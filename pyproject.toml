@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "legalpdf-translate"
+version = "0.1.0"
+description = "Windows desktop app for page-by-page legal PDF translation to DOCX."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "openai>=1.40.0",
+  "PyMuPDF>=1.24.0",
+  "python-docx>=1.1.0",
+  "python-dotenv>=1.0.1",
+  "Pillow>=10.0.0",
+]
+authors = [{ name = "LegalPDF Translate" }]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "pyinstaller>=6.0.0"]
+
+[project.scripts]
+legalpdf-translate = "legalpdf_translate.cli:main"
+legalpdf-translate-gui = "legalpdf_translate.gui_main:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["legalpdf_translate"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
