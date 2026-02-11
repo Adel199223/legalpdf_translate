@@ -2,7 +2,10 @@
 
 from pathlib import Path
 
-project_root = Path(__file__).resolve().parents[1]
+project_root = Path(SPECPATH).resolve().parents[0]
+# same as:
+# project_root = Path(SPECPATH).resolve().parent
+
 
 a = Analysis(
     [str(project_root / "src" / "legalpdf_translate" / "gui_main.py")],
