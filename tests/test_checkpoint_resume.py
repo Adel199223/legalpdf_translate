@@ -42,7 +42,7 @@ def test_run_state_atomic_save_and_load(tmp_path: Path) -> None:
         pdf_fingerprint=sha256_of_file(pdf),
         context_hash=sha256_of_text(None),
         total_pages=8,
-        max_pages_effective=3,
+        selected_pages=[1, 2, 3],
     )
     save_run_state_atomic(paths.run_state_path, state)
     assert paths.run_state_path.exists()
@@ -52,6 +52,9 @@ def test_run_state_atomic_save_and_load(tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded.total_pages == 8
     assert loaded.max_pages_effective == 3
+    assert loaded.selection_start_page == 1
+    assert loaded.selection_end_page == 3
+    assert loaded.selection_page_count == 3
     assert loaded.frozen_outdir_abs == str(paths.frozen_outdir)
     assert loaded.run_dir_abs == str(paths.run_dir)
     assert loaded.run_started_at == "20260211_010101"
@@ -68,7 +71,7 @@ def test_resume_compatibility_and_done_pages(tmp_path: Path) -> None:
         pdf_fingerprint=sha256_of_file(pdf),
         context_hash=sha256_of_text("ctx"),
         total_pages=5,
-        max_pages_effective=3,
+        selected_pages=[1, 2, 3],
     )
     mark_page_done(state, 1, image_used=False, retry_used=False, usage={})
     assert list_completed_pages(state) == [1]
@@ -79,6 +82,10 @@ def test_resume_compatibility_and_done_pages(tmp_path: Path) -> None:
         paths=paths,
         pdf_fingerprint=sha256_of_file(pdf),
         context_hash=sha256_of_text("ctx"),
+        selection_start_page=1,
+        selection_end_page=3,
+        selection_page_count=3,
+        max_pages_effective=3,
     )
     assert not is_resume_compatible(
         state,
@@ -86,4 +93,8 @@ def test_resume_compatibility_and_done_pages(tmp_path: Path) -> None:
         paths=paths,
         pdf_fingerprint=sha256_of_file(pdf),
         context_hash=sha256_of_text("different"),
+        selection_start_page=1,
+        selection_end_page=3,
+        selection_page_count=3,
+        max_pages_effective=3,
     )

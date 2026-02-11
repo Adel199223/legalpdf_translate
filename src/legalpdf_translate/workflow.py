@@ -14,13 +14,13 @@ from .checkpoint import (
     build_run_paths,
     clear_run_dirs,
     ensure_run_dirs,
-    is_resume_compatible,
     list_completed_pages,
     load_run_state,
     mark_page_done,
     mark_page_failed,
     new_run_state,
     record_final_docx_path,
+    resume_incompatibility_reason,
     save_run_state_atomic,
     sha256_of_bytes,
     sha256_of_file,
@@ -32,6 +32,7 @@ from .image_io import render_page_image_data_url, should_include_image
 from .openai_client import OpenAIResponsesClient
 from .output_normalize import normalize_output_text
 from .output_paths import require_writable_output_dir
+from .page_selection import resolve_page_selection
 from .pdf_text_order import extract_ordered_page_text, get_page_count
 from .prompt_builder import build_page_prompt, build_retry_prompt
 from .resources_loader import load_system_instructions
@@ -85,9 +86,18 @@ class TranslationWorkflow:
         context_text, context_hash = self._resolve_context(config)
 
         total_pages = get_page_count(config.pdf_path)
-        max_pages_effective = total_pages if config.max_pages is None else min(config.max_pages, total_pages)
-        if max_pages_effective <= 0:
+        selected_pages = resolve_page_selection(
+            total_pages,
+            config.start_page,
+            config.end_page,
+            config.max_pages,
+        )
+        if not selected_pages:
             raise ValueError("No pages selected for translation.")
+        selection_start_page = selected_pages[0]
+        selection_end_page = selected_pages[-1]
+        selection_page_count = len(selected_pages)
+        max_pages_effective = selection_page_count
 
         pdf_fingerprint = sha256_of_file(config.pdf_path)
         paths, existing_state = self._resolve_paths_for_run(config)
@@ -101,6 +111,10 @@ class TranslationWorkflow:
             pdf_fingerprint=pdf_fingerprint,
             context_hash=context_hash,
             total_pages=total_pages,
+            selected_pages=selected_pages,
+            selection_start_page=selection_start_page,
+            selection_end_page=selection_end_page,
+            selection_page_count=selection_page_count,
             max_pages_effective=max_pages_effective,
         )
         self._last_state = run_state
@@ -110,17 +124,18 @@ class TranslationWorkflow:
 
         failed_page: int | None = None
         compliance_failure = False
-        for page_number in range(1, max_pages_effective + 1):
+        for selected_index, page_number in enumerate(selected_pages, start=1):
+            self._log(f"Processing {selected_index}/{selection_page_count} (PDF page {page_number})")
             if self._cancel_event.is_set():
                 self._log("Cancellation requested; stopping before next page.")
                 break
             page_state = run_state.pages.get(str(page_number))
             if config.resume and page_state and page_state.get("status") == PageStatus.DONE.value:
                 self._log(f"page={page_number} image_used=False retry_used=False status=skipped")
-                self._progress(page_number, max_pages_effective, "skipped (already done)")
+                self._progress(selected_index, selection_page_count, "skipped (already done)")
                 continue
 
-            self._progress(page_number, max_pages_effective, "processing")
+            self._progress(selected_index, selection_page_count, "processing")
             try:
                 if client is None:
                     client = OpenAIResponsesClient(logger=self._log)
@@ -155,7 +170,7 @@ class TranslationWorkflow:
                     usage=page_result.usage,
                 )
                 save_run_state_atomic(paths.run_state_path, run_state)
-                self._progress(page_number, max_pages_effective, "done")
+                self._progress(selected_index, selection_page_count, "done")
                 continue
 
             failed_page = page_number
@@ -173,7 +188,7 @@ class TranslationWorkflow:
                 error=page_result.error or "unknown_failure",
             )
             save_run_state_atomic(paths.run_state_path, run_state)
-            self._progress(page_number, max_pages_effective, "failed")
+            self._progress(selected_index, selection_page_count, "failed")
             break
 
         self._last_state = run_state
@@ -456,6 +471,10 @@ class TranslationWorkflow:
         pdf_fingerprint: str,
         context_hash: str,
         total_pages: int,
+        selected_pages: list[int],
+        selection_start_page: int,
+        selection_end_page: int,
+        selection_page_count: int,
         max_pages_effective: int,
     ) -> RunState:
         existing = existing_state
@@ -476,19 +495,28 @@ class TranslationWorkflow:
                         "Checkpoint run directory mismatch. Start a new run with resume disabled."
                     )
 
-            if is_resume_compatible(
+            mismatch_reason = resume_incompatibility_reason(
                 existing,
                 config=config,
                 paths=paths,
                 pdf_fingerprint=pdf_fingerprint,
                 context_hash=context_hash,
-            ):
+                selection_start_page=selection_start_page,
+                selection_end_page=selection_end_page,
+                selection_page_count=selection_page_count,
+                max_pages_effective=max_pages_effective,
+            )
+            if mismatch_reason is None:
                 existing.frozen_outdir_abs = str(paths.frozen_outdir)
                 existing.run_dir_abs = str(paths.run_dir)
                 existing.run_started_at = paths.run_started_at
                 save_run_state_atomic(paths.run_state_path, existing)
                 self._log("Compatible checkpoint found. Resuming from completed pages.")
                 return existing
+            raise ValueError(
+                "Checkpoint is incompatible with current run settings: "
+                f"{mismatch_reason}. Disable resume or use New Run."
+            )
 
         clear_run_dirs(paths)
         state = new_run_state(
@@ -497,7 +525,7 @@ class TranslationWorkflow:
             pdf_fingerprint=pdf_fingerprint,
             context_hash=context_hash,
             total_pages=total_pages,
-            max_pages_effective=max_pages_effective,
+            selected_pages=selected_pages,
         )
         save_run_state_atomic(paths.run_state_path, state)
         return state
@@ -511,6 +539,8 @@ class TranslationWorkflow:
             target_lang=config.target_lang,
             effort=config.effort,
             image_mode=config.image_mode,
+            start_page=config.start_page,
+            end_page=config.end_page,
             max_pages=config.max_pages,
             resume=config.resume,
             page_breaks=config.page_breaks,
@@ -524,6 +554,12 @@ class TranslationWorkflow:
             raise FileNotFoundError(f"PDF not found: {config.pdf_path}")
         if config.target_lang not in (TargetLang.EN, TargetLang.FR, TargetLang.AR):
             raise ValueError("Invalid target language.")
+        if config.start_page <= 0:
+            raise ValueError("start_page must be >= 1.")
+        if config.end_page is not None and config.end_page <= 0:
+            raise ValueError("end_page must be >= 1 when provided.")
+        if config.end_page is not None and config.start_page > config.end_page:
+            raise ValueError("start_page must be <= end_page.")
         if config.max_pages is not None and config.max_pages <= 0:
             raise ValueError("max_pages must be a positive integer when provided.")
         if config.context_file and not config.context_file.exists():

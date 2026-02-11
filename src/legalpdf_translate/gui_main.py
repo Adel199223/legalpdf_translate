@@ -5,10 +5,12 @@ from __future__ import annotations
 import tkinter as tk
 
 from .gui_app import LegalPDFTranslateApp
+from .gui_theme import apply_theme
 
 
 def main() -> None:
     root = tk.Tk()
+    apply_theme(root)
     root.title("LegalPDF Translate")
     root.geometry("980x760")
     LegalPDFTranslateApp(root)

@@ -156,7 +156,7 @@ def test_rebuild_docx_from_pages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         pdf_fingerprint="pdfhash",
         context_hash=sha256_of_text(None),
         total_pages=2,
-        max_pages_effective=2,
+        selected_pages=[1, 2],
     )
     mark_page_done(state, 1, image_used=False, retry_used=False, usage={})
     mark_page_done(state, 2, image_used=False, retry_used=False, usage={})
@@ -180,3 +180,106 @@ def test_rebuild_docx_from_pages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     loaded_state = load_run_state(paths.run_state_path)
     assert loaded_state is not None
     assert loaded_state.final_docx_path_abs == str(rebuilt_path.resolve())
+
+
+def test_workflow_uses_real_pdf_page_numbers_for_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.AUTO,
+        start_page=3,
+        end_page=5,
+        max_pages=2,
+        resume=False,
+        page_breaks=True,
+        keep_intermediates=True,
+    )
+
+    called_pages: list[int] = []
+
+    def _fake_process_page(self, *, client, config, paths, instructions, context_text, page_number, total_pages):  # type: ignore[no-untyped-def]
+        called_pages.append(page_number)
+        _write_page(paths.pages_dir / f"page_{page_number:04d}.txt", f"Page {page_number}")
+        return _PageOutcome(
+            status=PageStatus.DONE,
+            image_used=False,
+            retry_used=False,
+            usage={},
+            error=None,
+        )
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 6)
+    monkeypatch.setattr(TranslationWorkflow, "_process_page", _fake_process_page)
+
+    workflow = TranslationWorkflow(client=object())
+    summary = workflow.run(config)
+
+    assert summary.success is True
+    assert called_pages == [3, 4]
+    paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
+    page_files = sorted(path.name for path in paths.pages_dir.glob("page_*.txt"))
+    assert page_files == ["page_0003.txt", "page_0004.txt"]
+
+
+def test_resume_mismatch_raises_explicit_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    checkpoint_config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.AUTO,
+        start_page=1,
+        end_page=3,
+        max_pages=3,
+        resume=True,
+        page_breaks=True,
+        keep_intermediates=True,
+    )
+    paths = build_run_paths(checkpoint_config.output_dir, checkpoint_config.pdf_path, checkpoint_config.target_lang)
+    ensure_run_dirs(paths)
+    state = new_run_state(
+        config=checkpoint_config,
+        paths=paths,
+        pdf_fingerprint=sha256_of_text("pdf"),
+        context_hash=sha256_of_text(None),
+        total_pages=6,
+        selected_pages=[1, 2, 3],
+    )
+    save_run_state_atomic(paths.run_state_path, state)
+
+    run_config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.AUTO,
+        start_page=2,
+        end_page=4,
+        max_pages=3,
+        resume=True,
+        page_breaks=True,
+        keep_intermediates=True,
+    )
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 6)
+    monkeypatch.setattr(workflow_module, "sha256_of_file", lambda _pdf: sha256_of_text("pdf"))
+
+    workflow = TranslationWorkflow(client=object())
+    with pytest.raises(ValueError, match="Checkpoint is incompatible"):
+        workflow.run(run_config)

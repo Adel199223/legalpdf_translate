@@ -39,6 +39,8 @@ class RunConfig:
     target_lang: TargetLang
     effort: ReasoningEffort = ReasoningEffort.HIGH
     image_mode: ImageMode = ImageMode.AUTO
+    start_page: int = 1
+    end_page: int | None = None
     max_pages: int | None = None
     resume: bool = True
     page_breaks: bool = True
@@ -66,6 +68,9 @@ class RunState:
     lang: str
     total_pages: int
     max_pages_effective: int
+    selection_start_page: int
+    selection_end_page: int
+    selection_page_count: int
     settings: dict[str, Any]
     context_hash: str
     created_at: str
@@ -85,6 +90,9 @@ class RunState:
             "lang": self.lang,
             "total_pages": self.total_pages,
             "max_pages_effective": self.max_pages_effective,
+            "selection_start_page": self.selection_start_page,
+            "selection_end_page": self.selection_end_page,
+            "selection_page_count": self.selection_page_count,
             "settings": self.settings,
             "context_hash": self.context_hash,
             "created_at": self.created_at,

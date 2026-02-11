@@ -13,7 +13,7 @@ OPENAI_STORE: Final[bool] = False
 DEFAULT_REASONING_EFFORT: Final[str] = "high"
 RETRY_REASONING_EFFORT: Final[str] = "medium"
 
-RUN_STATE_VERSION: Final[int] = 2
+RUN_STATE_VERSION: Final[int] = 3
 
 IMAGE_MAX_DATA_URL_BYTES: Final[int] = 20 * 1024 * 1024
 IMAGE_INITIAL_DPI: Final[int] = 200

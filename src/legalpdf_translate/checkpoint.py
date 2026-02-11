@@ -80,6 +80,8 @@ def settings_fingerprint(config: RunConfig) -> dict[str, Any]:
         "image_mode": config.image_mode.value,
         "page_breaks": config.page_breaks,
         "keep_intermediates": config.keep_intermediates,
+        "start_page": config.start_page,
+        "end_page": config.end_page,
         "max_pages": config.max_pages,
     }
 
@@ -91,8 +93,15 @@ def new_run_state(
     pdf_fingerprint: str,
     context_hash: str,
     total_pages: int,
-    max_pages_effective: int,
+    selected_pages: list[int],
 ) -> RunState:
+    if not selected_pages:
+        raise ValueError("selected_pages cannot be empty.")
+
+    selection_start_page = selected_pages[0]
+    selection_end_page = selected_pages[-1]
+    selection_page_count = len(selected_pages)
+
     now = _utc_now()
     pages = {
         str(page_num): {
@@ -102,7 +111,7 @@ def new_run_state(
             "usage": {},
             "error": None,
         }
-        for page_num in range(1, max_pages_effective + 1)
+        for page_num in selected_pages
     }
     return RunState(
         version=RUN_STATE_VERSION,
@@ -110,7 +119,10 @@ def new_run_state(
         pdf_fingerprint=pdf_fingerprint,
         lang=config.target_lang.value,
         total_pages=total_pages,
-        max_pages_effective=max_pages_effective,
+        max_pages_effective=selection_page_count,
+        selection_start_page=selection_start_page,
+        selection_end_page=selection_end_page,
+        selection_page_count=selection_page_count,
         settings=settings_fingerprint(config),
         context_hash=context_hash,
         created_at=now,
@@ -135,6 +147,18 @@ def load_run_state(path: Path) -> RunState | None:
     else:
         final_docx = str(final_docx_raw)
 
+    pages = dict(data["pages"])
+    page_numbers: list[int] = []
+    for key in pages.keys():
+        try:
+            page_numbers.append(int(key))
+        except ValueError:
+            continue
+    page_numbers = sorted(page_numbers)
+    fallback_selection_start = page_numbers[0] if page_numbers else 1
+    fallback_selection_end = page_numbers[-1] if page_numbers else int(data.get("max_pages_effective", 0))
+    fallback_selection_count = len(page_numbers)
+
     return RunState(
         version=int(data["version"]),
         pdf_path=str(data["pdf_path"]),
@@ -142,6 +166,9 @@ def load_run_state(path: Path) -> RunState | None:
         lang=str(data["lang"]),
         total_pages=int(data["total_pages"]),
         max_pages_effective=int(data["max_pages_effective"]),
+        selection_start_page=int(data.get("selection_start_page", fallback_selection_start)),
+        selection_end_page=int(data.get("selection_end_page", fallback_selection_end)),
+        selection_page_count=int(data.get("selection_page_count", fallback_selection_count)),
         settings=dict(data["settings"]),
         context_hash=str(data["context_hash"]),
         created_at=str(data["created_at"]),
@@ -150,7 +177,7 @@ def load_run_state(path: Path) -> RunState | None:
         run_dir_abs=str(data.get("run_dir_abs", path.parent.resolve())),
         final_docx_path_abs=final_docx,
         run_started_at=str(data.get("run_started_at", "")),
-        pages=dict(data["pages"]),
+        pages=pages,
         last_completed_page=int(data.get("last_completed_page", 0)),
     )
 
@@ -166,6 +193,68 @@ def save_run_state_atomic(path: Path, state: RunState) -> None:
     temp_path.replace(path)
 
 
+def resume_incompatibility_reason(
+    state: RunState,
+    *,
+    config: RunConfig,
+    paths: RunPaths,
+    pdf_fingerprint: str,
+    context_hash: str,
+    selection_start_page: int,
+    selection_end_page: int,
+    selection_page_count: int,
+    max_pages_effective: int,
+) -> str | None:
+    if state.version != RUN_STATE_VERSION:
+        return f"state version mismatch: checkpoint={state.version}, expected={RUN_STATE_VERSION}"
+    if state.pdf_fingerprint != pdf_fingerprint:
+        return "PDF fingerprint mismatch."
+    if state.lang != config.target_lang.value:
+        return f"target language mismatch: checkpoint={state.lang}, expected={config.target_lang.value}"
+    if state.context_hash != context_hash:
+        return "context mismatch."
+    expected_settings = settings_fingerprint(config)
+    if state.settings != expected_settings:
+        return (
+            "settings mismatch: checkpoint="
+            f"{state.settings}, expected={expected_settings}"
+        )
+
+    if state.selection_start_page != selection_start_page:
+        return (
+            "selection start page mismatch: checkpoint="
+            f"{state.selection_start_page}, expected={selection_start_page}"
+        )
+    if state.selection_end_page != selection_end_page:
+        return (
+            "selection end page mismatch: checkpoint="
+            f"{state.selection_end_page}, expected={selection_end_page}"
+        )
+    if state.selection_page_count != selection_page_count:
+        return (
+            "selection page count mismatch: checkpoint="
+            f"{state.selection_page_count}, expected={selection_page_count}"
+        )
+    if state.max_pages_effective != max_pages_effective:
+        return (
+            "max_pages_effective mismatch: checkpoint="
+            f"{state.max_pages_effective}, expected={max_pages_effective}"
+        )
+
+    if state.frozen_outdir_abs:
+        if Path(state.frozen_outdir_abs).expanduser().resolve() != paths.frozen_outdir:
+            return "output folder mismatch."
+    if state.run_dir_abs:
+        if Path(state.run_dir_abs).expanduser().resolve() != paths.run_dir:
+            return "run directory mismatch."
+    if state.run_started_at and state.run_started_at != paths.run_started_at:
+        return (
+            "run timestamp mismatch: checkpoint="
+            f"{state.run_started_at}, expected={paths.run_started_at}"
+        )
+    return None
+
+
 def is_resume_compatible(
     state: RunState,
     *,
@@ -173,27 +262,25 @@ def is_resume_compatible(
     paths: RunPaths,
     pdf_fingerprint: str,
     context_hash: str,
+    selection_start_page: int,
+    selection_end_page: int,
+    selection_page_count: int,
+    max_pages_effective: int,
 ) -> bool:
-    if state.version != RUN_STATE_VERSION:
-        return False
-    if state.pdf_fingerprint != pdf_fingerprint:
-        return False
-    if state.lang != config.target_lang.value:
-        return False
-    if state.context_hash != context_hash:
-        return False
-    if state.settings != settings_fingerprint(config):
-        return False
-
-    if state.frozen_outdir_abs:
-        if Path(state.frozen_outdir_abs).expanduser().resolve() != paths.frozen_outdir:
-            return False
-    if state.run_dir_abs:
-        if Path(state.run_dir_abs).expanduser().resolve() != paths.run_dir:
-            return False
-    if state.run_started_at and state.run_started_at != paths.run_started_at:
-        return False
-    return True
+    return (
+        resume_incompatibility_reason(
+            state,
+            config=config,
+            paths=paths,
+            pdf_fingerprint=pdf_fingerprint,
+            context_hash=context_hash,
+            selection_start_page=selection_start_page,
+            selection_end_page=selection_end_page,
+            selection_page_count=selection_page_count,
+            max_pages_effective=max_pages_effective,
+        )
+        is None
+    )
 
 
 def record_final_docx_path(state: RunState, final_docx_path: Path) -> None:
