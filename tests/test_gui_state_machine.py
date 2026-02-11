@@ -33,6 +33,7 @@ def _make_app_stub() -> LegalPDFTranslateApp:
     app._running_translation = False
     app._can_export_partial = False
     app.last_output_docx = None
+    app.last_joblog_seed = None
 
     app._config_control_states = [
         (_FakeWidget(), tk.NORMAL),
@@ -45,6 +46,8 @@ def _make_app_stub() -> LegalPDFTranslateApp:
     app.export_partial_btn = _FakeWidget()
     app.rebuild_btn = _FakeWidget()
     app.open_outdir_btn = _FakeWidget()
+    app.save_joblog_btn = _FakeWidget()
+    app.open_joblog_btn = _FakeWidget()
 
     app._can_start_translation = lambda: True  # type: ignore[method-assign]
     app._has_rebuildable_pages = lambda: False  # type: ignore[method-assign]
@@ -78,6 +81,7 @@ def test_new_run_clears_runtime_state_without_restart() -> None:
     app._busy = False
     app.last_summary = object()
     app.last_output_docx = object()
+    app.last_joblog_seed = object()
     app._can_export_partial = True
     app.workflow = object()
     app.worker = object()
@@ -110,6 +114,7 @@ def test_new_run_clears_runtime_state_without_restart() -> None:
 
     assert app.last_summary is None
     assert app.last_output_docx is None
+    assert app.last_joblog_seed is None
     assert app._can_export_partial is False
     assert app.workflow is None
     assert app.worker is None

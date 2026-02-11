@@ -9,6 +9,43 @@ from typing import Any
 
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
+DEFAULT_VOCAB_CASE_ENTITIES = [
+    "Ministério Público",
+    "Tribunal Judicial",
+    "Juízo Local Criminal",
+    "Juízo Central Cível",
+    "Tribunal do Trabalho",
+]
+DEFAULT_VOCAB_SERVICE_ENTITIES = [
+    "Ministério Público",
+    "Tribunal Judicial",
+    "GNR",
+    "PSP",
+    "Advogado",
+]
+DEFAULT_VOCAB_CITIES = [
+    "Beja",
+    "Moura",
+    "Cuba",
+    "Ferreira do Alentejo",
+    "Serpa",
+]
+DEFAULT_VOCAB_JOB_TYPES = ["Translation", "Interpretation"]
+DEFAULT_JOBLOG_VISIBLE_COLUMNS = [
+    "translation_date",
+    "case_number",
+    "job_type",
+    "service_entity",
+    "service_city",
+    "lang",
+    "pages",
+    "word_count",
+    "rate_per_word",
+    "expected_total",
+    "amount_paid",
+    "api_cost",
+    "profit",
+]
 ALLOWED_GUI_KEYS = {
     "last_outdir",
     "last_lang",
@@ -21,6 +58,18 @@ ALLOWED_GUI_KEYS = {
     "end_page",
     "max_pages",
 }
+ALLOWED_JOBLOG_KEYS = {
+    "vocab_case_entities",
+    "vocab_service_entities",
+    "vocab_cities",
+    "vocab_job_types",
+    "default_rate_per_word",
+    "joblog_visible_columns",
+    "metadata_ai_enabled",
+    "metadata_photo_enabled",
+    "service_equals_case_by_default",
+    "non_court_service_entities",
+}
 DEFAULT_GUI_SETTINGS: dict[str, Any] = {
     "last_outdir": "",
     "last_lang": "EN",
@@ -32,6 +81,18 @@ DEFAULT_GUI_SETTINGS: dict[str, Any] = {
     "start_page": 1,
     "end_page": None,
     "max_pages": None,
+}
+DEFAULT_JOBLOG_SETTINGS: dict[str, Any] = {
+    "vocab_case_entities": list(DEFAULT_VOCAB_CASE_ENTITIES),
+    "vocab_service_entities": list(DEFAULT_VOCAB_SERVICE_ENTITIES),
+    "vocab_cities": list(DEFAULT_VOCAB_CITIES),
+    "vocab_job_types": list(DEFAULT_VOCAB_JOB_TYPES),
+    "default_rate_per_word": {"EN": 0.08, "FR": 0.08, "AR": 0.09},
+    "joblog_visible_columns": list(DEFAULT_JOBLOG_VISIBLE_COLUMNS),
+    "metadata_ai_enabled": True,
+    "metadata_photo_enabled": True,
+    "service_equals_case_by_default": True,
+    "non_court_service_entities": ["GNR", "PSP"],
 }
 
 
@@ -108,6 +169,45 @@ def _coerce_optional_int(value: object) -> int | None:
     return None
 
 
+def _coerce_str_list(value: object, *, fallback: list[str]) -> list[str]:
+    if not isinstance(value, list):
+        return list(fallback)
+    output: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        cleaned = item.strip()
+        if cleaned == "":
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(cleaned)
+    if not output:
+        return list(fallback)
+    return output
+
+
+def _coerce_rate_map(value: object, *, fallback: dict[str, float]) -> dict[str, float]:
+    if not isinstance(value, dict):
+        return dict(fallback)
+    output = dict(fallback)
+    for lang in ("EN", "FR", "AR"):
+        raw = value.get(lang)
+        if isinstance(raw, (int, float)):
+            output[lang] = float(raw)
+        elif isinstance(raw, str):
+            cleaned = raw.strip().replace(",", ".")
+            if cleaned:
+                try:
+                    output[lang] = float(cleaned)
+                except ValueError:
+                    continue
+    return output
+
+
 def load_gui_settings() -> dict[str, Any]:
     data = load_settings()
     merged = dict(DEFAULT_GUI_SETTINGS)
@@ -133,11 +233,56 @@ def save_gui_settings(values: dict[str, Any]) -> None:
     for key in ALLOWED_GUI_KEYS:
         if key in values:
             data[key] = values[key]
-    sanitized: dict[str, Any] = {}
-    for key in ALLOWED_GUI_KEYS:
+    save_settings(data)
+
+
+def load_joblog_settings() -> dict[str, Any]:
+    data = load_settings()
+    merged = dict(DEFAULT_JOBLOG_SETTINGS)
+    for key in ALLOWED_JOBLOG_KEYS:
         if key in data:
-            sanitized[key] = data[key]
-    save_settings(sanitized)
+            merged[key] = data[key]
+
+    merged["vocab_case_entities"] = _coerce_str_list(
+        merged.get("vocab_case_entities"),
+        fallback=DEFAULT_VOCAB_CASE_ENTITIES,
+    )
+    merged["vocab_service_entities"] = _coerce_str_list(
+        merged.get("vocab_service_entities"),
+        fallback=DEFAULT_VOCAB_SERVICE_ENTITIES,
+    )
+    merged["vocab_cities"] = _coerce_str_list(
+        merged.get("vocab_cities"),
+        fallback=DEFAULT_VOCAB_CITIES,
+    )
+    merged["vocab_job_types"] = _coerce_str_list(
+        merged.get("vocab_job_types"),
+        fallback=DEFAULT_VOCAB_JOB_TYPES,
+    )
+    merged["joblog_visible_columns"] = _coerce_str_list(
+        merged.get("joblog_visible_columns"),
+        fallback=DEFAULT_JOBLOG_VISIBLE_COLUMNS,
+    )
+    merged["non_court_service_entities"] = _coerce_str_list(
+        merged.get("non_court_service_entities"),
+        fallback=["GNR", "PSP"],
+    )
+    merged["metadata_ai_enabled"] = _coerce_bool(merged.get("metadata_ai_enabled"), True)
+    merged["metadata_photo_enabled"] = _coerce_bool(merged.get("metadata_photo_enabled"), True)
+    merged["service_equals_case_by_default"] = _coerce_bool(merged.get("service_equals_case_by_default"), True)
+    merged["default_rate_per_word"] = _coerce_rate_map(
+        merged.get("default_rate_per_word"),
+        fallback=DEFAULT_JOBLOG_SETTINGS["default_rate_per_word"],
+    )
+    return merged
+
+
+def save_joblog_settings(values: dict[str, Any]) -> None:
+    data = load_settings()
+    for key in ALLOWED_JOBLOG_KEYS:
+        if key in values:
+            data[key] = values[key]
+    save_settings(data)
 
 
 def load_last_outdir() -> Path | None:

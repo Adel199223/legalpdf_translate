@@ -14,10 +14,13 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from .checkpoint import load_run_state, parse_effort, parse_image_mode
 from .gui_theme import apply_text_widget_theme
+from .joblog_db import job_log_db_path
+from .joblog_ui import JobLogSeed, JobLogWindow, SaveToJobLogDialog, build_seed_from_run
+from .metadata_autofill import extract_from_header_text, extract_header_text_from_pdf_with_ocr_fallback
 from .output_paths import build_output_paths, require_writable_output_dir_text
 from .pdf_text_order import get_page_count
 from .types import RunConfig, RunSummary, TargetLang
-from .user_settings import load_gui_settings, save_gui_settings
+from .user_settings import load_gui_settings, load_joblog_settings, save_gui_settings
 from .workflow import TranslationWorkflow
 
 
@@ -30,6 +33,10 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.worker: threading.Thread | None = None
         self.last_summary: RunSummary | None = None
         self.last_output_docx: Path | None = None
+        self.last_run_config: RunConfig | None = None
+        self.last_joblog_seed: JobLogSeed | None = None
+        self.joblog_window: JobLogWindow | None = None
+        self.joblog_db_path = job_log_db_path()
 
         self._busy = False
         self._running_translation = False
@@ -196,7 +203,7 @@ class LegalPDFTranslateApp(ttk.Frame):
 
         controls = ttk.Frame(self)
         controls.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(10, 0))
-        controls.columnconfigure(6, weight=1)
+        controls.columnconfigure(8, weight=1)
 
         self.translate_btn = ttk.Button(controls, text="Translate", command=self._start_translation)
         self.translate_btn.grid(row=0, column=0, padx=(0, 6))
@@ -220,6 +227,19 @@ class LegalPDFTranslateApp(ttk.Frame):
             state=tk.DISABLED,
         )
         self.open_outdir_btn.grid(row=0, column=5, padx=(0, 6))
+        self.save_joblog_btn = ttk.Button(
+            controls,
+            text="Save to Job Log",
+            command=self._open_save_to_joblog_dialog,
+            state=tk.DISABLED,
+        )
+        self.save_joblog_btn.grid(row=0, column=6, padx=(0, 6))
+        self.open_joblog_btn = ttk.Button(
+            controls,
+            text="Job Log",
+            command=self._open_joblog_window,
+        )
+        self.open_joblog_btn.grid(row=0, column=7, padx=(0, 6))
 
         self.progress = ttk.Progressbar(self, orient=tk.HORIZONTAL, mode="determinate", maximum=100)
         self.progress.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(10, 0))
@@ -457,6 +477,9 @@ class LegalPDFTranslateApp(ttk.Frame):
             and self.last_output_docx.stat().st_size > 0
         )
         self.open_outdir_btn.configure(state=tk.NORMAL if can_open else tk.DISABLED)
+        can_save_joblog = (not self._busy) and (self.last_joblog_seed is not None)
+        self.save_joblog_btn.configure(state=tk.NORMAL if can_save_joblog else tk.DISABLED)
+        self.open_joblog_btn.configure(state=tk.NORMAL if not self._busy else tk.DISABLED)
 
     def _new_queue(self) -> "queue.Queue[tuple[str, object]]":
         self.queue = queue.Queue()
@@ -472,6 +495,8 @@ class LegalPDFTranslateApp(ttk.Frame):
         self._persist_gui_settings()
         self.last_summary = None
         self.last_output_docx = None
+        self.last_run_config = config
+        self.last_joblog_seed = None
         self._can_export_partial = False
         self._set_busy(True, translation=True)
         self.progress.configure(value=0)
@@ -537,6 +562,8 @@ class LegalPDFTranslateApp(ttk.Frame):
             return
         self.last_summary = None
         self.last_output_docx = None
+        self.last_run_config = None
+        self.last_joblog_seed = None
         self._can_export_partial = False
         self.workflow = None
         self.worker = None
@@ -597,6 +624,63 @@ class LegalPDFTranslateApp(ttk.Frame):
         open_now = messagebox.askyesno(title, f"Saved DOCX:\n{self.last_output_docx}\n\nOpen file now?")
         if open_now:
             self._open_output_file()
+
+    def _prepare_joblog_seed(self, summary: RunSummary) -> None:
+        if self.last_run_config is None:
+            self.last_joblog_seed = None
+            return
+        settings = load_joblog_settings()
+        default_rate = settings["default_rate_per_word"].get(self.last_run_config.target_lang.value, 0.0)
+        seed = build_seed_from_run(
+            pdf_path=self.last_run_config.pdf_path,
+            lang=self.last_run_config.target_lang.value,
+            pages_dir=summary.run_dir / "pages",
+            completed_pages=summary.completed_pages,
+            completed_at=datetime.now().isoformat(timespec="seconds"),
+            default_rate_per_word=float(default_rate),
+            api_cost=0.0,
+        )
+
+        header_text = extract_header_text_from_pdf_with_ocr_fallback(seed.pdf_path)
+        if header_text.strip():
+            suggestion = extract_from_header_text(
+                header_text,
+                vocab_cities=list(settings["vocab_cities"]),
+                ai_enabled=bool(settings["metadata_ai_enabled"]),
+            )
+            if suggestion.case_entity:
+                seed.case_entity = suggestion.case_entity
+                seed.service_entity = suggestion.case_entity
+            if suggestion.case_city:
+                seed.case_city = suggestion.case_city
+                seed.service_city = suggestion.case_city
+            if suggestion.case_number:
+                seed.case_number = suggestion.case_number
+
+        self.last_joblog_seed = seed
+
+    def _open_save_to_joblog_dialog(self) -> None:
+        if self.last_joblog_seed is None:
+            messagebox.showinfo("Job Log", "No completed run available to save.")
+            return
+
+        def _refresh_after_save() -> None:
+            if self.joblog_window is not None and self.joblog_window.winfo_exists():
+                self.joblog_window.refresh_rows()
+
+        SaveToJobLogDialog(
+            self.master,
+            db_path=self.joblog_db_path,
+            seed=self.last_joblog_seed,
+            on_saved=_refresh_after_save,
+        )
+
+    def _open_joblog_window(self) -> None:
+        if self.joblog_window is not None and self.joblog_window.winfo_exists():
+            self.joblog_window.lift()
+            self.joblog_window.focus_force()
+            return
+        self.joblog_window = JobLogWindow(self.master, db_path=self.joblog_db_path)
 
     def _int_from_text(self, value: str, *, allow_blank: bool, default: int | None = None) -> int | None:
         cleaned = value.strip()
@@ -665,9 +749,12 @@ class LegalPDFTranslateApp(ttk.Frame):
                     self.last_output_docx = summary.output_docx.expanduser().resolve()
                     self.status_var.set("Completed")
                     self._append_log(f"Saved DOCX: {self.last_output_docx}")
+                    self._prepare_joblog_seed(summary)
                     self._show_saved_docx_dialog("Translation complete")
+                    self._open_save_to_joblog_dialog()
                 else:
                     self.last_output_docx = None
+                    self.last_joblog_seed = None
                     self.status_var.set(f"Failed ({summary.error})")
                     self._append_log(f"Run failed: {summary.error}; failed_page={summary.failed_page}")
                     if summary.error == "docx_write_failed" and summary.attempted_output_docx is not None:
@@ -688,6 +775,7 @@ class LegalPDFTranslateApp(ttk.Frame):
                 rebuilt = payload  # type: ignore[assignment]
                 self._set_busy(False, translation=False)
                 self.last_output_docx = rebuilt.expanduser().resolve()
+                self.last_joblog_seed = None
                 self.status_var.set("Completed")
                 self._append_log(f"Saved DOCX: {self.last_output_docx}")
                 self._show_saved_docx_dialog("Rebuild complete")
