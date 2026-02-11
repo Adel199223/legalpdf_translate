@@ -600,9 +600,7 @@ class SaveToJobLogDialog(tk.Toplevel):
                 "ocr_engine": self._settings["ocr_engine"],
                 "ocr_api_base_url": self._settings["ocr_api_base_url"],
                 "ocr_api_model": self._settings["ocr_api_model"],
-                "ocr_api_key_source": self._settings["ocr_api_key_source"],
-                "ocr_api_key_env": self._settings["ocr_api_key_env"],
-                "ocr_api_key_credman_target": self._settings["ocr_api_key_credman_target"],
+                "ocr_api_key_env_name": self._settings["ocr_api_key_env_name"],
             }
         )
         self._saved = True

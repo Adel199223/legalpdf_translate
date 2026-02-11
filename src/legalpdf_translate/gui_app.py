@@ -7,27 +7,39 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
+from openai import OpenAI
+
+from .__init__ import __version__
 from .checkpoint import (
     load_run_state,
-    parse_api_key_source,
     parse_effort,
     parse_image_mode,
     parse_ocr_engine_policy,
     parse_ocr_mode,
 )
-from .gui_theme import apply_text_widget_theme
+from .config import OPENAI_MODEL
+from .gui_settings_dialog import GuiSettingsDialog
+from .gui_theme import apply_text_widget_theme, apply_theme
 from .joblog_db import job_log_db_path
 from .joblog_ui import JobLogSeed, JobLogWindow, SaveToJobLogDialog, build_seed_from_run
 from .metadata_autofill import extract_pdf_header_metadata, metadata_config_from_settings
+from .openai_client import OpenAIResponsesClient
 from .output_paths import build_output_paths, require_writable_output_dir_text
 from .pdf_text_order import get_page_count
+from .secrets_store import (
+    delete_openai_key,
+    delete_ocr_key,
+    get_openai_key,
+    get_ocr_key,
+)
 from .types import RunConfig, RunSummary, TargetLang
-from .user_settings import load_gui_settings, load_joblog_settings, save_gui_settings
+from .user_settings import app_data_dir, load_gui_settings, load_joblog_settings, save_gui_settings, settings_path
 from .workflow import TranslationWorkflow
 
 
@@ -43,7 +55,18 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.last_run_config: RunConfig | None = None
         self.last_joblog_seed: JobLogSeed | None = None
         self.joblog_window: JobLogWindow | None = None
+        self.settings_window: tk.Toplevel | None = None
         self.joblog_db_path = job_log_db_path()
+        self.settings_data = load_gui_settings()
+        self._session_started_at = datetime.now()
+        self._metadata_logs_dir = app_data_dir() / "logs"
+        self._metadata_logs_dir.mkdir(parents=True, exist_ok=True)
+        self._metadata_log_file = self._metadata_logs_dir / (
+            f"session_{self._session_started_at.strftime('%Y%m%d_%H%M%S')}.log"
+        )
+        self._menu_file: tk.Menu | None = None
+        self._menu_tools: tk.Menu | None = None
+        self._menu_help: tk.Menu | None = None
 
         self._busy = False
         self._running_translation = False
@@ -60,9 +83,7 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.ocr_engine_var = tk.StringVar(value="local_then_api")
         self.ocr_api_base_url_var = tk.StringVar(value="")
         self.ocr_api_model_var = tk.StringVar(value="")
-        self.ocr_api_key_source_var = tk.StringVar(value="env")
-        self.ocr_api_key_env_var = tk.StringVar(value="DEEPSEEK_API_KEY")
-        self.ocr_api_key_credman_target_var = tk.StringVar(value="LegalPDFTranslate_OCR")
+        self.ocr_api_key_env_name_var = tk.StringVar(value="DEEPSEEK_API_KEY")
         self.start_page_var = tk.StringVar(value="1")
         self.end_page_var = tk.StringVar(value="")
         self.max_pages_var = tk.StringVar(value="")
@@ -75,9 +96,11 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.status_var = tk.StringVar(value="Idle")
         self.page_count_var = tk.StringVar(value="Pages: -")
 
-        self._apply_saved_settings(load_gui_settings())
+        self._apply_saved_settings(self.settings_data)
+        self._apply_theme_from_settings(self.settings_data)
 
         self._build_ui()
+        self._install_menu()
         self._set_details_expanded(False)
         self._bind_var_watchers()
         self.pack(fill=tk.BOTH, expand=True)
@@ -86,58 +109,74 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.after(120, self._poll_queue)
 
     def _apply_saved_settings(self, data: dict[str, object]) -> None:
-        outdir_text = str(data.get("last_outdir", "") or "").strip()
+        outdir_text = str(data.get("last_outdir", data.get("default_outdir", "")) or "").strip()
         if outdir_text:
             outdir_candidate = Path(outdir_text).expanduser().resolve()
             if outdir_candidate.exists() and outdir_candidate.is_dir():
                 self.outdir_var.set(str(outdir_candidate))
 
-        lang = str(data.get("last_lang", TargetLang.EN.value) or TargetLang.EN.value).upper()
+        lang = str(data.get("default_lang", data.get("last_lang", TargetLang.EN.value)) or TargetLang.EN.value).upper()
         if lang in (TargetLang.EN.value, TargetLang.FR.value, TargetLang.AR.value):
             self.lang_var.set(lang)
 
-        effort = str(data.get("effort", "high") or "high").lower()
+        effort = str(data.get("default_effort", data.get("effort", "high")) or "high").lower()
         if effort in ("high", "xhigh"):
             self.effort_var.set(effort)
 
-        image_mode = str(data.get("image_mode", "auto") or "auto").lower()
+        image_mode = str(data.get("default_images_mode", data.get("image_mode", "auto")) or "auto").lower()
         if image_mode in ("off", "auto", "always"):
             self.images_var.set(image_mode)
-        ocr_mode = str(data.get("ocr_mode", "auto") or "auto").lower()
+        ocr_mode = str(data.get("ocr_mode_default", data.get("ocr_mode", "auto")) or "auto").lower()
         if ocr_mode in ("off", "auto", "always"):
             self.ocr_mode_var.set(ocr_mode)
-        ocr_engine = str(data.get("ocr_engine", "local_then_api") or "local_then_api").lower()
+        ocr_engine = str(data.get("ocr_engine_default", data.get("ocr_engine", "local_then_api")) or "local_then_api").lower()
         if ocr_engine in ("local", "local_then_api", "api"):
             self.ocr_engine_var.set(ocr_engine)
         self.ocr_api_base_url_var.set(str(data.get("ocr_api_base_url", "") or ""))
         self.ocr_api_model_var.set(str(data.get("ocr_api_model", "") or ""))
-        ocr_key_source = str(data.get("ocr_api_key_source", "env") or "env").lower()
-        if ocr_key_source in ("env", "credman", "inline"):
-            self.ocr_api_key_source_var.set(ocr_key_source)
-        self.ocr_api_key_env_var.set(str(data.get("ocr_api_key_env", "DEEPSEEK_API_KEY") or "DEEPSEEK_API_KEY"))
-        self.ocr_api_key_credman_target_var.set(
-            str(data.get("ocr_api_key_credman_target", "LegalPDFTranslate_OCR") or "LegalPDFTranslate_OCR")
+        self.ocr_api_key_env_name_var.set(
+            str(
+                data.get(
+                    "ocr_api_key_env_name",
+                    data.get("ocr_api_key_env", "DEEPSEEK_API_KEY"),
+                )
+                or "DEEPSEEK_API_KEY"
+            )
         )
 
-        resume = data.get("resume")
+        resume = data.get("default_resume", data.get("resume"))
         if isinstance(resume, bool):
             self.resume_var.set(resume)
-        page_breaks = data.get("page_breaks")
+        page_breaks = data.get("default_page_breaks", data.get("page_breaks"))
         if isinstance(page_breaks, bool):
             self.page_breaks_var.set(page_breaks)
-        keep_intermediates = data.get("keep_intermediates")
+        keep_intermediates = data.get("default_keep_intermediates", data.get("keep_intermediates"))
         if isinstance(keep_intermediates, bool):
             self.keep_var.set(keep_intermediates)
 
-        start_page = data.get("start_page")
+        start_page = data.get("default_start_page", data.get("start_page"))
         if isinstance(start_page, int) and start_page > 0:
             self.start_page_var.set(str(start_page))
-        end_page = data.get("end_page")
+        end_page = data.get("default_end_page", data.get("end_page"))
         if isinstance(end_page, int) and end_page > 0:
             self.end_page_var.set(str(end_page))
         max_pages = data.get("max_pages")
         if isinstance(max_pages, int) and max_pages > 0:
             self.max_pages_var.set(str(max_pages))
+
+    def _apply_theme_from_settings(self, settings: dict[str, object] | None = None) -> None:
+        effective = settings if settings is not None else self.settings_data
+        theme_name = str(effective.get("ui_theme", "dark_futuristic") or "dark_futuristic")
+        scale_raw = effective.get("ui_scale", 1.0)
+        try:
+            ui_scale = float(scale_raw)
+        except (TypeError, ValueError):
+            ui_scale = 1.0
+        palette = apply_theme(self.master, theme_name=theme_name, ui_scale=ui_scale)
+        if hasattr(self, "context_text"):
+            apply_text_widget_theme(self.context_text, palette)
+        if hasattr(self, "log_text"):
+            apply_text_widget_theme(self.log_text, palette)
 
     def _build_ui(self) -> None:
         self.columnconfigure(1, weight=1)
@@ -172,6 +211,8 @@ class LegalPDFTranslateApp(ttk.Frame):
             command=self._toggle_advanced,
         )
         self.show_advanced_btn.grid(row=3, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        self.settings_btn = ttk.Button(self, text="Settings...", command=self._open_settings_dialog)
+        self.settings_btn.grid(row=3, column=3, sticky="e", pady=(10, 0))
 
         self.advanced = ttk.LabelFrame(self, text="Advanced", padding=8)
         self.advanced.columnconfigure(1, weight=1)
@@ -317,6 +358,7 @@ class LegalPDFTranslateApp(ttk.Frame):
             (self.outdir_entry, tk.NORMAL),
             (self.outdir_browse_btn, tk.NORMAL),
             (self.show_advanced_btn, tk.NORMAL),
+            (self.settings_btn, tk.NORMAL),
             (self.effort_combo, "readonly"),
             (self.images_combo, "readonly"),
             (self.ocr_mode_combo, "readonly"),
@@ -330,6 +372,159 @@ class LegalPDFTranslateApp(ttk.Frame):
             (self.context_file_entry, tk.NORMAL),
             (self.context_browse_btn, tk.NORMAL),
         ]
+
+    def _install_menu(self) -> None:
+        menu_bar = tk.Menu(self.master)
+
+        file_menu = tk.Menu(menu_bar, tearoff=False)
+        file_menu.add_command(label="New Run", command=self._new_run)
+        file_menu.add_command(label="Open Output Folder", command=self._open_output_folder)
+        file_menu.add_command(label="Export Partial DOCX", command=self._export_partial)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self._on_close)
+        menu_bar.add_cascade(label="File", menu=file_menu)
+
+        tools_menu = tk.Menu(menu_bar, tearoff=False)
+        tools_menu.add_command(label="Settings...", command=self._open_settings_dialog)
+        tools_menu.add_command(label="Test API Keys...", command=self._test_api_keys)
+        clear_keys_submenu = tk.Menu(tools_menu, tearoff=False)
+        clear_keys_submenu.add_command(label="OpenAI key", command=self._clear_openai_key)
+        clear_keys_submenu.add_command(label="OCR key", command=self._clear_ocr_key)
+        clear_keys_submenu.add_command(label="Both", command=self._clear_all_keys)
+        tools_menu.add_cascade(label="Clear Stored Keys...", menu=clear_keys_submenu)
+        menu_bar.add_cascade(label="Tools", menu=tools_menu)
+
+        help_menu = tk.Menu(menu_bar, tearoff=False)
+        help_menu.add_command(label="About", command=self._show_about)
+        help_menu.add_command(label="Open Logs Folder", command=self._open_logs_folder)
+        help_menu.add_command(label="How it works", command=self._show_how_it_works)
+        menu_bar.add_cascade(label="Help", menu=help_menu)
+
+        self.master.configure(menu=menu_bar)
+        self._menu_file = file_menu
+        self._menu_tools = tools_menu
+        self._menu_help = help_menu
+
+    def _clear_openai_key(self) -> None:
+        try:
+            delete_openai_key()
+        except RuntimeError as exc:
+            messagebox.showerror("Credential Manager", str(exc))
+            return
+        messagebox.showinfo("Credential Manager", "Stored OpenAI key cleared.")
+
+    def _clear_ocr_key(self) -> None:
+        try:
+            delete_ocr_key()
+        except RuntimeError as exc:
+            messagebox.showerror("Credential Manager", str(exc))
+            return
+        messagebox.showinfo("Credential Manager", "Stored OCR key cleared.")
+
+    def _clear_all_keys(self) -> None:
+        try:
+            delete_openai_key()
+            delete_ocr_key()
+        except RuntimeError as exc:
+            messagebox.showerror("Credential Manager", str(exc))
+            return
+        messagebox.showinfo("Credential Manager", "Stored OpenAI and OCR keys cleared.")
+
+    def _test_api_keys(self) -> None:
+        lines: list[str] = []
+
+        openai_key: str | None
+        try:
+            openai_key = get_openai_key()
+        except RuntimeError as exc:
+            messagebox.showerror("API Key Test", str(exc))
+            return
+        if not openai_key:
+            lines.append("OpenAI: missing key")
+        else:
+            started = time.perf_counter()
+            try:
+                client = OpenAI(api_key=openai_key)
+                client.responses.create(
+                    model=OPENAI_MODEL,
+                    input=[{"role": "user", "content": [{"type": "input_text", "text": "Reply exactly with OK."}]}],
+                    max_output_tokens=8,
+                    store=False,
+                )
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                lines.append(f"OpenAI: PASS ({latency_ms} ms)")
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"OpenAI: FAIL ({type(exc).__name__})")
+
+        try:
+            ocr_key = get_ocr_key()
+        except RuntimeError as exc:
+            messagebox.showerror("API Key Test", str(exc))
+            return
+        if not ocr_key:
+            lines.append("OCR API: missing key")
+        else:
+            ocr_base_url = self.ocr_api_base_url_var.get().strip()
+            ocr_model = self.ocr_api_model_var.get().strip() or "gpt-4o-mini"
+            if ocr_base_url == "":
+                lines.append("OCR API: key present (base URL not set)")
+            else:
+                started = time.perf_counter()
+                try:
+                    client = OpenAI(api_key=ocr_key, base_url=ocr_base_url)
+                    client.responses.create(
+                        model=ocr_model,
+                        input=[{"role": "user", "content": [{"type": "input_text", "text": "Reply exactly with OK."}]}],
+                        max_output_tokens=8,
+                        store=False,
+                    )
+                    latency_ms = int((time.perf_counter() - started) * 1000)
+                    lines.append(f"OCR API: PASS ({latency_ms} ms)")
+                except Exception as exc:  # noqa: BLE001
+                    lines.append(f"OCR API: FAIL ({type(exc).__name__})")
+
+        messagebox.showinfo("API Key Test", "\n".join(lines))
+
+    def _show_about(self) -> None:
+        build_date = datetime.fromtimestamp(Path(__file__).stat().st_mtime).strftime("%Y-%m-%d")
+        messagebox.showinfo(
+            "About",
+            f"LegalPDF Translate\nVersion: {__version__}\nBuild date: {build_date}",
+        )
+
+    def _open_logs_folder(self) -> None:
+        self._metadata_logs_dir.mkdir(parents=True, exist_ok=True)
+        target = self._metadata_logs_dir.expanduser().resolve()
+        try:
+            if os.name == "nt":
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(target)])
+            else:
+                subprocess.Popen(["xdg-open", str(target)])
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Open logs folder", str(exc))
+
+    def _show_how_it_works(self) -> None:
+        lines = [
+            "1) The app processes selected pages one by one.",
+            "2) It reuses checkpoints so runs can resume safely.",
+            "3) OCR is used when text is missing or poor.",
+            "4) Translation is validated before page acceptance.",
+            "5) Cancellation is cooperative between pages.",
+            "6) Partial DOCX export is available after progress.",
+            "7) Logs store metadata only, not translated content.",
+            "8) API keys are stored securely in Credential Manager.",
+            "9) New Run clears runtime state without app restart.",
+        ]
+        win = tk.Toplevel(self.master)
+        win.title("How it works")
+        win.transient(self.master)
+        win.resizable(False, False)
+        frame = ttk.Frame(win, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="\n".join(lines), justify=tk.LEFT).pack(anchor="w")
+        ttk.Button(frame, text="Close", command=win.destroy).pack(anchor="e", pady=(10, 0))
 
     def _bind_var_watchers(self) -> None:
         self.pdf_path_var.trace_add("write", self._on_form_input_changed)
@@ -399,6 +594,13 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.log_text.insert(tk.END, f"[{stamp}] {message}\n")
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
+        if bool(self.settings_data.get("diagnostics_verbose_metadata_logs", False)):
+            try:
+                self._metadata_log_file.parent.mkdir(parents=True, exist_ok=True)
+                with self._metadata_log_file.open("a", encoding="utf-8") as fh:
+                    fh.write(f"[{datetime.now().isoformat(timespec='seconds')}] {message}\n")
+            except Exception:
+                pass
 
     def _clear_log(self) -> None:
         self.log_text.configure(state=tk.NORMAL)
@@ -449,10 +651,7 @@ class LegalPDFTranslateApp(ttk.Frame):
             ocr_engine=parse_ocr_engine_policy(self.ocr_engine_var.get()),
             ocr_api_base_url=self.ocr_api_base_url_var.get().strip() or None,
             ocr_api_model=self.ocr_api_model_var.get().strip() or None,
-            ocr_api_key_source=parse_api_key_source(self.ocr_api_key_source_var.get()),
-            ocr_api_key_env=self.ocr_api_key_env_var.get().strip() or "DEEPSEEK_API_KEY",
-            ocr_api_key_credman_target=self.ocr_api_key_credman_target_var.get().strip() or "LegalPDFTranslate_OCR",
-            ocr_api_key_inline=None,
+            ocr_api_key_env_name=self.ocr_api_key_env_name_var.get().strip() or "DEEPSEEK_API_KEY",
             start_page=start_page,
             end_page=end_page,
             max_pages=max_pages,
@@ -542,6 +741,14 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.save_joblog_btn.configure(state=tk.NORMAL if can_save_joblog else tk.DISABLED)
         self.open_joblog_btn.configure(state=tk.NORMAL if not self._busy else tk.DISABLED)
 
+        menu_file = getattr(self, "_menu_file", None)
+        if menu_file is not None:
+            menu_file.entryconfig("Open Output Folder", state=tk.NORMAL if can_open else tk.DISABLED)
+            menu_file.entryconfig(
+                "Export Partial DOCX",
+                state=tk.NORMAL if (not self._busy and self._can_export_partial) else tk.DISABLED,
+            )
+
     def _new_queue(self) -> "queue.Queue[tuple[str, object]]":
         self.queue = queue.Queue()
         return self.queue
@@ -571,7 +778,24 @@ class LegalPDFTranslateApp(ttk.Frame):
         def progress_callback(page: int, total: int, status: str) -> None:
             run_queue.put(("progress", (page, total, status)))
 
-        workflow = TranslationWorkflow(log_callback=log_callback, progress_callback=progress_callback)
+        max_retries = int(self.settings_data.get("perf_max_transport_retries", 4))
+        backoff_cap = float(self.settings_data.get("perf_backoff_cap_seconds", 12.0))
+        try:
+            client = OpenAIResponsesClient(
+                max_transport_retries=max_retries,
+                backoff_cap_seconds=backoff_cap,
+                logger=log_callback,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._set_busy(False, translation=False)
+            messagebox.showerror("Missing credentials", str(exc))
+            return
+
+        workflow = TranslationWorkflow(
+            client=client,
+            log_callback=log_callback,
+            progress_callback=progress_callback,
+        )
         self.workflow = workflow
 
         def target() -> None:
@@ -742,6 +966,64 @@ class LegalPDFTranslateApp(ttk.Frame):
             return
         self.joblog_window = JobLogWindow(self.master, db_path=self.joblog_db_path)
 
+    def collect_debug_bundle_metadata_paths(self) -> list[Path]:
+        paths: list[Path] = []
+        settings_file = settings_path()
+        if settings_file.exists():
+            paths.append(settings_file)
+        if self._metadata_log_file.exists():
+            paths.append(self._metadata_log_file)
+        if self.last_summary is not None:
+            run_state_path = self.last_summary.run_dir / "run_state.json"
+            if run_state_path.exists():
+                paths.append(run_state_path)
+        if self.last_run_config is not None:
+            run_paths = build_output_paths(
+                self.last_run_config.output_dir,
+                self.last_run_config.pdf_path,
+                self.last_run_config.target_lang,
+            )
+            if run_paths.run_state_path.exists():
+                paths.append(run_paths.run_state_path)
+        return paths
+
+    def apply_settings_from_dialog(self, values: dict[str, object], *, persist: bool) -> None:
+        self.settings_data.update(values)
+        if persist:
+            save_gui_settings(values)
+            self.settings_data = load_gui_settings()
+        self._apply_theme_from_settings(self.settings_data)
+        self.lang_var.set(str(self.settings_data.get("default_lang", "EN")))
+        self.effort_var.set(str(self.settings_data.get("default_effort", "high")))
+        self.images_var.set(str(self.settings_data.get("default_images_mode", "auto")))
+        self.resume_var.set(bool(self.settings_data.get("default_resume", True)))
+        self.keep_var.set(bool(self.settings_data.get("default_keep_intermediates", True)))
+        self.page_breaks_var.set(bool(self.settings_data.get("default_page_breaks", True)))
+        self.start_page_var.set(str(self.settings_data.get("default_start_page", 1)))
+        default_end = self.settings_data.get("default_end_page")
+        self.end_page_var.set("" if default_end in (None, "") else str(default_end))
+        default_outdir = str(self.settings_data.get("default_outdir", "") or "")
+        if default_outdir and not self.outdir_var.get().strip():
+            self.outdir_var.set(default_outdir)
+        self.ocr_mode_var.set(str(self.settings_data.get("ocr_mode_default", "auto")))
+        self.ocr_engine_var.set(str(self.settings_data.get("ocr_engine_default", "local_then_api")))
+        self.ocr_api_base_url_var.set(str(self.settings_data.get("ocr_api_base_url", "") or ""))
+        self.ocr_api_model_var.set(str(self.settings_data.get("ocr_api_model", "") or ""))
+        self.ocr_api_key_env_name_var.set(str(self.settings_data.get("ocr_api_key_env_name", "DEEPSEEK_API_KEY")))
+        self._refresh_controls()
+
+    def _open_settings_dialog(self) -> None:
+        if self.settings_window is not None and self.settings_window.winfo_exists():
+            self.settings_window.lift()
+            self.settings_window.focus_force()
+            return
+        self.settings_window = GuiSettingsDialog(
+            self.master,
+            app=self,
+            settings=self.settings_data,
+        )
+        self.settings_window.bind("<Destroy>", lambda _: setattr(self, "settings_window", None), add="+")
+
     def _int_from_text(self, value: str, *, allow_blank: bool, default: int | None = None) -> int | None:
         cleaned = value.strip()
         if cleaned == "":
@@ -766,31 +1048,31 @@ class LegalPDFTranslateApp(ttk.Frame):
         max_pages = self._int_from_text(self.max_pages_var.get(), allow_blank=True, default=None)
 
         try:
-            save_gui_settings(
-                {
-                    "last_outdir": outdir_text,
-                    "last_lang": self.lang_var.get().strip().upper(),
-                    "effort": self.effort_var.get().strip().lower(),
-                    "image_mode": self.images_var.get().strip().lower(),
-                    "ocr_mode": self.ocr_mode_var.get().strip().lower(),
-                    "ocr_engine": self.ocr_engine_var.get().strip().lower(),
-                    "ocr_api_base_url": self.ocr_api_base_url_var.get().strip(),
-                    "ocr_api_model": self.ocr_api_model_var.get().strip(),
-                    "ocr_api_key_source": self.ocr_api_key_source_var.get().strip().lower(),
-                    "ocr_api_key_env": self.ocr_api_key_env_var.get().strip(),
-                    "ocr_api_key_credman_target": self.ocr_api_key_credman_target_var.get().strip(),
-                    "resume": bool(self.resume_var.get()),
-                    "keep_intermediates": bool(self.keep_var.get()),
-                    "page_breaks": bool(self.page_breaks_var.get()),
-                    "start_page": start_page,
-                    "end_page": end_page,
-                    "max_pages": max_pages,
-                }
-            )
+            values = {
+                "last_outdir": outdir_text,
+                "last_lang": self.lang_var.get().strip().upper(),
+                "effort": self.effort_var.get().strip().lower(),
+                "image_mode": self.images_var.get().strip().lower(),
+                "ocr_mode": self.ocr_mode_var.get().strip().lower(),
+                "ocr_engine": self.ocr_engine_var.get().strip().lower(),
+                "ocr_api_base_url": self.ocr_api_base_url_var.get().strip(),
+                "ocr_api_model": self.ocr_api_model_var.get().strip(),
+                "ocr_api_key_env_name": self.ocr_api_key_env_name_var.get().strip() or "DEEPSEEK_API_KEY",
+                "resume": bool(self.resume_var.get()),
+                "keep_intermediates": bool(self.keep_var.get()),
+                "page_breaks": bool(self.page_breaks_var.get()),
+                "start_page": start_page,
+                "end_page": end_page,
+                "max_pages": max_pages,
+            }
+            save_gui_settings(values)
+            self.settings_data.update(values)
         except Exception:
             pass
 
     def _on_close(self) -> None:
+        if self.settings_window is not None and self.settings_window.winfo_exists():
+            self.settings_window.destroy()
         self._persist_gui_settings()
         self.master.destroy()
 

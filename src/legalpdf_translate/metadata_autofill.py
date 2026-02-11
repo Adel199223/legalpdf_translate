@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -16,8 +17,8 @@ from PIL import Image
 from .ocr_engine import OcrEngineConfig, OcrResult, build_ocr_engine
 from .ocr_helpers import ocr_pdf_page_text
 from .pdf_text_order import extract_ordered_page_text
-from .secret_store import get_api_key
-from .types import ApiKeySource, OcrEnginePolicy, OcrMode
+from .secrets_store import get_ocr_key
+from .types import OcrEnginePolicy, OcrMode
 
 GENERIC_CASE_ENTITIES = {"", "unknown", "desconhecido", "n/a", "na", "sem informação", "sem informacao"}
 
@@ -67,10 +68,7 @@ class MetadataAutofillConfig:
     ocr_engine_policy: OcrEnginePolicy = OcrEnginePolicy.LOCAL_THEN_API
     ocr_api_base_url: str | None = None
     ocr_api_model: str | None = None
-    ocr_api_key_source: ApiKeySource = ApiKeySource.ENV
-    ocr_api_key_env: str = "DEEPSEEK_API_KEY"
-    ocr_api_key_credman_target: str = "LegalPDFTranslate_OCR"
-    ocr_api_key_inline: str | None = None
+    ocr_api_key_env_name: str = "DEEPSEEK_API_KEY"
     metadata_ai_enabled: bool = True
     metadata_allow_header_ocr_even_if_ocr_off: bool = True
 
@@ -82,20 +80,19 @@ def metadata_config_from_settings(settings: dict[str, object]) -> MetadataAutofi
     ocr_engine_text = str(settings.get("ocr_engine", "local_then_api") or "local_then_api").strip().lower()
     if ocr_engine_text not in {"local", "local_then_api", "api"}:
         ocr_engine_text = "local_then_api"
-    key_source_text = str(settings.get("ocr_api_key_source", "env") or "env").strip().lower()
-    if key_source_text not in {"env", "credman", "inline"}:
-        key_source_text = "env"
+    key_env_name = str(
+        settings.get(
+            "ocr_api_key_env_name",
+            settings.get("ocr_api_key_env", "DEEPSEEK_API_KEY"),
+        )
+        or "DEEPSEEK_API_KEY"
+    ).strip() or "DEEPSEEK_API_KEY"
     return MetadataAutofillConfig(
         ocr_mode=OcrMode(ocr_mode_text),
         ocr_engine_policy=OcrEnginePolicy(ocr_engine_text),
         ocr_api_base_url=str(settings.get("ocr_api_base_url", "") or "").strip() or None,
         ocr_api_model=str(settings.get("ocr_api_model", "") or "").strip() or None,
-        ocr_api_key_source=ApiKeySource(key_source_text),
-        ocr_api_key_env=str(settings.get("ocr_api_key_env", "DEEPSEEK_API_KEY") or "DEEPSEEK_API_KEY"),
-        ocr_api_key_credman_target=str(
-            settings.get("ocr_api_key_credman_target", "LegalPDFTranslate_OCR") or "LegalPDFTranslate_OCR"
-        ),
-        ocr_api_key_inline=None,
+        ocr_api_key_env_name=key_env_name,
         metadata_ai_enabled=bool(settings.get("metadata_ai_enabled", True)),
         metadata_allow_header_ocr_even_if_ocr_off=True,
     )
@@ -197,12 +194,14 @@ def _parse_json_object(raw: str) -> dict[str, Any] | None:
 
 
 def _resolve_api_client(config: MetadataAutofillConfig) -> OpenAI | None:
-    key = get_api_key(
-        source=config.ocr_api_key_source.value,
-        env_name=config.ocr_api_key_env,
-        credman_target=config.ocr_api_key_credman_target,
-        inline_value=config.ocr_api_key_inline,
-    )
+    try:
+        key = get_ocr_key()
+    except RuntimeError:
+        key = None
+    if not key:
+        env_name = (config.ocr_api_key_env_name or "").strip() or "DEEPSEEK_API_KEY"
+        from_env = os.getenv(env_name, "").strip()
+        key = from_env or None
     if not key:
         return None
     return OpenAI(api_key=key, base_url=(config.ocr_api_base_url.strip() if config.ocr_api_base_url else None))
@@ -417,10 +416,7 @@ def _build_ocr_engine_from_config(config: MetadataAutofillConfig):
             policy=config.ocr_engine_policy,
             api_base_url=config.ocr_api_base_url,
             api_model=config.ocr_api_model,
-            api_key_source=config.ocr_api_key_source,
-            api_key_env=config.ocr_api_key_env,
-            api_key_credman_target=config.ocr_api_key_credman_target,
-            api_key_inline=config.ocr_api_key_inline,
+            api_key_env_name=config.ocr_api_key_env_name,
         )
     )
 

@@ -12,7 +12,11 @@ a = Analysis(
     pathex=[str(project_root / "src"), str(project_root)],
     binaries=[],
     datas=[(str(project_root / "resources"), "resources")],
-    hiddenimports=["legalpdf_translate.gui_app"],
+    hiddenimports=[
+        "legalpdf_translate.gui_app",
+        "keyring",
+        "keyring.backends.Windows",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

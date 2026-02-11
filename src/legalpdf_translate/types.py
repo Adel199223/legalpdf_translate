@@ -67,10 +67,7 @@ class RunConfig:
     ocr_engine: OcrEnginePolicy = OcrEnginePolicy.LOCAL_THEN_API
     ocr_api_base_url: str | None = None
     ocr_api_model: str | None = None
-    ocr_api_key_source: ApiKeySource = ApiKeySource.ENV
-    ocr_api_key_env: str = "DEEPSEEK_API_KEY"
-    ocr_api_key_credman_target: str = "LegalPDFTranslate_OCR"
-    ocr_api_key_inline: str | None = None
+    ocr_api_key_env_name: str = "DEEPSEEK_API_KEY"
     context_file: Path | None = None
     context_text: str | None = None
 

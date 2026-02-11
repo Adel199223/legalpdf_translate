@@ -615,10 +615,7 @@ class TranslationWorkflow:
             ocr_engine=config.ocr_engine,
             ocr_api_base_url=(config.ocr_api_base_url or "").strip() or None,
             ocr_api_model=(config.ocr_api_model or "").strip() or None,
-            ocr_api_key_source=config.ocr_api_key_source,
-            ocr_api_key_env=(config.ocr_api_key_env or "").strip() or "DEEPSEEK_API_KEY",
-            ocr_api_key_credman_target=(config.ocr_api_key_credman_target or "").strip() or "LegalPDFTranslate_OCR",
-            ocr_api_key_inline=config.ocr_api_key_inline,
+            ocr_api_key_env_name=(config.ocr_api_key_env_name or "").strip() or "DEEPSEEK_API_KEY",
             context_file=context_file_abs,
             context_text=config.context_text,
         )

@@ -11,6 +11,7 @@ from typing import Any, Callable
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
 
 from .config import OPENAI_MODEL, OPENAI_STORE
+from .secrets_store import get_openai_key
 
 
 @dataclass(slots=True)
@@ -27,14 +28,24 @@ class OpenAIResponsesClient:
         *,
         max_transport_retries: int = 4,
         base_backoff_seconds: float = 1.0,
+        backoff_cap_seconds: float = 12.0,
         logger: Callable[[str], None] | None = None,
     ) -> None:
-        resolved_api_key = api_key or os.getenv("OPENAI_API_KEY")
+        resolved_api_key = (api_key or "").strip() or None
         if not resolved_api_key:
-            raise ValueError("OPENAI_API_KEY is not set.")
+            try:
+                resolved_api_key = get_openai_key()
+            except RuntimeError:
+                resolved_api_key = None
+        if not resolved_api_key:
+            env_key = os.getenv("OPENAI_API_KEY", "").strip()
+            resolved_api_key = env_key or None
+        if not resolved_api_key:
+            raise ValueError("OpenAI API key is not configured.")
         self._client = OpenAI(api_key=resolved_api_key)
         self._max_transport_retries = max_transport_retries
         self._base_backoff_seconds = base_backoff_seconds
+        self._backoff_cap_seconds = max(1.0, backoff_cap_seconds)
         self._logger = logger
 
     def create_page_response(
@@ -75,7 +86,10 @@ class OpenAIResponsesClient:
                 last_error = exc
                 if not _is_retryable(exc) or attempt >= self._max_transport_retries - 1:
                     raise
-                sleep_seconds = self._base_backoff_seconds * (2**attempt) + random.uniform(0.0, 0.4)
+                sleep_seconds = min(
+                    self._backoff_cap_seconds,
+                    self._base_backoff_seconds * (2**attempt) + random.uniform(0.0, 0.4),
+                )
                 if self._logger:
                     self._logger(
                         f"Transient API error ({type(exc).__name__}), retrying in {sleep_seconds:.2f}s."

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -12,8 +13,8 @@ from typing import Any, Literal, Protocol
 
 from openai import OpenAI
 
-from .secret_store import get_api_key
-from .types import ApiKeySource, OcrEnginePolicy, RunConfig, TargetLang
+from .secrets_store import get_ocr_key
+from .types import OcrEnginePolicy, RunConfig, TargetLang
 
 
 @dataclass(slots=True)
@@ -34,10 +35,7 @@ class OcrEngineConfig:
     policy: OcrEnginePolicy = OcrEnginePolicy.LOCAL_THEN_API
     api_base_url: str | None = None
     api_model: str | None = None
-    api_key_source: ApiKeySource = ApiKeySource.ENV
-    api_key_env: str = "DEEPSEEK_API_KEY"
-    api_key_credman_target: str = "LegalPDFTranslate_OCR"
-    api_key_inline: str | None = None
+    api_key_env_name: str = "DEEPSEEK_API_KEY"
 
 
 def ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngineConfig:
@@ -45,10 +43,7 @@ def ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngineConfig:
         policy=config.ocr_engine,
         api_base_url=config.ocr_api_base_url,
         api_model=config.ocr_api_model,
-        api_key_source=config.ocr_api_key_source,
-        api_key_env=config.ocr_api_key_env,
-        api_key_credman_target=config.ocr_api_key_credman_target,
-        api_key_inline=config.ocr_api_key_inline,
+        api_key_env_name=config.ocr_api_key_env_name,
     )
 
 
@@ -221,12 +216,15 @@ class LocalThenApiEngine:
 
 
 def _resolve_api_key(config: OcrEngineConfig) -> str | None:
-    return get_api_key(
-        source=config.api_key_source.value,
-        env_name=config.api_key_env,
-        credman_target=config.api_key_credman_target,
-        inline_value=config.api_key_inline,
-    )
+    try:
+        stored = get_ocr_key()
+    except RuntimeError:
+        stored = None
+    if stored:
+        return stored
+    env_name = (config.api_key_env_name or "").strip() or "DEEPSEEK_API_KEY"
+    from_env = os.getenv(env_name, "").strip()
+    return from_env or None
 
 
 def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
@@ -236,10 +234,7 @@ def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
     if config.policy == OcrEnginePolicy.API:
         api_key = _resolve_api_key(config)
         if not api_key:
-            raise ValueError(
-                "OCR engine is set to API but no API key was found. "
-                f"Check source={config.api_key_source.value}."
-            )
+            raise ValueError("OCR API key is not configured.")
         model = (config.api_model or "").strip() or "gpt-4o-mini"
         return ApiOcrEngine(api_key=api_key, model=model, base_url=config.api_base_url)
 
