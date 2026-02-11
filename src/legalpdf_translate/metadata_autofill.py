@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import io
 import json
 import re
 import unicodedata
@@ -12,11 +10,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from openai import OpenAI
 from PIL import Image
 
-from .image_io import render_page_image_data_url
-from .openai_client import OpenAIResponsesClient
+from .ocr_engine import OcrEngineConfig, OcrResult, build_ocr_engine
+from .ocr_helpers import ocr_pdf_page_text
 from .pdf_text_order import extract_ordered_page_text
+from .secret_store import get_api_key
+from .types import ApiKeySource, OcrEnginePolicy, OcrMode
 
 GENERIC_CASE_ENTITIES = {"", "unknown", "desconhecido", "n/a", "na", "sem informação", "sem informacao"}
 
@@ -58,6 +59,46 @@ class MetadataSuggestion:
     service_city: str | None = None
     service_date: str | None = None
     confidence: dict[str, float] | None = None
+
+
+@dataclass(slots=True)
+class MetadataAutofillConfig:
+    ocr_mode: OcrMode = OcrMode.AUTO
+    ocr_engine_policy: OcrEnginePolicy = OcrEnginePolicy.LOCAL_THEN_API
+    ocr_api_base_url: str | None = None
+    ocr_api_model: str | None = None
+    ocr_api_key_source: ApiKeySource = ApiKeySource.ENV
+    ocr_api_key_env: str = "DEEPSEEK_API_KEY"
+    ocr_api_key_credman_target: str = "LegalPDFTranslate_OCR"
+    ocr_api_key_inline: str | None = None
+    metadata_ai_enabled: bool = True
+    metadata_allow_header_ocr_even_if_ocr_off: bool = True
+
+
+def metadata_config_from_settings(settings: dict[str, object]) -> MetadataAutofillConfig:
+    ocr_mode_text = str(settings.get("ocr_mode", "auto") or "auto").strip().lower()
+    if ocr_mode_text not in {"off", "auto", "always"}:
+        ocr_mode_text = "auto"
+    ocr_engine_text = str(settings.get("ocr_engine", "local_then_api") or "local_then_api").strip().lower()
+    if ocr_engine_text not in {"local", "local_then_api", "api"}:
+        ocr_engine_text = "local_then_api"
+    key_source_text = str(settings.get("ocr_api_key_source", "env") or "env").strip().lower()
+    if key_source_text not in {"env", "credman", "inline"}:
+        key_source_text = "env"
+    return MetadataAutofillConfig(
+        ocr_mode=OcrMode(ocr_mode_text),
+        ocr_engine_policy=OcrEnginePolicy(ocr_engine_text),
+        ocr_api_base_url=str(settings.get("ocr_api_base_url", "") or "").strip() or None,
+        ocr_api_model=str(settings.get("ocr_api_model", "") or "").strip() or None,
+        ocr_api_key_source=ApiKeySource(key_source_text),
+        ocr_api_key_env=str(settings.get("ocr_api_key_env", "DEEPSEEK_API_KEY") or "DEEPSEEK_API_KEY"),
+        ocr_api_key_credman_target=str(
+            settings.get("ocr_api_key_credman_target", "LegalPDFTranslate_OCR") or "LegalPDFTranslate_OCR"
+        ),
+        ocr_api_key_inline=None,
+        metadata_ai_enabled=bool(settings.get("metadata_ai_enabled", True)),
+        metadata_allow_header_ocr_even_if_ocr_off=True,
+    )
 
 
 def normalize_for_match(value: str) -> str:
@@ -155,48 +196,43 @@ def _parse_json_object(raw: str) -> dict[str, Any] | None:
     return parsed
 
 
-def _build_ai_client(logger=None) -> OpenAIResponsesClient | None:
-    try:
-        return OpenAIResponsesClient(logger=logger)
-    except Exception:
+def _resolve_api_client(config: MetadataAutofillConfig) -> OpenAI | None:
+    key = get_api_key(
+        source=config.ocr_api_key_source.value,
+        env_name=config.ocr_api_key_env,
+        credman_target=config.ocr_api_key_credman_target,
+        inline_value=config.ocr_api_key_inline,
+    )
+    if not key:
         return None
+    return OpenAI(api_key=key, base_url=(config.ocr_api_base_url.strip() if config.ocr_api_base_url else None))
 
 
-def _header_ai_assist(
-    header_text: str,
+def _ai_extract_json(
+    prompt: str,
     *,
-    ai_client: OpenAIResponsesClient | None,
+    config: MetadataAutofillConfig,
 ) -> dict[str, str] | None:
-    client = ai_client or _build_ai_client()
+    client = _resolve_api_client(config)
     if client is None:
         return None
-    instructions = (
-        "Extract legal case metadata from Portuguese header text. "
-        "Return strict JSON only with keys: case_entity, case_city, case_number."
-    )
-    prompt = (
-        "Header text:\n"
-        f"{header_text}\n\n"
-        'Return exactly one JSON object like {"case_entity":"...","case_city":"...","case_number":"..."}.\n'
-        "Use empty string for unknown values."
-    )
+    model = (config.ocr_api_model or "").strip() or "gpt-4o-mini"
     try:
-        result = client.create_page_response(
-            instructions=instructions,
-            prompt_text=prompt,
-            effort="medium",
-            image_data_url=None,
+        response = client.responses.create(
+            model=model,
+            input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+            store=False,
         )
     except Exception:
         return None
-    payload = _parse_json_object(result.raw_output)
+
+    output_text = getattr(response, "output_text", None)
+    if not isinstance(output_text, str):
+        output_text = ""
+    payload = _parse_json_object(output_text)
     if payload is None:
         return None
-    output: dict[str, str] = {}
-    for key in ("case_entity", "case_city", "case_number"):
-        value = payload.get(key)
-        output[key] = str(value).strip() if value is not None else ""
-    return output
+    return {str(k): str(v).strip() for k, v in payload.items()}
 
 
 def extract_from_header_text(
@@ -204,7 +240,7 @@ def extract_from_header_text(
     *,
     vocab_cities: list[str],
     ai_enabled: bool,
-    ai_client: OpenAIResponsesClient | None = None,
+    ai_config: MetadataAutofillConfig | None = None,
 ) -> MetadataSuggestion:
     text = header_text.strip()
     case_entity = _extract_case_entity(text)
@@ -218,9 +254,15 @@ def extract_from_header_text(
     entity_conf = 0.9 if case_entity else 0.0
     case_no_conf = 0.95 if case_number else 0.0
 
+    config = ai_config or MetadataAutofillConfig(metadata_ai_enabled=ai_enabled)
     low_conf = (entity_conf < 0.6) or (city_conf < 0.6) or (case_no_conf < 0.5)
-    if ai_enabled and low_conf and text:
-        ai_data = _header_ai_assist(text, ai_client=ai_client)
+    if ai_enabled and config.metadata_ai_enabled and low_conf and text:
+        prompt = (
+            "Extract legal case metadata from Portuguese header text. "
+            "Return strict JSON only with keys: case_entity, case_city, case_number.\n\n"
+            f"Header text:\n{text}"
+        )
+        ai_data = _ai_extract_json(prompt, config=config)
         if ai_data:
             if not case_entity and ai_data.get("case_entity"):
                 case_entity = _sanitize_entity(ai_data.get("case_entity"))
@@ -286,49 +328,12 @@ def _extract_photo_date(text: str) -> str | None:
     return None
 
 
-def _photo_ai_assist(
-    ocr_text: str,
-    *,
-    ai_client: OpenAIResponsesClient | None,
-) -> dict[str, str] | None:
-    client = ai_client or _build_ai_client()
-    if client is None:
-        return None
-    instructions = (
-        "Extract service metadata from OCR text. "
-        "Return strict JSON only with keys: service_city, service_date, case_number."
-    )
-    prompt = (
-        "OCR text:\n"
-        f"{ocr_text}\n\n"
-        'Return exactly one JSON object like {"service_city":"...","service_date":"YYYY-MM-DD","case_number":"..."}.\n'
-        "Use empty string for unknown values."
-    )
-    try:
-        result = client.create_page_response(
-            instructions=instructions,
-            prompt_text=prompt,
-            effort="medium",
-            image_data_url=None,
-        )
-    except Exception:
-        return None
-    payload = _parse_json_object(result.raw_output)
-    if payload is None:
-        return None
-    output: dict[str, str] = {}
-    for key in ("service_city", "service_date", "case_number"):
-        value = payload.get(key)
-        output[key] = str(value).strip() if value is not None else ""
-    return output
-
-
 def extract_from_photo_ocr_text(
     ocr_text: str,
     *,
     vocab_cities: list[str],
     ai_enabled: bool,
-    ai_client: OpenAIResponsesClient | None = None,
+    ai_config: MetadataAutofillConfig | None = None,
 ) -> MetadataSuggestion:
     text = ocr_text.strip()
     service_city = _first_city_match(text, vocab_cities)
@@ -344,9 +349,15 @@ def extract_from_photo_ocr_text(
     case_number = _extract_case_number(text)
     case_conf = 0.85 if case_number else 0.0
 
+    config = ai_config or MetadataAutofillConfig(metadata_ai_enabled=ai_enabled)
     low_conf = (city_conf < 0.6) or (date_conf < 0.6)
-    if ai_enabled and low_conf and text:
-        ai_data = _photo_ai_assist(text, ai_client=ai_client)
+    if ai_enabled and config.metadata_ai_enabled and low_conf and text:
+        prompt = (
+            "Extract service metadata from OCR text. "
+            "Return strict JSON only with keys: service_city, service_date, case_number.\n\n"
+            f"OCR text:\n{text}"
+        )
+        ai_data = _ai_extract_json(prompt, config=config)
         if ai_data:
             if not service_city and ai_data.get("service_city"):
                 service_city = _sanitize_city(ai_data.get("service_city"))
@@ -400,58 +411,127 @@ def extract_header_text_from_pdf_first_page(pdf_path: Path, *, max_lines: int = 
     return "\n".join(lines[:max_lines])
 
 
-def _image_path_to_data_url(image_path: Path) -> str:
-    image = Image.open(image_path)
-    if image.mode not in ("RGB", "L"):
-        image = image.convert("RGB")
-    buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=88, optimize=True)
-    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-    return f"data:image/jpeg;base64,{encoded}"
-
-
-def extract_ocr_text_from_photo_image(
-    image_path: Path,
-    *,
-    ai_client: OpenAIResponsesClient | None = None,
-) -> str:
-    client = ai_client or _build_ai_client()
-    if client is None:
-        raise RuntimeError("Photo metadata OCR requires OpenAI API access.")
-    data_url = _image_path_to_data_url(image_path)
-    instructions = (
-        "Read visible text in this screenshot/photo. "
-        "Return plain text only, preserving likely line breaks, no commentary."
+def _build_ocr_engine_from_config(config: MetadataAutofillConfig):
+    return build_ocr_engine(
+        OcrEngineConfig(
+            policy=config.ocr_engine_policy,
+            api_base_url=config.ocr_api_base_url,
+            api_model=config.ocr_api_model,
+            api_key_source=config.ocr_api_key_source,
+            api_key_env=config.ocr_api_key_env,
+            api_key_credman_target=config.ocr_api_key_credman_target,
+            api_key_inline=config.ocr_api_key_inline,
+        )
     )
-    result = client.create_page_response(
-        instructions=instructions,
-        prompt_text="Transcribe visible text.",
-        effort="medium",
-        image_data_url=data_url,
-    )
-    return result.raw_output.strip()
 
 
 def extract_header_text_from_pdf_with_ocr_fallback(
     pdf_path: Path,
     *,
-    ai_client: OpenAIResponsesClient | None = None,
+    config: MetadataAutofillConfig | None = None,
 ) -> str:
     header_text = extract_header_text_from_pdf_first_page(pdf_path)
     if header_text.strip():
         return header_text
-    client = ai_client or _build_ai_client()
-    if client is None:
+
+    effective = config or MetadataAutofillConfig()
+    if effective.ocr_mode == OcrMode.OFF and not effective.metadata_allow_header_ocr_even_if_ocr_off:
         return ""
-    image_data_url, _ = render_page_image_data_url(pdf_path, page_index=0)
-    instructions = (
-        "Read only the top section/header text of this legal PDF page image. "
-        "Return plain text only."
+    ocr_mode = OcrMode.ALWAYS if effective.metadata_allow_header_ocr_even_if_ocr_off else effective.ocr_mode
+    try:
+        engine = _build_ocr_engine_from_config(effective)
+    except Exception:
+        return ""
+    ocr_result = ocr_pdf_page_text(
+        pdf_path=pdf_path,
+        page_number=1,
+        mode=ocr_mode,
+        engine=engine,
+        prefer_header=True,
+        lang_hint="PT",
     )
-    result = client.create_page_response(
-        instructions=instructions,
-        prompt_text="Extract the page header text.",
-        effort="medium",
-        image_data_url=image_data_url,
+    return ocr_result.text.strip()
+
+
+def extract_pdf_header_metadata(
+    pdf_path: Path,
+    *,
+    vocab_cities: list[str],
+    config: MetadataAutofillConfig | None = None,
+    page_number: int = 1,
+) -> MetadataSuggestion:
+    effective = config or MetadataAutofillConfig()
+    if page_number != 1:
+        ordered = extract_ordered_page_text(pdf_path, page_number - 1)
+        header_text = "\n".join([line.strip() for line in ordered.text.splitlines()[:14] if line.strip()])
+    else:
+        header_text = extract_header_text_from_pdf_with_ocr_fallback(pdf_path, config=effective)
+    if not header_text.strip():
+        return MetadataSuggestion()
+    return extract_from_header_text(
+        header_text,
+        vocab_cities=vocab_cities,
+        ai_enabled=effective.metadata_ai_enabled,
+        ai_config=effective,
     )
-    return result.raw_output.strip()
+
+
+def _read_exif_date(image_path: Path) -> str | None:
+    try:
+        image = Image.open(image_path)
+    except Exception:
+        return None
+    try:
+        exif = image.getexif()
+    except Exception:
+        return None
+    for tag in (36867, 36868, 306):  # DateTimeOriginal, DateTimeDigitized, DateTime
+        raw = exif.get(tag)
+        if not raw:
+            continue
+        text = str(raw).strip()
+        if not text:
+            continue
+        try:
+            return datetime.strptime(text, "%Y:%m:%d %H:%M:%S").date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _ocr_photo_text(image_path: Path, config: MetadataAutofillConfig) -> OcrResult:
+    try:
+        engine = _build_ocr_engine_from_config(config)
+    except Exception as exc:  # noqa: BLE001
+        return OcrResult(text="", engine="none", failed_reason=str(exc), chars=0)
+    try:
+        image_bytes = image_path.read_bytes()
+    except Exception as exc:  # noqa: BLE001
+        return OcrResult(text="", engine="none", failed_reason=f"photo read failed: {exc}", chars=0)
+    return engine.ocr_image(image_bytes, lang_hint="PT")
+
+
+def extract_photo_metadata_from_image(
+    image_path: Path,
+    *,
+    vocab_cities: list[str],
+    config: MetadataAutofillConfig | None = None,
+) -> MetadataSuggestion:
+    effective = config or MetadataAutofillConfig()
+    exif_date = _read_exif_date(image_path)
+    if effective.ocr_mode == OcrMode.OFF:
+        ocr_result = OcrResult(text="", engine="none", failed_reason="ocr disabled by mode=off", chars=0)
+    else:
+        ocr_result = _ocr_photo_text(image_path, effective)
+    suggestion = extract_from_photo_ocr_text(
+        ocr_result.text,
+        vocab_cities=vocab_cities,
+        ai_enabled=effective.metadata_ai_enabled,
+        ai_config=effective,
+    )
+    if exif_date:
+        suggestion.service_date = exif_date
+        if suggestion.confidence is None:
+            suggestion.confidence = {}
+        suggestion.confidence["service_date"] = 0.99
+    return suggestion

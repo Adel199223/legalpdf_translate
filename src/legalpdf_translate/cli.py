@@ -7,7 +7,14 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .checkpoint import bool_from_text, parse_effort, parse_image_mode
+from .checkpoint import (
+    bool_from_text,
+    parse_api_key_source,
+    parse_effort,
+    parse_image_mode,
+    parse_ocr_engine_policy,
+    parse_ocr_mode,
+)
 from .output_paths import require_writable_output_dir_text
 from .types import RunConfig, TargetLang
 from .workflow import TranslationWorkflow
@@ -53,6 +60,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Rebuild DOCX from existing run_dir/pages without API calls.",
     )
+    parser.add_argument("--ocr-mode", default="auto", choices=["off", "auto", "always"], help="OCR mode.")
+    parser.add_argument(
+        "--ocr-engine",
+        default="local_then_api",
+        choices=["local", "local_then_api", "api"],
+        help="OCR engine routing.",
+    )
+    parser.add_argument("--ocr-api-base-url", default="", help="Optional OCR API base URL.")
+    parser.add_argument("--ocr-api-model", default="", help="Optional OCR API model.")
+    parser.add_argument(
+        "--ocr-api-key-source",
+        default="env",
+        choices=["env", "credman", "inline"],
+        help="OCR API key source.",
+    )
+    parser.add_argument("--ocr-api-key-env", default="DEEPSEEK_API_KEY", help="Environment variable for OCR API key.")
+    parser.add_argument(
+        "--ocr-api-key-credman-target",
+        default="LegalPDFTranslate_OCR",
+        help="Credential Manager target for OCR API key.",
+    )
+    parser.add_argument("--ocr-api-key-inline", default="", help="Inline OCR API key (not recommended).")
     return parser
 
 
@@ -72,6 +101,14 @@ def main(argv: list[str] | None = None) -> int:
             resume=bool_from_text(args.resume),
             page_breaks=bool_from_text(args.page_breaks),
             keep_intermediates=bool_from_text(args.keep_intermediates),
+            ocr_mode=parse_ocr_mode(args.ocr_mode),
+            ocr_engine=parse_ocr_engine_policy(args.ocr_engine),
+            ocr_api_base_url=args.ocr_api_base_url.strip() or None,
+            ocr_api_model=args.ocr_api_model.strip() or None,
+            ocr_api_key_source=parse_api_key_source(args.ocr_api_key_source),
+            ocr_api_key_env=args.ocr_api_key_env.strip() or "DEEPSEEK_API_KEY",
+            ocr_api_key_credman_target=args.ocr_api_key_credman_target.strip() or "LegalPDFTranslate_OCR",
+            ocr_api_key_inline=args.ocr_api_key_inline.strip() or None,
             context_file=Path(args.context_file).resolve() if args.context_file.strip() != "" else None,
             context_text=None,
         )

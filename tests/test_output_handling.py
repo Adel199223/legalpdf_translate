@@ -129,7 +129,9 @@ def test_no_completed_without_file(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     outdir.mkdir()
     config = _make_config(pdf, outdir)
 
-    def _fake_process_page(self, *, client, config, paths, instructions, context_text, page_number, total_pages):  # type: ignore[no-untyped-def]
+    def _fake_process_page(
+        self, *, client, config, paths, instructions, context_text, page_number, total_pages, ocr_engine
+    ):  # type: ignore[no-untyped-def]
         _write_page(paths.pages_dir / "page_0001.txt", "ready")
         return _PageOutcome(
             status=PageStatus.DONE,
@@ -237,7 +239,9 @@ def test_workflow_uses_real_pdf_page_numbers_for_selection(
 
     called_pages: list[int] = []
 
-    def _fake_process_page(self, *, client, config, paths, instructions, context_text, page_number, total_pages):  # type: ignore[no-untyped-def]
+    def _fake_process_page(
+        self, *, client, config, paths, instructions, context_text, page_number, total_pages, ocr_engine
+    ):  # type: ignore[no-untyped-def]
         called_pages.append(page_number)
         _write_page(paths.pages_dir / f"page_{page_number:04d}.txt", f"Page {page_number}")
         return _PageOutcome(

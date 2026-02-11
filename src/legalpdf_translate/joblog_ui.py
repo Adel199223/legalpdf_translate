@@ -13,12 +13,12 @@ from typing import Callable
 
 from .joblog_db import insert_job_run, list_job_runs, open_job_log, update_joblog_visible_columns
 from .metadata_autofill import (
+    MetadataAutofillConfig,
     MetadataSuggestion,
     apply_service_case_default_rule,
-    extract_from_header_text,
-    extract_from_photo_ocr_text,
-    extract_header_text_from_pdf_with_ocr_fallback,
-    extract_ocr_text_from_photo_image,
+    extract_pdf_header_metadata,
+    extract_photo_metadata_from_image,
+    metadata_config_from_settings,
 )
 from .user_settings import load_joblog_settings, save_joblog_settings
 
@@ -64,6 +64,7 @@ JOBLOG_COLUMN_LABELS = {
 @dataclass(slots=True)
 class JobLogSeed:
     completed_at: str
+    translation_date: str
     job_type: str
     case_number: str
     case_entity: str
@@ -114,6 +115,7 @@ def build_seed_from_run(
     expected_total = round(float(default_rate_per_word) * float(word_count), 2)
     return JobLogSeed(
         completed_at=completed_at,
+        translation_date=_date_from_completed_at(completed_at),
         job_type="Translation",
         case_number="",
         case_entity="",
@@ -153,7 +155,7 @@ class SaveToJobLogDialog(tk.Toplevel):
         self._on_saved = on_saved
         self._saved = False
         self._settings = load_joblog_settings()
-        self._header_text_cache: str | None = None
+        self._metadata_config: MetadataAutofillConfig = metadata_config_from_settings(self._settings)
 
         self._case_entity_user_set = False
         self._case_city_user_set = False
@@ -200,7 +202,7 @@ class SaveToJobLogDialog(tk.Toplevel):
             width=20,
         )
         self.job_type_combo.grid(row=0, column=1, sticky="w", padx=(6, 12))
-        ttk.Label(top, text=f"Translation date: {_date_from_completed_at(self._seed.completed_at)}").grid(
+        ttk.Label(top, text=f"Translation date: {self._seed.translation_date}").grid(
             row=0, column=2, sticky="w", padx=(0, 6)
         )
         ttk.Label(top, text=f"Lang: {self._seed.lang} | Pages: {self._seed.pages} | Words: {self._seed.word_count}").grid(
@@ -414,13 +416,6 @@ class SaveToJobLogDialog(tk.Toplevel):
             return
         self._ensure_in_vocab("vocab_cities", value)
 
-    def _load_header_text(self) -> str:
-        if self._header_text_cache is None:
-            self._header_text_cache = extract_header_text_from_pdf_with_ocr_fallback(
-                self._seed.pdf_path,
-            )
-        return self._header_text_cache
-
     def _apply_header_suggestion(self, suggestion: MetadataSuggestion) -> None:
         if suggestion.case_entity:
             self._ensure_in_vocab("vocab_case_entities", suggestion.case_entity)
@@ -442,15 +437,23 @@ class SaveToJobLogDialog(tk.Toplevel):
         self._apply_non_court_default_rule()
 
     def _autofill_from_pdf_header(self) -> None:
-        header_text = self._load_header_text()
-        if not header_text.strip():
+        suggestion = extract_pdf_header_metadata(
+            self._seed.pdf_path,
+            vocab_cities=list(self._settings["vocab_cities"]),
+            config=self._metadata_config,
+            page_number=1,
+        )
+        if not any(
+            (
+                suggestion.case_entity,
+                suggestion.case_city,
+                suggestion.case_number,
+                suggestion.service_entity,
+                suggestion.service_city,
+            )
+        ):
             messagebox.showwarning("Autofill", "No header text could be extracted.")
             return
-        suggestion = extract_from_header_text(
-            header_text,
-            vocab_cities=list(self._settings["vocab_cities"]),
-            ai_enabled=bool(self._settings["metadata_ai_enabled"]),
-        )
         self._apply_header_suggestion(suggestion)
 
     def _autofill_from_photo(self) -> None:
@@ -473,15 +476,10 @@ class SaveToJobLogDialog(tk.Toplevel):
         )
         if not image_path_text:
             return
-        try:
-            ocr_text = extract_ocr_text_from_photo_image(Path(image_path_text))
-        except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Photo autofill failed", str(exc))
-            return
-        suggestion = extract_from_photo_ocr_text(
-            ocr_text,
+        suggestion = extract_photo_metadata_from_image(
+            Path(image_path_text),
             vocab_cities=list(self._settings["vocab_cities"]),
-            ai_enabled=bool(self._settings["metadata_ai_enabled"]),
+            config=self._metadata_config,
         )
         if suggestion.service_city:
             self._ensure_in_vocab("vocab_cities", suggestion.service_city)
@@ -555,6 +553,7 @@ class SaveToJobLogDialog(tk.Toplevel):
 
         payload = {
             "completed_at": self._seed.completed_at,
+            "translation_date": self._seed.translation_date,
             "job_type": self.job_type_var.get().strip() or "Translation",
             "case_number": self.case_number_var.get().strip(),
             "case_entity": case_entity,
@@ -597,6 +596,13 @@ class SaveToJobLogDialog(tk.Toplevel):
                 "metadata_photo_enabled": self._settings["metadata_photo_enabled"],
                 "service_equals_case_by_default": bool(self.service_same_var.get()),
                 "non_court_service_entities": self._settings["non_court_service_entities"],
+                "ocr_mode": self._settings["ocr_mode"],
+                "ocr_engine": self._settings["ocr_engine"],
+                "ocr_api_base_url": self._settings["ocr_api_base_url"],
+                "ocr_api_model": self._settings["ocr_api_model"],
+                "ocr_api_key_source": self._settings["ocr_api_key_source"],
+                "ocr_api_key_env": self._settings["ocr_api_key_env"],
+                "ocr_api_key_credman_target": self._settings["ocr_api_key_credman_target"],
             }
         )
         self._saved = True

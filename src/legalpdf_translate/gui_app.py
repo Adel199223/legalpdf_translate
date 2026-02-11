@@ -12,11 +12,18 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-from .checkpoint import load_run_state, parse_effort, parse_image_mode
+from .checkpoint import (
+    load_run_state,
+    parse_api_key_source,
+    parse_effort,
+    parse_image_mode,
+    parse_ocr_engine_policy,
+    parse_ocr_mode,
+)
 from .gui_theme import apply_text_widget_theme
 from .joblog_db import job_log_db_path
 from .joblog_ui import JobLogSeed, JobLogWindow, SaveToJobLogDialog, build_seed_from_run
-from .metadata_autofill import extract_from_header_text, extract_header_text_from_pdf_with_ocr_fallback
+from .metadata_autofill import extract_pdf_header_metadata, metadata_config_from_settings
 from .output_paths import build_output_paths, require_writable_output_dir_text
 from .pdf_text_order import get_page_count
 from .types import RunConfig, RunSummary, TargetLang
@@ -49,6 +56,13 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.outdir_var = tk.StringVar()
         self.effort_var = tk.StringVar(value="high")
         self.images_var = tk.StringVar(value="auto")
+        self.ocr_mode_var = tk.StringVar(value="auto")
+        self.ocr_engine_var = tk.StringVar(value="local_then_api")
+        self.ocr_api_base_url_var = tk.StringVar(value="")
+        self.ocr_api_model_var = tk.StringVar(value="")
+        self.ocr_api_key_source_var = tk.StringVar(value="env")
+        self.ocr_api_key_env_var = tk.StringVar(value="DEEPSEEK_API_KEY")
+        self.ocr_api_key_credman_target_var = tk.StringVar(value="LegalPDFTranslate_OCR")
         self.start_page_var = tk.StringVar(value="1")
         self.end_page_var = tk.StringVar(value="")
         self.max_pages_var = tk.StringVar(value="")
@@ -89,6 +103,21 @@ class LegalPDFTranslateApp(ttk.Frame):
         image_mode = str(data.get("image_mode", "auto") or "auto").lower()
         if image_mode in ("off", "auto", "always"):
             self.images_var.set(image_mode)
+        ocr_mode = str(data.get("ocr_mode", "auto") or "auto").lower()
+        if ocr_mode in ("off", "auto", "always"):
+            self.ocr_mode_var.set(ocr_mode)
+        ocr_engine = str(data.get("ocr_engine", "local_then_api") or "local_then_api").lower()
+        if ocr_engine in ("local", "local_then_api", "api"):
+            self.ocr_engine_var.set(ocr_engine)
+        self.ocr_api_base_url_var.set(str(data.get("ocr_api_base_url", "") or ""))
+        self.ocr_api_model_var.set(str(data.get("ocr_api_model", "") or ""))
+        ocr_key_source = str(data.get("ocr_api_key_source", "env") or "env").lower()
+        if ocr_key_source in ("env", "credman", "inline"):
+            self.ocr_api_key_source_var.set(ocr_key_source)
+        self.ocr_api_key_env_var.set(str(data.get("ocr_api_key_env", "DEEPSEEK_API_KEY") or "DEEPSEEK_API_KEY"))
+        self.ocr_api_key_credman_target_var.set(
+            str(data.get("ocr_api_key_credman_target", "LegalPDFTranslate_OCR") or "LegalPDFTranslate_OCR")
+        )
 
         resume = data.get("resume")
         if isinstance(resume, bool):
@@ -201,6 +230,26 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.context_text.grid(row=8, column=1, columnspan=2, sticky="ew", pady=(6, 0))
         apply_text_widget_theme(self.context_text)
 
+        ttk.Label(self.advanced, text="OCR mode").grid(row=9, column=0, sticky="w", pady=(6, 0))
+        self.ocr_mode_combo = ttk.Combobox(
+            self.advanced,
+            textvariable=self.ocr_mode_var,
+            values=["off", "auto", "always"],
+            state="readonly",
+            width=18,
+        )
+        self.ocr_mode_combo.grid(row=9, column=1, sticky="w", pady=(6, 0))
+
+        ttk.Label(self.advanced, text="OCR engine").grid(row=10, column=0, sticky="w", pady=(6, 0))
+        self.ocr_engine_combo = ttk.Combobox(
+            self.advanced,
+            textvariable=self.ocr_engine_var,
+            values=["local", "local_then_api", "api"],
+            state="readonly",
+            width=18,
+        )
+        self.ocr_engine_combo.grid(row=10, column=1, sticky="w", pady=(6, 0))
+
         controls = ttk.Frame(self)
         controls.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(10, 0))
         controls.columnconfigure(8, weight=1)
@@ -270,6 +319,8 @@ class LegalPDFTranslateApp(ttk.Frame):
             (self.show_advanced_btn, tk.NORMAL),
             (self.effort_combo, "readonly"),
             (self.images_combo, "readonly"),
+            (self.ocr_mode_combo, "readonly"),
+            (self.ocr_engine_combo, "readonly"),
             (self.start_page_entry, tk.NORMAL),
             (self.end_page_entry, tk.NORMAL),
             (self.max_pages_entry, tk.NORMAL),
@@ -286,6 +337,8 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.outdir_var.trace_add("write", self._on_setting_changed)
         self.effort_var.trace_add("write", self._on_setting_changed)
         self.images_var.trace_add("write", self._on_setting_changed)
+        self.ocr_mode_var.trace_add("write", self._on_setting_changed)
+        self.ocr_engine_var.trace_add("write", self._on_setting_changed)
         self.resume_var.trace_add("write", self._on_setting_changed)
         self.page_breaks_var.trace_add("write", self._on_setting_changed)
         self.keep_var.trace_add("write", self._on_setting_changed)
@@ -392,6 +445,14 @@ class LegalPDFTranslateApp(ttk.Frame):
             target_lang=lang,
             effort=parse_effort(self.effort_var.get()),
             image_mode=parse_image_mode(self.images_var.get()),
+            ocr_mode=parse_ocr_mode(self.ocr_mode_var.get()),
+            ocr_engine=parse_ocr_engine_policy(self.ocr_engine_var.get()),
+            ocr_api_base_url=self.ocr_api_base_url_var.get().strip() or None,
+            ocr_api_model=self.ocr_api_model_var.get().strip() or None,
+            ocr_api_key_source=parse_api_key_source(self.ocr_api_key_source_var.get()),
+            ocr_api_key_env=self.ocr_api_key_env_var.get().strip() or "DEEPSEEK_API_KEY",
+            ocr_api_key_credman_target=self.ocr_api_key_credman_target_var.get().strip() or "LegalPDFTranslate_OCR",
+            ocr_api_key_inline=None,
             start_page=start_page,
             end_page=end_page,
             max_pages=max_pages,
@@ -641,21 +702,20 @@ class LegalPDFTranslateApp(ttk.Frame):
             api_cost=0.0,
         )
 
-        header_text = extract_header_text_from_pdf_with_ocr_fallback(seed.pdf_path)
-        if header_text.strip():
-            suggestion = extract_from_header_text(
-                header_text,
-                vocab_cities=list(settings["vocab_cities"]),
-                ai_enabled=bool(settings["metadata_ai_enabled"]),
-            )
-            if suggestion.case_entity:
-                seed.case_entity = suggestion.case_entity
-                seed.service_entity = suggestion.case_entity
-            if suggestion.case_city:
-                seed.case_city = suggestion.case_city
-                seed.service_city = suggestion.case_city
-            if suggestion.case_number:
-                seed.case_number = suggestion.case_number
+        suggestion = extract_pdf_header_metadata(
+            seed.pdf_path,
+            vocab_cities=list(settings["vocab_cities"]),
+            config=metadata_config_from_settings(settings),
+            page_number=1,
+        )
+        if suggestion.case_entity:
+            seed.case_entity = suggestion.case_entity
+            seed.service_entity = suggestion.case_entity
+        if suggestion.case_city:
+            seed.case_city = suggestion.case_city
+            seed.service_city = suggestion.case_city
+        if suggestion.case_number:
+            seed.case_number = suggestion.case_number
 
         self.last_joblog_seed = seed
 
@@ -712,6 +772,13 @@ class LegalPDFTranslateApp(ttk.Frame):
                     "last_lang": self.lang_var.get().strip().upper(),
                     "effort": self.effort_var.get().strip().lower(),
                     "image_mode": self.images_var.get().strip().lower(),
+                    "ocr_mode": self.ocr_mode_var.get().strip().lower(),
+                    "ocr_engine": self.ocr_engine_var.get().strip().lower(),
+                    "ocr_api_base_url": self.ocr_api_base_url_var.get().strip(),
+                    "ocr_api_model": self.ocr_api_model_var.get().strip(),
+                    "ocr_api_key_source": self.ocr_api_key_source_var.get().strip().lower(),
+                    "ocr_api_key_env": self.ocr_api_key_env_var.get().strip(),
+                    "ocr_api_key_credman_target": self.ocr_api_key_credman_target_var.get().strip(),
                     "resume": bool(self.resume_var.get()),
                     "keep_intermediates": bool(self.keep_var.get()),
                     "page_breaks": bool(self.page_breaks_var.get()),

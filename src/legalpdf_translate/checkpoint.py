@@ -11,7 +11,17 @@ from typing import Any
 
 from .config import CONTEXT_EMPTY_HASH_MARKER, RUN_STATE_VERSION
 from .output_paths import OutputPaths, build_output_paths
-from .types import ImageMode, PageStatus, ReasoningEffort, RunConfig, RunState, TargetLang
+from .types import (
+    ApiKeySource,
+    ImageMode,
+    OcrEnginePolicy,
+    OcrMode,
+    PageStatus,
+    ReasoningEffort,
+    RunConfig,
+    RunState,
+    TargetLang,
+)
 
 RunPaths = OutputPaths
 
@@ -78,6 +88,10 @@ def settings_fingerprint(config: RunConfig) -> dict[str, Any]:
     return {
         "effort": config.effort.value,
         "image_mode": config.image_mode.value,
+        "ocr_mode": config.ocr_mode.value,
+        "ocr_engine": config.ocr_engine.value,
+        "ocr_api_base_url": (config.ocr_api_base_url or "").strip(),
+        "ocr_api_model": (config.ocr_api_model or "").strip(),
         "page_breaks": config.page_breaks,
         "keep_intermediates": config.keep_intermediates,
         "start_page": config.start_page,
@@ -375,3 +389,36 @@ def parse_image_mode(value: str) -> ImageMode:
     if lowered == ImageMode.ALWAYS.value:
         return ImageMode.ALWAYS
     raise ValueError("Image mode must be off, auto, or always.")
+
+
+def parse_ocr_mode(value: str) -> OcrMode:
+    lowered = value.strip().lower()
+    if lowered == OcrMode.OFF.value:
+        return OcrMode.OFF
+    if lowered == OcrMode.AUTO.value:
+        return OcrMode.AUTO
+    if lowered == OcrMode.ALWAYS.value:
+        return OcrMode.ALWAYS
+    raise ValueError("OCR mode must be off, auto, or always.")
+
+
+def parse_ocr_engine_policy(value: str) -> OcrEnginePolicy:
+    lowered = value.strip().lower()
+    if lowered == OcrEnginePolicy.LOCAL.value:
+        return OcrEnginePolicy.LOCAL
+    if lowered == OcrEnginePolicy.LOCAL_THEN_API.value:
+        return OcrEnginePolicy.LOCAL_THEN_API
+    if lowered == OcrEnginePolicy.API.value:
+        return OcrEnginePolicy.API
+    raise ValueError("OCR engine must be local, local_then_api, or api.")
+
+
+def parse_api_key_source(value: str) -> ApiKeySource:
+    lowered = value.strip().lower()
+    if lowered == ApiKeySource.ENV.value:
+        return ApiKeySource.ENV
+    if lowered == ApiKeySource.CREDMAN.value:
+        return ApiKeySource.CREDMAN
+    if lowered == ApiKeySource.INLINE.value:
+        return ApiKeySource.INLINE
+    raise ValueError("API key source must be env, credman, or inline.")

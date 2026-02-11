@@ -46,6 +46,15 @@ DEFAULT_JOBLOG_VISIBLE_COLUMNS = [
     "api_cost",
     "profit",
 ]
+DEFAULT_OCR_SETTINGS: dict[str, Any] = {
+    "ocr_mode": "auto",
+    "ocr_engine": "local_then_api",
+    "ocr_api_base_url": "",
+    "ocr_api_model": "",
+    "ocr_api_key_source": "env",
+    "ocr_api_key_env": "DEEPSEEK_API_KEY",
+    "ocr_api_key_credman_target": "LegalPDFTranslate_OCR",
+}
 ALLOWED_GUI_KEYS = {
     "last_outdir",
     "last_lang",
@@ -57,6 +66,13 @@ ALLOWED_GUI_KEYS = {
     "start_page",
     "end_page",
     "max_pages",
+    "ocr_mode",
+    "ocr_engine",
+    "ocr_api_base_url",
+    "ocr_api_model",
+    "ocr_api_key_source",
+    "ocr_api_key_env",
+    "ocr_api_key_credman_target",
 }
 ALLOWED_JOBLOG_KEYS = {
     "vocab_case_entities",
@@ -69,6 +85,14 @@ ALLOWED_JOBLOG_KEYS = {
     "metadata_photo_enabled",
     "service_equals_case_by_default",
     "non_court_service_entities",
+    "ocr_mode",
+    "ocr_engine",
+    "ocr_api_base_url",
+    "ocr_api_model",
+    "ocr_api_key_source",
+    "ocr_api_key_env",
+    "ocr_api_key_credman_target",
+    "vocab_entities",
 }
 DEFAULT_GUI_SETTINGS: dict[str, Any] = {
     "last_outdir": "",
@@ -81,6 +105,7 @@ DEFAULT_GUI_SETTINGS: dict[str, Any] = {
     "start_page": 1,
     "end_page": None,
     "max_pages": None,
+    **DEFAULT_OCR_SETTINGS,
 }
 DEFAULT_JOBLOG_SETTINGS: dict[str, Any] = {
     "vocab_case_entities": list(DEFAULT_VOCAB_CASE_ENTITIES),
@@ -93,6 +118,8 @@ DEFAULT_JOBLOG_SETTINGS: dict[str, Any] = {
     "metadata_photo_enabled": True,
     "service_equals_case_by_default": True,
     "non_court_service_entities": ["GNR", "PSP"],
+    "vocab_entities": list(DEFAULT_VOCAB_CASE_ENTITIES),
+    **DEFAULT_OCR_SETTINGS,
 }
 
 
@@ -208,6 +235,14 @@ def _coerce_rate_map(value: object, *, fallback: dict[str, float]) -> dict[str, 
     return output
 
 
+def _coerce_choice(value: object, *, default: str, allowed: set[str]) -> str:
+    if isinstance(value, str):
+        cleaned = value.strip().lower()
+        if cleaned in allowed:
+            return cleaned
+    return default
+
+
 def load_gui_settings() -> dict[str, Any]:
     data = load_settings()
     merged = dict(DEFAULT_GUI_SETTINGS)
@@ -225,6 +260,27 @@ def load_gui_settings() -> dict[str, Any]:
     merged["start_page"] = _coerce_int(merged.get("start_page"), 1)
     merged["end_page"] = _coerce_optional_int(merged.get("end_page"))
     merged["max_pages"] = _coerce_optional_int(merged.get("max_pages"))
+    merged["ocr_mode"] = _coerce_choice(
+        merged.get("ocr_mode"),
+        default="auto",
+        allowed={"off", "auto", "always"},
+    )
+    merged["ocr_engine"] = _coerce_choice(
+        merged.get("ocr_engine"),
+        default="local_then_api",
+        allowed={"local", "local_then_api", "api"},
+    )
+    merged["ocr_api_base_url"] = str(merged.get("ocr_api_base_url", "") or "")
+    merged["ocr_api_model"] = str(merged.get("ocr_api_model", "") or "")
+    merged["ocr_api_key_source"] = _coerce_choice(
+        merged.get("ocr_api_key_source"),
+        default="env",
+        allowed={"env", "credman", "inline"},
+    )
+    merged["ocr_api_key_env"] = str(merged.get("ocr_api_key_env", "DEEPSEEK_API_KEY") or "DEEPSEEK_API_KEY")
+    merged["ocr_api_key_credman_target"] = str(
+        merged.get("ocr_api_key_credman_target", "LegalPDFTranslate_OCR") or "LegalPDFTranslate_OCR"
+    )
     return merged
 
 
@@ -259,6 +315,10 @@ def load_joblog_settings() -> dict[str, Any]:
         merged.get("vocab_job_types"),
         fallback=DEFAULT_VOCAB_JOB_TYPES,
     )
+    merged["vocab_entities"] = _coerce_str_list(
+        merged.get("vocab_entities"),
+        fallback=DEFAULT_VOCAB_CASE_ENTITIES,
+    )
     merged["joblog_visible_columns"] = _coerce_str_list(
         merged.get("joblog_visible_columns"),
         fallback=DEFAULT_JOBLOG_VISIBLE_COLUMNS,
@@ -274,6 +334,31 @@ def load_joblog_settings() -> dict[str, Any]:
         merged.get("default_rate_per_word"),
         fallback=DEFAULT_JOBLOG_SETTINGS["default_rate_per_word"],
     )
+    merged["ocr_mode"] = _coerce_choice(
+        merged.get("ocr_mode"),
+        default="auto",
+        allowed={"off", "auto", "always"},
+    )
+    merged["ocr_engine"] = _coerce_choice(
+        merged.get("ocr_engine"),
+        default="local_then_api",
+        allowed={"local", "local_then_api", "api"},
+    )
+    merged["ocr_api_base_url"] = str(merged.get("ocr_api_base_url", "") or "")
+    merged["ocr_api_model"] = str(merged.get("ocr_api_model", "") or "")
+    merged["ocr_api_key_source"] = _coerce_choice(
+        merged.get("ocr_api_key_source"),
+        default="env",
+        allowed={"env", "credman", "inline"},
+    )
+    merged["ocr_api_key_env"] = str(merged.get("ocr_api_key_env", "DEEPSEEK_API_KEY") or "DEEPSEEK_API_KEY")
+    merged["ocr_api_key_credman_target"] = str(
+        merged.get("ocr_api_key_credman_target", "LegalPDFTranslate_OCR") or "LegalPDFTranslate_OCR"
+    )
+    if not merged["vocab_case_entities"]:
+        merged["vocab_case_entities"] = list(merged["vocab_entities"])
+    if not merged["vocab_service_entities"]:
+        merged["vocab_service_entities"] = list(merged["vocab_entities"])
     return merged
 
 

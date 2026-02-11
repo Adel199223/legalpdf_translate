@@ -26,6 +26,24 @@ class ImageMode(str, Enum):
     ALWAYS = "always"
 
 
+class OcrMode(str, Enum):
+    OFF = "off"
+    AUTO = "auto"
+    ALWAYS = "always"
+
+
+class OcrEnginePolicy(str, Enum):
+    LOCAL = "local"
+    LOCAL_THEN_API = "local_then_api"
+    API = "api"
+
+
+class ApiKeySource(str, Enum):
+    ENV = "env"
+    CREDMAN = "credman"
+    INLINE = "inline"
+
+
 class PageStatus(str, Enum):
     PENDING = "pending"
     DONE = "done"
@@ -45,6 +63,14 @@ class RunConfig:
     resume: bool = True
     page_breaks: bool = True
     keep_intermediates: bool = True
+    ocr_mode: OcrMode = OcrMode.AUTO
+    ocr_engine: OcrEnginePolicy = OcrEnginePolicy.LOCAL_THEN_API
+    ocr_api_base_url: str | None = None
+    ocr_api_model: str | None = None
+    ocr_api_key_source: ApiKeySource = ApiKeySource.ENV
+    ocr_api_key_env: str = "DEEPSEEK_API_KEY"
+    ocr_api_key_credman_target: str = "LegalPDFTranslate_OCR"
+    ocr_api_key_inline: str | None = None
     context_file: Path | None = None
     context_text: str | None = None
 

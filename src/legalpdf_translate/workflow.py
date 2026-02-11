@@ -29,7 +29,9 @@ from .checkpoint import (
 )
 from .config import load_environment
 from .docx_writer import assemble_docx
-from .image_io import render_page_image_data_url, should_include_image
+from .image_io import render_page_image_data_url
+from .ocr_engine import OCREngine, OcrResult, build_ocr_engine, ocr_engine_config_from_run_config
+from .ocr_helpers import ocr_pdf_page_text
 from .openai_client import OpenAIResponsesClient
 from .output_normalize import normalize_output_text
 from .output_paths import require_writable_output_dir
@@ -37,7 +39,7 @@ from .page_selection import resolve_page_selection
 from .pdf_text_order import extract_ordered_page_text, get_page_count
 from .prompt_builder import build_page_prompt, build_retry_prompt
 from .resources_loader import load_system_instructions
-from .types import PageStatus, ReasoningEffort, RunConfig, RunState, RunSummary, TargetLang
+from .types import OcrMode, PageStatus, ReasoningEffort, RunConfig, RunState, RunSummary, TargetLang
 from .validators import parse_code_block_output, validate_ar, validate_enfr
 
 
@@ -126,6 +128,15 @@ class TranslationWorkflow:
 
         client = self._provided_client
         instructions = load_system_instructions(config.target_lang)
+        ocr_engine: OCREngine | None = None
+        if config.ocr_mode != OcrMode.OFF:
+            try:
+                ocr_engine = build_ocr_engine(ocr_engine_config_from_run_config(config))
+            except Exception:
+                if config.ocr_engine.value == "api" or config.ocr_mode == OcrMode.ALWAYS:
+                    raise
+                ocr_engine = None
+                self._log("OCR engine unavailable; continuing without OCR for this run.")
 
         failed_page: int | None = None
         compliance_failure = False
@@ -152,6 +163,7 @@ class TranslationWorkflow:
                     context_text=context_text,
                     page_number=page_number,
                     total_pages=total_pages,
+                    ocr_engine=ocr_engine,
                 )
             except Exception as exc:  # noqa: BLE001
                 self._log(f"Runtime failure on page {page_number}: {exc}")
@@ -354,18 +366,44 @@ class TranslationWorkflow:
         context_text: str | None,
         page_number: int,
         total_pages: int,
+        ocr_engine: OCREngine | None,
     ) -> "_PageOutcome":
         ordered = extract_ordered_page_text(config.pdf_path, page_number - 1)
-        source_text = ordered.text
+        extracted_text = ordered.text
+        extracted_usable = self._is_usable_source_text(extracted_text)
+
+        ocr_result = OcrResult(
+            text="",
+            engine="none",
+            failed_reason="ocr_not_requested",
+            chars=0,
+        )
+        ocr_attempted = False
+        should_ocr = False
+        if config.ocr_mode == OcrMode.ALWAYS:
+            should_ocr = True
+        elif config.ocr_mode == OcrMode.AUTO:
+            should_ocr = not extracted_usable
+        if should_ocr and ocr_engine is not None:
+            ocr_attempted = True
+            ocr_result = ocr_pdf_page_text(
+                config.pdf_path,
+                page_number,
+                mode=OcrMode.ALWAYS,
+                engine=ocr_engine,
+                prefer_header=False,
+                lang_hint=config.target_lang.value,
+            )
+
+        source_text = ocr_result.text if ocr_result.chars > 0 else extracted_text
         if config.target_lang == TargetLang.AR:
             source_text = pretokenize_arabic_source(source_text)
 
-        image_used = should_include_image(
-            config.image_mode,
-            ordered_text=ordered.text,
-            extraction_failed=ordered.extraction_failed,
-            fragmented=ordered.fragmented,
-        )
+        source_usable = self._is_usable_source_text(source_text)
+        image_used = False
+        if not source_usable:
+            if config.ocr_mode == OcrMode.OFF or (ocr_attempted and ocr_result.chars <= 0):
+                image_used = True
         image_data_url = None
         if image_used:
             image_path = paths.images_dir / f"page_{page_number:04d}.jpg" if config.keep_intermediates else None
@@ -374,6 +412,11 @@ class TranslationWorkflow:
                 page_number - 1,
                 save_path=image_path,
             )
+        ocr_reason = ocr_result.failed_reason or "none"
+        self._log(
+            f"page={page_number} ocr_used={ocr_result.engine} ocr_chars={ocr_result.chars} "
+            f"ocr_failed_reason={ocr_reason}"
+        )
 
         prompt_text = build_page_prompt(
             lang=config.target_lang,
@@ -383,7 +426,13 @@ class TranslationWorkflow:
             context_text=context_text,
         )
 
-        usage_payload: dict[str, object] = {}
+        usage_payload: dict[str, object] = {
+            "ocr": {
+                "engine": ocr_result.engine,
+                "chars": ocr_result.chars,
+                "failed_reason": ocr_result.failed_reason,
+            }
+        }
         initial = client.create_page_response(
             instructions=instructions,
             prompt_text=prompt_text,
@@ -562,9 +611,33 @@ class TranslationWorkflow:
             resume=config.resume,
             page_breaks=config.page_breaks,
             keep_intermediates=config.keep_intermediates,
+            ocr_mode=config.ocr_mode,
+            ocr_engine=config.ocr_engine,
+            ocr_api_base_url=(config.ocr_api_base_url or "").strip() or None,
+            ocr_api_model=(config.ocr_api_model or "").strip() or None,
+            ocr_api_key_source=config.ocr_api_key_source,
+            ocr_api_key_env=(config.ocr_api_key_env or "").strip() or "DEEPSEEK_API_KEY",
+            ocr_api_key_credman_target=(config.ocr_api_key_credman_target or "").strip() or "LegalPDFTranslate_OCR",
+            ocr_api_key_inline=config.ocr_api_key_inline,
             context_file=context_file_abs,
             context_text=config.context_text,
         )
+
+    def _is_usable_source_text(self, value: str) -> bool:
+        cleaned = value.strip()
+        if not cleaned:
+            return False
+        if len(cleaned) < 24:
+            return False
+        alpha_num = sum(1 for ch in cleaned if ch.isalnum())
+        if alpha_num < max(12, int(len(cleaned) * 0.2)):
+            return False
+        lines = [line for line in cleaned.splitlines() if line.strip()]
+        if lines and len(lines) >= 10:
+            short_ratio = sum(1 for line in lines if len(line.strip()) <= 2) / len(lines)
+            if short_ratio > 0.75:
+                return False
+        return True
 
     def _validate_config(self, config: RunConfig) -> None:
         if not config.pdf_path.exists():

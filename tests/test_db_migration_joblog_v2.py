@@ -65,10 +65,14 @@ def test_migration_adds_v2_columns_and_backfills(tmp_path: Path) -> None:
     assert "service_entity" in columns
     assert "service_city" in columns
     assert "service_date" in columns
+    assert "translation_date" in columns
+    assert "header_text" not in columns
+    assert "ocr_text" not in columns
+    assert "extracted_text" not in columns
 
     row = migrated.execute(
         """
-        SELECT case_entity, case_city, service_entity, service_city, service_date
+        SELECT case_entity, case_city, service_entity, service_city, service_date, translation_date
         FROM job_runs
         LIMIT 1
         """
@@ -81,3 +85,4 @@ def test_migration_adds_v2_columns_and_backfills(tmp_path: Path) -> None:
     assert row[2] == "Tribunal Judicial de Beja"
     assert row[3] == "Beja"
     assert row[4] == "2026-02-11"
+    assert row[5] == "2026-02-11"

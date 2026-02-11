@@ -13,6 +13,7 @@ JOB_LOG_DB_FILENAME = "job_log.sqlite3"
 
 JOB_RUN_COLUMNS = [
     "completed_at",
+    "translation_date",
     "job_type",
     "case_number",
     "case_entity",
@@ -50,6 +51,7 @@ def ensure_joblog_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS job_runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             completed_at TEXT NOT NULL,
+            translation_date TEXT,
             job_type TEXT DEFAULT 'Translation',
             case_number TEXT,
             case_entity TEXT,
@@ -105,6 +107,27 @@ def _backfill_service_date_from_completed_at(conn: sqlite3.Connection) -> None:
         )
 
 
+def _backfill_translation_date_from_completed_at(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, completed_at
+        FROM job_runs
+        WHERE translation_date IS NULL OR trim(translation_date) = ''
+        """
+    ).fetchall()
+    for row in rows:
+        completed_at = str(row["completed_at"] or "").strip()
+        if completed_at == "":
+            continue
+        parsed_date = _date_only(completed_at)
+        if parsed_date is None:
+            continue
+        conn.execute(
+            "UPDATE job_runs SET translation_date = ? WHERE id = ?",
+            (parsed_date, int(row["id"])),
+        )
+
+
 def _date_only(timestamp_value: str) -> str | None:
     cleaned = timestamp_value.strip()
     if cleaned == "":
@@ -122,6 +145,7 @@ def _date_only(timestamp_value: str) -> str | None:
 def migrate_joblog_v2(conn: sqlite3.Connection) -> None:
     columns = _table_columns(conn, "job_runs")
     _add_column_if_missing(conn, columns, "job_type", "TEXT DEFAULT 'Translation'")
+    _add_column_if_missing(conn, columns, "translation_date", "TEXT")
     _add_column_if_missing(conn, columns, "case_entity", "TEXT")
     _add_column_if_missing(conn, columns, "case_city", "TEXT")
     _add_column_if_missing(conn, columns, "service_entity", "TEXT")
@@ -163,6 +187,7 @@ def migrate_joblog_v2(conn: sqlite3.Connection) -> None:
         WHERE service_city IS NULL OR trim(service_city) = ''
         """
     )
+    _backfill_translation_date_from_completed_at(conn)
     _backfill_service_date_from_completed_at(conn)
 
 
@@ -184,7 +209,7 @@ def list_job_runs(conn: sqlite3.Connection, *, limit: int = 500) -> list[sqlite3
         SELECT
             id,
             completed_at,
-            date(completed_at) AS translation_date,
+            COALESCE(NULLIF(trim(translation_date), ''), date(completed_at)) AS translation_date,
             job_type,
             case_number,
             case_entity,
