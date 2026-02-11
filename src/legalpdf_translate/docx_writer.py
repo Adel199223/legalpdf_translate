@@ -38,13 +38,28 @@ def _verify_docx_readable(path: Path) -> None:
         raise RuntimeError(f"DOCX validation failed for {path}: {exc}") from exc
 
 
+def resolve_noncolliding_output_path(output_path: Path) -> Path:
+    final_path = output_path.expanduser().resolve()
+    if not final_path.exists():
+        return final_path
+
+    stem = final_path.stem
+    suffix = final_path.suffix
+    index = 1
+    while True:
+        candidate = final_path.with_name(f"{stem}_{index:02d}{suffix}")
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
 def save_document_atomic(
     document: Document,
     output_path: Path,
     *,
     verify_readable: bool = True,
 ) -> Path:
-    final_path = output_path.expanduser().resolve()
+    final_path = resolve_noncolliding_output_path(output_path)
     tmp_path = final_path.with_name(f"{final_path.name}.tmp")
 
     final_path.parent.mkdir(parents=True, exist_ok=True)

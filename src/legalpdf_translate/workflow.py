@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import threading
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
 
@@ -117,6 +118,10 @@ class TranslationWorkflow:
             selection_page_count=selection_page_count,
             max_pages_effective=max_pages_effective,
         )
+        run_state.run_status = "running"
+        run_state.final_docx_path_abs = None
+        run_state.finished_at = None
+        save_run_state_atomic(paths.run_state_path, run_state)
         self._last_state = run_state
 
         client = self._provided_client
@@ -203,6 +208,8 @@ class TranslationWorkflow:
                     page_breaks=config.page_breaks,
                 )
             except Exception as exc:  # noqa: BLE001
+                run_state.run_status = "docx_write_failed"
+                run_state.finished_at = self._utc_now()
                 run_state.final_docx_path_abs = None
                 save_run_state_atomic(paths.run_state_path, run_state)
                 self._log(f"DOCX save failed at {paths.final_docx_path}: {exc}")
@@ -219,6 +226,8 @@ class TranslationWorkflow:
                 )
 
             record_final_docx_path(run_state, output_docx)
+            run_state.run_status = "completed"
+            run_state.finished_at = self._utc_now()
             save_run_state_atomic(paths.run_state_path, run_state)
             if not config.keep_intermediates:
                 self._cleanup_intermediates(paths)
@@ -239,6 +248,9 @@ class TranslationWorkflow:
             partial_docx = self.export_partial_docx()
 
         if self._cancel_event.is_set():
+            run_state.run_status = "cancelled"
+            run_state.finished_at = self._utc_now()
+            save_run_state_atomic(paths.run_state_path, run_state)
             return RunSummary(
                 success=False,
                 exit_code=2,
@@ -250,6 +262,9 @@ class TranslationWorkflow:
                 error="cancelled",
             )
 
+        run_state.run_status = "compliance_failure" if compliance_failure else "runtime_failure"
+        run_state.finished_at = self._utc_now()
+        save_run_state_atomic(paths.run_state_path, run_state)
         return RunSummary(
             success=False,
             exit_code=3 if compliance_failure else 2,
@@ -307,6 +322,8 @@ class TranslationWorkflow:
             run_state.run_dir_abs = str(run_dir)
             run_state.run_started_at = run_started_at
             record_final_docx_path(run_state, output_docx)
+            run_state.run_status = "completed"
+            run_state.finished_at = self._utc_now()
             save_run_state_atomic(run_state_path, run_state)
 
         self._last_config = config
@@ -584,6 +601,9 @@ class TranslationWorkflow:
     def _progress(self, current_page: int, total_pages: int, status: str) -> None:
         if self._progress_callback:
             self._progress_callback(current_page, total_pages, status)
+
+    def _utc_now(self) -> str:
+        return datetime.now(UTC).isoformat()
 
 
 @dataclass(slots=True)

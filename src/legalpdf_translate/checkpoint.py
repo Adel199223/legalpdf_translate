@@ -129,8 +129,10 @@ def new_run_state(
         updated_at=now,
         frozen_outdir_abs=str(paths.frozen_outdir),
         run_dir_abs=str(paths.run_dir),
+        run_status="running",
         final_docx_path_abs=None,
         run_started_at=paths.run_started_at,
+        finished_at=None,
         pages=pages,
         last_completed_page=0,
     )
@@ -146,6 +148,18 @@ def load_run_state(path: Path) -> RunState | None:
         final_docx = None
     else:
         final_docx = str(final_docx_raw)
+
+    run_status_raw = data.get("run_status")
+    if isinstance(run_status_raw, str) and run_status_raw.strip():
+        run_status = run_status_raw.strip()
+    else:
+        run_status = "running"
+    finished_at_raw = data.get("finished_at")
+    finished_at: str | None
+    if finished_at_raw in (None, ""):
+        finished_at = None
+    else:
+        finished_at = str(finished_at_raw)
 
     pages = dict(data["pages"])
     page_numbers: list[int] = []
@@ -175,8 +189,10 @@ def load_run_state(path: Path) -> RunState | None:
         updated_at=str(data["updated_at"]),
         frozen_outdir_abs=str(data.get("frozen_outdir_abs", path.parent.parent.resolve())),
         run_dir_abs=str(data.get("run_dir_abs", path.parent.resolve())),
+        run_status=run_status,
         final_docx_path_abs=final_docx,
         run_started_at=str(data.get("run_started_at", "")),
+        finished_at=finished_at,
         pages=pages,
         last_completed_page=int(data.get("last_completed_page", 0)),
     )

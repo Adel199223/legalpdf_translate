@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+
+import legalpdf_translate.workflow as workflow_module
 from legalpdf_translate.checkpoint import (
     build_run_paths,
     ensure_run_dirs,
@@ -13,6 +16,7 @@ from legalpdf_translate.checkpoint import (
     sha256_of_text,
 )
 from legalpdf_translate.types import ImageMode, ReasoningEffort, RunConfig, TargetLang
+from legalpdf_translate.workflow import TranslationWorkflow
 
 
 def _config(tmp_path: Path, pdf_path: Path) -> RunConfig:
@@ -98,3 +102,71 @@ def test_resume_compatibility_and_done_pages(tmp_path: Path) -> None:
         selection_page_count=3,
         max_pages_effective=3,
     )
+
+
+def test_resume_mismatch_is_explicit_and_does_not_start_processing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    base_config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.AUTO,
+        start_page=1,
+        end_page=2,
+        max_pages=2,
+        resume=True,
+        page_breaks=True,
+        keep_intermediates=True,
+    )
+    paths = build_run_paths(base_config.output_dir, base_config.pdf_path, base_config.target_lang)
+    ensure_run_dirs(paths)
+    state = new_run_state(
+        config=base_config,
+        paths=paths,
+        pdf_fingerprint=sha256_of_text("pdf-fingerprint"),
+        context_hash=sha256_of_text(None),
+        total_pages=6,
+        selected_pages=[1, 2],
+    )
+    save_run_state_atomic(paths.run_state_path, state)
+
+    mismatch_config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.AUTO,
+        start_page=2,
+        end_page=3,
+        max_pages=2,
+        resume=True,
+        page_breaks=True,
+        keep_intermediates=True,
+    )
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 6)
+    monkeypatch.setattr(workflow_module, "sha256_of_file", lambda _pdf: sha256_of_text("pdf-fingerprint"))
+
+    started_processing = False
+
+    def _forbid_process_page(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal started_processing
+        started_processing = True
+        raise AssertionError("_process_page must not run on incompatible resume")
+
+    monkeypatch.setattr(TranslationWorkflow, "_process_page", _forbid_process_page)
+
+    workflow = TranslationWorkflow(client=object())
+    with pytest.raises(ValueError, match="Checkpoint is incompatible with current run settings"):
+        workflow.run(mismatch_config)
+    assert started_processing is False

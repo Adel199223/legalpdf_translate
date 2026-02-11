@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import queue
 import subprocess
+import sys
 import threading
 import tkinter as tk
 from datetime import datetime
@@ -572,6 +574,30 @@ class LegalPDFTranslateApp(ttk.Frame):
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Open folder failed", str(exc))
 
+    def _open_output_file(self) -> None:
+        if self.last_output_docx is None:
+            return
+        output_path = self.last_output_docx.expanduser().resolve()
+        if not output_path.exists():
+            messagebox.showerror("Open file failed", f"Output file not found:\n{output_path}")
+            return
+        try:
+            if os.name == "nt":
+                os.startfile(str(output_path))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(output_path)])
+            else:
+                subprocess.Popen(["xdg-open", str(output_path)])
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Open file failed", str(exc))
+
+    def _show_saved_docx_dialog(self, title: str) -> None:
+        if self.last_output_docx is None:
+            return
+        open_now = messagebox.askyesno(title, f"Saved DOCX:\n{self.last_output_docx}\n\nOpen file now?")
+        if open_now:
+            self._open_output_file()
+
     def _int_from_text(self, value: str, *, allow_blank: bool, default: int | None = None) -> int | None:
         cleaned = value.strip()
         if cleaned == "":
@@ -639,7 +665,7 @@ class LegalPDFTranslateApp(ttk.Frame):
                     self.last_output_docx = summary.output_docx.expanduser().resolve()
                     self.status_var.set("Completed")
                     self._append_log(f"Saved DOCX: {self.last_output_docx}")
-                    messagebox.showinfo("Translation complete", f"Saved DOCX:\n{self.last_output_docx}")
+                    self._show_saved_docx_dialog("Translation complete")
                 else:
                     self.last_output_docx = None
                     self.status_var.set(f"Failed ({summary.error})")
@@ -664,7 +690,7 @@ class LegalPDFTranslateApp(ttk.Frame):
                 self.last_output_docx = rebuilt.expanduser().resolve()
                 self.status_var.set("Completed")
                 self._append_log(f"Saved DOCX: {self.last_output_docx}")
-                messagebox.showinfo("Rebuild complete", f"Saved DOCX:\n{self.last_output_docx}")
+                self._show_saved_docx_dialog("Rebuild complete")
                 self._refresh_controls()
             elif event == "rebuild_error":
                 self._set_busy(False, translation=False)

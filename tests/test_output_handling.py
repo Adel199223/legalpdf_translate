@@ -17,6 +17,7 @@ from legalpdf_translate.checkpoint import (
     sha256_of_text,
 )
 from legalpdf_translate.docx_writer import assemble_docx
+from legalpdf_translate.docx_writer import resolve_noncolliding_output_path
 from legalpdf_translate.output_paths import (
     build_output_paths,
     require_writable_output_dir,
@@ -97,6 +98,30 @@ def test_atomic_docx_write_success(tmp_path: Path) -> None:
     Document(final_docx)
 
 
+def test_resolve_noncolliding_output_path_uses_suffixes(tmp_path: Path) -> None:
+    base = tmp_path / "report.docx"
+    base.write_bytes(b"existing")
+    (tmp_path / "report_01.docx").write_bytes(b"existing")
+
+    resolved = resolve_noncolliding_output_path(base)
+
+    assert resolved == tmp_path / "report_02.docx"
+    assert resolved.exists() is False
+
+
+def test_safe_suffix_prevents_overwrite(tmp_path: Path) -> None:
+    pages_dir = tmp_path / "pages"
+    _write_page(pages_dir / "page_0001.txt", "First output")
+    original = tmp_path / "final.docx"
+    original.write_bytes(b"do-not-overwrite")
+
+    written = assemble_docx(pages_dir, original, lang=TargetLang.EN, page_breaks=False)
+
+    assert written == tmp_path / "final_01.docx"
+    assert written.exists()
+    assert original.read_bytes() == b"do-not-overwrite"
+
+
 def test_no_completed_without_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pdf = tmp_path / "sample.pdf"
     pdf.write_bytes(b"not a real pdf")
@@ -131,6 +156,10 @@ def test_no_completed_without_file(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert summary.attempted_output_docx is not None
     assert summary.attempted_output_docx.parent == outdir.resolve()
     assert summary.attempted_output_docx.exists() is False
+    loaded_state = load_run_state(build_run_paths(config.output_dir, config.pdf_path, config.target_lang).run_state_path)
+    assert loaded_state is not None
+    assert loaded_state.run_status == "docx_write_failed"
+    assert loaded_state.finished_at is not None
 
 
 def test_rebuild_docx_from_pages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -180,6 +209,8 @@ def test_rebuild_docx_from_pages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     loaded_state = load_run_state(paths.run_state_path)
     assert loaded_state is not None
     assert loaded_state.final_docx_path_abs == str(rebuilt_path.resolve())
+    assert loaded_state.run_status == "completed"
+    assert loaded_state.finished_at is not None
 
 
 def test_workflow_uses_real_pdf_page_numbers_for_selection(

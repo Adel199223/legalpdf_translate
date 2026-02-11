@@ -77,8 +77,10 @@ class RunState:
     updated_at: str
     frozen_outdir_abs: str
     run_dir_abs: str
+    run_status: str
     final_docx_path_abs: str | None
     run_started_at: str
+    finished_at: str | None
     pages: dict[str, dict[str, Any]]
     last_completed_page: int
 
@@ -99,8 +101,10 @@ class RunState:
             "updated_at": self.updated_at,
             "frozen_outdir_abs": self.frozen_outdir_abs,
             "run_dir_abs": self.run_dir_abs,
+            "run_status": self.run_status,
             "final_docx_path_abs": self.final_docx_path_abs,
             "run_started_at": self.run_started_at,
+            "finished_at": self.finished_at,
             "pages": self.pages,
             "last_completed_page": self.last_completed_page,
         }
