@@ -1,6 +1,18 @@
+# secrets
 .env
+
+# virtualenv / python cache
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+*.egg-info/
+
+# pyinstaller outputs (keep the spec)
 dist/
-build/
+build/*
+!build/pyinstaller_gui.spec
+
+# app run outputs
+*_run/
+*.docx
