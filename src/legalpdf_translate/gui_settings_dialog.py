@@ -248,7 +248,13 @@ class GuiSettingsDialog(tk.Toplevel):
             width=12,
         ).grid(row=2, column=1, sticky="w", pady=(6, 0))
         ttk.Label(tab, text="Default workers").grid(row=3, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(tab, textvariable=self.default_workers_var, width=12).grid(row=3, column=1, sticky="w", pady=(6, 0))
+        self.default_workers_entry = ttk.Entry(tab, textvariable=self.default_workers_var, width=12, state=tk.DISABLED)
+        self.default_workers_entry.grid(row=3, column=1, sticky="w", pady=(6, 0))
+        ttk.Label(
+            tab,
+            text="Not active yet (v1 runs 1 page at a time)",
+            style="Muted.TLabel",
+        ).grid(row=3, column=2, sticky="w", padx=(8, 0), pady=(6, 0))
         ttk.Label(tab, text="Default start page").grid(row=4, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(tab, textvariable=self.default_start_var, width=12).grid(row=4, column=1, sticky="w", pady=(6, 0))
         ttk.Label(tab, text="Default end page").grid(row=5, column=0, sticky="w", pady=(6, 0))
