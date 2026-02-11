@@ -1,8 +1,8 @@
-"""DOCX assembly utilities."""
+"""DOCX assembly utilities with atomic save semantics."""
 
 from __future__ import annotations
 
-from datetime import datetime
+import os
 from pathlib import Path
 
 from docx import Document
@@ -11,21 +11,6 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 from .types import TargetLang
-
-
-def timestamp_for_filename() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-
-def build_output_docx_path(
-    output_dir: Path,
-    pdf_stem: str,
-    lang: TargetLang,
-    *,
-    partial: bool = False,
-) -> Path:
-    suffix = "_PARTIAL" if partial else ""
-    return output_dir / f"{pdf_stem}_{lang.value}_{timestamp_for_filename()}{suffix}.docx"
 
 
 def _add_rtl_flags(paragraph) -> None:
@@ -39,6 +24,53 @@ def _add_rtl_flags(paragraph) -> None:
     p_pr.append(rtl)
 
 
+def _verify_non_empty_file(path: Path) -> None:
+    if not path.exists():
+        raise RuntimeError(f"DOCX file was not created: {path}")
+    if path.stat().st_size <= 0:
+        raise RuntimeError(f"DOCX file is empty: {path}")
+
+
+def _verify_docx_readable(path: Path) -> None:
+    try:
+        Document(path)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"DOCX validation failed for {path}: {exc}") from exc
+
+
+def save_document_atomic(
+    document: Document,
+    output_path: Path,
+    *,
+    verify_readable: bool = True,
+) -> Path:
+    final_path = output_path.expanduser().resolve()
+    tmp_path = final_path.with_name(f"{final_path.name}.tmp")
+
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    if tmp_path.exists():
+        tmp_path.unlink()
+
+    try:
+        document.save(tmp_path)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Failed writing temporary DOCX: {tmp_path}") from exc
+
+    _verify_non_empty_file(tmp_path)
+    if verify_readable:
+        _verify_docx_readable(tmp_path)
+
+    try:
+        os.replace(tmp_path, final_path)
+    except OSError as exc:
+        raise RuntimeError(f"Failed to atomically replace DOCX at {final_path}") from exc
+
+    _verify_non_empty_file(final_path)
+    if verify_readable:
+        _verify_docx_readable(final_path)
+    return final_path
+
+
 def assemble_docx(
     pages_dir: Path,
     output_path: Path,
@@ -46,6 +78,7 @@ def assemble_docx(
     lang: TargetLang,
     page_breaks: bool,
     up_to_page: int | None = None,
+    verify_readable: bool = True,
 ) -> Path:
     page_files = sorted(pages_dir.glob("page_*.txt"))
     if up_to_page is not None:
@@ -71,6 +104,4 @@ def assemble_docx(
                 run = document.add_paragraph().add_run()
             run.add_break(WD_BREAK.PAGE)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    document.save(output_path)
-    return output_path
+    return save_document_atomic(document, output_path, verify_readable=verify_readable)

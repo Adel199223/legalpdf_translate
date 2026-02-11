@@ -33,11 +33,12 @@ def test_run_state_atomic_save_and_load(tmp_path: Path) -> None:
     pdf = tmp_path / "sample.pdf"
     pdf.write_bytes(b"fake")
     config = _config(tmp_path, pdf)
-    paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
+    paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang, run_started_at="20260211_010101")
     ensure_run_dirs(paths)
 
     state = new_run_state(
         config=config,
+        paths=paths,
         pdf_fingerprint=sha256_of_file(pdf),
         context_hash=sha256_of_text(None),
         total_pages=8,
@@ -51,14 +52,19 @@ def test_run_state_atomic_save_and_load(tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded.total_pages == 8
     assert loaded.max_pages_effective == 3
+    assert loaded.frozen_outdir_abs == str(paths.frozen_outdir)
+    assert loaded.run_dir_abs == str(paths.run_dir)
+    assert loaded.run_started_at == "20260211_010101"
 
 
 def test_resume_compatibility_and_done_pages(tmp_path: Path) -> None:
     pdf = tmp_path / "sample.pdf"
     pdf.write_bytes(b"fake")
     config = _config(tmp_path, pdf)
+    paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang, run_started_at="20260211_020202")
     state = new_run_state(
         config=config,
+        paths=paths,
         pdf_fingerprint=sha256_of_file(pdf),
         context_hash=sha256_of_text("ctx"),
         total_pages=5,
@@ -70,12 +76,14 @@ def test_resume_compatibility_and_done_pages(tmp_path: Path) -> None:
     assert is_resume_compatible(
         state,
         config=config,
+        paths=paths,
         pdf_fingerprint=sha256_of_file(pdf),
         context_hash=sha256_of_text("ctx"),
     )
     assert not is_resume_compatible(
         state,
         config=config,
+        paths=paths,
         pdf_fingerprint=sha256_of_file(pdf),
         context_hash=sha256_of_text("different"),
     )

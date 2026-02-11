@@ -70,6 +70,10 @@ class RunState:
     context_hash: str
     created_at: str
     updated_at: str
+    frozen_outdir_abs: str
+    run_dir_abs: str
+    final_docx_path_abs: str | None
+    run_started_at: str
     pages: dict[str, dict[str, Any]]
     last_completed_page: int
 
@@ -85,6 +89,10 @@ class RunState:
             "context_hash": self.context_hash,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "frozen_outdir_abs": self.frozen_outdir_abs,
+            "run_dir_abs": self.run_dir_abs,
+            "final_docx_path_abs": self.final_docx_path_abs,
+            "run_started_at": self.run_started_at,
             "pages": self.pages,
             "last_completed_page": self.last_completed_page,
         }
@@ -100,4 +108,4 @@ class RunSummary:
     completed_pages: int
     failed_page: int | None
     error: str | None = None
-
+    attempted_output_docx: Path | None = None

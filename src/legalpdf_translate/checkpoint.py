@@ -5,30 +5,29 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .config import CONTEXT_EMPTY_HASH_MARKER, RUN_STATE_VERSION
+from .output_paths import OutputPaths, build_output_paths
 from .types import ImageMode, PageStatus, ReasoningEffort, RunConfig, RunState, TargetLang
 
-
-@dataclass(slots=True)
-class RunPaths:
-    run_dir: Path
-    pages_dir: Path
-    images_dir: Path
-    run_state_path: Path
+RunPaths = OutputPaths
 
 
-def build_run_paths(output_dir: Path, pdf_path: Path, lang: TargetLang) -> RunPaths:
-    run_dir = output_dir / f"{pdf_path.stem}_{lang.value}_run"
-    return RunPaths(
-        run_dir=run_dir,
-        pages_dir=run_dir / "pages",
-        images_dir=run_dir / "images",
-        run_state_path=run_dir / "run_state.json",
+def build_run_paths(
+    output_dir: Path,
+    pdf_path: Path,
+    lang: TargetLang,
+    *,
+    run_started_at: str | None = None,
+) -> RunPaths:
+    return build_output_paths(
+        output_dir=output_dir,
+        pdf_path=pdf_path,
+        lang=lang,
+        run_started_at=run_started_at,
     )
 
 
@@ -88,6 +87,7 @@ def settings_fingerprint(config: RunConfig) -> dict[str, Any]:
 def new_run_state(
     *,
     config: RunConfig,
+    paths: RunPaths,
     pdf_fingerprint: str,
     context_hash: str,
     total_pages: int,
@@ -115,6 +115,10 @@ def new_run_state(
         context_hash=context_hash,
         created_at=now,
         updated_at=now,
+        frozen_outdir_abs=str(paths.frozen_outdir),
+        run_dir_abs=str(paths.run_dir),
+        final_docx_path_abs=None,
+        run_started_at=paths.run_started_at,
         pages=pages,
         last_completed_page=0,
     )
@@ -124,6 +128,13 @@ def load_run_state(path: Path) -> RunState | None:
     if not path.exists():
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
+    final_docx_raw = data.get("final_docx_path_abs")
+    final_docx: str | None
+    if final_docx_raw in (None, ""):
+        final_docx = None
+    else:
+        final_docx = str(final_docx_raw)
+
     return RunState(
         version=int(data["version"]),
         pdf_path=str(data["pdf_path"]),
@@ -135,6 +146,10 @@ def load_run_state(path: Path) -> RunState | None:
         context_hash=str(data["context_hash"]),
         created_at=str(data["created_at"]),
         updated_at=str(data["updated_at"]),
+        frozen_outdir_abs=str(data.get("frozen_outdir_abs", path.parent.parent.resolve())),
+        run_dir_abs=str(data.get("run_dir_abs", path.parent.resolve())),
+        final_docx_path_abs=final_docx,
+        run_started_at=str(data.get("run_started_at", "")),
         pages=dict(data["pages"]),
         last_completed_page=int(data.get("last_completed_page", 0)),
     )
@@ -142,6 +157,7 @@ def load_run_state(path: Path) -> RunState | None:
 
 def save_run_state_atomic(path: Path, state: RunState) -> None:
     state.updated_at = _utc_now()
+    path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(".tmp")
     temp_path.write_text(
         json.dumps(state.to_dict(), ensure_ascii=False, indent=2),
@@ -154,6 +170,7 @@ def is_resume_compatible(
     state: RunState,
     *,
     config: RunConfig,
+    paths: RunPaths,
     pdf_fingerprint: str,
     context_hash: str,
 ) -> bool:
@@ -165,7 +182,22 @@ def is_resume_compatible(
         return False
     if state.context_hash != context_hash:
         return False
-    return state.settings == settings_fingerprint(config)
+    if state.settings != settings_fingerprint(config):
+        return False
+
+    if state.frozen_outdir_abs:
+        if Path(state.frozen_outdir_abs).expanduser().resolve() != paths.frozen_outdir:
+            return False
+    if state.run_dir_abs:
+        if Path(state.run_dir_abs).expanduser().resolve() != paths.run_dir:
+            return False
+    if state.run_started_at and state.run_started_at != paths.run_started_at:
+        return False
+    return True
+
+
+def record_final_docx_path(state: RunState, final_docx_path: Path) -> None:
+    state.final_docx_path_abs = str(final_docx_path.expanduser().resolve())
 
 
 def mark_page_done(

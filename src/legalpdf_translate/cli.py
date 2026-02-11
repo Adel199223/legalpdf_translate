@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .checkpoint import bool_from_text, parse_effort, parse_image_mode
+from .output_paths import require_writable_output_dir_text
 from .types import RunConfig, TargetLang
 from .workflow import TranslationWorkflow
 
@@ -40,12 +41,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--keep-intermediates",
         default="true",
-        help="Keep pages/images/run_state in run folder: true|false.",
+        help="Keep pages/images in run folder for resume/rebuild: true|false.",
     )
     parser.add_argument(
         "--context-file",
         default="",
         help="Optional context file path; empty string disables context.",
+    )
+    parser.add_argument(
+        "--rebuild-docx",
+        action="store_true",
+        help="Rebuild DOCX from existing run_dir/pages without API calls.",
     )
     return parser
 
@@ -55,9 +61,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        outdir_abs = require_writable_output_dir_text(args.outdir)
         config = RunConfig(
             pdf_path=Path(args.pdf).resolve(),
-            output_dir=Path(args.outdir).resolve(),
+            output_dir=outdir_abs,
             target_lang=args.lang,
             effort=parse_effort(args.effort),
             image_mode=parse_image_mode(args.images),
@@ -79,6 +86,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[{_timestamp()}] page={page}/{total} status={status}")
 
     workflow = TranslationWorkflow(log_callback=log_callback, progress_callback=progress_callback)
+
+    if args.rebuild_docx:
+        try:
+            rebuilt_path = workflow.rebuild_docx(config)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[{_timestamp()}] Rebuild error: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{_timestamp()}] Rebuild runtime error: {exc}", file=sys.stderr)
+            return 2
+        print(f"[{_timestamp()}] Saved DOCX: {rebuilt_path}")
+        return 0
+
     try:
         summary = workflow.run(config)
     except (FileNotFoundError, ValueError) as exc:
@@ -88,12 +108,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[{_timestamp()}] Runtime error: {exc}", file=sys.stderr)
         return 2
 
-    if summary.success:
-        print(f"[{_timestamp()}] Completed: {summary.output_docx}")
+    if summary.success and summary.output_docx is not None:
+        print(f"[{_timestamp()}] Saved DOCX: {summary.output_docx}")
         return 0
 
     if summary.partial_docx is not None:
         print(f"[{_timestamp()}] Partial export: {summary.partial_docx}")
+    if summary.error == "docx_write_failed" and summary.attempted_output_docx is not None:
+        print(
+            f"[{_timestamp()}] DOCX save failed at: {summary.attempted_output_docx}",
+            file=sys.stderr,
+        )
     print(f"[{_timestamp()}] Failed: {summary.error}; failed_page={summary.failed_page}", file=sys.stderr)
     return summary.exit_code
 

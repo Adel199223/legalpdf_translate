@@ -20,21 +20,23 @@ from .checkpoint import (
     mark_page_done,
     mark_page_failed,
     new_run_state,
+    record_final_docx_path,
     save_run_state_atomic,
     sha256_of_bytes,
     sha256_of_file,
     sha256_of_text,
 )
 from .config import load_environment
-from .docx_writer import assemble_docx, build_output_docx_path
+from .docx_writer import assemble_docx
 from .image_io import render_page_image_data_url, should_include_image
 from .openai_client import OpenAIResponsesClient
+from .output_normalize import normalize_output_text
+from .output_paths import require_writable_output_dir
 from .pdf_text_order import extract_ordered_page_text, get_page_count
 from .prompt_builder import build_page_prompt, build_retry_prompt
 from .resources_loader import load_system_instructions
 from .types import PageStatus, ReasoningEffort, RunConfig, RunState, RunSummary, TargetLang
 from .validators import parse_code_block_output, validate_ar, validate_enfr
-from .output_normalize import normalize_output_text
 
 
 @dataclass(slots=True)
@@ -66,17 +68,19 @@ class TranslationWorkflow:
 
     def run(self, config: RunConfig) -> RunSummary:
         self._cancel_event.clear()
-        self._last_config = config
+        self._last_config = None
         self._last_paths = None
         self._last_state = None
 
-        load_environment()
+        config = self._normalize_config(config)
         self._validate_config(config)
-        config.output_dir.mkdir(parents=True, exist_ok=True)
+        self._last_config = config
+
+        load_environment()
         if not config.keep_intermediates:
             self._log(
-                "keep_intermediates is OFF: run artifacts will be deleted after successful export; "
-                "resume/audit will not be available."
+                "keep_intermediates is OFF: pages/images will be deleted after successful export; "
+                "resume/rebuild will not be available."
             )
         context_text, context_hash = self._resolve_context(config)
 
@@ -86,13 +90,14 @@ class TranslationWorkflow:
             raise ValueError("No pages selected for translation.")
 
         pdf_fingerprint = sha256_of_file(config.pdf_path)
-        paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
+        paths, existing_state = self._resolve_paths_for_run(config)
         ensure_run_dirs(paths)
         self._last_paths = paths
 
         run_state = self._load_or_initialize_run_state(
             config=config,
             paths=paths,
+            existing_state=existing_state,
             pdf_fingerprint=pdf_fingerprint,
             context_hash=context_hash,
             total_pages=total_pages,
@@ -175,15 +180,33 @@ class TranslationWorkflow:
         completed_pages = len(list_completed_pages(run_state))
 
         if failed_page is None and not self._cancel_event.is_set():
-            output_docx = build_output_docx_path(config.output_dir, config.pdf_path.stem, config.target_lang)
-            assemble_docx(
-                paths.pages_dir,
-                output_docx,
-                lang=config.target_lang,
-                page_breaks=config.page_breaks,
-            )
+            try:
+                output_docx = assemble_docx(
+                    paths.pages_dir,
+                    paths.final_docx_path,
+                    lang=config.target_lang,
+                    page_breaks=config.page_breaks,
+                )
+            except Exception as exc:  # noqa: BLE001
+                run_state.final_docx_path_abs = None
+                save_run_state_atomic(paths.run_state_path, run_state)
+                self._log(f"DOCX save failed at {paths.final_docx_path}: {exc}")
+                return RunSummary(
+                    success=False,
+                    exit_code=2,
+                    output_docx=None,
+                    partial_docx=None,
+                    run_dir=paths.run_dir,
+                    completed_pages=completed_pages,
+                    failed_page=None,
+                    error="docx_write_failed",
+                    attempted_output_docx=paths.final_docx_path,
+                )
+
+            record_final_docx_path(run_state, output_docx)
+            save_run_state_atomic(paths.run_state_path, run_state)
             if not config.keep_intermediates:
-                shutil.rmtree(paths.run_dir, ignore_errors=True)
+                self._cleanup_intermediates(paths)
             return RunSummary(
                 success=True,
                 exit_code=0,
@@ -193,6 +216,7 @@ class TranslationWorkflow:
                 completed_pages=completed_pages,
                 failed_page=None,
                 error=None,
+                attempted_output_docx=output_docx,
             )
 
         partial_docx = None
@@ -222,21 +246,68 @@ class TranslationWorkflow:
             error="compliance_failure" if compliance_failure else "runtime_failure",
         )
 
+    def rebuild_docx(self, config: RunConfig) -> Path:
+        config = self._normalize_config(config)
+        self._validate_config(config)
+
+        base_paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
+        run_state = load_run_state(base_paths.run_state_path)
+
+        effective_outdir = base_paths.frozen_outdir
+        run_started_at = base_paths.run_started_at
+        run_dir = base_paths.run_dir
+        pages_dir = base_paths.pages_dir
+        run_state_path = base_paths.run_state_path
+
+        if run_state is not None:
+            if run_state.frozen_outdir_abs:
+                effective_outdir = require_writable_output_dir(Path(run_state.frozen_outdir_abs))
+            if run_state.run_started_at:
+                run_started_at = run_state.run_started_at
+            if run_state.run_dir_abs:
+                run_dir = Path(run_state.run_dir_abs).expanduser().resolve()
+                pages_dir = run_dir / "pages"
+                run_state_path = run_dir / "run_state.json"
+
+        final_paths = build_run_paths(
+            output_dir=effective_outdir,
+            pdf_path=config.pdf_path,
+            lang=config.target_lang,
+            run_started_at=run_started_at,
+        )
+
+        page_files = sorted(pages_dir.glob("page_*.txt"))
+        if not page_files:
+            raise ValueError(f"No completed page files found for rebuild: {pages_dir}")
+
+        output_docx = assemble_docx(
+            pages_dir,
+            final_paths.final_docx_path,
+            lang=config.target_lang,
+            page_breaks=config.page_breaks,
+        )
+
+        if run_state is not None:
+            run_state.frozen_outdir_abs = str(effective_outdir)
+            run_state.run_dir_abs = str(run_dir)
+            run_state.run_started_at = run_started_at
+            record_final_docx_path(run_state, output_docx)
+            save_run_state_atomic(run_state_path, run_state)
+
+        self._last_config = config
+        self._last_paths = final_paths
+        self._last_state = run_state
+        return output_docx
+
     def export_partial_docx(self) -> Path | None:
         if self._last_config is None or self._last_paths is None or self._last_state is None:
             return None
         completed = list_completed_pages(self._last_state)
         if not completed:
             return None
-        output_docx = build_output_docx_path(
-            self._last_config.output_dir,
-            self._last_config.pdf_path.stem,
-            self._last_config.target_lang,
-            partial=True,
-        )
         return assemble_docx(
             self._last_paths.pages_dir,
-            output_docx,
+            self._last_paths.partial_docx_path,
             lang=self._last_config.target_lang,
             page_breaks=self._last_config.page_breaks,
         )
@@ -354,29 +425,75 @@ class TranslationWorkflow:
             )
         return _Evaluation(ok=True, normalized_text=normalized, defect_reason=None)
 
+    def _resolve_paths_for_run(self, config: RunConfig) -> tuple[RunPaths, RunState | None]:
+        paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
+        existing = load_run_state(paths.run_state_path)
+        if not config.resume or existing is None:
+            return paths, existing
+
+        if existing.frozen_outdir_abs:
+            state_outdir = Path(existing.frozen_outdir_abs).expanduser().resolve()
+            if state_outdir != paths.frozen_outdir:
+                raise ValueError(
+                    "Checkpoint output folder does not match the selected output folder. "
+                    "Use New Run (resume disabled)."
+                )
+        run_started_at = existing.run_started_at or paths.run_started_at
+        resolved_paths = build_run_paths(
+            output_dir=config.output_dir,
+            pdf_path=config.pdf_path,
+            lang=config.target_lang,
+            run_started_at=run_started_at,
+        )
+        return resolved_paths, existing
+
     def _load_or_initialize_run_state(
         self,
         *,
         config: RunConfig,
         paths: RunPaths,
+        existing_state: RunState | None,
         pdf_fingerprint: str,
         context_hash: str,
         total_pages: int,
         max_pages_effective: int,
     ) -> RunState:
-        existing = load_run_state(paths.run_state_path)
-        if config.resume and existing is not None and is_resume_compatible(
-            existing,
-            config=config,
-            pdf_fingerprint=pdf_fingerprint,
-            context_hash=context_hash,
-        ):
-            self._log("Compatible checkpoint found. Resuming from completed pages.")
-            return existing
+        existing = existing_state
+        if existing is None:
+            existing = load_run_state(paths.run_state_path)
+
+        if config.resume and existing is not None:
+            if existing.frozen_outdir_abs:
+                frozen_from_state = Path(existing.frozen_outdir_abs).expanduser().resolve()
+                if frozen_from_state != paths.frozen_outdir:
+                    raise ValueError(
+                        "Checkpoint output folder mismatch. Start a new run with resume disabled."
+                    )
+            if existing.run_dir_abs:
+                run_dir_from_state = Path(existing.run_dir_abs).expanduser().resolve()
+                if run_dir_from_state != paths.run_dir:
+                    raise ValueError(
+                        "Checkpoint run directory mismatch. Start a new run with resume disabled."
+                    )
+
+            if is_resume_compatible(
+                existing,
+                config=config,
+                paths=paths,
+                pdf_fingerprint=pdf_fingerprint,
+                context_hash=context_hash,
+            ):
+                existing.frozen_outdir_abs = str(paths.frozen_outdir)
+                existing.run_dir_abs = str(paths.run_dir)
+                existing.run_started_at = paths.run_started_at
+                save_run_state_atomic(paths.run_state_path, existing)
+                self._log("Compatible checkpoint found. Resuming from completed pages.")
+                return existing
 
         clear_run_dirs(paths)
         state = new_run_state(
             config=config,
+            paths=paths,
             pdf_fingerprint=pdf_fingerprint,
             context_hash=context_hash,
             total_pages=total_pages,
@@ -384,6 +501,23 @@ class TranslationWorkflow:
         )
         save_run_state_atomic(paths.run_state_path, state)
         return state
+
+    def _normalize_config(self, config: RunConfig) -> RunConfig:
+        outdir_abs = require_writable_output_dir(config.output_dir)
+        context_file_abs = config.context_file.expanduser().resolve() if config.context_file else None
+        return RunConfig(
+            pdf_path=config.pdf_path.expanduser().resolve(),
+            output_dir=outdir_abs,
+            target_lang=config.target_lang,
+            effort=config.effort,
+            image_mode=config.image_mode,
+            max_pages=config.max_pages,
+            resume=config.resume,
+            page_breaks=config.page_breaks,
+            keep_intermediates=config.keep_intermediates,
+            context_file=context_file_abs,
+            context_text=config.context_text,
+        )
 
     def _validate_config(self, config: RunConfig) -> None:
         if not config.pdf_path.exists():
@@ -402,6 +536,10 @@ class TranslationWorkflow:
         if config.context_text:
             return config.context_text, sha256_of_text(config.context_text)
         return None, sha256_of_text(None)
+
+    def _cleanup_intermediates(self, paths: RunPaths) -> None:
+        shutil.rmtree(paths.pages_dir, ignore_errors=True)
+        shutil.rmtree(paths.images_dir, ignore_errors=True)
 
     def _log(self, message: str) -> None:
         if self._log_callback:
