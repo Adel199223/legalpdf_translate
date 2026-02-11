@@ -87,6 +87,7 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.start_page_var = tk.StringVar(value="1")
         self.end_page_var = tk.StringVar(value="")
         self.max_pages_var = tk.StringVar(value="")
+        self.workers_var = tk.StringVar(value="3")
         self.resume_var = tk.BooleanVar(value=True)
         self.page_breaks_var = tk.BooleanVar(value=True)
         self.keep_var = tk.BooleanVar(value=True)
@@ -163,6 +164,13 @@ class LegalPDFTranslateApp(ttk.Frame):
         max_pages = data.get("max_pages")
         if isinstance(max_pages, int) and max_pages > 0:
             self.max_pages_var.set(str(max_pages))
+        workers = data.get("workers", data.get("default_workers", 3))
+        try:
+            workers_int = int(workers)  # type: ignore[arg-type]
+        except Exception:
+            workers_int = 3
+        workers_int = max(1, min(6, workers_int))
+        self.workers_var.set(str(workers_int))
 
     def _apply_theme_from_settings(self, settings: dict[str, object] | None = None) -> None:
         effective = settings if settings is not None else self.settings_data
@@ -249,29 +257,39 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.max_pages_entry = ttk.Entry(self.advanced, textvariable=self.max_pages_var, width=12)
         self.max_pages_entry.grid(row=4, column=1, sticky="w", pady=(6, 0))
 
+        ttk.Label(self.advanced, text="Parallel workers").grid(row=5, column=0, sticky="w", pady=(6, 0))
+        self.workers_combo = ttk.Combobox(
+            self.advanced,
+            textvariable=self.workers_var,
+            values=["1", "2", "3", "4", "5", "6"],
+            state="readonly",
+            width=12,
+        )
+        self.workers_combo.grid(row=5, column=1, sticky="w", pady=(6, 0))
+
         self.resume_check = ttk.Checkbutton(self.advanced, text="Resume", variable=self.resume_var)
-        self.resume_check.grid(row=5, column=0, sticky="w", pady=(6, 0))
+        self.resume_check.grid(row=6, column=0, sticky="w", pady=(6, 0))
         self.page_breaks_check = ttk.Checkbutton(
             self.advanced,
             text="Insert page breaks",
             variable=self.page_breaks_var,
         )
-        self.page_breaks_check.grid(row=5, column=1, sticky="w", pady=(6, 0))
+        self.page_breaks_check.grid(row=6, column=1, sticky="w", pady=(6, 0))
         self.keep_check = ttk.Checkbutton(self.advanced, text="Keep intermediates", variable=self.keep_var)
-        self.keep_check.grid(row=6, column=0, sticky="w", pady=(6, 0))
+        self.keep_check.grid(row=7, column=0, sticky="w", pady=(6, 0))
 
-        ttk.Label(self.advanced, text="Context file").grid(row=7, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(self.advanced, text="Context file").grid(row=8, column=0, sticky="w", pady=(6, 0))
         self.context_file_entry = ttk.Entry(self.advanced, textvariable=self.context_file_var)
-        self.context_file_entry.grid(row=7, column=1, sticky="ew", pady=(6, 0))
+        self.context_file_entry.grid(row=8, column=1, sticky="ew", pady=(6, 0))
         self.context_browse_btn = ttk.Button(self.advanced, text="Browse", command=self._pick_context)
-        self.context_browse_btn.grid(row=7, column=2, sticky="ew", pady=(6, 0), padx=(6, 0))
+        self.context_browse_btn.grid(row=8, column=2, sticky="ew", pady=(6, 0), padx=(6, 0))
 
-        ttk.Label(self.advanced, text="Context text").grid(row=8, column=0, sticky="nw", pady=(6, 0))
+        ttk.Label(self.advanced, text="Context text").grid(row=9, column=0, sticky="nw", pady=(6, 0))
         self.context_text = scrolledtext.ScrolledText(self.advanced, height=5, wrap=tk.WORD)
-        self.context_text.grid(row=8, column=1, columnspan=2, sticky="ew", pady=(6, 0))
+        self.context_text.grid(row=9, column=1, columnspan=2, sticky="ew", pady=(6, 0))
         apply_text_widget_theme(self.context_text)
 
-        ttk.Label(self.advanced, text="OCR mode").grid(row=9, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(self.advanced, text="OCR mode").grid(row=10, column=0, sticky="w", pady=(6, 0))
         self.ocr_mode_combo = ttk.Combobox(
             self.advanced,
             textvariable=self.ocr_mode_var,
@@ -279,9 +297,9 @@ class LegalPDFTranslateApp(ttk.Frame):
             state="readonly",
             width=18,
         )
-        self.ocr_mode_combo.grid(row=9, column=1, sticky="w", pady=(6, 0))
+        self.ocr_mode_combo.grid(row=10, column=1, sticky="w", pady=(6, 0))
 
-        ttk.Label(self.advanced, text="OCR engine").grid(row=10, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(self.advanced, text="OCR engine").grid(row=11, column=0, sticky="w", pady=(6, 0))
         self.ocr_engine_combo = ttk.Combobox(
             self.advanced,
             textvariable=self.ocr_engine_var,
@@ -289,7 +307,7 @@ class LegalPDFTranslateApp(ttk.Frame):
             state="readonly",
             width=18,
         )
-        self.ocr_engine_combo.grid(row=10, column=1, sticky="w", pady=(6, 0))
+        self.ocr_engine_combo.grid(row=11, column=1, sticky="w", pady=(6, 0))
 
         controls = ttk.Frame(self)
         controls.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(10, 0))
@@ -366,6 +384,7 @@ class LegalPDFTranslateApp(ttk.Frame):
             (self.start_page_entry, tk.NORMAL),
             (self.end_page_entry, tk.NORMAL),
             (self.max_pages_entry, tk.NORMAL),
+            (self.workers_combo, "readonly"),
             (self.resume_check, tk.NORMAL),
             (self.page_breaks_check, tk.NORMAL),
             (self.keep_check, tk.NORMAL),
@@ -540,6 +559,7 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.start_page_var.trace_add("write", self._on_setting_changed)
         self.end_page_var.trace_add("write", self._on_setting_changed)
         self.max_pages_var.trace_add("write", self._on_setting_changed)
+        self.workers_var.trace_add("write", self._on_setting_changed)
 
     def _on_form_input_changed(self, *_: object) -> None:
         self._refresh_controls()
@@ -636,6 +656,8 @@ class LegalPDFTranslateApp(ttk.Frame):
         start_page = self._parse_required_int(start_text, "Start page")
         end_page = self._parse_optional_int(self.end_page_var.get(), "End page")
         max_pages = self._parse_optional_int(self.max_pages_var.get(), "Max pages")
+        workers = self._parse_required_int(self.workers_var.get().strip() or "3", "Parallel workers")
+        workers = max(1, min(6, workers))
 
         context_file_text = self.context_file_var.get().strip()
         context_file = Path(context_file_text).expanduser().resolve() if context_file_text else None
@@ -655,6 +677,7 @@ class LegalPDFTranslateApp(ttk.Frame):
             start_page=start_page,
             end_page=end_page,
             max_pages=max_pages,
+            workers=workers,
             resume=self.resume_var.get(),
             page_breaks=self.page_breaks_var.get(),
             keep_intermediates=self.keep_var.get(),
@@ -1002,6 +1025,11 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.start_page_var.set(str(self.settings_data.get("default_start_page", 1)))
         default_end = self.settings_data.get("default_end_page")
         self.end_page_var.set("" if default_end in (None, "") else str(default_end))
+        try:
+            default_workers = int(self.settings_data.get("default_workers", 3))
+        except (TypeError, ValueError):
+            default_workers = 3
+        self.workers_var.set(str(max(1, min(6, default_workers))))
         default_outdir = str(self.settings_data.get("default_outdir", "") or "")
         if default_outdir and not self.outdir_var.get().strip():
             self.outdir_var.set(default_outdir)
@@ -1064,6 +1092,7 @@ class LegalPDFTranslateApp(ttk.Frame):
                 "start_page": start_page,
                 "end_page": end_page,
                 "max_pages": max_pages,
+                "workers": max(1, min(6, self._int_from_text(self.workers_var.get(), allow_blank=True, default=3) or 3)),
             }
             save_gui_settings(values)
             self.settings_data.update(values)

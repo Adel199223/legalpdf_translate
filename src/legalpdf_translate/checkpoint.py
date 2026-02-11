@@ -97,6 +97,7 @@ def settings_fingerprint(config: RunConfig) -> dict[str, Any]:
         "start_page": config.start_page,
         "end_page": config.end_page,
         "max_pages": config.max_pages,
+        "workers": config.workers,
     }
 
 
@@ -117,6 +118,7 @@ def new_run_state(
     selection_page_count = len(selected_pages)
 
     now = _utc_now()
+    selection_count = len(selected_pages)
     pages = {
         str(page_num): {
             "status": PageStatus.PENDING.value,
@@ -144,11 +146,15 @@ def new_run_state(
         frozen_outdir_abs=str(paths.frozen_outdir),
         run_dir_abs=str(paths.run_dir),
         run_status="running",
+        halt_reason=None,
         final_docx_path_abs=None,
         run_started_at=paths.run_started_at,
         finished_at=None,
         pages=pages,
         last_completed_page=0,
+        done_count=0,
+        failed_count=0,
+        pending_count=selection_count,
     )
 
 
@@ -174,6 +180,11 @@ def load_run_state(path: Path) -> RunState | None:
         finished_at = None
     else:
         finished_at = str(finished_at_raw)
+    halt_reason_raw = data.get("halt_reason")
+    if halt_reason_raw in (None, ""):
+        halt_reason = None
+    else:
+        halt_reason = str(halt_reason_raw)
 
     pages = dict(data["pages"])
     page_numbers: list[int] = []
@@ -186,6 +197,15 @@ def load_run_state(path: Path) -> RunState | None:
     fallback_selection_start = page_numbers[0] if page_numbers else 1
     fallback_selection_end = page_numbers[-1] if page_numbers else int(data.get("max_pages_effective", 0))
     fallback_selection_count = len(page_numbers)
+    done_count = 0
+    failed_count = 0
+    for page_data in pages.values():
+        status = str(page_data.get("status", "")).strip().lower()
+        if status == PageStatus.DONE.value:
+            done_count += 1
+        elif status == PageStatus.FAILED.value:
+            failed_count += 1
+    pending_count = max(0, fallback_selection_count - done_count - failed_count)
 
     return RunState(
         version=int(data["version"]),
@@ -204,11 +224,15 @@ def load_run_state(path: Path) -> RunState | None:
         frozen_outdir_abs=str(data.get("frozen_outdir_abs", path.parent.parent.resolve())),
         run_dir_abs=str(data.get("run_dir_abs", path.parent.resolve())),
         run_status=run_status,
+        halt_reason=halt_reason,
         final_docx_path_abs=final_docx,
         run_started_at=str(data.get("run_started_at", "")),
         finished_at=finished_at,
         pages=pages,
         last_completed_page=int(data.get("last_completed_page", 0)),
+        done_count=int(data.get("done_count", done_count)),
+        failed_count=int(data.get("failed_count", failed_count)),
+        pending_count=int(data.get("pending_count", pending_count)),
     )
 
 
@@ -334,6 +358,7 @@ def mark_page_done(
         "error": None,
     }
     state.last_completed_page = max(state.last_completed_page, page_number)
+    _refresh_counts(state)
 
 
 def mark_page_failed(
@@ -352,6 +377,22 @@ def mark_page_failed(
         "usage": usage or {},
         "error": error,
     }
+    _refresh_counts(state)
+
+
+def _refresh_counts(state: RunState) -> None:
+    done_count = 0
+    failed_count = 0
+    for page_data in state.pages.values():
+        status = str(page_data.get("status", "")).strip().lower()
+        if status == PageStatus.DONE.value:
+            done_count += 1
+        elif status == PageStatus.FAILED.value:
+            failed_count += 1
+    total = len(state.pages)
+    state.done_count = done_count
+    state.failed_count = failed_count
+    state.pending_count = max(0, total - done_count - failed_count)
 
 
 def list_completed_pages(state: RunState) -> list[int]:

@@ -46,10 +46,13 @@ CLI options:
 - `--effort`: `high|xhigh`
 - `--images`: `off|auto|always`
 - `--max-pages`: integer or omit for all pages
+- `--workers`: `1..6` (default `3`)
 - `--resume`: `true|false`
 - `--page-breaks`: `true|false`
 - `--keep-intermediates`: `true|false`
 - `--context-file`: path or empty string
+
+Recommended workers: `3` (default). For PDFs under ~20 pages, `5` is often faster. If you see frequent `429`/timeout retries, reduce workers.
 
 ## Resume Behavior
 

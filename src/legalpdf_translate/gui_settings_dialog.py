@@ -78,7 +78,7 @@ class GuiSettingsDialog(tk.Toplevel):
         self.default_lang_var = tk.StringVar(value=str(settings.get("default_lang", "EN")))
         self.default_effort_var = tk.StringVar(value=str(settings.get("default_effort", "high")))
         self.default_images_mode_var = tk.StringVar(value=str(settings.get("default_images_mode", "auto")))
-        self.default_workers_var = tk.StringVar(value=str(settings.get("default_workers", 1)))
+        self.default_workers_var = tk.StringVar(value=str(settings.get("default_workers", 3)))
         self.default_resume_var = tk.BooleanVar(value=bool(settings.get("default_resume", True)))
         self.default_keep_var = tk.BooleanVar(value=bool(settings.get("default_keep_intermediates", True)))
         self.default_breaks_var = tk.BooleanVar(value=bool(settings.get("default_page_breaks", True)))
@@ -248,13 +248,13 @@ class GuiSettingsDialog(tk.Toplevel):
             width=12,
         ).grid(row=2, column=1, sticky="w", pady=(6, 0))
         ttk.Label(tab, text="Default workers").grid(row=3, column=0, sticky="w", pady=(6, 0))
-        self.default_workers_entry = ttk.Entry(tab, textvariable=self.default_workers_var, width=12, state=tk.DISABLED)
-        self.default_workers_entry.grid(row=3, column=1, sticky="w", pady=(6, 0))
-        ttk.Label(
+        ttk.Combobox(
             tab,
-            text="Not active yet (v1 runs 1 page at a time)",
-            style="Muted.TLabel",
-        ).grid(row=3, column=2, sticky="w", padx=(8, 0), pady=(6, 0))
+            textvariable=self.default_workers_var,
+            values=["1", "2", "3", "4", "5", "6"],
+            state="readonly",
+            width=12,
+        ).grid(row=3, column=1, sticky="w", pady=(6, 0))
         ttk.Label(tab, text="Default start page").grid(row=4, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(tab, textvariable=self.default_start_var, width=12).grid(row=4, column=1, sticky="w", pady=(6, 0))
         ttk.Label(tab, text="Default end page").grid(row=5, column=0, sticky="w", pady=(6, 0))
@@ -452,7 +452,7 @@ class GuiSettingsDialog(tk.Toplevel):
         self.default_lang_var.set("EN")
         self.default_effort_var.set("high")
         self.default_images_mode_var.set("auto")
-        self.default_workers_var.set("1")
+        self.default_workers_var.set("3")
         self.default_resume_var.set(True)
         self.default_keep_var.set(True)
         self.default_breaks_var.set(True)
@@ -493,7 +493,7 @@ class GuiSettingsDialog(tk.Toplevel):
             "default_lang": self.default_lang_var.get().strip().upper(),
             "default_effort": self.default_effort_var.get().strip().lower(),
             "default_images_mode": self.default_images_mode_var.get().strip().lower(),
-            "default_workers": _to_int(self.default_workers_var.get(), field="Default workers", min_value=1, max_value=64),
+            "default_workers": _to_int(self.default_workers_var.get(), field="Default workers", min_value=1, max_value=6),
             "default_resume": bool(self.default_resume_var.get()),
             "default_keep_intermediates": bool(self.default_keep_var.get()),
             "default_page_breaks": bool(self.default_breaks_var.get()),

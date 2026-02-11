@@ -60,6 +60,7 @@ class RunConfig:
     start_page: int = 1
     end_page: int | None = None
     max_pages: int | None = None
+    workers: int = 3
     resume: bool = True
     page_breaks: bool = True
     keep_intermediates: bool = True
@@ -101,11 +102,15 @@ class RunState:
     frozen_outdir_abs: str
     run_dir_abs: str
     run_status: str
+    halt_reason: str | None
     final_docx_path_abs: str | None
     run_started_at: str
     finished_at: str | None
     pages: dict[str, dict[str, Any]]
     last_completed_page: int
+    done_count: int
+    failed_count: int
+    pending_count: int
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -125,11 +130,15 @@ class RunState:
             "frozen_outdir_abs": self.frozen_outdir_abs,
             "run_dir_abs": self.run_dir_abs,
             "run_status": self.run_status,
+            "halt_reason": self.halt_reason,
             "final_docx_path_abs": self.final_docx_path_abs,
             "run_started_at": self.run_started_at,
             "finished_at": self.finished_at,
             "pages": self.pages,
             "last_completed_page": self.last_completed_page,
+            "done_count": self.done_count,
+            "failed_count": self.failed_count,
+            "pending_count": self.pending_count,
         }
 
 

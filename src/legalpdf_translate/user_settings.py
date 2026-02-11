@@ -61,7 +61,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "default_lang": "EN",
     "default_effort": "high",
     "default_images_mode": "auto",
-    "default_workers": 1,
+    "default_workers": 3,
     "default_resume": True,
     "default_keep_intermediates": True,
     "default_page_breaks": True,
@@ -88,6 +88,7 @@ ALLOWED_GUI_KEYS = {
     "default_effort",
     "default_images_mode",
     "default_workers",
+    "workers",
     "default_resume",
     "default_keep_intermediates",
     "default_page_breaks",
@@ -151,6 +152,7 @@ DEFAULT_GUI_SETTINGS: dict[str, Any] = {
     "start_page": 1,
     "end_page": None,
     "max_pages": None,
+    "workers": 3,
     **DEFAULT_OCR_SETTINGS,
 }
 DEFAULT_JOBLOG_SETTINGS: dict[str, Any] = {
@@ -332,6 +334,8 @@ def load_gui_settings() -> dict[str, Any]:
         merged["default_start_page"] = data["start_page"]
     if "default_end_page" not in data and "end_page" in data:
         merged["default_end_page"] = data["end_page"]
+    if "default_workers" not in data and "workers" in data:
+        merged["default_workers"] = data["workers"]
     if "default_outdir" not in data and "last_outdir" in data:
         merged["default_outdir"] = data["last_outdir"]
     if "ocr_mode_default" not in data and "ocr_mode" in data:
@@ -349,6 +353,7 @@ def load_gui_settings() -> dict[str, Any]:
     merged["start_page"] = _coerce_int(merged.get("start_page"), 1)
     merged["end_page"] = _coerce_optional_int(merged.get("end_page"))
     merged["max_pages"] = _coerce_optional_int(merged.get("max_pages"))
+    merged["workers"] = max(1, min(6, _coerce_int(merged.get("workers"), 3)))
     merged["ocr_mode"] = _coerce_choice(
         merged.get("ocr_mode"),
         default="auto",
@@ -391,7 +396,7 @@ def load_gui_settings() -> dict[str, Any]:
         default="auto",
         allowed={"off", "auto", "always"},
     )
-    merged["default_workers"] = max(1, _coerce_int(merged.get("default_workers"), 1))
+    merged["default_workers"] = max(1, min(6, _coerce_int(merged.get("default_workers"), 3)))
     merged["default_resume"] = _coerce_bool(merged.get("default_resume"), True)
     merged["default_keep_intermediates"] = _coerce_bool(merged.get("default_keep_intermediates"), True)
     merged["default_page_breaks"] = _coerce_bool(merged.get("default_page_breaks"), True)

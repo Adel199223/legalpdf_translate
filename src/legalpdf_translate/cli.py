@@ -51,6 +51,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--effort", default="high", choices=["high", "xhigh"], help="Reasoning effort.")
     parser.add_argument("--images", default="auto", choices=["off", "auto", "always"], help="Image mode.")
     parser.add_argument("--max-pages", type=int, default=None, help="Optional maximum pages to translate.")
+    parser.add_argument("--workers", type=int, default=3, help="Parallel workers (1..6).")
     parser.add_argument("--resume", default="true", help="Resume from checkpoints: true|false.")
     parser.add_argument("--page-breaks", default="true", help="Insert page breaks: true|false.")
     parser.add_argument(
@@ -146,6 +147,14 @@ def _validate_required_run_args(args: argparse.Namespace) -> tuple[str, TargetLa
     return args.pdf, args.lang, args.outdir
 
 
+def _clamp_workers(value: int) -> int:
+    if value < 1:
+        return 1
+    if value > 6:
+        return 6
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
@@ -163,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
             effort=parse_effort(args.effort),
             image_mode=parse_image_mode(args.images),
             max_pages=args.max_pages,
+            workers=_clamp_workers(int(args.workers)),
             resume=bool_from_text(args.resume),
             page_breaks=bool_from_text(args.page_breaks),
             keep_intermediates=bool_from_text(args.keep_intermediates),

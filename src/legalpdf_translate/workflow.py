@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import random
 import shutil
 import threading
+import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from .arabic_pre_tokenize import pretokenize_arabic_source
 from .checkpoint import (
@@ -126,7 +129,6 @@ class TranslationWorkflow:
         save_run_state_atomic(paths.run_state_path, run_state)
         self._last_state = run_state
 
-        client = self._provided_client
         instructions = load_system_instructions(config.target_lang)
         ocr_engine: OCREngine | None = None
         if config.ocr_mode != OcrMode.OFF:
@@ -138,80 +140,174 @@ class TranslationWorkflow:
                 ocr_engine = None
                 self._log("OCR engine unavailable; continuing without OCR for this run.")
 
+        state_lock = threading.Lock()
         failed_page: int | None = None
         compliance_failure = False
-        for selected_index, page_number in enumerate(selected_pages, start=1):
-            self._log(f"Processing {selected_index}/{selection_page_count} (PDF page {page_number})")
-            if self._cancel_event.is_set():
-                self._log("Cancellation requested; stopping before next page.")
-                break
+        halt_reason: str | None = None
+
+        thread_local = threading.local()
+        provided_client = self._provided_client
+
+        def _get_thread_client() -> OpenAIResponsesClient | Any:
+            cached = getattr(thread_local, "client", None)
+            if isinstance(cached, OpenAIResponsesClient):
+                return cached
+            if provided_client is not None and not isinstance(provided_client, OpenAIResponsesClient):
+                return provided_client
+            if isinstance(provided_client, OpenAIResponsesClient):
+                client_instance = OpenAIResponsesClient(
+                    max_transport_retries=provided_client._max_transport_retries,
+                    base_backoff_seconds=provided_client._base_backoff_seconds,
+                    backoff_cap_seconds=provided_client._backoff_cap_seconds,
+                    pre_call_jitter_seconds=provided_client._pre_call_jitter_seconds,
+                    request_timeout_seconds=provided_client._request_timeout_seconds,
+                    logger=self._log,
+                )
+            else:
+                client_instance = OpenAIResponsesClient(logger=self._log)
+            thread_local.client = client_instance
+            return client_instance
+
+        pending_pages: list[int] = []
+        for page_number in selected_pages:
             page_state = run_state.pages.get(str(page_number))
             if config.resume and page_state and page_state.get("status") == PageStatus.DONE.value:
                 self._log(f"page={page_number} image_used=False retry_used=False status=skipped")
-                self._progress(selected_index, selection_page_count, "skipped (already done)")
                 continue
+            pending_pages.append(page_number)
 
-            self._progress(selected_index, selection_page_count, "processing")
-            try:
-                if client is None:
-                    client = OpenAIResponsesClient(logger=self._log)
-                page_result = self._process_page(
-                    client=client,
-                    config=config,
-                    paths=paths,
-                    instructions=instructions,
-                    context_text=context_text,
-                    page_number=page_number,
-                    total_pages=total_pages,
-                    ocr_engine=ocr_engine,
-                )
-            except Exception as exc:  # noqa: BLE001
-                self._log(f"Runtime failure on page {page_number}: {exc}")
-                page_result = _PageOutcome(
-                    status=PageStatus.FAILED,
-                    image_used=False,
-                    retry_used=False,
-                    usage={},
-                    error="runtime_failure",
-                )
-            if page_result.status == PageStatus.DONE:
-                self._log(
-                    f"page={page_number} image_used={page_result.image_used} "
-                    f"retry_used={page_result.retry_used} status=done"
-                )
-                mark_page_done(
-                    run_state,
-                    page_number,
-                    image_used=page_result.image_used,
-                    retry_used=page_result.retry_used,
-                    usage=page_result.usage,
-                )
-                save_run_state_atomic(paths.run_state_path, run_state)
-                self._progress(selected_index, selection_page_count, "done")
-                continue
+        if run_state.done_count > 0:
+            self._progress(run_state.done_count, selection_page_count, f"Resumed {run_state.done_count} page(s)")
 
-            failed_page = page_number
-            compliance_failure = page_result.error == "compliance_failure"
-            self._log(
-                f"page={page_number} image_used={page_result.image_used} "
-                f"retry_used={page_result.retry_used} status=failed"
-            )
-            mark_page_failed(
-                run_state,
-                page_number,
-                image_used=page_result.image_used,
-                retry_used=page_result.retry_used,
-                usage=page_result.usage,
-                error=page_result.error or "unknown_failure",
-            )
-            save_run_state_atomic(paths.run_state_path, run_state)
-            self._progress(selected_index, selection_page_count, "failed")
-            break
+        if pending_pages:
+            worker_count = max(1, min(6, config.workers, len(pending_pages)))
+
+            def _run_page_task(page_number: int) -> _PageOutcome | None:
+                if self._cancel_event.is_set():
+                    return None
+                local_client = _get_thread_client()
+                self._log(f"Processing PDF page {page_number}")
+                try:
+                    return self._process_page(
+                        client=local_client,
+                        config=config,
+                        paths=paths,
+                        instructions=instructions,
+                        context_text=context_text,
+                        page_number=page_number,
+                        total_pages=total_pages,
+                        ocr_engine=ocr_engine,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    self._log(f"Runtime failure on page {page_number}: {exc}")
+                    return _PageOutcome(
+                        status=PageStatus.FAILED,
+                        image_used=False,
+                        retry_used=False,
+                        usage={},
+                        error="runtime_failure",
+                    )
+
+            futures: dict[Future[_PageOutcome | None], int] = {}
+            next_page_idx = 0
+            stop_submitting = False
+            submitted_count = 0
+
+            def _submit_next(executor: ThreadPoolExecutor) -> bool:
+                nonlocal next_page_idx, submitted_count
+                if stop_submitting or self._cancel_event.is_set():
+                    return False
+                if next_page_idx >= len(pending_pages):
+                    return False
+                page_number = pending_pages[next_page_idx]
+                next_page_idx += 1
+                if worker_count > 1 and submitted_count > 0:
+                    time.sleep(random.uniform(0.0, 0.12))
+                future = executor.submit(_run_page_task, page_number)
+                futures[future] = page_number
+                submitted_count += 1
+                return True
+
+            with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="lpt-page") as executor:
+                for _ in range(worker_count):
+                    if not _submit_next(executor):
+                        break
+
+                while futures:
+                    if self._cancel_event.is_set():
+                        stop_submitting = True
+                        for future in list(futures.keys()):
+                            if future.cancel():
+                                futures.pop(future, None)
+                        if not futures:
+                            break
+
+                    done_set, _ = wait(set(futures.keys()), return_when=FIRST_COMPLETED)
+                    for future in done_set:
+                        page_number = futures.pop(future, None)
+                        if page_number is None:
+                            continue
+                        if future.cancelled():
+                            continue
+
+                        outcome = future.result()
+                        if outcome is None:
+                            continue
+
+                        if outcome.status == PageStatus.DONE:
+                            self._log(
+                                f"page={page_number} image_used={outcome.image_used} "
+                                f"retry_used={outcome.retry_used} status=done"
+                            )
+                            with state_lock:
+                                mark_page_done(
+                                    run_state,
+                                    page_number,
+                                    image_used=outcome.image_used,
+                                    retry_used=outcome.retry_used,
+                                    usage=outcome.usage,
+                                )
+                                save_run_state_atomic(paths.run_state_path, run_state)
+                                done_count = run_state.done_count
+                            self._progress(done_count, selection_page_count, f"Page {page_number} finished")
+                        else:
+                            self._log(
+                                f"page={page_number} image_used={outcome.image_used} "
+                                f"retry_used={outcome.retry_used} status=failed"
+                            )
+                            with state_lock:
+                                mark_page_failed(
+                                    run_state,
+                                    page_number,
+                                    image_used=outcome.image_used,
+                                    retry_used=outcome.retry_used,
+                                    usage=outcome.usage,
+                                    error=outcome.error or "unknown_failure",
+                                )
+                                if failed_page is None:
+                                    run_state.halt_reason = (
+                                        f"Hard failure at page {page_number}: {outcome.error or 'unknown_failure'}"
+                                    )
+                                save_run_state_atomic(paths.run_state_path, run_state)
+                                done_count = run_state.done_count
+                            if failed_page is None:
+                                failed_page = page_number
+                                compliance_failure = outcome.error == "compliance_failure"
+                                halt_reason = (
+                                    f"Hard failure at page {page_number}: {outcome.error or 'unknown_failure'}"
+                                )
+                                stop_submitting = True
+                            self._progress(done_count, selection_page_count, f"Page {page_number} failed")
+
+                    if not stop_submitting and not self._cancel_event.is_set():
+                        while len(futures) < worker_count:
+                            if not _submit_next(executor):
+                                break
 
         self._last_state = run_state
-        completed_pages = len(list_completed_pages(run_state))
+        completed_pages = run_state.done_count
 
-        if failed_page is None and not self._cancel_event.is_set():
+        if failed_page is None and not self._cancel_event.is_set() and run_state.failed_count == 0:
             try:
                 output_docx = assemble_docx(
                     paths.pages_dir,
@@ -220,10 +316,12 @@ class TranslationWorkflow:
                     page_breaks=config.page_breaks,
                 )
             except Exception as exc:  # noqa: BLE001
-                run_state.run_status = "docx_write_failed"
-                run_state.finished_at = self._utc_now()
-                run_state.final_docx_path_abs = None
-                save_run_state_atomic(paths.run_state_path, run_state)
+                with state_lock:
+                    run_state.run_status = "docx_write_failed"
+                    run_state.finished_at = self._utc_now()
+                    run_state.final_docx_path_abs = None
+                    run_state.halt_reason = "docx_write_failed"
+                    save_run_state_atomic(paths.run_state_path, run_state)
                 self._log(f"DOCX save failed at {paths.final_docx_path}: {exc}")
                 return RunSummary(
                     success=False,
@@ -237,10 +335,12 @@ class TranslationWorkflow:
                     attempted_output_docx=paths.final_docx_path,
                 )
 
-            record_final_docx_path(run_state, output_docx)
-            run_state.run_status = "completed"
-            run_state.finished_at = self._utc_now()
-            save_run_state_atomic(paths.run_state_path, run_state)
+            with state_lock:
+                record_final_docx_path(run_state, output_docx)
+                run_state.run_status = "completed"
+                run_state.finished_at = self._utc_now()
+                run_state.halt_reason = None
+                save_run_state_atomic(paths.run_state_path, run_state)
             if not config.keep_intermediates:
                 self._cleanup_intermediates(paths)
             return RunSummary(
@@ -260,9 +360,12 @@ class TranslationWorkflow:
             partial_docx = self.export_partial_docx()
 
         if self._cancel_event.is_set():
-            run_state.run_status = "cancelled"
-            run_state.finished_at = self._utc_now()
-            save_run_state_atomic(paths.run_state_path, run_state)
+            with state_lock:
+                run_state.run_status = "cancelled"
+                run_state.finished_at = self._utc_now()
+                if run_state.halt_reason is None:
+                    run_state.halt_reason = "cancelled_by_user"
+                save_run_state_atomic(paths.run_state_path, run_state)
             return RunSummary(
                 success=False,
                 exit_code=2,
@@ -274,9 +377,11 @@ class TranslationWorkflow:
                 error="cancelled",
             )
 
-        run_state.run_status = "compliance_failure" if compliance_failure else "runtime_failure"
-        run_state.finished_at = self._utc_now()
-        save_run_state_atomic(paths.run_state_path, run_state)
+        with state_lock:
+            run_state.run_status = "compliance_failure" if compliance_failure else "runtime_failure"
+            run_state.finished_at = self._utc_now()
+            run_state.halt_reason = halt_reason or run_state.halt_reason or "hard_failure"
+            save_run_state_atomic(paths.run_state_path, run_state)
         return RunSummary(
             success=False,
             exit_code=3 if compliance_failure else 2,
@@ -608,6 +713,7 @@ class TranslationWorkflow:
             start_page=config.start_page,
             end_page=config.end_page,
             max_pages=config.max_pages,
+            workers=max(1, min(6, int(config.workers))),
             resume=config.resume,
             page_breaks=config.page_breaks,
             keep_intermediates=config.keep_intermediates,
@@ -649,6 +755,8 @@ class TranslationWorkflow:
             raise ValueError("start_page must be <= end_page.")
         if config.max_pages is not None and config.max_pages <= 0:
             raise ValueError("max_pages must be a positive integer when provided.")
+        if config.workers < 1 or config.workers > 6:
+            raise ValueError("workers must be between 1 and 6.")
         if config.context_file and not config.context_file.exists():
             raise FileNotFoundError(f"Context file not found: {config.context_file}")
 

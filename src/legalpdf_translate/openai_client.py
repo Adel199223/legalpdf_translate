@@ -6,6 +6,8 @@ import os
 import random
 import time
 from dataclasses import dataclass
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
@@ -29,6 +31,8 @@ class OpenAIResponsesClient:
         max_transport_retries: int = 4,
         base_backoff_seconds: float = 1.0,
         backoff_cap_seconds: float = 12.0,
+        pre_call_jitter_seconds: float = 0.8,
+        request_timeout_seconds: float = 180.0,
         logger: Callable[[str], None] | None = None,
     ) -> None:
         resolved_api_key = (api_key or "").strip() or None
@@ -46,6 +50,8 @@ class OpenAIResponsesClient:
         self._max_transport_retries = max_transport_retries
         self._base_backoff_seconds = base_backoff_seconds
         self._backoff_cap_seconds = max(1.0, backoff_cap_seconds)
+        self._pre_call_jitter_seconds = max(0.0, pre_call_jitter_seconds)
+        self._request_timeout_seconds = max(5.0, request_timeout_seconds)
         self._logger = logger
 
     def create_page_response(
@@ -55,6 +61,7 @@ class OpenAIResponsesClient:
         prompt_text: str,
         effort: str,
         image_data_url: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> ApiCallResult:
         content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt_text}]
         if image_data_url:
@@ -70,12 +77,15 @@ class OpenAIResponsesClient:
         last_error: Exception | None = None
         for attempt in range(self._max_transport_retries):
             try:
+                if self._pre_call_jitter_seconds > 0:
+                    time.sleep(random.uniform(0.0, self._pre_call_jitter_seconds))
                 response = self._client.responses.create(
                     model=OPENAI_MODEL,
                     instructions=instructions,
                     input=user_input,
                     reasoning={"effort": effort},
                     store=OPENAI_STORE,
+                    timeout=max(5.0, timeout_seconds) if timeout_seconds is not None else self._request_timeout_seconds,
                 )
                 return ApiCallResult(
                     raw_output=_extract_output_text(response),
@@ -86,10 +96,14 @@ class OpenAIResponsesClient:
                 last_error = exc
                 if not _is_retryable(exc) or attempt >= self._max_transport_retries - 1:
                     raise
-                sleep_seconds = min(
-                    self._backoff_cap_seconds,
-                    self._base_backoff_seconds * (2**attempt) + random.uniform(0.0, 0.4),
-                )
+                retry_after = _retry_after_seconds(exc)
+                if retry_after is not None:
+                    sleep_seconds = min(self._backoff_cap_seconds, retry_after + random.uniform(0.0, 0.25))
+                else:
+                    sleep_seconds = min(
+                        self._backoff_cap_seconds,
+                        self._base_backoff_seconds * (2**attempt) + random.uniform(0.0, 0.4),
+                    )
                 if self._logger:
                     self._logger(
                         f"Transient API error ({type(exc).__name__}), retrying in {sleep_seconds:.2f}s."
@@ -149,3 +163,41 @@ def _extract_usage(response: Any) -> dict[str, Any]:
         if value is not None:
             usage[key] = value
     return usage
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    headers: Any = None
+    response = getattr(exc, "response", None)
+    if response is not None:
+        headers = getattr(response, "headers", None)
+    if headers is None:
+        headers = getattr(exc, "headers", None)
+    if headers is None:
+        return None
+    value: str | None = None
+    if isinstance(headers, dict):
+        for key in ("retry-after", "Retry-After"):
+            if key in headers:
+                raw = headers.get(key)
+                value = str(raw).strip() if raw is not None else None
+                break
+    else:
+        getter = getattr(headers, "get", None)
+        if callable(getter):
+            raw = getter("retry-after") or getter("Retry-After")
+            if raw is not None:
+                value = str(raw).strip()
+    if not value:
+        return None
+    try:
+        delay = float(value)
+        return max(0.0, delay)
+    except ValueError:
+        pass
+    try:
+        parsed_dt = parsedate_to_datetime(value)
+        now = datetime.now(parsed_dt.tzinfo) if parsed_dt.tzinfo else datetime.utcnow()
+        delay = (parsed_dt - now).total_seconds()
+        return max(0.0, delay)
+    except Exception:
+        return None
