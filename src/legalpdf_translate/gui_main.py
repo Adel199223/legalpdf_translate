@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import tkinter as tk
 
-from .gui_app import LegalPDFTranslateApp
-from .gui_theme import apply_theme
+from legalpdf_translate.gui_app import LegalPDFTranslateApp
+from legalpdf_translate.gui_theme import apply_theme
 
 
 def main() -> None:
