@@ -13,6 +13,7 @@ from .config import CONTEXT_EMPTY_HASH_MARKER, RUN_STATE_VERSION
 from .output_paths import OutputPaths, build_output_paths
 from .types import (
     ApiKeySource,
+    EffortPolicy,
     ImageMode,
     OcrEnginePolicy,
     OcrMode,
@@ -87,6 +88,8 @@ def _utc_now() -> str:
 def settings_fingerprint(config: RunConfig) -> dict[str, Any]:
     return {
         "effort": config.effort.value,
+        "effort_policy": config.effort_policy.value,
+        "allow_xhigh_escalation": bool(config.allow_xhigh_escalation),
         "image_mode": config.image_mode.value,
         "ocr_mode": config.ocr_mode.value,
         "ocr_engine": config.ocr_engine.value,
@@ -99,6 +102,58 @@ def settings_fingerprint(config: RunConfig) -> dict[str, Any]:
         "max_pages": config.max_pages,
         "workers": config.workers,
     }
+
+
+def _default_page_record(*, status: str = PageStatus.PENDING.value) -> dict[str, Any]:
+    return {
+        "status": status,
+        "image_used": False,
+        "retry_used": False,
+        "usage": {},
+        "error": None,
+        "started_at_iso": "",
+        "ended_at_iso": "",
+        "wall_seconds": 0.0,
+        "attempt1_effort": "",
+        "attempt2_effort": "",
+        "image_mode": "",
+        "image_detail": "",
+        "image_bytes": 0,
+        "image_width_px": 0,
+        "image_height_px": 0,
+        "image_format": "",
+        "image_compress_steps": 0,
+        "extracted_text_chars": 0,
+        "extracted_text_lines": 0,
+        "newline_to_char_ratio": 0.0,
+        "ordered_blocks_count": 0,
+        "header_blocks_count": 0,
+        "footer_blocks_count": 0,
+        "barcode_blocks_count": 0,
+        "body_blocks_count": 0,
+        "two_column_detected": False,
+        "compliance_defect_outside_text": False,
+        "parser_failed": False,
+        "validator_failed": False,
+        "retry_reason": "",
+        "openai_request_id": "",
+        "status_code": None,
+        "exception_class": "",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "total_tokens": 0,
+        "transport_retries_count": 0,
+        "last_backoff_seconds": 0.0,
+        "rate_limit_hit": False,
+    }
+
+
+def _coerce_page_record(raw: Any) -> dict[str, Any]:
+    record = _default_page_record()
+    if isinstance(raw, dict):
+        record.update(raw)
+    return record
 
 
 def new_run_state(
@@ -120,13 +175,7 @@ def new_run_state(
     now = _utc_now()
     selection_count = len(selected_pages)
     pages = {
-        str(page_num): {
-            "status": PageStatus.PENDING.value,
-            "image_used": False,
-            "retry_used": False,
-            "usage": {},
-            "error": None,
-        }
+        str(page_num): _default_page_record(status=PageStatus.PENDING.value)
         for page_num in selected_pages
     }
     return RunState(
@@ -161,79 +210,113 @@ def new_run_state(
 def load_run_state(path: Path) -> RunState | None:
     if not path.exists():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    final_docx_raw = data.get("final_docx_path_abs")
-    final_docx: str | None
-    if final_docx_raw in (None, ""):
-        final_docx = None
-    else:
-        final_docx = str(final_docx_raw)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        return None
 
-    run_status_raw = data.get("run_status")
-    if isinstance(run_status_raw, str) and run_status_raw.strip():
-        run_status = run_status_raw.strip()
-    else:
-        run_status = "running"
-    finished_at_raw = data.get("finished_at")
-    finished_at: str | None
-    if finished_at_raw in (None, ""):
-        finished_at = None
-    else:
-        finished_at = str(finished_at_raw)
-    halt_reason_raw = data.get("halt_reason")
-    if halt_reason_raw in (None, ""):
-        halt_reason = None
-    else:
-        halt_reason = str(halt_reason_raw)
+    if not isinstance(data, dict):
+        return None
+    required_keys = {
+        "version",
+        "pdf_path",
+        "pdf_fingerprint",
+        "lang",
+        "total_pages",
+        "max_pages_effective",
+        "settings",
+        "context_hash",
+        "created_at",
+        "updated_at",
+        "pages",
+    }
+    if any(key not in data for key in required_keys):
+        return None
 
-    pages = dict(data["pages"])
-    page_numbers: list[int] = []
-    for key in pages.keys():
-        try:
-            page_numbers.append(int(key))
-        except ValueError:
-            continue
-    page_numbers = sorted(page_numbers)
-    fallback_selection_start = page_numbers[0] if page_numbers else 1
-    fallback_selection_end = page_numbers[-1] if page_numbers else int(data.get("max_pages_effective", 0))
-    fallback_selection_count = len(page_numbers)
-    done_count = 0
-    failed_count = 0
-    for page_data in pages.values():
-        status = str(page_data.get("status", "")).strip().lower()
-        if status == PageStatus.DONE.value:
-            done_count += 1
-        elif status == PageStatus.FAILED.value:
-            failed_count += 1
-    pending_count = max(0, fallback_selection_count - done_count - failed_count)
+    try:
+        final_docx_raw = data.get("final_docx_path_abs")
+        final_docx: str | None
+        if final_docx_raw in (None, ""):
+            final_docx = None
+        else:
+            final_docx = str(final_docx_raw)
 
-    return RunState(
-        version=int(data["version"]),
-        pdf_path=str(data["pdf_path"]),
-        pdf_fingerprint=str(data["pdf_fingerprint"]),
-        lang=str(data["lang"]),
-        total_pages=int(data["total_pages"]),
-        max_pages_effective=int(data["max_pages_effective"]),
-        selection_start_page=int(data.get("selection_start_page", fallback_selection_start)),
-        selection_end_page=int(data.get("selection_end_page", fallback_selection_end)),
-        selection_page_count=int(data.get("selection_page_count", fallback_selection_count)),
-        settings=dict(data["settings"]),
-        context_hash=str(data["context_hash"]),
-        created_at=str(data["created_at"]),
-        updated_at=str(data["updated_at"]),
-        frozen_outdir_abs=str(data.get("frozen_outdir_abs", path.parent.parent.resolve())),
-        run_dir_abs=str(data.get("run_dir_abs", path.parent.resolve())),
-        run_status=run_status,
-        halt_reason=halt_reason,
-        final_docx_path_abs=final_docx,
-        run_started_at=str(data.get("run_started_at", "")),
-        finished_at=finished_at,
-        pages=pages,
-        last_completed_page=int(data.get("last_completed_page", 0)),
-        done_count=int(data.get("done_count", done_count)),
-        failed_count=int(data.get("failed_count", failed_count)),
-        pending_count=int(data.get("pending_count", pending_count)),
-    )
+        run_status_raw = data.get("run_status")
+        if isinstance(run_status_raw, str) and run_status_raw.strip():
+            run_status = run_status_raw.strip()
+        else:
+            run_status = "running"
+        finished_at_raw = data.get("finished_at")
+        finished_at: str | None
+        if finished_at_raw in (None, ""):
+            finished_at = None
+        else:
+            finished_at = str(finished_at_raw)
+        halt_reason_raw = data.get("halt_reason")
+        if halt_reason_raw in (None, ""):
+            halt_reason = None
+        else:
+            halt_reason = str(halt_reason_raw)
+
+        pages_raw_obj = data["pages"]
+        if not isinstance(pages_raw_obj, dict):
+            return None
+        pages: dict[str, dict[str, Any]] = {}
+        for key, value in pages_raw_obj.items():
+            pages[str(key)] = _coerce_page_record(value)
+        page_numbers: list[int] = []
+        for key in pages.keys():
+            try:
+                page_numbers.append(int(key))
+            except ValueError:
+                continue
+        page_numbers = sorted(page_numbers)
+        fallback_selection_start = page_numbers[0] if page_numbers else 1
+        fallback_selection_end = page_numbers[-1] if page_numbers else int(data.get("max_pages_effective", 0))
+        fallback_selection_count = len(page_numbers)
+        done_count = 0
+        failed_count = 0
+        for page_data in pages.values():
+            status = str(page_data.get("status", "")).strip().lower()
+            if status == PageStatus.DONE.value:
+                done_count += 1
+            elif status == PageStatus.FAILED.value:
+                failed_count += 1
+        pending_count = max(0, fallback_selection_count - done_count - failed_count)
+
+        settings_obj = data["settings"]
+        if not isinstance(settings_obj, dict):
+            return None
+
+        return RunState(
+            version=int(data["version"]),
+            pdf_path=str(data["pdf_path"]),
+            pdf_fingerprint=str(data["pdf_fingerprint"]),
+            lang=str(data["lang"]),
+            total_pages=int(data["total_pages"]),
+            max_pages_effective=int(data["max_pages_effective"]),
+            selection_start_page=int(data.get("selection_start_page", fallback_selection_start)),
+            selection_end_page=int(data.get("selection_end_page", fallback_selection_end)),
+            selection_page_count=int(data.get("selection_page_count", fallback_selection_count)),
+            settings=dict(settings_obj),
+            context_hash=str(data["context_hash"]),
+            created_at=str(data["created_at"]),
+            updated_at=str(data["updated_at"]),
+            frozen_outdir_abs=str(data.get("frozen_outdir_abs", path.parent.parent.resolve())),
+            run_dir_abs=str(data.get("run_dir_abs", path.parent.resolve())),
+            run_status=run_status,
+            halt_reason=halt_reason,
+            final_docx_path_abs=final_docx,
+            run_started_at=str(data.get("run_started_at", "")),
+            finished_at=finished_at,
+            pages=pages,
+            last_completed_page=int(data.get("last_completed_page", 0)),
+            done_count=int(data.get("done_count", done_count)),
+            failed_count=int(data.get("failed_count", failed_count)),
+            pending_count=int(data.get("pending_count", pending_count)),
+        )
+    except (TypeError, ValueError, KeyError):
+        return None
 
 
 def save_run_state_atomic(path: Path, state: RunState) -> None:
@@ -348,15 +431,23 @@ def mark_page_done(
     image_used: bool,
     retry_used: bool,
     usage: dict[str, Any] | None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     page_key = str(page_number)
-    state.pages[page_key] = {
-        "status": PageStatus.DONE.value,
-        "image_used": image_used,
-        "retry_used": retry_used,
-        "usage": usage or {},
-        "error": None,
-    }
+    page_data = _default_page_record(status=PageStatus.DONE.value)
+    page_data.update(_coerce_page_record(state.pages.get(page_key)))
+    if metadata:
+        page_data.update(metadata)
+    page_data.update(
+        {
+            "status": PageStatus.DONE.value,
+            "image_used": image_used,
+            "retry_used": retry_used,
+            "usage": usage or {},
+            "error": None,
+        }
+    )
+    state.pages[page_key] = page_data
     state.last_completed_page = max(state.last_completed_page, page_number)
     _refresh_counts(state)
 
@@ -369,14 +460,23 @@ def mark_page_failed(
     retry_used: bool,
     usage: dict[str, Any] | None,
     error: str,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
-    state.pages[str(page_number)] = {
-        "status": PageStatus.FAILED.value,
-        "image_used": image_used,
-        "retry_used": retry_used,
-        "usage": usage or {},
-        "error": error,
-    }
+    page_key = str(page_number)
+    page_data = _default_page_record(status=PageStatus.FAILED.value)
+    page_data.update(_coerce_page_record(state.pages.get(page_key)))
+    if metadata:
+        page_data.update(metadata)
+    page_data.update(
+        {
+            "status": PageStatus.FAILED.value,
+            "image_used": image_used,
+            "retry_used": retry_used,
+            "usage": usage or {},
+            "error": error,
+        }
+    )
+    state.pages[page_key] = page_data
     _refresh_counts(state)
 
 
@@ -419,6 +519,17 @@ def parse_effort(value: str) -> ReasoningEffort:
     if lowered == ReasoningEffort.XHIGH.value:
         return ReasoningEffort.XHIGH
     raise ValueError("Effort must be high or xhigh.")
+
+
+def parse_effort_policy(value: str) -> EffortPolicy:
+    lowered = value.strip().lower()
+    if lowered == EffortPolicy.ADAPTIVE.value:
+        return EffortPolicy.ADAPTIVE
+    if lowered == EffortPolicy.FIXED_HIGH.value:
+        return EffortPolicy.FIXED_HIGH
+    if lowered == EffortPolicy.FIXED_XHIGH.value:
+        return EffortPolicy.FIXED_XHIGH
+    raise ValueError("Effort policy must be adaptive, fixed_high, or fixed_xhigh.")
 
 
 def parse_image_mode(value: str) -> ImageMode:

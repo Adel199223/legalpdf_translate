@@ -2,23 +2,17 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from typing import cast
 
 from PIL import Image, ImageTk
+from .resources_loader import resource_path as _shared_resource_path
 
 _pil_cache: dict[str, Image.Image] = {}
 _photo_cache: dict[tuple[str, tuple[int, int] | None], ImageTk.PhotoImage] = {}
 
 
 def resource_path(rel_path: str) -> Path:
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        base = Path(cast(str, meipass))
-    else:
-        base = Path(__file__).resolve().parents[2]
-    return (base / rel_path).resolve()
+    return _shared_resource_path(rel_path)
 
 
 def load_image(rel_path: str, size: tuple[int, int] | None = None) -> ImageTk.PhotoImage:

@@ -28,29 +28,38 @@ copy .env.example .env
 
 Set `OPENAI_API_KEY` in `.env` or your environment.
 
-## Run GUI
+## Run Qt GUI (Recommended)
 
 ```powershell
-legalpdf-translate-gui
+legalpdf-translate-qt
 ```
 
-## Run Qt GUI (PySide6)
+You can also launch the Qt GUI directly:
 
 ```powershell
 python -m legalpdf_translate.qt_main
 ```
 
+## Run Tkinter GUI (Fallback)
+
+```powershell
+legalpdf-translate-gui
+```
+
 ## Run CLI
 
 ```powershell
-legalpdf-translate --pdf input.pdf --lang EN --outdir out --effort high --images auto --max-pages 5 --resume true --page-breaks true --keep-intermediates true --context-file ""
+legalpdf-translate --pdf input.pdf --lang EN --outdir out --effort high --effort-policy adaptive --images off --max-pages 5 --resume true --page-breaks true --keep-intermediates true --context-file ""
 ```
 
 CLI options:
 
 - `--lang`: `EN|FR|AR`
 - `--effort`: `high|xhigh`
+- `--effort-policy`: `adaptive|fixed_high|fixed_xhigh`
+- `--allow-xhigh-escalation`: `true|false` (default `false`)
 - `--images`: `off|auto|always`
+- `--analyze-only`: extraction/image preflight only (no API calls), writes `analyze_report.json`
 - `--max-pages`: integer or omit for all pages
 - `--workers`: `1..6` (default `3`)
 - `--resume`: `true|false`
@@ -59,6 +68,14 @@ CLI options:
 - `--context-file`: path or empty string
 
 Recommended workers: `3` (default). For PDFs under ~20 pages, `5` is often faster. If you see frequent `429`/timeout retries, reduce workers.
+
+When `--effort-policy` is omitted, default behavior is `adaptive`. For backward compatibility, explicitly passing `--effort high|xhigh` maps to `fixed_high|fixed_xhigh`.
+
+Analyze-only example:
+
+```powershell
+legalpdf-translate --pdf input.pdf --lang FR --outdir out --max-pages 10 --images auto --analyze-only
+```
 
 ## Resume Behavior
 
@@ -69,6 +86,8 @@ Run artifacts are stored in:
 - `pages/page_0001.txt` etc.
 - `images/page_0001.jpg` (if kept)
 - `run_state.json`
+- `run_summary.json` (written on success/failure/cancel)
+- `analyze_report.json` (analyze-only mode)
 
 When `--resume true`, completed pages are skipped if checkpoint compatibility matches (`pdf_fingerprint`, language, context hash, key settings).
 

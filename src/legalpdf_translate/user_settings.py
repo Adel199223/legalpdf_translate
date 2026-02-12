@@ -60,7 +60,8 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "ui_scale": 1.0,
     "default_lang": "EN",
     "default_effort": "high",
-    "default_images_mode": "auto",
+    "default_effort_policy": "adaptive",
+    "default_images_mode": "off",
     "default_workers": 3,
     "default_resume": True,
     "default_keep_intermediates": True,
@@ -76,6 +77,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "perf_timeout_image_seconds": 120,
     "adaptive_effort_enabled": False,
     "adaptive_effort_xhigh_only_when_image_or_validator_fail": True,
+    "allow_xhigh_escalation": False,
     "diagnostics_show_cost_summary": True,
     "diagnostics_verbose_metadata_logs": False,
     "min_chars_to_accept_ocr": 200,
@@ -86,6 +88,7 @@ ALLOWED_GUI_KEYS = {
     "ui_scale",
     "default_lang",
     "default_effort",
+    "default_effort_policy",
     "default_images_mode",
     "default_workers",
     "workers",
@@ -103,12 +106,14 @@ ALLOWED_GUI_KEYS = {
     "perf_timeout_image_seconds",
     "adaptive_effort_enabled",
     "adaptive_effort_xhigh_only_when_image_or_validator_fail",
+    "allow_xhigh_escalation",
     "diagnostics_show_cost_summary",
     "diagnostics_verbose_metadata_logs",
     "min_chars_to_accept_ocr",
     "last_outdir",
     "last_lang",
     "effort",
+    "effort_policy",
     "image_mode",
     "resume",
     "keep_intermediates",
@@ -145,7 +150,8 @@ DEFAULT_GUI_SETTINGS: dict[str, Any] = {
     "last_outdir": "",
     "last_lang": "EN",
     "effort": "high",
-    "image_mode": "auto",
+    "effort_policy": "adaptive",
+    "image_mode": "off",
     "resume": True,
     "keep_intermediates": True,
     "page_breaks": True,
@@ -322,6 +328,13 @@ def load_gui_settings() -> dict[str, Any]:
         merged["default_lang"] = data["last_lang"]
     if "default_effort" not in data and "effort" in data:
         merged["default_effort"] = data["effort"]
+    if "default_effort_policy" not in data:
+        if "adaptive_effort_enabled" in data:
+            merged["default_effort_policy"] = "adaptive" if bool(data.get("adaptive_effort_enabled")) else "fixed_high"
+        elif "default_effort" in data:
+            merged["default_effort_policy"] = "fixed_xhigh" if str(data.get("default_effort")).strip().lower() == "xhigh" else "fixed_high"
+        elif "effort" in data:
+            merged["default_effort_policy"] = "fixed_xhigh" if str(data.get("effort")).strip().lower() == "xhigh" else "fixed_high"
     if "default_images_mode" not in data and "image_mode" in data:
         merged["default_images_mode"] = data["image_mode"]
     if "default_resume" not in data and "resume" in data:
@@ -346,7 +359,30 @@ def load_gui_settings() -> dict[str, Any]:
     merged["last_outdir"] = str(merged.get("last_outdir", "") or "")
     merged["last_lang"] = str(merged.get("last_lang", "EN") or "EN")
     merged["effort"] = str(merged.get("effort", "high") or "high")
-    merged["image_mode"] = str(merged.get("image_mode", "auto") or "auto")
+    if "effort_policy" not in data:
+        if "default_effort_policy" in data:
+            merged["effort_policy"] = merged.get("default_effort_policy")
+        elif "effort" in data:
+            merged["effort_policy"] = "fixed_xhigh" if merged["effort"].strip().lower() == "xhigh" else "fixed_high"
+    merged["effort_policy"] = _coerce_choice(
+        merged.get("effort_policy"),
+        default="adaptive",
+        allowed={"adaptive", "fixed_high", "fixed_xhigh"},
+    )
+    if (
+        "allow_xhigh_escalation" not in data
+        and "adaptive_effort_xhigh_only_when_image_or_validator_fail" in data
+    ):
+        merged["allow_xhigh_escalation"] = data.get("adaptive_effort_xhigh_only_when_image_or_validator_fail")
+    merged["allow_xhigh_escalation"] = _coerce_bool(
+        merged.get("allow_xhigh_escalation"),
+        bool(merged.get("adaptive_effort_xhigh_only_when_image_or_validator_fail", False)),
+    )
+    merged["image_mode"] = _coerce_choice(
+        merged.get("image_mode"),
+        default=str(merged.get("default_images_mode", "off") or "off"),
+        allowed={"off", "auto", "always"},
+    )
     merged["resume"] = _coerce_bool(merged.get("resume"), True)
     merged["keep_intermediates"] = _coerce_bool(merged.get("keep_intermediates"), True)
     merged["page_breaks"] = _coerce_bool(merged.get("page_breaks"), True)
@@ -391,9 +427,14 @@ def load_gui_settings() -> dict[str, Any]:
         default="high",
         allowed={"high", "xhigh"},
     )
+    merged["default_effort_policy"] = _coerce_choice(
+        merged.get("default_effort_policy"),
+        default="adaptive",
+        allowed={"adaptive", "fixed_high", "fixed_xhigh"},
+    )
     merged["default_images_mode"] = _coerce_choice(
         merged.get("default_images_mode"),
-        default="auto",
+        default="off",
         allowed={"off", "auto", "always"},
     )
     merged["default_workers"] = max(1, min(6, _coerce_int(merged.get("default_workers"), 3)))
@@ -422,6 +463,9 @@ def load_gui_settings() -> dict[str, Any]:
         merged.get("adaptive_effort_xhigh_only_when_image_or_validator_fail"),
         True,
     )
+    # Keep legacy adaptive flags mirrored for backward compatibility.
+    merged["adaptive_effort_enabled"] = merged["default_effort_policy"] == "adaptive"
+    merged["adaptive_effort_xhigh_only_when_image_or_validator_fail"] = bool(merged["allow_xhigh_escalation"])
     merged["diagnostics_show_cost_summary"] = _coerce_bool(merged.get("diagnostics_show_cost_summary"), True)
     merged["diagnostics_verbose_metadata_logs"] = _coerce_bool(
         merged.get("diagnostics_verbose_metadata_logs"),

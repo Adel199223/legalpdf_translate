@@ -21,6 +21,22 @@ class ApiCallResult:
     raw_output: str
     usage: dict[str, Any]
     response_id: str | None
+    transport_retries_count: int = 0
+    last_backoff_seconds: float = 0.0
+    rate_limit_hit: bool = False
+
+
+@dataclass(slots=True)
+class ApiCallError(RuntimeError):
+    message: str
+    status_code: int | None
+    exception_class: str
+    transport_retries_count: int
+    last_backoff_seconds: float
+    rate_limit_hit: bool
+
+    def __str__(self) -> str:
+        return self.message
 
 
 class OpenAIResponsesClient:
@@ -47,7 +63,7 @@ class OpenAIResponsesClient:
         if not resolved_api_key:
             raise ValueError("OpenAI API key is not configured.")
         self._client = OpenAI(api_key=resolved_api_key)
-        self._max_transport_retries = max_transport_retries
+        self._max_transport_retries = max(0, int(max_transport_retries))
         self._base_backoff_seconds = base_backoff_seconds
         self._backoff_cap_seconds = max(1.0, backoff_cap_seconds)
         self._pre_call_jitter_seconds = max(0.0, pre_call_jitter_seconds)
@@ -61,6 +77,7 @@ class OpenAIResponsesClient:
         prompt_text: str,
         effort: str,
         image_data_url: str | None = None,
+        image_detail: str = "low",
         timeout_seconds: float | None = None,
     ) -> ApiCallResult:
         content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt_text}]
@@ -69,13 +86,17 @@ class OpenAIResponsesClient:
                 {
                     "type": "input_image",
                     "image_url": image_data_url,
-                    "detail": "high",
+                    "detail": image_detail,
                 }
             )
         user_input = [{"role": "user", "content": content}]
 
         last_error: Exception | None = None
-        for attempt in range(self._max_transport_retries):
+        transport_retries_count = 0
+        last_backoff_seconds = 0.0
+        rate_limit_hit = False
+        # max_transport_retries is "retries after the first call"; always attempt at least once.
+        for attempt in range(self._max_transport_retries + 1):
             try:
                 if self._pre_call_jitter_seconds > 0:
                     time.sleep(random.uniform(0.0, self._pre_call_jitter_seconds))
@@ -91,11 +112,24 @@ class OpenAIResponsesClient:
                     raw_output=_extract_output_text(response),
                     usage=_extract_usage(response),
                     response_id=getattr(response, "id", None),
+                    transport_retries_count=transport_retries_count,
+                    last_backoff_seconds=last_backoff_seconds,
+                    rate_limit_hit=rate_limit_hit,
                 )
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
-                if not _is_retryable(exc) or attempt >= self._max_transport_retries - 1:
-                    raise
+                status_code = _status_code_from_exception(exc)
+                if status_code == 429 or isinstance(exc, RateLimitError):
+                    rate_limit_hit = True
+                if not _is_retryable(exc) or attempt >= self._max_transport_retries:
+                    raise ApiCallError(
+                        message=f"{type(exc).__name__}: {exc}",
+                        status_code=status_code,
+                        exception_class=type(exc).__name__,
+                        transport_retries_count=transport_retries_count,
+                        last_backoff_seconds=last_backoff_seconds,
+                        rate_limit_hit=rate_limit_hit,
+                    ) from exc
                 retry_after = _retry_after_seconds(exc)
                 if retry_after is not None:
                     sleep_seconds = min(self._backoff_cap_seconds, retry_after + random.uniform(0.0, 0.25))
@@ -108,6 +142,8 @@ class OpenAIResponsesClient:
                     self._logger(
                         f"Transient API error ({type(exc).__name__}), retrying in {sleep_seconds:.2f}s."
                     )
+                transport_retries_count += 1
+                last_backoff_seconds = sleep_seconds
                 time.sleep(sleep_seconds)
         if last_error is not None:
             raise last_error
@@ -160,6 +196,13 @@ def _extract_usage(response: Any) -> dict[str, Any]:
         value = getattr(usage_obj, key, None)
         if value is None and isinstance(usage_obj, dict):
             value = usage_obj.get(key)
+        if key == "reasoning_tokens" and value is None:
+            details_obj = getattr(usage_obj, "output_tokens_details", None)
+            if details_obj is None and isinstance(usage_obj, dict):
+                details_obj = usage_obj.get("output_tokens_details")
+            value = getattr(details_obj, "reasoning_tokens", None)
+            if value is None and isinstance(details_obj, dict):
+                value = details_obj.get("reasoning_tokens")
         if value is not None:
             usage[key] = value
     return usage
@@ -201,3 +244,15 @@ def _retry_after_seconds(exc: Exception) -> float | None:
         return max(0.0, delay)
     except Exception:
         return None
+
+
+def _status_code_from_exception(exc: Exception) -> int | None:
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status
+    response = getattr(exc, "response", None)
+    if response is not None:
+        response_status = getattr(response, "status_code", None)
+        if isinstance(response_status, int):
+            return response_status
+    return None

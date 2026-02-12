@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+from dataclasses import dataclass
 from pathlib import Path
 
 import fitz
@@ -20,7 +21,18 @@ from .config import (
     IMAGE_MIN_QUALITY,
     IMAGE_SCALE_FACTOR,
 )
-from .types import ImageMode
+from .types import ImageMode, TargetLang
+
+
+@dataclass(slots=True)
+class RenderedImage:
+    data_url: str
+    image_bytes: bytes
+    encoded_bytes: int
+    width_px: int
+    height_px: int
+    image_format: str
+    compress_steps: int
 
 
 def should_include_image(
@@ -28,12 +40,21 @@ def should_include_image(
     ordered_text: str,
     extraction_failed: bool,
     fragmented: bool = False,
+    *,
+    lang: TargetLang | None = None,
 ) -> bool:
     if mode == ImageMode.OFF:
         return False
     if mode == ImageMode.ALWAYS:
         return True
 
+    # EN/FR strict auto policy: only extraction failure or effectively no text.
+    if lang in (TargetLang.EN, TargetLang.FR):
+        if extraction_failed:
+            return True
+        return len(ordered_text.strip()) < 20
+
+    # AR keeps stricter heuristics.
     if extraction_failed:
         return True
     if ordered_text.strip() == "":
@@ -76,7 +97,7 @@ def render_page_image_data_url(
     start_dpi: int = IMAGE_INITIAL_DPI,
     max_dpi: int = IMAGE_MAX_DPI,
     max_data_url_bytes: int = IMAGE_MAX_DATA_URL_BYTES,
-) -> tuple[str, bytes]:
+) -> RenderedImage:
     dpi = min(start_dpi, max_dpi)
     with fitz.open(pdf_path) as doc:
         page = doc.load_page(page_index)
@@ -86,8 +107,11 @@ def render_page_image_data_url(
     current = image
     image_bytes = _encode_jpeg(current, quality=quality)
     data_url = _data_url_from_bytes(image_bytes)
+    compress_steps = 0
+    max_bytes_limit = max(256 * 1024, min(max_data_url_bytes, IMAGE_MAX_DATA_URL_BYTES))
 
-    while len(data_url.encode("utf-8")) >= max_data_url_bytes:
+    while len(data_url.encode("utf-8")) >= max_bytes_limit:
+        compress_steps += 1
         if quality > IMAGE_MIN_QUALITY:
             quality = max(IMAGE_MIN_QUALITY, quality - 10)
         else:
@@ -99,11 +123,20 @@ def render_page_image_data_url(
         image_bytes = _encode_jpeg(current, quality=quality)
         data_url = _data_url_from_bytes(image_bytes)
 
-    if len(data_url.encode("utf-8")) >= max_data_url_bytes:
-        raise RuntimeError("Unable to compress page image below 20MB data URL limit.")
+    encoded_bytes = len(data_url.encode("utf-8"))
+    if encoded_bytes >= max_bytes_limit:
+        raise RuntimeError("Unable to compress page image below configured data URL limit.")
 
     if save_path is not None:
         save_path.parent.mkdir(parents=True, exist_ok=True)
         save_path.write_bytes(image_bytes)
 
-    return data_url, image_bytes
+    return RenderedImage(
+        data_url=data_url,
+        image_bytes=image_bytes,
+        encoded_bytes=encoded_bytes,
+        width_px=current.width,
+        height_px=current.height,
+        image_format="jpeg",
+        compress_steps=compress_steps,
+    )

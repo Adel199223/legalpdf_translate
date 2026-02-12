@@ -15,9 +15,13 @@ a = Analysis(
         *[(path, "resources/ui") for path in glob(str(project_root / "resources" / "ui" / "*.png"))],
     ],
     hiddenimports=[
+        "legalpdf_translate.qt_app",
         "legalpdf_translate.qt_gui.app_window",
+        "legalpdf_translate.qt_gui.dialogs",
         "legalpdf_translate.qt_gui.worker",
         "legalpdf_translate.qt_gui.styles",
+        "keyring",
+        "keyring.backends.Windows",
     ],
     hookspath=[],
     hooksconfig={},

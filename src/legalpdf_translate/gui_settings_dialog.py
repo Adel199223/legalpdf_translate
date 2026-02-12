@@ -77,7 +77,8 @@ class GuiSettingsDialog(tk.Toplevel):
         self.ui_scale_var = tk.StringVar(value=f"{float(settings.get('ui_scale', 1.0)):.2f}")
         self.default_lang_var = tk.StringVar(value=str(settings.get("default_lang", "EN")))
         self.default_effort_var = tk.StringVar(value=str(settings.get("default_effort", "high")))
-        self.default_images_mode_var = tk.StringVar(value=str(settings.get("default_images_mode", "auto")))
+        self.default_effort_policy_var = tk.StringVar(value=str(settings.get("default_effort_policy", "adaptive")))
+        self.default_images_mode_var = tk.StringVar(value=str(settings.get("default_images_mode", "off")))
         self.default_workers_var = tk.StringVar(value=str(settings.get("default_workers", 3)))
         self.default_resume_var = tk.BooleanVar(value=bool(settings.get("default_resume", True)))
         self.default_keep_var = tk.BooleanVar(value=bool(settings.get("default_keep_intermediates", True)))
@@ -98,10 +99,7 @@ class GuiSettingsDialog(tk.Toplevel):
         self.backoff_cap_var = tk.StringVar(value=str(settings.get("perf_backoff_cap_seconds", 12.0)))
         self.timeout_text_var = tk.StringVar(value=str(settings.get("perf_timeout_text_seconds", 90)))
         self.timeout_image_var = tk.StringVar(value=str(settings.get("perf_timeout_image_seconds", 120)))
-        self.adaptive_effort_enabled_var = tk.BooleanVar(value=bool(settings.get("adaptive_effort_enabled", False)))
-        self.adaptive_xhigh_guard_var = tk.BooleanVar(
-            value=bool(settings.get("adaptive_effort_xhigh_only_when_image_or_validator_fail", True))
-        )
+        self.allow_xhigh_escalation_var = tk.BooleanVar(value=bool(settings.get("allow_xhigh_escalation", False)))
         self.diag_cost_summary_var = tk.BooleanVar(value=bool(settings.get("diagnostics_show_cost_summary", True)))
         self.diag_verbose_meta_var = tk.BooleanVar(value=bool(settings.get("diagnostics_verbose_metadata_logs", False)))
 
@@ -239,60 +237,65 @@ class GuiSettingsDialog(tk.Toplevel):
         ttk.Combobox(tab, textvariable=self.default_effort_var, values=["high", "xhigh"], state="readonly", width=12).grid(
             row=1, column=1, sticky="w", pady=(6, 0)
         )
-        ttk.Label(tab, text="Default images mode").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(tab, text="Default effort policy").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Combobox(
+            tab,
+            textvariable=self.default_effort_policy_var,
+            values=["adaptive", "fixed_high", "fixed_xhigh"],
+            state="readonly",
+            width=14,
+        ).grid(row=2, column=1, sticky="w", pady=(6, 0))
+        ttk.Label(tab, text="Default images mode").grid(row=3, column=0, sticky="w", pady=(6, 0))
         ttk.Combobox(
             tab,
             textvariable=self.default_images_mode_var,
             values=["off", "auto", "always"],
             state="readonly",
             width=12,
-        ).grid(row=2, column=1, sticky="w", pady=(6, 0))
-        ttk.Label(tab, text="Default workers").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ).grid(row=3, column=1, sticky="w", pady=(6, 0))
+        ttk.Label(tab, text="Default workers").grid(row=4, column=0, sticky="w", pady=(6, 0))
         ttk.Combobox(
             tab,
             textvariable=self.default_workers_var,
             values=["1", "2", "3", "4", "5", "6"],
             state="readonly",
             width=12,
-        ).grid(row=3, column=1, sticky="w", pady=(6, 0))
-        ttk.Label(tab, text="Default start page").grid(row=4, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(tab, textvariable=self.default_start_var, width=12).grid(row=4, column=1, sticky="w", pady=(6, 0))
-        ttk.Label(tab, text="Default end page").grid(row=5, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(tab, textvariable=self.default_end_var, width=12).grid(row=5, column=1, sticky="w", pady=(6, 0))
-        ttk.Label(tab, text="Default output folder").grid(row=6, column=0, sticky="w", pady=(6, 0))
+        ).grid(row=4, column=1, sticky="w", pady=(6, 0))
+        ttk.Label(tab, text="Default start page").grid(row=5, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(tab, textvariable=self.default_start_var, width=12).grid(row=5, column=1, sticky="w", pady=(6, 0))
+        ttk.Label(tab, text="Default end page").grid(row=6, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(tab, textvariable=self.default_end_var, width=12).grid(row=6, column=1, sticky="w", pady=(6, 0))
+        ttk.Label(tab, text="Default output folder").grid(row=7, column=0, sticky="w", pady=(6, 0))
         outdir_row = ttk.Frame(tab)
-        outdir_row.grid(row=6, column=1, sticky="ew", pady=(6, 0))
+        outdir_row.grid(row=7, column=1, sticky="ew", pady=(6, 0))
         outdir_row.columnconfigure(0, weight=1)
         ttk.Entry(outdir_row, textvariable=self.default_outdir_var).grid(row=0, column=0, sticky="ew")
         ttk.Button(outdir_row, text="Browse", command=self._pick_default_outdir).grid(row=0, column=1, padx=(6, 0))
         ttk.Checkbutton(tab, text="Default resume ON", variable=self.default_resume_var).grid(
-            row=7, column=0, sticky="w", pady=(8, 0)
+            row=8, column=0, sticky="w", pady=(8, 0)
         )
         ttk.Checkbutton(tab, text="Default keep intermediates ON", variable=self.default_keep_var).grid(
-            row=7, column=1, sticky="w", pady=(8, 0)
+            row=8, column=1, sticky="w", pady=(8, 0)
         )
         ttk.Checkbutton(tab, text="Default page breaks ON", variable=self.default_breaks_var).grid(
-            row=8, column=0, sticky="w", pady=(6, 0)
+            row=9, column=0, sticky="w", pady=(6, 0)
         )
 
-        ttk.Separator(tab, orient=tk.HORIZONTAL).grid(row=9, column=0, columnspan=2, sticky="ew", pady=12)
-        ttk.Label(tab, text="Transport retries").grid(row=10, column=0, sticky="w")
-        ttk.Entry(tab, textvariable=self.retries_var, width=12).grid(row=10, column=1, sticky="w")
-        ttk.Label(tab, text="Backoff cap (seconds)").grid(row=11, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(tab, textvariable=self.backoff_cap_var, width=12).grid(row=11, column=1, sticky="w", pady=(6, 0))
-        ttk.Label(tab, text="Text timeout (seconds)").grid(row=12, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(tab, textvariable=self.timeout_text_var, width=12).grid(row=12, column=1, sticky="w", pady=(6, 0))
-        ttk.Label(tab, text="Image timeout (seconds)").grid(row=13, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(tab, textvariable=self.timeout_image_var, width=12).grid(row=13, column=1, sticky="w", pady=(6, 0))
-        ttk.Checkbutton(tab, text="Adaptive effort", variable=self.adaptive_effort_enabled_var).grid(
-            row=14, column=0, sticky="w", pady=(8, 0)
-        )
+        ttk.Separator(tab, orient=tk.HORIZONTAL).grid(row=10, column=0, columnspan=2, sticky="ew", pady=12)
+        ttk.Label(tab, text="Transport retries").grid(row=11, column=0, sticky="w")
+        ttk.Entry(tab, textvariable=self.retries_var, width=12).grid(row=11, column=1, sticky="w")
+        ttk.Label(tab, text="Backoff cap (seconds)").grid(row=12, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(tab, textvariable=self.backoff_cap_var, width=12).grid(row=12, column=1, sticky="w", pady=(6, 0))
+        ttk.Label(tab, text="Text timeout (seconds)").grid(row=13, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(tab, textvariable=self.timeout_text_var, width=12).grid(row=13, column=1, sticky="w", pady=(6, 0))
+        ttk.Label(tab, text="Image timeout (seconds)").grid(row=14, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(tab, textvariable=self.timeout_image_var, width=12).grid(row=14, column=1, sticky="w", pady=(6, 0))
         ttk.Checkbutton(
             tab,
-            text="Use xhigh only on image/validator fallback",
-            variable=self.adaptive_xhigh_guard_var,
-        ).grid(row=14, column=1, sticky="w", pady=(8, 0))
-        ttk.Button(tab, text="Restore defaults", command=self._restore_defaults).grid(row=15, column=1, sticky="w", pady=(10, 0))
+            text="Allow xhigh escalation (adaptive, image + short text only)",
+            variable=self.allow_xhigh_escalation_var,
+        ).grid(row=15, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(tab, text="Restore defaults", command=self._restore_defaults).grid(row=16, column=1, sticky="w", pady=(10, 0))
 
     def _pick_default_outdir(self) -> None:
         chosen = filedialog.askdirectory(title="Choose default output folder")
@@ -451,7 +454,8 @@ class GuiSettingsDialog(tk.Toplevel):
     def _restore_defaults(self) -> None:
         self.default_lang_var.set("EN")
         self.default_effort_var.set("high")
-        self.default_images_mode_var.set("auto")
+        self.default_effort_policy_var.set("adaptive")
+        self.default_images_mode_var.set("off")
         self.default_workers_var.set("3")
         self.default_resume_var.set(True)
         self.default_keep_var.set(True)
@@ -465,8 +469,7 @@ class GuiSettingsDialog(tk.Toplevel):
         self.backoff_cap_var.set("12.0")
         self.timeout_text_var.set("90")
         self.timeout_image_var.set("120")
-        self.adaptive_effort_enabled_var.set(False)
-        self.adaptive_xhigh_guard_var.set(True)
+        self.allow_xhigh_escalation_var.set(False)
 
     def _collect_values(self) -> dict[str, object]:
         base_url = self.ocr_base_url_var.get().strip()
@@ -492,6 +495,7 @@ class GuiSettingsDialog(tk.Toplevel):
             "ui_scale": ui_scale,
             "default_lang": self.default_lang_var.get().strip().upper(),
             "default_effort": self.default_effort_var.get().strip().lower(),
+            "default_effort_policy": self.default_effort_policy_var.get().strip().lower(),
             "default_images_mode": self.default_images_mode_var.get().strip().lower(),
             "default_workers": _to_int(self.default_workers_var.get(), field="Default workers", min_value=1, max_value=6),
             "default_resume": bool(self.default_resume_var.get()),
@@ -529,8 +533,9 @@ class GuiSettingsDialog(tk.Toplevel):
                 min_value=5,
                 max_value=1200,
             ),
-            "adaptive_effort_enabled": bool(self.adaptive_effort_enabled_var.get()),
-            "adaptive_effort_xhigh_only_when_image_or_validator_fail": bool(self.adaptive_xhigh_guard_var.get()),
+            "allow_xhigh_escalation": bool(self.allow_xhigh_escalation_var.get()),
+            "adaptive_effort_enabled": self.default_effort_policy_var.get().strip().lower() == "adaptive",
+            "adaptive_effort_xhigh_only_when_image_or_validator_fail": bool(self.allow_xhigh_escalation_var.get()),
             "diagnostics_show_cost_summary": bool(self.diag_cost_summary_var.get()),
             "diagnostics_verbose_metadata_logs": bool(self.diag_verbose_meta_var.get()),
             "min_chars_to_accept_ocr": _to_int(

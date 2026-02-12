@@ -11,6 +11,7 @@ from pathlib import Path
 from .checkpoint import (
     bool_from_text,
     parse_effort,
+    parse_effort_policy,
     parse_image_mode,
     parse_ocr_engine_policy,
     parse_ocr_mode,
@@ -49,7 +50,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lang", type=_parse_lang, help="Target language: EN|FR|AR.")
     parser.add_argument("--outdir", help="Output folder path.")
     parser.add_argument("--effort", default="high", choices=["high", "xhigh"], help="Reasoning effort.")
-    parser.add_argument("--images", default="auto", choices=["off", "auto", "always"], help="Image mode.")
+    parser.add_argument(
+        "--effort-policy",
+        default=None,
+        choices=["adaptive", "fixed_high", "fixed_xhigh"],
+        help="Effort policy (default adaptive; if omitted, --effort maps to fixed policy for compatibility).",
+    )
+    parser.add_argument(
+        "--allow-xhigh-escalation",
+        default="false",
+        help="Allow adaptive per-page xhigh escalation: true|false.",
+    )
+    parser.add_argument("--images", default="off", choices=["off", "auto", "always"], help="Image mode.")
     parser.add_argument("--max-pages", type=int, default=None, help="Optional maximum pages to translate.")
     parser.add_argument("--workers", type=int, default=3, help="Parallel workers (1..6).")
     parser.add_argument("--resume", default="true", help="Resume from checkpoints: true|false.")
@@ -68,6 +80,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--rebuild-docx",
         action="store_true",
         help="Rebuild DOCX from existing run_dir/pages without API calls.",
+    )
+    parser.add_argument(
+        "--analyze-only",
+        action="store_true",
+        help="Analyze extraction/image heuristics only (no API calls).",
     )
     parser.add_argument("--ocr-mode", default="auto", choices=["off", "auto", "always"], help="OCR mode.")
     parser.add_argument(
@@ -156,8 +173,9 @@ def _clamp_workers(value: int) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_args = list(argv) if argv is not None else sys.argv[1:]
     parser = build_arg_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_args)
     key_command_result = _handle_key_commands(args)
     if key_command_result is not None:
         return key_command_result
@@ -165,11 +183,20 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pdf_arg, lang_arg, outdir_arg = _validate_required_run_args(args)
         outdir_abs = require_writable_output_dir_text(outdir_arg)
+        effort_flag_explicit = "--effort" in raw_args
+        if args.effort_policy is not None:
+            effort_policy = parse_effort_policy(args.effort_policy)
+        elif effort_flag_explicit:
+            effort_policy = parse_effort_policy("fixed_xhigh" if args.effort == "xhigh" else "fixed_high")
+        else:
+            effort_policy = parse_effort_policy("adaptive")
         config = RunConfig(
             pdf_path=Path(pdf_arg).resolve(),
             output_dir=outdir_abs,
             target_lang=lang_arg,
             effort=parse_effort(args.effort),
+            effort_policy=effort_policy,
+            allow_xhigh_escalation=bool_from_text(args.allow_xhigh_escalation),
             image_mode=parse_image_mode(args.images),
             max_pages=args.max_pages,
             workers=_clamp_workers(int(args.workers)),
@@ -196,6 +223,25 @@ def main(argv: list[str] | None = None) -> int:
 
     workflow = TranslationWorkflow(log_callback=log_callback, progress_callback=progress_callback)
 
+    if args.analyze_only:
+        if args.rebuild_docx:
+            print(f"[{_timestamp()}] Config error: --analyze-only cannot be combined with --rebuild-docx.", file=sys.stderr)
+            return 1
+        try:
+            analysis = workflow.analyze(config)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[{_timestamp()}] Analyze error: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{_timestamp()}] Analyze runtime error: {exc}", file=sys.stderr)
+            return 2
+        print(
+            f"[{_timestamp()}] Analyze complete: selected_pages={analysis.selected_pages_count}, "
+            f"would_attach_images={analysis.pages_would_attach_images}"
+        )
+        print(f"[{_timestamp()}] Analyze report: {analysis.analyze_report_path} (run_dir={analysis.run_dir})")
+        return 0
+
     if args.rebuild_docx:
         try:
             rebuilt_path = workflow.rebuild_docx(config)
@@ -219,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if summary.success and summary.output_docx is not None:
         print(f"[{_timestamp()}] Saved DOCX: {summary.output_docx}")
+        if summary.run_summary_path is not None:
+            print(f"[{_timestamp()}] Run report: {summary.run_summary_path} (run_dir={summary.run_dir})")
         return 0
 
     if summary.partial_docx is not None:
@@ -228,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
             f"[{_timestamp()}] DOCX save failed at: {summary.attempted_output_docx}",
             file=sys.stderr,
         )
+    if summary.run_summary_path is not None:
+        print(f"[{_timestamp()}] Run report: {summary.run_summary_path} (run_dir={summary.run_dir})", file=sys.stderr)
     print(f"[{_timestamp()}] Failed: {summary.error}; failed_page={summary.failed_page}", file=sys.stderr)
     return summary.exit_code
 

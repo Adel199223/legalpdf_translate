@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tkinter as tk
 
+import legalpdf_translate.gui_app as gui_app_module
 from legalpdf_translate.gui_app import LegalPDFTranslateApp
 
 
@@ -34,6 +35,7 @@ def _make_app_stub() -> LegalPDFTranslateApp:
     app._can_export_partial = False
     app.last_output_docx = None
     app.last_joblog_seed = None
+    app.last_run_report_path = None
 
     app._config_control_states = [
         (_FakeWidget(), tk.NORMAL),
@@ -41,11 +43,13 @@ def _make_app_stub() -> LegalPDFTranslateApp:
     ]
     app.context_text = _FakeWidget()
     app.translate_btn = _FakeWidget()
+    app.analyze_btn = _FakeWidget()
     app.cancel_btn = _FakeWidget()
     app.new_run_btn = _FakeWidget()
     app.export_partial_btn = _FakeWidget()
     app.rebuild_btn = _FakeWidget()
     app.open_outdir_btn = _FakeWidget()
+    app.run_report_btn = _FakeWidget()
     app.save_joblog_btn = _FakeWidget()
     app.open_joblog_btn = _FakeWidget()
 
@@ -105,10 +109,14 @@ def test_new_run_clears_runtime_state_without_restart() -> None:
     def _persist_gui_settings() -> None:
         calls["persist"] = True
 
+    def _reset_live_counters() -> None:
+        calls["counters"] = True
+
     app._new_queue = _new_queue  # type: ignore[method-assign]
     app._clear_log = _clear_log  # type: ignore[method-assign]
     app._set_details_expanded = _set_details_expanded  # type: ignore[method-assign]
     app._persist_gui_settings = _persist_gui_settings  # type: ignore[method-assign]
+    app._reset_live_counters = _reset_live_counters  # type: ignore[method-assign]
 
     app._new_run()
 
@@ -120,4 +128,72 @@ def test_new_run_clears_runtime_state_without_restart() -> None:
     assert app.worker is None
     assert app.progress.values.get("value") == 0
     assert app.status_var.get() == "Idle"
-    assert calls == {"queue": True, "clear_log": True, "details": False, "persist": True}
+    assert calls == {"queue": True, "counters": True, "clear_log": True, "details": False, "persist": True}
+
+
+def test_on_close_blocked_while_busy(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    class _FakeWin:
+        def winfo_exists(self) -> bool:
+            return True
+
+        def destroy(self) -> None:
+            calls["settings_destroy"] = True
+
+    class _FakeMaster:
+        def destroy(self) -> None:
+            calls["master_destroy"] = True
+
+    app = LegalPDFTranslateApp.__new__(LegalPDFTranslateApp)
+    app._busy = True
+    app.settings_window = _FakeWin()
+    app.master = _FakeMaster()
+    app._persist_gui_settings = lambda: calls.__setitem__("persist", True)  # type: ignore[method-assign]
+
+    monkeypatch.setattr(
+        gui_app_module.messagebox,
+        "showwarning",
+        lambda title, message: calls.__setitem__("warning", (title, message)),
+    )
+
+    app._on_close()
+
+    assert "warning" in calls
+    assert "persist" not in calls
+    assert "settings_destroy" not in calls
+    assert "master_destroy" not in calls
+
+
+def test_settings_persist_is_debounced() -> None:
+    calls: dict[str, object] = {}
+    scheduled: dict[str, object] = {}
+
+    app = LegalPDFTranslateApp.__new__(LegalPDFTranslateApp)
+    app._settings_persist_after_id = None
+
+    def _after(delay_ms: int, callback):  # type: ignore[no-untyped-def]
+        calls["delay"] = delay_ms
+        scheduled["callback"] = callback
+        return "after-id-1"
+
+    def _after_cancel(after_id: str) -> None:
+        calls["cancelled"] = after_id
+
+    app.after = _after  # type: ignore[method-assign]
+    app.after_cancel = _after_cancel  # type: ignore[method-assign]
+    app._persist_gui_settings = lambda: calls.__setitem__("persisted", True)  # type: ignore[method-assign]
+
+    app._schedule_settings_persist()
+    first_id = app._settings_persist_after_id
+    app._schedule_settings_persist()
+
+    assert first_id == "after-id-1"
+    assert calls["cancelled"] == "after-id-1"
+    assert calls["delay"] == 250
+
+    # Simulate Tk callback execution.
+    callback = scheduled["callback"]
+    callback()
+    assert app._settings_persist_after_id is None
+    assert calls["persisted"] is True

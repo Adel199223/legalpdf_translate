@@ -30,20 +30,11 @@ def build_page_prompt(
 
 
 def build_retry_prompt(lang: TargetLang, prior_output: str) -> str:
-    if lang in (TargetLang.EN, TargetLang.FR):
-        header = (
-            "COMPLIANCE FIX ONLY: Re-output the SAME translation content as below, without "
-            "adding/removing any text, strictly as ONE plain-text code block and NOTHING ELSE. "
-            "Do not insert blank lines. Content to reformat:"
-        )
-    else:
-        header = (
-            "COMPLIANCE FIX ONLY: Re-output the SAME Arabic translation content as below, "
-            "without adding/removing any text, strictly as ONE plain-text code block and NOTHING "
-            "ELSE. Do not insert blank lines. Ensure every Latin-script string and every "
-            "number/identifier is inside [[...]] AND each token is wrapped as \u2066[[...]]\u2069. "
-            "Do not reorder tokens except the list-marker rule. Content to reformat:"
-        )
+    _ = lang
+    header = (
+        "COMPLIANCE FIX ONLY: Re-emit the SAME content, fix formatting only, "
+        "as ONE plain-text code block and NOTHING ELSE."
+    )
     return "\n".join(
         [
             header,

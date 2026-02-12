@@ -114,3 +114,24 @@ class RebuildDocxWorker(QObject):
             self.finished.emit(rebuilt)
         except Exception as exc:  # noqa: BLE001
             self.error.emit(str(exc))
+
+
+class AnalyzeWorker(QObject):
+    """Run analyze-only workflow path without API calls."""
+
+    log = Signal(str)
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, *, config: RunConfig) -> None:
+        super().__init__()
+        self._config = config
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            workflow = TranslationWorkflow(log_callback=self.log.emit)
+            summary = workflow.analyze(self._config)
+            self.finished.emit(summary)
+        except Exception as exc:  # noqa: BLE001
+            self.error.emit(str(exc))
