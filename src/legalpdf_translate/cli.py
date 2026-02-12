@@ -173,8 +173,9 @@ def _clamp_workers(value: int) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_args = list(argv) if argv is not None else sys.argv[1:]
     parser = build_arg_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_args)
     key_command_result = _handle_key_commands(args)
     if key_command_result is not None:
         return key_command_result
@@ -182,10 +183,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pdf_arg, lang_arg, outdir_arg = _validate_required_run_args(args)
         outdir_abs = require_writable_output_dir_text(outdir_arg)
+        effort_flag_explicit = "--effort" in raw_args
         if args.effort_policy is not None:
             effort_policy = parse_effort_policy(args.effort_policy)
-        else:
+        elif effort_flag_explicit:
             effort_policy = parse_effort_policy("fixed_xhigh" if args.effort == "xhigh" else "fixed_high")
+        else:
+            effort_policy = parse_effort_policy("adaptive")
         config = RunConfig(
             pdf_path=Path(pdf_arg).resolve(),
             output_dir=outdir_abs,

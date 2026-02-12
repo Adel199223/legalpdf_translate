@@ -69,7 +69,7 @@ CLI options:
 
 Recommended workers: `3` (default). For PDFs under ~20 pages, `5` is often faster. If you see frequent `429`/timeout retries, reduce workers.
 
-When `--effort-policy` is omitted, legacy compatibility is kept: `--effort high` maps to `fixed_high`, and `--effort xhigh` maps to `fixed_xhigh`.
+When `--effort-policy` is omitted, default behavior is `adaptive`. For backward compatibility, explicitly passing `--effort high|xhigh` maps to `fixed_high|fixed_xhigh`.
 
 Analyze-only example:
 
