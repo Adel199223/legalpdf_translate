@@ -207,7 +207,17 @@ class TranslationWorkflow:
                         ocr_engine=ocr_engine,
                     )
                 except Exception as exc:  # noqa: BLE001
-                    self._log(f"Runtime failure on page {page_number}: {exc}")
+                    exception_class = type(exc).__name__
+                    status_code = getattr(exc, "status_code", None)
+                    if isinstance(status_code, int):
+                        self._log(
+                            f"Runtime failure on page {page_number}: "
+                            f"exception_class={exception_class} status_code={status_code}"
+                        )
+                    else:
+                        self._log(
+                            f"Runtime failure on page {page_number}: exception_class={exception_class}"
+                        )
                     return _PageOutcome(
                         status=PageStatus.FAILED,
                         image_used=False,
