@@ -1414,6 +1414,9 @@ class LegalPDFTranslateApp(ttk.Frame):
             pass
 
     def _on_close(self) -> None:
+        if self._busy:
+            messagebox.showwarning("Run in progress", "Cancel the active run before closing the app.")
+            return
         if self.settings_window is not None and self.settings_window.winfo_exists():
             self.settings_window.destroy()
         self._persist_gui_settings()

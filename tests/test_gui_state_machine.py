@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tkinter as tk
 
+import legalpdf_translate.gui_app as gui_app_module
 from legalpdf_translate.gui_app import LegalPDFTranslateApp
 
 
@@ -128,3 +129,37 @@ def test_new_run_clears_runtime_state_without_restart() -> None:
     assert app.progress.values.get("value") == 0
     assert app.status_var.get() == "Idle"
     assert calls == {"queue": True, "counters": True, "clear_log": True, "details": False, "persist": True}
+
+
+def test_on_close_blocked_while_busy(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    class _FakeWin:
+        def winfo_exists(self) -> bool:
+            return True
+
+        def destroy(self) -> None:
+            calls["settings_destroy"] = True
+
+    class _FakeMaster:
+        def destroy(self) -> None:
+            calls["master_destroy"] = True
+
+    app = LegalPDFTranslateApp.__new__(LegalPDFTranslateApp)
+    app._busy = True
+    app.settings_window = _FakeWin()
+    app.master = _FakeMaster()
+    app._persist_gui_settings = lambda: calls.__setitem__("persist", True)  # type: ignore[method-assign]
+
+    monkeypatch.setattr(
+        gui_app_module.messagebox,
+        "showwarning",
+        lambda title, message: calls.__setitem__("warning", (title, message)),
+    )
+
+    app._on_close()
+
+    assert "warning" in calls
+    assert "persist" not in calls
+    assert "settings_destroy" not in calls
+    assert "master_destroy" not in calls
