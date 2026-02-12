@@ -28,16 +28,22 @@ copy .env.example .env
 
 Set `OPENAI_API_KEY` in `.env` or your environment.
 
-## Run GUI
+## Run Qt GUI (Recommended)
 
 ```powershell
-legalpdf-translate-gui
+legalpdf-translate-qt
 ```
 
-## Run Qt GUI (PySide6)
+You can also launch the Qt GUI directly:
 
 ```powershell
 python -m legalpdf_translate.qt_main
+```
+
+## Run Tkinter GUI (Fallback)
+
+```powershell
+legalpdf-translate-gui
 ```
 
 ## Run CLI

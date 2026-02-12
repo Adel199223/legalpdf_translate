@@ -6,16 +6,16 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsDropShadowEffect, QWidget
 
 PALETTE = {
-    "text": "#EAF7FF",
-    "muted": "#93B6D2",
-    "accent": "#39D8FF",
-    "accent_strong": "#11BCE8",
-    "danger": "#D56A7A",
-    "line": "rgba(132, 220, 255, 118)",
-    "surface": "rgba(8, 24, 45, 148)",
-    "surface_alt": "rgba(10, 30, 56, 132)",
-    "field": "rgba(5, 15, 31, 194)",
-    "field_focus": "rgba(8, 26, 51, 220)",
+    "text": "#EAF9FF",
+    "muted": "#9AB9CE",
+    "accent": "#38DCFF",
+    "accent_strong": "#14C9F2",
+    "danger": "#DC7B8C",
+    "line": "rgba(124, 216, 255, 130)",
+    "card": "rgba(5, 18, 38, 175)",
+    "surface_alt": "rgba(8, 24, 47, 170)",
+    "field": "rgba(3, 12, 27, 212)",
+    "field_focus": "rgba(8, 31, 62, 228)",
 }
 
 
@@ -29,27 +29,32 @@ def build_stylesheet() -> str:
     }}
 
     QFrame#GlassCard {{
-        background: transparent;
-        border: 1px solid transparent;
-        border-radius: 28px;
-    }}
-
-    QWidget#CardTint {{
-        background-color: {PALETTE['surface']};
+        background-color: {PALETTE['card']};
         border: 1px solid {PALETTE['line']};
         border-radius: 28px;
     }}
 
+    QFrame#HeaderStrip {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:0,
+            stop:0 rgba(8, 36, 66, 175),
+            stop:0.5 rgba(11, 52, 88, 212),
+            stop:1 rgba(8, 36, 66, 175)
+        );
+        border: 1px solid rgba(120, 214, 255, 130);
+        border-radius: 15px;
+    }}
+
     QLabel#TitleLabel {{
         color: {PALETTE['accent']};
-        font-size: 24pt;
+        font-size: 23pt;
         font-weight: 700;
-        letter-spacing: 0.4px;
+        letter-spacing: 0.6px;
     }}
 
     QLabel#StatusHeaderLabel {{
-        color: {PALETTE['muted']};
-        font-size: 11pt;
+        color: #B6EFFF;
+        font-size: 11.5pt;
         font-weight: 600;
     }}
 
@@ -66,18 +71,19 @@ def build_stylesheet() -> str:
     QLabel#PathLabel {{
         color: {PALETTE['accent']};
         font-size: 10pt;
+        font-weight: 600;
     }}
 
     QFrame#SurfacePanel {{
         background-color: {PALETTE['surface_alt']};
-        border: 1px solid rgba(111, 184, 216, 86);
+        border: 1px solid rgba(114, 193, 227, 94);
         border-radius: 16px;
     }}
 
     QLineEdit, QPlainTextEdit, QComboBox, QSpinBox {{
         background-color: {PALETTE['field']};
         color: {PALETTE['text']};
-        border: 1px solid rgba(108, 184, 216, 116);
+        border: 1px solid rgba(103, 181, 215, 130);
         border-radius: 10px;
         padding: 8px 10px;
         selection-background-color: rgba(35, 138, 185, 220);
@@ -89,7 +95,7 @@ def build_stylesheet() -> str:
     }}
 
     QComboBox::drop-down {{
-        border-left: 1px solid rgba(116, 187, 217, 96);
+        border-left: 1px solid rgba(116, 187, 217, 112);
         width: 26px;
     }}
 
@@ -119,16 +125,17 @@ def build_stylesheet() -> str:
     }}
 
     QPushButton {{
-        background-color: rgba(8, 29, 53, 224);
+        background-color: rgba(8, 31, 57, 228);
         color: {PALETTE['text']};
-        border: 1px solid rgba(105, 173, 204, 126);
+        border: 1px solid rgba(113, 185, 216, 145);
         border-radius: 11px;
         padding: 9px 14px;
         font-weight: 600;
     }}
 
     QPushButton:hover {{
-        border-color: {PALETTE['accent']};
+        border-color: rgba(125, 226, 255, 235);
+        background-color: rgba(13, 45, 80, 236);
     }}
 
     QPushButton:pressed {{
@@ -141,14 +148,14 @@ def build_stylesheet() -> str:
     }}
 
     QPushButton#PrimaryButton {{
-        background-color: rgba(17, 188, 232, 228);
+        background-color: rgba(23, 201, 242, 232);
         color: #001724;
-        border: 1px solid rgba(130, 237, 255, 232);
+        border: 1px solid rgba(166, 244, 255, 246);
         font-weight: 700;
     }}
 
     QPushButton#PrimaryButton:hover {{
-        background-color: rgba(51, 212, 246, 235);
+        background-color: rgba(61, 220, 247, 238);
     }}
 
     QPushButton#DangerButton {{
@@ -158,7 +165,7 @@ def build_stylesheet() -> str:
 
     QProgressBar {{
         background-color: rgba(4, 16, 31, 196);
-        border: 1px solid rgba(110, 181, 212, 98);
+        border: 1px solid rgba(107, 182, 214, 114);
         border-radius: 10px;
         min-height: 20px;
         text-align: center;

@@ -64,7 +64,7 @@ class _FakeWindow:
         self.shown = True
 
 
-def test_qt_main_smoke(monkeypatch) -> None:
+def test_qt_app_run_smoke(monkeypatch) -> None:
     qtcore_mod = types.ModuleType("PySide6.QtCore")
     qtcore_mod.Qt = _FakeQt
     qtgui_mod = types.ModuleType("PySide6.QtGui")
@@ -85,9 +85,9 @@ def test_qt_main_smoke(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "legalpdf_translate.qt_gui.styles", styles_mod)
     monkeypatch.setitem(sys.modules, "legalpdf_translate.qt_gui.app_window", app_window_mod)
 
-    from legalpdf_translate import qt_main
+    from legalpdf_translate import qt_app
 
-    qt_main.main()
+    qt_app.run(["python"])
 
     app = _FakeQApplication.last_instance
     assert app is not None
@@ -95,3 +95,21 @@ def test_qt_main_smoke(monkeypatch) -> None:
     assert app.stylesheet == "fake-style"
     assert _FakeWindow.instances
     assert _FakeWindow.instances[-1].shown is True
+
+
+def test_qt_main_smoke(monkeypatch) -> None:
+    called = {"run": False}
+
+    def _fake_run() -> int:
+        called["run"] = True
+        return 0
+
+    qt_app_mod = types.ModuleType("legalpdf_translate.qt_app")
+    qt_app_mod.run = _fake_run
+    monkeypatch.setitem(sys.modules, "legalpdf_translate.qt_app", qt_app_mod)
+
+    from legalpdf_translate import qt_main
+
+    qt_main.main()
+    assert called["run"] is True
+
