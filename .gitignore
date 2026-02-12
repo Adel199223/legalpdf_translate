@@ -12,6 +12,7 @@ __pycache__/
 dist/
 build/*
 !build/pyinstaller_gui.spec
+!build/pyinstaller_qt.spec
 
 # app run outputs
 *_run/

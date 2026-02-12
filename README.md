@@ -34,6 +34,12 @@ Set `OPENAI_API_KEY` in `.env` or your environment.
 legalpdf-translate-gui
 ```
 
+## Run Qt GUI (PySide6)
+
+```powershell
+python -m legalpdf_translate.qt_main
+```
+
 ## Run CLI
 
 ```powershell
@@ -76,6 +82,18 @@ When `--resume true`, completed pages are skipped if checkpoint compatibility ma
 
 ```powershell
 pyinstaller build\pyinstaller_gui.spec
+```
+
+Qt GUI build:
+
+```powershell
+pyinstaller build\pyinstaller_qt.spec --noconfirm
+```
+
+If PyInstaller has Qt-plugin issues on your machine, fallback to the official Qt deploy tool:
+
+```powershell
+pyside6-deploy src\legalpdf_translate\qt_main.py
 ```
 
 Primary artifact:

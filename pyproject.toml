@@ -15,6 +15,7 @@ dependencies = [
   "python-dotenv>=1.0.1",
   "Pillow>=10.0.0",
   "keyring>=25.0.0",
+  "PySide6>=6.7.0",
 ]
 authors = [{ name = "LegalPDF Translate" }]
 
@@ -24,10 +25,11 @@ dev = ["pytest>=8.0.0", "pyinstaller>=6.0.0"]
 [project.scripts]
 legalpdf-translate = "legalpdf_translate.cli:main"
 legalpdf-translate-gui = "legalpdf_translate.gui_main:main"
+legalpdf-translate-qt = "legalpdf_translate.qt_main:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-packages = ["legalpdf_translate"]
+packages = ["legalpdf_translate", "legalpdf_translate.qt_gui"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
