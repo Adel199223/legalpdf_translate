@@ -13,6 +13,7 @@ from .config import CONTEXT_EMPTY_HASH_MARKER, RUN_STATE_VERSION
 from .output_paths import OutputPaths, build_output_paths
 from .types import (
     ApiKeySource,
+    EffortPolicy,
     ImageMode,
     OcrEnginePolicy,
     OcrMode,
@@ -87,6 +88,8 @@ def _utc_now() -> str:
 def settings_fingerprint(config: RunConfig) -> dict[str, Any]:
     return {
         "effort": config.effort.value,
+        "effort_policy": config.effort_policy.value,
+        "allow_xhigh_escalation": bool(config.allow_xhigh_escalation),
         "image_mode": config.image_mode.value,
         "ocr_mode": config.ocr_mode.value,
         "ocr_engine": config.ocr_engine.value,
@@ -485,6 +488,17 @@ def parse_effort(value: str) -> ReasoningEffort:
     if lowered == ReasoningEffort.XHIGH.value:
         return ReasoningEffort.XHIGH
     raise ValueError("Effort must be high or xhigh.")
+
+
+def parse_effort_policy(value: str) -> EffortPolicy:
+    lowered = value.strip().lower()
+    if lowered == EffortPolicy.ADAPTIVE.value:
+        return EffortPolicy.ADAPTIVE
+    if lowered == EffortPolicy.FIXED_HIGH.value:
+        return EffortPolicy.FIXED_HIGH
+    if lowered == EffortPolicy.FIXED_XHIGH.value:
+        return EffortPolicy.FIXED_XHIGH
+    raise ValueError("Effort policy must be adaptive, fixed_high, or fixed_xhigh.")
 
 
 def parse_image_mode(value: str) -> ImageMode:

@@ -11,6 +11,7 @@ from pathlib import Path
 from .checkpoint import (
     bool_from_text,
     parse_effort,
+    parse_effort_policy,
     parse_image_mode,
     parse_ocr_engine_policy,
     parse_ocr_mode,
@@ -49,7 +50,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lang", type=_parse_lang, help="Target language: EN|FR|AR.")
     parser.add_argument("--outdir", help="Output folder path.")
     parser.add_argument("--effort", default="high", choices=["high", "xhigh"], help="Reasoning effort.")
-    parser.add_argument("--images", default="auto", choices=["off", "auto", "always"], help="Image mode.")
+    parser.add_argument(
+        "--effort-policy",
+        default=None,
+        choices=["adaptive", "fixed_high", "fixed_xhigh"],
+        help="Effort policy (default adaptive; if omitted, --effort maps to fixed policy for compatibility).",
+    )
+    parser.add_argument(
+        "--allow-xhigh-escalation",
+        default="false",
+        help="Allow adaptive per-page xhigh escalation: true|false.",
+    )
+    parser.add_argument("--images", default="off", choices=["off", "auto", "always"], help="Image mode.")
     parser.add_argument("--max-pages", type=int, default=None, help="Optional maximum pages to translate.")
     parser.add_argument("--workers", type=int, default=3, help="Parallel workers (1..6).")
     parser.add_argument("--resume", default="true", help="Resume from checkpoints: true|false.")
@@ -170,11 +182,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pdf_arg, lang_arg, outdir_arg = _validate_required_run_args(args)
         outdir_abs = require_writable_output_dir_text(outdir_arg)
+        if args.effort_policy is not None:
+            effort_policy = parse_effort_policy(args.effort_policy)
+        else:
+            effort_policy = parse_effort_policy("fixed_xhigh" if args.effort == "xhigh" else "fixed_high")
         config = RunConfig(
             pdf_path=Path(pdf_arg).resolve(),
             output_dir=outdir_abs,
             target_lang=lang_arg,
             effort=parse_effort(args.effort),
+            effort_policy=effort_policy,
+            allow_xhigh_escalation=bool_from_text(args.allow_xhigh_escalation),
             image_mode=parse_image_mode(args.images),
             max_pages=args.max_pages,
             workers=_clamp_workers(int(args.workers)),

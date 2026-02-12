@@ -590,7 +590,7 @@ class TranslationWorkflow:
             "started_at_iso": started_at_iso,
             "ended_at_iso": "",
             "wall_seconds": 0.0,
-            "attempt1_effort": config.effort.value,
+            "attempt1_effort": "",
             "attempt2_effort": "",
             "image_mode": config.image_mode.value,
             "image_detail": "",
@@ -683,6 +683,14 @@ class TranslationWorkflow:
             page_metadata["image_compress_steps"] = int(rendered_image.compress_steps)
         else:
             page_metadata["image_detail"] = ""
+
+        attempt1_effort = self._resolve_attempt1_effort(
+            config=config,
+            image_used=image_used,
+            ordered_text_chars=len(extracted_text.strip()),
+        )
+        page_metadata["attempt1_effort"] = attempt1_effort.value
+
         ocr_reason = ocr_result.failed_reason or "none"
         self._log(
             f"page={page_number} ocr_used={ocr_result.engine} ocr_chars={ocr_result.chars} "
@@ -708,9 +716,9 @@ class TranslationWorkflow:
             initial = client.create_page_response(
                 instructions=instructions,
                 prompt_text=prompt_text,
-                effort=config.effort.value,
+                effort=attempt1_effort.value,
                 image_data_url=image_data_url,
-                image_detail=str(page_metadata["image_detail"] or "high"),
+                image_detail=str(page_metadata["image_detail"] or "low"),
             )
         except ApiCallError as exc:
             page_metadata["status_code"] = exc.status_code
@@ -759,12 +767,13 @@ class TranslationWorkflow:
         )
         page_metadata["retry_reason"] = retry_reason
         retry_prompt = build_retry_prompt(config.target_lang, initial.raw_output)
-        page_metadata["attempt2_effort"] = ReasoningEffort.MEDIUM.value
+        retry_effort = self._resolve_retry_effort(config=config)
+        page_metadata["attempt2_effort"] = retry_effort.value
         try:
             retry = client.create_page_response(
                 instructions=instructions,
                 prompt_text=retry_prompt,
-                effort=ReasoningEffort.MEDIUM.value,
+                effort=retry_effort.value,
                 image_data_url=None,
             )
         except ApiCallError as exc:
@@ -1060,6 +1069,45 @@ class TranslationWorkflow:
                 return policy.strip().lower()
         return "fixed_xhigh" if config.effort == ReasoningEffort.XHIGH else "fixed_high"
 
+    def _resolve_attempt1_effort(
+        self,
+        *,
+        config: RunConfig,
+        image_used: bool,
+        ordered_text_chars: int,
+    ) -> ReasoningEffort:
+        policy = self._resolve_effort_policy_label(config)
+        if policy == "fixed_high":
+            return ReasoningEffort.HIGH
+        if policy == "fixed_xhigh":
+            return ReasoningEffort.XHIGH
+
+        # Adaptive policy.
+        if config.target_lang in (TargetLang.EN, TargetLang.FR):
+            if (
+                config.allow_xhigh_escalation
+                and image_used
+                and ordered_text_chars < 20
+            ):
+                return ReasoningEffort.XHIGH
+            return ReasoningEffort.HIGH
+
+        # AR adaptive keeps user's selected baseline but can escalate to xhigh per-page.
+        base = config.effort if config.effort in (ReasoningEffort.HIGH, ReasoningEffort.XHIGH) else ReasoningEffort.HIGH
+        if (
+            config.allow_xhigh_escalation
+            and image_used
+            and ordered_text_chars < 20
+        ):
+            return ReasoningEffort.XHIGH
+        return base
+
+    def _resolve_retry_effort(self, *, config: RunConfig) -> ReasoningEffort:
+        policy = self._resolve_effort_policy_label(config)
+        if policy == "adaptive" and config.target_lang in (TargetLang.EN, TargetLang.FR):
+            return ReasoningEffort.HIGH
+        return ReasoningEffort.MEDIUM
+
     def _classify_suspected_cause(
         self,
         *,
@@ -1265,6 +1313,8 @@ class TranslationWorkflow:
             output_dir=outdir_abs,
             target_lang=config.target_lang,
             effort=config.effort,
+            effort_policy=config.effort_policy,
+            allow_xhigh_escalation=config.allow_xhigh_escalation,
             image_mode=config.image_mode,
             start_page=config.start_page,
             end_page=config.end_page,

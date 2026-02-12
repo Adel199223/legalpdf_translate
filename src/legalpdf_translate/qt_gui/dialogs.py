@@ -872,6 +872,7 @@ class QtSettingsDialog(QDialog):
 
         self.default_lang_combo = QComboBox(); self.default_lang_combo.addItems(["EN", "FR", "AR"])
         self.default_effort_combo = QComboBox(); self.default_effort_combo.addItems(["high", "xhigh"])
+        self.default_effort_policy_combo = QComboBox(); self.default_effort_policy_combo.addItems(["adaptive", "fixed_high", "fixed_xhigh"])
         self.default_images_combo = QComboBox(); self.default_images_combo.addItems(["off", "auto", "always"])
         self.default_workers_combo = QComboBox(); self.default_workers_combo.addItems(["1", "2", "3", "4", "5", "6"])
         self.default_start_edit = QLineEdit()
@@ -885,12 +886,12 @@ class QtSettingsDialog(QDialog):
         self.backoff_cap_edit = QLineEdit()
         self.timeout_text_edit = QLineEdit()
         self.timeout_image_edit = QLineEdit()
-        self.adaptive_effort_check = QCheckBox("Adaptive effort")
-        self.adaptive_guard_check = QCheckBox("Use xhigh only on image/validator fallback")
+        self.allow_xhigh_check = QCheckBox("Allow xhigh escalation (adaptive, image + short text only)")
         self.restore_defaults_btn = QPushButton("Restore defaults")
 
         grid.addWidget(QLabel("Default language"), row, 0); grid.addWidget(self.default_lang_combo, row, 1); row += 1
         grid.addWidget(QLabel("Default effort"), row, 0); grid.addWidget(self.default_effort_combo, row, 1); row += 1
+        grid.addWidget(QLabel("Default effort policy"), row, 0); grid.addWidget(self.default_effort_policy_combo, row, 1); row += 1
         grid.addWidget(QLabel("Default images mode"), row, 0); grid.addWidget(self.default_images_combo, row, 1); row += 1
         grid.addWidget(QLabel("Default workers"), row, 0); grid.addWidget(self.default_workers_combo, row, 1); row += 1
         grid.addWidget(QLabel("Default start page"), row, 0); grid.addWidget(self.default_start_edit, row, 1); row += 1
@@ -919,8 +920,7 @@ class QtSettingsDialog(QDialog):
         grid.addWidget(QLabel("Backoff cap (seconds)"), row, 0); grid.addWidget(self.backoff_cap_edit, row, 1); row += 1
         grid.addWidget(QLabel("Text timeout (seconds)"), row, 0); grid.addWidget(self.timeout_text_edit, row, 1); row += 1
         grid.addWidget(QLabel("Image timeout (seconds)"), row, 0); grid.addWidget(self.timeout_image_edit, row, 1); row += 1
-        grid.addWidget(self.adaptive_effort_check, row, 0, 1, 2); row += 1
-        grid.addWidget(self.adaptive_guard_check, row, 0, 1, 2); row += 1
+        grid.addWidget(self.allow_xhigh_check, row, 0, 1, 2); row += 1
         grid.addWidget(self.restore_defaults_btn, row, 1, alignment=Qt.AlignmentFlag.AlignLeft)
 
         grid.setColumnStretch(1, 1)
@@ -948,7 +948,8 @@ class QtSettingsDialog(QDialog):
         self.ui_scale_combo.setCurrentText(f"{float(settings.get('ui_scale', 1.0)):.2f}")
         self.default_lang_combo.setCurrentText(str(settings.get("default_lang", "EN")))
         self.default_effort_combo.setCurrentText(str(settings.get("default_effort", "high")))
-        self.default_images_combo.setCurrentText(str(settings.get("default_images_mode", "auto")))
+        self.default_effort_policy_combo.setCurrentText(str(settings.get("default_effort_policy", "adaptive")))
+        self.default_images_combo.setCurrentText(str(settings.get("default_images_mode", "off")))
         self.default_workers_combo.setCurrentText(str(settings.get("default_workers", 3)))
         self.default_resume_check.setChecked(bool(settings.get("default_resume", True)))
         self.default_keep_check.setChecked(bool(settings.get("default_keep_intermediates", True)))
@@ -967,10 +968,7 @@ class QtSettingsDialog(QDialog):
         self.backoff_cap_edit.setText(str(settings.get("perf_backoff_cap_seconds", 12.0)))
         self.timeout_text_edit.setText(str(settings.get("perf_timeout_text_seconds", 90)))
         self.timeout_image_edit.setText(str(settings.get("perf_timeout_image_seconds", 120)))
-        self.adaptive_effort_check.setChecked(bool(settings.get("adaptive_effort_enabled", False)))
-        self.adaptive_guard_check.setChecked(
-            bool(settings.get("adaptive_effort_xhigh_only_when_image_or_validator_fail", True))
-        )
+        self.allow_xhigh_check.setChecked(bool(settings.get("allow_xhigh_escalation", False)))
         self.diag_cost_summary_check.setChecked(bool(settings.get("diagnostics_show_cost_summary", True)))
         self.diag_verbose_meta_check.setChecked(bool(settings.get("diagnostics_verbose_metadata_logs", False)))
 
@@ -1119,7 +1117,8 @@ class QtSettingsDialog(QDialog):
     def _restore_defaults(self) -> None:
         self.default_lang_combo.setCurrentText("EN")
         self.default_effort_combo.setCurrentText("high")
-        self.default_images_combo.setCurrentText("auto")
+        self.default_effort_policy_combo.setCurrentText("adaptive")
+        self.default_images_combo.setCurrentText("off")
         self.default_workers_combo.setCurrentText("3")
         self.default_resume_check.setChecked(True)
         self.default_keep_check.setChecked(True)
@@ -1133,8 +1132,7 @@ class QtSettingsDialog(QDialog):
         self.backoff_cap_edit.setText("12.0")
         self.timeout_text_edit.setText("90")
         self.timeout_image_edit.setText("120")
-        self.adaptive_effort_check.setChecked(False)
-        self.adaptive_guard_check.setChecked(True)
+        self.allow_xhigh_check.setChecked(False)
 
     def _collect_values(self) -> dict[str, object]:
         base_url = self.ocr_base_url_edit.text().strip()
@@ -1159,6 +1157,7 @@ class QtSettingsDialog(QDialog):
             "ui_scale": ui_scale,
             "default_lang": self.default_lang_combo.currentText().strip().upper(),
             "default_effort": self.default_effort_combo.currentText().strip().lower(),
+            "default_effort_policy": self.default_effort_policy_combo.currentText().strip().lower(),
             "default_images_mode": self.default_images_combo.currentText().strip().lower(),
             "default_workers": _to_int(self.default_workers_combo.currentText(), field="Default workers", min_value=1, max_value=6),
             "default_resume": bool(self.default_resume_check.isChecked()),
@@ -1176,8 +1175,9 @@ class QtSettingsDialog(QDialog):
             "perf_backoff_cap_seconds": _to_float(self.backoff_cap_edit.text(), field="Backoff cap", min_value=1.0, max_value=120.0),
             "perf_timeout_text_seconds": _to_int(self.timeout_text_edit.text(), field="Text timeout", min_value=5, max_value=600),
             "perf_timeout_image_seconds": _to_int(self.timeout_image_edit.text(), field="Image timeout", min_value=5, max_value=1200),
-            "adaptive_effort_enabled": bool(self.adaptive_effort_check.isChecked()),
-            "adaptive_effort_xhigh_only_when_image_or_validator_fail": bool(self.adaptive_guard_check.isChecked()),
+            "allow_xhigh_escalation": bool(self.allow_xhigh_check.isChecked()),
+            "adaptive_effort_enabled": self.default_effort_policy_combo.currentText().strip().lower() == "adaptive",
+            "adaptive_effort_xhigh_only_when_image_or_validator_fail": bool(self.allow_xhigh_check.isChecked()),
             "diagnostics_show_cost_summary": bool(self.diag_cost_summary_check.isChecked()),
             "diagnostics_verbose_metadata_logs": bool(self.diag_verbose_meta_check.isChecked()),
             "min_chars_to_accept_ocr": _to_int(self.min_chars_edit.text(), field="Min chars to accept OCR", min_value=20, max_value=10000),

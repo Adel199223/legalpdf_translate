@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -19,6 +20,7 @@ from .__init__ import __version__
 from .checkpoint import (
     load_run_state,
     parse_effort,
+    parse_effort_policy,
     parse_image_mode,
     parse_ocr_engine_policy,
     parse_ocr_mode,
@@ -38,10 +40,14 @@ from .secrets_store import (
     get_openai_key,
     get_ocr_key,
 )
-from .types import RunConfig, RunSummary, TargetLang
+from .types import AnalyzeSummary, EffortPolicy, RunConfig, RunSummary, TargetLang
 from .ui_assets import load_image
 from .user_settings import app_data_dir, load_gui_settings, load_joblog_settings, save_gui_settings, settings_path
 from .workflow import TranslationWorkflow
+
+_PAGE_LOG_RE = re.compile(
+    r"page=(?P<page>\d+)\s+image_used=(?P<image>True|False)\s+retry_used=(?P<retry>True|False)\s+status=(?P<status>[a-z_]+)"
+)
 
 
 class LegalPDFTranslateApp(ttk.Frame):
@@ -55,6 +61,7 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.last_output_docx: Path | None = None
         self.last_run_config: RunConfig | None = None
         self.last_joblog_seed: JobLogSeed | None = None
+        self.last_run_report_path: Path | None = None
         self.joblog_window: JobLogWindow | None = None
         self.settings_window: tk.Toplevel | None = None
         self.joblog_db_path = job_log_db_path()
@@ -85,12 +92,17 @@ class LegalPDFTranslateApp(ttk.Frame):
         self._can_export_partial = False
         self._details_expanded = False
         self._config_control_states: list[tuple[tk.Widget, str]] = []
+        self._progress_done_pages = 0
+        self._progress_total_pages = 0
+        self._image_pages_seen: set[int] = set()
+        self._retry_pages_seen: set[int] = set()
 
         self.pdf_path_var = tk.StringVar()
         self.lang_var = tk.StringVar(value=TargetLang.EN.value)
         self.outdir_var = tk.StringVar()
         self.effort_var = tk.StringVar(value="high")
-        self.images_var = tk.StringVar(value="auto")
+        self.effort_policy_var = tk.StringVar(value="adaptive")
+        self.images_var = tk.StringVar(value="off")
         self.ocr_mode_var = tk.StringVar(value="auto")
         self.ocr_engine_var = tk.StringVar(value="local_then_api")
         self.ocr_api_base_url_var = tk.StringVar(value="")
@@ -108,6 +120,7 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.details_toggle_text_var = tk.StringVar(value="Show details ▾")
         self.status_var = tk.StringVar(value="Idle")
         self.page_count_var = tk.StringVar(value="Pages: -")
+        self.live_counters_var = tk.StringVar(value="Done 0/0 | Images 0 | Retries 0")
 
         self._apply_saved_settings(self.settings_data)
         self._apply_theme_from_settings(self.settings_data)
@@ -136,7 +149,13 @@ class LegalPDFTranslateApp(ttk.Frame):
         if effort in ("high", "xhigh"):
             self.effort_var.set(effort)
 
-        image_mode = str(data.get("default_images_mode", data.get("image_mode", "auto")) or "auto").lower()
+        effort_policy = str(
+            data.get("default_effort_policy", data.get("effort_policy", "adaptive")) or "adaptive"
+        ).lower()
+        if effort_policy in ("adaptive", "fixed_high", "fixed_xhigh"):
+            self.effort_policy_var.set(effort_policy)
+
+        image_mode = str(data.get("default_images_mode", data.get("image_mode", "off")) or "off").lower()
         if image_mode in ("off", "auto", "always"):
             self.images_var.set(image_mode)
         ocr_mode = str(data.get("ocr_mode_default", data.get("ocr_mode", "auto")) or "auto").lower()
@@ -269,7 +288,17 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.advanced = ttk.LabelFrame(content, text="Advanced", padding=8, style="Surface.TLabelframe")
         self.advanced.columnconfigure(1, weight=1)
 
-        ttk.Label(self.advanced, text="Reasoning effort").grid(row=0, column=0, sticky="w")
+        ttk.Label(self.advanced, text="Effort policy").grid(row=0, column=0, sticky="w")
+        self.effort_policy_combo = ttk.Combobox(
+            self.advanced,
+            textvariable=self.effort_policy_var,
+            values=["adaptive", "fixed_high", "fixed_xhigh"],
+            state="readonly",
+            width=12,
+        )
+        self.effort_policy_combo.grid(row=0, column=1, sticky="w")
+
+        ttk.Label(self.advanced, text="Reasoning effort").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.effort_combo = ttk.Combobox(
             self.advanced,
             textvariable=self.effort_var,
@@ -277,9 +306,9 @@ class LegalPDFTranslateApp(ttk.Frame):
             state="readonly",
             width=12,
         )
-        self.effort_combo.grid(row=0, column=1, sticky="w")
+        self.effort_combo.grid(row=1, column=1, sticky="w", pady=(6, 0))
 
-        ttk.Label(self.advanced, text="Image mode").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(self.advanced, text="Image mode").grid(row=2, column=0, sticky="w", pady=(6, 0))
         self.images_combo = ttk.Combobox(
             self.advanced,
             textvariable=self.images_var,
@@ -287,21 +316,21 @@ class LegalPDFTranslateApp(ttk.Frame):
             state="readonly",
             width=12,
         )
-        self.images_combo.grid(row=1, column=1, sticky="w", pady=(6, 0))
+        self.images_combo.grid(row=2, column=1, sticky="w", pady=(6, 0))
 
-        ttk.Label(self.advanced, text="Start page (1-based)").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(self.advanced, text="Start page (1-based)").grid(row=3, column=0, sticky="w", pady=(6, 0))
         self.start_page_entry = ttk.Entry(self.advanced, textvariable=self.start_page_var, width=12)
-        self.start_page_entry.grid(row=2, column=1, sticky="w", pady=(6, 0))
+        self.start_page_entry.grid(row=3, column=1, sticky="w", pady=(6, 0))
 
-        ttk.Label(self.advanced, text="End page (blank=last)").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(self.advanced, text="End page (blank=last)").grid(row=4, column=0, sticky="w", pady=(6, 0))
         self.end_page_entry = ttk.Entry(self.advanced, textvariable=self.end_page_var, width=12)
-        self.end_page_entry.grid(row=3, column=1, sticky="w", pady=(6, 0))
+        self.end_page_entry.grid(row=4, column=1, sticky="w", pady=(6, 0))
 
-        ttk.Label(self.advanced, text="Max pages (blank=all)").grid(row=4, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(self.advanced, text="Max pages (blank=all)").grid(row=5, column=0, sticky="w", pady=(6, 0))
         self.max_pages_entry = ttk.Entry(self.advanced, textvariable=self.max_pages_var, width=12)
-        self.max_pages_entry.grid(row=4, column=1, sticky="w", pady=(6, 0))
+        self.max_pages_entry.grid(row=5, column=1, sticky="w", pady=(6, 0))
 
-        ttk.Label(self.advanced, text="Parallel workers").grid(row=5, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(self.advanced, text="Parallel workers").grid(row=6, column=0, sticky="w", pady=(6, 0))
         self.workers_combo = ttk.Combobox(
             self.advanced,
             textvariable=self.workers_var,
@@ -309,31 +338,31 @@ class LegalPDFTranslateApp(ttk.Frame):
             state="readonly",
             width=12,
         )
-        self.workers_combo.grid(row=5, column=1, sticky="w", pady=(6, 0))
+        self.workers_combo.grid(row=6, column=1, sticky="w", pady=(6, 0))
 
         self.resume_check = ttk.Checkbutton(self.advanced, text="Resume", variable=self.resume_var)
-        self.resume_check.grid(row=6, column=0, sticky="w", pady=(6, 0))
+        self.resume_check.grid(row=7, column=0, sticky="w", pady=(6, 0))
         self.page_breaks_check = ttk.Checkbutton(
             self.advanced,
             text="Insert page breaks",
             variable=self.page_breaks_var,
         )
-        self.page_breaks_check.grid(row=6, column=1, sticky="w", pady=(6, 0))
+        self.page_breaks_check.grid(row=7, column=1, sticky="w", pady=(6, 0))
         self.keep_check = ttk.Checkbutton(self.advanced, text="Keep intermediates", variable=self.keep_var)
-        self.keep_check.grid(row=7, column=0, sticky="w", pady=(6, 0))
+        self.keep_check.grid(row=8, column=0, sticky="w", pady=(6, 0))
 
-        ttk.Label(self.advanced, text="Context file").grid(row=8, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(self.advanced, text="Context file").grid(row=9, column=0, sticky="w", pady=(6, 0))
         self.context_file_entry = ttk.Entry(self.advanced, textvariable=self.context_file_var)
-        self.context_file_entry.grid(row=8, column=1, sticky="ew", pady=(6, 0))
+        self.context_file_entry.grid(row=9, column=1, sticky="ew", pady=(6, 0))
         self.context_browse_btn = ttk.Button(self.advanced, text="Browse", command=self._pick_context)
-        self.context_browse_btn.grid(row=8, column=2, sticky="ew", pady=(6, 0), padx=(6, 0))
+        self.context_browse_btn.grid(row=9, column=2, sticky="ew", pady=(6, 0), padx=(6, 0))
 
-        ttk.Label(self.advanced, text="Context text").grid(row=9, column=0, sticky="nw", pady=(6, 0))
+        ttk.Label(self.advanced, text="Context text").grid(row=10, column=0, sticky="nw", pady=(6, 0))
         self.context_text = scrolledtext.ScrolledText(self.advanced, height=5, wrap=tk.WORD)
-        self.context_text.grid(row=9, column=1, columnspan=2, sticky="ew", pady=(6, 0))
+        self.context_text.grid(row=10, column=1, columnspan=2, sticky="ew", pady=(6, 0))
         apply_text_widget_theme(self.context_text)
 
-        ttk.Label(self.advanced, text="OCR mode").grid(row=10, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(self.advanced, text="OCR mode").grid(row=11, column=0, sticky="w", pady=(6, 0))
         self.ocr_mode_combo = ttk.Combobox(
             self.advanced,
             textvariable=self.ocr_mode_var,
@@ -341,9 +370,9 @@ class LegalPDFTranslateApp(ttk.Frame):
             state="readonly",
             width=18,
         )
-        self.ocr_mode_combo.grid(row=10, column=1, sticky="w", pady=(6, 0))
+        self.ocr_mode_combo.grid(row=11, column=1, sticky="w", pady=(6, 0))
 
-        ttk.Label(self.advanced, text="OCR engine").grid(row=11, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(self.advanced, text="OCR engine").grid(row=12, column=0, sticky="w", pady=(6, 0))
         self.ocr_engine_combo = ttk.Combobox(
             self.advanced,
             textvariable=self.ocr_engine_var,
@@ -351,11 +380,18 @@ class LegalPDFTranslateApp(ttk.Frame):
             state="readonly",
             width=18,
         )
-        self.ocr_engine_combo.grid(row=11, column=1, sticky="w", pady=(6, 0))
+        self.ocr_engine_combo.grid(row=12, column=1, sticky="w", pady=(6, 0))
+        self.analyze_btn = ttk.Button(
+            self.advanced,
+            text="Analyze",
+            command=self._start_analyze,
+            style="Secondary.TButton",
+        )
+        self.analyze_btn.grid(row=12, column=2, sticky="e", padx=(6, 0), pady=(6, 0))
 
         controls = ttk.Frame(content, style="Surface.TFrame")
         controls.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(10, 0))
-        controls.columnconfigure(8, weight=1)
+        controls.columnconfigure(10, weight=1)
 
         self.translate_btn = ttk.Button(controls, text="Translate", command=self._start_translation, style="Primary.TButton")
         self.translate_btn.grid(row=0, column=0, padx=(0, 6))
@@ -387,6 +423,14 @@ class LegalPDFTranslateApp(ttk.Frame):
             style="Secondary.TButton",
         )
         self.open_outdir_btn.grid(row=0, column=5, padx=(0, 6))
+        self.run_report_btn = ttk.Button(
+            controls,
+            text="Run Report",
+            command=self._open_run_report,
+            state=tk.DISABLED,
+            style="Secondary.TButton",
+        )
+        self.run_report_btn.grid(row=0, column=6, padx=(0, 6))
         self.save_joblog_btn = ttk.Button(
             controls,
             text="Save to Job Log",
@@ -394,20 +438,22 @@ class LegalPDFTranslateApp(ttk.Frame):
             state=tk.DISABLED,
             style="Secondary.TButton",
         )
-        self.save_joblog_btn.grid(row=0, column=6, padx=(0, 6))
+        self.save_joblog_btn.grid(row=0, column=7, padx=(0, 6))
         self.open_joblog_btn = ttk.Button(
             controls,
             text="Job Log",
             command=self._open_joblog_window,
             style="Secondary.TButton",
         )
-        self.open_joblog_btn.grid(row=0, column=7, padx=(0, 6))
+        self.open_joblog_btn.grid(row=0, column=8, padx=(0, 6))
 
         self.progress = ttk.Progressbar(content, orient=tk.HORIZONTAL, mode="determinate", maximum=100)
         self.progress.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(10, 0))
 
         self.status_label = ttk.Label(content, textvariable=self.status_var)
         self.status_label.grid(row=7, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        self.live_counters_label = ttk.Label(content, textvariable=self.live_counters_var, style="Muted.TLabel")
+        self.live_counters_label.grid(row=8, column=0, columnspan=4, sticky="w", pady=(4, 0))
 
         self.details_toggle_btn = ttk.Button(
             content,
@@ -415,7 +461,7 @@ class LegalPDFTranslateApp(ttk.Frame):
             command=self._toggle_details,
             style="Secondary.TButton",
         )
-        self.details_toggle_btn.grid(row=8, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        self.details_toggle_btn.grid(row=9, column=0, columnspan=4, sticky="w", pady=(8, 0))
 
         self.details_frame = ttk.Frame(content, style="Surface.TFrame")
         self.details_frame.columnconfigure(0, weight=1)
@@ -432,6 +478,7 @@ class LegalPDFTranslateApp(ttk.Frame):
             (self.outdir_browse_btn, tk.NORMAL),
             (self.show_advanced_btn, tk.NORMAL),
             (self.settings_btn, tk.NORMAL),
+            (self.effort_policy_combo, "readonly"),
             (self.effort_combo, "readonly"),
             (self.images_combo, "readonly"),
             (self.ocr_mode_combo, "readonly"),
@@ -445,6 +492,7 @@ class LegalPDFTranslateApp(ttk.Frame):
             (self.keep_check, tk.NORMAL),
             (self.context_file_entry, tk.NORMAL),
             (self.context_browse_btn, tk.NORMAL),
+            (self.analyze_btn, tk.NORMAL),
         ]
         self.bind("<Configure>", self._on_root_configure, add="+")
         self.after(10, self._refresh_visual_assets)
@@ -667,6 +715,7 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.lang_var.trace_add("write", self._on_setting_changed)
         self.outdir_var.trace_add("write", self._on_setting_changed)
         self.effort_var.trace_add("write", self._on_setting_changed)
+        self.effort_policy_var.trace_add("write", self._on_setting_changed)
         self.images_var.trace_add("write", self._on_setting_changed)
         self.ocr_mode_var.trace_add("write", self._on_setting_changed)
         self.ocr_engine_var.trace_add("write", self._on_setting_changed)
@@ -698,14 +747,14 @@ class LegalPDFTranslateApp(ttk.Frame):
         self._details_expanded = expanded
         if expanded:
             self.details_toggle_text_var.set("Hide details ▴")
-            self.details_frame.grid(row=9, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
+            self.details_frame.grid(row=10, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
             if self._content_frame is not None:
-                self._content_frame.rowconfigure(9, weight=1)
+                self._content_frame.rowconfigure(10, weight=1)
         else:
             self.details_toggle_text_var.set("Show details ▾")
             self.details_frame.grid_forget()
             if self._content_frame is not None:
-                self._content_frame.rowconfigure(9, weight=0)
+                self._content_frame.rowconfigure(10, weight=0)
 
     def _pick_pdf(self) -> None:
         path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")])
@@ -733,6 +782,7 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.log_text.insert(tk.END, f"[{stamp}] {message}\n")
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
+        self._track_page_flags_from_log(message)
         if bool(self.settings_data.get("diagnostics_verbose_metadata_logs", False)):
             try:
                 self._metadata_log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -740,6 +790,34 @@ class LegalPDFTranslateApp(ttk.Frame):
                     fh.write(f"[{datetime.now().isoformat(timespec='seconds')}] {message}\n")
             except Exception:
                 pass
+
+    def _track_page_flags_from_log(self, message: str) -> None:
+        match = _PAGE_LOG_RE.search(message)
+        if match is None:
+            return
+        try:
+            page_number = int(match.group("page"))
+        except Exception:
+            return
+        if match.group("image") == "True":
+            self._image_pages_seen.add(page_number)
+        if match.group("retry") == "True":
+            self._retry_pages_seen.add(page_number)
+        self._update_live_counters()
+
+    def _reset_live_counters(self) -> None:
+        self._progress_done_pages = 0
+        self._progress_total_pages = 0
+        self._image_pages_seen.clear()
+        self._retry_pages_seen.clear()
+        self._update_live_counters()
+
+    def _update_live_counters(self) -> None:
+        self.live_counters_var.set(
+            "Done "
+            f"{self._progress_done_pages}/{self._progress_total_pages} | "
+            f"Images {len(self._image_pages_seen)} | Retries {len(self._retry_pages_seen)}"
+        )
 
     def _clear_log(self) -> None:
         self.log_text.configure(state=tk.NORMAL)
@@ -787,6 +865,8 @@ class LegalPDFTranslateApp(ttk.Frame):
             output_dir=outdir,
             target_lang=lang,
             effort=parse_effort(self.effort_var.get()),
+            effort_policy=parse_effort_policy(self.effort_policy_var.get()),
+            allow_xhigh_escalation=bool(self.settings_data.get("allow_xhigh_escalation", False)),
             image_mode=parse_image_mode(self.images_var.get()),
             ocr_mode=parse_ocr_mode(self.ocr_mode_var.get()),
             ocr_engine=parse_ocr_engine_policy(self.ocr_engine_var.get()),
@@ -863,6 +943,7 @@ class LegalPDFTranslateApp(ttk.Frame):
     def _refresh_controls(self) -> None:
         can_start = self._can_start_translation()
         self.translate_btn.configure(state=tk.NORMAL if (not self._busy and can_start) else tk.DISABLED)
+        self.analyze_btn.configure(state=tk.NORMAL if (not self._busy and can_start) else tk.DISABLED)
         self.cancel_btn.configure(state=tk.NORMAL if self._running_translation else tk.DISABLED)
         self.new_run_btn.configure(state=tk.NORMAL if not self._busy else tk.DISABLED)
         self.export_partial_btn.configure(
@@ -879,6 +960,12 @@ class LegalPDFTranslateApp(ttk.Frame):
             and self.last_output_docx.stat().st_size > 0
         )
         self.open_outdir_btn.configure(state=tk.NORMAL if can_open else tk.DISABLED)
+        can_open_report = (
+            not self._busy
+            and self.last_run_report_path is not None
+            and self.last_run_report_path.exists()
+        )
+        self.run_report_btn.configure(state=tk.NORMAL if can_open_report else tk.DISABLED)
         can_save_joblog = (not self._busy) and (self.last_joblog_seed is not None)
         self.save_joblog_btn.configure(state=tk.NORMAL if can_save_joblog else tk.DISABLED)
         self.open_joblog_btn.configure(state=tk.NORMAL if not self._busy else tk.DISABLED)
@@ -895,6 +982,41 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.queue = queue.Queue()
         return self.queue
 
+    def _warn_fixed_xhigh_for_enfr(self) -> str:
+        dialog = tk.Toplevel(self.master)
+        dialog.title("Cost/Time warning")
+        dialog.transient(self.master)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        choice = {"value": "cancel"}
+
+        frame = ttk.Frame(dialog, padding=14)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            frame,
+            text="xhigh can multiply cost and time; recommended: adaptive or high.",
+            justify=tk.LEFT,
+            wraplength=420,
+        ).pack(anchor="w")
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(
+            buttons,
+            text="Proceed",
+            style="Primary.TButton",
+            command=lambda: (choice.__setitem__("value", "proceed"), dialog.destroy()),
+        ).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(
+            buttons,
+            text="Switch to adaptive",
+            style="Secondary.TButton",
+            command=lambda: (choice.__setitem__("value", "switch"), dialog.destroy()),
+        ).pack(side=tk.RIGHT)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        dialog.wait_window()
+        return str(choice["value"])
+
     def _start_translation(self) -> None:
         try:
             config = self._build_config()
@@ -902,15 +1024,32 @@ class LegalPDFTranslateApp(ttk.Frame):
             messagebox.showerror("Invalid configuration", str(exc))
             return
 
+        if (
+            config.target_lang in (TargetLang.EN, TargetLang.FR)
+            and config.effort_policy == EffortPolicy.FIXED_XHIGH
+        ):
+            decision = self._warn_fixed_xhigh_for_enfr()
+            if decision == "switch":
+                self.effort_policy_var.set("adaptive")
+                try:
+                    config = self._build_config()
+                except Exception as exc:  # noqa: BLE001
+                    messagebox.showerror("Invalid configuration", str(exc))
+                    return
+            elif decision != "proceed":
+                return
+
         self._persist_gui_settings()
         self.last_summary = None
         self.last_output_docx = None
         self.last_run_config = config
         self.last_joblog_seed = None
+        self.last_run_report_path = None
         self._can_export_partial = False
         self._set_busy(True, translation=True)
         self.progress.configure(value=0)
         self.status_var.set("Starting...")
+        self._reset_live_counters()
 
         run_queue = self._new_queue()
 
@@ -979,6 +1118,41 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.worker = threading.Thread(target=target, daemon=True)
         self.worker.start()
 
+    def _start_analyze(self) -> None:
+        try:
+            config = self._build_config()
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Invalid configuration", str(exc))
+            return
+
+        self._persist_gui_settings()
+        self.last_summary = None
+        self.last_run_report_path = None
+        self.last_output_docx = None
+        self.last_joblog_seed = None
+        self._set_busy(True, translation=False)
+        self.status_var.set("Analyzing...")
+        self.progress.configure(value=0)
+        self._reset_live_counters()
+
+        run_queue = self._new_queue()
+
+        def log_callback(message: str) -> None:
+            run_queue.put(("log", message))
+
+        workflow = TranslationWorkflow(log_callback=log_callback)
+        self.workflow = workflow
+
+        def target() -> None:
+            try:
+                summary = workflow.analyze(config)
+                run_queue.put(("analyze_done", summary))
+            except Exception as exc:  # noqa: BLE001
+                run_queue.put(("analyze_error", str(exc)))
+
+        self.worker = threading.Thread(target=target, daemon=True)
+        self.worker.start()
+
     def _cancel_translation(self) -> None:
         if self.workflow is not None and self._running_translation:
             self.workflow.cancel()
@@ -991,12 +1165,14 @@ class LegalPDFTranslateApp(ttk.Frame):
         self.last_output_docx = None
         self.last_run_config = None
         self.last_joblog_seed = None
+        self.last_run_report_path = None
         self._can_export_partial = False
         self.workflow = None
         self.worker = None
         self._new_queue()
         self.progress.configure(value=0)
         self.status_var.set("Idle")
+        self._reset_live_counters()
         self._clear_log()
         self._set_details_expanded(False)
         self._persist_gui_settings()
@@ -1027,6 +1203,23 @@ class LegalPDFTranslateApp(ttk.Frame):
             subprocess.Popen(["explorer", f"/select,{output_path}"])
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Open folder failed", str(exc))
+
+    def _open_run_report(self) -> None:
+        if self.last_run_report_path is None:
+            return
+        report_path = self.last_run_report_path.expanduser().resolve()
+        if not report_path.exists():
+            messagebox.showerror("Run report", f"Run report not found:\n{report_path}")
+            return
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["explorer", f"/select,{report_path}"])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(report_path.parent)])
+            else:
+                subprocess.Popen(["xdg-open", str(report_path.parent)])
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Run report", str(exc))
 
     def _open_output_file(self) -> None:
         if self.last_output_docx is None:
@@ -1137,7 +1330,8 @@ class LegalPDFTranslateApp(ttk.Frame):
         self._apply_theme_from_settings(self.settings_data)
         self.lang_var.set(str(self.settings_data.get("default_lang", "EN")))
         self.effort_var.set(str(self.settings_data.get("default_effort", "high")))
-        self.images_var.set(str(self.settings_data.get("default_images_mode", "auto")))
+        self.effort_policy_var.set(str(self.settings_data.get("default_effort_policy", "adaptive")))
+        self.images_var.set(str(self.settings_data.get("default_images_mode", "off")))
         self.resume_var.set(bool(self.settings_data.get("default_resume", True)))
         self.keep_var.set(bool(self.settings_data.get("default_keep_intermediates", True)))
         self.page_breaks_var.set(bool(self.settings_data.get("default_page_breaks", True)))
@@ -1199,6 +1393,7 @@ class LegalPDFTranslateApp(ttk.Frame):
                 "last_outdir": outdir_text,
                 "last_lang": self.lang_var.get().strip().upper(),
                 "effort": self.effort_var.get().strip().lower(),
+                "effort_policy": self.effort_policy_var.get().strip().lower(),
                 "image_mode": self.images_var.get().strip().lower(),
                 "ocr_mode": self.ocr_mode_var.get().strip().lower(),
                 "ocr_engine": self.ocr_engine_var.get().strip().lower(),
@@ -1237,15 +1432,21 @@ class LegalPDFTranslateApp(ttk.Frame):
                 if int(total) > 0:
                     progress_value = (float(page) / float(total)) * 100.0
                     self.progress.configure(value=progress_value)
+                self._progress_done_pages = max(0, int(page))
+                self._progress_total_pages = max(0, int(total))
+                self._update_live_counters()
                 self.status_var.set(f"Page {page}/{total}: {status}")
             elif event == "done":
                 summary = payload  # type: ignore[assignment]
                 self.last_summary = summary
+                self.last_run_report_path = summary.run_summary_path
                 self._set_busy(False, translation=False)
                 if summary.success and summary.output_docx is not None:
                     self.last_output_docx = summary.output_docx.expanduser().resolve()
                     self.status_var.set("Completed")
                     self._append_log(f"Saved DOCX: {self.last_output_docx}")
+                    if summary.run_summary_path is not None:
+                        self._append_log(f"Run report: {summary.run_summary_path}")
                     self._prepare_joblog_seed(summary)
                     self._show_saved_docx_dialog("Translation complete")
                     self._open_save_to_joblog_dialog()
@@ -1254,6 +1455,8 @@ class LegalPDFTranslateApp(ttk.Frame):
                     self.last_joblog_seed = None
                     self.status_var.set(f"Failed ({summary.error})")
                     self._append_log(f"Run failed: {summary.error}; failed_page={summary.failed_page}")
+                    if summary.run_summary_path is not None:
+                        self._append_log(f"Run report: {summary.run_summary_path}")
                     if summary.error == "docx_write_failed" and summary.attempted_output_docx is not None:
                         self._append_log(f"DOCX save failed at: {summary.attempted_output_docx}")
                     self._can_export_partial = summary.completed_pages > 0
@@ -1267,6 +1470,42 @@ class LegalPDFTranslateApp(ttk.Frame):
                             f"Partial pages: {summary.completed_pages}"
                         )
                     messagebox.showwarning("Translation stopped", details)
+                self._progress_done_pages = max(0, int(summary.completed_pages))
+                self._progress_total_pages = max(self._progress_total_pages, self._progress_done_pages)
+                self._update_live_counters()
+                self._refresh_controls()
+            elif event == "analyze_done":
+                analysis = payload  # type: ignore[assignment]
+                if not isinstance(analysis, AnalyzeSummary):
+                    self._set_busy(False, translation=False)
+                    self.status_var.set("Analyze failed")
+                    messagebox.showerror("Analyze failed", "Invalid analyze response.")
+                    self._refresh_controls()
+                    continue
+                self._set_busy(False, translation=False)
+                self.status_var.set("Analyze complete")
+                self._append_log(
+                    "Analyze complete: "
+                    f"selected_pages={analysis.selected_pages_count}, "
+                    f"would_attach_images={analysis.pages_would_attach_images}"
+                )
+                self._append_log(f"Analyze report: {analysis.analyze_report_path}")
+                self._progress_done_pages = 0
+                self._progress_total_pages = int(analysis.selected_pages_count)
+                self._update_live_counters()
+                messagebox.showinfo(
+                    "Analyze complete",
+                    "Analyze-only finished.\n\n"
+                    f"Selected pages: {analysis.selected_pages_count}\n"
+                    f"Would attach images: {analysis.pages_would_attach_images}\n"
+                    f"Report: {analysis.analyze_report_path}",
+                )
+                self._refresh_controls()
+            elif event == "analyze_error":
+                self._set_busy(False, translation=False)
+                self.status_var.set("Analyze failed")
+                self._append_log(f"Analyze failed: {payload}")
+                messagebox.showerror("Analyze failed", str(payload))
                 self._refresh_controls()
             elif event == "rebuild_done":
                 rebuilt = payload  # type: ignore[assignment]

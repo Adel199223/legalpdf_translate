@@ -20,6 +20,12 @@ class ReasoningEffort(str, Enum):
     MEDIUM = "medium"
 
 
+class EffortPolicy(str, Enum):
+    ADAPTIVE = "adaptive"
+    FIXED_HIGH = "fixed_high"
+    FIXED_XHIGH = "fixed_xhigh"
+
+
 class ImageMode(str, Enum):
     OFF = "off"
     AUTO = "auto"
@@ -71,6 +77,8 @@ class RunConfig:
     ocr_api_key_env_name: str = "DEEPSEEK_API_KEY"
     context_file: Path | None = None
     context_text: str | None = None
+    effort_policy: EffortPolicy = EffortPolicy.ADAPTIVE
+    allow_xhigh_escalation: bool = False
 
 
 @dataclass(slots=True)

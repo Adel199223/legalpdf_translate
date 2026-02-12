@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..__init__ import __version__
-from ..checkpoint import parse_effort, parse_image_mode, parse_ocr_engine_policy, parse_ocr_mode
+from ..checkpoint import parse_effort, parse_effort_policy, parse_image_mode, parse_ocr_engine_policy, parse_ocr_mode
 from ..checkpoint import load_run_state
 from ..config import OPENAI_MODEL
 from ..joblog_db import job_log_db_path
@@ -53,12 +53,12 @@ from ..metadata_autofill import extract_pdf_header_metadata, metadata_config_fro
 from ..output_paths import build_output_paths, require_writable_output_dir_text
 from ..pdf_text_order import get_page_count
 from ..secrets_store import delete_openai_key, delete_ocr_key, get_openai_key, get_ocr_key
-from ..types import RunConfig, RunSummary, TargetLang
+from ..types import AnalyzeSummary, EffortPolicy, RunConfig, RunSummary, TargetLang
 from ..user_settings import app_data_dir, load_gui_settings, load_joblog_settings, save_gui_settings, settings_path
 from ..workflow import TranslationWorkflow
 from .dialogs import JobLogSeed, QtJobLogWindow, QtSaveToJobLogDialog, QtSettingsDialog, build_seed_from_run
 from .styles import apply_primary_glow, apply_soft_shadow
-from .worker import RebuildDocxWorker, TranslationRunWorker
+from .worker import AnalyzeWorker, RebuildDocxWorker, TranslationRunWorker
 
 
 def _is_truthy_env(value: str | None) -> bool:
@@ -164,6 +164,7 @@ class QtMainWindow(QMainWindow):
         self._last_output_docx: Path | None = None
         self._last_run_config: RunConfig | None = None
         self._last_joblog_seed: JobLogSeed | None = None
+        self._last_run_report_path: Path | None = None
         self._joblog_window: QtJobLogWindow | None = None
         self._settings_dialog: QtSettingsDialog | None = None
         self._menu_actions: dict[str, QAction] = {}
@@ -178,6 +179,10 @@ class QtMainWindow(QMainWindow):
         self._running = False
         self._can_export_partial = False
         self._last_page_path: str | None = None
+        self._progress_done_pages = 0
+        self._progress_total_pages = 0
+        self._image_pages_seen: set[int] = set()
+        self._retry_pages_seen: set[int] = set()
         self._click_debug_enabled = _is_truthy_env(os.getenv("LEGALPDF_QT_CLICK_DEBUG"))
 
         self._build_ui()
@@ -257,6 +262,7 @@ class QtMainWindow(QMainWindow):
         adv.setContentsMargins(10, 10, 10, 10)
         adv.setHorizontalSpacing(12)
         adv.setVerticalSpacing(10)
+        self.effort_policy_combo = QComboBox(); self.effort_policy_combo.addItems(["adaptive", "fixed_high", "fixed_xhigh"])
         self.effort_combo = QComboBox(); self.effort_combo.addItems(["high", "xhigh"])
         self.images_combo = QComboBox(); self.images_combo.addItems(["off", "auto", "always"])
         self.ocr_mode_combo = QComboBox(); self.ocr_mode_combo.addItems(["off", "auto", "always"])
@@ -272,7 +278,9 @@ class QtMainWindow(QMainWindow):
         self.context_btn = QPushButton("Browse")
         cf = QWidget(); cfl = QHBoxLayout(cf); cfl.setContentsMargins(0, 0, 0, 0); cfl.setSpacing(8); cfl.addWidget(self.context_file_edit); cfl.addWidget(self.context_btn)
         self.context_text = QPlainTextEdit(); self.context_text.setFixedHeight(90); self.context_text.setPlaceholderText("Optional context text...")
+        self.analyze_btn = QPushButton("Analyze")
         toggles = QWidget(); tl = QHBoxLayout(toggles); tl.setContentsMargins(0, 0, 0, 0); tl.setSpacing(12); tl.addWidget(self.resume_check); tl.addWidget(self.breaks_check); tl.addWidget(self.keep_check); tl.addStretch(1)
+        adv.addRow("Effort policy", self.effort_policy_combo)
         adv.addRow("Reasoning effort", self.effort_combo)
         adv.addRow("Image mode", self.images_combo)
         adv.addRow("OCR mode", self.ocr_mode_combo)
@@ -284,6 +292,7 @@ class QtMainWindow(QMainWindow):
         adv.addRow("Run options", toggles)
         adv.addRow("Context file", cf)
         adv.addRow("Context text", self.context_text)
+        adv.addRow("", self.analyze_btn)
         main_layout.addWidget(self.adv_frame)
         card_shell.addWidget(self.main_card)
 
@@ -310,7 +319,9 @@ class QtMainWindow(QMainWindow):
         fp = QHBoxLayout(); fp.addWidget(QLabel("Final DOCX")); self.final_docx_edit = QLineEdit(readOnly=True); fp.addWidget(self.final_docx_edit, 1); footer.addLayout(fp)
         pr = QHBoxLayout(); self.progress = QProgressBar(); self.progress.setRange(0, 100); self.progress.setValue(0); self.page_label = QLabel("Page: -/-", objectName="MutedLabel"); pr.addWidget(self.progress, 1); pr.addWidget(self.page_label); footer.addLayout(pr)
         self.status_label = QLabel("Idle", objectName="PathLabel")
+        self.live_counters_label = QLabel("Done 0/0 | Images 0 | Retries 0", objectName="MutedLabel")
         footer.addWidget(self.status_label)
+        footer.addWidget(self.live_counters_label)
 
         buttons = QHBoxLayout(); buttons.setSpacing(8)
         self.translate_btn = QPushButton("Translate", objectName="PrimaryButton")
@@ -319,6 +330,7 @@ class QtMainWindow(QMainWindow):
         self.partial_btn = QPushButton("Export partial DOCX")
         self.rebuild_btn = QPushButton("Rebuild DOCX")
         self.open_btn = QPushButton("Open output folder")
+        self.report_btn = QPushButton("Run Report")
         self.save_joblog_btn = QPushButton("Save to Job Log")
         self.open_joblog_btn = QPushButton("Job Log")
         for btn in (
@@ -328,6 +340,7 @@ class QtMainWindow(QMainWindow):
             self.partial_btn,
             self.rebuild_btn,
             self.open_btn,
+            self.report_btn,
             self.save_joblog_btn,
             self.open_joblog_btn,
         ):
@@ -345,11 +358,13 @@ class QtMainWindow(QMainWindow):
         self.show_adv.toggled.connect(self._set_adv_visible)
         self.details_btn.toggled.connect(self._set_details_visible)
         self.translate_btn.clicked.connect(self._start)
+        self.analyze_btn.clicked.connect(self._start_analyze)
         self.cancel_btn.clicked.connect(self._cancel)
         self.new_btn.clicked.connect(self._new_run)
         self.partial_btn.clicked.connect(self._export_partial)
         self.rebuild_btn.clicked.connect(self._start_rebuild_docx)
         self.open_btn.clicked.connect(self._open_output_folder)
+        self.report_btn.clicked.connect(self._open_run_report)
         self.save_joblog_btn.clicked.connect(self._open_save_to_joblog_dialog)
         self.open_joblog_btn.clicked.connect(self._open_joblog_window)
 
@@ -358,6 +373,7 @@ class QtMainWindow(QMainWindow):
         self.lang_combo.currentTextChanged.connect(self._on_form_changed)
         self.outdir_edit.textChanged.connect(self._on_form_changed)
         self.effort_combo.currentTextChanged.connect(self._on_form_changed)
+        self.effort_policy_combo.currentTextChanged.connect(self._on_form_changed)
         self.images_combo.currentTextChanged.connect(self._on_form_changed)
         self.ocr_mode_combo.currentTextChanged.connect(self._on_form_changed)
         self.ocr_engine_combo.currentTextChanged.connect(self._on_form_changed)
@@ -383,7 +399,10 @@ class QtMainWindow(QMainWindow):
             lang = "EN"
         self.lang_combo.setCurrentText(lang)
         self.effort_combo.setCurrentText(str(defaults.get("effort", defaults.get("default_effort", "high")) or "high"))
-        self.images_combo.setCurrentText(str(defaults.get("image_mode", defaults.get("default_images_mode", "auto")) or "auto"))
+        self.effort_policy_combo.setCurrentText(
+            str(defaults.get("effort_policy", defaults.get("default_effort_policy", "adaptive")) or "adaptive")
+        )
+        self.images_combo.setCurrentText(str(defaults.get("image_mode", defaults.get("default_images_mode", "off")) or "off"))
         self.ocr_mode_combo.setCurrentText(str(defaults.get("ocr_mode", defaults.get("ocr_mode_default", "auto")) or "auto"))
         self.ocr_engine_combo.setCurrentText(
             str(defaults.get("ocr_engine", defaults.get("ocr_engine_default", "local_then_api")) or "local_then_api")
@@ -429,6 +448,7 @@ class QtMainWindow(QMainWindow):
             "last_outdir": self.outdir_edit.text().strip(),
             "last_lang": self.lang_combo.currentText().strip().upper(),
             "effort": self.effort_combo.currentText().strip().lower(),
+            "effort_policy": self.effort_policy_combo.currentText().strip().lower(),
             "image_mode": self.images_combo.currentText().strip().lower(),
             "ocr_mode": self.ocr_mode_combo.currentText().strip().lower(),
             "ocr_engine": self.ocr_engine_combo.currentText().strip().lower(),
@@ -639,7 +659,8 @@ class QtMainWindow(QMainWindow):
 
         self.lang_combo.setCurrentText(str(self._defaults.get("default_lang", "EN")))
         self.effort_combo.setCurrentText(str(self._defaults.get("default_effort", "high")))
-        self.images_combo.setCurrentText(str(self._defaults.get("default_images_mode", "auto")))
+        self.effort_policy_combo.setCurrentText(str(self._defaults.get("default_effort_policy", "adaptive")))
+        self.images_combo.setCurrentText(str(self._defaults.get("default_images_mode", "off")))
         self.resume_check.setChecked(bool(self._defaults.get("default_resume", True)))
         self.keep_check.setChecked(bool(self._defaults.get("default_keep_intermediates", True)))
         self.breaks_check.setChecked(bool(self._defaults.get("default_page_breaks", True)))
@@ -741,6 +762,38 @@ class QtMainWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _reset_live_counters(self) -> None:
+        self._progress_done_pages = 0
+        self._progress_total_pages = 0
+        self._image_pages_seen.clear()
+        self._retry_pages_seen.clear()
+        self._update_live_counters()
+
+    def _update_live_counters(self) -> None:
+        self.live_counters_label.setText(
+            "Done "
+            f"{self._progress_done_pages}/{self._progress_total_pages} | "
+            f"Images {len(self._image_pages_seen)} | Retries {len(self._retry_pages_seen)}"
+        )
+
+    def _warn_fixed_xhigh_for_enfr(self) -> str:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Cost/Time warning")
+        dialog.setText("xhigh can multiply cost and time; recommended: adaptive or high.")
+        proceed_btn = dialog.addButton("Proceed", QMessageBox.ButtonRole.AcceptRole)
+        switch_btn = dialog.addButton("Switch to adaptive", QMessageBox.ButtonRole.ActionRole)
+        cancel_btn = dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.exec()
+        clicked = dialog.clickedButton()
+        if clicked is proceed_btn:
+            return "proceed"
+        if clicked is switch_btn:
+            return "switch"
+        if clicked is cancel_btn:
+            return "cancel"
+        return "cancel"
+
     def _build_config(self) -> RunConfig:
         pdf_text = self.pdf_edit.text().strip()
         outdir_text = self.outdir_edit.text().strip()
@@ -774,6 +827,8 @@ class QtMainWindow(QMainWindow):
             output_dir=outdir,
             target_lang=TargetLang(self.lang_combo.currentText().strip().upper()),
             effort=parse_effort(self.effort_combo.currentText()),
+            effort_policy=parse_effort_policy(self.effort_policy_combo.currentText()),
+            allow_xhigh_escalation=bool(self._defaults.get("allow_xhigh_escalation", False)),
             image_mode=parse_image_mode(self.images_combo.currentText()),
             start_page=start_page,
             end_page=opt_int(self.end_edit.text(), "End page"),
@@ -838,6 +893,7 @@ class QtMainWindow(QMainWindow):
     def _update_controls(self) -> None:
         can_start = self._can_start()
         self.translate_btn.setEnabled(can_start)
+        self.analyze_btn.setEnabled(can_start and not self._busy)
         self.cancel_btn.setEnabled(self._running)
         self.new_btn.setEnabled(not self._busy)
         self.partial_btn.setEnabled((not self._busy) and self._can_export_partial and self._last_workflow is not None)
@@ -849,6 +905,12 @@ class QtMainWindow(QMainWindow):
             and self._last_output_docx.stat().st_size > 0
         )
         self.open_btn.setEnabled(can_open)
+        can_report = (
+            (not self._busy)
+            and self._last_run_report_path is not None
+            and self._last_run_report_path.exists()
+        )
+        self.report_btn.setEnabled(can_report)
         self.save_joblog_btn.setEnabled((not self._busy) and (self._last_joblog_seed is not None))
         self.open_joblog_btn.setEnabled(not self._busy)
 
@@ -860,7 +922,7 @@ class QtMainWindow(QMainWindow):
         self._running = busy and translation
         for w in (
             self.pdf_edit, self.pdf_btn, self.lang_combo, self.outdir_edit, self.outdir_btn, self.show_adv, self.settings_btn,
-            self.effort_combo, self.images_combo, self.ocr_mode_combo, self.ocr_engine_combo,
+            self.effort_policy_combo, self.effort_combo, self.images_combo, self.ocr_mode_combo, self.ocr_engine_combo,
             self.start_edit, self.end_edit, self.max_edit, self.workers_spin,
             self.resume_check, self.breaks_check, self.keep_check,
             self.context_file_edit, self.context_btn, self.context_text,
@@ -877,8 +939,24 @@ class QtMainWindow(QMainWindow):
             QMessageBox.critical(self, "Invalid configuration", str(exc))
             return
 
+        if (
+            config.target_lang in (TargetLang.EN, TargetLang.FR)
+            and config.effort_policy == EffortPolicy.FIXED_XHIGH
+        ):
+            decision = self._warn_fixed_xhigh_for_enfr()
+            if decision == "switch":
+                self.effort_policy_combo.setCurrentText("adaptive")
+                try:
+                    config = self._build_config()
+                except Exception as exc:  # noqa: BLE001
+                    QMessageBox.critical(self, "Invalid configuration", str(exc))
+                    return
+            elif decision != "proceed":
+                return
+
         self._save_settings()
         self._last_summary = None
+        self._last_run_report_path = None
         self._last_output_docx = None
         self._last_run_config = config
         self._last_joblog_seed = None
@@ -889,6 +967,7 @@ class QtMainWindow(QMainWindow):
         self.page_label.setText("Page: -/-")
         self.status_label.setText("Starting...")
         self.header_status_label.setText("Starting...")
+        self._reset_live_counters()
 
         max_retries = int(self._defaults.get("perf_max_transport_retries", 4) or 4)
         backoff_cap = float(self._defaults.get("perf_backoff_cap_seconds", 12.0) or 12.0)
@@ -915,19 +994,60 @@ class QtMainWindow(QMainWindow):
         self._set_busy(True, translation=True)
         thread.start()
 
+    def _start_analyze(self) -> None:
+        if self._busy:
+            return
+        try:
+            config = self._build_config()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Invalid configuration", str(exc))
+            return
+
+        self._save_settings()
+        self._last_summary = None
+        self._last_run_report_path = None
+        self._last_output_docx = None
+        self._last_joblog_seed = None
+        self.status_label.setText("Analyzing...")
+        self.header_status_label.setText("Analyzing...")
+        self.progress.setValue(0)
+        self.page_label.setText("Page: -/-")
+        self._reset_live_counters()
+
+        thread = QThread(self)
+        worker = AnalyzeWorker(config=config)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.log.connect(self._append_log)
+        worker.finished.connect(self._on_analyze_finished)
+        worker.error.connect(self._on_analyze_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(self._cleanup_worker)
+
+        self._worker_thread = thread
+        self._worker = worker
+        self._set_busy(True, translation=False)
+        thread.start()
+
     def _on_progress(self, selected_index: int, selected_total: int, real_page: int, status: str, image_used: bool, retry_used: bool) -> None:
         if selected_total > 0:
             self.progress.setValue(max(0, min(100, int((float(selected_index) / float(selected_total)) * 100.0))))
+        self._progress_done_pages = max(0, int(selected_index))
+        self._progress_total_pages = max(0, int(selected_total))
         if real_page > 0:
             extra = []
             if image_used:
                 extra.append("image")
+                self._image_pages_seen.add(real_page)
             if retry_used:
                 extra.append("retry")
+                self._retry_pages_seen.add(real_page)
             suffix = f" [{', '.join(extra)}]" if extra else ""
             self.page_label.setText(f"Page {real_page} ({selected_index}/{selected_total}){suffix}")
         else:
             self.page_label.setText(f"Progress: {selected_index}/{selected_total}")
+        self._update_live_counters()
         self.status_label.setText(status)
         self.header_status_label.setText(status)
 
@@ -942,6 +1062,7 @@ class QtMainWindow(QMainWindow):
             self._last_joblog_seed = None
             return
         self._last_summary = summary
+        self._last_run_report_path = summary.run_summary_path
         if summary.success and summary.output_docx is not None:
             output = summary.output_docx.expanduser().resolve()
             self._last_output_docx = output
@@ -949,6 +1070,8 @@ class QtMainWindow(QMainWindow):
             self.status_label.setText("Completed")
             self.header_status_label.setText("Completed")
             self._append_log(f"Saved DOCX: {output}")
+            if summary.run_summary_path is not None:
+                self._append_log(f"Run report: {summary.run_summary_path}")
             self._prepare_joblog_seed(summary)
             self._show_saved_docx_dialog("Translation complete")
             self._open_save_to_joblog_dialog()
@@ -956,6 +1079,8 @@ class QtMainWindow(QMainWindow):
             self._last_output_docx = None
             self._last_joblog_seed = None
             self._append_log(f"Run failed: {summary.error}; failed_page={summary.failed_page}")
+            if summary.run_summary_path is not None:
+                self._append_log(f"Run report: {summary.run_summary_path}")
             self.status_label.setText(f"Failed ({summary.error})")
             self.header_status_label.setText("Failed")
             if summary.error == "docx_write_failed" and summary.attempted_output_docx is not None:
@@ -967,6 +1092,9 @@ class QtMainWindow(QMainWindow):
                     f"Partial pages: {summary.completed_pages}"
                 )
             QMessageBox.warning(self, "Translation stopped", details)
+        self._progress_done_pages = max(self._progress_done_pages, int(summary.completed_pages))
+        self._progress_total_pages = max(self._progress_total_pages, self._progress_done_pages)
+        self._update_live_counters()
         self._can_export_partial = summary.completed_pages > 0
         self._update_controls()
     def _on_error(self, message: str) -> None:
@@ -976,6 +1104,43 @@ class QtMainWindow(QMainWindow):
         self.header_status_label.setText("Error")
         self._append_log(f"Runtime error: {message}")
         QMessageBox.critical(self, "Runtime error", message)
+
+    def _on_analyze_finished(self, summary_obj: object) -> None:
+        self._set_busy(False, translation=False)
+        if not isinstance(summary_obj, AnalyzeSummary):
+            self.status_label.setText("Analyze failed")
+            self.header_status_label.setText("Analyze failed")
+            QMessageBox.critical(self, "Analyze failed", "Invalid analyze response.")
+            self._update_controls()
+            return
+        summary = summary_obj
+        self.status_label.setText("Analyze complete")
+        self.header_status_label.setText("Analyze complete")
+        self._append_log(
+            "Analyze complete: "
+            f"selected_pages={summary.selected_pages_count}, "
+            f"would_attach_images={summary.pages_would_attach_images}"
+        )
+        self._append_log(f"Analyze report: {summary.analyze_report_path}")
+        self._progress_done_pages = 0
+        self._progress_total_pages = int(summary.selected_pages_count)
+        self._update_live_counters()
+        QMessageBox.information(
+            self,
+            "Analyze complete",
+            "Analyze-only finished.\n\n"
+            f"Selected pages: {summary.selected_pages_count}\n"
+            f"Would attach images: {summary.pages_would_attach_images}\n"
+            f"Report: {summary.analyze_report_path}",
+        )
+        self._update_controls()
+
+    def _on_analyze_error(self, message: str) -> None:
+        self._set_busy(False, translation=False)
+        self.status_label.setText("Analyze failed")
+        self.header_status_label.setText("Analyze failed")
+        self._append_log(f"Analyze failed: {message}")
+        QMessageBox.critical(self, "Analyze failed", message)
 
     def _dispatch_cancel(self) -> None:
         if self._worker is None:
@@ -1006,6 +1171,7 @@ class QtMainWindow(QMainWindow):
         if self._busy:
             return
         self._last_summary = None
+        self._last_run_report_path = None
         self._last_output_docx = None
         self._last_run_config = None
         self._last_joblog_seed = None
@@ -1017,6 +1183,7 @@ class QtMainWindow(QMainWindow):
         self.page_label.setText("Page: -/-")
         self.status_label.setText("Idle")
         self.header_status_label.setText("Idle")
+        self._reset_live_counters()
         self.final_docx_edit.clear()
         self.log_text.clear()
         self.details_btn.setChecked(False)
@@ -1222,6 +1389,24 @@ class QtMainWindow(QMainWindow):
                 subprocess.Popen(["xdg-open", str(target)])
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Open output folder", str(exc))
+
+    def _open_run_report(self) -> None:
+        if self._last_run_report_path is None:
+            QMessageBox.information(self, "Run report", "No run report available.")
+            return
+        report_path = self._last_run_report_path.expanduser().resolve()
+        if not report_path.exists():
+            QMessageBox.critical(self, "Run report", f"Run report not found:\n{report_path}")
+            return
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["explorer", f"/select,{report_path}"])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(report_path.parent)])
+            else:
+                subprocess.Popen(["xdg-open", str(report_path.parent)])
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Run report", str(exc))
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
         if self._click_debug_enabled:
