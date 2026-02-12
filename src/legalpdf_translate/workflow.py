@@ -34,6 +34,7 @@ from .checkpoint import (
     sha256_of_text,
 )
 from .config import load_environment
+from .config import IMAGE_MAX_DATA_URL_BYTES_AR, IMAGE_MAX_DATA_URL_BYTES_ENFR
 from .docx_writer import assemble_docx
 from .image_io import render_page_image_data_url, should_include_image
 from .ocr_engine import OCREngine, OcrResult, build_ocr_engine, ocr_engine_config_from_run_config
@@ -45,7 +46,7 @@ from .page_selection import resolve_page_selection
 from .pdf_text_order import extract_ordered_page_text, get_page_count
 from .prompt_builder import build_page_prompt, build_retry_prompt
 from .resources_loader import load_system_instructions
-from .types import AnalyzeSummary, OcrMode, PageStatus, ReasoningEffort, RunConfig, RunState, RunSummary, TargetLang
+from .types import AnalyzeSummary, ImageMode, OcrMode, PageStatus, ReasoningEffort, RunConfig, RunState, RunSummary, TargetLang
 from .validators import parse_code_block_output, validate_ar, validate_enfr
 
 
@@ -455,6 +456,7 @@ class TranslationWorkflow:
                 extracted_text,
                 ordered.extraction_failed,
                 ordered.fragmented,
+                lang=config.target_lang,
             )
             if would_attach_image:
                 pages_would_attach_images += 1
@@ -467,6 +469,7 @@ class TranslationWorkflow:
                     "two_column_detected": bool(ordered.two_column_detected),
                     "would_attach_image": would_attach_image,
                     "reason": self._analyze_image_reason(
+                        lang=config.target_lang,
                         mode=config.image_mode.value,
                         extraction_failed=ordered.extraction_failed,
                         ordered_text=extracted_text,
@@ -648,23 +651,36 @@ class TranslationWorkflow:
         if config.target_lang == TargetLang.AR:
             source_text = pretokenize_arabic_source(source_text)
 
-        source_usable = self._is_usable_source_text(source_text)
-        image_used = False
-        if not source_usable:
-            if config.ocr_mode == OcrMode.OFF or (ocr_attempted and ocr_result.chars <= 0):
-                image_used = True
+        image_used = should_include_image(
+            config.image_mode,
+            extracted_text,
+            ordered.extraction_failed,
+            ordered.fragmented,
+            lang=config.target_lang,
+        )
+        short_or_failed = ordered.extraction_failed or len(extracted_text.strip()) < 20
+        image_detail = "low"
+        if short_or_failed and config.image_mode in (ImageMode.AUTO, ImageMode.ALWAYS):
+            image_detail = "high"
+
         image_data_url = None
-        image_bytes: bytes | None = None
+        rendered_image = None
         if image_used:
             image_path = paths.images_dir / f"page_{page_number:04d}.jpg" if config.keep_intermediates else None
-            image_data_url, image_bytes = render_page_image_data_url(
+            image_cap_bytes = self._image_cap_for_lang(config.target_lang)
+            rendered_image = render_page_image_data_url(
                 config.pdf_path,
                 page_number - 1,
                 save_path=image_path,
+                max_data_url_bytes=image_cap_bytes,
             )
-            page_metadata["image_detail"] = "high"
-            page_metadata["image_format"] = "jpeg"
-            page_metadata["image_bytes"] = len(image_bytes)
+            image_data_url = rendered_image.data_url
+            page_metadata["image_detail"] = image_detail
+            page_metadata["image_format"] = rendered_image.image_format
+            page_metadata["image_bytes"] = int(rendered_image.encoded_bytes)
+            page_metadata["image_width_px"] = int(rendered_image.width_px)
+            page_metadata["image_height_px"] = int(rendered_image.height_px)
+            page_metadata["image_compress_steps"] = int(rendered_image.compress_steps)
         else:
             page_metadata["image_detail"] = ""
         ocr_reason = ocr_result.failed_reason or "none"
@@ -1113,9 +1129,15 @@ class TranslationWorkflow:
         except ValueError:
             return None
 
+    def _image_cap_for_lang(self, lang: TargetLang) -> int:
+        if lang == TargetLang.AR:
+            return IMAGE_MAX_DATA_URL_BYTES_AR
+        return IMAGE_MAX_DATA_URL_BYTES_ENFR
+
     def _analyze_image_reason(
         self,
         *,
+        lang: TargetLang,
         mode: str,
         extraction_failed: bool,
         ordered_text: str,
@@ -1126,6 +1148,12 @@ class TranslationWorkflow:
             return "image_mode_off"
         if mode == "always":
             return "image_mode_always"
+        if lang in (TargetLang.EN, TargetLang.FR):
+            if extraction_failed:
+                return "extraction_failed"
+            if len(ordered_text.strip()) < 20:
+                return "ordered_text_chars_lt_20"
+            return "not_needed"
         if extraction_failed:
             return "extraction_failed"
         if ordered_text.strip() == "":
