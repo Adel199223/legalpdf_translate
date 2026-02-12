@@ -7,8 +7,8 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QThread, Signal
-from PySide6.QtGui import QCloseEvent, QPainter, QPixmap
+from PySide6.QtCore import QRect, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QCloseEvent, QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QToolButton,
     QVBoxLayout,
@@ -35,9 +36,9 @@ from ..output_paths import require_writable_output_dir_text
 from ..pdf_text_order import get_page_count
 from ..resources_loader import get_resources_dir
 from ..types import RunConfig, RunSummary, TargetLang
-from ..user_settings import load_gui_settings
+from ..user_settings import load_gui_settings, save_gui_settings
 from ..workflow import TranslationWorkflow
-from .styles import apply_card_shadow
+from .styles import apply_primary_glow, apply_soft_shadow, make_blur_effect
 from .worker import TranslationRunWorker
 
 
@@ -45,23 +46,67 @@ class _BackgroundWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         ui_dir = get_resources_dir() / "ui"
-        self._bg = QPixmap(str(ui_dir / "ui_bg_tile.png"))
+        bg = ui_dir / "bg.png"
+        if not bg.exists():
+            bg = ui_dir / "ui_bg_tile.png"
+        self._bg = QPixmap(str(bg))
         self._left = QPixmap(str(ui_dir / "ui_deco_left.png"))
         self._right = QPixmap(str(ui_dir / "ui_deco_right.png"))
+        self._scaled_bg = QPixmap()
+
+        self._glow_left = QLabel(self)
+        self._glow_left.setStyleSheet("background-color: rgba(57, 216, 255, 95); border-radius: 160px;")
+        self._glow_left.setGraphicsEffect(make_blur_effect(self._glow_left, radius=78))
+        self._glow_left.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        self._glow_right = QLabel(self)
+        self._glow_right.setStyleSheet("background-color: rgba(31, 186, 255, 72); border-radius: 180px;")
+        self._glow_right.setGraphicsEffect(make_blur_effect(self._glow_right, radius=92))
+        self._glow_right.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        if self.width() > 0 and self.height() > 0:
+            self._scaled_bg = self._bg.scaled(
+                self.size(),
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        self._glow_left.setGeometry(-120, int(self.height() * 0.12), 340, 340)
+        self._glow_right.setGeometry(self.width() - 240, int(self.height() * 0.44), 380, 380)
+
+    def sample_background(self, rect: QRect) -> QPixmap:
+        if rect.width() <= 0 or rect.height() <= 0 or self._scaled_bg.isNull():
+            return QPixmap()
+        source_rect = rect.intersected(self.rect())
+        if source_rect.isNull():
+            return QPixmap()
+        sampled = self._scaled_bg.copy(source_rect)
+        if source_rect == rect:
+            return sampled
+        target = QPixmap(rect.size())
+        target.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(target)
+        painter.drawPixmap(source_rect.topLeft() - rect.topLeft(), sampled)
+        painter.end()
+        return target
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        if self._bg.isNull():
+        if self._scaled_bg.isNull():
             painter.fillRect(self.rect(), Qt.GlobalColor.black)
         else:
-            painter.drawPixmap(self.rect(), self._bg)
+            painter.drawPixmap(0, 0, self._scaled_bg)
         h = max(180, self.height() - 160)
         w = max(68, min(112, int(self.width() * 0.09)))
+        painter.setOpacity(0.45)
         if not self._left.isNull():
             painter.drawPixmap(8, 88, self._left.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation))
         if not self._right.isNull():
             painter.drawPixmap(max(8, self.width() - w - 8), 88, self._right.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        painter.setOpacity(1.0)
+        painter.fillRect(self.rect(), QColor(3, 9, 24, 72))
         painter.end()
         super().paintEvent(event)
 
@@ -75,7 +120,6 @@ class QtMainWindow(QMainWindow):
         self.resize(1240, 880)
 
         self._defaults = load_gui_settings()
-        self._settings = QSettings("LegalPDFTranslate", "QtGui")
         self._worker_thread: QThread | None = None
         self._worker: TranslationRunWorker | None = None
         self._last_workflow: TranslationWorkflow | None = None
@@ -87,24 +131,45 @@ class QtMainWindow(QMainWindow):
         self._last_page_path: str | None = None
 
         self._build_ui()
-        self._restore_qsettings()
+        self._restore_settings()
         self._refresh_page_count()
         self._update_controls()
+        QTimer.singleShot(0, self._sync_glass_background)
 
     def _build_ui(self) -> None:
         root = _BackgroundWidget(self)
         root.setObjectName("RootWidget")
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(18, 18, 18, 14)
-        outer.setSpacing(12)
+        outer.setContentsMargins(28, 24, 28, 20)
+        outer.setSpacing(0)
+        outer.addStretch(1)
 
-        self.header_card = QFrame(objectName="HeaderCard")
+        self.glass_card = QFrame(objectName="GlassCard")
+        self.glass_card.setMaximumWidth(1120)
+        self.glass_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        outer.addWidget(self.glass_card, 0, Qt.AlignmentFlag.AlignHCenter)
+        outer.addStretch(1)
+
+        self._glass_blur = QLabel(self.glass_card)
+        self._glass_blur.setScaledContents(True)
+        self._glass_blur.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._glass_blur.setGraphicsEffect(make_blur_effect(self._glass_blur, radius=28))
+
+        self._glass_tint = QFrame(self.glass_card, objectName="CardTint")
+        self._glass_tint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        self.card_content = QWidget(self.glass_card)
+        card_shell = QVBoxLayout(self.card_content)
+        card_shell.setContentsMargins(18, 18, 18, 16)
+        card_shell.setSpacing(10)
+
+        self.header_card = QFrame(objectName="SurfacePanel")
         header_layout = QVBoxLayout(self.header_card)
         header_layout.setContentsMargins(14, 12, 14, 12)
         self.banner_label = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
-        self.banner_label.setMinimumHeight(54)
-        self.banner_label.setMaximumHeight(64)
+        self.banner_label.setMinimumHeight(58)
+        self.banner_label.setMaximumHeight(78)
         self._banner_src = QPixmap(str(get_resources_dir() / "ui" / "ui_banner.png"))
         header_layout.addWidget(self.banner_label)
         title_row = QHBoxLayout()
@@ -114,9 +179,9 @@ class QtMainWindow(QMainWindow):
         title_row.addStretch(1)
         title_row.addWidget(self.header_status_label)
         header_layout.addLayout(title_row)
-        outer.addWidget(self.header_card)
+        card_shell.addWidget(self.header_card)
 
-        self.main_card = QFrame(objectName="MainCard")
+        self.main_card = QFrame(objectName="SurfacePanel")
         main_layout = QVBoxLayout(self.main_card)
         main_layout.setContentsMargins(16, 14, 16, 14)
         grid = QGridLayout()
@@ -144,7 +209,7 @@ class QtMainWindow(QMainWindow):
         grid.addWidget(self.show_adv, 3, 0, 1, 2)
         main_layout.addLayout(grid)
 
-        self.adv_frame = QFrame(objectName="MainCard")
+        self.adv_frame = QFrame(objectName="SurfacePanel")
         adv = QFormLayout(self.adv_frame)
         adv.setContentsMargins(10, 10, 10, 10)
         self.effort_combo = QComboBox(); self.effort_combo.addItems(["high", "xhigh"])
@@ -175,8 +240,9 @@ class QtMainWindow(QMainWindow):
         adv.addRow("Context file", cf)
         adv.addRow("Context text", self.context_text)
         main_layout.addWidget(self.adv_frame)
-        outer.addWidget(self.main_card)
-        self.details_card = QFrame(objectName="DetailsCard")
+        card_shell.addWidget(self.main_card)
+
+        self.details_card = QFrame(objectName="SurfacePanel")
         details_layout = QVBoxLayout(self.details_card)
         details_layout.setContentsMargins(10, 8, 10, 10)
         self.details_btn = QToolButton(objectName="DisclosureButton")
@@ -190,9 +256,9 @@ class QtMainWindow(QMainWindow):
         self.log_text.setMaximumBlockCount(5000)
         details_layout.addWidget(self.details_btn)
         details_layout.addWidget(self.log_text)
-        outer.addWidget(self.details_card)
+        card_shell.addWidget(self.details_card)
 
-        self.footer_card = QFrame(objectName="FooterCard")
+        self.footer_card = QFrame(objectName="SurfacePanel")
         footer = QVBoxLayout(self.footer_card)
         footer.setContentsMargins(14, 10, 14, 10)
         fp = QHBoxLayout(); fp.addWidget(QLabel("Final DOCX")); self.final_docx_edit = QLineEdit(readOnly=True); fp.addWidget(self.final_docx_edit, 1); footer.addLayout(fp)
@@ -211,11 +277,10 @@ class QtMainWindow(QMainWindow):
             buttons.addWidget(btn)
         buttons.addStretch(1)
         footer.addLayout(buttons)
-        outer.addWidget(self.footer_card)
+        card_shell.addWidget(self.footer_card)
 
-        for w in (self.header_card, self.main_card, self.details_card, self.footer_card):
-            apply_card_shadow(w)
-        apply_card_shadow(self.translate_btn, blur_radius=22, offset_y=5)
+        apply_soft_shadow(self.glass_card, blur_radius=60, offset_y=14)
+        apply_primary_glow(self.translate_btn, blur_radius=28)
 
         self.pdf_btn.clicked.connect(self._pick_pdf)
         self.outdir_btn.clicked.connect(self._pick_outdir)
@@ -240,57 +305,90 @@ class QtMainWindow(QMainWindow):
         self._set_adv_visible(False)
         self._set_details_visible(False)
         self._refresh_banner()
+        self._layout_glass_layers()
 
-    def _restore_qsettings(self) -> None:
-        def b(name: str, default: bool) -> bool:
-            raw = self._settings.value(name, default)
-            if isinstance(raw, bool):
-                return raw
-            return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+    def _restore_settings(self) -> None:
+        defaults = self._defaults
+        outdir = str(defaults.get("last_outdir", defaults.get("default_outdir", "")) or "").strip()
+        self.outdir_edit.setText(outdir)
 
-        self.outdir_edit.setText(str(self._settings.value("last_outdir", str(self._defaults.get("default_outdir", "") or "")) or ""))
-        self.lang_combo.setCurrentText(str(self._settings.value("lang", str(self._defaults.get("default_lang", "EN") or "EN")) or "EN"))
-        self.effort_combo.setCurrentText(str(self._settings.value("effort", str(self._defaults.get("default_effort", "high") or "high")) or "high"))
-        self.images_combo.setCurrentText(str(self._settings.value("image_mode", str(self._defaults.get("default_images_mode", "auto") or "auto")) or "auto"))
-        self.ocr_mode_combo.setCurrentText(str(self._settings.value("ocr_mode", str(self._defaults.get("ocr_mode_default", "auto") or "auto")) or "auto"))
-        self.ocr_engine_combo.setCurrentText(str(self._settings.value("ocr_engine", str(self._defaults.get("ocr_engine_default", "local_then_api") or "local_then_api")) or "local_then_api"))
-        self.start_edit.setText(str(self._settings.value("start_page", str(self._defaults.get("default_start_page", 1) or 1)) or "1"))
-        self.end_edit.setText(str(self._settings.value("end_page", "") or ""))
-        self.max_edit.setText(str(self._settings.value("max_pages", "") or ""))
-        self.workers_spin.setValue(max(1, min(6, int(self._settings.value("workers", int(self._defaults.get("default_workers", 3) or 3))))))
-        self.resume_check.setChecked(b("resume", bool(self._defaults.get("default_resume", True))))
-        self.breaks_check.setChecked(b("page_breaks", bool(self._defaults.get("default_page_breaks", True))))
-        self.keep_check.setChecked(b("keep_intermediates", bool(self._defaults.get("default_keep_intermediates", True))))
-        self.context_file_edit.setText(str(self._settings.value("context_file", "") or ""))
-        show_adv = b("show_advanced", False)
-        self.show_adv.setChecked(show_adv)
-        self._set_adv_visible(show_adv)
+        lang = str(defaults.get("last_lang", defaults.get("default_lang", "EN")) or "EN").strip().upper()
+        if lang not in {"EN", "FR", "AR"}:
+            lang = "EN"
+        self.lang_combo.setCurrentText(lang)
+        self.effort_combo.setCurrentText(str(defaults.get("effort", defaults.get("default_effort", "high")) or "high"))
+        self.images_combo.setCurrentText(str(defaults.get("image_mode", defaults.get("default_images_mode", "auto")) or "auto"))
+        self.ocr_mode_combo.setCurrentText(str(defaults.get("ocr_mode", defaults.get("ocr_mode_default", "auto")) or "auto"))
+        self.ocr_engine_combo.setCurrentText(
+            str(defaults.get("ocr_engine", defaults.get("ocr_engine_default", "local_then_api")) or "local_then_api")
+        )
 
-    def _save_qsettings(self) -> None:
-        self._settings.setValue("last_outdir", self.outdir_edit.text().strip())
-        self._settings.setValue("lang", self.lang_combo.currentText())
-        self._settings.setValue("effort", self.effort_combo.currentText())
-        self._settings.setValue("image_mode", self.images_combo.currentText())
-        self._settings.setValue("ocr_mode", self.ocr_mode_combo.currentText())
-        self._settings.setValue("ocr_engine", self.ocr_engine_combo.currentText())
-        self._settings.setValue("start_page", self.start_edit.text().strip() or "1")
-        self._settings.setValue("end_page", self.end_edit.text().strip())
-        self._settings.setValue("max_pages", self.max_edit.text().strip())
-        self._settings.setValue("workers", self.workers_spin.value())
-        self._settings.setValue("resume", self.resume_check.isChecked())
-        self._settings.setValue("page_breaks", self.breaks_check.isChecked())
-        self._settings.setValue("keep_intermediates", self.keep_check.isChecked())
-        self._settings.setValue("context_file", self.context_file_edit.text().strip())
-        self._settings.setValue("show_advanced", self.show_adv.isChecked())
-        self._settings.sync()
+        start_page = defaults.get("start_page", defaults.get("default_start_page", 1))
+        end_page = defaults.get("end_page", defaults.get("default_end_page", None))
+        max_pages = defaults.get("max_pages", None)
+        self.start_edit.setText(str(start_page if isinstance(start_page, int) and start_page > 0 else 1))
+        self.end_edit.setText("" if end_page in (None, "") else str(end_page))
+        self.max_edit.setText("" if max_pages in (None, "") else str(max_pages))
+
+        workers_value = defaults.get("workers", defaults.get("default_workers", 3))
+        try:
+            workers = int(workers_value)  # type: ignore[arg-type]
+        except Exception:
+            workers = 3
+        self.workers_spin.setValue(max(1, min(6, workers)))
+
+        self.resume_check.setChecked(bool(defaults.get("resume", defaults.get("default_resume", True))))
+        self.breaks_check.setChecked(bool(defaults.get("page_breaks", defaults.get("default_page_breaks", True))))
+        self.keep_check.setChecked(bool(defaults.get("keep_intermediates", defaults.get("default_keep_intermediates", True))))
+
+    def _save_settings(self) -> None:
+        def opt_int(text: str) -> int | None:
+            cleaned = text.strip()
+            if cleaned == "":
+                return None
+            try:
+                return int(cleaned)
+            except ValueError:
+                return None
+
+        start_text = self.start_edit.text().strip() or "1"
+        try:
+            start_page = int(start_text)
+        except ValueError:
+            start_page = 1
+        if start_page <= 0:
+            start_page = 1
+
+        values = {
+            "last_outdir": self.outdir_edit.text().strip(),
+            "last_lang": self.lang_combo.currentText().strip().upper(),
+            "effort": self.effort_combo.currentText().strip().lower(),
+            "image_mode": self.images_combo.currentText().strip().lower(),
+            "ocr_mode": self.ocr_mode_combo.currentText().strip().lower(),
+            "ocr_engine": self.ocr_engine_combo.currentText().strip().lower(),
+            "start_page": start_page,
+            "end_page": opt_int(self.end_edit.text()),
+            "max_pages": opt_int(self.max_edit.text()),
+            "workers": max(1, min(6, int(self.workers_spin.value()))),
+            "resume": self.resume_check.isChecked(),
+            "page_breaks": self.breaks_check.isChecked(),
+            "keep_intermediates": self.keep_check.isChecked(),
+        }
+        try:
+            save_gui_settings(values)
+            self._defaults.update(values)
+        except Exception:
+            pass
 
     def _set_details_visible(self, visible: bool) -> None:
         self.log_text.setVisible(visible)
         self.details_btn.setArrowType(Qt.ArrowType.DownArrow if visible else Qt.ArrowType.RightArrow)
         self.details_btn.setText("Hide details" if visible else "Show details")
+        QTimer.singleShot(0, self._sync_glass_background)
 
     def _set_adv_visible(self, visible: bool) -> None:
         self.adv_frame.setVisible(visible)
+        QTimer.singleShot(0, self._sync_glass_background)
 
     def _on_form_changed(self) -> None:
         self._refresh_page_count()
@@ -302,7 +400,31 @@ class QtMainWindow(QMainWindow):
         size = self.banner_label.size()
         if size.width() <= 1 or size.height() <= 1:
             return
-        self.banner_label.setPixmap(self._banner_src.scaled(size, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        self.banner_label.setPixmap(
+            self._banner_src.scaled(
+                size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def _layout_glass_layers(self) -> None:
+        if not hasattr(self, "glass_card"):
+            return
+        rect = self.glass_card.rect()
+        self._glass_blur.setGeometry(rect)
+        self._glass_tint.setGeometry(rect)
+        self.card_content.setGeometry(rect)
+
+    def _sync_glass_background(self) -> None:
+        if not hasattr(self, "glass_card") or not hasattr(self, "_background_widget"):
+            return
+        self._layout_glass_layers()
+        if self.glass_card.width() <= 0 or self.glass_card.height() <= 0:
+            return
+        sampled = self._background_widget.sample_background(self.glass_card.geometry())
+        if not sampled.isNull():
+            self._glass_blur.setPixmap(sampled)
 
     def _refresh_page_count(self) -> None:
         pdf_text = self.pdf_edit.text().strip()
@@ -436,7 +558,7 @@ class QtMainWindow(QMainWindow):
             QMessageBox.critical(self, "Invalid configuration", str(exc))
             return
 
-        self._save_qsettings()
+        self._save_settings()
         self._last_summary = None
         self._last_output_docx = None
         self._last_workflow = None
@@ -555,7 +677,7 @@ class QtMainWindow(QMainWindow):
         self.log_text.clear()
         self.details_btn.setChecked(False)
         self._set_details_visible(False)
-        self._save_qsettings()
+        self._save_settings()
         self._update_controls()
 
     def _export_partial(self) -> None:
@@ -623,11 +745,13 @@ class QtMainWindow(QMainWindow):
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         self._refresh_banner()
+        self._layout_glass_layers()
+        QTimer.singleShot(0, self._sync_glass_background)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._busy:
             QMessageBox.warning(self, "Run in progress", "Cancel the active run before closing the app.")
             event.ignore()
             return
-        self._save_qsettings()
+        self._save_settings()
         super().closeEvent(event)
