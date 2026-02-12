@@ -35,7 +35,7 @@ from .checkpoint import (
 )
 from .config import load_environment
 from .docx_writer import assemble_docx
-from .image_io import render_page_image_data_url
+from .image_io import render_page_image_data_url, should_include_image
 from .ocr_engine import OCREngine, OcrResult, build_ocr_engine, ocr_engine_config_from_run_config
 from .ocr_helpers import ocr_pdf_page_text
 from .openai_client import ApiCallError, OpenAIResponsesClient
@@ -45,7 +45,7 @@ from .page_selection import resolve_page_selection
 from .pdf_text_order import extract_ordered_page_text, get_page_count
 from .prompt_builder import build_page_prompt, build_retry_prompt
 from .resources_loader import load_system_instructions
-from .types import OcrMode, PageStatus, ReasoningEffort, RunConfig, RunState, RunSummary, TargetLang
+from .types import AnalyzeSummary, OcrMode, PageStatus, ReasoningEffort, RunConfig, RunState, RunSummary, TargetLang
 from .validators import parse_code_block_output, validate_ar, validate_enfr
 
 
@@ -424,6 +424,76 @@ class TranslationWorkflow:
             failed_page=failed_page,
             error="compliance_failure" if compliance_failure else "runtime_failure",
             run_summary_path=run_summary_path,
+        )
+
+    def analyze(self, config: RunConfig) -> AnalyzeSummary:
+        config = self._normalize_config(config)
+        self._validate_config(config)
+
+        total_pages = get_page_count(config.pdf_path)
+        selected_pages = resolve_page_selection(
+            total_pages,
+            config.start_page,
+            config.end_page,
+            config.max_pages,
+        )
+        if not selected_pages:
+            raise ValueError("No pages selected for analysis.")
+
+        paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
+        ensure_run_dirs(paths)
+        self._last_config = config
+        self._last_paths = paths
+
+        rows: list[dict[str, object]] = []
+        pages_would_attach_images = 0
+        for page_number in selected_pages:
+            ordered = extract_ordered_page_text(config.pdf_path, page_number - 1)
+            extracted_text = ordered.text
+            would_attach_image = should_include_image(
+                config.image_mode,
+                extracted_text,
+                ordered.extraction_failed,
+                ordered.fragmented,
+            )
+            if would_attach_image:
+                pages_would_attach_images += 1
+            rows.append(
+                {
+                    "page_number": page_number,
+                    "extracted_text_chars": len(extracted_text),
+                    "newline_to_char_ratio": float(ordered.newline_to_char_ratio),
+                    "blocks_count": int(ordered.block_count),
+                    "two_column_detected": bool(ordered.two_column_detected),
+                    "would_attach_image": would_attach_image,
+                    "reason": self._analyze_image_reason(
+                        mode=config.image_mode.value,
+                        extraction_failed=ordered.extraction_failed,
+                        ordered_text=extracted_text,
+                        fragmented=ordered.fragmented,
+                        would_attach_image=would_attach_image,
+                    ),
+                }
+            )
+
+        payload = {
+            "run_id": paths.run_started_at,
+            "pdf_path": str(config.pdf_path),
+            "lang": config.target_lang.value,
+            "image_mode": config.image_mode.value,
+            "selected_pages_count": len(selected_pages),
+            "pages_would_attach_images": pages_would_attach_images,
+            "pages": rows,
+        }
+        analyze_report_path = paths.run_dir / "analyze_report.json"
+        tmp_path = analyze_report_path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_path.replace(analyze_report_path)
+        return AnalyzeSummary(
+            run_dir=paths.run_dir,
+            analyze_report_path=analyze_report_path,
+            selected_pages_count=len(selected_pages),
+            pages_would_attach_images=pages_would_attach_images,
         )
 
     def rebuild_docx(self, config: RunConfig) -> Path:
@@ -1042,6 +1112,32 @@ class TranslationWorkflow:
             return float(raw)
         except ValueError:
             return None
+
+    def _analyze_image_reason(
+        self,
+        *,
+        mode: str,
+        extraction_failed: bool,
+        ordered_text: str,
+        fragmented: bool,
+        would_attach_image: bool,
+    ) -> str:
+        if mode == "off":
+            return "image_mode_off"
+        if mode == "always":
+            return "image_mode_always"
+        if extraction_failed:
+            return "extraction_failed"
+        if ordered_text.strip() == "":
+            return "empty_text"
+        if len(ordered_text) < 40:
+            return "short_text"
+        ratio = ordered_text.count("\n") / max(len(ordered_text), 1)
+        if ratio > 0.12 and len(ordered_text) < 1500:
+            return "newline_ratio_fragmented"
+        if fragmented:
+            return "fragmented_blocks"
+        return "not_needed" if not would_attach_image else "heuristic_triggered"
 
     def _resolve_paths_for_run(self, config: RunConfig) -> tuple[RunPaths, RunState | None]:
         paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)

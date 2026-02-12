@@ -154,3 +154,11 @@ class RunSummary:
     error: str | None = None
     attempted_output_docx: Path | None = None
     run_summary_path: Path | None = None
+
+
+@dataclass(slots=True)
+class AnalyzeSummary:
+    run_dir: Path
+    analyze_report_path: Path
+    selected_pages_count: int
+    pages_would_attach_images: int

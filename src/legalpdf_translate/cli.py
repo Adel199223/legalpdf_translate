@@ -69,6 +69,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Rebuild DOCX from existing run_dir/pages without API calls.",
     )
+    parser.add_argument(
+        "--analyze-only",
+        action="store_true",
+        help="Analyze extraction/image heuristics only (no API calls).",
+    )
     parser.add_argument("--ocr-mode", default="auto", choices=["off", "auto", "always"], help="OCR mode.")
     parser.add_argument(
         "--ocr-engine",
@@ -195,6 +200,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[{_timestamp()}] page={page}/{total} status={status}")
 
     workflow = TranslationWorkflow(log_callback=log_callback, progress_callback=progress_callback)
+
+    if args.analyze_only:
+        if args.rebuild_docx:
+            print(f"[{_timestamp()}] Config error: --analyze-only cannot be combined with --rebuild-docx.", file=sys.stderr)
+            return 1
+        try:
+            analysis = workflow.analyze(config)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[{_timestamp()}] Analyze error: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{_timestamp()}] Analyze runtime error: {exc}", file=sys.stderr)
+            return 2
+        print(
+            f"[{_timestamp()}] Analyze complete: selected_pages={analysis.selected_pages_count}, "
+            f"would_attach_images={analysis.pages_would_attach_images}"
+        )
+        print(f"[{_timestamp()}] Analyze report: {analysis.analyze_report_path} (run_dir={analysis.run_dir})")
+        return 0
 
     if args.rebuild_docx:
         try:
