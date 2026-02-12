@@ -63,7 +63,7 @@ class OpenAIResponsesClient:
         if not resolved_api_key:
             raise ValueError("OpenAI API key is not configured.")
         self._client = OpenAI(api_key=resolved_api_key)
-        self._max_transport_retries = max_transport_retries
+        self._max_transport_retries = max(0, int(max_transport_retries))
         self._base_backoff_seconds = base_backoff_seconds
         self._backoff_cap_seconds = max(1.0, backoff_cap_seconds)
         self._pre_call_jitter_seconds = max(0.0, pre_call_jitter_seconds)
@@ -95,7 +95,8 @@ class OpenAIResponsesClient:
         transport_retries_count = 0
         last_backoff_seconds = 0.0
         rate_limit_hit = False
-        for attempt in range(self._max_transport_retries):
+        # max_transport_retries is "retries after the first call"; always attempt at least once.
+        for attempt in range(self._max_transport_retries + 1):
             try:
                 if self._pre_call_jitter_seconds > 0:
                     time.sleep(random.uniform(0.0, self._pre_call_jitter_seconds))
@@ -120,7 +121,7 @@ class OpenAIResponsesClient:
                 status_code = _status_code_from_exception(exc)
                 if status_code == 429 or isinstance(exc, RateLimitError):
                     rate_limit_hit = True
-                if not _is_retryable(exc) or attempt >= self._max_transport_retries - 1:
+                if not _is_retryable(exc) or attempt >= self._max_transport_retries:
                     raise ApiCallError(
                         message=f"{type(exc).__name__}: {exc}",
                         status_code=status_code,
