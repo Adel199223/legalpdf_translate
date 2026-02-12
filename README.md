@@ -1,6 +1,6 @@
 # LegalPDF Translate
 
-Windows 11 desktop app (Tkinter) and CLI for legal PDF translation:
+Windows 11 desktop app (Qt/PySide6) and CLI for legal PDF translation:
 
 - Input: one PDF
 - Processing: strictly one page per API request
@@ -28,34 +28,10 @@ copy .env.example .env
 
 Set `OPENAI_API_KEY` in `.env` or your environment.
 
-## Run Qt GUI (Recommended)
-
-```powershell
-legalpdf-translate-qt
-```
-
-You can also launch the Qt GUI directly:
+## Run GUI (Qt)
 
 ```powershell
 python -m legalpdf_translate.qt_gui
-```
-
-Or run the Qt entry module directly:
-
-```powershell
-python -m legalpdf_translate.qt_main
-```
-
-## Run Tkinter GUI (Fallback)
-
-```powershell
-legalpdf-translate-gui
-```
-
-You can also launch Tkinter directly from source:
-
-```powershell
-python -m legalpdf_translate.gui_main
 ```
 
 ## Run CLI
@@ -109,27 +85,23 @@ When `--resume true`, completed pages are skipped if checkpoint compatibility ma
 - No extracted source text or translated content is written to operational logs.
 - Saved per-page files contain only validated translation output.
 
-## Build Windows EXE (PyInstaller one-folder)
+## Build Windows EXE (Qt only)
 
 ```powershell
-pyinstaller build\pyinstaller_gui.spec
-```
-
-Qt GUI build:
-
-```powershell
-pyinstaller build\pyinstaller_qt.spec --noconfirm
-```
-
-If PyInstaller has Qt-plugin issues on your machine, fallback to the official Qt deploy tool:
-
-```powershell
-pyside6-deploy src\legalpdf_translate\qt_main.py
+powershell -ExecutionPolicy Bypass -File scripts/build_qt.ps1
 ```
 
 Primary artifact:
 
 `dist\legalpdf_translate\LegalPDFTranslate.exe`
+
+## Install Local Click-to-Run Shortcut
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install_local.ps1
+```
+
+This creates a Desktop shortcut named `LegalPDF Translate`.
 
 ## Tests
 

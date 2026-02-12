@@ -1,6 +1,5 @@
 ﻿# -*- mode: python ; coding: utf-8 -*-
 
-from glob import glob
 from pathlib import Path
 
 project_root = Path(SPECPATH).resolve().parents[0]
@@ -12,7 +11,6 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(project_root / "resources"), "resources"),
-        *[(path, "resources/ui") for path in glob(str(project_root / "resources" / "ui" / "*.png"))],
     ],
     hiddenimports=[
         "legalpdf_translate.qt_app",
@@ -36,7 +34,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="LegalPDFTranslateQt",
+    name="LegalPDFTranslate",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -51,5 +49,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="legalpdf_translate_qt",
+    name="legalpdf_translate",
 )

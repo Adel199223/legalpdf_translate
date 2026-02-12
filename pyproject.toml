@@ -24,7 +24,6 @@ dev = ["pytest>=8.0.0", "pyinstaller>=6.0.0"]
 
 [project.scripts]
 legalpdf-translate = "legalpdf_translate.cli:main"
-legalpdf-translate-gui = "legalpdf_translate.gui_main:main"
 legalpdf-translate-qt = "legalpdf_translate.qt_main:main"
 
 [tool.setuptools]

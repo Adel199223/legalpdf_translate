@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from legalpdf_translate.resources_loader import resource_path as loader_resource_path
-from legalpdf_translate.ui_assets import resource_path as ui_resource_path
+from legalpdf_translate.resources_loader import get_resources_dir, resource_path
 
 
-def test_shared_resource_path_helper_is_consistent() -> None:
+def test_resource_path_points_into_resources_dir() -> None:
     rel = "resources/system_instructions_enfr.txt"
-    assert loader_resource_path(rel) == ui_resource_path(rel)
+    resolved = resource_path(rel)
+    assert resolved.exists()
+    assert resolved.parent == get_resources_dir()
