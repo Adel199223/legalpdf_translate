@@ -38,6 +38,15 @@ def _verify_docx_readable(path: Path) -> None:
         raise RuntimeError(f"DOCX validation failed for {path}: {exc}") from exc
 
 
+def _fsync_file(path: Path) -> None:
+    try:
+        with path.open("r+b") as handle:
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError as exc:
+        raise RuntimeError(f"Failed to fsync temporary DOCX: {path}") from exc
+
+
 def resolve_noncolliding_output_path(output_path: Path) -> Path:
     final_path = output_path.expanduser().resolve()
     if not final_path.exists():
@@ -72,6 +81,7 @@ def save_document_atomic(
         raise RuntimeError(f"Failed writing temporary DOCX: {tmp_path}") from exc
 
     _verify_non_empty_file(tmp_path)
+    _fsync_file(tmp_path)
     if verify_readable:
         _verify_docx_readable(tmp_path)
 

@@ -2,6 +2,7 @@ from pathlib import Path
 
 from docx import Document
 
+import legalpdf_translate.docx_writer as docx_writer
 from legalpdf_translate.docx_writer import assemble_docx
 from legalpdf_translate.types import TargetLang
 
@@ -37,3 +38,22 @@ def test_assemble_docx_arabic_sets_rtl_bidi_flags(tmp_path: Path) -> None:
     paragraph_xml = doc.paragraphs[0]._p.xml
     assert "<w:bidi" in paragraph_xml
     assert "<w:rtl" in paragraph_xml
+
+
+def test_save_document_atomic_fsyncs_temp_file(tmp_path: Path, monkeypatch) -> None:
+    pages_dir = tmp_path / "pages"
+    _write_page(pages_dir / "page_0001.txt", "Line A")
+    out = tmp_path / "out.docx"
+
+    calls = {"count": 0}
+    original_fsync = docx_writer.os.fsync
+
+    def _counting_fsync(fd: int) -> None:
+        calls["count"] += 1
+        original_fsync(fd)
+
+    monkeypatch.setattr(docx_writer.os, "fsync", _counting_fsync)
+    assemble_docx(pages_dir, out, lang=TargetLang.EN, page_breaks=False)
+
+    assert out.exists()
+    assert calls["count"] >= 1
