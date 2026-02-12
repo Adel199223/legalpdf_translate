@@ -34,6 +34,7 @@ def _make_app_stub() -> LegalPDFTranslateApp:
     app._can_export_partial = False
     app.last_output_docx = None
     app.last_joblog_seed = None
+    app.last_run_report_path = None
 
     app._config_control_states = [
         (_FakeWidget(), tk.NORMAL),
@@ -41,11 +42,13 @@ def _make_app_stub() -> LegalPDFTranslateApp:
     ]
     app.context_text = _FakeWidget()
     app.translate_btn = _FakeWidget()
+    app.analyze_btn = _FakeWidget()
     app.cancel_btn = _FakeWidget()
     app.new_run_btn = _FakeWidget()
     app.export_partial_btn = _FakeWidget()
     app.rebuild_btn = _FakeWidget()
     app.open_outdir_btn = _FakeWidget()
+    app.run_report_btn = _FakeWidget()
     app.save_joblog_btn = _FakeWidget()
     app.open_joblog_btn = _FakeWidget()
 
@@ -105,10 +108,14 @@ def test_new_run_clears_runtime_state_without_restart() -> None:
     def _persist_gui_settings() -> None:
         calls["persist"] = True
 
+    def _reset_live_counters() -> None:
+        calls["counters"] = True
+
     app._new_queue = _new_queue  # type: ignore[method-assign]
     app._clear_log = _clear_log  # type: ignore[method-assign]
     app._set_details_expanded = _set_details_expanded  # type: ignore[method-assign]
     app._persist_gui_settings = _persist_gui_settings  # type: ignore[method-assign]
+    app._reset_live_counters = _reset_live_counters  # type: ignore[method-assign]
 
     app._new_run()
 
@@ -120,4 +127,4 @@ def test_new_run_clears_runtime_state_without_restart() -> None:
     assert app.worker is None
     assert app.progress.values.get("value") == 0
     assert app.status_var.get() == "Idle"
-    assert calls == {"queue": True, "clear_log": True, "details": False, "persist": True}
+    assert calls == {"queue": True, "counters": True, "clear_log": True, "details": False, "persist": True}

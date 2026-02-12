@@ -77,7 +77,7 @@ class OpenAIResponsesClient:
         prompt_text: str,
         effort: str,
         image_data_url: str | None = None,
-        image_detail: str = "high",
+        image_detail: str = "low",
         timeout_seconds: float | None = None,
     ) -> ApiCallResult:
         content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt_text}]
@@ -195,6 +195,13 @@ def _extract_usage(response: Any) -> dict[str, Any]:
         value = getattr(usage_obj, key, None)
         if value is None and isinstance(usage_obj, dict):
             value = usage_obj.get(key)
+        if key == "reasoning_tokens" and value is None:
+            details_obj = getattr(usage_obj, "output_tokens_details", None)
+            if details_obj is None and isinstance(usage_obj, dict):
+                details_obj = usage_obj.get("output_tokens_details")
+            value = getattr(details_obj, "reasoning_tokens", None)
+            if value is None and isinstance(details_obj, dict):
+                value = details_obj.get("reasoning_tokens")
         if value is not None:
             usage[key] = value
     return usage

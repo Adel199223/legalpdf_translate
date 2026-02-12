@@ -102,6 +102,7 @@ def test_new_run_resets_runtime_state() -> None:
     fake = SimpleNamespace(
         _busy=False,
         _last_summary=object(),
+        _last_run_report_path=object(),
         _last_output_docx=object(),
         _last_run_config=object(),
         _last_joblog_seed=object(),
@@ -119,11 +120,13 @@ def test_new_run_resets_runtime_state() -> None:
         _set_details_visible=lambda visible: calls.__setitem__("details", visible),
         _save_settings=lambda: calls.__setitem__("save_settings", True),
         _update_controls=lambda: calls.__setitem__("update_controls", True),
+        _reset_live_counters=lambda: None,
     )
 
     QtMainWindow._new_run(fake)
 
     assert fake._last_summary is None
+    assert fake._last_run_report_path is None
     assert fake._last_output_docx is None
     assert fake._last_run_config is None
     assert fake._last_joblog_seed is None
@@ -152,6 +155,7 @@ def test_save_settings_uses_existing_gui_keys(monkeypatch) -> None:
         outdir_edit=_FakeEdit("C:/tmp/out"),
         lang_combo=_FakeCombo("FR"),
         effort_combo=_FakeCombo("high"),
+        effort_policy_combo=_FakeCombo("adaptive"),
         images_combo=_FakeCombo("auto"),
         ocr_mode_combo=_FakeCombo("auto"),
         ocr_engine_combo=_FakeCombo("local_then_api"),
@@ -170,6 +174,7 @@ def test_save_settings_uses_existing_gui_keys(monkeypatch) -> None:
         "last_outdir",
         "last_lang",
         "effort",
+        "effort_policy",
         "image_mode",
         "ocr_mode",
         "ocr_engine",
@@ -184,4 +189,3 @@ def test_save_settings_uses_existing_gui_keys(monkeypatch) -> None:
     assert set(captured.keys()) == expected
     assert fake._defaults["last_lang"] == "FR"
     assert fake._defaults["workers"] == 4
-
