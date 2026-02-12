@@ -210,82 +210,113 @@ def new_run_state(
 def load_run_state(path: Path) -> RunState | None:
     if not path.exists():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    final_docx_raw = data.get("final_docx_path_abs")
-    final_docx: str | None
-    if final_docx_raw in (None, ""):
-        final_docx = None
-    else:
-        final_docx = str(final_docx_raw)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        return None
 
-    run_status_raw = data.get("run_status")
-    if isinstance(run_status_raw, str) and run_status_raw.strip():
-        run_status = run_status_raw.strip()
-    else:
-        run_status = "running"
-    finished_at_raw = data.get("finished_at")
-    finished_at: str | None
-    if finished_at_raw in (None, ""):
-        finished_at = None
-    else:
-        finished_at = str(finished_at_raw)
-    halt_reason_raw = data.get("halt_reason")
-    if halt_reason_raw in (None, ""):
-        halt_reason = None
-    else:
-        halt_reason = str(halt_reason_raw)
+    if not isinstance(data, dict):
+        return None
+    required_keys = {
+        "version",
+        "pdf_path",
+        "pdf_fingerprint",
+        "lang",
+        "total_pages",
+        "max_pages_effective",
+        "settings",
+        "context_hash",
+        "created_at",
+        "updated_at",
+        "pages",
+    }
+    if any(key not in data for key in required_keys):
+        return None
 
-    pages_raw = dict(data["pages"])
-    pages: dict[str, dict[str, Any]] = {}
-    for key, value in pages_raw.items():
-        pages[str(key)] = _coerce_page_record(value)
-    page_numbers: list[int] = []
-    for key in pages.keys():
-        try:
-            page_numbers.append(int(key))
-        except ValueError:
-            continue
-    page_numbers = sorted(page_numbers)
-    fallback_selection_start = page_numbers[0] if page_numbers else 1
-    fallback_selection_end = page_numbers[-1] if page_numbers else int(data.get("max_pages_effective", 0))
-    fallback_selection_count = len(page_numbers)
-    done_count = 0
-    failed_count = 0
-    for page_data in pages.values():
-        status = str(page_data.get("status", "")).strip().lower()
-        if status == PageStatus.DONE.value:
-            done_count += 1
-        elif status == PageStatus.FAILED.value:
-            failed_count += 1
-    pending_count = max(0, fallback_selection_count - done_count - failed_count)
+    try:
+        final_docx_raw = data.get("final_docx_path_abs")
+        final_docx: str | None
+        if final_docx_raw in (None, ""):
+            final_docx = None
+        else:
+            final_docx = str(final_docx_raw)
 
-    return RunState(
-        version=int(data["version"]),
-        pdf_path=str(data["pdf_path"]),
-        pdf_fingerprint=str(data["pdf_fingerprint"]),
-        lang=str(data["lang"]),
-        total_pages=int(data["total_pages"]),
-        max_pages_effective=int(data["max_pages_effective"]),
-        selection_start_page=int(data.get("selection_start_page", fallback_selection_start)),
-        selection_end_page=int(data.get("selection_end_page", fallback_selection_end)),
-        selection_page_count=int(data.get("selection_page_count", fallback_selection_count)),
-        settings=dict(data["settings"]),
-        context_hash=str(data["context_hash"]),
-        created_at=str(data["created_at"]),
-        updated_at=str(data["updated_at"]),
-        frozen_outdir_abs=str(data.get("frozen_outdir_abs", path.parent.parent.resolve())),
-        run_dir_abs=str(data.get("run_dir_abs", path.parent.resolve())),
-        run_status=run_status,
-        halt_reason=halt_reason,
-        final_docx_path_abs=final_docx,
-        run_started_at=str(data.get("run_started_at", "")),
-        finished_at=finished_at,
-        pages=pages,
-        last_completed_page=int(data.get("last_completed_page", 0)),
-        done_count=int(data.get("done_count", done_count)),
-        failed_count=int(data.get("failed_count", failed_count)),
-        pending_count=int(data.get("pending_count", pending_count)),
-    )
+        run_status_raw = data.get("run_status")
+        if isinstance(run_status_raw, str) and run_status_raw.strip():
+            run_status = run_status_raw.strip()
+        else:
+            run_status = "running"
+        finished_at_raw = data.get("finished_at")
+        finished_at: str | None
+        if finished_at_raw in (None, ""):
+            finished_at = None
+        else:
+            finished_at = str(finished_at_raw)
+        halt_reason_raw = data.get("halt_reason")
+        if halt_reason_raw in (None, ""):
+            halt_reason = None
+        else:
+            halt_reason = str(halt_reason_raw)
+
+        pages_raw_obj = data["pages"]
+        if not isinstance(pages_raw_obj, dict):
+            return None
+        pages: dict[str, dict[str, Any]] = {}
+        for key, value in pages_raw_obj.items():
+            pages[str(key)] = _coerce_page_record(value)
+        page_numbers: list[int] = []
+        for key in pages.keys():
+            try:
+                page_numbers.append(int(key))
+            except ValueError:
+                continue
+        page_numbers = sorted(page_numbers)
+        fallback_selection_start = page_numbers[0] if page_numbers else 1
+        fallback_selection_end = page_numbers[-1] if page_numbers else int(data.get("max_pages_effective", 0))
+        fallback_selection_count = len(page_numbers)
+        done_count = 0
+        failed_count = 0
+        for page_data in pages.values():
+            status = str(page_data.get("status", "")).strip().lower()
+            if status == PageStatus.DONE.value:
+                done_count += 1
+            elif status == PageStatus.FAILED.value:
+                failed_count += 1
+        pending_count = max(0, fallback_selection_count - done_count - failed_count)
+
+        settings_obj = data["settings"]
+        if not isinstance(settings_obj, dict):
+            return None
+
+        return RunState(
+            version=int(data["version"]),
+            pdf_path=str(data["pdf_path"]),
+            pdf_fingerprint=str(data["pdf_fingerprint"]),
+            lang=str(data["lang"]),
+            total_pages=int(data["total_pages"]),
+            max_pages_effective=int(data["max_pages_effective"]),
+            selection_start_page=int(data.get("selection_start_page", fallback_selection_start)),
+            selection_end_page=int(data.get("selection_end_page", fallback_selection_end)),
+            selection_page_count=int(data.get("selection_page_count", fallback_selection_count)),
+            settings=dict(settings_obj),
+            context_hash=str(data["context_hash"]),
+            created_at=str(data["created_at"]),
+            updated_at=str(data["updated_at"]),
+            frozen_outdir_abs=str(data.get("frozen_outdir_abs", path.parent.parent.resolve())),
+            run_dir_abs=str(data.get("run_dir_abs", path.parent.resolve())),
+            run_status=run_status,
+            halt_reason=halt_reason,
+            final_docx_path_abs=final_docx,
+            run_started_at=str(data.get("run_started_at", "")),
+            finished_at=finished_at,
+            pages=pages,
+            last_completed_page=int(data.get("last_completed_page", 0)),
+            done_count=int(data.get("done_count", done_count)),
+            failed_count=int(data.get("failed_count", failed_count)),
+            pending_count=int(data.get("pending_count", pending_count)),
+        )
+    except (TypeError, ValueError, KeyError):
+        return None
 
 
 def save_run_state_atomic(path: Path, state: RunState) -> None:

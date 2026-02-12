@@ -1218,6 +1218,8 @@ class TranslationWorkflow:
     def _resolve_paths_for_run(self, config: RunConfig) -> tuple[RunPaths, RunState | None]:
         paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
         existing = load_run_state(paths.run_state_path)
+        if config.resume and existing is None and paths.run_state_path.exists():
+            self._log("Existing run_state.json is unreadable; starting a new run state.")
         if not config.resume or existing is None:
             return paths, existing
 

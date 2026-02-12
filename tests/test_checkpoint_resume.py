@@ -15,8 +15,8 @@ from legalpdf_translate.checkpoint import (
     sha256_of_file,
     sha256_of_text,
 )
-from legalpdf_translate.types import ImageMode, ReasoningEffort, RunConfig, TargetLang
-from legalpdf_translate.workflow import TranslationWorkflow
+from legalpdf_translate.types import ImageMode, PageStatus, ReasoningEffort, RunConfig, TargetLang
+from legalpdf_translate.workflow import TranslationWorkflow, _PageOutcome
 
 
 def _config(tmp_path: Path, pdf_path: Path) -> RunConfig:
@@ -170,3 +170,60 @@ def test_resume_mismatch_is_explicit_and_does_not_start_processing(
     with pytest.raises(ValueError, match="Checkpoint is incompatible with current run settings"):
         workflow.run(mismatch_config)
     assert started_processing is False
+
+
+def test_load_run_state_returns_none_for_corrupt_json(tmp_path: Path) -> None:
+    run_state_path = tmp_path / "run_state.json"
+    run_state_path.write_text("{not-valid-json", encoding="utf-8")
+
+    assert load_run_state(run_state_path) is None
+
+
+def test_workflow_logs_unreadable_checkpoint_and_starts_new_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.OFF,
+        max_pages=1,
+        workers=1,
+        resume=True,
+        page_breaks=True,
+        keep_intermediates=True,
+    )
+    paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
+    ensure_run_dirs(paths)
+    paths.run_state_path.write_text("{invalid-json", encoding="utf-8")
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+
+    def _fake_process_page(
+        self, *, client, config, paths, instructions, context_text, page_number, total_pages, ocr_engine
+    ):  # type: ignore[no-untyped-def]
+        page_path = paths.pages_dir / f"page_{page_number:04d}.txt"
+        page_path.write_text("OK", encoding="utf-8")
+        return _PageOutcome(
+            status=PageStatus.DONE,
+            image_used=False,
+            retry_used=False,
+            usage={},
+            error=None,
+        )
+
+    monkeypatch.setattr(TranslationWorkflow, "_process_page", _fake_process_page)
+    logs: list[str] = []
+    workflow = TranslationWorkflow(client=object(), log_callback=logs.append)
+    summary = workflow.run(config)
+
+    assert summary.success is True
+    assert any("run_state.json is unreadable" in line for line in logs)
