@@ -20,6 +20,8 @@ a = Analysis(
         "legalpdf_translate.qt_gui.dialogs",
         "legalpdf_translate.qt_gui.worker",
         "legalpdf_translate.qt_gui.styles",
+        "keyring",
+        "keyring.backends.Windows",
     ],
     hookspath=[],
     hooksconfig={},
