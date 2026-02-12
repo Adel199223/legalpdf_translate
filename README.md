@@ -37,6 +37,12 @@ legalpdf-translate-qt
 You can also launch the Qt GUI directly:
 
 ```powershell
+python -m legalpdf_translate.qt_gui
+```
+
+Or run the Qt entry module directly:
+
+```powershell
 python -m legalpdf_translate.qt_main
 ```
 
@@ -44,6 +50,12 @@ python -m legalpdf_translate.qt_main
 
 ```powershell
 legalpdf-translate-gui
+```
+
+You can also launch Tkinter directly from source:
+
+```powershell
+python -m legalpdf_translate.gui_main
 ```
 
 ## Run CLI
