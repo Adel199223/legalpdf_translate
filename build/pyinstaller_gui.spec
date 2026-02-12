@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from glob import glob
 from pathlib import Path
 
 project_root = Path(SPECPATH).resolve().parents[0]
@@ -11,9 +12,13 @@ a = Analysis(
     [str(project_root / "src" / "legalpdf_translate" / "gui_main.py")],
     pathex=[str(project_root / "src"), str(project_root)],
     binaries=[],
-    datas=[(str(project_root / "resources"), "resources")],
+    datas=[
+        (str(project_root / "resources"), "resources"),
+        *[(path, "resources/ui") for path in glob(str(project_root / "resources" / "ui" / "*.png"))],
+    ],
     hiddenimports=[
         "legalpdf_translate.gui_app",
+        "legalpdf_translate.ui_assets",
         "keyring",
         "keyring.backends.Windows",
     ],

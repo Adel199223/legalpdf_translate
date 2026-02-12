@@ -39,6 +39,7 @@ from .secrets_store import (
     get_ocr_key,
 )
 from .types import RunConfig, RunSummary, TargetLang
+from .ui_assets import load_image
 from .user_settings import app_data_dir, load_gui_settings, load_joblog_settings, save_gui_settings, settings_path
 from .workflow import TranslationWorkflow
 
@@ -67,6 +68,17 @@ class LegalPDFTranslateApp(ttk.Frame):
         self._menu_file: tk.Menu | None = None
         self._menu_tools: tk.Menu | None = None
         self._menu_help: tk.Menu | None = None
+        self._bg_label: tk.Label | None = None
+        self._header_label: tk.Label | None = None
+        self._left_deco_label: tk.Label | None = None
+        self._right_deco_label: tk.Label | None = None
+        self._header_title_label: tk.Label | None = None
+        self._content_frame: ttk.Frame | None = None
+        self._bg_image: object | None = None
+        self._header_image: object | None = None
+        self._left_deco_image: object | None = None
+        self._right_deco_image: object | None = None
+        self._last_visual_size: tuple[int, int] | None = None
 
         self._busy = False
         self._running_translation = False
@@ -181,24 +193,56 @@ class LegalPDFTranslateApp(ttk.Frame):
         except (TypeError, ValueError):
             ui_scale = 1.0
         palette = apply_theme(self.master, theme_name=theme_name, ui_scale=ui_scale)
+        if self._header_title_label is not None:
+            title_size = max(15, int(round(16 * ui_scale)))
+            self._header_title_label.configure(
+                bg=palette["bg"],
+                fg=palette["accent"],
+                font=("Segoe UI Semibold", title_size),
+            )
         if hasattr(self, "context_text"):
             apply_text_widget_theme(self.context_text, palette)
         if hasattr(self, "log_text"):
             apply_text_widget_theme(self.log_text, palette)
 
     def _build_ui(self) -> None:
-        self.columnconfigure(1, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
 
-        ttk.Label(self, text="PDF").grid(row=0, column=0, sticky="w")
-        self.pdf_entry = ttk.Entry(self, textvariable=self.pdf_path_var)
-        self.pdf_entry.grid(row=0, column=1, sticky="ew", padx=6)
-        self.pdf_browse_btn = ttk.Button(self, text="Browse", command=self._pick_pdf)
-        self.pdf_browse_btn.grid(row=0, column=2, sticky="ew")
-        ttk.Label(self, textvariable=self.page_count_var).grid(row=0, column=3, sticky="w", padx=(8, 0))
-
-        ttk.Label(self, text="Language").grid(row=1, column=0, sticky="w", pady=(8, 0))
-        self.lang_combo = ttk.Combobox(
+        self._bg_label = tk.Label(self, bd=0, highlightthickness=0)
+        self._bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+        self._header_label = tk.Label(self, bd=0, highlightthickness=0)
+        self._header_label.place(x=0, y=8)
+        self._left_deco_label = tk.Label(self, bd=0, highlightthickness=0)
+        self._left_deco_label.place(x=0, y=90)
+        self._right_deco_label = tk.Label(self, bd=0, highlightthickness=0)
+        self._right_deco_label.place(x=0, y=90)
+        self._header_title_label = tk.Label(
             self,
+            text="LegalPDF Translate",
+            fg="#9EE6FF",
+            bg="#0A1830",
+            anchor="w",
+            padx=16,
+            font=("Segoe UI Semibold", 18),
+        )
+        self._header_title_label.place(x=42, y=20)
+
+        content = ttk.Frame(self, style="Surface.TFrame", padding=(12, 12, 12, 12))
+        content.grid(row=1, column=0, sticky="nsew", padx=(22, 22), pady=(72, 12))
+        self._content_frame = content
+        content.columnconfigure(1, weight=1)
+
+        ttk.Label(content, text="PDF").grid(row=0, column=0, sticky="w")
+        self.pdf_entry = ttk.Entry(content, textvariable=self.pdf_path_var)
+        self.pdf_entry.grid(row=0, column=1, sticky="ew", padx=6)
+        self.pdf_browse_btn = ttk.Button(content, text="Browse", command=self._pick_pdf)
+        self.pdf_browse_btn.grid(row=0, column=2, sticky="ew")
+        ttk.Label(content, textvariable=self.page_count_var, style="Muted.TLabel").grid(row=0, column=3, sticky="w", padx=(8, 0))
+
+        ttk.Label(content, text="Language").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self.lang_combo = ttk.Combobox(
+            content,
             textvariable=self.lang_var,
             values=[TargetLang.EN.value, TargetLang.FR.value, TargetLang.AR.value],
             state="readonly",
@@ -206,23 +250,23 @@ class LegalPDFTranslateApp(ttk.Frame):
         )
         self.lang_combo.grid(row=1, column=1, sticky="w", padx=6, pady=(8, 0))
 
-        ttk.Label(self, text="Output Folder").grid(row=2, column=0, sticky="w", pady=(8, 0))
-        self.outdir_entry = ttk.Entry(self, textvariable=self.outdir_var)
+        ttk.Label(content, text="Output Folder").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self.outdir_entry = ttk.Entry(content, textvariable=self.outdir_var)
         self.outdir_entry.grid(row=2, column=1, sticky="ew", padx=6, pady=(8, 0))
-        self.outdir_browse_btn = ttk.Button(self, text="Browse", command=self._pick_outdir)
+        self.outdir_browse_btn = ttk.Button(content, text="Browse", command=self._pick_outdir)
         self.outdir_browse_btn.grid(row=2, column=2, sticky="ew", pady=(8, 0))
 
         self.show_advanced_btn = ttk.Checkbutton(
-            self,
+            content,
             text="Show Advanced",
             variable=self.show_advanced_var,
             command=self._toggle_advanced,
         )
         self.show_advanced_btn.grid(row=3, column=0, columnspan=3, sticky="w", pady=(10, 0))
-        self.settings_btn = ttk.Button(self, text="Settings...", command=self._open_settings_dialog)
+        self.settings_btn = ttk.Button(content, text="Settings...", command=self._open_settings_dialog, style="Secondary.TButton")
         self.settings_btn.grid(row=3, column=3, sticky="e", pady=(10, 0))
 
-        self.advanced = ttk.LabelFrame(self, text="Advanced", padding=8)
+        self.advanced = ttk.LabelFrame(content, text="Advanced", padding=8, style="Surface.TLabelframe")
         self.advanced.columnconfigure(1, weight=1)
 
         ttk.Label(self.advanced, text="Reasoning effort").grid(row=0, column=0, sticky="w")
@@ -309,30 +353,38 @@ class LegalPDFTranslateApp(ttk.Frame):
         )
         self.ocr_engine_combo.grid(row=11, column=1, sticky="w", pady=(6, 0))
 
-        controls = ttk.Frame(self)
+        controls = ttk.Frame(content, style="Surface.TFrame")
         controls.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(10, 0))
         controls.columnconfigure(8, weight=1)
 
-        self.translate_btn = ttk.Button(controls, text="Translate", command=self._start_translation)
+        self.translate_btn = ttk.Button(controls, text="Translate", command=self._start_translation, style="Primary.TButton")
         self.translate_btn.grid(row=0, column=0, padx=(0, 6))
-        self.cancel_btn = ttk.Button(controls, text="Cancel", command=self._cancel_translation, state=tk.DISABLED)
+        self.cancel_btn = ttk.Button(controls, text="Cancel", command=self._cancel_translation, state=tk.DISABLED, style="Secondary.TButton")
         self.cancel_btn.grid(row=0, column=1, padx=(0, 6))
-        self.new_run_btn = ttk.Button(controls, text="New Run", command=self._new_run)
+        self.new_run_btn = ttk.Button(controls, text="New Run", command=self._new_run, style="Secondary.TButton")
         self.new_run_btn.grid(row=0, column=2, padx=(0, 6))
         self.export_partial_btn = ttk.Button(
             controls,
             text="Export partial DOCX",
             command=self._export_partial,
             state=tk.DISABLED,
+            style="Secondary.TButton",
         )
         self.export_partial_btn.grid(row=0, column=3, padx=(0, 6))
-        self.rebuild_btn = ttk.Button(controls, text="Rebuild DOCX", command=self._start_rebuild_docx, state=tk.DISABLED)
+        self.rebuild_btn = ttk.Button(
+            controls,
+            text="Rebuild DOCX",
+            command=self._start_rebuild_docx,
+            state=tk.DISABLED,
+            style="Secondary.TButton",
+        )
         self.rebuild_btn.grid(row=0, column=4, padx=(0, 6))
         self.open_outdir_btn = ttk.Button(
             controls,
             text="Open output folder",
             command=self._open_output_folder,
             state=tk.DISABLED,
+            style="Secondary.TButton",
         )
         self.open_outdir_btn.grid(row=0, column=5, padx=(0, 6))
         self.save_joblog_btn = ttk.Button(
@@ -340,29 +392,32 @@ class LegalPDFTranslateApp(ttk.Frame):
             text="Save to Job Log",
             command=self._open_save_to_joblog_dialog,
             state=tk.DISABLED,
+            style="Secondary.TButton",
         )
         self.save_joblog_btn.grid(row=0, column=6, padx=(0, 6))
         self.open_joblog_btn = ttk.Button(
             controls,
             text="Job Log",
             command=self._open_joblog_window,
+            style="Secondary.TButton",
         )
         self.open_joblog_btn.grid(row=0, column=7, padx=(0, 6))
 
-        self.progress = ttk.Progressbar(self, orient=tk.HORIZONTAL, mode="determinate", maximum=100)
+        self.progress = ttk.Progressbar(content, orient=tk.HORIZONTAL, mode="determinate", maximum=100)
         self.progress.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(10, 0))
 
-        self.status_label = ttk.Label(self, textvariable=self.status_var)
+        self.status_label = ttk.Label(content, textvariable=self.status_var)
         self.status_label.grid(row=7, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
         self.details_toggle_btn = ttk.Button(
-            self,
+            content,
             textvariable=self.details_toggle_text_var,
             command=self._toggle_details,
+            style="Secondary.TButton",
         )
         self.details_toggle_btn.grid(row=8, column=0, columnspan=4, sticky="w", pady=(8, 0))
 
-        self.details_frame = ttk.Frame(self)
+        self.details_frame = ttk.Frame(content, style="Surface.TFrame")
         self.details_frame.columnconfigure(0, weight=1)
         self.details_frame.rowconfigure(0, weight=1)
         self.log_text = scrolledtext.ScrolledText(self.details_frame, height=12, wrap=tk.WORD, state=tk.DISABLED)
@@ -391,6 +446,68 @@ class LegalPDFTranslateApp(ttk.Frame):
             (self.context_file_entry, tk.NORMAL),
             (self.context_browse_btn, tk.NORMAL),
         ]
+        self.bind("<Configure>", self._on_root_configure, add="+")
+        self.after(10, self._refresh_visual_assets)
+
+    def _refresh_visual_assets(self) -> None:
+        width = max(1, self.winfo_width())
+        height = max(1, self.winfo_height())
+        if self._last_visual_size == (width, height):
+            return
+        self._last_visual_size = (width, height)
+
+        def _snap(value: int, step: int = 8) -> int:
+            return max(step, int(round(value / step) * step))
+
+        header_width = max(500, min(940, width - 60))
+        header_height = 62
+        side_height = max(180, height - 140)
+        side_width = max(72, min(120, int(width * 0.1)))
+        image_bg_size = (_snap(width), _snap(height))
+        image_header_size = (_snap(header_width), _snap(header_height, 2))
+        image_side_size = (_snap(side_width, 4), _snap(side_height, 4))
+        right_x = max(0, width - side_width - 8)
+        header_x = max(0, (width - header_width) // 2)
+
+        if self._bg_label is not None:
+            try:
+                self._bg_image = load_image("resources/ui/ui_bg_tile.png", size=image_bg_size)
+                self._bg_label.configure(image=self._bg_image)
+                self._bg_label.place_configure(x=0, y=0, width=width, height=height)
+                self._bg_label.lower()
+            except Exception:
+                pass
+        if self._header_label is not None:
+            try:
+                self._header_image = load_image("resources/ui/ui_banner.png", size=image_header_size)
+                self._header_label.configure(image=self._header_image)
+                self._header_label.place_configure(x=header_x, y=10, width=header_width, height=header_height)
+            except Exception:
+                pass
+        if self._left_deco_label is not None:
+            try:
+                self._left_deco_image = load_image("resources/ui/ui_deco_left.png", size=image_side_size)
+                self._left_deco_label.configure(image=self._left_deco_image)
+                self._left_deco_label.place_configure(x=8, y=88, width=side_width, height=side_height)
+            except Exception:
+                pass
+        if self._right_deco_label is not None:
+            try:
+                self._right_deco_image = load_image("resources/ui/ui_deco_right.png", size=image_side_size)
+                self._right_deco_label.configure(image=self._right_deco_image)
+                self._right_deco_label.place_configure(x=right_x, y=88, width=side_width, height=side_height)
+            except Exception:
+                pass
+        if self._header_title_label is not None:
+            self._header_title_label.place_configure(x=header_x + 38, y=22, width=max(260, header_width - 80), height=38)
+            self._header_title_label.lift()
+        if self._content_frame is not None:
+            self._content_frame.lift()
+
+    def _on_root_configure(self, event: tk.Event) -> None:
+        if event.widget is not self:
+            return
+        self._refresh_visual_assets()
 
     def _install_menu(self) -> None:
         menu_bar = tk.Menu(self.master)
@@ -582,11 +699,13 @@ class LegalPDFTranslateApp(ttk.Frame):
         if expanded:
             self.details_toggle_text_var.set("Hide details ▴")
             self.details_frame.grid(row=9, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
-            self.rowconfigure(9, weight=1)
+            if self._content_frame is not None:
+                self._content_frame.rowconfigure(9, weight=1)
         else:
             self.details_toggle_text_var.set("Show details ▾")
             self.details_frame.grid_forget()
-            self.rowconfigure(9, weight=0)
+            if self._content_frame is not None:
+                self._content_frame.rowconfigure(9, weight=0)
 
     def _pick_pdf(self) -> None:
         path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")])

@@ -7,20 +7,22 @@ from tkinter import ttk
 
 THEMES: dict[str, dict[str, str]] = {
     "dark_futuristic": {
-        "bg": "#0E1320",
-        "surface": "#161F33",
-        "text": "#E8EDF8",
-        "secondary": "#98A5C4",
-        "accent": "#3D84FF",
-        "danger": "#D65757",
+        "bg": "#06132A",
+        "surface": "#0D1D3A",
+        "surface_alt": "#12284A",
+        "text": "#EAF4FF",
+        "secondary": "#91A8C7",
+        "accent": "#33B8FF",
+        "danger": "#D96A6A",
     },
     "dark_simple": {
-        "bg": "#111315",
-        "surface": "#1A1E22",
-        "text": "#ECEDEE",
-        "secondary": "#A6ABAF",
-        "accent": "#2F74E7",
-        "danger": "#D14B4B",
+        "bg": "#0C1118",
+        "surface": "#182334",
+        "surface_alt": "#213147",
+        "text": "#EBF1F8",
+        "secondary": "#9AA9BC",
+        "accent": "#2FA8FF",
+        "danger": "#D46262",
     },
 }
 
@@ -34,11 +36,17 @@ def apply_theme(root: tk.Tk, *, theme_name: str = "dark_futuristic", ui_scale: f
     style = ttk.Style(root)
     style.theme_use("clam")
 
-    base_size = max(9, int(round(10 * float(ui_scale))))
-    title_size = max(base_size + 3, int(round(14 * float(ui_scale))))
+    scale = float(ui_scale)
+    base_size = max(11, int(round(11 * scale)))
+    title_size = max(12, int(round(13 * scale)))
+    button_size = max(11, int(round(11 * scale)))
+    pad_x = max(10, int(round(12 * scale)))
+    pad_y = max(6, int(round(8 * scale)))
+
     root.option_add("*Font", ("Segoe UI", base_size))
+    root.option_add("*TCombobox*Listbox.font", ("Segoe UI", base_size))
     try:
-        root.tk.call("tk", "scaling", float(ui_scale))
+        root.tk.call("tk", "scaling", scale)
     except Exception:
         pass
 
@@ -50,32 +58,76 @@ def apply_theme(root: tk.Tk, *, theme_name: str = "dark_futuristic", ui_scale: f
         fieldbackground=palette["surface"],
         font=("Segoe UI", base_size),
     )
-    style.configure("Title.TLabel", font=("Segoe UI Semibold", title_size), foreground=palette["text"])
-    style.configure("Muted.TLabel", foreground=palette["secondary"])
-    style.configure("Danger.TLabel", foreground=palette["danger"])
+    style.configure(
+        "Title.TLabel",
+        background=palette["bg"],
+        foreground=palette["text"],
+        font=("Segoe UI Semibold", title_size),
+    )
+    style.configure("Muted.TLabel", background=palette["bg"], foreground=palette["secondary"])
+    style.configure("Danger.TLabel", background=palette["bg"], foreground=palette["danger"])
     style.configure("TFrame", background=palette["bg"])
+    style.configure("Surface.TFrame", background=palette["surface"])
     style.configure("TLabel", background=palette["bg"], foreground=palette["text"])
     style.configure(
         "TLabelframe",
-        background=palette["bg"],
+        background=palette["surface"],
         foreground=palette["text"],
-        bordercolor=palette["surface"],
+        bordercolor=palette["surface_alt"],
         relief=tk.GROOVE,
-        padding=8,
+        padding=(pad_x, pad_y),
     )
-    style.configure("TLabelframe.Label", background=palette["bg"], foreground=palette["text"])
+    style.configure("TLabelframe.Label", background=palette["surface"], foreground=palette["text"])
+    style.configure(
+        "Surface.TLabelframe",
+        background=palette["surface"],
+        foreground=palette["text"],
+        bordercolor=palette["surface_alt"],
+        relief=tk.GROOVE,
+        padding=(pad_x, pad_y),
+    )
+    style.configure("Surface.TLabelframe.Label", background=palette["surface"], foreground=palette["text"])
 
     style.configure(
         "TButton",
         background=palette["surface"],
         foreground=palette["text"],
-        bordercolor=palette["surface"],
+        bordercolor=palette["surface_alt"],
         focuscolor=palette["accent"],
-        padding=(12, 7),
+        padding=(pad_x, pad_y),
+        font=("Segoe UI", button_size),
     )
     style.map(
         "TButton",
-        background=[("active", palette["accent"]), ("disabled", palette["surface"])],
+        background=[("active", palette["surface_alt"]), ("disabled", palette["surface"])],
+        foreground=[("disabled", palette["secondary"])],
+    )
+    style.configure(
+        "Primary.TButton",
+        background=palette["accent"],
+        foreground="#041523",
+        bordercolor=palette["accent"],
+        focuscolor=palette["accent"],
+        padding=(pad_x, pad_y),
+        font=("Segoe UI Semibold", button_size),
+    )
+    style.map(
+        "Primary.TButton",
+        background=[("active", "#68CCFF"), ("disabled", palette["surface"])],
+        foreground=[("disabled", palette["secondary"])],
+    )
+    style.configure(
+        "Secondary.TButton",
+        background=palette["surface"],
+        foreground=palette["text"],
+        bordercolor=palette["surface_alt"],
+        focuscolor=palette["accent"],
+        padding=(pad_x, pad_y),
+        font=("Segoe UI", button_size),
+    )
+    style.map(
+        "Secondary.TButton",
+        background=[("active", palette["surface_alt"]), ("disabled", palette["surface"])],
         foreground=[("disabled", palette["secondary"])],
     )
 
@@ -84,8 +136,8 @@ def apply_theme(root: tk.Tk, *, theme_name: str = "dark_futuristic", ui_scale: f
         fieldbackground=palette["surface"],
         foreground=palette["text"],
         insertcolor=palette["text"],
-        bordercolor=palette["surface"],
-        padding=(6, 5),
+        bordercolor=palette["surface_alt"],
+        padding=(8, 6),
     )
     style.map(
         "TEntry",
@@ -99,8 +151,8 @@ def apply_theme(root: tk.Tk, *, theme_name: str = "dark_futuristic", ui_scale: f
         foreground=palette["text"],
         background=palette["surface"],
         arrowcolor=palette["text"],
-        bordercolor=palette["surface"],
-        padding=(6, 5),
+        bordercolor=palette["surface_alt"],
+        padding=(8, 6),
     )
     style.map(
         "TCombobox",
@@ -111,9 +163,9 @@ def apply_theme(root: tk.Tk, *, theme_name: str = "dark_futuristic", ui_scale: f
     style.configure(
         "Horizontal.TProgressbar",
         background=palette["accent"],
-        troughcolor=palette["surface"],
-        bordercolor=palette["surface"],
-        thickness=max(14, int(round(16 * ui_scale))),
+        troughcolor=palette["surface_alt"],
+        bordercolor=palette["surface_alt"],
+        thickness=max(16, int(round(18 * scale))),
     )
     return palette
 
