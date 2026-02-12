@@ -37,6 +37,11 @@ class OrderedPageText:
     newline_to_char_ratio: float
     fragmented: bool
     block_count: int
+    header_blocks_count: int
+    footer_blocks_count: int
+    barcode_blocks_count: int
+    body_blocks_count: int
+    two_column_detected: bool
 
 
 HEADER_ANCHORS = [
@@ -168,8 +173,27 @@ def _detect_two_columns(body_blocks: list[TextBlock], page_width: float) -> tupl
 
 
 def order_text_blocks(blocks: list[TextBlock], page_width: float, page_height: float) -> str:
+    ordered, _ = order_text_blocks_with_metadata(blocks, page_width=page_width, page_height=page_height)
+    return ordered
+
+
+def order_text_blocks_with_metadata(
+    blocks: list[TextBlock],
+    page_width: float,
+    page_height: float,
+) -> tuple[str, dict[str, object]]:
     if not blocks:
-        return ""
+        return (
+            "",
+            {
+                "block_count": 0,
+                "header_blocks_count": 0,
+                "footer_blocks_count": 0,
+                "barcode_blocks_count": 0,
+                "body_blocks_count": 0,
+                "two_column_detected": False,
+            },
+        )
     _classify_blocks(blocks, page_width=page_width, page_height=page_height)
     header = sorted((b for b in blocks if b.group == BlockGroup.HEADER), key=_sort_key)
     barcode = sorted((b for b in blocks if b.group == BlockGroup.BARCODE), key=_sort_key)
@@ -188,7 +212,17 @@ def order_text_blocks(blocks: list[TextBlock], page_width: float, page_height: f
         if block.text.strip() == "":
             continue
         lines.append(block.text)
-    return "\n".join(lines)
+    return (
+        "\n".join(lines),
+        {
+            "block_count": len(blocks),
+            "header_blocks_count": len(header),
+            "footer_blocks_count": len(footer),
+            "barcode_blocks_count": len(barcode),
+            "body_blocks_count": len(body),
+            "two_column_detected": is_two_col,
+        },
+    )
 
 
 def _fragmented_heuristic(text: str) -> bool:
@@ -206,7 +240,7 @@ def extract_ordered_page_text(pdf_path: Path, page_index: int) -> OrderedPageTex
             page = doc.load_page(page_index)
             page_dict = page.get_text("dict")
             blocks = build_text_blocks_from_page_dict(page_dict)
-            ordered_text = order_text_blocks(
+            ordered_text, metadata = order_text_blocks_with_metadata(
                 blocks,
                 page_width=float(page.rect.width),
                 page_height=float(page.rect.height),
@@ -218,6 +252,11 @@ def extract_ordered_page_text(pdf_path: Path, page_index: int) -> OrderedPageTex
             newline_to_char_ratio=1.0,
             fragmented=False,
             block_count=0,
+            header_blocks_count=0,
+            footer_blocks_count=0,
+            barcode_blocks_count=0,
+            body_blocks_count=0,
+            two_column_detected=False,
         )
 
     char_count = len(ordered_text)
@@ -227,5 +266,10 @@ def extract_ordered_page_text(pdf_path: Path, page_index: int) -> OrderedPageTex
         extraction_failed=False,
         newline_to_char_ratio=ratio,
         fragmented=_fragmented_heuristic(ordered_text),
-        block_count=len(blocks),
+        block_count=int(metadata["block_count"]),
+        header_blocks_count=int(metadata["header_blocks_count"]),
+        footer_blocks_count=int(metadata["footer_blocks_count"]),
+        barcode_blocks_count=int(metadata["barcode_blocks_count"]),
+        body_blocks_count=int(metadata["body_blocks_count"]),
+        two_column_detected=bool(metadata["two_column_detected"]),
     )

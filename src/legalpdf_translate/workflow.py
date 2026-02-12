@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import math
+import os
 import random
 import shutil
 import threading
@@ -35,7 +38,7 @@ from .docx_writer import assemble_docx
 from .image_io import render_page_image_data_url
 from .ocr_engine import OCREngine, OcrResult, build_ocr_engine, ocr_engine_config_from_run_config
 from .ocr_helpers import ocr_pdf_page_text
-from .openai_client import OpenAIResponsesClient
+from .openai_client import ApiCallError, OpenAIResponsesClient
 from .output_normalize import normalize_output_text
 from .output_paths import require_writable_output_dir
 from .page_selection import resolve_page_selection
@@ -51,6 +54,10 @@ class _Evaluation:
     ok: bool
     normalized_text: str | None
     defect_reason: str | None
+    parser_failed: bool = False
+    validator_failed: bool = False
+    outside_text: bool = False
+    block_count: int = 0
 
 
 class TranslationWorkflow:
@@ -266,6 +273,7 @@ class TranslationWorkflow:
                                     image_used=outcome.image_used,
                                     retry_used=outcome.retry_used,
                                     usage=outcome.usage,
+                                    metadata=outcome.page_metadata,
                                 )
                                 save_run_state_atomic(paths.run_state_path, run_state)
                                 done_count = run_state.done_count
@@ -283,6 +291,7 @@ class TranslationWorkflow:
                                     retry_used=outcome.retry_used,
                                     usage=outcome.usage,
                                     error=outcome.error or "unknown_failure",
+                                    metadata=outcome.page_metadata,
                                 )
                                 if failed_page is None:
                                     run_state.halt_reason = (
@@ -322,6 +331,11 @@ class TranslationWorkflow:
                     run_state.final_docx_path_abs = None
                     run_state.halt_reason = "docx_write_failed"
                     save_run_state_atomic(paths.run_state_path, run_state)
+                run_summary_path = self._write_run_summary(
+                    config=config,
+                    paths=paths,
+                    run_state=run_state,
+                )
                 self._log(f"DOCX save failed at {paths.final_docx_path}: {exc}")
                 return RunSummary(
                     success=False,
@@ -333,6 +347,7 @@ class TranslationWorkflow:
                     failed_page=None,
                     error="docx_write_failed",
                     attempted_output_docx=paths.final_docx_path,
+                    run_summary_path=run_summary_path,
                 )
 
             with state_lock:
@@ -341,6 +356,11 @@ class TranslationWorkflow:
                 run_state.finished_at = self._utc_now()
                 run_state.halt_reason = None
                 save_run_state_atomic(paths.run_state_path, run_state)
+            run_summary_path = self._write_run_summary(
+                config=config,
+                paths=paths,
+                run_state=run_state,
+            )
             if not config.keep_intermediates:
                 self._cleanup_intermediates(paths)
             return RunSummary(
@@ -353,6 +373,7 @@ class TranslationWorkflow:
                 failed_page=None,
                 error=None,
                 attempted_output_docx=output_docx,
+                run_summary_path=run_summary_path,
             )
 
         partial_docx = None
@@ -366,6 +387,11 @@ class TranslationWorkflow:
                 if run_state.halt_reason is None:
                     run_state.halt_reason = "cancelled_by_user"
                 save_run_state_atomic(paths.run_state_path, run_state)
+            run_summary_path = self._write_run_summary(
+                config=config,
+                paths=paths,
+                run_state=run_state,
+            )
             return RunSummary(
                 success=False,
                 exit_code=2,
@@ -375,6 +401,7 @@ class TranslationWorkflow:
                 completed_pages=completed_pages,
                 failed_page=failed_page,
                 error="cancelled",
+                run_summary_path=run_summary_path,
             )
 
         with state_lock:
@@ -382,6 +409,11 @@ class TranslationWorkflow:
             run_state.finished_at = self._utc_now()
             run_state.halt_reason = halt_reason or run_state.halt_reason or "hard_failure"
             save_run_state_atomic(paths.run_state_path, run_state)
+        run_summary_path = self._write_run_summary(
+            config=config,
+            paths=paths,
+            run_state=run_state,
+        )
         return RunSummary(
             success=False,
             exit_code=3 if compliance_failure else 2,
@@ -391,6 +423,7 @@ class TranslationWorkflow:
             completed_pages=completed_pages,
             failed_page=failed_page,
             error="compliance_failure" if compliance_failure else "runtime_failure",
+            run_summary_path=run_summary_path,
         )
 
     def rebuild_docx(self, config: RunConfig) -> Path:
@@ -473,9 +506,50 @@ class TranslationWorkflow:
         total_pages: int,
         ocr_engine: OCREngine | None,
     ) -> "_PageOutcome":
+        started_monotonic = time.perf_counter()
+        started_at_iso = self._utc_now()
         ordered = extract_ordered_page_text(config.pdf_path, page_number - 1)
         extracted_text = ordered.text
         extracted_usable = self._is_usable_source_text(extracted_text)
+        extracted_lines = len([line for line in extracted_text.splitlines() if line.strip()])
+
+        page_metadata: dict[str, object] = {
+            "started_at_iso": started_at_iso,
+            "ended_at_iso": "",
+            "wall_seconds": 0.0,
+            "attempt1_effort": config.effort.value,
+            "attempt2_effort": "",
+            "image_mode": config.image_mode.value,
+            "image_detail": "",
+            "image_bytes": 0,
+            "image_width_px": 0,
+            "image_height_px": 0,
+            "image_format": "",
+            "image_compress_steps": 0,
+            "extracted_text_chars": len(extracted_text),
+            "extracted_text_lines": extracted_lines,
+            "newline_to_char_ratio": float(ordered.newline_to_char_ratio),
+            "ordered_blocks_count": int(ordered.block_count),
+            "header_blocks_count": int(ordered.header_blocks_count),
+            "footer_blocks_count": int(ordered.footer_blocks_count),
+            "barcode_blocks_count": int(ordered.barcode_blocks_count),
+            "body_blocks_count": int(ordered.body_blocks_count),
+            "two_column_detected": bool(ordered.two_column_detected),
+            "compliance_defect_outside_text": False,
+            "parser_failed": False,
+            "validator_failed": False,
+            "retry_reason": "",
+            "openai_request_id": "",
+            "status_code": None,
+            "exception_class": "",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "total_tokens": 0,
+            "transport_retries_count": 0,
+            "last_backoff_seconds": 0.0,
+            "rate_limit_hit": False,
+        }
 
         ocr_result = OcrResult(
             text="",
@@ -510,13 +584,19 @@ class TranslationWorkflow:
             if config.ocr_mode == OcrMode.OFF or (ocr_attempted and ocr_result.chars <= 0):
                 image_used = True
         image_data_url = None
+        image_bytes: bytes | None = None
         if image_used:
             image_path = paths.images_dir / f"page_{page_number:04d}.jpg" if config.keep_intermediates else None
-            image_data_url, _ = render_page_image_data_url(
+            image_data_url, image_bytes = render_page_image_data_url(
                 config.pdf_path,
                 page_number - 1,
                 save_path=image_path,
             )
+            page_metadata["image_detail"] = "high"
+            page_metadata["image_format"] = "jpeg"
+            page_metadata["image_bytes"] = len(image_bytes)
+        else:
+            page_metadata["image_detail"] = ""
         ocr_reason = ocr_result.failed_reason or "none"
         self._log(
             f"page={page_number} ocr_used={ocr_result.engine} ocr_chars={ocr_result.chars} "
@@ -538,46 +618,124 @@ class TranslationWorkflow:
                 "failed_reason": ocr_result.failed_reason,
             }
         }
-        initial = client.create_page_response(
-            instructions=instructions,
-            prompt_text=prompt_text,
-            effort=config.effort.value,
-            image_data_url=image_data_url,
-        )
+        try:
+            initial = client.create_page_response(
+                instructions=instructions,
+                prompt_text=prompt_text,
+                effort=config.effort.value,
+                image_data_url=image_data_url,
+                image_detail=str(page_metadata["image_detail"] or "high"),
+            )
+        except ApiCallError as exc:
+            page_metadata["status_code"] = exc.status_code
+            page_metadata["exception_class"] = exc.exception_class
+            page_metadata["transport_retries_count"] = int(exc.transport_retries_count)
+            page_metadata["last_backoff_seconds"] = float(exc.last_backoff_seconds)
+            page_metadata["rate_limit_hit"] = bool(exc.rate_limit_hit)
+            page_metadata["ended_at_iso"] = self._utc_now()
+            page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
+            return _PageOutcome(
+                status=PageStatus.FAILED,
+                image_used=image_used,
+                retry_used=False,
+                usage=usage_payload,
+                error="runtime_failure",
+                page_metadata=page_metadata,
+            )
         usage_payload["attempt_1"] = initial.usage
+        page_metadata["openai_request_id"] = initial.response_id or ""
+        page_metadata["transport_retries_count"] = int(initial.transport_retries_count)
+        page_metadata["last_backoff_seconds"] = float(initial.last_backoff_seconds)
+        page_metadata["rate_limit_hit"] = bool(initial.rate_limit_hit)
+        self._accumulate_usage_totals(page_metadata, initial.usage)
         initial_eval = self._evaluate_output(initial.raw_output, config.target_lang)
+        page_metadata["parser_failed"] = bool(initial_eval.parser_failed)
+        page_metadata["validator_failed"] = bool(initial_eval.validator_failed)
+        page_metadata["compliance_defect_outside_text"] = bool(initial_eval.outside_text)
         if initial_eval.ok and initial_eval.normalized_text is not None:
             output_path = paths.pages_dir / f"page_{page_number:04d}.txt"
             output_path.write_text(initial_eval.normalized_text, encoding="utf-8")
+            page_metadata["ended_at_iso"] = self._utc_now()
+            page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
             return _PageOutcome(
                 status=PageStatus.DONE,
                 image_used=image_used,
                 retry_used=False,
                 usage=usage_payload,
                 error=None,
+                page_metadata=page_metadata,
             )
 
-        retry_prompt = build_retry_prompt(config.target_lang, initial.raw_output)
-        retry = client.create_page_response(
-            instructions=instructions,
-            prompt_text=retry_prompt,
-            effort=ReasoningEffort.MEDIUM.value,
-            image_data_url=None,
+        retry_reason = self._retry_reason_from_evaluation(
+            initial_eval,
+            lang=config.target_lang,
+            fallback_reason=initial_eval.defect_reason,
         )
+        page_metadata["retry_reason"] = retry_reason
+        retry_prompt = build_retry_prompt(config.target_lang, initial.raw_output)
+        page_metadata["attempt2_effort"] = ReasoningEffort.MEDIUM.value
+        try:
+            retry = client.create_page_response(
+                instructions=instructions,
+                prompt_text=retry_prompt,
+                effort=ReasoningEffort.MEDIUM.value,
+                image_data_url=None,
+            )
+        except ApiCallError as exc:
+            page_metadata["status_code"] = exc.status_code
+            page_metadata["exception_class"] = exc.exception_class
+            page_metadata["transport_retries_count"] = int(page_metadata["transport_retries_count"]) + int(
+                exc.transport_retries_count
+            )
+            page_metadata["last_backoff_seconds"] = float(exc.last_backoff_seconds)
+            page_metadata["rate_limit_hit"] = bool(page_metadata["rate_limit_hit"]) or bool(exc.rate_limit_hit)
+            page_metadata["ended_at_iso"] = self._utc_now()
+            page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
+            return _PageOutcome(
+                status=PageStatus.FAILED,
+                image_used=image_used,
+                retry_used=True,
+                usage=usage_payload,
+                error="runtime_failure",
+                page_metadata=page_metadata,
+            )
         usage_payload["attempt_2"] = retry.usage
+        if not page_metadata["openai_request_id"]:
+            page_metadata["openai_request_id"] = retry.response_id or ""
+        page_metadata["transport_retries_count"] = int(page_metadata["transport_retries_count"]) + int(
+            retry.transport_retries_count
+        )
+        page_metadata["last_backoff_seconds"] = float(retry.last_backoff_seconds)
+        page_metadata["rate_limit_hit"] = bool(page_metadata["rate_limit_hit"]) or bool(retry.rate_limit_hit)
+        self._accumulate_usage_totals(page_metadata, retry.usage)
         retry_eval = self._evaluate_output(retry.raw_output, config.target_lang)
+        page_metadata["parser_failed"] = bool(page_metadata["parser_failed"]) or bool(retry_eval.parser_failed)
+        page_metadata["validator_failed"] = bool(page_metadata["validator_failed"]) or bool(retry_eval.validator_failed)
+        page_metadata["compliance_defect_outside_text"] = bool(page_metadata["compliance_defect_outside_text"]) or bool(
+            retry_eval.outside_text
+        )
         if retry_eval.ok and retry_eval.normalized_text is not None:
             output_path = paths.pages_dir / f"page_{page_number:04d}.txt"
             output_path.write_text(retry_eval.normalized_text, encoding="utf-8")
+            page_metadata["ended_at_iso"] = self._utc_now()
+            page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
             return _PageOutcome(
                 status=PageStatus.DONE,
                 image_used=image_used,
                 retry_used=True,
                 usage=usage_payload,
                 error=None,
+                page_metadata=page_metadata,
             )
 
         defect_reason = retry_eval.defect_reason or initial_eval.defect_reason or "compliance_failure"
+        page_metadata["retry_reason"] = self._retry_reason_from_evaluation(
+            retry_eval,
+            lang=config.target_lang,
+            fallback_reason=defect_reason,
+        )
+        page_metadata["ended_at_iso"] = self._utc_now()
+        page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
         self._log(f"Compliance failure on page {page_number}: {defect_reason}")
         return _PageOutcome(
             status=PageStatus.FAILED,
@@ -585,16 +743,41 @@ class TranslationWorkflow:
             retry_used=True,
             usage=usage_payload,
             error="compliance_failure",
+            page_metadata=page_metadata,
         )
 
     def _evaluate_output(self, raw_output: str, lang: TargetLang) -> _Evaluation:
         parsed = parse_code_block_output(raw_output)
         if parsed.block_count == 0:
-            return _Evaluation(ok=False, normalized_text=None, defect_reason="No code block in model output.")
+            return _Evaluation(
+                ok=False,
+                normalized_text=None,
+                defect_reason="No code block in model output.",
+                parser_failed=True,
+                validator_failed=False,
+                outside_text=False,
+                block_count=0,
+            )
         if parsed.block_count > 1:
-            return _Evaluation(ok=False, normalized_text=None, defect_reason="More than one code block in model output.")
+            return _Evaluation(
+                ok=False,
+                normalized_text=None,
+                defect_reason="More than one code block in model output.",
+                parser_failed=True,
+                validator_failed=False,
+                outside_text=False,
+                block_count=parsed.block_count,
+            )
         if parsed.inner_content is None:
-            return _Evaluation(ok=False, normalized_text=None, defect_reason="Missing inner code block content.")
+            return _Evaluation(
+                ok=False,
+                normalized_text=None,
+                defect_reason="Missing inner code block content.",
+                parser_failed=True,
+                validator_failed=False,
+                outside_text=False,
+                block_count=1,
+            )
 
         normalized = normalize_output_text(parsed.inner_content, lang=lang)
         if lang in (TargetLang.EN, TargetLang.FR):
@@ -602,14 +785,263 @@ class TranslationWorkflow:
         else:
             validation = validate_ar(normalized)
         if not validation.ok:
-            return _Evaluation(ok=False, normalized_text=normalized, defect_reason=validation.reason)
+            return _Evaluation(
+                ok=False,
+                normalized_text=normalized,
+                defect_reason=validation.reason,
+                parser_failed=False,
+                validator_failed=True,
+                outside_text=False,
+                block_count=1,
+            )
         if parsed.outside_has_non_whitespace:
             return _Evaluation(
                 ok=False,
                 normalized_text=normalized,
                 defect_reason="Non-whitespace text found outside code block.",
+                parser_failed=False,
+                validator_failed=False,
+                outside_text=True,
+                block_count=1,
             )
-        return _Evaluation(ok=True, normalized_text=normalized, defect_reason=None)
+        return _Evaluation(
+            ok=True,
+            normalized_text=normalized,
+            defect_reason=None,
+            parser_failed=False,
+            validator_failed=False,
+            outside_text=False,
+            block_count=1,
+        )
+
+    def _accumulate_usage_totals(self, page_metadata: dict[str, object], usage: dict[str, Any]) -> None:
+        for key in ("input_tokens", "output_tokens", "reasoning_tokens", "total_tokens"):
+            current = int(page_metadata.get(key, 0) or 0)
+            try:
+                increment = int(usage.get(key, 0) or 0)
+            except Exception:
+                increment = 0
+            page_metadata[key] = current + max(0, increment)
+
+    def _retry_reason_from_evaluation(
+        self,
+        evaluation: _Evaluation,
+        *,
+        lang: TargetLang,
+        fallback_reason: str | None,
+    ) -> str:
+        if evaluation.outside_text:
+            return "outside_text"
+        if evaluation.block_count == 0:
+            return "no_code_block"
+        if evaluation.block_count > 1:
+            return "multi_code_block"
+        reason = (fallback_reason or "").strip().lower()
+        if "blank line" in reason:
+            return "blank_lines"
+        if lang == TargetLang.AR:
+            if "latin" in reason or "digit" in reason or "token" in reason or "wrapped" in reason:
+                return "ar_token_violation"
+        return "other"
+
+    def _write_run_summary(
+        self,
+        *,
+        config: RunConfig,
+        paths: RunPaths,
+        run_state: RunState,
+    ) -> Path:
+        summary_path = paths.run_dir / "run_summary.json"
+        payload = self._build_run_summary_payload(config=config, paths=paths, run_state=run_state)
+        tmp_path = summary_path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_path.replace(summary_path)
+        return summary_path
+
+    def _build_run_summary_payload(
+        self,
+        *,
+        config: RunConfig,
+        paths: RunPaths,
+        run_state: RunState,
+    ) -> dict[str, Any]:
+        page_rows: list[tuple[int, dict[str, Any]]] = []
+        for key, page in run_state.pages.items():
+            try:
+                page_number = int(key)
+            except ValueError:
+                continue
+            if isinstance(page, dict):
+                page_rows.append((page_number, page))
+        page_rows.sort(key=lambda item: item[0])
+
+        total_wall_seconds = sum(float(page.get("wall_seconds", 0.0) or 0.0) for _, page in page_rows)
+        total_input_tokens = sum(int(page.get("input_tokens", 0) or 0) for _, page in page_rows)
+        total_output_tokens = sum(int(page.get("output_tokens", 0) or 0) for _, page in page_rows)
+        total_reasoning_tokens = sum(int(page.get("reasoning_tokens", 0) or 0) for _, page in page_rows)
+        total_tokens = sum(int(page.get("total_tokens", 0) or 0) for _, page in page_rows)
+
+        pages_with_images = sum(1 for _, page in page_rows if bool(page.get("image_used", False)))
+        pages_with_retries = sum(1 for _, page in page_rows if bool(page.get("retry_used", False)))
+        pages_failed = sum(
+            1 for _, page in page_rows if str(page.get("status", "")).strip().lower() == PageStatus.FAILED.value
+        )
+        rate_limit_hits = sum(1 for _, page in page_rows if bool(page.get("rate_limit_hit", False)))
+        transport_retries_total = sum(int(page.get("transport_retries_count", 0) or 0) for _, page in page_rows)
+
+        slowest = sorted(page_rows, key=lambda item: float(item[1].get("wall_seconds", 0.0) or 0.0), reverse=True)[:10]
+        top_reasoning = sorted(
+            page_rows,
+            key=lambda item: int(item[1].get("reasoning_tokens", 0) or 0),
+            reverse=True,
+        )[:10]
+
+        def _row(page_number: int, page: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "page_number": page_number,
+                "wall_seconds": float(page.get("wall_seconds", 0.0) or 0.0),
+                "reasoning_tokens": int(page.get("reasoning_tokens", 0) or 0),
+                "image_bytes": int(page.get("image_bytes", 0) or 0),
+                "retry_used": bool(page.get("retry_used", False)),
+            }
+
+        selected_pages_count = int(run_state.selection_page_count or len(page_rows))
+        avg_image_bytes = 0.0
+        if pages_with_images > 0:
+            avg_image_bytes = (
+                sum(int(page.get("image_bytes", 0) or 0) for _, page in page_rows if bool(page.get("image_used", False)))
+                / float(pages_with_images)
+            )
+
+        effort_policy = self._resolve_effort_policy_label(config)
+        suspected_cause, evidence = self._classify_suspected_cause(
+            selected_pages_count=selected_pages_count,
+            pages_with_images=pages_with_images,
+            avg_image_bytes=avg_image_bytes,
+            total_reasoning_tokens=total_reasoning_tokens,
+            total_tokens=total_tokens,
+            effort_policy=effort_policy,
+            pages_with_retries=pages_with_retries,
+            rate_limit_hits=rate_limit_hits,
+            transport_retries_total=transport_retries_total,
+        )
+
+        total_cost_estimate = self._estimate_cost_if_available(
+            total_input_tokens=total_input_tokens,
+            total_output_tokens=total_output_tokens,
+            total_reasoning_tokens=total_reasoning_tokens,
+        )
+
+        payload: dict[str, Any] = {
+            "run_id": run_state.run_started_at or paths.run_started_at,
+            "pdf_path": str(config.pdf_path),
+            "lang": config.target_lang.value,
+            "selected_pages_count": selected_pages_count,
+            "effort_policy": effort_policy,
+            "image_mode": config.image_mode.value,
+            "totals": {
+                "total_wall_seconds": round(total_wall_seconds, 3),
+                "total_cost_estimate_if_available": total_cost_estimate,
+                "total_input_tokens": total_input_tokens,
+                "total_output_tokens": total_output_tokens,
+                "total_reasoning_tokens": total_reasoning_tokens,
+                "total_tokens": total_tokens,
+            },
+            "counts": {
+                "pages_with_images": pages_with_images,
+                "pages_with_retries": pages_with_retries,
+                "pages_failed": pages_failed,
+                "rate_limit_hits": rate_limit_hits,
+                "transport_retries_total": transport_retries_total,
+            },
+            "top_slowest_pages": [_row(page_number, page) for page_number, page in slowest],
+            "top_reasoning_pages": [_row(page_number, page) for page_number, page in top_reasoning],
+            "suspected_cause": suspected_cause,
+            "evidence": evidence,
+        }
+        currency = os.getenv("LEGALPDF_COST_CURRENCY", "").strip()
+        if currency:
+            payload["cost_currency"] = currency.upper()
+        return payload
+
+    def _resolve_effort_policy_label(self, config: RunConfig) -> str:
+        policy = getattr(config, "effort_policy", None)
+        if policy is not None:
+            value = getattr(policy, "value", None)
+            if isinstance(value, str) and value.strip():
+                return value.strip().lower()
+            if isinstance(policy, str) and policy.strip():
+                return policy.strip().lower()
+        return "fixed_xhigh" if config.effort == ReasoningEffort.XHIGH else "fixed_high"
+
+    def _classify_suspected_cause(
+        self,
+        *,
+        selected_pages_count: int,
+        pages_with_images: int,
+        avg_image_bytes: float,
+        total_reasoning_tokens: int,
+        total_tokens: int,
+        effort_policy: str,
+        pages_with_retries: int,
+        rate_limit_hits: int,
+        transport_retries_total: int,
+    ) -> tuple[str, list[str]]:
+        evidence: list[str] = []
+        selected = max(1, selected_pages_count)
+        images_ratio = pages_with_images / float(selected)
+        retries_ratio = pages_with_retries / float(selected)
+        reasoning_ratio = total_reasoning_tokens / float(max(1, total_tokens))
+        transport_threshold = max(3, int(math.ceil(0.5 * selected)))
+
+        if images_ratio >= 0.30 and avg_image_bytes >= 1_048_576:
+            evidence.append(
+                f"images_ratio={images_ratio:.3f}>=0.300 and avg_image_bytes={int(avg_image_bytes)}>=1048576"
+            )
+            return "image_auto_triggering", evidence
+        if reasoning_ratio >= 0.60 and effort_policy == "fixed_xhigh":
+            evidence.append(
+                f"reasoning_ratio={reasoning_ratio:.3f}>=0.600 and effort_policy=fixed_xhigh"
+            )
+            return "xhigh_reasoning_tokens", evidence
+        if retries_ratio >= 0.20:
+            evidence.append(f"retries_ratio={retries_ratio:.3f}>=0.200")
+            return "compliance_retries", evidence
+        if rate_limit_hits > 0 or transport_retries_total >= transport_threshold:
+            evidence.append(
+                f"rate_limit_hits={rate_limit_hits}, transport_retries_total={transport_retries_total}, threshold={transport_threshold}"
+            )
+            return "rate_limiting", evidence
+        evidence.append("no primary threshold fired")
+        return "mixed_or_unknown", evidence
+
+    def _estimate_cost_if_available(
+        self,
+        *,
+        total_input_tokens: int,
+        total_output_tokens: int,
+        total_reasoning_tokens: int,
+    ) -> float | None:
+        input_rate = self._env_float("LEGALPDF_COST_INPUT_PER_1M")
+        output_rate = self._env_float("LEGALPDF_COST_OUTPUT_PER_1M")
+        reasoning_rate = self._env_float("LEGALPDF_COST_REASONING_PER_1M")
+        if input_rate is None or output_rate is None or reasoning_rate is None:
+            return None
+        estimate = (
+            (total_input_tokens / 1_000_000.0) * input_rate
+            + (total_output_tokens / 1_000_000.0) * output_rate
+            + (total_reasoning_tokens / 1_000_000.0) * reasoning_rate
+        )
+        return round(estimate, 6)
+
+    def _env_float(self, key: str) -> float | None:
+        raw = os.getenv(key, "").strip()
+        if raw == "":
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None
 
     def _resolve_paths_for_run(self, config: RunConfig) -> tuple[RunPaths, RunState | None]:
         paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
@@ -791,3 +1223,4 @@ class _PageOutcome:
     retry_used: bool
     usage: dict[str, object]
     error: str | None
+    page_metadata: dict[str, object] | None = None

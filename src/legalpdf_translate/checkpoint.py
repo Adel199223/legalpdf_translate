@@ -101,6 +101,58 @@ def settings_fingerprint(config: RunConfig) -> dict[str, Any]:
     }
 
 
+def _default_page_record(*, status: str = PageStatus.PENDING.value) -> dict[str, Any]:
+    return {
+        "status": status,
+        "image_used": False,
+        "retry_used": False,
+        "usage": {},
+        "error": None,
+        "started_at_iso": "",
+        "ended_at_iso": "",
+        "wall_seconds": 0.0,
+        "attempt1_effort": "",
+        "attempt2_effort": "",
+        "image_mode": "",
+        "image_detail": "",
+        "image_bytes": 0,
+        "image_width_px": 0,
+        "image_height_px": 0,
+        "image_format": "",
+        "image_compress_steps": 0,
+        "extracted_text_chars": 0,
+        "extracted_text_lines": 0,
+        "newline_to_char_ratio": 0.0,
+        "ordered_blocks_count": 0,
+        "header_blocks_count": 0,
+        "footer_blocks_count": 0,
+        "barcode_blocks_count": 0,
+        "body_blocks_count": 0,
+        "two_column_detected": False,
+        "compliance_defect_outside_text": False,
+        "parser_failed": False,
+        "validator_failed": False,
+        "retry_reason": "",
+        "openai_request_id": "",
+        "status_code": None,
+        "exception_class": "",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "total_tokens": 0,
+        "transport_retries_count": 0,
+        "last_backoff_seconds": 0.0,
+        "rate_limit_hit": False,
+    }
+
+
+def _coerce_page_record(raw: Any) -> dict[str, Any]:
+    record = _default_page_record()
+    if isinstance(raw, dict):
+        record.update(raw)
+    return record
+
+
 def new_run_state(
     *,
     config: RunConfig,
@@ -120,13 +172,7 @@ def new_run_state(
     now = _utc_now()
     selection_count = len(selected_pages)
     pages = {
-        str(page_num): {
-            "status": PageStatus.PENDING.value,
-            "image_used": False,
-            "retry_used": False,
-            "usage": {},
-            "error": None,
-        }
+        str(page_num): _default_page_record(status=PageStatus.PENDING.value)
         for page_num in selected_pages
     }
     return RunState(
@@ -186,7 +232,10 @@ def load_run_state(path: Path) -> RunState | None:
     else:
         halt_reason = str(halt_reason_raw)
 
-    pages = dict(data["pages"])
+    pages_raw = dict(data["pages"])
+    pages: dict[str, dict[str, Any]] = {}
+    for key, value in pages_raw.items():
+        pages[str(key)] = _coerce_page_record(value)
     page_numbers: list[int] = []
     for key in pages.keys():
         try:
@@ -348,15 +397,23 @@ def mark_page_done(
     image_used: bool,
     retry_used: bool,
     usage: dict[str, Any] | None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     page_key = str(page_number)
-    state.pages[page_key] = {
-        "status": PageStatus.DONE.value,
-        "image_used": image_used,
-        "retry_used": retry_used,
-        "usage": usage or {},
-        "error": None,
-    }
+    page_data = _default_page_record(status=PageStatus.DONE.value)
+    page_data.update(_coerce_page_record(state.pages.get(page_key)))
+    if metadata:
+        page_data.update(metadata)
+    page_data.update(
+        {
+            "status": PageStatus.DONE.value,
+            "image_used": image_used,
+            "retry_used": retry_used,
+            "usage": usage or {},
+            "error": None,
+        }
+    )
+    state.pages[page_key] = page_data
     state.last_completed_page = max(state.last_completed_page, page_number)
     _refresh_counts(state)
 
@@ -369,14 +426,23 @@ def mark_page_failed(
     retry_used: bool,
     usage: dict[str, Any] | None,
     error: str,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
-    state.pages[str(page_number)] = {
-        "status": PageStatus.FAILED.value,
-        "image_used": image_used,
-        "retry_used": retry_used,
-        "usage": usage or {},
-        "error": error,
-    }
+    page_key = str(page_number)
+    page_data = _default_page_record(status=PageStatus.FAILED.value)
+    page_data.update(_coerce_page_record(state.pages.get(page_key)))
+    if metadata:
+        page_data.update(metadata)
+    page_data.update(
+        {
+            "status": PageStatus.FAILED.value,
+            "image_used": image_used,
+            "retry_used": retry_used,
+            "usage": usage or {},
+            "error": error,
+        }
+    )
+    state.pages[page_key] = page_data
     _refresh_counts(state)
 
 

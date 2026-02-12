@@ -153,3 +153,4 @@ class RunSummary:
     failed_page: int | None
     error: str | None = None
     attempted_output_docx: Path | None = None
+    run_summary_path: Path | None = None

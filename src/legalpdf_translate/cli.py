@@ -219,6 +219,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if summary.success and summary.output_docx is not None:
         print(f"[{_timestamp()}] Saved DOCX: {summary.output_docx}")
+        if summary.run_summary_path is not None:
+            print(f"[{_timestamp()}] Run report: {summary.run_summary_path} (run_dir={summary.run_dir})")
         return 0
 
     if summary.partial_docx is not None:
@@ -228,6 +230,8 @@ def main(argv: list[str] | None = None) -> int:
             f"[{_timestamp()}] DOCX save failed at: {summary.attempted_output_docx}",
             file=sys.stderr,
         )
+    if summary.run_summary_path is not None:
+        print(f"[{_timestamp()}] Run report: {summary.run_summary_path} (run_dir={summary.run_dir})", file=sys.stderr)
     print(f"[{_timestamp()}] Failed: {summary.error}; failed_page={summary.failed_page}", file=sys.stderr)
     return summary.exit_code
 
