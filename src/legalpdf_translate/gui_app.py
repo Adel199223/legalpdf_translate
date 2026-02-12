@@ -92,6 +92,7 @@ class LegalPDFTranslateApp(ttk.Frame):
         self._can_export_partial = False
         self._details_expanded = False
         self._config_control_states: list[tuple[tk.Widget, str]] = []
+        self._settings_persist_after_id: str | None = None
         self._progress_done_pages = 0
         self._progress_total_pages = 0
         self._image_pages_seen: set[int] = set()
@@ -731,8 +732,31 @@ class LegalPDFTranslateApp(ttk.Frame):
         self._refresh_controls()
 
     def _on_setting_changed(self, *_: object) -> None:
-        self._persist_gui_settings()
+        self._schedule_settings_persist()
         self._refresh_controls()
+
+    def _schedule_settings_persist(self) -> None:
+        pending = self._settings_persist_after_id
+        if pending is not None:
+            try:
+                self.after_cancel(pending)
+            except Exception:
+                pass
+        self._settings_persist_after_id = self.after(250, self._flush_scheduled_settings_persist)
+
+    def _flush_scheduled_settings_persist(self) -> None:
+        self._settings_persist_after_id = None
+        self._persist_gui_settings()
+
+    def _cancel_scheduled_settings_persist(self) -> None:
+        pending = self._settings_persist_after_id
+        if pending is None:
+            return
+        self._settings_persist_after_id = None
+        try:
+            self.after_cancel(pending)
+        except Exception:
+            pass
 
     def _toggle_advanced(self) -> None:
         if self.show_advanced_var.get():
@@ -1375,6 +1399,7 @@ class LegalPDFTranslateApp(ttk.Frame):
             return default if allow_blank else None
 
     def _persist_gui_settings(self) -> None:
+        self._cancel_scheduled_settings_persist()
         outdir_text = self.outdir_var.get().strip()
         if outdir_text:
             try:
@@ -1417,6 +1442,7 @@ class LegalPDFTranslateApp(ttk.Frame):
         if self._busy:
             messagebox.showwarning("Run in progress", "Cancel the active run before closing the app.")
             return
+        self._cancel_scheduled_settings_persist()
         if self.settings_window is not None and self.settings_window.winfo_exists():
             self.settings_window.destroy()
         self._persist_gui_settings()

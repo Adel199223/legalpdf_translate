@@ -80,6 +80,14 @@ class _FakeTextBox:
         self.cleared = True
 
 
+class _FakeTimer:
+    def __init__(self) -> None:
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
+
 def test_translate_gating_requires_output_folder(tmp_path: Path) -> None:
     pdf_path = tmp_path / "sample.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
@@ -189,3 +197,23 @@ def test_save_settings_uses_existing_gui_keys(monkeypatch) -> None:
     assert set(captured.keys()) == expected
     assert fake._defaults["last_lang"] == "FR"
     assert fake._defaults["workers"] == 4
+
+
+def test_on_form_changed_uses_scheduled_save() -> None:
+    calls = {"scheduled": False, "page_count": False, "controls": False}
+    fake = SimpleNamespace(
+        _schedule_save_settings=lambda: calls.__setitem__("scheduled", True),
+        _refresh_page_count=lambda: calls.__setitem__("page_count", True),
+        _update_controls=lambda: calls.__setitem__("controls", True),
+    )
+
+    QtMainWindow._on_form_changed(fake)
+
+    assert calls == {"scheduled": True, "page_count": True, "controls": True}
+
+
+def test_schedule_save_settings_starts_timer() -> None:
+    timer = _FakeTimer()
+    fake = SimpleNamespace(_settings_save_timer=timer)
+    QtMainWindow._schedule_save_settings(fake)
+    assert timer.started is True

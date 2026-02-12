@@ -163,3 +163,37 @@ def test_on_close_blocked_while_busy(monkeypatch) -> None:
     assert "persist" not in calls
     assert "settings_destroy" not in calls
     assert "master_destroy" not in calls
+
+
+def test_settings_persist_is_debounced() -> None:
+    calls: dict[str, object] = {}
+    scheduled: dict[str, object] = {}
+
+    app = LegalPDFTranslateApp.__new__(LegalPDFTranslateApp)
+    app._settings_persist_after_id = None
+
+    def _after(delay_ms: int, callback):  # type: ignore[no-untyped-def]
+        calls["delay"] = delay_ms
+        scheduled["callback"] = callback
+        return "after-id-1"
+
+    def _after_cancel(after_id: str) -> None:
+        calls["cancelled"] = after_id
+
+    app.after = _after  # type: ignore[method-assign]
+    app.after_cancel = _after_cancel  # type: ignore[method-assign]
+    app._persist_gui_settings = lambda: calls.__setitem__("persisted", True)  # type: ignore[method-assign]
+
+    app._schedule_settings_persist()
+    first_id = app._settings_persist_after_id
+    app._schedule_settings_persist()
+
+    assert first_id == "after-id-1"
+    assert calls["cancelled"] == "after-id-1"
+    assert calls["delay"] == 250
+
+    # Simulate Tk callback execution.
+    callback = scheduled["callback"]
+    callback()
+    assert app._settings_persist_after_id is None
+    assert calls["persisted"] is True

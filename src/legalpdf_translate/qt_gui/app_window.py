@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from openai import OpenAI
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -184,6 +184,10 @@ class QtMainWindow(QMainWindow):
         self._image_pages_seen: set[int] = set()
         self._retry_pages_seen: set[int] = set()
         self._click_debug_enabled = _is_truthy_env(os.getenv("LEGALPDF_QT_CLICK_DEBUG"))
+        self._settings_save_timer = QTimer(self)
+        self._settings_save_timer.setSingleShot(True)
+        self._settings_save_timer.setInterval(250)
+        self._settings_save_timer.timeout.connect(self._save_settings)
 
         self._build_ui()
         self._install_menu()
@@ -427,6 +431,10 @@ class QtMainWindow(QMainWindow):
         self.keep_check.setChecked(bool(defaults.get("keep_intermediates", defaults.get("default_keep_intermediates", True))))
 
     def _save_settings(self) -> None:
+        timer = getattr(self, "_settings_save_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+
         def opt_int(text: str) -> int | None:
             cleaned = text.strip()
             if cleaned == "":
@@ -710,9 +718,12 @@ class QtMainWindow(QMainWindow):
         self._refresh_canvas()
 
     def _on_form_changed(self) -> None:
-        self._save_settings()
+        self._schedule_save_settings()
         self._refresh_page_count()
         self._update_controls()
+
+    def _schedule_save_settings(self) -> None:
+        self._settings_save_timer.start()
 
     def _refresh_canvas(self) -> None:
         central = self.centralWidget()
@@ -1428,6 +1439,8 @@ class QtMainWindow(QMainWindow):
             QMessageBox.warning(self, "Run in progress", "Cancel the active run before closing the app.")
             event.ignore()
             return
+        if self._settings_save_timer.isActive():
+            self._settings_save_timer.stop()
         if self._settings_dialog is not None and self._settings_dialog.isVisible():
             self._settings_dialog.close()
         self._save_settings()

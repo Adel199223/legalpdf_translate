@@ -8,13 +8,21 @@ from pathlib import Path
 from .types import TargetLang
 
 
-def get_resources_dir() -> Path:
+def _resource_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass:
-            return Path(meipass) / "resources"
-        return Path(sys.executable).resolve().parent / "resources"
-    return Path(__file__).resolve().parents[2] / "resources"
+            return Path(meipass)
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
+def resource_path(rel_path: str) -> Path:
+    return (_resource_base_dir() / rel_path).resolve()
+
+
+def get_resources_dir() -> Path:
+    return resource_path("resources")
 
 
 def load_system_instructions(target_lang: TargetLang) -> str:
