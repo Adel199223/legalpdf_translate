@@ -23,6 +23,7 @@ class ApiCallResult:
     response_id: str | None
     transport_retries_count: int = 0
     last_backoff_seconds: float = 0.0
+    total_backoff_seconds: float = 0.0
     rate_limit_hit: bool = False
 
 
@@ -33,6 +34,7 @@ class ApiCallError(RuntimeError):
     exception_class: str
     transport_retries_count: int
     last_backoff_seconds: float
+    total_backoff_seconds: float
     rate_limit_hit: bool
 
     def __str__(self) -> str:
@@ -94,6 +96,7 @@ class OpenAIResponsesClient:
         last_error: Exception | None = None
         transport_retries_count = 0
         last_backoff_seconds = 0.0
+        total_backoff_seconds = 0.0
         rate_limit_hit = False
         # max_transport_retries is "retries after the first call"; always attempt at least once.
         for attempt in range(self._max_transport_retries + 1):
@@ -114,6 +117,7 @@ class OpenAIResponsesClient:
                     response_id=getattr(response, "id", None),
                     transport_retries_count=transport_retries_count,
                     last_backoff_seconds=last_backoff_seconds,
+                    total_backoff_seconds=total_backoff_seconds,
                     rate_limit_hit=rate_limit_hit,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -128,6 +132,7 @@ class OpenAIResponsesClient:
                         exception_class=type(exc).__name__,
                         transport_retries_count=transport_retries_count,
                         last_backoff_seconds=last_backoff_seconds,
+                        total_backoff_seconds=total_backoff_seconds,
                         rate_limit_hit=rate_limit_hit,
                     ) from exc
                 retry_after = _retry_after_seconds(exc)
@@ -144,6 +149,7 @@ class OpenAIResponsesClient:
                     )
                 transport_retries_count += 1
                 last_backoff_seconds = sleep_seconds
+                total_backoff_seconds += sleep_seconds
                 time.sleep(sleep_seconds)
         if last_error is not None:
             raise last_error

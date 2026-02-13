@@ -17,6 +17,8 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert loaded["ui_scale"] in {1.0, 1.1, 1.25}
     assert "perf_max_transport_retries" in loaded
     assert "diagnostics_verbose_metadata_logs" in loaded
+    assert loaded["diagnostics_admin_mode"] is True
+    assert loaded["diagnostics_include_sanitized_snippets"] is False
     assert loaded["default_effort_policy"] in {"adaptive", "fixed_high", "fixed_xhigh"}
     assert loaded["effort_policy"] in {"adaptive", "fixed_high", "fixed_xhigh"}
     assert isinstance(loaded["allow_xhigh_escalation"], bool)

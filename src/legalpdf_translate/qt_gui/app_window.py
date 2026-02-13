@@ -77,6 +77,7 @@ from legalpdf_translate.qt_gui.worker import (
     RebuildDocxWorker,
     TranslationRunWorker,
 )
+from legalpdf_translate.run_report import build_run_report_markdown
 from legalpdf_translate.secrets_store import (
     delete_openai_key,
     delete_ocr_key,
@@ -202,6 +203,7 @@ class QtMainWindow(QMainWindow):
         self._last_summary: RunSummary | None = None
         self._last_output_docx: Path | None = None
         self._last_run_config: RunConfig | None = None
+        self._last_run_dir: Path | None = None
         self._last_joblog_seed: JobLogSeed | None = None
         self._last_run_report_path: Path | None = None
         self._joblog_window: QtJobLogWindow | None = None
@@ -373,7 +375,7 @@ class QtMainWindow(QMainWindow):
         self.partial_btn = QPushButton("Export partial DOCX")
         self.rebuild_btn = QPushButton("Rebuild DOCX")
         self.open_btn = QPushButton("Open output folder")
-        self.report_btn = QPushButton("Run Report")
+        self.report_btn = QPushButton("Export Run Report")
         self.save_joblog_btn = QPushButton("Save to Job Log")
         self.open_joblog_btn = QPushButton("Job Log")
         for btn in (
@@ -688,6 +690,9 @@ class QtMainWindow(QMainWindow):
             run_state_path = self._last_summary.run_dir / "run_state.json"
             if run_state_path.exists():
                 paths.append(run_state_path)
+            run_events_path = self._last_summary.run_dir / "run_events.jsonl"
+            if run_events_path.exists():
+                paths.append(run_events_path)
         if self._last_run_config is not None:
             run_paths = build_output_paths(
                 self._last_run_config.output_dir,
@@ -894,6 +899,10 @@ class QtMainWindow(QMainWindow):
             ocr_api_key_env_name=str(self._defaults.get("ocr_api_key_env_name", "DEEPSEEK_API_KEY") or "DEEPSEEK_API_KEY"),
             context_file=context_file,
             context_text=self.context_text.toPlainText().strip() or None,
+            diagnostics_admin_mode=bool(self._defaults.get("diagnostics_admin_mode", True)),
+            diagnostics_include_sanitized_snippets=bool(
+                self._defaults.get("diagnostics_include_sanitized_snippets", False)
+            ),
         )
 
     def _can_start(self) -> bool:
@@ -955,11 +964,11 @@ class QtMainWindow(QMainWindow):
             and self._last_output_docx.stat().st_size > 0
         )
         self.open_btn.setEnabled(can_open)
-        can_report = (
-            (not self._busy)
-            and self._last_run_report_path is not None
-            and self._last_run_report_path.exists()
-        )
+        can_report = False
+        if self._running:
+            can_report = self._resolve_report_run_dir() is not None
+        elif not self._busy:
+            can_report = self._resolve_report_run_dir() is not None
         self.report_btn.setEnabled(can_report)
         self.save_joblog_btn.setEnabled((not self._busy) and (self._last_joblog_seed is not None))
         self.open_joblog_btn.setEnabled(not self._busy)
@@ -1007,6 +1016,7 @@ class QtMainWindow(QMainWindow):
         self._save_settings()
         self._last_summary = None
         self._last_run_report_path = None
+        self._last_run_dir = build_output_paths(config.output_dir, config.pdf_path, config.target_lang).run_dir
         self._last_output_docx = None
         self._last_run_config = config
         self._last_joblog_seed = None
@@ -1112,6 +1122,7 @@ class QtMainWindow(QMainWindow):
             self._last_joblog_seed = None
             return
         self._last_summary = summary
+        self._last_run_dir = summary.run_dir
         self._last_run_report_path = summary.run_summary_path
         if summary.success and summary.output_docx is not None:
             output = summary.output_docx.expanduser().resolve()
@@ -1222,6 +1233,7 @@ class QtMainWindow(QMainWindow):
             return
         self._last_summary = None
         self._last_run_report_path = None
+        self._last_run_dir = None
         self._last_output_docx = None
         self._last_run_config = None
         self._last_joblog_seed = None
@@ -1440,21 +1452,96 @@ class QtMainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Open output folder", str(exc))
 
+    def _resolve_report_run_dir(self) -> Path | None:
+        if self._last_run_dir is not None:
+            return self._last_run_dir.expanduser().resolve()
+        if self._last_summary is not None:
+            return self._last_summary.run_dir.expanduser().resolve()
+        if self._last_run_report_path is not None:
+            return self._last_run_report_path.expanduser().resolve().parent
+        if self._worker is not None and hasattr(self._worker, "workflow"):
+            workflow = getattr(self._worker, "workflow", None)
+            if workflow is not None and hasattr(workflow, "_last_paths"):
+                paths = getattr(workflow, "_last_paths", None)
+                run_dir = getattr(paths, "run_dir", None)
+                if isinstance(run_dir, Path):
+                    return run_dir.expanduser().resolve()
+        return None
+
     def _open_run_report(self) -> None:
-        if self._last_run_report_path is None:
+        run_dir = self._resolve_report_run_dir()
+        if run_dir is None:
             QMessageBox.information(self, "Run report", "No run report available.")
             return
-        report_path = self._last_run_report_path.expanduser().resolve()
-        if not report_path.exists():
-            QMessageBox.critical(self, "Run report", f"Run report not found:\n{report_path}")
+        if not run_dir.exists():
+            QMessageBox.information(self, "Run report", f"Run folder is not ready yet:\n{run_dir}")
+            return
+
+        admin_mode = bool(self._defaults.get("diagnostics_admin_mode", True))
+        include_snippets = (
+            admin_mode and bool(self._defaults.get("diagnostics_include_sanitized_snippets", False))
+        )
+        try:
+            report_text = build_run_report_markdown(
+                run_dir=run_dir,
+                admin_mode=admin_mode,
+                include_sanitized_snippets=include_snippets,
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Run report", str(exc))
+            return
+
+        chooser = QMessageBox(self)
+        chooser.setIcon(QMessageBox.Icon.Question)
+        chooser.setWindowTitle("Export Run Report")
+        chooser.setText("Choose how to export the run report.")
+        save_btn = chooser.addButton("Save .md", QMessageBox.ButtonRole.ActionRole)
+        copy_btn = chooser.addButton("Copy to clipboard", QMessageBox.ButtonRole.ActionRole)
+        chooser.addButton(QMessageBox.StandardButton.Cancel)
+        chooser.exec()
+        clicked = chooser.clickedButton()
+
+        if clicked is copy_btn:
+            QApplication.clipboard().setText(report_text)
+            self._append_log("Run report copied to clipboard.")
+            QMessageBox.information(self, "Run report", "Run report copied to clipboard.")
+            return
+
+        if clicked is not save_btn:
+            return
+
+        default_path = run_dir / "run_report.md"
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Run Report",
+            str(default_path),
+            "Markdown (*.md);;Text (*.txt);;All Files (*.*)",
+        )
+        if not save_path:
+            return
+        output_path = Path(save_path).expanduser().resolve()
+        try:
+            output_path.write_text(report_text, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Run report", f"Failed to save run report: {exc}")
+            return
+        self._append_log(f"Run report exported: {output_path}")
+        open_choice = QMessageBox.question(
+            self,
+            "Run report",
+            "Open report folder now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if open_choice != QMessageBox.StandardButton.Yes:
             return
         try:
             if os.name == "nt":
-                subprocess.Popen(["explorer", f"/select,{report_path}"])
+                subprocess.Popen(["explorer", f"/select,{output_path}"])
             elif sys.platform == "darwin":
-                subprocess.Popen(["open", str(report_path.parent)])
+                subprocess.Popen(["open", str(output_path.parent)])
             else:
-                subprocess.Popen(["xdg-open", str(report_path.parent)])
+                subprocess.Popen(["xdg-open", str(output_path.parent)])
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Run report", str(exc))
 

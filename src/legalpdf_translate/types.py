@@ -79,6 +79,8 @@ class RunConfig:
     context_text: str | None = None
     effort_policy: EffortPolicy = EffortPolicy.ADAPTIVE
     allow_xhigh_escalation: bool = False
+    diagnostics_admin_mode: bool = False
+    diagnostics_include_sanitized_snippets: bool = False
 
 
 @dataclass(slots=True)

@@ -939,13 +939,18 @@ class QtSettingsDialog(QDialog):
         layout = QVBoxLayout(self.tab_diag)
         self.diag_cost_summary_check = QCheckBox("Show cost summary")
         self.diag_verbose_meta_check = QCheckBox("Verbose metadata logs")
+        self.diag_admin_mode_check = QCheckBox("Admin diagnostics mode")
+        self.diag_snippets_check = QCheckBox("Include small sanitized snippets (first 200 chars per page)")
         self.create_bundle_btn = QPushButton("Create debug bundle")
         hint = QLabel("Bundle excludes page text files and all credentials.")
         layout.addWidget(self.diag_cost_summary_check)
         layout.addWidget(self.diag_verbose_meta_check)
+        layout.addWidget(self.diag_admin_mode_check)
+        layout.addWidget(self.diag_snippets_check)
         layout.addWidget(self.create_bundle_btn)
         layout.addWidget(hint)
         layout.addStretch(1)
+        self.diag_admin_mode_check.toggled.connect(self.diag_snippets_check.setEnabled)
         self.create_bundle_btn.clicked.connect(self._create_debug_bundle)
 
     def _set_values_from_settings(self, settings: dict[str, object]) -> None:
@@ -976,6 +981,9 @@ class QtSettingsDialog(QDialog):
         self.allow_xhigh_check.setChecked(bool(settings.get("allow_xhigh_escalation", False)))
         self.diag_cost_summary_check.setChecked(bool(settings.get("diagnostics_show_cost_summary", True)))
         self.diag_verbose_meta_check.setChecked(bool(settings.get("diagnostics_verbose_metadata_logs", False)))
+        self.diag_admin_mode_check.setChecked(bool(settings.get("diagnostics_admin_mode", True)))
+        self.diag_snippets_check.setChecked(bool(settings.get("diagnostics_include_sanitized_snippets", False)))
+        self.diag_snippets_check.setEnabled(self.diag_admin_mode_check.isChecked())
 
     def _pick_default_outdir(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "Choose default output folder")
@@ -984,6 +992,25 @@ class QtSettingsDialog(QDialog):
 
     def _toggle_openai_key(self) -> None:
         if self.openai_key_edit.echoMode() == QLineEdit.EchoMode.Password:
+            confirm = QMessageBox.question(
+                self,
+                "Reveal OpenAI key",
+                "Reveal stored OpenAI API key in plain text?",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if confirm != QMessageBox.StandardButton.Ok:
+                return
+            try:
+                stored = get_openai_key()
+            except RuntimeError as exc:
+                QMessageBox.critical(self, "Settings", str(exc))
+                return
+            if not stored:
+                QMessageBox.warning(self, "Settings", "OpenAI key is not stored.")
+                self._refresh_key_status()
+                return
+            self.openai_key_edit.setText(stored)
             self.openai_key_edit.setEchoMode(QLineEdit.EchoMode.Normal)
             self.openai_toggle_btn.setText("Hide")
         else:
@@ -992,6 +1019,25 @@ class QtSettingsDialog(QDialog):
 
     def _toggle_ocr_key(self) -> None:
         if self.ocr_key_edit.echoMode() == QLineEdit.EchoMode.Password:
+            confirm = QMessageBox.question(
+                self,
+                "Reveal OCR key",
+                "Reveal stored OCR API key in plain text?",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if confirm != QMessageBox.StandardButton.Ok:
+                return
+            try:
+                stored = get_ocr_key()
+            except RuntimeError as exc:
+                QMessageBox.critical(self, "Settings", str(exc))
+                return
+            if not stored:
+                QMessageBox.warning(self, "Settings", "OCR key is not stored.")
+                self._refresh_key_status()
+                return
+            self.ocr_key_edit.setText(stored)
             self.ocr_key_edit.setEchoMode(QLineEdit.EchoMode.Normal)
             self.ocr_toggle_btn.setText("Hide")
         else:
@@ -1008,6 +1054,16 @@ class QtSettingsDialog(QDialog):
             ocr_stored = False
         self.openai_status_label.setText("Stored" if openai_stored else "Not stored")
         self.ocr_status_label.setText("Stored" if ocr_stored else "Not stored")
+        self.openai_toggle_btn.setEnabled(openai_stored)
+        self.ocr_toggle_btn.setEnabled(ocr_stored)
+        if not openai_stored:
+            self.openai_key_edit.clear()
+            self.openai_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self.openai_toggle_btn.setText("Show")
+        if not ocr_stored:
+            self.ocr_key_edit.clear()
+            self.ocr_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self.ocr_toggle_btn.setText("Show")
         self.provider_summary_label.setText(
             "Provider mode: OpenAI credentials "
             f"{'present' if openai_stored else 'missing'}, OCR credentials {'present' if ocr_stored else 'missing'}."
@@ -1037,6 +1093,9 @@ class QtSettingsDialog(QDialog):
         except RuntimeError as exc:
             QMessageBox.critical(self, "Settings", str(exc))
             return
+        self.openai_key_edit.clear()
+        self.openai_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.openai_toggle_btn.setText("Show")
         self._refresh_key_status()
 
     def _save_ocr_key(self) -> None:
@@ -1063,6 +1122,9 @@ class QtSettingsDialog(QDialog):
         except RuntimeError as exc:
             QMessageBox.critical(self, "Settings", str(exc))
             return
+        self.ocr_key_edit.clear()
+        self.ocr_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ocr_toggle_btn.setText("Show")
         self._refresh_key_status()
 
     def _test_openai_key(self) -> None:
@@ -1185,6 +1247,8 @@ class QtSettingsDialog(QDialog):
             "adaptive_effort_xhigh_only_when_image_or_validator_fail": bool(self.allow_xhigh_check.isChecked()),
             "diagnostics_show_cost_summary": bool(self.diag_cost_summary_check.isChecked()),
             "diagnostics_verbose_metadata_logs": bool(self.diag_verbose_meta_check.isChecked()),
+            "diagnostics_admin_mode": bool(self.diag_admin_mode_check.isChecked()),
+            "diagnostics_include_sanitized_snippets": bool(self.diag_snippets_check.isChecked()),
             "min_chars_to_accept_ocr": _to_int(self.min_chars_edit.text(), field="Min chars to accept OCR", min_value=20, max_value=10000),
         }
 

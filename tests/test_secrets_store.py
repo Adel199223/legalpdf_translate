@@ -31,3 +31,18 @@ def test_delete_ocr_key_removes_stored_value() -> None:
     assert secrets_store.get_ocr_key(backend=backend) == "def"
     secrets_store.delete_ocr_key(backend=backend)
     assert secrets_store.get_ocr_key(backend=backend) is None
+
+
+def test_roundtrip_store_retrieve_clear_for_both_keys() -> None:
+    backend = _FakeBackend()
+    secrets_store.set_openai_key("openai-secret", backend=backend)
+    secrets_store.set_ocr_key("ocr-secret", backend=backend)
+
+    assert secrets_store.get_openai_key(backend=backend) == "openai-secret"
+    assert secrets_store.get_ocr_key(backend=backend) == "ocr-secret"
+
+    secrets_store.delete_openai_key(backend=backend)
+    secrets_store.delete_ocr_key(backend=backend)
+
+    assert secrets_store.get_openai_key(backend=backend) is None
+    assert secrets_store.get_ocr_key(backend=backend) is None

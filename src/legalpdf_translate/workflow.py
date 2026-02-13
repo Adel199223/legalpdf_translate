@@ -45,6 +45,7 @@ from .output_paths import require_writable_output_dir
 from .page_selection import resolve_page_selection
 from .pdf_text_order import extract_ordered_page_text, get_page_count
 from .prompt_builder import build_page_prompt, build_retry_prompt
+from .run_report import RunEventCollector
 from .resources_loader import load_system_instructions
 from .types import AnalyzeSummary, ImageMode, OcrMode, PageStatus, ReasoningEffort, RunConfig, RunState, RunSummary, TargetLang
 from .validators import parse_code_block_output, validate_ar, validate_enfr
@@ -77,21 +78,30 @@ class TranslationWorkflow:
         self._last_config: RunConfig | None = None
         self._last_paths: RunPaths | None = None
         self._last_state: RunState | None = None
+        self._event_collector: RunEventCollector | None = None
+        self._run_stage_timings_ms: dict[str, float] = {}
+        self._diagnostics_admin_mode = False
 
     def cancel(self) -> None:
         self._cancel_event.set()
 
     def run(self, config: RunConfig) -> RunSummary:
+        run_started_perf = time.perf_counter()
         self._cancel_event.clear()
         self._last_config = None
         self._last_paths = None
         self._last_state = None
+        self._event_collector = None
+        self._run_stage_timings_ms = {}
 
         config = self._normalize_config(config)
         self._validate_config(config)
         self._last_config = config
+        self._diagnostics_admin_mode = bool(config.diagnostics_admin_mode)
 
+        started = time.perf_counter()
         load_environment()
+        self._run_stage_timings_ms["load_environment"] = round((time.perf_counter() - started) * 1000.0, 3)
         if not config.keep_intermediates:
             self._log(
                 "keep_intermediates is OFF: pages/images will be deleted after successful export; "
@@ -99,13 +109,17 @@ class TranslationWorkflow:
             )
         context_text, context_hash = self._resolve_context(config)
 
+        started = time.perf_counter()
         total_pages = get_page_count(config.pdf_path)
+        self._run_stage_timings_ms["get_page_count"] = round((time.perf_counter() - started) * 1000.0, 3)
+        started = time.perf_counter()
         selected_pages = resolve_page_selection(
             total_pages,
             config.start_page,
             config.end_page,
             config.max_pages,
         )
+        self._run_stage_timings_ms["resolve_page_selection"] = round((time.perf_counter() - started) * 1000.0, 3)
         if not selected_pages:
             raise ValueError("No pages selected for translation.")
         selection_start_page = selected_pages[0]
@@ -117,6 +131,25 @@ class TranslationWorkflow:
         paths, existing_state = self._resolve_paths_for_run(config)
         ensure_run_dirs(paths)
         self._last_paths = paths
+        self._event_collector = RunEventCollector(run_dir=paths.run_dir, enabled=self._diagnostics_admin_mode)
+        self._record_event(
+            event_type="run_started",
+            stage="run",
+            details={
+                "run_id": paths.run_started_at,
+                "pdf_name": config.pdf_path.name,
+                "target_lang": config.target_lang.value,
+                "selection_start_page": selection_start_page,
+                "selection_end_page": selection_end_page,
+                "selection_page_count": selection_page_count,
+                "max_pages_effective": max_pages_effective,
+                "resume": bool(config.resume),
+                "image_mode": config.image_mode.value,
+                "ocr_mode": config.ocr_mode.value,
+                "ocr_engine": config.ocr_engine.value,
+                "keep_intermediates": bool(config.keep_intermediates),
+            },
+        )
 
         run_state = self._load_or_initialize_run_state(
             config=config,
@@ -136,17 +169,38 @@ class TranslationWorkflow:
         run_state.finished_at = None
         save_run_state_atomic(paths.run_state_path, run_state)
         self._last_state = run_state
+        self._record_event(
+            event_type="run_state_ready",
+            stage="checkpoint",
+            details={
+                "run_state_path": str(paths.run_state_path),
+                "done_count": int(run_state.done_count),
+                "failed_count": int(run_state.failed_count),
+                "pending_count": int(run_state.pending_count),
+            },
+        )
 
         instructions = load_system_instructions(config.target_lang)
         ocr_engine: OCREngine | None = None
         if config.ocr_mode != OcrMode.OFF:
             try:
                 ocr_engine = build_ocr_engine(ocr_engine_config_from_run_config(config))
+                self._record_event(
+                    event_type="ocr_engine_ready",
+                    stage="ocr",
+                    decisions={"engine_policy": config.ocr_engine.value},
+                )
             except Exception:
                 if config.ocr_engine.value == "api" or config.ocr_mode == OcrMode.ALWAYS:
                     raise
                 ocr_engine = None
                 self._log("OCR engine unavailable; continuing without OCR for this run.")
+                self._record_event(
+                    event_type="ocr_engine_unavailable",
+                    stage="ocr",
+                    warning="OCR engine unavailable; continuing without OCR for this run.",
+                    decisions={"engine_policy": config.ocr_engine.value},
+                )
 
         state_lock = threading.Lock()
         failed_page: int | None = None
@@ -181,6 +235,12 @@ class TranslationWorkflow:
             page_state = run_state.pages.get(str(page_number))
             if config.resume and page_state and page_state.get("status") == PageStatus.DONE.value:
                 self._log(f"page={page_number} image_used=False retry_used=False status=skipped")
+                self._record_event(
+                    event_type="page_skipped_resume",
+                    stage="page",
+                    page_index=page_number,
+                    decisions={"reason": "already_done"},
+                )
                 continue
             pending_pages.append(page_number)
 
@@ -195,6 +255,11 @@ class TranslationWorkflow:
                     return None
                 local_client = _get_thread_client()
                 self._log(f"Processing PDF page {page_number}")
+                self._record_event(
+                    event_type="page_started",
+                    stage="page",
+                    page_index=page_number,
+                )
                 try:
                     return self._process_page(
                         client=local_client,
@@ -218,6 +283,13 @@ class TranslationWorkflow:
                         self._log(
                             f"Runtime failure on page {page_number}: exception_class={exception_class}"
                         )
+                    self._record_event(
+                        event_type="page_runtime_exception",
+                        stage="page",
+                        page_index=page_number,
+                        error=f"exception_class={exception_class}",
+                        details={"status_code": status_code if isinstance(status_code, int) else None},
+                    )
                     return _PageOutcome(
                         status=PageStatus.FAILED,
                         image_used=False,
@@ -288,6 +360,44 @@ class TranslationWorkflow:
                                 )
                                 save_run_state_atomic(paths.run_state_path, run_state)
                                 done_count = run_state.done_count
+                            self._record_event(
+                                event_type="page_done",
+                                stage="page",
+                                page_index=page_number,
+                                duration_ms=float((outcome.page_metadata or {}).get("wall_seconds", 0.0) or 0.0)
+                                * 1000.0,
+                                counters={
+                                    "api_calls_count": int((outcome.page_metadata or {}).get("api_calls_count", 0) or 0),
+                                    "input_tokens": int((outcome.page_metadata or {}).get("input_tokens", 0) or 0),
+                                    "output_tokens": int((outcome.page_metadata or {}).get("output_tokens", 0) or 0),
+                                    "reasoning_tokens": int(
+                                        (outcome.page_metadata or {}).get("reasoning_tokens", 0) or 0
+                                    ),
+                                    "total_tokens": int((outcome.page_metadata or {}).get("total_tokens", 0) or 0),
+                                    "transport_retries_count": int(
+                                        (outcome.page_metadata or {}).get("transport_retries_count", 0) or 0
+                                    ),
+                                    "backoff_wait_seconds_total": float(
+                                        (outcome.page_metadata or {}).get("backoff_wait_seconds_total", 0.0) or 0.0
+                                    ),
+                                },
+                                decisions={
+                                    "source_route": str((outcome.page_metadata or {}).get("source_route", "") or ""),
+                                    "image_used": bool(outcome.image_used),
+                                    "retry_used": bool(outcome.retry_used),
+                                },
+                            )
+                            if self._diagnostics_admin_mode and outcome.page_metadata:
+                                self._log(
+                                    "page="
+                                    f"{page_number} route={outcome.page_metadata.get('source_route', '')} "
+                                    f"extract_s={outcome.page_metadata.get('extract_seconds', 0.0)} "
+                                    f"ocr_s={outcome.page_metadata.get('ocr_seconds', 0.0)} "
+                                    f"translate_s={outcome.page_metadata.get('translate_seconds', 0.0)} "
+                                    f"api_calls={outcome.page_metadata.get('api_calls_count', 0)} "
+                                    f"tokens={outcome.page_metadata.get('total_tokens', 0)} "
+                                    f"cost={outcome.page_metadata.get('estimated_cost', None)}"
+                                )
                             self._progress(done_count, selection_page_count, f"Page {page_number} finished")
                         else:
                             self._log(
@@ -317,6 +427,29 @@ class TranslationWorkflow:
                                     f"Hard failure at page {page_number}: {outcome.error or 'unknown_failure'}"
                                 )
                                 stop_submitting = True
+                            self._record_event(
+                                event_type="page_failed",
+                                stage="page",
+                                page_index=page_number,
+                                duration_ms=float((outcome.page_metadata or {}).get("wall_seconds", 0.0) or 0.0)
+                                * 1000.0,
+                                error=outcome.error or "unknown_failure",
+                                counters={
+                                    "api_calls_count": int((outcome.page_metadata or {}).get("api_calls_count", 0) or 0),
+                                    "transport_retries_count": int(
+                                        (outcome.page_metadata or {}).get("transport_retries_count", 0) or 0
+                                    ),
+                                    "backoff_wait_seconds_total": float(
+                                        (outcome.page_metadata or {}).get("backoff_wait_seconds_total", 0.0) or 0.0
+                                    ),
+                                    "total_tokens": int((outcome.page_metadata or {}).get("total_tokens", 0) or 0),
+                                },
+                                decisions={
+                                    "source_route": str((outcome.page_metadata or {}).get("source_route", "") or ""),
+                                    "image_used": bool(outcome.image_used),
+                                    "retry_used": bool(outcome.retry_used),
+                                },
+                            )
                             self._progress(done_count, selection_page_count, f"Page {page_number} failed")
 
                     if not stop_submitting and not self._cancel_event.is_set():
@@ -329,13 +462,17 @@ class TranslationWorkflow:
 
         if failed_page is None and not self._cancel_event.is_set() and run_state.failed_count == 0:
             try:
+                docx_started = time.perf_counter()
                 output_docx = assemble_docx(
                     paths.pages_dir,
                     paths.final_docx_path,
                     lang=config.target_lang,
                     page_breaks=config.page_breaks,
                 )
+                self._run_stage_timings_ms["docx_rebuild"] = round((time.perf_counter() - docx_started) * 1000.0, 3)
             except Exception as exc:  # noqa: BLE001
+                self._run_stage_timings_ms["docx_rebuild"] = round((time.perf_counter() - docx_started) * 1000.0, 3)
+                self._run_stage_timings_ms["run_total"] = round((time.perf_counter() - run_started_perf) * 1000.0, 3)
                 with state_lock:
                     run_state.run_status = "docx_write_failed"
                     run_state.finished_at = self._utc_now()
@@ -348,6 +485,12 @@ class TranslationWorkflow:
                     run_state=run_state,
                 )
                 self._log(f"DOCX save failed at {paths.final_docx_path}: {exc}")
+                self._record_event(
+                    event_type="run_failed",
+                    stage="run",
+                    error="docx_write_failed",
+                    details={"attempted_output_docx": str(paths.final_docx_path)},
+                )
                 return RunSummary(
                     success=False,
                     exit_code=2,
@@ -367,10 +510,19 @@ class TranslationWorkflow:
                 run_state.finished_at = self._utc_now()
                 run_state.halt_reason = None
                 save_run_state_atomic(paths.run_state_path, run_state)
+            self._run_stage_timings_ms["run_total"] = round((time.perf_counter() - run_started_perf) * 1000.0, 3)
             run_summary_path = self._write_run_summary(
                 config=config,
                 paths=paths,
                 run_state=run_state,
+            )
+            self._record_event(
+                event_type="run_completed",
+                stage="run",
+                details={
+                    "output_docx": str(output_docx),
+                    "completed_pages": int(completed_pages),
+                },
             )
             if not config.keep_intermediates:
                 self._cleanup_intermediates(paths)
@@ -392,6 +544,7 @@ class TranslationWorkflow:
             partial_docx = self.export_partial_docx()
 
         if self._cancel_event.is_set():
+            self._run_stage_timings_ms["run_total"] = round((time.perf_counter() - run_started_perf) * 1000.0, 3)
             with state_lock:
                 run_state.run_status = "cancelled"
                 run_state.finished_at = self._utc_now()
@@ -402,6 +555,11 @@ class TranslationWorkflow:
                 config=config,
                 paths=paths,
                 run_state=run_state,
+            )
+            self._record_event(
+                event_type="run_cancelled",
+                stage="run",
+                details={"completed_pages": int(completed_pages)},
             )
             return RunSummary(
                 success=False,
@@ -420,10 +578,20 @@ class TranslationWorkflow:
             run_state.finished_at = self._utc_now()
             run_state.halt_reason = halt_reason or run_state.halt_reason or "hard_failure"
             save_run_state_atomic(paths.run_state_path, run_state)
+        self._run_stage_timings_ms["run_total"] = round((time.perf_counter() - run_started_perf) * 1000.0, 3)
         run_summary_path = self._write_run_summary(
             config=config,
             paths=paths,
             run_state=run_state,
+        )
+        self._record_event(
+            event_type="run_failed",
+            stage="run",
+            error="compliance_failure" if compliance_failure else "runtime_failure",
+            details={
+                "failed_page": failed_page,
+                "completed_pages": int(completed_pages),
+            },
         )
         return RunSummary(
             success=False,
@@ -591,7 +759,9 @@ class TranslationWorkflow:
     ) -> "_PageOutcome":
         started_monotonic = time.perf_counter()
         started_at_iso = self._utc_now()
+        extract_started = time.perf_counter()
         ordered = extract_ordered_page_text(config.pdf_path, page_number - 1)
+        extract_seconds = time.perf_counter() - extract_started
         extracted_text = ordered.text
         extracted_usable = self._is_usable_source_text(extracted_text)
         extracted_lines = len([line for line in extracted_text.splitlines() if line.strip()])
@@ -611,6 +781,19 @@ class TranslationWorkflow:
             "image_compress_steps": 0,
             "extracted_text_chars": len(extracted_text),
             "extracted_text_lines": extracted_lines,
+            "extract_seconds": round(extract_seconds, 3),
+            "ocr_seconds": 0.0,
+            "translate_seconds": 0.0,
+            "attempt1_seconds": 0.0,
+            "attempt2_seconds": 0.0,
+            "api_calls_count": 0,
+            "backoff_wait_seconds_total": 0.0,
+            "source_route": "",
+            "source_route_reason": "",
+            "image_decision_reason": "",
+            "ocr_engine_used": "",
+            "ocr_failed_reason": "",
+            "estimated_cost": None,
             "newline_to_char_ratio": float(ordered.newline_to_char_ratio),
             "ordered_blocks_count": int(ordered.block_count),
             "header_blocks_count": int(ordered.header_blocks_count),
@@ -633,6 +816,7 @@ class TranslationWorkflow:
             "last_backoff_seconds": 0.0,
             "rate_limit_hit": False,
         }
+        api_calls_count = 0
 
         ocr_result = OcrResult(
             text="",
@@ -648,6 +832,7 @@ class TranslationWorkflow:
             should_ocr = not extracted_usable
         if should_ocr and ocr_engine is not None:
             ocr_attempted = True
+            ocr_started = time.perf_counter()
             ocr_result = ocr_pdf_page_text(
                 config.pdf_path,
                 page_number,
@@ -656,8 +841,37 @@ class TranslationWorkflow:
                 prefer_header=False,
                 lang_hint=config.target_lang.value,
             )
+            page_metadata["ocr_seconds"] = round(time.perf_counter() - ocr_started, 3)
 
         source_text = ocr_result.text if ocr_result.chars > 0 else extracted_text
+        source_route = "ocr" if ocr_result.chars > 0 else "direct_text"
+        source_route_reason = "direct_text_default"
+        if ocr_result.chars > 0:
+            source_route_reason = "ocr_success"
+        elif should_ocr and ocr_attempted:
+            source_route_reason = f"ocr_fallback:{ocr_result.failed_reason or 'empty_result'}"
+        elif should_ocr and ocr_engine is None:
+            source_route_reason = "ocr_requested_engine_unavailable"
+        elif config.ocr_mode == OcrMode.AUTO and extracted_usable:
+            source_route_reason = "direct_text_usable"
+        page_metadata["source_route"] = source_route
+        page_metadata["source_route_reason"] = source_route_reason
+        page_metadata["ocr_engine_used"] = ocr_result.engine
+        page_metadata["ocr_failed_reason"] = ocr_result.failed_reason or ""
+
+        self._record_event(
+            event_type="page_source_route",
+            stage="extract",
+            page_index=page_number,
+            duration_ms=extract_seconds * 1000.0,
+            decisions={
+                "route": source_route,
+                "reason": source_route_reason,
+                "ocr_engine": ocr_result.engine,
+                "ocr_chars": int(ocr_result.chars),
+            },
+        )
+
         if config.target_lang == TargetLang.AR:
             source_text = pretokenize_arabic_source(source_text)
 
@@ -668,6 +882,15 @@ class TranslationWorkflow:
             ordered.fragmented,
             lang=config.target_lang,
         )
+        image_decision_reason = self._analyze_image_reason(
+            lang=config.target_lang,
+            mode=config.image_mode.value,
+            extraction_failed=ordered.extraction_failed,
+            ordered_text=extracted_text,
+            fragmented=ordered.fragmented,
+            would_attach_image=image_used,
+        )
+        page_metadata["image_decision_reason"] = image_decision_reason
         short_or_failed = ordered.extraction_failed or len(extracted_text.strip()) < 20
         image_detail = "low"
         if short_or_failed and config.image_mode in (ImageMode.AUTO, ImageMode.ALWAYS):
@@ -693,6 +916,17 @@ class TranslationWorkflow:
             page_metadata["image_compress_steps"] = int(rendered_image.compress_steps)
         else:
             page_metadata["image_detail"] = ""
+        self._record_event(
+            event_type="page_image_decision",
+            stage="image",
+            page_index=page_number,
+            decisions={
+                "image_mode": config.image_mode.value,
+                "image_used": bool(image_used),
+                "reason": image_decision_reason,
+                "image_detail": image_detail if image_used else "",
+            },
+        )
 
         attempt1_effort = self._resolve_attempt1_effort(
             config=config,
@@ -722,6 +956,22 @@ class TranslationWorkflow:
                 "failed_reason": ocr_result.failed_reason,
             }
         }
+        def _finalize_page_metadata() -> None:
+            page_metadata["api_calls_count"] = int(api_calls_count)
+            page_metadata["translate_seconds"] = round(
+                float(page_metadata.get("attempt1_seconds", 0.0) or 0.0)
+                + float(page_metadata.get("attempt2_seconds", 0.0) or 0.0),
+                3,
+            )
+            page_metadata["estimated_cost"] = self._estimate_cost_if_available(
+                total_input_tokens=int(page_metadata.get("input_tokens", 0) or 0),
+                total_output_tokens=int(page_metadata.get("output_tokens", 0) or 0),
+                total_reasoning_tokens=int(page_metadata.get("reasoning_tokens", 0) or 0),
+            )
+            page_metadata["ended_at_iso"] = self._utc_now()
+            page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
+
+        attempt1_started = time.perf_counter()
         try:
             initial = client.create_page_response(
                 instructions=instructions,
@@ -730,14 +980,31 @@ class TranslationWorkflow:
                 image_data_url=image_data_url,
                 image_detail=str(page_metadata["image_detail"] or "low"),
             )
+            page_metadata["attempt1_seconds"] = round(time.perf_counter() - attempt1_started, 3)
+            api_calls_count += 1
         except ApiCallError as exc:
+            page_metadata["attempt1_seconds"] = round(time.perf_counter() - attempt1_started, 3)
+            api_calls_count += 1
             page_metadata["status_code"] = exc.status_code
             page_metadata["exception_class"] = exc.exception_class
             page_metadata["transport_retries_count"] = int(exc.transport_retries_count)
             page_metadata["last_backoff_seconds"] = float(exc.last_backoff_seconds)
+            page_metadata["backoff_wait_seconds_total"] = float(exc.total_backoff_seconds)
             page_metadata["rate_limit_hit"] = bool(exc.rate_limit_hit)
-            page_metadata["ended_at_iso"] = self._utc_now()
-            page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
+            self._record_event(
+                event_type="api_call_failed",
+                stage="translate",
+                page_index=page_number,
+                duration_ms=float(page_metadata["attempt1_seconds"]) * 1000.0,
+                counters={
+                    "attempt": 1,
+                    "transport_retries_count": int(exc.transport_retries_count),
+                    "backoff_wait_seconds_total": float(exc.total_backoff_seconds),
+                    "rate_limit_hit": bool(exc.rate_limit_hit),
+                },
+                error=exc.exception_class,
+            )
+            _finalize_page_metadata()
             return _PageOutcome(
                 status=PageStatus.FAILED,
                 image_used=image_used,
@@ -750,8 +1017,25 @@ class TranslationWorkflow:
         page_metadata["openai_request_id"] = initial.response_id or ""
         page_metadata["transport_retries_count"] = int(initial.transport_retries_count)
         page_metadata["last_backoff_seconds"] = float(initial.last_backoff_seconds)
+        page_metadata["backoff_wait_seconds_total"] = float(initial.total_backoff_seconds)
         page_metadata["rate_limit_hit"] = bool(initial.rate_limit_hit)
         self._accumulate_usage_totals(page_metadata, initial.usage)
+        self._record_event(
+            event_type="api_call_done",
+            stage="translate",
+            page_index=page_number,
+            duration_ms=float(page_metadata["attempt1_seconds"]) * 1000.0,
+            counters={
+                "attempt": 1,
+                "input_tokens": int(initial.usage.get("input_tokens", 0) or 0),
+                "output_tokens": int(initial.usage.get("output_tokens", 0) or 0),
+                "reasoning_tokens": int(initial.usage.get("reasoning_tokens", 0) or 0),
+                "total_tokens": int(initial.usage.get("total_tokens", 0) or 0),
+                "transport_retries_count": int(initial.transport_retries_count),
+                "backoff_wait_seconds_total": float(initial.total_backoff_seconds),
+                "rate_limit_hit": bool(initial.rate_limit_hit),
+            },
+        )
         initial_eval = self._evaluate_output(initial.raw_output, config.target_lang)
         page_metadata["parser_failed"] = bool(initial_eval.parser_failed)
         page_metadata["validator_failed"] = bool(initial_eval.validator_failed)
@@ -759,8 +1043,7 @@ class TranslationWorkflow:
         if initial_eval.ok and initial_eval.normalized_text is not None:
             output_path = paths.pages_dir / f"page_{page_number:04d}.txt"
             output_path.write_text(initial_eval.normalized_text, encoding="utf-8")
-            page_metadata["ended_at_iso"] = self._utc_now()
-            page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
+            _finalize_page_metadata()
             return _PageOutcome(
                 status=PageStatus.DONE,
                 image_used=image_used,
@@ -779,6 +1062,7 @@ class TranslationWorkflow:
         retry_prompt = build_retry_prompt(config.target_lang, initial.raw_output)
         retry_effort = self._resolve_retry_effort(config=config)
         page_metadata["attempt2_effort"] = retry_effort.value
+        attempt2_started = time.perf_counter()
         try:
             retry = client.create_page_response(
                 instructions=instructions,
@@ -786,16 +1070,35 @@ class TranslationWorkflow:
                 effort=retry_effort.value,
                 image_data_url=None,
             )
+            page_metadata["attempt2_seconds"] = round(time.perf_counter() - attempt2_started, 3)
+            api_calls_count += 1
         except ApiCallError as exc:
+            page_metadata["attempt2_seconds"] = round(time.perf_counter() - attempt2_started, 3)
+            api_calls_count += 1
             page_metadata["status_code"] = exc.status_code
             page_metadata["exception_class"] = exc.exception_class
             page_metadata["transport_retries_count"] = int(page_metadata["transport_retries_count"]) + int(
                 exc.transport_retries_count
             )
             page_metadata["last_backoff_seconds"] = float(exc.last_backoff_seconds)
+            page_metadata["backoff_wait_seconds_total"] = float(page_metadata["backoff_wait_seconds_total"]) + float(
+                exc.total_backoff_seconds
+            )
             page_metadata["rate_limit_hit"] = bool(page_metadata["rate_limit_hit"]) or bool(exc.rate_limit_hit)
-            page_metadata["ended_at_iso"] = self._utc_now()
-            page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
+            self._record_event(
+                event_type="api_call_failed",
+                stage="translate",
+                page_index=page_number,
+                duration_ms=float(page_metadata["attempt2_seconds"]) * 1000.0,
+                counters={
+                    "attempt": 2,
+                    "transport_retries_count": int(exc.transport_retries_count),
+                    "backoff_wait_seconds_total": float(exc.total_backoff_seconds),
+                    "rate_limit_hit": bool(exc.rate_limit_hit),
+                },
+                error=exc.exception_class,
+            )
+            _finalize_page_metadata()
             return _PageOutcome(
                 status=PageStatus.FAILED,
                 image_used=image_used,
@@ -811,8 +1114,27 @@ class TranslationWorkflow:
             retry.transport_retries_count
         )
         page_metadata["last_backoff_seconds"] = float(retry.last_backoff_seconds)
+        page_metadata["backoff_wait_seconds_total"] = float(page_metadata["backoff_wait_seconds_total"]) + float(
+            retry.total_backoff_seconds
+        )
         page_metadata["rate_limit_hit"] = bool(page_metadata["rate_limit_hit"]) or bool(retry.rate_limit_hit)
         self._accumulate_usage_totals(page_metadata, retry.usage)
+        self._record_event(
+            event_type="api_call_done",
+            stage="translate",
+            page_index=page_number,
+            duration_ms=float(page_metadata["attempt2_seconds"]) * 1000.0,
+            counters={
+                "attempt": 2,
+                "input_tokens": int(retry.usage.get("input_tokens", 0) or 0),
+                "output_tokens": int(retry.usage.get("output_tokens", 0) or 0),
+                "reasoning_tokens": int(retry.usage.get("reasoning_tokens", 0) or 0),
+                "total_tokens": int(retry.usage.get("total_tokens", 0) or 0),
+                "transport_retries_count": int(retry.transport_retries_count),
+                "backoff_wait_seconds_total": float(retry.total_backoff_seconds),
+                "rate_limit_hit": bool(retry.rate_limit_hit),
+            },
+        )
         retry_eval = self._evaluate_output(retry.raw_output, config.target_lang)
         page_metadata["parser_failed"] = bool(page_metadata["parser_failed"]) or bool(retry_eval.parser_failed)
         page_metadata["validator_failed"] = bool(page_metadata["validator_failed"]) or bool(retry_eval.validator_failed)
@@ -822,8 +1144,7 @@ class TranslationWorkflow:
         if retry_eval.ok and retry_eval.normalized_text is not None:
             output_path = paths.pages_dir / f"page_{page_number:04d}.txt"
             output_path.write_text(retry_eval.normalized_text, encoding="utf-8")
-            page_metadata["ended_at_iso"] = self._utc_now()
-            page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
+            _finalize_page_metadata()
             return _PageOutcome(
                 status=PageStatus.DONE,
                 image_used=image_used,
@@ -839,8 +1160,7 @@ class TranslationWorkflow:
             lang=config.target_lang,
             fallback_reason=defect_reason,
         )
-        page_metadata["ended_at_iso"] = self._utc_now()
-        page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
+        _finalize_page_metadata()
         self._log(f"Compliance failure on page {page_number}: {defect_reason}")
         return _PageOutcome(
             status=PageStatus.FAILED,
@@ -1064,6 +1384,54 @@ class TranslationWorkflow:
             "suspected_cause": suspected_cause,
             "evidence": evidence,
         }
+        if self._diagnostics_admin_mode:
+            api_calls_total = sum(int(page.get("api_calls_count", 0) or 0) for _, page in page_rows)
+            backoff_wait_seconds_total = sum(
+                float(page.get("backoff_wait_seconds_total", 0.0) or 0.0) for _, page in page_rows
+            )
+            extract_seconds_total = sum(float(page.get("extract_seconds", 0.0) or 0.0) for _, page in page_rows)
+            ocr_seconds_total = sum(float(page.get("ocr_seconds", 0.0) or 0.0) for _, page in page_rows)
+            translate_seconds_total = sum(float(page.get("translate_seconds", 0.0) or 0.0) for _, page in page_rows)
+            page_rollups = [
+                {
+                    "page_number": page_number,
+                    "status": str(page.get("status", "") or ""),
+                    "source_route": str(page.get("source_route", "") or ""),
+                    "source_route_reason": str(page.get("source_route_reason", "") or ""),
+                    "image_used": bool(page.get("image_used", False)),
+                    "image_decision_reason": str(page.get("image_decision_reason", "") or ""),
+                    "ocr_engine_used": str(page.get("ocr_engine_used", "") or ""),
+                    "ocr_failed_reason": str(page.get("ocr_failed_reason", "") or ""),
+                    "wall_seconds": float(page.get("wall_seconds", 0.0) or 0.0),
+                    "extract_seconds": float(page.get("extract_seconds", 0.0) or 0.0),
+                    "ocr_seconds": float(page.get("ocr_seconds", 0.0) or 0.0),
+                    "translate_seconds": float(page.get("translate_seconds", 0.0) or 0.0),
+                    "api_calls_count": int(page.get("api_calls_count", 0) or 0),
+                    "transport_retries_count": int(page.get("transport_retries_count", 0) or 0),
+                    "backoff_wait_seconds_total": float(page.get("backoff_wait_seconds_total", 0.0) or 0.0),
+                    "rate_limit_hit": bool(page.get("rate_limit_hit", False)),
+                    "input_tokens": int(page.get("input_tokens", 0) or 0),
+                    "output_tokens": int(page.get("output_tokens", 0) or 0),
+                    "reasoning_tokens": int(page.get("reasoning_tokens", 0) or 0),
+                    "total_tokens": int(page.get("total_tokens", 0) or 0),
+                    "estimated_cost": page.get("estimated_cost"),
+                    "exception_class": str(page.get("exception_class", "") or ""),
+                    "error": str(page.get("error", "") or ""),
+                    "retry_reason": str(page.get("retry_reason", "") or ""),
+                }
+                for page_number, page in page_rows
+            ]
+            payload["diagnostics"] = {
+                "schema_version": "admin_diagnostics_v1",
+                "stage_timings_ms": dict(self._run_stage_timings_ms),
+                "api_calls_total": api_calls_total,
+                "backoff_wait_seconds_total": round(backoff_wait_seconds_total, 3),
+                "extract_seconds_total": round(extract_seconds_total, 3),
+                "ocr_seconds_total": round(ocr_seconds_total, 3),
+                "translate_seconds_total": round(translate_seconds_total, 3),
+                "events_path": str(paths.run_dir / "run_events.jsonl"),
+                "page_rollups": page_rollups,
+            }
         currency = os.getenv("LEGALPDF_COST_CURRENCY", "").strip()
         if currency:
             payload["cost_currency"] = currency.upper()
@@ -1230,6 +1598,11 @@ class TranslationWorkflow:
         existing = load_run_state(paths.run_state_path)
         if config.resume and existing is None and paths.run_state_path.exists():
             self._log("Existing run_state.json is unreadable; starting a new run state.")
+            self._record_event(
+                event_type="checkpoint_unreadable",
+                stage="checkpoint",
+                warning="Existing run_state.json is unreadable; starting a new run state.",
+            )
         if not config.resume or existing is None:
             return paths, existing
 
@@ -1246,6 +1619,11 @@ class TranslationWorkflow:
             pdf_path=config.pdf_path,
             lang=config.target_lang,
             run_started_at=run_started_at,
+        )
+        self._record_event(
+            event_type="checkpoint_detected",
+            stage="checkpoint",
+            details={"run_started_at": run_started_at},
         )
         return resolved_paths, existing
 
@@ -1299,7 +1677,21 @@ class TranslationWorkflow:
                 existing.run_started_at = paths.run_started_at
                 save_run_state_atomic(paths.run_state_path, existing)
                 self._log("Compatible checkpoint found. Resuming from completed pages.")
+                self._record_event(
+                    event_type="checkpoint_resume_compatible",
+                    stage="checkpoint",
+                    details={
+                        "done_count": int(existing.done_count),
+                        "failed_count": int(existing.failed_count),
+                        "pending_count": int(existing.pending_count),
+                    },
+                )
                 return existing
+            self._record_event(
+                event_type="checkpoint_resume_incompatible",
+                stage="checkpoint",
+                error=mismatch_reason,
+            )
             raise ValueError(
                 "Checkpoint is incompatible with current run settings: "
                 f"{mismatch_reason}. Disable resume or use New Run."
@@ -1342,6 +1734,8 @@ class TranslationWorkflow:
             ocr_api_key_env_name=(config.ocr_api_key_env_name or "").strip() or "DEEPSEEK_API_KEY",
             context_file=context_file_abs,
             context_text=config.context_text,
+            diagnostics_admin_mode=bool(config.diagnostics_admin_mode),
+            diagnostics_include_sanitized_snippets=bool(config.diagnostics_include_sanitized_snippets),
         )
 
     def _is_usable_source_text(self, value: str) -> bool:
@@ -1389,6 +1783,34 @@ class TranslationWorkflow:
     def _cleanup_intermediates(self, paths: RunPaths) -> None:
         shutil.rmtree(paths.pages_dir, ignore_errors=True)
         shutil.rmtree(paths.images_dir, ignore_errors=True)
+
+    def _record_event(
+        self,
+        *,
+        event_type: str,
+        stage: str,
+        page_index: int | None = None,
+        duration_ms: float | None = None,
+        counters: dict[str, Any] | None = None,
+        decisions: dict[str, Any] | None = None,
+        warning: str | None = None,
+        error: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        collector = self._event_collector
+        if collector is None:
+            return
+        collector.add_event(
+            event_type=event_type,
+            stage=stage,
+            page_index=page_index,
+            duration_ms=duration_ms,
+            counters=counters,
+            decisions=decisions,
+            warning=warning,
+            error=error,
+            details=details,
+        )
 
     def _log(self, message: str) -> None:
         if self._log_callback:

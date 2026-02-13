@@ -80,6 +80,8 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "allow_xhigh_escalation": False,
     "diagnostics_show_cost_summary": True,
     "diagnostics_verbose_metadata_logs": False,
+    "diagnostics_admin_mode": True,
+    "diagnostics_include_sanitized_snippets": False,
     "min_chars_to_accept_ocr": 200,
 }
 ALLOWED_GUI_KEYS = {
@@ -109,6 +111,8 @@ ALLOWED_GUI_KEYS = {
     "allow_xhigh_escalation",
     "diagnostics_show_cost_summary",
     "diagnostics_verbose_metadata_logs",
+    "diagnostics_admin_mode",
+    "diagnostics_include_sanitized_snippets",
     "min_chars_to_accept_ocr",
     "last_outdir",
     "last_lang",
@@ -469,6 +473,11 @@ def load_gui_settings() -> dict[str, Any]:
     merged["diagnostics_show_cost_summary"] = _coerce_bool(merged.get("diagnostics_show_cost_summary"), True)
     merged["diagnostics_verbose_metadata_logs"] = _coerce_bool(
         merged.get("diagnostics_verbose_metadata_logs"),
+        False,
+    )
+    merged["diagnostics_admin_mode"] = _coerce_bool(merged.get("diagnostics_admin_mode"), True)
+    merged["diagnostics_include_sanitized_snippets"] = _coerce_bool(
+        merged.get("diagnostics_include_sanitized_snippets"),
         False,
     )
     merged["min_chars_to_accept_ocr"] = max(20, _coerce_int(merged.get("min_chars_to_accept_ocr"), 200))

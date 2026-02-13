@@ -217,3 +217,43 @@ def test_schedule_save_settings_starts_timer() -> None:
     fake = SimpleNamespace(_settings_save_timer=timer)
     QtMainWindow._schedule_save_settings(fake)
     assert timer.started is True
+
+
+def test_report_button_enabled_during_and_after_run() -> None:
+    menu_calls: dict[str, bool] = {}
+    report_button = _FakeButton()
+    fake = SimpleNamespace(
+        _can_start=lambda: True,
+        _busy=True,
+        _running=True,
+        _can_export_partial=False,
+        _last_workflow=None,
+        _has_rebuildable_pages=lambda: False,
+        _last_output_docx=None,
+        _last_run_report_path=None,
+        _last_joblog_seed=None,
+        _resolve_report_run_dir=lambda: Path("C:/tmp/run"),
+        translate_btn=_FakeButton(),
+        analyze_btn=_FakeButton(),
+        cancel_btn=_FakeButton(),
+        new_btn=_FakeButton(),
+        partial_btn=_FakeButton(),
+        rebuild_btn=_FakeButton(),
+        open_btn=_FakeButton(),
+        report_btn=report_button,
+        save_joblog_btn=_FakeButton(),
+        open_joblog_btn=_FakeButton(),
+        _set_menu_enabled=lambda key, enabled: menu_calls.__setitem__(key, enabled),
+    )
+
+    QtMainWindow._update_controls(fake)
+    assert report_button.enabled is True
+
+    fake._busy = False
+    fake._running = False
+    QtMainWindow._update_controls(fake)
+    assert report_button.enabled is True
+
+    fake._resolve_report_run_dir = lambda: None
+    QtMainWindow._update_controls(fake)
+    assert report_button.enabled is False
