@@ -207,3 +207,21 @@ Verification commands/results:
 - python -m pytest -q -> 218 passed in 5.79s
 - python -m compileall src tests -> success
 - git status --short -- src tests -> modified/untracked files present for this in-progress change set
+
+Date: 2026-02-13
+Code change summary:
+- Implemented OCR auto-mode quality routing in `src/legalpdf_translate/workflow.py` with `classify_extracted_text_quality(...)`, explicit `ocr_request_reason` (`required|helpful|not_requested`), and conservative signal-based helpful detection.
+- Switched OCR initialization to lazy on-demand preflight (no run-start preflight), added `ocr_preflight_checked` tracking, and added explicit events `ocr_preflight_checked`, `ocr_required_but_unavailable`, `ocr_helpful_but_unavailable`.
+- Enforced cost guardrail for helpful OCR: local-only attempts in auto mode; if unavailable, direct-text fallback with info-only event and `ocr_failed_reason="helpful_unavailable"`.
+- Extended summary/report payloads in `src/legalpdf_translate/workflow.py` and `src/legalpdf_translate/run_report.py` with additive OCR fields (`ocr_required_pages`, `ocr_helpful_pages`, `ocr_preflight_checked`) and non-misleading warning semantics.
+- Added deterministic OCR routing coverage in `tests/test_workflow_ocr_routing.py` and expanded `tests/test_run_report.py` for required-vs-helpful unavailable reporting behavior.
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (sections: D, J)
+- docs/assistant/CODEX_PROMPT_FACTORY.md (sections: 2 - added Example 12)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 232 passed in 5.50s
+- python -m compileall src tests -> success
+- git status --short -- src tests -> M src/legalpdf_translate/ocr_engine.py; M src/legalpdf_translate/run_report.py; M src/legalpdf_translate/workflow.py; M tests/test_run_report.py; ?? tests/test_workflow_ocr_routing.py

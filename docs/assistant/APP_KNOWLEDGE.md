@@ -132,11 +132,16 @@ Assistant routing hint: If asked "which module owns behavior X", start at `workf
 4. Per-page extraction and route decision
 - Extraction in `src/legalpdf_translate/workflow.py::_process_page` using `extract_ordered_page_text`.
 - Route fields set per page: `source_route`, `source_route_reason`.
-- OCR decision based on `RunConfig.ocr_mode` and extracted text usability.
+- OCR auto-mode uses a two-tier quality classifier in `src/legalpdf_translate/workflow.py::classify_extracted_text_quality`:
+  - `ocr_request_reason=required` when extraction is unusable/garbage.
+  - `ocr_request_reason=helpful` only when >=2 conservative structure-break signals trigger.
+  - `ocr_request_reason=not_requested` otherwise.
 
 5. Image decision and OCR path
 - Image attach decision in `src/legalpdf_translate/workflow.py` with `should_include_image` and `_analyze_image_reason`.
 - OCR engine build/policy in `src/legalpdf_translate/ocr_engine.py::build_ocr_engine`.
+- OCR preflight is lazy (no run-start preflight): first OCR-requested page triggers `ocr_preflight_checked`.
+- Helpful OCR is local-only guardrailed in auto mode; it never auto-escalates to API OCR.
 
 6. Translation request and retries
 - OpenAI request path in `src/legalpdf_translate/workflow.py::_process_page`.
@@ -370,8 +375,10 @@ Assistant routing hint: If asked for "minimum QA after a change", run targeted t
 - Translate pipeline orchestration: `src/legalpdf_translate/workflow.py::TranslationWorkflow.run`
 - Per-page processing logic: `src/legalpdf_translate/workflow.py::_process_page`
 - OCR policy and engines: `src/legalpdf_translate/ocr_engine.py::build_ocr_engine`
+- OCR quality classifier + request reason routing: `src/legalpdf_translate/workflow.py::classify_extracted_text_quality`, `src/legalpdf_translate/workflow.py::_process_page`
 - OpenAI transport retries: `src/legalpdf_translate/openai_client.py::OpenAIResponsesClient.create_page_response`
 - Run report rendering/redaction: `src/legalpdf_translate/run_report.py::build_run_report_markdown`, `sanitize_text`
+- OCR report fields to inspect: `pipeline.ocr_requested_pages`, `pipeline.ocr_used_pages`, `pipeline.ocr_required_pages`, `pipeline.ocr_helpful_pages`, `pipeline.ocr_preflight_checked`, per-page `ocr_request_reason`, `extraction_quality_signals`
 - Export run report from UI: `src/legalpdf_translate/qt_gui/app_window.py::_open_run_report`
 - Checkpoint/resume logic: `src/legalpdf_translate/checkpoint.py`, `src/legalpdf_translate/workflow.py::_load_or_initialize_run_state`
 - Output/run folder naming: `src/legalpdf_translate/output_paths.py::build_output_paths`

@@ -47,6 +47,15 @@ def ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngineConfig:
     )
 
 
+def local_only_ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngineConfig:
+    return OcrEngineConfig(
+        policy=OcrEnginePolicy.LOCAL,
+        api_base_url=config.ocr_api_base_url,
+        api_model=config.ocr_api_model,
+        api_key_env_name=config.ocr_api_key_env_name,
+    )
+
+
 def _lang_hint_to_tesseract(lang_hint: str | None) -> str:
     if not lang_hint:
         return "por"

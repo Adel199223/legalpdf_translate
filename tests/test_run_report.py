@@ -110,6 +110,9 @@ def _seed_run_dir(tmp_path: Path) -> Path:
             "ocr_provider_configured": True,
             "ocr_requested_pages": 1,
             "ocr_used_pages": 1,
+            "ocr_required_pages": 1,
+            "ocr_helpful_pages": 0,
+            "ocr_preflight_checked": True,
         },
         "totals": {
             "total_wall_seconds": 3.6,
@@ -273,6 +276,9 @@ def test_run_report_clarifies_ocr_not_needed_when_provider_missing(tmp_path: Pat
                 "ocr_provider_configured": False,
                 "ocr_requested_pages": 0,
                 "ocr_used_pages": 0,
+                "ocr_required_pages": 0,
+                "ocr_helpful_pages": 0,
+                "ocr_preflight_checked": False,
             },
             "totals": {
                 "total_wall_seconds": 0.8,
@@ -299,7 +305,264 @@ def test_run_report_clarifies_ocr_not_needed_when_provider_missing(tmp_path: Pat
         include_sanitized_snippets=False,
     )
 
-    assert "OCR not used; OCR provider not configured (not needed)." in markdown
+    assert "OCR not used; OCR not requested by routing." in markdown
+    assert "WARNING: OCR required" not in markdown
     assert '"ocr_requested": false' in markdown
     assert '"ocr_used": false' in markdown
     assert '"ocr_provider_configured": false' in markdown
+    assert '"ocr_required_pages": 0' in markdown
+    assert '"ocr_helpful_pages": 0' in markdown
+    assert '"ocr_preflight_checked": false' in markdown
+
+
+def test_run_report_warns_when_ocr_required_but_unavailable(tmp_path: Path) -> None:
+    run_dir = tmp_path / "required_unavailable_run"
+    pages_dir = run_dir / "pages"
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    (pages_dir / "page_0001.txt").write_text("Fallback direct text", encoding="utf-8")
+
+    _write_json(
+        run_dir / "run_state.json",
+        {
+            "run_started_at": "20260213_030405",
+            "run_status": "completed",
+            "halt_reason": "",
+            "finished_at": "2026-02-13T03:05:59+00:00",
+            "pdf_path": str(tmp_path / "input.pdf"),
+            "lang": "EN",
+            "total_pages": 1,
+            "max_pages_effective": 1,
+            "selection_start_page": 1,
+            "selection_end_page": 1,
+            "settings": {
+                "image_mode": "auto",
+                "ocr_mode": "auto",
+                "ocr_engine": "local_then_api",
+                "keep_intermediates": True,
+                "resume": False,
+            },
+            "pages": {
+                "1": {
+                    "status": "done",
+                    "source_route": "direct_text",
+                    "source_route_reason": "ocr_requested_engine_unavailable",
+                    "image_used": False,
+                    "image_decision_reason": "not_needed",
+                    "ocr_requested": True,
+                    "ocr_request_reason": "required",
+                    "ocr_used": False,
+                    "ocr_provider_configured": False,
+                    "ocr_engine_used": "none",
+                    "ocr_failed_reason": "required_unavailable",
+                    "extraction_quality_signals": [],
+                    "wall_seconds": 0.9,
+                    "extract_seconds": 0.2,
+                    "ocr_seconds": 0.0,
+                    "translate_seconds": 0.6,
+                    "api_calls_count": 1,
+                    "transport_retries_count": 0,
+                    "backoff_wait_seconds_total": 0.0,
+                    "rate_limit_hit": False,
+                    "input_tokens": 60,
+                    "output_tokens": 25,
+                    "reasoning_tokens": 3,
+                    "total_tokens": 88,
+                    "estimated_cost": 0.0009,
+                    "exception_class": "",
+                    "error": "",
+                    "retry_reason": "",
+                }
+            },
+        },
+    )
+    _write_json(
+        run_dir / "run_summary.json",
+        {
+            "run_id": "20260213_030405",
+            "pdf_path": str(tmp_path / "input.pdf"),
+            "lang": "EN",
+            "image_mode": "auto",
+            "pipeline": {
+                "image_mode": "auto",
+                "ocr_mode": "auto",
+                "ocr_engine": "local_then_api",
+                "ocr_requested": True,
+                "ocr_used": False,
+                "ocr_provider_configured": False,
+                "ocr_requested_pages": 1,
+                "ocr_used_pages": 0,
+                "ocr_required_pages": 1,
+                "ocr_helpful_pages": 0,
+                "ocr_preflight_checked": True,
+            },
+            "totals": {
+                "total_wall_seconds": 0.9,
+                "total_cost_estimate_if_available": 0.0009,
+                "total_input_tokens": 60,
+                "total_output_tokens": 25,
+                "total_reasoning_tokens": 3,
+                "total_tokens": 88,
+            },
+            "counts": {
+                "pages_with_images": 0,
+                "pages_with_retries": 0,
+                "pages_failed": 0,
+                "rate_limit_hits": 0,
+                "transport_retries_total": 0,
+            },
+        },
+    )
+    (run_dir / "run_events.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-02-13T03:05:01+00:00",
+                "event_type": "ocr_required_but_unavailable",
+                "stage": "ocr",
+                "page_index": 1,
+                "warning": "OCR required but unavailable",
+                "decisions": {"request_reason": "required"},
+                "details": {},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "WARNING: OCR required on `1` page(s) but OCR could not run" in markdown
+    assert '"ocr_required_pages": 1' in markdown
+    assert '"ocr_helpful_pages": 0' in markdown
+    assert '"ocr_preflight_checked": true' in markdown
+
+
+def test_run_report_treats_helpful_unavailable_as_info_only(tmp_path: Path) -> None:
+    run_dir = tmp_path / "helpful_unavailable_run"
+    pages_dir = run_dir / "pages"
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    (pages_dir / "page_0001.txt").write_text("Fallback direct text", encoding="utf-8")
+
+    _write_json(
+        run_dir / "run_state.json",
+        {
+            "run_started_at": "20260213_040506",
+            "run_status": "completed",
+            "halt_reason": "",
+            "finished_at": "2026-02-13T04:06:59+00:00",
+            "pdf_path": str(tmp_path / "input.pdf"),
+            "lang": "EN",
+            "total_pages": 1,
+            "max_pages_effective": 1,
+            "selection_start_page": 1,
+            "selection_end_page": 1,
+            "settings": {
+                "image_mode": "auto",
+                "ocr_mode": "auto",
+                "ocr_engine": "local_then_api",
+                "keep_intermediates": True,
+                "resume": False,
+            },
+            "pages": {
+                "1": {
+                    "status": "done",
+                    "source_route": "direct_text",
+                    "source_route_reason": "ocr_helpful_unavailable",
+                    "image_used": False,
+                    "image_decision_reason": "not_needed",
+                    "ocr_requested": False,
+                    "ocr_request_reason": "helpful",
+                    "ocr_used": False,
+                    "ocr_provider_configured": False,
+                    "ocr_engine_used": "none",
+                    "ocr_failed_reason": "helpful_unavailable",
+                    "extraction_quality_signals": ["fragmented_lines", "repetition_dominance"],
+                    "wall_seconds": 1.0,
+                    "extract_seconds": 0.2,
+                    "ocr_seconds": 0.0,
+                    "translate_seconds": 0.7,
+                    "api_calls_count": 1,
+                    "transport_retries_count": 0,
+                    "backoff_wait_seconds_total": 0.0,
+                    "rate_limit_hit": False,
+                    "input_tokens": 65,
+                    "output_tokens": 26,
+                    "reasoning_tokens": 3,
+                    "total_tokens": 94,
+                    "estimated_cost": 0.001,
+                    "exception_class": "",
+                    "error": "",
+                    "retry_reason": "",
+                }
+            },
+        },
+    )
+    _write_json(
+        run_dir / "run_summary.json",
+        {
+            "run_id": "20260213_040506",
+            "pdf_path": str(tmp_path / "input.pdf"),
+            "lang": "EN",
+            "image_mode": "auto",
+            "pipeline": {
+                "image_mode": "auto",
+                "ocr_mode": "auto",
+                "ocr_engine": "local_then_api",
+                "ocr_requested": False,
+                "ocr_used": False,
+                "ocr_provider_configured": False,
+                "ocr_requested_pages": 0,
+                "ocr_used_pages": 0,
+                "ocr_required_pages": 0,
+                "ocr_helpful_pages": 1,
+                "ocr_preflight_checked": True,
+            },
+            "totals": {
+                "total_wall_seconds": 1.0,
+                "total_cost_estimate_if_available": 0.001,
+                "total_input_tokens": 65,
+                "total_output_tokens": 26,
+                "total_reasoning_tokens": 3,
+                "total_tokens": 94,
+            },
+            "counts": {
+                "pages_with_images": 0,
+                "pages_with_retries": 0,
+                "pages_failed": 0,
+                "rate_limit_hits": 0,
+                "transport_retries_total": 0,
+            },
+        },
+    )
+    (run_dir / "run_events.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-02-13T04:06:01+00:00",
+                "event_type": "ocr_helpful_but_unavailable",
+                "stage": "ocr",
+                "page_index": 1,
+                "warning": None,
+                "decisions": {"request_reason": "helpful"},
+                "details": {"note": "helpful"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "WARNING: OCR required" not in markdown
+    assert "were marked as helpful for OCR" in markdown
+    assert '"ocr_required_pages": 0' in markdown
+    assert '"ocr_helpful_pages": 1' in markdown
+    assert '"ocr_preflight_checked": true' in markdown

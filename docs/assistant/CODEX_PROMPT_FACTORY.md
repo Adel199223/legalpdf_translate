@@ -323,6 +323,47 @@ Commands to run
 - python -m pytest -q
 ```
 
+### Example 12 - OCR cost guardrail + reporting semantics
+```text
+Goal
+- Make `ocr_mode=auto` cost-safe and report-safe:
+  - OCR only when extraction is required/unusable, or conservatively helpful for layout.
+  - Helpful OCR path must be local-only (no automatic API OCR escalation).
+  - No OCR-unavailable warnings unless OCR was actually required/requested and unavailable.
+
+Scope boundaries
+- Edit only:
+  - src/legalpdf_translate/workflow.py
+  - src/legalpdf_translate/ocr_engine.py
+  - src/legalpdf_translate/run_report.py
+  - tests/test_workflow_ocr_routing.py
+  - tests/test_run_report.py
+- Docs required in same task:
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/CODEX_PROMPT_FACTORY.md
+  - docs/assistant/UPDATE_POLICY.md
+- Do not change prompt templates / validator contracts / API payload shape (`docs/assistant/API_PROMPTS.md`).
+
+Files to inspect first
+- src/legalpdf_translate/workflow.py::_process_page
+- src/legalpdf_translate/workflow.py::classify_extracted_text_quality
+- src/legalpdf_translate/ocr_engine.py::build_ocr_engine
+- src/legalpdf_translate/run_report.py::build_run_report_markdown
+
+Acceptance criteria
+- Extractable normal text => direct_text route, no OCR warning, `ocr_requested=false`.
+- Unusable extraction => `ocr_request_reason=required`; missing OCR logs warning event.
+- Helpful layout-only case => `ocr_request_reason=helpful`; local-only OCR attempt; if local unavailable, info-only event and direct-text fallback.
+- Run report includes additive pipeline fields:
+  - `ocr_required_pages`, `ocr_helpful_pages`, `ocr_preflight_checked`
+
+Commands to run
+- rg -n "classify_extracted_text_quality|ocr_request_reason|ocr_preflight_checked|ocr_required_but_unavailable|ocr_helpful_but_unavailable" src/legalpdf_translate tests
+- python -m pytest -q tests/test_workflow_ocr_routing.py tests/test_run_report.py
+- python -m pytest -q
+- python -m compileall src tests
+```
+
 ## 3) Prompt Quality Checklist
 Before finalizing any Codex prompt/output, confirm:
 - Exact files are listed (real paths in this repo).

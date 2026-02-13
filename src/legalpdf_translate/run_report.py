@@ -284,20 +284,40 @@ def _ocr_summary_line(pipeline_obj: dict[str, Any]) -> str:
     ocr_requested = bool(pipeline_obj.get("ocr_requested", False))
     ocr_used = bool(pipeline_obj.get("ocr_used", False))
     ocr_provider_configured = bool(pipeline_obj.get("ocr_provider_configured", False))
+    ocr_preflight_checked = bool(pipeline_obj.get("ocr_preflight_checked", False))
     ocr_requested_pages = int(pipeline_obj.get("ocr_requested_pages", 0) or 0)
     ocr_used_pages = int(pipeline_obj.get("ocr_used_pages", 0) or 0)
+    ocr_required_pages = int(pipeline_obj.get("ocr_required_pages", 0) or 0)
+    ocr_helpful_pages = int(pipeline_obj.get("ocr_helpful_pages", 0) or 0)
+    ocr_required_unavailable_pages = int(pipeline_obj.get("ocr_required_unavailable_pages", 0) or 0)
 
     if ocr_mode == "off":
         return "- OCR disabled (mode=off)."
     if ocr_used:
+        if ocr_required_unavailable_pages > 0:
+            return (
+                f"- WARNING: OCR required but unavailable on `{ocr_required_unavailable_pages}` page(s); "
+                "direct-text fallback was used for those pages."
+            )
         return (
             f"- OCR used on `{ocr_used_pages}` page(s) "
-            f"(requested pages: `{ocr_requested_pages}`, provider configured: `{ocr_provider_configured}`)."
+            f"(requested pages: `{ocr_requested_pages}`, required pages: `{ocr_required_pages}`, "
+            f"helpful pages: `{ocr_helpful_pages}`, provider configured: `{ocr_provider_configured}`)."
         )
-    if ocr_requested and not ocr_provider_configured:
-        return "- OCR was requested but provider is not configured; OCR not used."
+    if ocr_required_unavailable_pages > 0:
+        return (
+            f"- WARNING: OCR required on `{ocr_required_unavailable_pages}` page(s) but OCR could not run; "
+            "direct-text fallback was used."
+        )
     if ocr_requested:
         return "- OCR was requested but not used after fallback decisions."
+    if ocr_helpful_pages > 0 and not ocr_provider_configured:
+        return (
+            f"- OCR not used; `{ocr_helpful_pages}` page(s) were marked as helpful for OCR, "
+            "but local OCR was unavailable so direct text was kept."
+        )
+    if not ocr_preflight_checked:
+        return "- OCR not used; OCR not requested by routing."
     if not ocr_provider_configured:
         return "- OCR not used; OCR provider not configured (not needed)."
     return "- OCR not used; direct text route was sufficient."
@@ -322,6 +342,9 @@ def build_run_report_payload(
     page_failures: list[int] = []
     ocr_requested_pages = 0
     ocr_used_pages = 0
+    ocr_required_pages = 0
+    ocr_helpful_pages = 0
+    ocr_required_unavailable_pages = 0
 
     for page_number, page in pages:
         status = str(page.get("status", "") or "").strip().lower()
@@ -336,12 +359,26 @@ def build_run_report_payload(
         backoff_wait_seconds_total += backoff_seconds
         if rate_limited:
             rate_limit_hits += 1
+        ocr_request_reason = str(page.get("ocr_request_reason", "not_requested") or "not_requested").strip().lower()
         ocr_requested = bool(page.get("ocr_requested", False))
         ocr_used = bool(page.get("ocr_used", False)) or str(page.get("source_route", "")).strip().lower() == "ocr"
         if ocr_requested:
             ocr_requested_pages += 1
         if ocr_used:
             ocr_used_pages += 1
+        if ocr_request_reason == "required":
+            ocr_required_pages += 1
+            ocr_failed_reason = str(page.get("ocr_failed_reason", "") or "").strip().lower()
+            if (not ocr_used) and (
+                "unavailable" in ocr_failed_reason
+                or "not_configured" in ocr_failed_reason
+                or not bool(page.get("ocr_provider_configured", False))
+            ):
+                ocr_required_unavailable_pages += 1
+        elif ocr_request_reason == "helpful":
+            ocr_helpful_pages += 1
+        raw_signals = page.get("extraction_quality_signals", [])
+        extraction_signals = raw_signals if isinstance(raw_signals, list) else []
         row = {
             "page_number": page_number,
             "status": status,
@@ -350,10 +387,12 @@ def build_run_report_payload(
             "image_used": bool(page.get("image_used", False)),
             "image_decision_reason": str(page.get("image_decision_reason", "") or ""),
             "ocr_requested": ocr_requested,
+            "ocr_request_reason": ocr_request_reason,
             "ocr_used": ocr_used,
             "ocr_provider_configured": bool(page.get("ocr_provider_configured", False)),
             "ocr_engine_used": str(page.get("ocr_engine_used", "") or ""),
             "ocr_failed_reason": str(page.get("ocr_failed_reason", "") or ""),
+            "extraction_quality_signals": extraction_signals,
             "wall_seconds": float(page.get("wall_seconds", 0.0) or 0.0),
             "extract_seconds": float(page.get("extract_seconds", 0.0) or 0.0),
             "ocr_seconds": float(page.get("ocr_seconds", 0.0) or 0.0),
@@ -422,18 +461,43 @@ def build_run_report_payload(
         ocr_used_value = ocr_used_pages > 0
 
     ocr_provider_configured_event: bool | None = None
+    ocr_preflight_checked_event = False
     for event in events:
         if not isinstance(event, dict):
             continue
         event_type = str(event.get("event_type", "") or "")
+        if event_type == "ocr_preflight_checked":
+            ocr_preflight_checked_event = True
+            decisions_obj = event.get("decisions")
+            if isinstance(decisions_obj, dict) and isinstance(decisions_obj.get("configured"), bool):
+                if bool(decisions_obj.get("configured")):
+                    ocr_provider_configured_event = True
+                    break
+                if ocr_provider_configured_event is None:
+                    ocr_provider_configured_event = False
+            continue
         if event_type == "ocr_engine_ready":
             ocr_provider_configured_event = True
             break
-        if event_type in {"ocr_engine_unavailable", "ocr_engine_not_configured"}:
+        if event_type in {
+            "ocr_required_but_unavailable",
+            "ocr_helpful_but_unavailable",
+            "ocr_engine_unavailable",
+            "ocr_engine_not_configured",
+        }:
             ocr_provider_configured_event = False
+
+    if isinstance(summary_pipeline_obj.get("ocr_preflight_checked"), bool):
+        ocr_preflight_checked_value = bool(summary_pipeline_obj.get("ocr_preflight_checked"))
+    elif ocr_preflight_checked_event:
+        ocr_preflight_checked_value = True
+    else:
+        ocr_preflight_checked_value = (ocr_requested_pages > 0) or (ocr_required_pages > 0) or (ocr_helpful_pages > 0)
 
     if isinstance(summary_pipeline_obj.get("ocr_provider_configured"), bool):
         ocr_provider_configured_value = bool(summary_pipeline_obj.get("ocr_provider_configured"))
+    elif not ocr_preflight_checked_value:
+        ocr_provider_configured_value = False
     elif ocr_provider_configured_event is not None:
         ocr_provider_configured_value = bool(ocr_provider_configured_event)
     elif ocr_mode_value == "off":
@@ -449,6 +513,18 @@ def build_run_report_payload(
         ocr_used_pages_value = int(summary_pipeline_obj.get("ocr_used_pages") or 0)
     else:
         ocr_used_pages_value = int(ocr_used_pages)
+    if isinstance(summary_pipeline_obj.get("ocr_required_pages"), int):
+        ocr_required_pages_value = int(summary_pipeline_obj.get("ocr_required_pages") or 0)
+    else:
+        ocr_required_pages_value = int(ocr_required_pages)
+    if isinstance(summary_pipeline_obj.get("ocr_helpful_pages"), int):
+        ocr_helpful_pages_value = int(summary_pipeline_obj.get("ocr_helpful_pages") or 0)
+    else:
+        ocr_helpful_pages_value = int(ocr_helpful_pages)
+    if isinstance(summary_pipeline_obj.get("ocr_required_unavailable_pages"), int):
+        ocr_required_unavailable_pages_value = int(summary_pipeline_obj.get("ocr_required_unavailable_pages") or 0)
+    else:
+        ocr_required_unavailable_pages_value = int(ocr_required_unavailable_pages)
 
     payload: dict[str, Any] = {
         "schema_version": "admin_run_report_v1" if admin_mode else "basic_run_report_v1",
@@ -486,6 +562,10 @@ def build_run_report_payload(
             "ocr_provider_configured": bool(ocr_provider_configured_value),
             "ocr_requested_pages": int(ocr_requested_pages_value),
             "ocr_used_pages": int(ocr_used_pages_value),
+            "ocr_required_pages": int(ocr_required_pages_value),
+            "ocr_helpful_pages": int(ocr_helpful_pages_value),
+            "ocr_required_unavailable_pages": int(ocr_required_unavailable_pages_value),
+            "ocr_preflight_checked": bool(ocr_preflight_checked_value),
         },
         "totals": {
             "wall_seconds": float(totals_obj.get("total_wall_seconds", 0.0) or 0.0),
@@ -598,6 +678,7 @@ def build_run_report_markdown(
                         f"status={item.get('status')} "
                         f"route={item.get('source_route')} "
                         f"ocr_requested={item.get('ocr_requested')} "
+                        f"ocr_request_reason={item.get('ocr_request_reason')} "
                         f"ocr_used={item.get('ocr_used')} "
                         f"image={item.get('image_used')} "
                         f"retry_reason={item.get('retry_reason')} "
