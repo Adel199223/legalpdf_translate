@@ -15,6 +15,8 @@ When code changes, update the matching documentation sections:
   - Added/removed fields, files, run-folder outputs, export paths.
 - Prompt factory updates:
   - Add/adjust examples that reflect new real paths and tests.
+- API prompt catalog updates:
+  - If prompt templates, system instructions, prompt builder logic, retry prompt wrappers, or API payload shape changes, update `docs/assistant/API_PROMPTS.md` (sections B-H).
 - Uncertainty notes refresh:
   - Remove stale `Uncertain` notes when verified, or add new ones with commands.
 

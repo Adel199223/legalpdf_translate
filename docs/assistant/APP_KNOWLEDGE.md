@@ -86,6 +86,7 @@ Core modules:
 - `src/legalpdf_translate/qt_gui/dialogs.py`: settings dialog (`QtSettingsDialog`), key show/hide, debug bundle creation, job log dialogs.
 - `src/legalpdf_translate/qt_gui/worker.py`: Qt thread workers for run/analyze/rebuild.
 - `src/legalpdf_translate/workflow.py`: translation pipeline orchestration (`TranslationWorkflow`).
+- `docs/assistant/API_PROMPTS.md`: canonical assistant-facing catalog of system/user prompt templates and API payload shapes (grounded to code symbols).
 - `src/legalpdf_translate/run_report.py`: event collector, redaction/sanitization, Markdown+JSON report builder.
 - `src/legalpdf_translate/glossary.py`: glossary schema/normalization helpers (`GlossaryEntry`, `normalize_glossaries`), tier controls (`tier`, `normalize_enabled_tiers_by_target_lang`), source-language detection/filtering for prompt guidance (`detect_source_lang_for_glossary`, `filter_entries_for_prompt`), prompt sort/cap helpers, and legacy file-rule compatibility helpers.
 - `src/legalpdf_translate/openai_client.py`: transport retries/backoff wrapper around OpenAI Responses API.
@@ -334,4 +335,7 @@ Assistant routing hint: If asked for "minimum QA after a change", run targeted t
 - Job log database path/schema: `src/legalpdf_translate/joblog_db.py::job_log_db_path`, `ensure_joblog_schema`
 - CLI flags/flow: `src/legalpdf_translate/cli.py::build_arg_parser`, `main`
 - Packaging/build: `build/pyinstaller_qt.spec`, `scripts/build_qt.ps1`
+- API prompts/templates catalog: `docs/assistant/API_PROMPTS.md`; implementation paths: `src/legalpdf_translate/prompt_builder.py::build_page_prompt`, `src/legalpdf_translate/prompt_builder.py::build_retry_prompt`, `src/legalpdf_translate/openai_client.py::OpenAIResponsesClient.create_page_response`, `src/legalpdf_translate/workflow.py::_process_page`
+- Retry formatting prompt location: `docs/assistant/API_PROMPTS.md` section `F`; implementation: `src/legalpdf_translate/prompt_builder.py::build_retry_prompt`
+- System instruction files location: `docs/assistant/API_PROMPTS.md` section `A`; files: `resources/system_instructions_enfr.txt`, `resources/system_instructions_ar.txt`; loader: `src/legalpdf_translate/resources_loader.py::load_system_instructions`
 - Assistant routing hint: For unknown feature location, run `rg -n "keyword" src tests` and map hits to this index.

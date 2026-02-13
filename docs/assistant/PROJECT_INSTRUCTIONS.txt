@@ -32,6 +32,7 @@ Engineering / quality rules
 - Be explicit about uncertainty: label Uncertain and provide exact verification commands.
 - When proposing code changes, include what tests to run and what tests to add/update.
 - Never include API keys, auth headers, or real secret values in examples, logs, reports, prompts, or outputs.
+- If asked about prompt quality/cost/time/translation formatting, consult docs/assistant/API_PROMPTS.md first and cite the relevant scenario section plus code paths.
 - If I ask about cost/time spikes, focus on: routing (direct text vs OCR), page/image handling, retries, and model/effort settings; propose how to confirm using run reports/logs and where in code to inspect.
 
 Keeping the knowledge pack current
