@@ -14,6 +14,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from openai import OpenAI
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -42,11 +43,16 @@ from legalpdf_translate.config import OPENAI_MODEL
 from legalpdf_translate.glossary import (
     GlossaryEntry,
     builtin_glossary_json,
+    coerce_glossary_tier,
+    coerce_source_lang,
     default_ar_entries,
     load_glossary_from_text,
+    normalize_enabled_tiers_by_target_lang,
     normalize_glossaries,
     serialize_glossaries,
     supported_target_langs,
+    valid_glossary_tiers,
+    valid_source_langs,
 )
 from legalpdf_translate.joblog_db import (
     insert_job_run,
@@ -863,8 +869,15 @@ class QtSettingsDialog(QDialog):
         self._apply_callback = apply_callback
         self._collect_debug_paths = collect_debug_paths
         self._glossaries_by_lang: dict[str, list[GlossaryEntry]] = normalize_glossaries({}, supported_target_langs())
+        self._enabled_glossary_tiers_by_lang: dict[str, list[int]] = normalize_enabled_tiers_by_target_lang(
+            {},
+            supported_target_langs(),
+        )
         self._glossary_current_lang: str | None = None
-        self._glossary_seed_version: int = 1
+        self._glossary_selected_tier: int = 1
+        self._glossary_search_text: str = ""
+        self._glossary_view_keys: list[tuple[str, str, str, str, int]] = []
+        self._glossary_seed_version: int = 2
         self._build_ui()
         self._set_values_from_settings(self._settings)
         self._refresh_key_status()
@@ -1082,17 +1095,48 @@ class QtSettingsDialog(QDialog):
         self.glossary_lang_combo = QComboBox()
         self.glossary_lang_combo.addItems(supported_target_langs())
         top.addWidget(self.glossary_lang_combo)
+        top.addWidget(QLabel("View tier"))
+        self.glossary_tier_combo = QComboBox()
+        for tier in valid_glossary_tiers():
+            self.glossary_tier_combo.addItem(f"Tier {tier}", tier)
+        self.glossary_tier_combo.setCurrentIndex(0)
+        top.addWidget(self.glossary_tier_combo)
+        self.glossary_tier_counts_label = QLabel("")
+        top.addWidget(self.glossary_tier_counts_label, 1)
         top.addStretch(1)
         layout.addLayout(top)
 
-        self.glossary_table = QTableWidget(0, 3, self.tab_glossary)
-        self.glossary_table.setHorizontalHeaderLabels(["Source text", "Preferred translation", "Match"])
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Search"))
+        self.glossary_search_edit = QLineEdit()
+        self.glossary_search_edit.setPlaceholderText("Filter source phrase or preferred translation...")
+        search_row.addWidget(self.glossary_search_edit, 1)
+        layout.addLayout(search_row)
+        self._glossary_search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self.tab_glossary)
+        self._glossary_search_shortcut.activated.connect(self._focus_glossary_search)
+
+        active_tiers_row = QHBoxLayout()
+        active_tiers_row.addWidget(QLabel("Active tiers for prompt"))
+        self._glossary_active_tier_checks: dict[int, QCheckBox] = {}
+        for tier in valid_glossary_tiers():
+            check = QCheckBox(f"T{tier}")
+            self._glossary_active_tier_checks[tier] = check
+            active_tiers_row.addWidget(check)
+        active_tiers_row.addStretch(1)
+        layout.addLayout(active_tiers_row)
+
+        self.glossary_table = QTableWidget(0, 5, self.tab_glossary)
+        self.glossary_table.setHorizontalHeaderLabels(
+            ["Source phrase (PDF text)", "Preferred translation", "Match", "Source lang", "Tier"]
+        )
         self.glossary_table.verticalHeader().setVisible(False)
         self.glossary_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.glossary_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.glossary_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.glossary_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.glossary_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.glossary_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.glossary_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.glossary_table, 1)
 
         actions = QHBoxLayout()
@@ -1103,13 +1147,28 @@ class QtSettingsDialog(QDialog):
         actions.addStretch(1)
         layout.addLayout(actions)
 
-        hint = QLabel("Glossary rows are per target language and used as preferred translation guidance.")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        self.glossary_hygiene_hint_label = QLabel(
+            "Glossary hygiene:\n"
+            "1) Add entries for repeated headers/titles/section labels.\n"
+            "2) Add entries for ambiguous phrases needing consistency.\n"
+            "3) Add entries where legal tone/formality must be stable.\n"
+            "4) Add entries for legal formula/boilerplate phrases.\n"
+            "Avoid obvious single-word dictionary items. Prefer Exact for short phrases."
+        )
+        self.glossary_hygiene_hint_label.setWordWrap(True)
+        layout.addWidget(self.glossary_hygiene_hint_label)
+
+        self.glossary_warning_label = QLabel("")
+        self.glossary_warning_label.setWordWrap(True)
+        layout.addWidget(self.glossary_warning_label)
 
         self.glossary_lang_combo.currentTextChanged.connect(self._on_glossary_language_changed)
+        self.glossary_tier_combo.currentIndexChanged.connect(self._on_glossary_tier_changed)
+        self.glossary_search_edit.textChanged.connect(self._on_glossary_search_changed)
         self.glossary_add_row_btn.clicked.connect(self._add_glossary_row)
         self.glossary_remove_rows_btn.clicked.connect(self._remove_selected_glossary_rows)
+        for tier, check in self._glossary_active_tier_checks.items():
+            check.toggled.connect(lambda checked, tier=tier: self._on_glossary_active_tier_changed(tier, checked))
 
     def _new_glossary_match_combo(self, selected: str = "exact") -> QComboBox:
         combo = QComboBox()
@@ -1131,14 +1190,130 @@ class QtSettingsDialog(QDialog):
         text = combo.currentText().strip().lower() if hasattr(combo, "currentText") else ""
         return "contains" if text == "contains" else "exact"
 
+    def _new_glossary_source_lang_combo(self, selected: str = "AUTO") -> QComboBox:
+        combo = QComboBox()
+        for value in valid_source_langs():
+            combo.addItem(value, value)
+        selected_clean = coerce_source_lang(selected, default="AUTO")
+        combo.setCurrentText(selected_clean)
+        return combo
+
+    def _new_glossary_tier_combo(self, selected: int = 2) -> QComboBox:
+        combo = QComboBox()
+        for value in valid_glossary_tiers():
+            combo.addItem(f"T{value}", value)
+        selected_tier = coerce_glossary_tier(selected, default=2)
+        if hasattr(combo, "setCurrentData"):
+            combo.setCurrentData(selected_tier)
+        else:
+            idx = combo.findData(selected_tier) if hasattr(combo, "findData") else -1
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+        return combo
+
+    def _glossary_source_lang_value(self, combo: object | None) -> str:
+        if combo is None:
+            return "AUTO"
+        value = combo.currentData() if hasattr(combo, "currentData") else None
+        if isinstance(value, str):
+            return coerce_source_lang(value, default="AUTO")
+        text = combo.currentText().strip().upper() if hasattr(combo, "currentText") else ""
+        return coerce_source_lang(text, default="AUTO")
+
+    def _glossary_tier_value(self, combo: object | None) -> int:
+        if combo is None:
+            return 2
+        value = combo.currentData() if hasattr(combo, "currentData") else None
+        if value is not None:
+            return coerce_glossary_tier(value, default=2)
+        text = combo.currentText().strip() if hasattr(combo, "currentText") else ""
+        if text.startswith("T"):
+            text = text[1:]
+        return coerce_glossary_tier(text, default=2)
+
+    def _glossary_entry_key(self, entry: GlossaryEntry) -> tuple[str, str, str, str, int]:
+        return (
+            entry.source_text,
+            entry.preferred_translation,
+            entry.match_mode,
+            entry.source_lang,
+            int(entry.tier),
+        )
+
+    def _visible_glossary_rows(self, lang: str) -> list[GlossaryEntry]:
+        entries = self._glossaries_by_lang.get(lang, [])
+        selected_tier = int(self._glossary_selected_tier)
+        search = self._glossary_search_text.strip().casefold()
+        filtered = [entry for entry in entries if int(entry.tier) == selected_tier]
+        if search:
+            filtered = [
+                entry
+                for entry in filtered
+                if search in entry.source_text.casefold() or search in entry.preferred_translation.casefold()
+            ]
+        return filtered
+
+    def _set_active_tier_checks(self, tiers: list[int]) -> None:
+        tier_set = {coerce_glossary_tier(value, default=1) for value in tiers}
+        if not tier_set:
+            tier_set = {1, 2}
+        for tier, check in self._glossary_active_tier_checks.items():
+            check.blockSignals(True)
+            check.setChecked(tier in tier_set)
+            check.blockSignals(False)
+
+    def _read_active_tier_checks(self) -> list[int]:
+        tiers = [tier for tier, check in self._glossary_active_tier_checks.items() if check.isChecked()]
+        if not tiers:
+            tiers = [1, 2]
+        return sorted({coerce_glossary_tier(value, default=1) for value in tiers})
+
+    def _refresh_glossary_tier_counts(self) -> None:
+        lang = self._glossary_current_lang or "EN"
+        counts = {tier: 0 for tier in valid_glossary_tiers()}
+        for entry in self._glossaries_by_lang.get(lang, []):
+            counts[coerce_glossary_tier(entry.tier, default=2)] += 1
+        active = self._enabled_glossary_tiers_by_lang.get(lang, [1, 2])
+        counts_text = " | ".join(f"T{tier}:{counts[tier]}" for tier in valid_glossary_tiers())
+        active_text = ",".join(f"T{tier}" for tier in sorted(active))
+        self.glossary_tier_counts_label.setText(f"{counts_text}   Active: {active_text}")
+
+    def _update_glossary_warning_label(self, rows: list[GlossaryEntry]) -> None:
+        warnings: list[str] = []
+        for entry in rows:
+            source = entry.source_text.strip()
+            words = [part for part in source.split() if part]
+            if entry.match_mode == "contains" and (len(source) < 10 or len(words) < 2):
+                warnings.append("Contains on short phrases may overmatch.")
+            if len(words) == 1 and int(entry.tier) <= 2:
+                warnings.append("Tier 1-2 should be reserved for high-impact phrases (headers/ambiguous/formulas).")
+        if not warnings:
+            self.glossary_warning_label.setText("No glossary hygiene warnings for visible rows.")
+            return
+        unique_warnings = list(dict.fromkeys(warnings))
+        self.glossary_warning_label.setText("Warning: " + " ".join(unique_warnings))
+
+    def _refresh_glossary_table_view(self) -> None:
+        lang = self._glossary_current_lang or "EN"
+        rows = self._visible_glossary_rows(lang)
+        self._set_glossary_table_rows(rows)
+        self._refresh_glossary_tier_counts()
+        self._update_glossary_warning_label(rows)
+
+    def _focus_glossary_search(self) -> None:
+        self.glossary_search_edit.setFocus()
+        self.glossary_search_edit.selectAll()
+
     def _set_glossary_table_rows(self, rows: list[GlossaryEntry]) -> None:
         self.glossary_table.setRowCount(0)
+        self._glossary_view_keys = [self._glossary_entry_key(entry) for entry in rows]
         for entry in rows:
             row = self.glossary_table.rowCount()
             self.glossary_table.insertRow(row)
-            self.glossary_table.setItem(row, 0, QTableWidgetItem(entry.source))
-            self.glossary_table.setItem(row, 1, QTableWidgetItem(entry.target))
-            self.glossary_table.setCellWidget(row, 2, self._new_glossary_match_combo(entry.match))
+            self.glossary_table.setItem(row, 0, QTableWidgetItem(entry.source_text))
+            self.glossary_table.setItem(row, 1, QTableWidgetItem(entry.preferred_translation))
+            self.glossary_table.setCellWidget(row, 2, self._new_glossary_match_combo(entry.match_mode))
+            self.glossary_table.setCellWidget(row, 3, self._new_glossary_source_lang_combo(entry.source_lang))
+            self.glossary_table.setCellWidget(row, 4, self._new_glossary_tier_combo(entry.tier))
 
     def _read_glossary_table_rows(self) -> list[GlossaryEntry]:
         rows: list[dict[str, str]] = []
@@ -1148,11 +1323,15 @@ class QtSettingsDialog(QDialog):
             source = source_item.text().strip() if source_item else ""
             target = target_item.text().strip() if target_item else ""
             match = self._glossary_match_value(self.glossary_table.cellWidget(row, 2))
+            source_lang = self._glossary_source_lang_value(self.glossary_table.cellWidget(row, 3))
+            tier = self._glossary_tier_value(self.glossary_table.cellWidget(row, 4))
             rows.append(
                 {
-                    "source": source,
-                    "target": target,
-                    "match": match,
+                    "source_text": source,
+                    "preferred_translation": target,
+                    "match_mode": match,
+                    "source_lang": source_lang,
+                    "tier": str(int(tier)),
                 }
             )
         normalized = normalize_glossaries(
@@ -1164,7 +1343,40 @@ class QtSettingsDialog(QDialog):
     def _save_current_glossary_language_rows(self) -> None:
         if self._glossary_current_lang is None:
             return
-        self._glossaries_by_lang[self._glossary_current_lang] = self._read_glossary_table_rows()
+        lang = self._glossary_current_lang
+        existing_rows = list(self._glossaries_by_lang.get(lang, []))
+        view_key_set = set(self._glossary_view_keys)
+        preserved_rows = [entry for entry in existing_rows if self._glossary_entry_key(entry) not in view_key_set]
+        merged_rows = preserved_rows + self._read_glossary_table_rows()
+        normalized = normalize_glossaries({lang: merged_rows}, [lang])
+        self._glossaries_by_lang[lang] = normalized.get(lang, [])
+        self._enabled_glossary_tiers_by_lang[lang] = self._read_active_tier_checks()
+
+    def _on_glossary_tier_changed(self, _: int) -> None:
+        self._save_current_glossary_language_rows()
+        current = self.glossary_tier_combo.currentData()
+        self._glossary_selected_tier = coerce_glossary_tier(current, default=1)
+        self._refresh_glossary_table_view()
+
+    def _on_glossary_search_changed(self, text: str) -> None:
+        self._save_current_glossary_language_rows()
+        self._glossary_search_text = str(text or "")
+        self._refresh_glossary_table_view()
+
+    def _on_glossary_active_tier_changed(self, tier: int, checked: bool) -> None:
+        _ = checked
+        if self._glossary_current_lang is None:
+            return
+        tiers = self._read_active_tier_checks()
+        if not tiers:
+            check = self._glossary_active_tier_checks.get(tier)
+            if check is not None:
+                check.blockSignals(True)
+                check.setChecked(True)
+                check.blockSignals(False)
+            tiers = [coerce_glossary_tier(tier, default=1)]
+        self._enabled_glossary_tiers_by_lang[self._glossary_current_lang] = sorted(tiers)
+        self._refresh_glossary_tier_counts()
 
     def _on_glossary_language_changed(self, lang_text: str) -> None:
         next_lang = str(lang_text or "").strip().upper()
@@ -1172,16 +1384,21 @@ class QtSettingsDialog(QDialog):
             return
         self._save_current_glossary_language_rows()
         self._glossary_current_lang = next_lang
-        self._set_glossary_table_rows(self._glossaries_by_lang.get(next_lang, []))
+        self._set_active_tier_checks(self._enabled_glossary_tiers_by_lang.get(next_lang, [1, 2]))
+        self._refresh_glossary_table_view()
 
     def _set_glossaries_from_settings(self, settings: dict[str, object]) -> None:
         langs = supported_target_langs()
         self._glossaries_by_lang = normalize_glossaries(settings.get("glossaries_by_lang"), langs)
-        seed_raw = settings.get("glossary_seed_version", 1)
+        self._enabled_glossary_tiers_by_lang = normalize_enabled_tiers_by_target_lang(
+            settings.get("enabled_glossary_tiers_by_target_lang"),
+            langs,
+        )
+        seed_raw = settings.get("glossary_seed_version", 2)
         try:
-            self._glossary_seed_version = max(1, int(seed_raw))  # type: ignore[arg-type]
+            self._glossary_seed_version = max(2, int(seed_raw))  # type: ignore[arg-type]
         except Exception:
-            self._glossary_seed_version = 1
+            self._glossary_seed_version = 2
         preferred = str(settings.get("default_lang", "EN") or "EN").strip().upper()
         if preferred not in langs:
             preferred = langs[0]
@@ -1192,7 +1409,12 @@ class QtSettingsDialog(QDialog):
         self.glossary_lang_combo.setCurrentText(preferred)
         self.glossary_lang_combo.blockSignals(False)
         self._glossary_current_lang = preferred
-        self._set_glossary_table_rows(self._glossaries_by_lang.get(preferred, []))
+        tier_data = self.glossary_tier_combo.currentData()
+        self._glossary_selected_tier = coerce_glossary_tier(tier_data, default=1)
+        self._glossary_search_text = ""
+        self.glossary_search_edit.clear()
+        self._set_active_tier_checks(self._enabled_glossary_tiers_by_lang.get(preferred, [1, 2]))
+        self._refresh_glossary_table_view()
 
     def _add_glossary_row(self) -> None:
         row = self.glossary_table.rowCount()
@@ -1200,6 +1422,8 @@ class QtSettingsDialog(QDialog):
         self.glossary_table.setItem(row, 0, QTableWidgetItem(""))
         self.glossary_table.setItem(row, 1, QTableWidgetItem(""))
         self.glossary_table.setCellWidget(row, 2, self._new_glossary_match_combo("exact"))
+        self.glossary_table.setCellWidget(row, 3, self._new_glossary_source_lang_combo("AUTO"))
+        self.glossary_table.setCellWidget(row, 4, self._new_glossary_tier_combo(self._glossary_selected_tier))
 
     def _remove_selected_glossary_rows(self) -> None:
         selected_rows = sorted({index.row() for index in self.glossary_table.selectedIndexes()}, reverse=True)
@@ -1207,6 +1431,7 @@ class QtSettingsDialog(QDialog):
             return
         for row in selected_rows:
             self.glossary_table.removeRow(row)
+        self._update_glossary_warning_label(self._read_glossary_table_rows())
 
     def _build_tab_diagnostics(self) -> None:
         layout = QVBoxLayout(self.tab_diag)
@@ -1533,7 +1758,7 @@ class QtSettingsDialog(QDialog):
         self.glossary_file_edit.setText("")
         self._glossaries_by_lang = normalize_glossaries({}, supported_target_langs())
         self._glossaries_by_lang["AR"] = default_ar_entries()
-        self._glossary_seed_version = 1
+        self._glossary_seed_version = 2
         self._set_glossaries_from_settings(
             {
                 "default_lang": "EN",
@@ -1569,6 +1794,10 @@ class QtSettingsDialog(QDialog):
 
         self._save_current_glossary_language_rows()
         normalized_glossaries = normalize_glossaries(self._glossaries_by_lang, supported_target_langs())
+        normalized_enabled_tiers = normalize_enabled_tiers_by_target_lang(
+            self._enabled_glossary_tiers_by_lang,
+            supported_target_langs(),
+        )
 
         return {
             "ui_theme": self.ui_theme_combo.currentText().strip(),
@@ -1585,7 +1814,11 @@ class QtSettingsDialog(QDialog):
             "default_end_page": default_end,
             "default_outdir": self.default_outdir_edit.text().strip(),
             "glossaries_by_lang": serialize_glossaries(normalized_glossaries),
-            "glossary_seed_version": max(1, int(self._glossary_seed_version)),
+            "enabled_glossary_tiers_by_target_lang": {
+                lang: list(normalized_enabled_tiers.get(lang, [1, 2]))
+                for lang in supported_target_langs()
+            },
+            "glossary_seed_version": max(2, int(self._glossary_seed_version)),
             "glossary_file_path": self.glossary_file_edit.text().strip(),
             "ocr_mode_default": self.ocr_mode_default_combo.currentText().strip().lower(),
             "ocr_engine_default": self.ocr_engine_default_combo.currentText().strip().lower(),

@@ -10,7 +10,9 @@ from typing import Any
 from .glossary import (
     default_ar_entries,
     entries_from_legacy_rules,
+    normalize_enabled_tiers_by_target_lang,
     normalize_glossaries,
+    seed_missing_entries_for_target_lang,
     serialize_glossaries,
     supported_target_langs,
 )
@@ -78,7 +80,9 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "default_end_page": None,
     "default_outdir": "",
     "glossaries_by_lang": {},
+    "enabled_glossary_tiers_by_target_lang": {},
     "glossary_seed_version": 0,
+    "glossary_seed_preset_version": 0,
     "glossary_file_path": "",
     "ocr_mode_default": "auto",
     "ocr_engine_default": "local_then_api",
@@ -112,7 +116,9 @@ ALLOWED_GUI_KEYS = {
     "default_end_page",
     "default_outdir",
     "glossaries_by_lang",
+    "enabled_glossary_tiers_by_target_lang",
     "glossary_seed_version",
+    "glossary_seed_preset_version",
     "glossary_file_path",
     "ocr_mode_default",
     "ocr_engine_default",
@@ -464,7 +470,12 @@ def load_gui_settings() -> dict[str, Any]:
     merged["default_outdir"] = str(merged.get("default_outdir", "") or "")
     supported_langs = supported_target_langs()
     normalized_glossaries = normalize_glossaries(merged.get("glossaries_by_lang"), supported_langs)
+    enabled_tiers = normalize_enabled_tiers_by_target_lang(
+        merged.get("enabled_glossary_tiers_by_target_lang"),
+        supported_langs,
+    )
     glossary_seed_version = _coerce_int(merged.get("glossary_seed_version"), 0)
+    glossary_seed_preset_version = _coerce_int(merged.get("glossary_seed_preset_version"), 0)
     merged["glossary_file_path"] = str(merged.get("glossary_file_path", "") or "")
     has_any_glossary_rows = any(normalized_glossaries.get(lang) for lang in supported_langs)
     if not has_any_glossary_rows and merged["glossary_file_path"].strip():
@@ -474,10 +485,28 @@ def load_gui_settings() -> dict[str, Any]:
             if legacy_rows:
                 normalized_glossaries[lang] = legacy_rows
         has_any_glossary_rows = any(normalized_glossaries.get(lang) for lang in supported_langs)
-    if glossary_seed_version < 1 and not normalized_glossaries.get("AR"):
+    raw_glossaries = data.get("glossaries_by_lang")
+    has_explicit_ar_rows = False
+    if isinstance(raw_glossaries, dict):
+        for raw_lang in raw_glossaries.keys():
+            if str(raw_lang).strip().upper() == "AR":
+                has_explicit_ar_rows = True
+                break
+    if glossary_seed_version < 2 and not normalized_glossaries.get("AR") and not has_explicit_ar_rows:
         normalized_glossaries["AR"] = default_ar_entries()
+    if glossary_seed_preset_version < 2:
+        for target_lang in ("AR", "EN", "FR"):
+            normalized_glossaries[target_lang] = seed_missing_entries_for_target_lang(
+                target_lang,
+                normalized_glossaries.get(target_lang, []),
+            )
     merged["glossaries_by_lang"] = serialize_glossaries(normalized_glossaries)
-    merged["glossary_seed_version"] = glossary_seed_version if glossary_seed_version >= 1 else 1
+    merged["enabled_glossary_tiers_by_target_lang"] = {
+        lang: list(enabled_tiers.get(lang, [1, 2]))
+        for lang in supported_langs
+    }
+    merged["glossary_seed_version"] = glossary_seed_version if glossary_seed_version >= 2 else 2
+    merged["glossary_seed_preset_version"] = glossary_seed_preset_version if glossary_seed_preset_version >= 2 else 2
     merged["ocr_mode_default"] = _coerce_choice(
         merged.get("ocr_mode_default"),
         default="auto",

@@ -37,12 +37,16 @@ from .config import load_environment
 from .config import IMAGE_MAX_DATA_URL_BYTES_AR, IMAGE_MAX_DATA_URL_BYTES_ENFR
 from .docx_writer import assemble_docx
 from .glossary import (
+    cap_entries_for_prompt,
     GlossaryEntry,
-    GlossaryRules,
-    apply_glossary,
+    detect_source_lang_for_glossary,
+    entries_from_legacy_rules,
+    filter_entries_for_prompt,
     format_glossary_for_prompt,
     load_glossary,
+    normalize_enabled_tiers_by_target_lang,
     normalize_glossaries,
+    sort_entries_for_prompt,
     supported_target_langs,
 )
 from .image_io import render_page_image_data_url, should_include_image
@@ -94,8 +98,11 @@ class TranslationWorkflow:
         self._ocr_provider_configured = False
         self._ocr_unavailable_warned = False
         self._ocr_unavailable_lock = threading.Lock()
-        self._glossary_rules: GlossaryRules = load_glossary(None)
         self._prompt_glossaries_by_lang: dict[str, list[GlossaryEntry]] = normalize_glossaries(
+            {},
+            supported_target_langs(),
+        )
+        self._enabled_glossary_tiers_by_lang: dict[str, list[int]] = normalize_enabled_tiers_by_target_lang(
             {},
             supported_target_langs(),
         )
@@ -116,12 +123,45 @@ class TranslationWorkflow:
 
         config = self._normalize_config(config)
         self._validate_config(config)
-        self._glossary_rules = load_glossary(config.glossary_file)
         gui_settings = load_gui_settings()
-        self._prompt_glossaries_by_lang = normalize_glossaries(
+        prompt_glossaries = normalize_glossaries(
             gui_settings.get("glossaries_by_lang"),
             supported_target_langs(),
         )
+        self._enabled_glossary_tiers_by_lang = normalize_enabled_tiers_by_target_lang(
+            gui_settings.get("enabled_glossary_tiers_by_target_lang"),
+            supported_target_langs(),
+        )
+        if config.glossary_file:
+            # Preserve fail-fast behavior for invalid custom glossary files.
+            load_glossary(config.glossary_file)
+            migrated_legacy = entries_from_legacy_rules(config.glossary_file)
+            for lang in supported_target_langs():
+                combined_rows = list(prompt_glossaries.get(lang, []))
+                seen = {
+                    (
+                        entry.source_text,
+                        entry.preferred_translation,
+                        entry.match_mode,
+                        entry.source_lang,
+                        int(entry.tier),
+                    )
+                    for entry in combined_rows
+                }
+                for legacy_entry in migrated_legacy.get(lang, []):
+                    key = (
+                        legacy_entry.source_text,
+                        legacy_entry.preferred_translation,
+                        legacy_entry.match_mode,
+                        legacy_entry.source_lang,
+                        int(legacy_entry.tier),
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    combined_rows.append(legacy_entry)
+                prompt_glossaries[lang] = combined_rows
+        self._prompt_glossaries_by_lang = prompt_glossaries
         self._last_config = config
         self._diagnostics_admin_mode = bool(config.diagnostics_admin_mode)
 
@@ -936,6 +976,7 @@ class TranslationWorkflow:
             },
         )
 
+        glossary_source_text = source_text
         if config.target_lang == TargetLang.AR:
             source_text = pretokenize_arabic_source(source_text)
 
@@ -1012,7 +1053,7 @@ class TranslationWorkflow:
             source_text=source_text,
             context_text=context_text,
         )
-        prompt_text = self._append_glossary_prompt(prompt_text, config.target_lang)
+        prompt_text = self._append_glossary_prompt(prompt_text, config.target_lang, source_text=glossary_source_text)
 
         usage_payload: dict[str, object] = {
             "ocr": {
@@ -1236,11 +1277,34 @@ class TranslationWorkflow:
             page_metadata=page_metadata,
         )
 
-    def _append_glossary_prompt(self, prompt_text: str, lang: TargetLang) -> str:
+    def _append_glossary_prompt(self, prompt_text: str, lang: TargetLang, *, source_text: str) -> str:
         entries = self._prompt_glossaries_by_lang.get(lang.value, [])
         if not entries:
             return prompt_text
-        glossary_block = format_glossary_for_prompt(lang.value, entries)
+        detected_source_lang = detect_source_lang_for_glossary(source_text)
+        enabled_tiers = self._enabled_glossary_tiers_by_lang.get(lang.value, [1, 2])
+        matching_entries = filter_entries_for_prompt(
+            entries,
+            detected_source_lang=detected_source_lang,
+            enabled_tiers=enabled_tiers,
+        )
+        if not matching_entries:
+            return prompt_text
+        sorted_entries = sort_entries_for_prompt(matching_entries)
+        capped_entries = cap_entries_for_prompt(
+            sorted_entries,
+            target_lang=lang.value,
+            detected_source_lang=detected_source_lang,
+            max_entries=50,
+            max_chars=6000,
+        )
+        if not capped_entries:
+            return prompt_text
+        glossary_block = format_glossary_for_prompt(
+            lang.value,
+            capped_entries,
+            detected_source_lang=detected_source_lang,
+        )
         if glossary_block == "":
             return prompt_text
         return f"{prompt_text}\n{glossary_block}"
@@ -1303,10 +1367,9 @@ class TranslationWorkflow:
                 outside_text=True,
                 block_count=1,
             )
-        glossary_normalized = apply_glossary(normalized, lang, self._glossary_rules)
         return _Evaluation(
             ok=True,
-            normalized_text=glossary_normalized,
+            normalized_text=normalized,
             defect_reason=None,
             parser_failed=False,
             validator_failed=False,

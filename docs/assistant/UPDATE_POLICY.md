@@ -101,3 +101,35 @@ Verification commands/results:
 - python -m pytest -q -> 156 passed in 5.99s
 - python -m compileall src tests -> success
 - git status --short -- src tests -> modified files present for this in-progress change set
+
+Date: 2026-02-13
+Code change summary:
+- Updated glossary entry schema to source-keyed canonical fields with per-row source language (`source_text`, `preferred_translation`, `match_mode`, `source_lang`) in `src/legalpdf_translate/glossary.py`.
+- Switched workflow glossary enforcement to prompt-only guidance and added source-language detection/filtering in `src/legalpdf_translate/workflow.py` (`_append_glossary_prompt` path); removed blind post-output glossary rewriting from `_evaluate_output`.
+- Updated Qt Settings Glossary tab table to include `Source lang` and renamed source column to `Source phrase (PDF text)` in `src/legalpdf_translate/qt_gui/dialogs.py`.
+- Updated settings normalization/seeding compatibility for the new schema and seed versioning in `src/legalpdf_translate/user_settings.py`.
+- Extended glossary/settings/workflow/Qt-table tests for source-language-aware behavior and backward-compatible migration.
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (sections: C, D, F, J)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 160 passed in 4.86s
+- python -m compileall src tests -> success
+- git status --short -- src tests -> modified files present for this in-progress change set
+
+Date: 2026-02-13
+Code change summary:
+- Added tiered glossary entries (`tier` 1..6), per-target active tiers, tier-aware prompt filtering/sorting/capping, and backward-compatible tier migration defaults.
+- Added searchable glossary UI with `Ctrl+F`, tier selector view, active tier checkboxes, tier counts, and non-blocking glossary hygiene warnings in Settings.
+- Added workflow tier-aware token-efficient glossary injection (active tiers only, sorted, capped at 50 entries / 6000 chars).
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (sections: C, D, F, J)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 173 passed in 5.09s
+- python -m compileall src tests -> success
+- git status --short -- src tests -> modified files present for this in-progress change set
