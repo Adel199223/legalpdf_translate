@@ -7,9 +7,9 @@ import threading
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from ..openai_client import OpenAIResponsesClient
-from ..types import RunConfig
-from ..workflow import TranslationWorkflow
+from legalpdf_translate.openai_client import OpenAIResponsesClient
+from legalpdf_translate.types import RunConfig
+from legalpdf_translate.workflow import TranslationWorkflow
 
 _PAGE_LOG_RE = re.compile(
     r"page=(?P<page>\d+)\s+image_used=(?P<image>True|False)\s+retry_used=(?P<retry>True|False)\s+status=(?P<status>[a-z_]+)"

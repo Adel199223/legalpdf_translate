@@ -37,9 +37,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..config import OPENAI_MODEL
-from ..joblog_db import insert_job_run, list_job_runs, open_job_log, update_joblog_visible_columns
-from ..metadata_autofill import (
+from legalpdf_translate.config import OPENAI_MODEL
+from legalpdf_translate.joblog_db import (
+    insert_job_run,
+    list_job_runs,
+    open_job_log,
+    update_joblog_visible_columns,
+)
+from legalpdf_translate.metadata_autofill import (
     MetadataAutofillConfig,
     MetadataSuggestion,
     apply_service_case_default_rule,
@@ -47,7 +52,7 @@ from ..metadata_autofill import (
     extract_photo_metadata_from_image,
     metadata_config_from_settings,
 )
-from ..secrets_store import (
+from legalpdf_translate.secrets_store import (
     delete_openai_key,
     delete_ocr_key,
     get_openai_key,
@@ -55,7 +60,7 @@ from ..secrets_store import (
     set_openai_key,
     set_ocr_key,
 )
-from ..user_settings import load_joblog_settings, save_joblog_settings
+from legalpdf_translate.user_settings import load_joblog_settings, save_joblog_settings
 
 JOBLOG_COLUMNS = [
     "translation_date",

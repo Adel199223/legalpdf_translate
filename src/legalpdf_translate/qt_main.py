@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .qt_app import run
+from legalpdf_translate.qt_app import run
 
 
 def main() -> None:

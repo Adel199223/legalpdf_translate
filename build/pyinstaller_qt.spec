@@ -3,10 +3,11 @@
 from pathlib import Path
 
 project_root = Path(SPECPATH).resolve().parents[0]
+entry_script = project_root / "src" / "legalpdf_translate" / "qt_main.py"
 
 
 a = Analysis(
-    [str(project_root / "src" / "legalpdf_translate" / "qt_main.py")],
+    [str(entry_script)],
     pathex=[str(project_root / "src"), str(project_root)],
     binaries=[],
     datas=[

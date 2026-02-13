@@ -44,21 +44,60 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..__init__ import __version__
-from ..checkpoint import parse_effort, parse_effort_policy, parse_image_mode, parse_ocr_engine_policy, parse_ocr_mode
-from ..checkpoint import load_run_state
-from ..config import OPENAI_MODEL
-from ..joblog_db import job_log_db_path
-from ..metadata_autofill import extract_pdf_header_metadata, metadata_config_from_settings
-from ..output_paths import build_output_paths, require_writable_output_dir_text
-from ..pdf_text_order import get_page_count
-from ..secrets_store import delete_openai_key, delete_ocr_key, get_openai_key, get_ocr_key
-from ..types import AnalyzeSummary, EffortPolicy, RunConfig, RunSummary, TargetLang
-from ..user_settings import app_data_dir, load_gui_settings, load_joblog_settings, save_gui_settings, settings_path
-from ..workflow import TranslationWorkflow
-from .dialogs import JobLogSeed, QtJobLogWindow, QtSaveToJobLogDialog, QtSettingsDialog, build_seed_from_run
-from .styles import apply_primary_glow, apply_soft_shadow
-from .worker import AnalyzeWorker, RebuildDocxWorker, TranslationRunWorker
+from legalpdf_translate import __version__
+from legalpdf_translate.checkpoint import (
+    load_run_state,
+    parse_effort,
+    parse_effort_policy,
+    parse_image_mode,
+    parse_ocr_engine_policy,
+    parse_ocr_mode,
+)
+from legalpdf_translate.config import OPENAI_MODEL
+from legalpdf_translate.joblog_db import job_log_db_path
+from legalpdf_translate.metadata_autofill import (
+    extract_pdf_header_metadata,
+    metadata_config_from_settings,
+)
+from legalpdf_translate.output_paths import (
+    build_output_paths,
+    require_writable_output_dir_text,
+)
+from legalpdf_translate.pdf_text_order import get_page_count
+from legalpdf_translate.qt_gui.dialogs import (
+    JobLogSeed,
+    QtJobLogWindow,
+    QtSaveToJobLogDialog,
+    QtSettingsDialog,
+    build_seed_from_run,
+)
+from legalpdf_translate.qt_gui.styles import apply_primary_glow, apply_soft_shadow
+from legalpdf_translate.qt_gui.worker import (
+    AnalyzeWorker,
+    RebuildDocxWorker,
+    TranslationRunWorker,
+)
+from legalpdf_translate.secrets_store import (
+    delete_openai_key,
+    delete_ocr_key,
+    get_openai_key,
+    get_ocr_key,
+)
+from legalpdf_translate.types import (
+    AnalyzeSummary,
+    EffortPolicy,
+    RunConfig,
+    RunSummary,
+    TargetLang,
+)
+from legalpdf_translate.user_settings import (
+    app_data_dir,
+    load_gui_settings,
+    load_joblog_settings,
+    save_gui_settings,
+    settings_path,
+)
+from legalpdf_translate.workflow import TranslationWorkflow
 
 
 def _is_truthy_env(value: str | None) -> bool:

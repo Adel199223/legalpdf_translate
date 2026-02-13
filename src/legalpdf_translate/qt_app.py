@@ -16,8 +16,8 @@ def run(argv: list[str] | None = None) -> int:
             "PySide6 is not installed. Install dependencies with `pip install -e .`."
         ) from exc
 
-    from .qt_gui.app_window import QtMainWindow
-    from .qt_gui.styles import build_stylesheet
+    from legalpdf_translate.qt_gui.app_window import QtMainWindow
+    from legalpdf_translate.qt_gui.styles import build_stylesheet
 
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
     QApplication.setHighDpiScaleFactorRoundingPolicy(
