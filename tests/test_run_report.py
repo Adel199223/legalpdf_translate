@@ -42,6 +42,9 @@ def _seed_run_dir(tmp_path: Path) -> Path:
                 "source_route_reason": "direct_text_usable",
                 "image_used": False,
                 "image_decision_reason": "not_needed",
+                "ocr_requested": False,
+                "ocr_used": False,
+                "ocr_provider_configured": True,
                 "ocr_engine_used": "none",
                 "ocr_failed_reason": "ocr_not_requested",
                 "wall_seconds": 1.2,
@@ -67,6 +70,9 @@ def _seed_run_dir(tmp_path: Path) -> Path:
                 "source_route_reason": "ocr_success",
                 "image_used": True,
                 "image_decision_reason": "ordered_text_chars_lt_20",
+                "ocr_requested": True,
+                "ocr_used": True,
+                "ocr_provider_configured": True,
                 "ocr_engine_used": "local",
                 "ocr_failed_reason": "",
                 "wall_seconds": 2.4,
@@ -95,6 +101,16 @@ def _seed_run_dir(tmp_path: Path) -> Path:
         "pdf_path": str(tmp_path / "input.pdf"),
         "lang": "EN",
         "image_mode": "auto",
+        "pipeline": {
+            "image_mode": "auto",
+            "ocr_mode": "auto",
+            "ocr_engine": "local_then_api",
+            "ocr_requested": True,
+            "ocr_used": True,
+            "ocr_provider_configured": True,
+            "ocr_requested_pages": 1,
+            "ocr_used_pages": 1,
+        },
         "totals": {
             "total_wall_seconds": 3.6,
             "total_cost_estimate_if_available": 0.003,
@@ -163,6 +179,9 @@ def test_admin_run_report_contains_sections_schema_and_redaction(tmp_path: Path)
     assert "sk-SECRETKEY12345" not in markdown
     assert "Bearer sk-SECRETKEY12345" not in markdown
     assert "[REDACTED]" in markdown
+    assert '"ocr_requested": true' in markdown
+    assert '"ocr_used": true' in markdown
+    assert '"ocr_provider_configured": true' in markdown
     assert "Page 1: `" in markdown
     # Snippet is hard-capped at 200 chars per page.
     assert ("A" * 205) not in markdown
@@ -178,3 +197,109 @@ def test_basic_run_report_omits_admin_verbose_sections(tmp_path: Path) -> None:
     assert '"schema_version": "basic_run_report_v1"' in markdown
     assert "## Per-Page Rollups" not in markdown
     assert "## Sanitized Snippets" not in markdown
+
+
+def test_run_report_clarifies_ocr_not_needed_when_provider_missing(tmp_path: Path) -> None:
+    run_dir = tmp_path / "text_only_run"
+    pages_dir = run_dir / "pages"
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    (pages_dir / "page_0001.txt").write_text("Simple translated text", encoding="utf-8")
+
+    _write_json(
+        run_dir / "run_state.json",
+        {
+            "run_started_at": "20260213_020304",
+            "run_status": "completed",
+            "halt_reason": "",
+            "finished_at": "2026-02-13T02:03:59+00:00",
+            "pdf_path": str(tmp_path / "input.pdf"),
+            "lang": "EN",
+            "total_pages": 1,
+            "max_pages_effective": 1,
+            "selection_start_page": 1,
+            "selection_end_page": 1,
+            "settings": {
+                "image_mode": "auto",
+                "ocr_mode": "auto",
+                "ocr_engine": "local_then_api",
+                "keep_intermediates": True,
+                "resume": False,
+            },
+            "pages": {
+                "1": {
+                    "status": "done",
+                    "source_route": "direct_text",
+                    "source_route_reason": "direct_text_usable",
+                    "image_used": False,
+                    "image_decision_reason": "not_needed",
+                    "ocr_requested": False,
+                    "ocr_used": False,
+                    "ocr_provider_configured": False,
+                    "ocr_engine_used": "none",
+                    "ocr_failed_reason": "ocr_not_requested",
+                    "wall_seconds": 0.8,
+                    "extract_seconds": 0.2,
+                    "ocr_seconds": 0.0,
+                    "translate_seconds": 0.5,
+                    "api_calls_count": 1,
+                    "transport_retries_count": 0,
+                    "backoff_wait_seconds_total": 0.0,
+                    "rate_limit_hit": False,
+                    "input_tokens": 50,
+                    "output_tokens": 20,
+                    "reasoning_tokens": 2,
+                    "total_tokens": 72,
+                    "estimated_cost": 0.0008,
+                    "exception_class": "",
+                    "error": "",
+                    "retry_reason": "",
+                }
+            },
+        },
+    )
+    _write_json(
+        run_dir / "run_summary.json",
+        {
+            "run_id": "20260213_020304",
+            "pdf_path": str(tmp_path / "input.pdf"),
+            "lang": "EN",
+            "image_mode": "auto",
+            "pipeline": {
+                "image_mode": "auto",
+                "ocr_mode": "auto",
+                "ocr_engine": "local_then_api",
+                "ocr_requested": False,
+                "ocr_used": False,
+                "ocr_provider_configured": False,
+                "ocr_requested_pages": 0,
+                "ocr_used_pages": 0,
+            },
+            "totals": {
+                "total_wall_seconds": 0.8,
+                "total_cost_estimate_if_available": 0.0008,
+                "total_input_tokens": 50,
+                "total_output_tokens": 20,
+                "total_reasoning_tokens": 2,
+                "total_tokens": 72,
+            },
+            "counts": {
+                "pages_with_images": 0,
+                "pages_with_retries": 0,
+                "pages_failed": 0,
+                "rate_limit_hits": 0,
+                "transport_retries_total": 0,
+            },
+        },
+    )
+    (run_dir / "run_events.jsonl").write_text("", encoding="utf-8")
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "OCR not used; OCR provider not configured (not needed)." in markdown
+    assert '"ocr_requested": false' in markdown
+    assert '"ocr_used": false' in markdown
+    assert '"ocr_provider_configured": false' in markdown

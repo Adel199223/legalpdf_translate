@@ -81,6 +81,9 @@ class TranslationWorkflow:
         self._event_collector: RunEventCollector | None = None
         self._run_stage_timings_ms: dict[str, float] = {}
         self._diagnostics_admin_mode = False
+        self._ocr_provider_configured = False
+        self._ocr_unavailable_warned = False
+        self._ocr_unavailable_lock = threading.Lock()
 
     def cancel(self) -> None:
         self._cancel_event.set()
@@ -93,6 +96,8 @@ class TranslationWorkflow:
         self._last_state = None
         self._event_collector = None
         self._run_stage_timings_ms = {}
+        self._ocr_provider_configured = False
+        self._ocr_unavailable_warned = False
 
         config = self._normalize_config(config)
         self._validate_config(config)
@@ -148,6 +153,7 @@ class TranslationWorkflow:
                 "ocr_mode": config.ocr_mode.value,
                 "ocr_engine": config.ocr_engine.value,
                 "keep_intermediates": bool(config.keep_intermediates),
+                "strip_bidi_controls": bool(config.strip_bidi_controls),
             },
         )
 
@@ -185,6 +191,7 @@ class TranslationWorkflow:
         if config.ocr_mode != OcrMode.OFF:
             try:
                 ocr_engine = build_ocr_engine(ocr_engine_config_from_run_config(config))
+                self._ocr_provider_configured = True
                 self._record_event(
                     event_type="ocr_engine_ready",
                     stage="ocr",
@@ -194,12 +201,14 @@ class TranslationWorkflow:
                 if config.ocr_engine.value == "api" or config.ocr_mode == OcrMode.ALWAYS:
                     raise
                 ocr_engine = None
-                self._log("OCR engine unavailable; continuing without OCR for this run.")
+                self._ocr_provider_configured = False
                 self._record_event(
-                    event_type="ocr_engine_unavailable",
+                    event_type="ocr_engine_not_configured",
                     stage="ocr",
-                    warning="OCR engine unavailable; continuing without OCR for this run.",
                     decisions={"engine_policy": config.ocr_engine.value},
+                    details={
+                        "note": "OCR provider not configured; OCR will only be used if explicitly requested by routing.",
+                    },
                 )
 
         state_lock = threading.Lock()
@@ -468,6 +477,7 @@ class TranslationWorkflow:
                     paths.final_docx_path,
                     lang=config.target_lang,
                     page_breaks=config.page_breaks,
+                    strip_bidi_controls=config.strip_bidi_controls,
                 )
                 self._run_stage_timings_ms["docx_rebuild"] = round((time.perf_counter() - docx_started) * 1000.0, 3)
             except Exception as exc:  # noqa: BLE001
@@ -716,6 +726,7 @@ class TranslationWorkflow:
             final_paths.final_docx_path,
             lang=config.target_lang,
             page_breaks=config.page_breaks,
+            strip_bidi_controls=config.strip_bidi_controls,
         )
 
         if run_state is not None:
@@ -743,6 +754,7 @@ class TranslationWorkflow:
             self._last_paths.partial_docx_path,
             lang=self._last_config.target_lang,
             page_breaks=self._last_config.page_breaks,
+            strip_bidi_controls=self._last_config.strip_bidi_controls,
         )
 
     def _process_page(
@@ -791,6 +803,9 @@ class TranslationWorkflow:
             "source_route": "",
             "source_route_reason": "",
             "image_decision_reason": "",
+            "ocr_requested": False,
+            "ocr_used": False,
+            "ocr_provider_configured": False,
             "ocr_engine_used": "",
             "ocr_failed_reason": "",
             "estimated_cost": None,
@@ -852,12 +867,40 @@ class TranslationWorkflow:
             source_route_reason = f"ocr_fallback:{ocr_result.failed_reason or 'empty_result'}"
         elif should_ocr and ocr_engine is None:
             source_route_reason = "ocr_requested_engine_unavailable"
+            ocr_result.failed_reason = "ocr_engine_unavailable"
         elif config.ocr_mode == OcrMode.AUTO and extracted_usable:
             source_route_reason = "direct_text_usable"
         page_metadata["source_route"] = source_route
         page_metadata["source_route_reason"] = source_route_reason
+        page_metadata["ocr_requested"] = bool(should_ocr)
+        page_metadata["ocr_used"] = bool(ocr_result.chars > 0)
+        page_metadata["ocr_provider_configured"] = bool(ocr_engine is not None)
         page_metadata["ocr_engine_used"] = ocr_result.engine
         page_metadata["ocr_failed_reason"] = ocr_result.failed_reason or ""
+
+        if should_ocr and ocr_engine is None:
+            warning_message = (
+                "OCR provider not configured for OCR-requested pages; "
+                "continuing with direct text route where possible."
+            )
+            should_warn = False
+            with self._ocr_unavailable_lock:
+                if not self._ocr_unavailable_warned:
+                    self._ocr_unavailable_warned = True
+                    should_warn = True
+            if should_warn:
+                self._log(warning_message)
+                self._record_event(
+                    event_type="ocr_engine_unavailable",
+                    stage="ocr",
+                    page_index=page_number,
+                    warning=warning_message,
+                    decisions={
+                        "ocr_mode": config.ocr_mode.value,
+                        "ocr_engine_policy": config.ocr_engine.value,
+                        "source_route_reason": source_route_reason,
+                    },
+                )
 
         self._record_event(
             event_type="page_source_route",
@@ -1313,6 +1356,17 @@ class TranslationWorkflow:
         )
         rate_limit_hits = sum(1 for _, page in page_rows if bool(page.get("rate_limit_hit", False)))
         transport_retries_total = sum(int(page.get("transport_retries_count", 0) or 0) for _, page in page_rows)
+        ocr_requested_pages = sum(1 for _, page in page_rows if bool(page.get("ocr_requested", False)))
+        ocr_used_pages = sum(
+            1
+            for _, page in page_rows
+            if bool(page.get("ocr_used", False)) or str(page.get("source_route", "")).strip().lower() == "ocr"
+        )
+        ocr_requested = config.ocr_mode == OcrMode.ALWAYS or ocr_requested_pages > 0
+        if config.ocr_mode == OcrMode.OFF:
+            ocr_requested = False
+        ocr_used = ocr_used_pages > 0
+        ocr_provider_configured = bool(self._ocr_provider_configured) if config.ocr_mode != OcrMode.OFF else False
 
         slowest = sorted(page_rows, key=lambda item: float(item[1].get("wall_seconds", 0.0) or 0.0), reverse=True)[:10]
         top_reasoning = sorted(
@@ -1364,6 +1418,16 @@ class TranslationWorkflow:
             "selected_pages_count": selected_pages_count,
             "effort_policy": effort_policy,
             "image_mode": config.image_mode.value,
+            "pipeline": {
+                "image_mode": config.image_mode.value,
+                "ocr_mode": config.ocr_mode.value,
+                "ocr_engine": config.ocr_engine.value,
+                "ocr_requested": bool(ocr_requested),
+                "ocr_used": bool(ocr_used),
+                "ocr_provider_configured": bool(ocr_provider_configured),
+                "ocr_requested_pages": int(ocr_requested_pages),
+                "ocr_used_pages": int(ocr_used_pages),
+            },
             "totals": {
                 "total_wall_seconds": round(total_wall_seconds, 3),
                 "total_cost_estimate_if_available": total_cost_estimate,
@@ -1400,6 +1464,9 @@ class TranslationWorkflow:
                     "source_route_reason": str(page.get("source_route_reason", "") or ""),
                     "image_used": bool(page.get("image_used", False)),
                     "image_decision_reason": str(page.get("image_decision_reason", "") or ""),
+                    "ocr_requested": bool(page.get("ocr_requested", False)),
+                    "ocr_used": bool(page.get("ocr_used", False)),
+                    "ocr_provider_configured": bool(page.get("ocr_provider_configured", False)),
                     "ocr_engine_used": str(page.get("ocr_engine_used", "") or ""),
                     "ocr_failed_reason": str(page.get("ocr_failed_reason", "") or ""),
                     "wall_seconds": float(page.get("wall_seconds", 0.0) or 0.0),
@@ -1736,6 +1803,7 @@ class TranslationWorkflow:
             context_text=config.context_text,
             diagnostics_admin_mode=bool(config.diagnostics_admin_mode),
             diagnostics_include_sanitized_snippets=bool(config.diagnostics_include_sanitized_snippets),
+            strip_bidi_controls=bool(config.strip_bidi_controls),
         )
 
     def _is_usable_source_text(self, value: str) -> bool:

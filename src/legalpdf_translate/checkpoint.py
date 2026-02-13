@@ -97,6 +97,7 @@ def settings_fingerprint(config: RunConfig) -> dict[str, Any]:
         "ocr_api_model": (config.ocr_api_model or "").strip(),
         "page_breaks": config.page_breaks,
         "keep_intermediates": config.keep_intermediates,
+        "strip_bidi_controls": bool(config.strip_bidi_controls),
         "start_page": config.start_page,
         "end_page": config.end_page,
         "max_pages": config.max_pages,
@@ -135,6 +136,9 @@ def _default_page_record(*, status: str = PageStatus.PENDING.value) -> dict[str,
         "source_route": "",
         "source_route_reason": "",
         "image_decision_reason": "",
+        "ocr_requested": False,
+        "ocr_used": False,
+        "ocr_provider_configured": False,
         "ocr_engine_used": "",
         "ocr_failed_reason": "",
         "estimated_cost": None,
@@ -364,10 +368,13 @@ def resume_incompatibility_reason(
     if state.context_hash != context_hash:
         return "context mismatch."
     expected_settings = settings_fingerprint(config)
-    if state.settings != expected_settings:
+    checkpoint_settings = dict(state.settings)
+    if "strip_bidi_controls" not in checkpoint_settings:
+        checkpoint_settings["strip_bidi_controls"] = True
+    if checkpoint_settings != expected_settings:
         return (
             "settings mismatch: checkpoint="
-            f"{state.settings}, expected={expected_settings}"
+            f"{checkpoint_settings}, expected={expected_settings}"
         )
 
     if state.selection_start_page != selection_start_page:

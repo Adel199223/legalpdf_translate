@@ -72,6 +72,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Keep pages/images in run folder for resume/rebuild: true|false.",
     )
     parser.add_argument(
+        "--preserve-bidi-controls",
+        action="store_true",
+        help="Preserve bidi control characters in DOCX output (default strips for Word compatibility).",
+    )
+    parser.add_argument(
         "--context-file",
         default="",
         help="Optional context file path; empty string disables context.",
@@ -203,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
             resume=bool_from_text(args.resume),
             page_breaks=bool_from_text(args.page_breaks),
             keep_intermediates=bool_from_text(args.keep_intermediates),
+            strip_bidi_controls=not bool(args.preserve_bidi_controls),
             ocr_mode=parse_ocr_mode(args.ocr_mode),
             ocr_engine=parse_ocr_engine_policy(args.ocr_engine),
             ocr_api_base_url=args.ocr_api_base_url.strip() or None,

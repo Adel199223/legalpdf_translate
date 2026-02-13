@@ -81,6 +81,7 @@ class RunConfig:
     allow_xhigh_escalation: bool = False
     diagnostics_admin_mode: bool = False
     diagnostics_include_sanitized_snippets: bool = False
+    strip_bidi_controls: bool = True
 
 
 @dataclass(slots=True)

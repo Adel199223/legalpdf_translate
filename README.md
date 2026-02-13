@@ -53,6 +53,7 @@ CLI options:
 - `--resume`: `true|false`
 - `--page-breaks`: `true|false`
 - `--keep-intermediates`: `true|false`
+- `--preserve-bidi-controls`: keep Unicode bidi control markers in DOCX output (default is to strip for Word compatibility)
 - `--context-file`: path or empty string
 
 Recommended workers: `3` (default). For PDFs under ~20 pages, `5` is often faster. If you see frequent `429`/timeout retries, reduce workers.

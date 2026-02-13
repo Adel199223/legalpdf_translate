@@ -12,6 +12,18 @@ from docx.oxml.ns import qn
 
 from .types import TargetLang
 
+_BIDI_CONTROL_CODEPOINTS = str.maketrans(
+    "",
+    "",
+    "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\ufeff",
+)
+
+
+def sanitize_bidi_controls(text: str) -> str:
+    if not text:
+        return text
+    return text.translate(_BIDI_CONTROL_CODEPOINTS)
+
 
 def _add_rtl_flags(paragraph) -> None:
     paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -103,6 +115,7 @@ def assemble_docx(
     lang: TargetLang,
     page_breaks: bool,
     up_to_page: int | None = None,
+    strip_bidi_controls: bool = True,
     verify_readable: bool = True,
 ) -> Path:
     page_files = sorted(pages_dir.glob("page_*.txt"))
@@ -117,6 +130,8 @@ def assemble_docx(
         page_text = page_file.read_text(encoding="utf-8")
         lines = page_text.split("\n")
         for line in lines:
+            if strip_bidi_controls:
+                line = sanitize_bidi_controls(line)
             if line.strip() == "":
                 continue
             paragraph = document.add_paragraph(line)

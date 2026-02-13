@@ -11,6 +11,91 @@ def test_cli_parser_accepts_analyze_only_flag() -> None:
     assert args.analyze_only is True
 
 
+def test_cli_defaults_to_stripping_bidi_controls(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    captured: dict[str, object] = {}
+
+    class _FakeWorkflow:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
+            _ = kwargs
+
+        def run(self, config):  # type: ignore[no-untyped-def]
+            captured["config"] = config
+            return RunSummary(
+                success=True,
+                exit_code=0,
+                output_docx=outdir / "dummy.docx",
+                partial_docx=None,
+                run_dir=outdir,
+                completed_pages=1,
+                failed_page=None,
+            )
+
+    monkeypatch.setattr(cli, "TranslationWorkflow", _FakeWorkflow)
+    monkeypatch.setattr(cli, "require_writable_output_dir_text", lambda _: outdir)
+
+    exit_code = cli.main(
+        [
+            "--pdf",
+            str(pdf),
+            "--lang",
+            "EN",
+            "--outdir",
+            str(outdir),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["config"].strip_bidi_controls is True
+
+
+def test_cli_can_preserve_bidi_controls(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    captured: dict[str, object] = {}
+
+    class _FakeWorkflow:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
+            _ = kwargs
+
+        def run(self, config):  # type: ignore[no-untyped-def]
+            captured["config"] = config
+            return RunSummary(
+                success=True,
+                exit_code=0,
+                output_docx=outdir / "dummy.docx",
+                partial_docx=None,
+                run_dir=outdir,
+                completed_pages=1,
+                failed_page=None,
+            )
+
+    monkeypatch.setattr(cli, "TranslationWorkflow", _FakeWorkflow)
+    monkeypatch.setattr(cli, "require_writable_output_dir_text", lambda _: outdir)
+
+    exit_code = cli.main(
+        [
+            "--pdf",
+            str(pdf),
+            "--lang",
+            "EN",
+            "--outdir",
+            str(outdir),
+            "--preserve-bidi-controls",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["config"].strip_bidi_controls is False
+
+
 def test_cli_effort_backward_compat_maps_fixed_policy(tmp_path: Path, monkeypatch) -> None:
     pdf = tmp_path / "sample.pdf"
     pdf.write_bytes(b"%PDF-1.4")

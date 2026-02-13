@@ -279,6 +279,30 @@ def _build_timeline_lines(events: list[dict[str, Any]], *, limit: int | None = N
     return lines
 
 
+def _ocr_summary_line(pipeline_obj: dict[str, Any]) -> str:
+    ocr_mode = str(pipeline_obj.get("ocr_mode", "") or "").strip().lower()
+    ocr_requested = bool(pipeline_obj.get("ocr_requested", False))
+    ocr_used = bool(pipeline_obj.get("ocr_used", False))
+    ocr_provider_configured = bool(pipeline_obj.get("ocr_provider_configured", False))
+    ocr_requested_pages = int(pipeline_obj.get("ocr_requested_pages", 0) or 0)
+    ocr_used_pages = int(pipeline_obj.get("ocr_used_pages", 0) or 0)
+
+    if ocr_mode == "off":
+        return "- OCR disabled (mode=off)."
+    if ocr_used:
+        return (
+            f"- OCR used on `{ocr_used_pages}` page(s) "
+            f"(requested pages: `{ocr_requested_pages}`, provider configured: `{ocr_provider_configured}`)."
+        )
+    if ocr_requested and not ocr_provider_configured:
+        return "- OCR was requested but provider is not configured; OCR not used."
+    if ocr_requested:
+        return "- OCR was requested but not used after fallback decisions."
+    if not ocr_provider_configured:
+        return "- OCR not used; OCR provider not configured (not needed)."
+    return "- OCR not used; direct text route was sufficient."
+
+
 def build_run_report_payload(
     *,
     run_dir: Path,
@@ -296,6 +320,8 @@ def build_run_report_payload(
     backoff_wait_seconds_total = 0.0
     rate_limit_hits = 0
     page_failures: list[int] = []
+    ocr_requested_pages = 0
+    ocr_used_pages = 0
 
     for page_number, page in pages:
         status = str(page.get("status", "") or "").strip().lower()
@@ -310,6 +336,12 @@ def build_run_report_payload(
         backoff_wait_seconds_total += backoff_seconds
         if rate_limited:
             rate_limit_hits += 1
+        ocr_requested = bool(page.get("ocr_requested", False))
+        ocr_used = bool(page.get("ocr_used", False)) or str(page.get("source_route", "")).strip().lower() == "ocr"
+        if ocr_requested:
+            ocr_requested_pages += 1
+        if ocr_used:
+            ocr_used_pages += 1
         row = {
             "page_number": page_number,
             "status": status,
@@ -317,6 +349,9 @@ def build_run_report_payload(
             "source_route_reason": str(page.get("source_route_reason", "") or ""),
             "image_used": bool(page.get("image_used", False)),
             "image_decision_reason": str(page.get("image_decision_reason", "") or ""),
+            "ocr_requested": ocr_requested,
+            "ocr_used": ocr_used,
+            "ocr_provider_configured": bool(page.get("ocr_provider_configured", False)),
             "ocr_engine_used": str(page.get("ocr_engine_used", "") or ""),
             "ocr_failed_reason": str(page.get("ocr_failed_reason", "") or ""),
             "wall_seconds": float(page.get("wall_seconds", 0.0) or 0.0),
@@ -353,6 +388,9 @@ def build_run_report_payload(
     settings_obj = run_state.get("settings")
     if not isinstance(settings_obj, dict):
         settings_obj = {}
+    summary_pipeline_obj = run_summary.get("pipeline")
+    if not isinstance(summary_pipeline_obj, dict):
+        summary_pipeline_obj = {}
     resume_value = bool(settings_obj.get("resume", False))
     for event in events:
         if not isinstance(event, dict):
@@ -365,6 +403,52 @@ def build_run_report_payload(
         if "resume" in details_obj:
             resume_value = bool(details_obj.get("resume"))
         break
+
+    ocr_mode_value = str(settings_obj.get("ocr_mode", summary_pipeline_obj.get("ocr_mode", "")) or "").strip().lower()
+    if ocr_mode_value == "always":
+        fallback_ocr_requested = True
+    elif ocr_mode_value == "off":
+        fallback_ocr_requested = False
+    else:
+        fallback_ocr_requested = ocr_requested_pages > 0
+    if isinstance(summary_pipeline_obj.get("ocr_requested"), bool):
+        ocr_requested_value = bool(summary_pipeline_obj.get("ocr_requested"))
+    else:
+        ocr_requested_value = fallback_ocr_requested
+
+    if isinstance(summary_pipeline_obj.get("ocr_used"), bool):
+        ocr_used_value = bool(summary_pipeline_obj.get("ocr_used"))
+    else:
+        ocr_used_value = ocr_used_pages > 0
+
+    ocr_provider_configured_event: bool | None = None
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_type = str(event.get("event_type", "") or "")
+        if event_type == "ocr_engine_ready":
+            ocr_provider_configured_event = True
+            break
+        if event_type in {"ocr_engine_unavailable", "ocr_engine_not_configured"}:
+            ocr_provider_configured_event = False
+
+    if isinstance(summary_pipeline_obj.get("ocr_provider_configured"), bool):
+        ocr_provider_configured_value = bool(summary_pipeline_obj.get("ocr_provider_configured"))
+    elif ocr_provider_configured_event is not None:
+        ocr_provider_configured_value = bool(ocr_provider_configured_event)
+    elif ocr_mode_value == "off":
+        ocr_provider_configured_value = False
+    else:
+        ocr_provider_configured_value = any(bool(row.get("ocr_provider_configured", False)) for row in per_page)
+
+    if isinstance(summary_pipeline_obj.get("ocr_requested_pages"), int):
+        ocr_requested_pages_value = int(summary_pipeline_obj.get("ocr_requested_pages") or 0)
+    else:
+        ocr_requested_pages_value = int(ocr_requested_pages)
+    if isinstance(summary_pipeline_obj.get("ocr_used_pages"), int):
+        ocr_used_pages_value = int(summary_pipeline_obj.get("ocr_used_pages") or 0)
+    else:
+        ocr_used_pages_value = int(ocr_used_pages)
 
     payload: dict[str, Any] = {
         "schema_version": "admin_run_report_v1" if admin_mode else "basic_run_report_v1",
@@ -395,8 +479,13 @@ def build_run_report_payload(
         },
         "pipeline": {
             "image_mode": str(settings_obj.get("image_mode", run_summary.get("image_mode", "")) or ""),
-            "ocr_mode": str(settings_obj.get("ocr_mode", "") or ""),
-            "ocr_engine": str(settings_obj.get("ocr_engine", "") or ""),
+            "ocr_mode": str(settings_obj.get("ocr_mode", summary_pipeline_obj.get("ocr_mode", "")) or ""),
+            "ocr_engine": str(settings_obj.get("ocr_engine", summary_pipeline_obj.get("ocr_engine", "")) or ""),
+            "ocr_requested": bool(ocr_requested_value),
+            "ocr_used": bool(ocr_used_value),
+            "ocr_provider_configured": bool(ocr_provider_configured_value),
+            "ocr_requested_pages": int(ocr_requested_pages_value),
+            "ocr_used_pages": int(ocr_used_pages_value),
         },
         "totals": {
             "wall_seconds": float(totals_obj.get("total_wall_seconds", 0.0) or 0.0),
@@ -452,6 +541,7 @@ def build_run_report_markdown(
     totals_obj = payload.get("totals", {})
     output_obj = payload.get("output", {})
     warnings_obj = payload.get("warnings_errors", {})
+    pipeline_obj = payload.get("pipeline", {})
     timeline_obj = payload.get("timeline_events", [])
     if not isinstance(run_obj, dict):
         run_obj = {}
@@ -463,6 +553,8 @@ def build_run_report_markdown(
         output_obj = {}
     if not isinstance(warnings_obj, dict):
         warnings_obj = {}
+    if not isinstance(pipeline_obj, dict):
+        pipeline_obj = {}
     if not isinstance(timeline_obj, list):
         timeline_obj = []
 
@@ -486,6 +578,7 @@ def build_run_report_markdown(
         f"- Failed pages `{warnings_obj.get('failed_pages_count', 0)}` "
         f"({warnings_obj.get('failed_pages', [])})."
     )
+    lines.append(_ocr_summary_line(pipeline_obj))
     lines.append("")
     lines.append("## Timeline")
     lines.extend(_build_timeline_lines(timeline_obj))
@@ -504,6 +597,8 @@ def build_run_report_markdown(
                         f"Page {item.get('page_number')}: "
                         f"status={item.get('status')} "
                         f"route={item.get('source_route')} "
+                        f"ocr_requested={item.get('ocr_requested')} "
+                        f"ocr_used={item.get('ocr_used')} "
                         f"image={item.get('image_used')} "
                         f"retry_reason={item.get('retry_reason')} "
                         f"tokens={item.get('total_tokens')} "
