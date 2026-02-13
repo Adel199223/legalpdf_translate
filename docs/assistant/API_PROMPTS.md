@@ -5,7 +5,9 @@
 - Formatting-only retry prompt template: `src/legalpdf_translate/prompt_builder.py::build_retry_prompt`.
 - Prompt invocation per page and retry flow: `src/legalpdf_translate/workflow.py::TranslationWorkflow._process_page`.
 - Optional glossary block append: `src/legalpdf_translate/workflow.py::TranslationWorkflow._append_glossary_prompt` and `src/legalpdf_translate/glossary.py::format_glossary_for_prompt`.
+- Optional addendum append: `src/legalpdf_translate/workflow.py::TranslationWorkflow._append_prompt_addendum`.
 - API payload shape: `src/legalpdf_translate/openai_client.py::OpenAIResponsesClient.create_page_response`.
+- Calibration verifier prompts: `src/legalpdf_translate/calibration_audit.py::_verifier_prompt`, `_verifier_retry_prompt`, `_call_verifier_with_retries`.
 - System instructions loader: `src/legalpdf_translate/resources_loader.py::load_system_instructions`.
 - System instruction files:
   - `resources/system_instructions_enfr.txt`
@@ -13,12 +15,12 @@
 - Compliance parser/validators used after model output:
   - `src/legalpdf_translate/validators.py::parse_code_block_output`
   - `src/legalpdf_translate/validators.py::validate_enfr`
-  - `src/legalpdf_translate/validators.py::validate_ar`
-  - `src/legalpdf_translate/output_normalize.py::normalize_output_text`
+- `src/legalpdf_translate/validators.py::validate_ar`
+- `src/legalpdf_translate/output_normalize.py::normalize_output_text`
 
 How to inspect in repo:
 ```powershell
-rg -n "build_page_prompt|build_retry_prompt|create_page_response|_append_glossary_prompt|_process_page|load_system_instructions" src/legalpdf_translate
+rg -n "build_page_prompt|build_retry_prompt|create_page_response|_append_glossary_prompt|_append_prompt_addendum|_process_page|_verifier_prompt|_verifier_retry_prompt|load_system_instructions" src/legalpdf_translate
 Get-Content src/legalpdf_translate/prompt_builder.py
 Get-Content src/legalpdf_translate/openai_client.py
 Get-Content src/legalpdf_translate/workflow.py
@@ -49,6 +51,10 @@ Template behavior:
 
 Call path:
 - Built in `build_page_prompt(...)`, then used in `src/legalpdf_translate/workflow.py::TranslationWorkflow._process_page`.
+- Final page request ordering in workflow is:
+  1. base prompt from `build_page_prompt(...)`
+  2. optional glossary append (`_append_glossary_prompt`)
+  3. optional addendum append (`_append_prompt_addendum`)
 
 ## C. Optional context template (how it is injected, delimiters/markers)
 Source of truth: `src/legalpdf_translate/prompt_builder.py::build_page_prompt`.
@@ -105,7 +111,7 @@ Normalization contract:
   - for AR, wraps existing `[[...]]` tokens with LRI/PDI via `wrap_existing_tokens_with_isolates(...)`.
 
 ## F. Retry template(s) (formatting-only retry, including “prior output” wrapper)
-Template source: `src/legalpdf_translate/prompt_builder.py::build_retry_prompt`.
+Template source (translation compliance retry): `src/legalpdf_translate/prompt_builder.py::build_retry_prompt`.
 
 Retry prompt structure:
 - Header line (formatting fix only):
@@ -119,6 +125,17 @@ Retry call behavior (workflow):
 - Triggered from `src/legalpdf_translate/workflow.py::_process_page` when initial evaluation fails.
 - Retry call uses same `instructions`, retry prompt text, medium/high policy-resolved effort, and **no image** (`image_data_url=None`).
 
+Calibration verifier JSON retry:
+- Source: `src/legalpdf_translate/calibration_audit.py::_verifier_retry_prompt`.
+- Trigger path: `src/legalpdf_translate/calibration_audit.py::_call_verifier_with_retries`.
+- Header line is:
+  - `FORMAT FIX ONLY: Re-emit as valid JSON only matching the required schema. No markdown.`
+- Wrapped prior output markers are exact:
+  - `<<<BEGIN PRIOR OUTPUT>>>`
+  - `{PRIOR_OUTPUT}`
+  - `<<<END PRIOR OUTPUT>>>`
+- Retry limit: up to 2 retries after the first verifier attempt (3 total attempts).
+
 ## G. Placeholders dictionary (define every placeholder used, e.g. {PAGE_NUM}, {TOTAL_PAGES}, {SOURCE_TEXT}, {CONTEXT_TEXT}, {PRIOR_OUTPUT})
 - `{TARGET_PREFIX}`: `EN` for English, `FR` for French, omitted for Arabic (`build_page_prompt` behavior).
 - `{PAGE_NUM}`: current 1-based page number (`build_page_prompt` input).
@@ -126,11 +143,16 @@ Retry call behavior (workflow):
 - `{SOURCE_TEXT}`: per-page extracted/selected source text passed to prompt builder.
 - `{CONTEXT_TEXT}`: optional context text (file or inline) when provided.
 - `{GLOSSARY_BLOCK}`: optional appended block from `format_glossary_for_prompt(...)` via `_append_glossary_prompt`.
+- `{ADDENDUM_TEXT}`: optional per-language addendum from settings key `prompt_addendum_by_lang` appended by `_append_prompt_addendum`.
 - `{PRIOR_OUTPUT}`: first model output passed into `build_retry_prompt(...)`.
 - `{SYSTEM_INSTRUCTIONS}`: loaded text from `load_system_instructions(...)`.
 - `{EFFORT}`: reasoning effort passed to API call (`high`, `xhigh`, `medium`).
 - `{IMAGE_DATA_URL}`: optional rendered image data URL.
 - `{IMAGE_DETAIL}`: optional image detail (`low` or `high`) when image is attached.
+- `{EXTRACTED_SOURCE}`: extracted page text passed to calibration verifier prompt.
+- `{FORCED_OCR_SOURCE}`: forced-OCR page text passed to calibration verifier prompt.
+- `{TRANSLATED_OUTPUT}`: evaluated translation text passed to calibration verifier prompt.
+- `{ADDENDUM_CONTEXT}`: addendum text included in verifier context block.
 
 ## H. Copy/paste prompt blocks (one block per scenario) — TEMPLATE ONLY, with placeholders
 
@@ -180,7 +202,18 @@ FR
 <<<END GLOSSARY>>>
 ```
 
-### 6) Retry formatting-only prompt
+### 6) Primary with glossary + addendum appended
+```text
+{PRIMARY_PROMPT_TEMPLATE_FROM_ABOVE}
+<<<BEGIN GLOSSARY>>>
+{GLOSSARY_LINES}
+<<<END GLOSSARY>>>
+<<<BEGIN ADDENDUM>>>
+{ADDENDUM_TEXT}
+<<<END ADDENDUM>>>
+```
+
+### 7) Retry formatting-only prompt
 ```text
 COMPLIANCE FIX ONLY: Re-emit the SAME content, fix formatting only, as ONE plain-text code block and NOTHING ELSE.
 <<<BEGIN PRIOR OUTPUT>>>
@@ -188,7 +221,39 @@ COMPLIANCE FIX ONLY: Re-emit the SAME content, fix formatting only, as ONE plain
 <<<END PRIOR OUTPUT>>>
 ```
 
-### 7) API payload template (with optional image content object)
+### 8) Calibration verifier prompt (JSON-only contract)
+```text
+You are a legal translation verifier.
+Return JSON only. No markdown, no prose outside JSON.
+{VERIFIER_SCHEMA_TEXT}
+Page: {PAGE_NUM}
+Target language: {TARGET_LANG}
+<<<BEGIN EXTRACTED SOURCE>>>
+{EXTRACTED_SOURCE}
+<<<END EXTRACTED SOURCE>>>
+<<<BEGIN FORCED OCR SOURCE>>>
+{FORCED_OCR_SOURCE}
+<<<END FORCED OCR SOURCE>>>
+<<<BEGIN TRANSLATED OUTPUT>>>
+{TRANSLATED_OUTPUT}
+<<<END TRANSLATED OUTPUT>>>
+<<<BEGIN GLOSSARY CONTEXT>>>
+{GLOSSARY_BLOCK_OR_NONE}
+<<<END GLOSSARY CONTEXT>>>
+<<<BEGIN ADDENDUM CONTEXT>>>
+{ADDENDUM_CONTEXT}
+<<<END ADDENDUM CONTEXT>>>
+```
+
+### 9) Calibration verifier retry prompt
+```text
+FORMAT FIX ONLY: Re-emit as valid JSON only matching the required schema. No markdown.
+<<<BEGIN PRIOR OUTPUT>>>
+{PRIOR_OUTPUT}
+<<<END PRIOR OUTPUT>>>
+```
+
+### 10) API payload template (with optional image content object)
 ```text
 responses.create(
   model={OPENAI_MODEL},
@@ -212,13 +277,15 @@ responses.create(
 Do not change without coordinated code + docs updates:
 - Prompt delimiters and ordering in `build_page_prompt(...)` (`<<<PAGE...>>>`, context markers, source markers).
 - Retry wrapper markers/header in `build_retry_prompt(...)`.
+- Addendum markers/order in `_append_prompt_addendum` (`<<<BEGIN ADDENDUM>>> ... <<<END ADDENDUM>>>`).
+- Calibration verifier JSON prompt/retry wrappers in `_verifier_prompt` / `_verifier_retry_prompt`.
 - Payload ordering/content types in `create_page_response(...)` (`input_text` first, optional `input_image` second).
 - Compliance assumptions enforced by `parse_code_block_output`, `validate_enfr`, `validate_ar`, and `normalize_output_text`.
 - System instruction file selection logic in `load_system_instructions(...)`.
 
 Evaluation checklist for prompt edits:
 ```powershell
-rg -n "build_page_prompt|build_retry_prompt|create_page_response|_append_glossary_prompt|parse_code_block_output|validate_enfr|validate_ar|normalize_output_text" src/legalpdf_translate
+rg -n "build_page_prompt|build_retry_prompt|create_page_response|_append_glossary_prompt|_append_prompt_addendum|_verifier_prompt|_verifier_retry_prompt|parse_code_block_output|validate_enfr|validate_ar|normalize_output_text" src/legalpdf_translate
 python -m pytest -q
 python -m compileall src tests
 ```

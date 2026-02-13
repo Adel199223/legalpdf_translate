@@ -450,9 +450,86 @@ def normalize_glossaries(
     return output
 
 
-def serialize_glossaries(glossaries_by_lang: dict[str, list[GlossaryEntry]]) -> dict[str, list[dict[str, object]]]:
+def _scope_conflict_key(entry: GlossaryEntry) -> tuple[str, str, str, int]:
+    return (
+        entry.source_text,
+        entry.source_lang,
+        entry.match_mode,
+        int(entry.tier),
+    )
+
+
+def merge_glossary_scopes(
+    project_glossaries: dict[str, list[GlossaryEntry]],
+    personal_glossaries: dict[str, list[GlossaryEntry]],
+    *,
+    supported_langs: list[str] | None = None,
+) -> dict[str, list[GlossaryEntry]]:
+    langs = supported_langs if supported_langs is not None else supported_target_langs()
+    normalized_project = normalize_glossaries(project_glossaries, langs)
+    normalized_personal = normalize_glossaries(personal_glossaries, langs)
+    merged: dict[str, list[GlossaryEntry]] = {}
+    for lang in langs:
+        project_rows = list(normalized_project.get(lang, []))
+        personal_rows = list(normalized_personal.get(lang, []))
+        if not project_rows and not personal_rows:
+            merged[lang] = []
+            continue
+
+        output_rows = list(project_rows)
+        by_conflict_key: dict[tuple[str, str, str, int], int] = {}
+        seen_exact: set[tuple[str, str, str, str, int]] = set()
+        for idx, row in enumerate(output_rows):
+            by_conflict_key[_scope_conflict_key(row)] = idx
+            seen_exact.add(
+                (
+                    row.source_text,
+                    row.preferred_translation,
+                    row.match_mode,
+                    row.source_lang,
+                    int(row.tier),
+                )
+            )
+
+        for personal in personal_rows:
+            exact_key = (
+                personal.source_text,
+                personal.preferred_translation,
+                personal.match_mode,
+                personal.source_lang,
+                int(personal.tier),
+            )
+            if exact_key in seen_exact:
+                continue
+            conflict_key = _scope_conflict_key(personal)
+            prior_index = by_conflict_key.get(conflict_key)
+            if prior_index is None:
+                by_conflict_key[conflict_key] = len(output_rows)
+                output_rows.append(personal)
+                seen_exact.add(exact_key)
+                continue
+            output_rows[prior_index] = personal
+            seen_exact = {
+                (
+                    row.source_text,
+                    row.preferred_translation,
+                    row.match_mode,
+                    row.source_lang,
+                    int(row.tier),
+                )
+                for row in output_rows
+            }
+        merged[lang] = output_rows
+    return normalize_glossaries(merged, langs)
+
+
+def serialize_glossaries(
+    glossaries_by_lang: dict[str, list[GlossaryEntry]],
+    supported_langs: list[str] | None = None,
+) -> dict[str, list[dict[str, object]]]:
     output: dict[str, list[dict[str, object]]] = {}
-    for lang in supported_target_langs():
+    langs = supported_langs if supported_langs is not None else supported_target_langs()
+    for lang in langs:
         rows = glossaries_by_lang.get(lang, [])
         output[lang] = [
             {
@@ -465,6 +542,64 @@ def serialize_glossaries(glossaries_by_lang: dict[str, list[GlossaryEntry]]) -> 
             for entry in rows
         ]
     return output
+
+
+def _coerce_project_table_payload(payload: dict[str, object]) -> dict[str, list[GlossaryEntry]]:
+    langs = supported_target_langs()
+    if "glossaries_by_lang" in payload:
+        return normalize_glossaries(payload.get("glossaries_by_lang"), langs)
+    # Backward compatible shape: top-level language buckets.
+    return normalize_glossaries(payload, langs)
+
+
+def load_project_glossaries(path: Path | None) -> dict[str, list[GlossaryEntry]]:
+    langs = supported_target_langs()
+    empty = normalize_glossaries({}, langs)
+    if path is None:
+        return empty
+    glossary_path = path.expanduser().resolve()
+    try:
+        raw = glossary_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"Unable to read glossary file: {glossary_path}") from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid glossary JSON at {glossary_path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid glossary JSON at {glossary_path}: root must be an object.")
+    # Legacy format: {"version":1,"rules":[...]}
+    if "rules" in payload:
+        # Preserve fail-fast validation behavior for custom files.
+        load_glossary(glossary_path)
+        return normalize_glossaries(entries_from_legacy_rules(glossary_path), langs)
+    return _coerce_project_table_payload(payload)
+
+
+def serialize_project_glossaries_payload(
+    glossaries_by_lang: dict[str, list[GlossaryEntry]],
+    *,
+    supported_langs: list[str] | None = None,
+) -> dict[str, object]:
+    langs = supported_langs if supported_langs is not None else supported_target_langs()
+    return {
+        "version": 1,
+        "format": "table_glossaries",
+        "glossaries_by_lang": serialize_glossaries(
+            normalize_glossaries(glossaries_by_lang, langs),
+            langs,
+        ),
+    }
+
+
+def save_project_glossaries(path: Path, glossaries_by_lang: dict[str, list[GlossaryEntry]]) -> Path:
+    target = path.expanduser().resolve()
+    payload = serialize_project_glossaries_payload(glossaries_by_lang)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = target.with_suffix(target.suffix + ".tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_path.replace(target)
+    return target
 
 
 def detect_source_lang_for_glossary(source_text: str) -> str:
@@ -526,6 +661,54 @@ def normalize_enabled_tiers_by_target_lang(
             tiers = list(default_tiers)
         output[code] = sorted(tiers)
     return output
+
+
+def _escape_markdown_cell(value: object) -> str:
+    return str(value or "").replace("|", "\\|").replace("\n", " ").strip()
+
+
+def build_consistency_glossary_markdown(
+    glossaries_by_lang: dict[str, list[GlossaryEntry]],
+    *,
+    enabled_tiers_by_lang: dict[str, list[int]],
+    generated_at_iso: str,
+    title: str = "AI Glossary",
+) -> str:
+    supported = supported_target_langs()
+    normalized_glossaries = normalize_glossaries(glossaries_by_lang, supported)
+    normalized_enabled = normalize_enabled_tiers_by_target_lang(enabled_tiers_by_lang, supported)
+
+    lines: list[str] = [
+        f"# {title}",
+        "",
+        f"Generated: {generated_at_iso}",
+    ]
+    for lang in supported:
+        rows = normalized_glossaries.get(lang, [])
+        enabled_tiers = normalized_enabled.get(lang, [1, 2])
+        enabled_text = ", ".join(f"T{tier}" for tier in enabled_tiers)
+        lines.extend(["", f"## {lang}", "", f"Enabled tiers: {enabled_text}", ""])
+        if not rows:
+            lines.append("No entries.")
+            continue
+        headers = ["Source phrase (PDF text)", "Preferred translation", "Match", "Source lang", "Tier"]
+        lines.append("| " + " | ".join(headers) + " |")
+        lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+        for entry in rows:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _escape_markdown_cell(entry.source_text),
+                        _escape_markdown_cell(entry.preferred_translation),
+                        _escape_markdown_cell(entry.match_mode),
+                        _escape_markdown_cell(entry.source_lang),
+                        str(int(entry.tier)),
+                    ]
+                )
+                + " |"
+            )
+    return "\n".join(lines).strip() + "\n"
 
 
 def filter_entries_for_prompt(

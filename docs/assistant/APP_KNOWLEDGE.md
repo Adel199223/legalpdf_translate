@@ -16,6 +16,8 @@ Primary user workflows:
 - Translate via CLI (`src/legalpdf_translate/cli.py::main`).
 - Analyze-only preflight without translation API calls (`src/legalpdf_translate/cli.py` flag `--analyze-only`, `src/legalpdf_translate/workflow.py::TranslationWorkflow.analyze`).
 - Rebuild DOCX from existing run pages (`src/legalpdf_translate/workflow.py::TranslationWorkflow.rebuild_docx`).
+- Build consistency glossary suggestions from corpus pages (`src/legalpdf_translate/qt_gui/app_window.py::_open_glossary_builder_dialog`, `src/legalpdf_translate/qt_gui/tools_dialogs.py::QtGlossaryBuilderDialog`).
+- Run calibration QA audit on sampled pages (`src/legalpdf_translate/qt_gui/app_window.py::_open_calibration_audit_dialog`, `src/legalpdf_translate/qt_gui/tools_dialogs.py::QtCalibrationAuditDialog`).
 - Export run report (save Markdown or copy clipboard) (`src/legalpdf_translate/qt_gui/app_window.py::_open_run_report`, `src/legalpdf_translate/run_report.py::build_run_report_markdown`).
 - Save run metadata to job log (`src/legalpdf_translate/qt_gui/dialogs.py::QtSaveToJobLogDialog`, `src/legalpdf_translate/joblog_db.py::insert_job_run`).
 - Assistant routing hint: If asked "what can a user do", inspect `README.md`, then `src/legalpdf_translate/qt_gui/app_window.py`, then `src/legalpdf_translate/cli.py`.
@@ -84,16 +86,21 @@ Assistant routing hint: If asked "how do I launch", inspect `README.md` and `pyp
 Core modules:
 - `src/legalpdf_translate/qt_gui/app_window.py`: main window UI state machine (`QtMainWindow`) and run/report/joblog actions.
 - `src/legalpdf_translate/qt_gui/dialogs.py`: settings dialog (`QtSettingsDialog`), key show/hide, debug bundle creation, job log dialogs.
+- `src/legalpdf_translate/qt_gui/tools_dialogs.py`: Glossary Builder and Calibration Audit dialogs/workers.
 - `src/legalpdf_translate/qt_gui/worker.py`: Qt thread workers for run/analyze/rebuild.
 - `src/legalpdf_translate/workflow.py`: translation pipeline orchestration (`TranslationWorkflow`).
 - `docs/assistant/API_PROMPTS.md`: canonical assistant-facing catalog of system/user prompt templates and API payload shapes (grounded to code symbols).
 - `src/legalpdf_translate/run_report.py`: event collector, redaction/sanitization, Markdown+JSON report builder.
 - `src/legalpdf_translate/glossary.py`: glossary schema/normalization helpers (`GlossaryEntry`, `normalize_glossaries`), tier controls (`tier`, `normalize_enabled_tiers_by_target_lang`), source-language detection/filtering for prompt guidance (`detect_source_lang_for_glossary`, `filter_entries_for_prompt`), prompt sort/cap helpers, and legacy file-rule compatibility helpers.
+- `src/legalpdf_translate/glossary_builder.py`: consistency glossary suggestion mining (frequency/dispersion thresholds + markdown/json suggestion rendering).
+- `src/legalpdf_translate/study_glossary.py`: learning-only glossary mining/scoring/coverage helpers (`mine_study_candidates`, `compute_non_overlapping_tier_assignment`, `apply_subsumption_suppression`, `normalize_study_entries`) and translation-fill helpers for short term cards.
+- `src/legalpdf_translate/calibration_audit.py`: deterministic page sampling, forced-OCR QA checks, verifier-LLM JSON retry handling, calibration artifact writing.
 - `src/legalpdf_translate/openai_client.py`: transport retries/backoff wrapper around OpenAI Responses API.
 - `src/legalpdf_translate/ocr_engine.py`: OCR engine policy and fallback (`local`, `local_then_api`, `api`).
 - `src/legalpdf_translate/checkpoint.py`: run-state schema/persistence and resume compatibility.
 - `src/legalpdf_translate/output_paths.py`: deterministic run/output paths and writable outdir checks.
 - `src/legalpdf_translate/user_settings.py`: GUI/joblog settings persistence and normalization.
+- `src/legalpdf_translate/qt_gui/dialogs.py::_build_tab_study`: Study Glossary settings-tab UI (run-folder builder, streaming generation worker, cancel, search/Ctrl+F, quiz/review, Markdown export).
 - `src/legalpdf_translate/secrets_store.py`: secure keyring-backed key storage wrappers.
 - `src/legalpdf_translate/joblog_db.py`: SQLite job log schema/migrations/CRUD.
 - `src/legalpdf_translate/docx_writer.py`: DOCX assembly from page outputs, including RTL paragraph/run direction handling and bidi-control sanitization helpers.
@@ -140,7 +147,9 @@ Assistant routing hint: If asked "which module owns behavior X", start at `workf
 - Per-language glossary prompt guidance is injected in `src/legalpdf_translate/workflow.py::_process_page` via `TranslationWorkflow._append_glossary_prompt` + `src/legalpdf_translate/glossary.py::format_glossary_for_prompt`.
 - Source-language-aware + tier-aware filtering happens before prompt injection (`detect_source_lang_for_glossary`, `filter_entries_for_prompt`) so rows can target source language (`PT|EN|FR|ANY|AUTO`) and only active tiers are injected.
 - Injection is token-controlled: entries are sorted by tier/impact and capped (`max 50` entries and `max 6000` chars) before prompt append.
+- Optional per-language addendum text is appended after glossary block in `src/legalpdf_translate/workflow.py::TranslationWorkflow._append_prompt_addendum` (settings key `prompt_addendum_by_lang`).
 - Workflow output finalization keeps parser/normalizer/validator behavior and no longer applies glossary blind post-replacements in `_evaluate_output`.
+- Study Glossary is intentionally isolated from translation prompt injection: its data lives in `study_glossary_entries` (settings) and UI/helpers under `src/legalpdf_translate/study_glossary.py` + `src/legalpdf_translate/qt_gui/dialogs.py`; translation still only uses `glossaries_by_lang` in `TranslationWorkflow._append_glossary_prompt`.
 - Successful page writes to run `pages/` directory.
 
 8. Final DOCX rebuild/export and summaries
@@ -190,10 +199,29 @@ Settings storage:
 - Load/save: `load_settings`, `save_settings`, `load_gui_settings`, `save_gui_settings`.
 - App data dir helper: `app_data_dir`.
 - Glossary settings keys:
+  - `personal_glossaries_by_lang` (personal consistency glossary, per target language)
   - `glossaries_by_lang` (per-target-language table rows)
+  - `prompt_addendum_by_lang` (optional per-target-language prompt addendum text)
   - `enabled_glossary_tiers_by_target_lang` (per-target-language active tiers for prompt injection)
   - `glossary_seed_version` (one-time AR seed tracking)
   - `glossary_file_path` (legacy file-path fallback)
+- Calibration settings keys:
+  - `calibration_sample_pages_default`
+  - `calibration_user_seed`
+  - `calibration_enable_excerpt_storage`
+  - `calibration_excerpt_max_chars`
+- Consistency glossary scopes:
+  - Personal scope in settings: `personal_glossaries_by_lang`
+  - Project/shared scope from file: `glossary_file_path` loaded by `src/legalpdf_translate/glossary.py::load_project_glossaries`
+  - Merge policy in runtime: `src/legalpdf_translate/glossary.py::merge_glossary_scopes` (personal overrides conflict rows)
+- Study Glossary settings keys (learning-only, not injected into translation prompts):
+  - `study_glossary_entries`
+  - `study_glossary_include_snippets`
+  - `study_glossary_snippet_max_chars`
+  - `study_glossary_last_run_dirs`
+  - `study_glossary_corpus_source`
+  - `study_glossary_pdf_paths`
+  - `study_glossary_default_coverage_percent`
 - Glossary UI now has a dedicated table editor tab in `src/legalpdf_translate/qt_gui/dialogs.py::_build_tab_glossary` with rows keyed on source phrase:
   - `Source phrase (PDF text)`
   - `Preferred translation`
@@ -202,6 +230,29 @@ Settings storage:
   - `Tier` (`1..6`)
   - Search filter + `Ctrl+F` focus shortcut
   - Active tier checkboxes (`T1..T6`) controlling prompt injection
+  - content-only Markdown export (`Export...`) for consistency glossary review (`AI_Glossary_YYYY-MM-DD.md`)
+- Study Glossary UI lives in `src/legalpdf_translate/qt_gui/dialogs.py::_build_tab_study` and is separate from AI Glossary:
+  - candidate builder supports corpus source modes:
+    - `Run folders` (default; reuses `pages/page_*.txt` when present)
+    - `Current PDF only` (active PDF from main window)
+    - `Select PDFs...` (explicit multi-file list)
+    - `From Job Log runs` (shown but unavailable in current version; no joblog run/pdf-path migration)
+  - streaming candidate generation with cancel support (no full corpus text list in memory)
+  - search + category/status/coverage filters + `Ctrl+F`
+  - non-overlapping 20/80 coverage assignment (longest-match-first: tri->bi->uni) for tiering stability
+  - subsumption suppression demotes short noisy terms to `LongTail` when longer phrases already account for most matches
+  - learning statuses (`new|learning|known|hard`) and review dates
+  - optional snippet storage (capped, opt-in)
+  - optional manual action `Copy selected to AI Glossary...`:
+    - explicit confirmation required
+    - defaults: `match=exact`, `source_lang=PT`, `tier=2`
+    - copies only non-empty target-language translations
+    - duplicate rows skipped; conflicts prompt for skip vs replace (never silent overwrite)
+  - content-only Markdown export (`Export...`) with tier sections (`Core80`, `Next15`, `LongTail`) and columns `PT/AR/FR/EN/TF/Pages/Docs/Tier/Category/Status`
+- Glossary Builder / Calibration Audit dialogs are launched from main window actions in `src/legalpdf_translate/qt_gui/app_window.py` and implemented in `src/legalpdf_translate/qt_gui/tools_dialogs.py`:
+  - `QtGlossaryBuilderDialog` mines candidates and writes `glossary_builder_suggestions.json/.md`
+  - `QtCalibrationAuditDialog` writes `calibration_report.json/.md` and `calibration_suggestions.json`
+  - Both use explicit Apply/Cancel flows and do not auto-modify prompt templates.
 
 Secret storage:
 - Keyring wrapper module: `src/legalpdf_translate/secrets_store.py`.
@@ -325,7 +376,13 @@ Assistant routing hint: If asked for "minimum QA after a change", run targeted t
 - Checkpoint/resume logic: `src/legalpdf_translate/checkpoint.py`, `src/legalpdf_translate/workflow.py::_load_or_initialize_run_state`
 - Output/run folder naming: `src/legalpdf_translate/output_paths.py::build_output_paths`
 - DOCX rebuild path: `src/legalpdf_translate/workflow.py::TranslationWorkflow.rebuild_docx`
-- Glossary table + prompt guidance: `src/legalpdf_translate/qt_gui/dialogs.py::_build_tab_glossary`, `_set_glossaries_from_settings`, `_read_glossary_table_rows`; `src/legalpdf_translate/glossary.py::normalize_glossaries`, `normalize_enabled_tiers_by_target_lang`, `detect_source_lang_for_glossary`, `filter_entries_for_prompt`, `sort_entries_for_prompt`, `cap_entries_for_prompt`, `format_glossary_for_prompt`; `src/legalpdf_translate/workflow.py::_append_glossary_prompt`
+- Glossary table + prompt guidance: `src/legalpdf_translate/qt_gui/dialogs.py::_build_tab_glossary`, `_set_glossaries_from_settings`, `_read_glossary_table_rows`, `_export_consistency_glossary_markdown`; `src/legalpdf_translate/glossary.py::normalize_glossaries`, `normalize_enabled_tiers_by_target_lang`, `build_consistency_glossary_markdown`, `detect_source_lang_for_glossary`, `filter_entries_for_prompt`, `sort_entries_for_prompt`, `cap_entries_for_prompt`, `format_glossary_for_prompt`; `src/legalpdf_translate/workflow.py::_append_glossary_prompt`
+- Glossary scope merge/project loading: `src/legalpdf_translate/glossary.py::load_project_glossaries`, `merge_glossary_scopes`, `save_project_glossaries`; runtime use in `src/legalpdf_translate/workflow.py::TranslationWorkflow.run`
+- Prompt addendum append point: `src/legalpdf_translate/workflow.py::_append_prompt_addendum`; settings key `prompt_addendum_by_lang`
+- Glossary Builder dialog/actions: `src/legalpdf_translate/qt_gui/app_window.py::_open_glossary_builder_dialog`, `src/legalpdf_translate/qt_gui/tools_dialogs.py::QtGlossaryBuilderDialog`, `_GlossaryBuilderWorker`
+- Calibration Audit dialog/actions: `src/legalpdf_translate/qt_gui/app_window.py::_open_calibration_audit_dialog`, `src/legalpdf_translate/qt_gui/tools_dialogs.py::QtCalibrationAuditDialog`, `_CalibrationAuditWorker`; backend `src/legalpdf_translate/calibration_audit.py::run_calibration_audit`, `pick_sample_pages`
+- Study Glossary (learning-only): `src/legalpdf_translate/qt_gui/dialogs.py::_build_tab_study`, `_generate_study_candidates`, `_cancel_study_generation`, `_export_study_glossary_markdown`, `_add_selected_candidates_to_study_glossary`; `src/legalpdf_translate/study_glossary.py::tokenize_pt`, `build_ngram_index`, `count_non_overlapping_matches`, `compute_non_overlapping_tier_assignment`, `apply_subsumption_suppression`, `update_candidate_stats_from_page`, `finalize_study_candidates`, `build_study_glossary_markdown`, `normalize_study_entries`, `merge_study_entries`
+- Study Glossary settings keys/normalization: `src/legalpdf_translate/user_settings.py::load_gui_settings` (`study_glossary_entries`, snippet/corpus/coverage keys)
 - Legacy glossary file fallback: `src/legalpdf_translate/glossary.py::load_glossary`, `entries_from_legacy_rules`; setting key `glossary_file_path`
 - AR glossary integration point: `src/legalpdf_translate/workflow.py::_process_page` (prompt block injection)
 - RTL DOCX formatting and mixed-direction run handling: `src/legalpdf_translate/docx_writer.py::assemble_docx`, `sanitize_bidi_controls`, `_segment_directional_runs`

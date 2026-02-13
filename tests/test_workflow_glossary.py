@@ -119,3 +119,22 @@ def test_append_glossary_prompt_caps_entries_deterministically() -> None:
     assert "src-10" in prompt
     assert "src-59" in prompt
     assert "src-60" not in prompt
+
+
+def test_append_glossary_prompt_ignores_study_glossary_data() -> None:
+    workflow = TranslationWorkflow(client=object())
+    workflow._prompt_glossaries_by_lang = {
+        "EN": [],
+        "FR": [],
+        "AR": [GlossaryEntry("acusação", "الاتهام", "exact", "PT", 1)],
+    }
+    workflow._enabled_glossary_tiers_by_lang = {"EN": [1, 2], "FR": [1, 2], "AR": [1, 2]}
+    workflow._study_glossary_entries = [  # type: ignore[attr-defined]
+        {"term_pt": "acusação", "translations_by_lang": {"AR": "نص دراسة"}}
+    ]
+
+    prompt = workflow._append_glossary_prompt("BASE", TargetLang.AR, source_text="acusação")
+
+    assert "<<<BEGIN GLOSSARY>>>" in prompt
+    assert "الاتهام" in prompt
+    assert "نص دراسة" not in prompt

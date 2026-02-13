@@ -7,6 +7,7 @@ import pytest
 
 from legalpdf_translate.glossary import (
     cap_entries_for_prompt,
+    build_consistency_glossary_markdown,
     coerce_glossary_tier,
     GlossaryEntry,
     apply_glossary,
@@ -516,6 +517,26 @@ def test_normalize_enabled_tiers_defaults_and_future_langs() -> None:
 def test_normalize_enabled_tiers_filters_invalid_values() -> None:
     normalized = normalize_enabled_tiers_by_target_lang({"AR": ["2", "2", "x", 7, 1]}, ["AR"])
     assert normalized["AR"] == [1, 2]
+
+
+def test_build_consistency_glossary_markdown_uses_schema_columns_only() -> None:
+    markdown = build_consistency_glossary_markdown(
+        {
+            "AR": [GlossaryEntry("acusação", "الاتهام", "exact", "PT", 1)],
+            "EN": [],
+            "FR": [],
+        },
+        enabled_tiers_by_lang={"AR": [1, 3], "EN": [1, 2], "FR": [2]},
+        generated_at_iso="2026-02-13T12:00:00",
+        title="AI Glossary",
+    )
+
+    assert markdown.startswith("# AI Glossary")
+    assert "## AR" in markdown
+    assert "Enabled tiers: T1, T3" in markdown
+    assert "| Source phrase (PDF text) | Preferred translation | Match | Source lang | Tier |" in markdown
+    assert "| Notes |" not in markdown
+    assert "acusação" in markdown
 
 
 def test_filter_entries_for_prompt_filters_by_source_lang_and_enabled_tiers() -> None:

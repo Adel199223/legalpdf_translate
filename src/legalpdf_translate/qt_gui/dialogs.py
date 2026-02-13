@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from openai import OpenAI
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, QThread, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -29,9 +29,12 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QPlainTextEdit,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -42,6 +45,7 @@ from PySide6.QtWidgets import (
 from legalpdf_translate.config import OPENAI_MODEL
 from legalpdf_translate.glossary import (
     GlossaryEntry,
+    build_consistency_glossary_markdown,
     builtin_glossary_json,
     coerce_glossary_tier,
     coerce_source_lang,
@@ -68,6 +72,8 @@ from legalpdf_translate.metadata_autofill import (
     extract_photo_metadata_from_image,
     metadata_config_from_settings,
 )
+from legalpdf_translate.openai_client import OpenAIResponsesClient
+from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
 from legalpdf_translate.secrets_store import (
     delete_openai_key,
     delete_ocr_key,
@@ -75,6 +81,25 @@ from legalpdf_translate.secrets_store import (
     get_ocr_key,
     set_openai_key,
     set_ocr_key,
+)
+from legalpdf_translate.study_glossary import (
+    StudyCandidate,
+    StudyGlossaryEntry,
+    apply_subsumption_suppression,
+    build_study_glossary_markdown,
+    build_entry_from_candidate,
+    compute_non_overlapping_tier_assignment,
+    create_candidate_stats,
+    compute_next_review_date,
+    finalize_study_candidates,
+    filter_candidates_by_thresholds,
+    fill_translations_for_entry,
+    merge_study_entries,
+    normalize_study_entries,
+    serialize_study_entries,
+    supported_learning_langs,
+    tokenize_page_for_mode,
+    update_candidate_stats_from_page,
 )
 from legalpdf_translate.user_settings import app_data_dir, load_joblog_settings, save_joblog_settings
 
@@ -850,6 +875,293 @@ class QtGlossaryEditorDialog(QDialog):
             self.accept()
 
 
+class _StudyTranslationWorker(QObject):
+    progress = Signal(int, str)
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        entries: list[StudyGlossaryEntry],
+        supported_langs: list[str],
+    ) -> None:
+        super().__init__()
+        self._entries = list(entries)
+        self._supported_langs = list(supported_langs)
+
+    def run(self) -> None:
+        try:
+            client = OpenAIResponsesClient()
+            updated: list[StudyGlossaryEntry] = []
+            total = max(1, len(self._entries))
+            for index, entry in enumerate(self._entries, start=1):
+                self.progress.emit(
+                    int(((index - 1) / float(total)) * 100.0),
+                    f"Refreshing translations for '{entry.term_pt}' ({index}/{total})",
+                )
+                updated.append(
+                    fill_translations_for_entry(
+                        entry,
+                        supported_langs=self._supported_langs,
+                        client=client,
+                        fill_only_missing=False,
+                    )
+                )
+            self.progress.emit(100, "Translation refresh complete.")
+            self.finished.emit(updated)
+        except Exception as exc:  # noqa: BLE001
+            self.error.emit(str(exc))
+
+
+class _StudyCandidateWorker(QObject):
+    progress = Signal(int, str)
+    finished = Signal(object)
+    cancelled = Signal()
+    error = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        source_mode: str,
+        run_dirs: list[str],
+        pdf_paths: list[str],
+        mode: str,
+        include_snippets: bool,
+        snippet_max_chars: int,
+    ) -> None:
+        super().__init__()
+        self._source_mode = str(source_mode or "run_folders").strip().lower()
+        self._run_dirs = list(run_dirs)
+        self._pdf_paths = list(pdf_paths)
+        self._mode = mode
+        self._include_snippets = bool(include_snippets)
+        self._snippet_max_chars = int(snippet_max_chars)
+        self._cancel_requested = False
+
+    def cancel(self) -> None:
+        self._cancel_requested = True
+
+    def _iter_page_numbers_from_state(self, state_payload: dict[str, object]) -> list[int]:
+        page_numbers: list[int] = []
+        pages_payload = state_payload.get("pages")
+        if isinstance(pages_payload, dict):
+            for key in pages_payload.keys():
+                try:
+                    value = int(str(key))
+                except (TypeError, ValueError):
+                    continue
+                if value > 0:
+                    page_numbers.append(value)
+        if page_numbers:
+            return sorted(set(page_numbers))
+        try:
+            start = int(state_payload.get("selection_start_page", 1))
+            end = int(state_payload.get("selection_end_page", start))
+        except (TypeError, ValueError):
+            start = 1
+            end = 1
+        if end < start:
+            return []
+        return list(range(start, end + 1))
+
+    def _resolve_pdf_path(self, run_dir: Path, state_payload: dict[str, object]) -> Path | None:
+        pdf_path_raw = str(state_payload.get("pdf_path", "") or "").strip()
+        if pdf_path_raw == "":
+            return None
+        pdf_path = Path(pdf_path_raw).expanduser()
+        if not pdf_path.is_absolute():
+            pdf_path = (run_dir / pdf_path).resolve()
+        if not pdf_path.exists() or not pdf_path.is_file():
+            return None
+        return pdf_path
+
+    def _ordered_page_text(self, pdf_path: Path, page_number: int) -> str:
+        try:
+            ordered = extract_ordered_page_text(pdf_path, page_number - 1)
+        except Exception:  # noqa: BLE001
+            return ""
+        if ordered.extraction_failed:
+            return ""
+        return str(ordered.text or "")
+
+    def _ingest_page_text(
+        self,
+        *,
+        doc_id: str,
+        page_number: int,
+        page_text: str,
+        stats: dict[str, object],
+        pages_tokens: list[list[str]],
+    ) -> bool:
+        if page_text.strip() == "":
+            return False
+        page_tokens = tokenize_page_for_mode(
+            page_text,
+            self._mode if self._mode in {"full_text", "headers_only"} else "full_text",  # type: ignore[arg-type]
+        )
+        if page_tokens:
+            pages_tokens.append(page_tokens)
+        update_candidate_stats_from_page(
+            doc_id=doc_id,
+            page_number=page_number,
+            text=page_text,
+            mode=self._mode,  # type: ignore[arg-type]
+            include_snippets=self._include_snippets,
+            snippet_max_chars=self._snippet_max_chars,
+            stats=stats,
+        )
+        return True
+
+    def _scan_pdf_source(
+        self,
+        *,
+        pdf_path: Path,
+        doc_id: str,
+        stats: dict[str, object],
+        pages_tokens: list[list[str]],
+    ) -> tuple[int, bool]:
+        try:
+            page_count = int(get_page_count(pdf_path))
+        except Exception:  # noqa: BLE001
+            return (0, False)
+        if page_count <= 0:
+            return (0, False)
+        pages_scanned = 0
+        for page_number in range(1, page_count + 1):
+            if self._cancel_requested:
+                return (pages_scanned, True)
+            page_text = self._ordered_page_text(pdf_path, page_number)
+            if self._ingest_page_text(
+                doc_id=doc_id,
+                page_number=page_number,
+                page_text=page_text,
+                stats=stats,
+                pages_tokens=pages_tokens,
+            ):
+                pages_scanned += 1
+        return (pages_scanned, False)
+
+    def run(self) -> None:
+        try:
+            stats = create_candidate_stats()
+            pages_tokens: list[list[str]] = []
+            total_pages_scanned = 0
+            sources_processed = 0
+            source_mode = self._source_mode if self._source_mode in {
+                "run_folders",
+                "current_pdf",
+                "select_pdfs",
+                "joblog_runs",
+            } else "run_folders"
+
+            if source_mode == "run_folders":
+                total_sources = max(1, len(self._run_dirs))
+                for source_index, raw_dir in enumerate(self._run_dirs, start=1):
+                    if self._cancel_requested:
+                        self.cancelled.emit()
+                        return
+                    run_dir = Path(raw_dir).expanduser().resolve()
+                    run_state_path = run_dir / "run_state.json"
+                    if not run_state_path.exists():
+                        sources_processed += 1
+                        self.progress.emit(
+                            int((sources_processed / float(total_sources)) * 100.0),
+                            f"Skipping {run_dir.name}: run_state.json not found ({source_index}/{total_sources}).",
+                        )
+                        continue
+                    try:
+                        state_payload = json.loads(run_state_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        sources_processed += 1
+                        self.progress.emit(
+                            int((sources_processed / float(total_sources)) * 100.0),
+                            f"Skipping {run_dir.name}: invalid run_state.json ({source_index}/{total_sources}).",
+                        )
+                        continue
+                    if not isinstance(state_payload, dict):
+                        sources_processed += 1
+                        continue
+                    doc_id = run_dir.name
+                    page_numbers = self._iter_page_numbers_from_state(state_payload)
+                    pages_dir = run_dir / "pages"
+                    pdf_path = self._resolve_pdf_path(run_dir, state_payload)
+                    for page_number in page_numbers:
+                        if self._cancel_requested:
+                            self.cancelled.emit()
+                            return
+                        page_text = ""
+                        page_file = pages_dir / f"page_{page_number:04d}.txt"
+                        if page_file.exists():
+                            try:
+                                page_text = page_file.read_text(encoding="utf-8")
+                            except OSError:
+                                page_text = ""
+                        if page_text.strip() == "" and pdf_path is not None:
+                            page_text = self._ordered_page_text(pdf_path, page_number)
+                        if self._ingest_page_text(
+                            doc_id=doc_id,
+                            page_number=page_number,
+                            page_text=page_text,
+                            stats=stats,
+                            pages_tokens=pages_tokens,
+                        ):
+                            total_pages_scanned += 1
+                        if total_pages_scanned > 0 and total_pages_scanned % 10 == 0:
+                            source_progress = int(((source_index - 1) / float(total_sources)) * 100.0)
+                            self.progress.emit(
+                                source_progress,
+                                f"Processing {run_dir.name}: {total_pages_scanned} pages scanned.",
+                            )
+                    sources_processed += 1
+                    self.progress.emit(
+                        int((sources_processed / float(total_sources)) * 100.0),
+                        f"Processed {sources_processed}/{total_sources} sources; pages scanned: {total_pages_scanned}.",
+                    )
+            else:
+                total_sources = max(1, len(self._pdf_paths))
+                for source_index, raw_pdf in enumerate(self._pdf_paths, start=1):
+                    if self._cancel_requested:
+                        self.cancelled.emit()
+                        return
+                    pdf_path = Path(raw_pdf).expanduser().resolve()
+                    if not pdf_path.exists() or not pdf_path.is_file():
+                        sources_processed += 1
+                        self.progress.emit(
+                            int((sources_processed / float(total_sources)) * 100.0),
+                            f"Skipping missing PDF ({source_index}/{total_sources}): {pdf_path.name}",
+                        )
+                        continue
+                    scanned, was_cancelled = self._scan_pdf_source(
+                        pdf_path=pdf_path,
+                        doc_id=pdf_path.stem,
+                        stats=stats,
+                        pages_tokens=pages_tokens,
+                    )
+                    if was_cancelled:
+                        self.cancelled.emit()
+                        return
+                    total_pages_scanned += scanned
+                    sources_processed += 1
+                    self.progress.emit(
+                        int((sources_processed / float(total_sources)) * 100.0),
+                        f"Processed {sources_processed}/{total_sources} PDFs; pages scanned: {total_pages_scanned}.",
+                    )
+
+            candidates = finalize_study_candidates(stats)
+            self.finished.emit(
+                {
+                    "candidates": candidates,
+                    "pages_tokens": pages_tokens,
+                    "run_folders_processed": int(sources_processed),
+                    "total_pages_scanned": int(total_pages_scanned),
+                    "source_mode": source_mode,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.error.emit(str(exc))
+
+
 class QtSettingsDialog(QDialog):
     """Qt equivalent of the Tk settings dialog."""
 
@@ -860,6 +1172,7 @@ class QtSettingsDialog(QDialog):
         settings: dict[str, object],
         apply_callback: Callable[[dict[str, object], bool], None],
         collect_debug_paths: Callable[[], list[Path]],
+        current_pdf_path: Path | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
@@ -868,6 +1181,7 @@ class QtSettingsDialog(QDialog):
         self._settings = dict(settings)
         self._apply_callback = apply_callback
         self._collect_debug_paths = collect_debug_paths
+        self._study_current_pdf_path: Path | None = current_pdf_path
         self._glossaries_by_lang: dict[str, list[GlossaryEntry]] = normalize_glossaries({}, supported_target_langs())
         self._enabled_glossary_tiers_by_lang: dict[str, list[int]] = normalize_enabled_tiers_by_target_lang(
             {},
@@ -878,6 +1192,22 @@ class QtSettingsDialog(QDialog):
         self._glossary_search_text: str = ""
         self._glossary_view_keys: list[tuple[str, str, str, str, int]] = []
         self._glossary_seed_version: int = 2
+        self._study_supported_langs: list[str] = supported_learning_langs()
+        self._study_entries: list[StudyGlossaryEntry] = normalize_study_entries([], self._study_supported_langs)
+        self._study_candidate_rows: list[StudyCandidate] = []
+        self._study_candidate_keys: list[str] = []
+        self._study_entry_view_terms: list[str] = []
+        self._study_search_text: str = ""
+        self._study_filters: dict[str, str] = {"category": "all", "status": "all", "coverage_tier": "all"}
+        self._study_corpus_source: str = "run_folders"
+        self._study_pdf_paths: list[str] = []
+        self._study_quiz_index: int = 0
+        self._study_last_run_folders_processed: int = 0
+        self._study_last_total_pages_scanned: int = 0
+        self._study_candidate_thread: QThread | None = None
+        self._study_candidate_worker: _StudyCandidateWorker | None = None
+        self._study_translation_thread: QThread | None = None
+        self._study_translation_worker: _StudyTranslationWorker | None = None
         self._build_ui()
         self._set_values_from_settings(self._settings)
         self._refresh_key_status()
@@ -894,12 +1224,14 @@ class QtSettingsDialog(QDialog):
         self.tab_appearance = QWidget(self)
         self.tab_behaviour = QWidget(self)
         self.tab_glossary = QWidget(self)
+        self.tab_study = QWidget(self)
         self.tab_diag = QWidget(self)
         self.tabs.addTab(self.tab_keys, "Keys & Providers")
         self.tabs.addTab(self.tab_ocr, "OCR Defaults")
         self.tabs.addTab(self.tab_appearance, "Appearance")
         self.tabs.addTab(self.tab_behaviour, "Behaviour & Performance")
         self.tabs.addTab(self.tab_glossary, "Glossary")
+        self.tabs.addTab(self.tab_study, "Study Glossary")
         self.tabs.addTab(self.tab_diag, "Diagnostics")
 
         self._build_tab_keys()
@@ -907,6 +1239,7 @@ class QtSettingsDialog(QDialog):
         self._build_tab_appearance()
         self._build_tab_behaviour()
         self._build_tab_glossary()
+        self._build_tab_study()
         self._build_tab_diagnostics()
 
         buttons = QHBoxLayout()
@@ -1142,8 +1475,10 @@ class QtSettingsDialog(QDialog):
         actions = QHBoxLayout()
         self.glossary_add_row_btn = QPushButton("Add row")
         self.glossary_remove_rows_btn = QPushButton("Remove selected")
+        self.glossary_export_btn = QPushButton("Export...")
         actions.addWidget(self.glossary_add_row_btn)
         actions.addWidget(self.glossary_remove_rows_btn)
+        actions.addWidget(self.glossary_export_btn)
         actions.addStretch(1)
         layout.addLayout(actions)
 
@@ -1167,6 +1502,7 @@ class QtSettingsDialog(QDialog):
         self.glossary_search_edit.textChanged.connect(self._on_glossary_search_changed)
         self.glossary_add_row_btn.clicked.connect(self._add_glossary_row)
         self.glossary_remove_rows_btn.clicked.connect(self._remove_selected_glossary_rows)
+        self.glossary_export_btn.clicked.connect(self._export_consistency_glossary_markdown)
         for tier, check in self._glossary_active_tier_checks.items():
             check.toggled.connect(lambda checked, tier=tier: self._on_glossary_active_tier_changed(tier, checked))
 
@@ -1389,7 +1725,8 @@ class QtSettingsDialog(QDialog):
 
     def _set_glossaries_from_settings(self, settings: dict[str, object]) -> None:
         langs = supported_target_langs()
-        self._glossaries_by_lang = normalize_glossaries(settings.get("glossaries_by_lang"), langs)
+        raw_personal = settings.get("personal_glossaries_by_lang", settings.get("glossaries_by_lang"))
+        self._glossaries_by_lang = normalize_glossaries(raw_personal, langs)
         self._enabled_glossary_tiers_by_lang = normalize_enabled_tiers_by_target_lang(
             settings.get("enabled_glossary_tiers_by_target_lang"),
             langs,
@@ -1432,6 +1769,1090 @@ class QtSettingsDialog(QDialog):
         for row in selected_rows:
             self.glossary_table.removeRow(row)
         self._update_glossary_warning_label(self._read_glossary_table_rows())
+
+    def _export_consistency_glossary_markdown(self) -> None:
+        self._save_current_glossary_language_rows()
+        normalized_glossaries = normalize_glossaries(self._glossaries_by_lang, supported_target_langs())
+        if not any(normalized_glossaries.get(lang) for lang in supported_target_langs()):
+            QMessageBox.information(self, "Glossary", "No glossary entries to export.")
+            return
+        markdown = build_consistency_glossary_markdown(
+            normalized_glossaries,
+            enabled_tiers_by_lang=self._enabled_glossary_tiers_by_lang,
+            generated_at_iso=datetime.now().replace(microsecond=0).isoformat(),
+            title="AI Glossary",
+        )
+        default_name = f"AI_Glossary_{datetime.now().date().isoformat()}.md"
+        default_path = (app_data_dir() / default_name).expanduser().resolve()
+        selected_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export AI Glossary",
+            str(default_path),
+            "Markdown (*.md);;Text (*.txt);;All Files (*.*)",
+        )
+        if not selected_path:
+            return
+        target = Path(selected_path).expanduser().resolve()
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(markdown, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Glossary", f"Unable to save export file:\n{target}\n{exc}")
+            return
+        QMessageBox.information(self, "Glossary", f"Exported:\n{target}")
+
+    def _build_tab_study(self) -> None:
+        layout = QVBoxLayout(self.tab_study)
+
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Search"))
+        self.study_search_edit = QLineEdit()
+        self.study_search_edit.setPlaceholderText("Filter PT term or any translation...")
+        search_row.addWidget(self.study_search_edit, 1)
+        layout.addLayout(search_row)
+        self._study_search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self.tab_study)
+        self._study_search_shortcut.activated.connect(self._focus_study_search)
+
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("Category"))
+        self.study_category_filter_combo = QComboBox()
+        self.study_category_filter_combo.addItems(
+            ["all", "headers", "roles", "procedure", "evidence", "reasoning", "decision_costs", "other"]
+        )
+        filter_row.addWidget(self.study_category_filter_combo)
+        filter_row.addWidget(QLabel("Status"))
+        self.study_status_filter_combo = QComboBox()
+        self.study_status_filter_combo.addItems(["all", "new", "learning", "known", "hard"])
+        filter_row.addWidget(self.study_status_filter_combo)
+        filter_row.addWidget(QLabel("Coverage tier"))
+        self.study_coverage_filter_combo = QComboBox()
+        self.study_coverage_filter_combo.addItems(["all", "core80", "next15", "long_tail"])
+        filter_row.addWidget(self.study_coverage_filter_combo)
+        filter_row.addStretch(1)
+        layout.addLayout(filter_row)
+
+        builder = QGroupBox("Builder")
+        builder_layout = QGridLayout(builder)
+        builder_layout.addWidget(QLabel("Corpus source"), 0, 0)
+        self.study_corpus_source_combo = QComboBox()
+        self.study_corpus_source_combo.addItem("Run folders (recommended for large corpora)", "run_folders")
+        self.study_corpus_source_combo.addItem("Current PDF only", "current_pdf")
+        self.study_corpus_source_combo.addItem("Select PDFs...", "select_pdfs")
+        self.study_corpus_source_combo.addItem("From Job Log runs (unavailable in this version)", "joblog_runs")
+        self.study_corpus_source_combo.setToolTip(
+            "Job Log source is intentionally unavailable in this version (no run/pdf path tracking migration)."
+        )
+        builder_layout.addWidget(self.study_corpus_source_combo, 0, 1)
+        self.study_current_pdf_label = QLabel("Current PDF: not available")
+        self.study_current_pdf_label.setWordWrap(True)
+        builder_layout.addWidget(self.study_current_pdf_label, 0, 2, 1, 2)
+
+        builder_layout.addWidget(QLabel("Run folders"), 1, 0)
+        self.study_run_dirs_list = QListWidget()
+        self.study_run_dirs_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        builder_layout.addWidget(self.study_run_dirs_list, 2, 0, 4, 1)
+        run_btns = QVBoxLayout()
+        self.study_add_run_dir_btn = QPushButton("Add run folder")
+        self.study_remove_run_dir_btn = QPushButton("Remove selected")
+        self.study_clear_run_dirs_btn = QPushButton("Clear")
+        run_btns.addWidget(self.study_add_run_dir_btn)
+        run_btns.addWidget(self.study_remove_run_dir_btn)
+        run_btns.addWidget(self.study_clear_run_dirs_btn)
+        run_btns.addStretch(1)
+        run_btn_wrap = QWidget()
+        run_btn_wrap.setLayout(run_btns)
+        builder_layout.addWidget(run_btn_wrap, 2, 1, 4, 1)
+
+        builder_layout.addWidget(QLabel("Selected PDFs"), 6, 0)
+        self.study_pdf_paths_list = QListWidget()
+        self.study_pdf_paths_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        builder_layout.addWidget(self.study_pdf_paths_list, 7, 0, 3, 1)
+        pdf_btns = QVBoxLayout()
+        self.study_add_pdf_btn = QPushButton("Add PDF(s)")
+        self.study_remove_pdf_btn = QPushButton("Remove selected")
+        self.study_clear_pdf_btn = QPushButton("Clear")
+        pdf_btns.addWidget(self.study_add_pdf_btn)
+        pdf_btns.addWidget(self.study_remove_pdf_btn)
+        pdf_btns.addWidget(self.study_clear_pdf_btn)
+        pdf_btns.addStretch(1)
+        pdf_btn_wrap = QWidget()
+        pdf_btn_wrap.setLayout(pdf_btns)
+        builder_layout.addWidget(pdf_btn_wrap, 7, 1, 3, 1)
+
+        builder_layout.addWidget(QLabel("Mode"), 1, 2)
+        self.study_mode_combo = QComboBox()
+        self.study_mode_combo.addItem("Full text", "full_text")
+        self.study_mode_combo.addItem("Headers only", "headers_only")
+        builder_layout.addWidget(self.study_mode_combo, 1, 3)
+
+        builder_layout.addWidget(QLabel("Coverage target (%)"), 2, 2)
+        self.study_coverage_spin = QSpinBox()
+        self.study_coverage_spin.setRange(50, 95)
+        self.study_coverage_spin.setValue(80)
+        builder_layout.addWidget(self.study_coverage_spin, 2, 3)
+
+        self.study_include_snippets_check = QCheckBox("Store snippets (privacy-sensitive; capped)")
+        builder_layout.addWidget(self.study_include_snippets_check, 3, 2, 1, 2)
+
+        builder_layout.addWidget(QLabel("Snippet max chars"), 4, 2)
+        self.study_snippet_chars_spin = QSpinBox()
+        self.study_snippet_chars_spin.setRange(40, 300)
+        self.study_snippet_chars_spin.setValue(120)
+        builder_layout.addWidget(self.study_snippet_chars_spin, 4, 3)
+
+        self.study_generate_btn = QPushButton("Generate")
+        self.study_cancel_generate_btn = QPushButton("Cancel")
+        self.study_cancel_generate_btn.setEnabled(False)
+        self.study_progress = QProgressBar()
+        self.study_progress.setRange(0, 100)
+        self.study_progress.setValue(0)
+        self.study_summary_label = QLabel("No candidates generated yet.")
+        builder_layout.addWidget(self.study_generate_btn, 5, 2)
+        cancel_progress_row = QHBoxLayout()
+        cancel_progress_row.addWidget(self.study_cancel_generate_btn)
+        cancel_progress_row.addWidget(self.study_progress, 1)
+        cancel_progress_wrap = QWidget()
+        cancel_progress_wrap.setLayout(cancel_progress_row)
+        builder_layout.addWidget(cancel_progress_wrap, 5, 3)
+        builder_layout.addWidget(self.study_summary_label, 10, 0, 1, 4)
+        builder_layout.setColumnStretch(0, 2)
+        builder_layout.setColumnStretch(3, 1)
+        layout.addWidget(builder)
+
+        suggestions_group = QGroupBox("Suggestions")
+        suggestions_layout = QVBoxLayout(suggestions_group)
+        self.study_candidates_table = QTableWidget(0, 8, self.tab_study)
+        self.study_candidates_table.setHorizontalHeaderLabels(
+            ["Use", "Portuguese (PT)", "TF", "Pages", "Category", "Coverage", "Confidence", "Snippet"]
+        )
+        self.study_candidates_table.verticalHeader().setVisible(False)
+        self.study_candidates_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.study_candidates_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.study_candidates_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        suggestions_layout.addWidget(self.study_candidates_table, 1)
+        self.study_add_selected_btn = QPushButton("Add selected to Study Glossary")
+        suggestions_layout.addWidget(self.study_add_selected_btn)
+        layout.addWidget(suggestions_group)
+
+        entries_group = QGroupBox("Study Glossary")
+        entries_layout = QVBoxLayout(entries_group)
+        self.study_entries_table = QTableWidget(0, 0, self.tab_study)
+        self.study_entries_table.verticalHeader().setVisible(False)
+        self.study_entries_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.study_entries_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        entries_layout.addWidget(self.study_entries_table, 1)
+
+        entries_actions = QHBoxLayout()
+        self.study_refresh_translations_btn = QPushButton("Refresh translations")
+        self.study_export_btn = QPushButton("Export...")
+        self.study_copy_to_ai_btn = QPushButton("Copy selected to AI Glossary...")
+        self.study_quiz_btn = QPushButton("Quiz me")
+        self.study_stats_label = QLabel("")
+        entries_actions.addWidget(self.study_refresh_translations_btn)
+        entries_actions.addWidget(self.study_export_btn)
+        entries_actions.addWidget(self.study_copy_to_ai_btn)
+        entries_actions.addWidget(self.study_quiz_btn)
+        entries_actions.addWidget(self.study_stats_label, 1)
+        entries_layout.addLayout(entries_actions)
+        layout.addWidget(entries_group, 1)
+
+        self.study_search_edit.textChanged.connect(self._on_study_search_changed)
+        self.study_category_filter_combo.currentTextChanged.connect(self._on_study_filters_changed)
+        self.study_status_filter_combo.currentTextChanged.connect(self._on_study_filters_changed)
+        self.study_coverage_filter_combo.currentTextChanged.connect(self._on_study_filters_changed)
+        self.study_corpus_source_combo.currentTextChanged.connect(self._on_study_corpus_source_changed)
+        self.study_add_run_dir_btn.clicked.connect(self._add_study_run_folder)
+        self.study_remove_run_dir_btn.clicked.connect(self._remove_selected_study_run_folders)
+        self.study_clear_run_dirs_btn.clicked.connect(self._clear_study_run_folders)
+        self.study_add_pdf_btn.clicked.connect(self._add_study_pdf_files)
+        self.study_remove_pdf_btn.clicked.connect(self._remove_selected_study_pdf_files)
+        self.study_clear_pdf_btn.clicked.connect(self._clear_study_pdf_files)
+        self.study_generate_btn.clicked.connect(self._generate_study_candidates)
+        self.study_cancel_generate_btn.clicked.connect(self._cancel_study_generation)
+        self.study_add_selected_btn.clicked.connect(self._add_selected_candidates_to_study_glossary)
+        self.study_refresh_translations_btn.clicked.connect(self._refresh_selected_study_translations)
+        self.study_export_btn.clicked.connect(self._export_study_glossary_markdown)
+        self.study_copy_to_ai_btn.clicked.connect(self._copy_selected_study_to_ai_glossary)
+        self.study_quiz_btn.clicked.connect(self._quiz_study_entry)
+
+    def _focus_study_search(self) -> None:
+        self.study_search_edit.setFocus()
+        self.study_search_edit.selectAll()
+
+    def _study_entry_key(self, term_pt: str) -> str:
+        return str(term_pt or "").strip().casefold()
+
+    def _collect_study_run_dirs(self) -> list[str]:
+        values: list[str] = []
+        seen: set[str] = set()
+        for idx in range(self.study_run_dirs_list.count()):
+            item = self.study_run_dirs_list.item(idx)
+            if item is None:
+                continue
+            cleaned = item.text().strip()
+            if cleaned == "":
+                continue
+            key = cleaned.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            values.append(cleaned)
+        return values
+
+    def _set_study_run_dirs(self, run_dirs: list[str]) -> None:
+        self.study_run_dirs_list.clear()
+        seen: set[str] = set()
+        for raw in run_dirs:
+            cleaned = str(raw or "").strip()
+            if cleaned == "":
+                continue
+            key = cleaned.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            self.study_run_dirs_list.addItem(cleaned)
+
+    def _add_study_run_folder(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, "Select run folder")
+        if not selected:
+            return
+        candidate = str(Path(selected).expanduser().resolve())
+        existing = {item.casefold() for item in self._collect_study_run_dirs()}
+        if candidate.casefold() in existing:
+            return
+        self.study_run_dirs_list.addItem(candidate)
+
+    def _remove_selected_study_run_folders(self) -> None:
+        for item in self.study_run_dirs_list.selectedItems():
+            row = self.study_run_dirs_list.row(item)
+            self.study_run_dirs_list.takeItem(row)
+
+    def _clear_study_run_folders(self) -> None:
+        self.study_run_dirs_list.clear()
+
+    def _collect_study_pdf_paths(self) -> list[str]:
+        values: list[str] = []
+        seen: set[str] = set()
+        for idx in range(self.study_pdf_paths_list.count()):
+            item = self.study_pdf_paths_list.item(idx)
+            if item is None:
+                continue
+            cleaned = item.text().strip()
+            if cleaned == "":
+                continue
+            key = cleaned.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            values.append(cleaned)
+        return values
+
+    def _set_study_pdf_paths(self, pdf_paths: list[str]) -> None:
+        self.study_pdf_paths_list.clear()
+        seen: set[str] = set()
+        for raw in pdf_paths:
+            cleaned = str(raw or "").strip()
+            if cleaned == "":
+                continue
+            key = cleaned.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            self.study_pdf_paths_list.addItem(cleaned)
+        self._study_pdf_paths = self._collect_study_pdf_paths()
+
+    def _add_study_pdf_files(self) -> None:
+        selected, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select PDF files",
+            "",
+            "PDF Files (*.pdf);;All Files (*.*)",
+        )
+        if not selected:
+            return
+        existing = {item.casefold() for item in self._collect_study_pdf_paths()}
+        for raw in selected:
+            cleaned = str(Path(raw).expanduser().resolve())
+            if cleaned.casefold() in existing:
+                continue
+            self.study_pdf_paths_list.addItem(cleaned)
+            existing.add(cleaned.casefold())
+        self._study_pdf_paths = self._collect_study_pdf_paths()
+
+    def _remove_selected_study_pdf_files(self) -> None:
+        for item in self.study_pdf_paths_list.selectedItems():
+            row = self.study_pdf_paths_list.row(item)
+            self.study_pdf_paths_list.takeItem(row)
+        self._study_pdf_paths = self._collect_study_pdf_paths()
+
+    def _clear_study_pdf_files(self) -> None:
+        self.study_pdf_paths_list.clear()
+        self._study_pdf_paths = []
+
+    def _current_study_corpus_source(self) -> str:
+        raw = self.study_corpus_source_combo.currentData()
+        value = str(raw or self.study_corpus_source_combo.currentText() or "").strip().lower()
+        if value not in {"run_folders", "current_pdf", "select_pdfs", "joblog_runs"}:
+            return "run_folders"
+        return value
+
+    def _refresh_study_corpus_source_controls(self) -> None:
+        mode = self._current_study_corpus_source()
+        self._study_corpus_source = mode
+        run_enabled = mode == "run_folders"
+        pdf_enabled = mode == "select_pdfs"
+        self.study_run_dirs_list.setEnabled(run_enabled)
+        self.study_add_run_dir_btn.setEnabled(run_enabled)
+        self.study_remove_run_dir_btn.setEnabled(run_enabled)
+        self.study_clear_run_dirs_btn.setEnabled(run_enabled)
+        self.study_pdf_paths_list.setEnabled(pdf_enabled)
+        self.study_add_pdf_btn.setEnabled(pdf_enabled)
+        self.study_remove_pdf_btn.setEnabled(pdf_enabled)
+        self.study_clear_pdf_btn.setEnabled(pdf_enabled)
+        if self._study_current_pdf_path is not None and self._study_current_pdf_path.exists():
+            self.study_current_pdf_label.setText(f"Current PDF: {self._study_current_pdf_path}")
+        else:
+            self.study_current_pdf_label.setText("Current PDF: not available")
+        if mode == "joblog_runs":
+            self.study_current_pdf_label.setText(
+                "Current PDF: unavailable for this source mode. Job Log run/pdf mapping is not enabled."
+            )
+
+    def _on_study_corpus_source_changed(self, _value: str) -> None:
+        self._refresh_study_corpus_source_controls()
+
+    def _resolve_study_corpus_inputs(self) -> tuple[str, list[str], list[str]] | None:
+        source_mode = self._current_study_corpus_source()
+        run_dirs = self._collect_study_run_dirs()
+        pdf_paths: list[str] = []
+        if source_mode == "run_folders":
+            if not run_dirs:
+                QMessageBox.warning(self, "Study Glossary", "Select at least one run folder.")
+                return None
+            return (source_mode, run_dirs, [])
+        if source_mode == "current_pdf":
+            current_pdf = self._study_current_pdf_path
+            if current_pdf is None or (not current_pdf.exists()) or (not current_pdf.is_file()):
+                QMessageBox.warning(self, "Study Glossary", "No active PDF is available. Select a PDF in the main window first.")
+                return None
+            return (source_mode, [], [str(current_pdf)])
+        if source_mode == "select_pdfs":
+            pdf_paths = self._collect_study_pdf_paths()
+            if not pdf_paths:
+                QMessageBox.warning(self, "Study Glossary", "Select one or more PDF files.")
+                return None
+            return (source_mode, [], pdf_paths)
+        QMessageBox.information(
+            self,
+            "Study Glossary",
+            "Job Log source is unavailable in this version (requires run/pdf path tracking in Job Log DB).",
+        )
+        return None
+
+    def _visible_study_entries(self) -> list[StudyGlossaryEntry]:
+        search = self._study_search_text.strip().casefold()
+        category = self._study_filters.get("category", "all")
+        status = self._study_filters.get("status", "all")
+        coverage_tier = self._study_filters.get("coverage_tier", "all")
+        visible: list[StudyGlossaryEntry] = []
+        for entry in self._study_entries:
+            if category != "all" and entry.category != category:
+                continue
+            if status != "all" and entry.status != status:
+                continue
+            if coverage_tier != "all" and entry.coverage_tier != coverage_tier:
+                continue
+            if search:
+                haystack = [entry.term_pt]
+                haystack.extend(entry.translations_by_lang.get(lang, "") for lang in self._study_supported_langs)
+                if not any(search in str(value or "").casefold() for value in haystack):
+                    continue
+            visible.append(entry)
+        return visible
+
+    def _set_study_entries_table_rows(self, rows: list[StudyGlossaryEntry]) -> None:
+        headers = ["Portuguese (PT)"] + self._study_supported_langs + [
+            "TF",
+            "Pages",
+            "Docs",
+            "Category",
+            "Status",
+            "Next review",
+            "Coverage",
+            "Snippet",
+        ]
+        self.study_entries_table.setColumnCount(len(headers))
+        self.study_entries_table.setHorizontalHeaderLabels(headers)
+        self.study_entries_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for lang_index in range(len(self._study_supported_langs)):
+            self.study_entries_table.horizontalHeader().setSectionResizeMode(
+                1 + lang_index,
+                QHeaderView.ResizeMode.Stretch,
+            )
+        self.study_entries_table.horizontalHeader().setSectionResizeMode(len(headers) - 1, QHeaderView.ResizeMode.Stretch)
+        self.study_entries_table.setRowCount(0)
+        self._study_entry_view_terms = [entry.term_pt for entry in rows]
+        for entry in rows:
+            row = self.study_entries_table.rowCount()
+            self.study_entries_table.insertRow(row)
+            self.study_entries_table.setItem(row, 0, QTableWidgetItem(entry.term_pt))
+            for lang_index, lang in enumerate(self._study_supported_langs):
+                self.study_entries_table.setItem(
+                    row,
+                    1 + lang_index,
+                    QTableWidgetItem(entry.translations_by_lang.get(lang, "")),
+                )
+            offset = 1 + len(self._study_supported_langs)
+            self.study_entries_table.setItem(row, offset + 0, QTableWidgetItem(str(int(entry.tf))))
+            self.study_entries_table.setItem(row, offset + 1, QTableWidgetItem(str(int(entry.df_pages))))
+            self.study_entries_table.setItem(row, offset + 2, QTableWidgetItem(str(int(entry.df_docs))))
+            self.study_entries_table.setItem(row, offset + 3, QTableWidgetItem(entry.category))
+            self.study_entries_table.setItem(row, offset + 4, QTableWidgetItem(entry.status))
+            self.study_entries_table.setItem(row, offset + 5, QTableWidgetItem(entry.next_review_date or ""))
+            self.study_entries_table.setItem(row, offset + 6, QTableWidgetItem(entry.coverage_tier))
+            snippet = entry.sample_snippets[0] if entry.sample_snippets else ""
+            self.study_entries_table.setItem(row, offset + 7, QTableWidgetItem(snippet))
+
+    def _read_study_entries_table_rows(self) -> list[StudyGlossaryEntry]:
+        rows: list[dict[str, object]] = []
+        lang_count = len(self._study_supported_langs)
+        for row in range(self.study_entries_table.rowCount()):
+            term_item = self.study_entries_table.item(row, 0)
+            term_pt = term_item.text().strip() if term_item else ""
+            translations: dict[str, str] = {}
+            for lang_index, lang in enumerate(self._study_supported_langs):
+                item = self.study_entries_table.item(row, 1 + lang_index)
+                translations[lang] = item.text().strip() if item else ""
+            offset = 1 + lang_count
+            tf_item = self.study_entries_table.item(row, offset + 0)
+            df_item = self.study_entries_table.item(row, offset + 1)
+            docs_item = self.study_entries_table.item(row, offset + 2)
+            category_item = self.study_entries_table.item(row, offset + 3)
+            status_item = self.study_entries_table.item(row, offset + 4)
+            review_item = self.study_entries_table.item(row, offset + 5)
+            coverage_item = self.study_entries_table.item(row, offset + 6)
+            snippet_item = self.study_entries_table.item(row, offset + 7)
+            rows.append(
+                {
+                    "term_pt": term_pt,
+                    "translations_by_lang": translations,
+                    "tf": (tf_item.text().strip() if tf_item else "0"),
+                    "df_pages": (df_item.text().strip() if df_item else "0"),
+                    "df_docs": (docs_item.text().strip() if docs_item else "0"),
+                    "category": (category_item.text().strip() if category_item else "other"),
+                    "status": (status_item.text().strip() if status_item else "new"),
+                    "next_review_date": (review_item.text().strip() if review_item else ""),
+                    "coverage_tier": (coverage_item.text().strip() if coverage_item else "long_tail"),
+                    "sample_snippets": [snippet_item.text().strip()] if snippet_item and snippet_item.text().strip() else [],
+                }
+            )
+        return normalize_study_entries(rows, self._study_supported_langs)
+
+    def _save_current_study_table_rows(self) -> None:
+        visible_rows = self._read_study_entries_table_rows()
+        key_to_visible = {self._study_entry_key(entry.term_pt): entry for entry in visible_rows}
+        visible_keys = {self._study_entry_key(term) for term in self._study_entry_view_terms}
+        hidden = [
+            entry
+            for entry in self._study_entries
+            if self._study_entry_key(entry.term_pt) not in visible_keys
+        ]
+        merged = hidden + list(key_to_visible.values())
+        self._study_entries = normalize_study_entries(
+            serialize_study_entries(merged, self._study_supported_langs),
+            self._study_supported_langs,
+        )
+
+    def _refresh_study_entries_table(self) -> None:
+        rows = self._visible_study_entries()
+        self._set_study_entries_table_rows(rows)
+        self._refresh_study_stats_label()
+
+    def _refresh_study_stats_label(self) -> None:
+        total = len(self._study_entries)
+        visible = len(self._visible_study_entries())
+        self.study_stats_label.setText(f"Entries: {visible}/{total}")
+
+    def _on_study_search_changed(self, text: str) -> None:
+        self._save_current_study_table_rows()
+        self._study_search_text = str(text or "")
+        self._refresh_study_entries_table()
+
+    def _on_study_filters_changed(self, _value: str) -> None:
+        self._save_current_study_table_rows()
+        self._study_filters["category"] = self.study_category_filter_combo.currentText().strip().lower() or "all"
+        self._study_filters["status"] = self.study_status_filter_combo.currentText().strip().lower() or "all"
+        self._study_filters["coverage_tier"] = self.study_coverage_filter_combo.currentText().strip().lower() or "all"
+        self._refresh_study_entries_table()
+
+    def _set_study_candidates_table_rows(self, rows: list[StudyCandidate], selected_terms: set[str]) -> None:
+        self.study_candidates_table.setRowCount(0)
+        self._study_candidate_keys = []
+        for candidate in rows:
+            row = self.study_candidates_table.rowCount()
+            self.study_candidates_table.insertRow(row)
+            check = QCheckBox()
+            check.setChecked(self._study_entry_key(candidate.term_pt) in selected_terms)
+            self.study_candidates_table.setCellWidget(row, 0, check)
+            self.study_candidates_table.setItem(row, 1, QTableWidgetItem(candidate.term_pt))
+            self.study_candidates_table.setItem(row, 2, QTableWidgetItem(str(int(candidate.tf))))
+            self.study_candidates_table.setItem(row, 3, QTableWidgetItem(str(int(candidate.df_pages))))
+            self.study_candidates_table.setItem(row, 4, QTableWidgetItem(candidate.category))
+            self.study_candidates_table.setItem(row, 5, QTableWidgetItem(candidate.coverage_tier))
+            self.study_candidates_table.setItem(row, 6, QTableWidgetItem(f"{float(candidate.confidence):.3f}"))
+            snippet = candidate.sample_snippets[0] if candidate.sample_snippets else ""
+            self.study_candidates_table.setItem(row, 7, QTableWidgetItem(snippet))
+            self._study_candidate_keys.append(self._study_entry_key(candidate.term_pt))
+
+    def _set_study_generation_controls_busy(self, busy: bool) -> None:
+        enabled = not busy
+        self.study_generate_btn.setEnabled(enabled)
+        self.study_corpus_source_combo.setEnabled(enabled)
+        self.study_mode_combo.setEnabled(enabled)
+        self.study_include_snippets_check.setEnabled(enabled)
+        self.study_snippet_chars_spin.setEnabled(enabled)
+        self.study_coverage_spin.setEnabled(enabled)
+        self.study_cancel_generate_btn.setEnabled(busy)
+        if enabled:
+            self._refresh_study_corpus_source_controls()
+        else:
+            self.study_run_dirs_list.setEnabled(False)
+            self.study_add_run_dir_btn.setEnabled(False)
+            self.study_remove_run_dir_btn.setEnabled(False)
+            self.study_clear_run_dirs_btn.setEnabled(False)
+            self.study_pdf_paths_list.setEnabled(False)
+            self.study_add_pdf_btn.setEnabled(False)
+            self.study_remove_pdf_btn.setEnabled(False)
+            self.study_clear_pdf_btn.setEnabled(False)
+
+    def _generate_study_candidates(self) -> None:
+        if self._study_candidate_thread is not None:
+            return
+        resolved = self._resolve_study_corpus_inputs()
+        if resolved is None:
+            return
+        source_mode, run_dirs, pdf_paths = resolved
+        mode = self.study_mode_combo.currentData()
+        mode_value = str(mode or "full_text")
+        include_snippets = bool(self.study_include_snippets_check.isChecked())
+        snippet_max_chars = int(self.study_snippet_chars_spin.value())
+        self._set_study_generation_controls_busy(True)
+        self.study_progress.setValue(0)
+        self.study_summary_label.setText("Generating study glossary candidates...")
+        thread = QThread(self)
+        worker = _StudyCandidateWorker(
+            source_mode=source_mode,
+            run_dirs=run_dirs,
+            pdf_paths=pdf_paths,
+            mode=mode_value,
+            include_snippets=include_snippets,
+            snippet_max_chars=snippet_max_chars,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_study_candidate_progress)
+        worker.finished.connect(self._on_study_candidate_finished)
+        worker.cancelled.connect(self._on_study_candidate_cancelled)
+        worker.error.connect(self._on_study_candidate_error)
+        worker.finished.connect(thread.quit)
+        worker.cancelled.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(worker.deleteLater)
+        self._study_candidate_thread = thread
+        self._study_candidate_worker = worker
+        thread.start()
+
+    def _cancel_study_generation(self) -> None:
+        worker = self._study_candidate_worker
+        if worker is None:
+            return
+        worker.cancel()
+        self.study_cancel_generate_btn.setEnabled(False)
+        self.study_summary_label.setText("Cancelling generation...")
+
+    def _on_study_candidate_progress(self, value: int, message: str) -> None:
+        self.study_progress.setValue(max(0, min(100, int(value))))
+        self.study_summary_label.setText(message)
+
+    def _on_study_candidate_finished(self, payload: object) -> None:
+        self._set_study_generation_controls_busy(False)
+        data = payload if isinstance(payload, dict) else {}
+        candidates_raw = data.get("candidates")
+        candidates = candidates_raw if isinstance(candidates_raw, list) else []
+        pages_tokens_raw = data.get("pages_tokens")
+        pages_tokens: list[list[str]] = []
+        if isinstance(pages_tokens_raw, list):
+            for page in pages_tokens_raw:
+                if not isinstance(page, list):
+                    continue
+                normalized_page = [str(token).strip().casefold() for token in page if str(token).strip()]
+                if normalized_page:
+                    pages_tokens.append(normalized_page)
+        filtered = filter_candidates_by_thresholds(
+            [candidate for candidate in candidates if isinstance(candidate, StudyCandidate)]
+        )
+        coverage_target = max(50, min(95, int(self.study_coverage_spin.value()))) / 100.0
+        tiered = compute_non_overlapping_tier_assignment(
+            filtered,
+            pages_tokens,
+            coverage_target=coverage_target,
+            next_target=0.95,
+        )
+        filtered_for_display = apply_subsumption_suppression(
+            tiered,
+            pages_tokens,
+            threshold=0.80,
+        )
+        selected_keys = {
+            self._study_entry_key(candidate.term_pt)
+            for candidate in filtered_for_display
+            if candidate.coverage_tier == "core80"
+        }
+        self._study_candidate_rows = filtered_for_display
+        self._set_study_candidates_table_rows(filtered_for_display, selected_keys)
+        self._study_last_run_folders_processed = int(data.get("run_folders_processed", 0) or 0)
+        self._study_last_total_pages_scanned = int(data.get("total_pages_scanned", 0) or 0)
+        source_mode = str(data.get("source_mode", self._study_corpus_source) or "run_folders")
+        source_label = "folders" if source_mode == "run_folders" else "sources"
+        self.study_progress.setValue(100)
+        core_count = len([item for item in filtered_for_display if item.coverage_tier == "core80"])
+        self.study_summary_label.setText(
+            f"Candidates: {len(filtered_for_display)} | {source_label}: {self._study_last_run_folders_processed} | "
+            f"pages: {self._study_last_total_pages_scanned} | core {int(coverage_target * 100)}%: {core_count}."
+        )
+        self._study_candidate_thread = None
+        self._study_candidate_worker = None
+
+    def _on_study_candidate_cancelled(self) -> None:
+        self._set_study_generation_controls_busy(False)
+        self.study_summary_label.setText("Generation cancelled. Existing study glossary is unchanged.")
+        self.study_progress.setValue(0)
+        self._study_candidate_thread = None
+        self._study_candidate_worker = None
+
+    def _on_study_candidate_error(self, message: str) -> None:
+        self._set_study_generation_controls_busy(False)
+        self.study_summary_label.setText("Generation failed.")
+        self.study_progress.setValue(0)
+        self._study_candidate_thread = None
+        self._study_candidate_worker = None
+        QMessageBox.critical(self, "Study Glossary", message or "Failed to generate study glossary candidates.")
+
+    def _add_selected_candidates_to_study_glossary(self) -> None:
+        if not self._study_candidate_rows:
+            return
+        selected: list[StudyCandidate] = []
+        for row in range(self.study_candidates_table.rowCount()):
+            check = self.study_candidates_table.cellWidget(row, 0)
+            checked = bool(check.isChecked()) if isinstance(check, QCheckBox) else False
+            if not checked:
+                continue
+            if row < len(self._study_candidate_rows):
+                selected.append(self._study_candidate_rows[row])
+        if not selected:
+            QMessageBox.information(self, "Study Glossary", "No candidate selected.")
+            return
+        new_entries = [
+            build_entry_from_candidate(candidate, supported_langs=self._study_supported_langs)
+            for candidate in selected
+        ]
+        self._save_current_study_table_rows()
+        self._study_entries = merge_study_entries(
+            self._study_entries,
+            new_entries,
+            supported_langs=self._study_supported_langs,
+        )
+        self._refresh_study_entries_table()
+
+    def _selected_study_entries_from_table(self) -> list[StudyGlossaryEntry]:
+        selected_rows = sorted({index.row() for index in self.study_entries_table.selectedIndexes()})
+        if not selected_rows:
+            return []
+        visible_rows = self._visible_study_entries()
+        selected_entries: list[StudyGlossaryEntry] = []
+        for row in selected_rows:
+            if 0 <= row < len(visible_rows):
+                selected_entries.append(visible_rows[row])
+        return selected_entries
+
+    def _count_study_to_ai_conflicts(self, selected_entries: list[StudyGlossaryEntry]) -> int:
+        supported_langs = supported_target_langs()
+        normalized = normalize_glossaries(self._glossaries_by_lang, supported_langs)
+        conflicts = 0
+        for entry in selected_entries:
+            source_text = entry.term_pt.strip()
+            if source_text == "":
+                continue
+            for target_lang in supported_langs:
+                preferred = entry.translations_by_lang.get(target_lang, "").strip()
+                if preferred == "":
+                    continue
+                duplicate = any(
+                    row.source_text == source_text
+                    and row.preferred_translation == preferred
+                    and row.match_mode == "exact"
+                    and row.source_lang == "PT"
+                    and int(row.tier) == 2
+                    for row in normalized.get(target_lang, [])
+                )
+                if duplicate:
+                    continue
+                has_conflict = any(
+                    row.source_text == source_text
+                    and row.match_mode == "exact"
+                    and row.source_lang == "PT"
+                    and int(row.tier) == 2
+                    and row.preferred_translation != preferred
+                    for row in normalized.get(target_lang, [])
+                )
+                if has_conflict:
+                    conflicts += 1
+        return conflicts
+
+    def _merge_study_entries_into_ai_glossary(
+        self,
+        selected_entries: list[StudyGlossaryEntry],
+        *,
+        replace_conflicts: bool,
+    ) -> tuple[int, int, int]:
+        supported_langs = supported_target_langs()
+        normalized = normalize_glossaries(self._glossaries_by_lang, supported_langs)
+        added = 0
+        skipped = 0
+        conflicts = 0
+        for entry in selected_entries:
+            source_text = entry.term_pt.strip()
+            if source_text == "":
+                continue
+            for target_lang in supported_langs:
+                preferred = entry.translations_by_lang.get(target_lang, "").strip()
+                if preferred == "":
+                    continue
+                bucket = list(normalized.get(target_lang, []))
+                candidate = GlossaryEntry(
+                    source_text=source_text,
+                    preferred_translation=preferred,
+                    match_mode="exact",
+                    source_lang="PT",
+                    tier=2,
+                )
+                duplicate = any(
+                    row.source_text == candidate.source_text
+                    and row.preferred_translation == candidate.preferred_translation
+                    and row.match_mode == candidate.match_mode
+                    and row.source_lang == candidate.source_lang
+                    and int(row.tier) == int(candidate.tier)
+                    for row in bucket
+                )
+                if duplicate:
+                    skipped += 1
+                    continue
+                conflict_indexes = [
+                    index
+                    for index, row in enumerate(bucket)
+                    if row.source_text == candidate.source_text
+                    and row.match_mode == candidate.match_mode
+                    and row.source_lang == candidate.source_lang
+                    and int(row.tier) == int(candidate.tier)
+                    and row.preferred_translation != candidate.preferred_translation
+                ]
+                if conflict_indexes:
+                    conflicts += 1
+                    if not replace_conflicts:
+                        skipped += 1
+                        continue
+                    for index in reversed(conflict_indexes):
+                        bucket.pop(index)
+                bucket.append(candidate)
+                normalized[target_lang] = normalize_glossaries({target_lang: bucket}, [target_lang]).get(target_lang, [])
+                added += 1
+        self._glossaries_by_lang = normalize_glossaries(normalized, supported_langs)
+        return (added, skipped, conflicts)
+
+    def _copy_selected_study_to_ai_glossary(self) -> None:
+        self._save_current_study_table_rows()
+        self._save_current_glossary_language_rows()
+        selected_entries = self._selected_study_entries_from_table()
+        if not selected_entries:
+            QMessageBox.information(self, "Study Glossary", "Select one or more Study Glossary rows first.")
+            return
+        conflicts = self._count_study_to_ai_conflicts(selected_entries)
+        replace_conflicts = False
+        if conflicts > 0:
+            choice = QMessageBox.question(
+                self,
+                "Copy to AI Glossary",
+                (
+                    "Conflicts were detected for the default mapping "
+                    "(Exact + PT + Tier 2).\n\n"
+                    "Yes: replace conflicting AI glossary rows.\n"
+                    "No: skip conflicting rows.\n"
+                    "Cancel: abort."
+                ),
+                buttons=(
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No
+                    | QMessageBox.StandardButton.Cancel
+                ),
+                defaultButton=QMessageBox.StandardButton.No,
+            )
+            if choice == QMessageBox.StandardButton.Cancel:
+                return
+            replace_conflicts = choice == QMessageBox.StandardButton.Yes
+        else:
+            choice = QMessageBox.question(
+                self,
+                "Copy to AI Glossary",
+                (
+                    "Copy selected study entries into AI Glossary?\n\n"
+                    "Defaults: match=exact, source_lang=PT, tier=2.\n"
+                    "Targets: all non-empty target-language translations."
+                ),
+                buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                defaultButton=QMessageBox.StandardButton.Yes,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return
+        added, skipped, conflict_count = self._merge_study_entries_into_ai_glossary(
+            selected_entries,
+            replace_conflicts=replace_conflicts,
+        )
+        self._refresh_glossary_table_view()
+        QMessageBox.information(
+            self,
+            "Copy to AI Glossary",
+            f"Added: {added}\nSkipped: {skipped}\nConflicts encountered: {conflict_count}",
+        )
+
+    def _refresh_selected_study_translations(self) -> None:
+        self._save_current_study_table_rows()
+        selected_entries = self._selected_study_entries_from_table()
+        if not selected_entries:
+            QMessageBox.information(self, "Study Glossary", "Select one or more study rows first.")
+            return
+        self.study_refresh_translations_btn.setEnabled(False)
+        self.study_progress.setValue(0)
+        self.study_summary_label.setText("Refreshing translations...")
+        thread = QThread(self)
+        worker = _StudyTranslationWorker(entries=selected_entries, supported_langs=self._study_supported_langs)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_study_translation_progress)
+        worker.finished.connect(self._on_study_translation_finished)
+        worker.error.connect(self._on_study_translation_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(worker.deleteLater)
+        self._study_translation_thread = thread
+        self._study_translation_worker = worker
+        thread.start()
+
+    def _on_study_translation_progress(self, value: int, message: str) -> None:
+        self.study_progress.setValue(max(0, min(100, int(value))))
+        self.study_summary_label.setText(message)
+
+    def _on_study_translation_finished(self, updated_rows: object) -> None:
+        entries = updated_rows if isinstance(updated_rows, list) else []
+        keyed_updates = {
+            self._study_entry_key(entry.term_pt): entry
+            for entry in entries
+            if isinstance(entry, StudyGlossaryEntry)
+        }
+        merged: list[StudyGlossaryEntry] = []
+        for entry in self._study_entries:
+            key = self._study_entry_key(entry.term_pt)
+            merged.append(keyed_updates.get(key, entry))
+        self._study_entries = normalize_study_entries(
+            serialize_study_entries(merged, self._study_supported_langs),
+            self._study_supported_langs,
+        )
+        self.study_refresh_translations_btn.setEnabled(True)
+        self.study_progress.setValue(100)
+        self.study_summary_label.setText("Translation refresh complete.")
+        self._refresh_study_entries_table()
+        self._study_translation_thread = None
+        self._study_translation_worker = None
+
+    def _on_study_translation_error(self, message: str) -> None:
+        self.study_refresh_translations_btn.setEnabled(True)
+        self.study_summary_label.setText("Translation refresh failed.")
+        self.study_progress.setValue(0)
+        self._study_translation_thread = None
+        self._study_translation_worker = None
+        QMessageBox.critical(self, "Study Glossary", message or "Failed to refresh translations.")
+
+    def _export_study_glossary_markdown(self) -> None:
+        self._save_current_study_table_rows()
+        if not self._study_entries:
+            QMessageBox.information(self, "Study Glossary", "No study glossary entries to export.")
+            return
+
+        chooser = QMessageBox(self)
+        chooser.setWindowTitle("Export Study Glossary")
+        chooser.setText("Choose export scope.")
+        current_btn = chooser.addButton("Current filter (Recommended)", QMessageBox.ButtonRole.AcceptRole)
+        all_btn = chooser.addButton("All entries", QMessageBox.ButtonRole.ActionRole)
+        chooser.addButton(QMessageBox.StandardButton.Cancel)
+        chooser.exec()
+        clicked = chooser.clickedButton()
+        if clicked is None or clicked == chooser.button(QMessageBox.StandardButton.Cancel):
+            return
+        if clicked == current_btn:
+            export_rows = self._visible_study_entries()
+            scope_label = "Current filter"
+        else:
+            export_rows = list(self._study_entries)
+            scope_label = "All entries"
+        if not export_rows:
+            QMessageBox.information(self, "Study Glossary", "No entries match the selected export scope.")
+            return
+
+        generated_at_iso = datetime.now().replace(microsecond=0).isoformat()
+        markdown = build_study_glossary_markdown(
+            export_rows,
+            generated_at_iso=generated_at_iso,
+            run_folders_count=self._study_last_run_folders_processed,
+            total_pages_scanned=self._study_last_total_pages_scanned,
+            include_snippets=bool(self.study_include_snippets_check.isChecked()),
+            snippet_max_chars=int(self.study_snippet_chars_spin.value()),
+            scope_label=scope_label,
+            supported_langs=self._study_supported_langs,
+        )
+        default_name = f"Study_Glossary_{datetime.now().date().isoformat()}.md"
+        default_path = (app_data_dir() / default_name).expanduser().resolve()
+        selected_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Study Glossary",
+            str(default_path),
+            "Markdown (*.md);;Text (*.txt);;All Files (*.*)",
+        )
+        if not selected_path:
+            return
+        target = Path(selected_path).expanduser().resolve()
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(markdown, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Study Glossary", f"Unable to save export file:\n{target}\n{exc}")
+            return
+        QMessageBox.information(self, "Study Glossary", f"Exported:\n{target}")
+
+    def _quiz_study_entry(self) -> None:
+        self._save_current_study_table_rows()
+        rows = self._visible_study_entries() or list(self._study_entries)
+        if not rows:
+            QMessageBox.information(self, "Study Glossary", "No study entries available.")
+            return
+        entry = rows[self._study_quiz_index % len(rows)]
+        self._study_quiz_index = (self._study_quiz_index + 1) % max(1, len(rows))
+        QMessageBox.information(self, "Study Quiz", f"Portuguese term:\n{entry.term_pt}")
+        translations = "\n".join(
+            f"{lang}: {entry.translations_by_lang.get(lang, '').strip() or '—'}"
+            for lang in self._study_supported_langs
+        )
+        quiz = QMessageBox(self)
+        quiz.setWindowTitle("Study Quiz")
+        quiz.setText(f"Translations:\n{translations}\n\nHow well do you know this term?")
+        known_btn = quiz.addButton("Known", QMessageBox.ButtonRole.AcceptRole)
+        learning_btn = quiz.addButton("Learning", QMessageBox.ButtonRole.ActionRole)
+        hard_btn = quiz.addButton("Hard", QMessageBox.ButtonRole.DestructiveRole)
+        quiz.addButton(QMessageBox.StandardButton.Cancel)
+        quiz.exec()
+        clicked = quiz.clickedButton()
+        if clicked is None or clicked == quiz.button(QMessageBox.StandardButton.Cancel):
+            return
+        if clicked == known_btn:
+            new_status = "known"
+        elif clicked == hard_btn:
+            new_status = "hard"
+        else:
+            new_status = "learning"
+        key = self._study_entry_key(entry.term_pt)
+        updated_entries: list[StudyGlossaryEntry] = []
+        for existing in self._study_entries:
+            if self._study_entry_key(existing.term_pt) != key:
+                updated_entries.append(existing)
+                continue
+            updated_entries.append(
+                StudyGlossaryEntry(
+                    term_pt=existing.term_pt,
+                    translations_by_lang=dict(existing.translations_by_lang),
+                    tf=existing.tf,
+                    df_pages=existing.df_pages,
+                    sample_snippets=list(existing.sample_snippets),
+                    category=existing.category,
+                    status=new_status,  # type: ignore[arg-type]
+                    next_review_date=compute_next_review_date(new_status),  # type: ignore[arg-type]
+                    coverage_tier=existing.coverage_tier,
+                    confidence=existing.confidence,
+                )
+            )
+        self._study_entries = updated_entries
+        self._refresh_study_entries_table()
+
+    def _set_study_from_settings(self, settings: dict[str, object]) -> None:
+        self._study_supported_langs = supported_learning_langs()
+        self._study_entries = normalize_study_entries(
+            settings.get("study_glossary_entries"),
+            self._study_supported_langs,
+        )
+        self.study_include_snippets_check.setChecked(bool(settings.get("study_glossary_include_snippets", False)))
+        try:
+            snippet_max = int(settings.get("study_glossary_snippet_max_chars", 120))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            snippet_max = 120
+        try:
+            coverage_percent = int(settings.get("study_glossary_default_coverage_percent", 80))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            coverage_percent = 80
+        self.study_snippet_chars_spin.setValue(max(40, min(300, snippet_max)))
+        self.study_coverage_spin.setValue(max(50, min(95, coverage_percent)))
+        run_dirs_raw = settings.get("study_glossary_last_run_dirs")
+        run_dirs = [str(item).strip() for item in run_dirs_raw] if isinstance(run_dirs_raw, list) else []
+        source_raw = str(settings.get("study_glossary_corpus_source", "run_folders") or "").strip().lower()
+        if source_raw not in {"run_folders", "current_pdf", "select_pdfs", "joblog_runs"}:
+            source_raw = "run_folders"
+        self._study_corpus_source = source_raw
+        pdf_paths_raw = settings.get("study_glossary_pdf_paths")
+        pdf_paths = [str(item).strip() for item in pdf_paths_raw] if isinstance(pdf_paths_raw, list) else []
+        self._set_study_run_dirs(run_dirs)
+        self._set_study_pdf_paths(pdf_paths)
+        self.study_corpus_source_combo.blockSignals(True)
+        for idx in range(self.study_corpus_source_combo.count()):
+            if str(self.study_corpus_source_combo.itemData(idx) or "").strip().lower() == source_raw:
+                self.study_corpus_source_combo.setCurrentIndex(idx)
+                break
+        self.study_corpus_source_combo.blockSignals(False)
+        self._study_search_text = ""
+        self.study_search_edit.clear()
+        self.study_category_filter_combo.setCurrentText("all")
+        self.study_status_filter_combo.setCurrentText("all")
+        self.study_coverage_filter_combo.setCurrentText("all")
+        self._study_filters = {"category": "all", "status": "all", "coverage_tier": "all"}
+        self._study_candidate_rows = []
+        self._study_quiz_index = 0
+        self._study_last_run_folders_processed = 0
+        self._study_last_total_pages_scanned = 0
+        self.study_candidates_table.setRowCount(0)
+        self.study_progress.setValue(0)
+        self.study_summary_label.setText("No candidates generated yet.")
+        self._set_study_generation_controls_busy(False)
+        self._refresh_study_corpus_source_controls()
+        self._refresh_study_entries_table()
+
+    def _collect_study_settings_values(self) -> dict[str, object]:
+        self._save_current_study_table_rows()
+        return {
+            "study_glossary_entries": serialize_study_entries(self._study_entries, self._study_supported_langs),
+            "study_glossary_include_snippets": bool(self.study_include_snippets_check.isChecked()),
+            "study_glossary_snippet_max_chars": int(self.study_snippet_chars_spin.value()),
+            "study_glossary_last_run_dirs": self._collect_study_run_dirs(),
+            "study_glossary_corpus_source": self._current_study_corpus_source(),
+            "study_glossary_pdf_paths": self._collect_study_pdf_paths(),
+            "study_glossary_default_coverage_percent": int(self.study_coverage_spin.value()),
+        }
 
     def _build_tab_diagnostics(self) -> None:
         layout = QVBoxLayout(self.tab_diag)
@@ -1484,6 +2905,7 @@ class QtSettingsDialog(QDialog):
         self.diag_snippets_check.setChecked(bool(settings.get("diagnostics_include_sanitized_snippets", False)))
         self.diag_snippets_check.setEnabled(self.diag_admin_mode_check.isChecked())
         self._set_glossaries_from_settings(settings)
+        self._set_study_from_settings(settings)
 
     def _pick_default_outdir(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "Choose default output folder")
@@ -1766,6 +3188,17 @@ class QtSettingsDialog(QDialog):
                 "glossary_seed_version": self._glossary_seed_version,
             }
         )
+        self._set_study_from_settings(
+            {
+                "study_glossary_entries": [],
+                "study_glossary_include_snippets": False,
+                "study_glossary_snippet_max_chars": 120,
+                "study_glossary_last_run_dirs": [],
+                "study_glossary_corpus_source": "run_folders",
+                "study_glossary_pdf_paths": [],
+                "study_glossary_default_coverage_percent": 80,
+            }
+        )
         self.ocr_mode_default_combo.setCurrentText("auto")
         self.ocr_engine_default_combo.setCurrentText("local_then_api")
         self.retries_edit.setText("4")
@@ -1813,6 +3246,7 @@ class QtSettingsDialog(QDialog):
             "default_start_page": default_start,
             "default_end_page": default_end,
             "default_outdir": self.default_outdir_edit.text().strip(),
+            "personal_glossaries_by_lang": serialize_glossaries(normalized_glossaries),
             "glossaries_by_lang": serialize_glossaries(normalized_glossaries),
             "enabled_glossary_tiers_by_target_lang": {
                 lang: list(normalized_enabled_tiers.get(lang, [1, 2]))
@@ -1820,6 +3254,7 @@ class QtSettingsDialog(QDialog):
             },
             "glossary_seed_version": max(2, int(self._glossary_seed_version)),
             "glossary_file_path": self.glossary_file_edit.text().strip(),
+            **self._collect_study_settings_values(),
             "ocr_mode_default": self.ocr_mode_default_combo.currentText().strip().lower(),
             "ocr_engine_default": self.ocr_engine_default_combo.currentText().strip().lower(),
             "ocr_api_base_url": base_url,

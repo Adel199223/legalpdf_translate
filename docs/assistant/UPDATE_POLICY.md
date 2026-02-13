@@ -135,3 +135,75 @@ Verification commands/results:
 - python -m pytest -q -> 173 passed in 5.09s
 - python -m compileall src tests -> success
 - git status --short -- src tests -> modified files present for this in-progress change set
+
+Date: 2026-02-13
+Code change summary:
+- Added learning-only Study Glossary core logic in `src/legalpdf_translate/study_glossary.py` (term mining, scoring, 20-80 coverage selection, merge helpers, language expansion, review-date helpers, translation fill helper).
+- Added Study Glossary settings schema + normalization in `src/legalpdf_translate/user_settings.py` (`study_glossary_entries`, snippets/corpus/coverage keys).
+- Added a dedicated Study Glossary settings tab in `src/legalpdf_translate/qt_gui/dialogs.py` with run-folder builder, search/filters, suggestions table, review statuses, and translation refresh/quiz actions.
+- Added regression tests for Study Glossary algorithm/settings/prompt isolation and Qt method-level table behaviors.
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (sections: C, D, F, J)
+- docs/assistant/PROJECT_INSTRUCTIONS.txt (routing rule for Study Glossary)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 194 passed in 5.20s
+- python -m compileall src tests -> success
+- git status --short -- src tests -> modified files present for this in-progress change set
+
+Date: 2026-02-13
+Code change summary:
+- Hardened Study Glossary coverage to use non-overlapping longest-match assignment (`tri->bi->uni`) in `src/legalpdf_translate/study_glossary.py` (`tokenize_pt`, `build_ngram_index`, `count_non_overlapping_matches`, `compute_non_overlapping_tier_assignment`).
+- Added subsumption suppression for noisy short suggestions (`apply_subsumption_suppression`) and wired deterministic coverage+tiering in Study Glossary candidate finalization path (`src/legalpdf_translate/qt_gui/dialogs.py::_on_study_candidate_finished`).
+- Added content-only Markdown export for consistency glossary in Qt settings (`src/legalpdf_translate/qt_gui/dialogs.py::_export_consistency_glossary_markdown`, `src/legalpdf_translate/glossary.py::build_consistency_glossary_markdown`).
+- Kept consistency glossary dynamic language expansion robust by making `serialize_glossaries(...)` accept caller-provided supported languages and using that in `src/legalpdf_translate/user_settings.py::load_gui_settings`.
+- Added regression coverage for non-overlapping coverage behavior, subsumption demotion, consistency export format, future-language glossary expansion, and prompt-isolation lock tests.
+
+Docs updated:
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 205 passed in 5.10s
+- python -m compileall src tests -> success
+- git status --short -- src tests -> modified files present for this in-progress change set
+
+Date: 2026-02-13
+Code change summary:
+- Added Study Glossary corpus source modes in Qt settings (`run_folders`, `current_pdf`, `select_pdfs`, `joblog_runs` unavailable) with persisted settings keys and UI state/validation paths.
+- Wired active main-window PDF into settings dialog (`src/legalpdf_translate/qt_gui/app_window.py::_open_settings_dialog`) for `Current PDF only` Study corpus mode.
+- Extended Study candidate worker inputs in `src/legalpdf_translate/qt_gui/dialogs.py::_StudyCandidateWorker` to support direct PDF sources while preserving streaming/cancel behavior and keeping Study prompt-isolated.
+- Added optional manual `Copy selected to AI Glossary...` action in Study tab with explicit confirmation, defaults (`exact`, `PT`, `tier 2`), duplicate-skip behavior, and conflict skip/replace prompt.
+- Added regression tests for new study settings keys/normalization, corpus source input resolution, and Study-to-AI merge semantics.
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (sections: F)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 211 passed in 5.37s
+- python -m compileall src tests -> success
+- git status --short -- src tests -> modified files present for this in-progress change set
+
+Date: 2026-02-13
+Code change summary:
+- Added integrated consistency Glossary Builder and Calibration Audit backends:
+  - `src/legalpdf_translate/glossary_builder.py` (frequency mining, thresholds, deterministic suggestions, markdown/json rendering).
+  - `src/legalpdf_translate/calibration_audit.py` (deterministic sampling, forced OCR comparison path, verifier JSON retry handling, audit artifacts).
+- Added project+personal consistency glossary scope support and merge helpers in `src/legalpdf_translate/glossary.py` (`load_project_glossaries`, `merge_glossary_scopes`, `save_project_glossaries`) and wired runtime merge in `src/legalpdf_translate/workflow.py::TranslationWorkflow.run`.
+- Added optional per-language prompt addendum path (`prompt_addendum_by_lang`) with deterministic append marker block in `src/legalpdf_translate/workflow.py::_append_prompt_addendum`.
+- Added Qt actions/dialogs for both tools in:
+  - `src/legalpdf_translate/qt_gui/app_window.py` (`Glossary Builder...`, `Calibration Audit...`)
+  - `src/legalpdf_translate/qt_gui/tools_dialogs.py` (`QtGlossaryBuilderDialog`, `QtCalibrationAuditDialog`, worker/cancel/progress/apply flows).
+- Kept Study Glossary prompt-isolated and consistency prompt injection path unchanged (`_append_glossary_prompt` still consumes only consistency glossary source).
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (builder/audit architecture + settings/scope merge + addendum + navigation entries)
+- docs/assistant/API_PROMPTS.md (addendum insertion + calibration verifier prompt/retry templates)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 218 passed in 5.79s
+- python -m compileall src tests -> success
+- git status --short -- src tests -> modified/untracked files present for this in-progress change set

@@ -71,6 +71,7 @@ from legalpdf_translate.qt_gui.dialogs import (
     QtSettingsDialog,
     build_seed_from_run,
 )
+from legalpdf_translate.qt_gui.tools_dialogs import QtCalibrationAuditDialog, QtGlossaryBuilderDialog
 from legalpdf_translate.qt_gui.styles import apply_primary_glow, apply_soft_shadow
 from legalpdf_translate.qt_gui.worker import (
     AnalyzeWorker,
@@ -208,6 +209,8 @@ class QtMainWindow(QMainWindow):
         self._last_run_report_path: Path | None = None
         self._joblog_window: QtJobLogWindow | None = None
         self._settings_dialog: QtSettingsDialog | None = None
+        self._glossary_builder_dialog: QtGlossaryBuilderDialog | None = None
+        self._calibration_dialog: QtCalibrationAuditDialog | None = None
         self._menu_actions: dict[str, QAction] = {}
         self._joblog_db_path = job_log_db_path()
         self._session_started_at = datetime.now()
@@ -298,8 +301,17 @@ class QtMainWindow(QMainWindow):
 
         self.show_adv = QCheckBox("Show Advanced")
         self.settings_btn = QPushButton("Settings...")
+        self.glossary_builder_btn = QPushButton("Glossary Builder...")
+        self.calibration_audit_btn = QPushButton("Calibration Audit...")
         grid.addWidget(self.show_adv, 3, 0, 1, 2)
-        grid.addWidget(self.settings_btn, 3, 3, 1, 1, Qt.AlignmentFlag.AlignRight)
+        tools_row = QWidget()
+        tools_row_layout = QHBoxLayout(tools_row)
+        tools_row_layout.setContentsMargins(0, 0, 0, 0)
+        tools_row_layout.setSpacing(8)
+        tools_row_layout.addWidget(self.glossary_builder_btn)
+        tools_row_layout.addWidget(self.calibration_audit_btn)
+        tools_row_layout.addWidget(self.settings_btn)
+        grid.addWidget(tools_row, 3, 2, 1, 2, Qt.AlignmentFlag.AlignRight)
         main_layout.addLayout(grid)
 
         self.adv_frame = QFrame(objectName="SurfacePanel")
@@ -400,6 +412,8 @@ class QtMainWindow(QMainWindow):
         self.outdir_btn.clicked.connect(self._pick_outdir)
         self.context_btn.clicked.connect(self._pick_context)
         self.settings_btn.clicked.connect(self._open_settings_dialog)
+        self.glossary_builder_btn.clicked.connect(self._open_glossary_builder_dialog)
+        self.calibration_audit_btn.clicked.connect(self._open_calibration_audit_dialog)
         self.show_adv.toggled.connect(self._set_adv_visible)
         self.details_btn.toggled.connect(self._set_details_visible)
         self.translate_btn.clicked.connect(self._start)
@@ -532,6 +546,12 @@ class QtMainWindow(QMainWindow):
         tools_menu = menu_bar.addMenu("Tools")
         tools_settings = tools_menu.addAction("Settings...")
         tools_settings.triggered.connect(self._open_settings_dialog)
+        tools_menu.addSeparator()
+        tools_glossary_builder = tools_menu.addAction("Glossary Builder...")
+        tools_glossary_builder.triggered.connect(self._open_glossary_builder_dialog)
+        tools_calibration_audit = tools_menu.addAction("Calibration Audit...")
+        tools_calibration_audit.triggered.connect(self._open_calibration_audit_dialog)
+        tools_menu.addSeparator()
         tools_test = tools_menu.addAction("Test API Keys...")
         tools_test.triggered.connect(self._test_api_keys)
         clear_menu = tools_menu.addMenu("Clear Stored Keys...")
@@ -555,6 +575,8 @@ class QtMainWindow(QMainWindow):
             "open_output_folder": file_open,
             "export_partial": file_export,
             "settings": tools_settings,
+            "glossary_builder": tools_glossary_builder,
+            "calibration_audit": tools_calibration_audit,
             "test_api_keys": tools_test,
             "about": help_about,
             "open_logs": help_logs,
@@ -737,16 +759,87 @@ class QtMainWindow(QMainWindow):
             self._settings_dialog.activateWindow()
             return
 
+        current_pdf_path: Path | None = None
+        pdf_text = self.pdf_edit.text().strip()
+        if pdf_text:
+            candidate = Path(pdf_text).expanduser().resolve()
+            if candidate.exists() and candidate.is_file():
+                current_pdf_path = candidate
+
         dialog = QtSettingsDialog(
             parent=self,
             settings=self._defaults,
             apply_callback=self.apply_settings_from_dialog,
             collect_debug_paths=self.collect_debug_bundle_metadata_paths,
+            current_pdf_path=current_pdf_path,
         )
         dialog.setModal(False)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dialog.destroyed.connect(lambda _obj=None: setattr(self, "_settings_dialog", None))
         self._settings_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _apply_aux_settings(self, values: dict[str, object]) -> None:
+        save_gui_settings(values)
+        self._defaults = load_gui_settings()
+        self._update_controls()
+
+    def _current_pdf_path_for_tools(self) -> Path | None:
+        pdf_text = self.pdf_edit.text().strip()
+        if pdf_text == "":
+            return None
+        candidate = Path(pdf_text).expanduser().resolve()
+        if not candidate.exists() or not candidate.is_file():
+            return None
+        return candidate
+
+    def _current_output_dir_for_tools(self) -> Path | None:
+        out_text = self.outdir_edit.text().strip()
+        if out_text == "":
+            return None
+        candidate = Path(out_text).expanduser().resolve()
+        if not candidate.exists() or not candidate.is_dir():
+            return None
+        return candidate
+
+    def _open_glossary_builder_dialog(self) -> None:
+        if self._glossary_builder_dialog is not None and self._glossary_builder_dialog.isVisible():
+            self._glossary_builder_dialog.raise_()
+            self._glossary_builder_dialog.activateWindow()
+            return
+        dialog = QtGlossaryBuilderDialog(
+            parent=self,
+            settings=self._defaults,
+            current_pdf_path=self._current_pdf_path_for_tools(),
+            current_output_dir=self._current_output_dir_for_tools(),
+            default_target_lang=self.lang_combo.currentText().strip().upper(),
+            save_settings_callback=self._apply_aux_settings,
+        )
+        dialog.setModal(False)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(lambda _obj=None: setattr(self, "_glossary_builder_dialog", None))
+        self._glossary_builder_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _open_calibration_audit_dialog(self) -> None:
+        if self._calibration_dialog is not None and self._calibration_dialog.isVisible():
+            self._calibration_dialog.raise_()
+            self._calibration_dialog.activateWindow()
+            return
+        dialog = QtCalibrationAuditDialog(
+            parent=self,
+            settings=self._defaults,
+            build_config_callback=self._build_config,
+            save_settings_callback=self._apply_aux_settings,
+        )
+        dialog.setModal(False)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(lambda _obj=None: setattr(self, "_calibration_dialog", None))
+        self._calibration_dialog = dialog
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -978,12 +1071,15 @@ class QtMainWindow(QMainWindow):
 
         self._set_menu_enabled("open_output_folder", can_open)
         self._set_menu_enabled("export_partial", (not self._busy) and self._can_export_partial)
+        self._set_menu_enabled("glossary_builder", not self._busy)
+        self._set_menu_enabled("calibration_audit", not self._busy)
 
     def _set_busy(self, busy: bool, *, translation: bool) -> None:
         self._busy = busy
         self._running = busy and translation
         for w in (
             self.pdf_edit, self.pdf_btn, self.lang_combo, self.outdir_edit, self.outdir_btn, self.show_adv, self.settings_btn,
+            self.glossary_builder_btn, self.calibration_audit_btn,
             self.effort_policy_combo, self.effort_combo, self.images_combo, self.ocr_mode_combo, self.ocr_engine_combo,
             self.start_edit, self.end_edit, self.max_edit, self.workers_spin,
             self.resume_check, self.breaks_check, self.keep_check,

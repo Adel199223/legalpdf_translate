@@ -295,6 +295,34 @@ Commands to run
 - python -m compileall src tests
 ```
 
+### Example 11 - Calibration verifier JSON hardening
+```text
+Goal
+- Improve calibration verifier JSON reliability without changing normal translation semantics.
+
+Scope boundaries
+- Edit only: src/legalpdf_translate/calibration_audit.py
+- Optional UI-only adjustments: src/legalpdf_translate/qt_gui/tools_dialogs.py
+- Do not change: src/legalpdf_translate/prompt_builder.py, OCR/reporting flow, DOCX logic
+- If touching prompts/templates, consult docs/assistant/API_PROMPTS.md and update it accordingly.
+
+Files to inspect first
+- docs/assistant/API_PROMPTS.md
+- src/legalpdf_translate/calibration_audit.py::_verifier_prompt
+- src/legalpdf_translate/calibration_audit.py::_verifier_retry_prompt
+- src/legalpdf_translate/calibration_audit.py::_call_verifier_with_retries
+
+Acceptance criteria
+- Verifier output parsing remains deterministic with retry fallback on malformed JSON.
+- Findings/suggestions schema remains stable.
+- No changes to `TranslationWorkflow._append_glossary_prompt` behavior.
+
+Commands to run
+- rg -n "_verifier_prompt|_verifier_retry_prompt|_call_verifier_with_retries|run_calibration_audit" src/legalpdf_translate
+- python -m pytest -q tests/test_calibration_audit.py tests/test_workflow_glossary.py
+- python -m pytest -q
+```
+
 ## 3) Prompt Quality Checklist
 Before finalizing any Codex prompt/output, confirm:
 - Exact files are listed (real paths in this repo).

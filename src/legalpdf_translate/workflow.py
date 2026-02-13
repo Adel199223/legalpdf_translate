@@ -40,10 +40,10 @@ from .glossary import (
     cap_entries_for_prompt,
     GlossaryEntry,
     detect_source_lang_for_glossary,
-    entries_from_legacy_rules,
     filter_entries_for_prompt,
     format_glossary_for_prompt,
-    load_glossary,
+    load_project_glossaries,
+    merge_glossary_scopes,
     normalize_enabled_tiers_by_target_lang,
     normalize_glossaries,
     sort_entries_for_prompt,
@@ -106,6 +106,7 @@ class TranslationWorkflow:
             {},
             supported_target_langs(),
         )
+        self._prompt_addendum_by_lang: dict[str, str] = {lang: "" for lang in supported_target_langs()}
 
     def cancel(self) -> None:
         self._cancel_event.set()
@@ -124,43 +125,30 @@ class TranslationWorkflow:
         config = self._normalize_config(config)
         self._validate_config(config)
         gui_settings = load_gui_settings()
-        prompt_glossaries = normalize_glossaries(
-            gui_settings.get("glossaries_by_lang"),
+        personal_glossaries = normalize_glossaries(
+            gui_settings.get("personal_glossaries_by_lang", gui_settings.get("glossaries_by_lang")),
             supported_target_langs(),
         )
         self._enabled_glossary_tiers_by_lang = normalize_enabled_tiers_by_target_lang(
             gui_settings.get("enabled_glossary_tiers_by_target_lang"),
             supported_target_langs(),
         )
+        raw_addendum_map = gui_settings.get("prompt_addendum_by_lang")
+        if not isinstance(raw_addendum_map, dict):
+            raw_addendum_map = {}
+        self._prompt_addendum_by_lang = {
+            lang: str(raw_addendum_map.get(lang, "") or "").strip()
+            for lang in supported_target_langs()
+        }
+        project_glossaries = normalize_glossaries({}, supported_target_langs())
         if config.glossary_file:
             # Preserve fail-fast behavior for invalid custom glossary files.
-            load_glossary(config.glossary_file)
-            migrated_legacy = entries_from_legacy_rules(config.glossary_file)
-            for lang in supported_target_langs():
-                combined_rows = list(prompt_glossaries.get(lang, []))
-                seen = {
-                    (
-                        entry.source_text,
-                        entry.preferred_translation,
-                        entry.match_mode,
-                        entry.source_lang,
-                        int(entry.tier),
-                    )
-                    for entry in combined_rows
-                }
-                for legacy_entry in migrated_legacy.get(lang, []):
-                    key = (
-                        legacy_entry.source_text,
-                        legacy_entry.preferred_translation,
-                        legacy_entry.match_mode,
-                        legacy_entry.source_lang,
-                        int(legacy_entry.tier),
-                    )
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    combined_rows.append(legacy_entry)
-                prompt_glossaries[lang] = combined_rows
+            project_glossaries = load_project_glossaries(config.glossary_file)
+        prompt_glossaries = merge_glossary_scopes(
+            project_glossaries,
+            personal_glossaries,
+            supported_langs=supported_target_langs(),
+        )
         self._prompt_glossaries_by_lang = prompt_glossaries
         self._last_config = config
         self._diagnostics_admin_mode = bool(config.diagnostics_admin_mode)
@@ -1054,6 +1042,7 @@ class TranslationWorkflow:
             context_text=context_text,
         )
         prompt_text = self._append_glossary_prompt(prompt_text, config.target_lang, source_text=glossary_source_text)
+        prompt_text = self._append_prompt_addendum(prompt_text, config.target_lang)
 
         usage_payload: dict[str, object] = {
             "ocr": {
@@ -1308,6 +1297,19 @@ class TranslationWorkflow:
         if glossary_block == "":
             return prompt_text
         return f"{prompt_text}\n{glossary_block}"
+
+    def _append_prompt_addendum(self, prompt_text: str, lang: TargetLang) -> str:
+        addendum = self._prompt_addendum_by_lang.get(lang.value, "").strip()
+        if addendum == "":
+            return prompt_text
+        return "\n".join(
+            [
+                prompt_text,
+                "<<<BEGIN ADDENDUM>>>",
+                addendum,
+                "<<<END ADDENDUM>>>",
+            ]
+        )
 
     def _evaluate_output(self, raw_output: str, lang: TargetLang) -> _Evaluation:
         parsed = parse_code_block_output(raw_output)

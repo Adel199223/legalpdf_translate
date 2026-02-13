@@ -23,6 +23,18 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert loaded["glossary_file_path"] == ""
     assert loaded["glossary_seed_version"] == 2
     assert loaded["glossary_seed_preset_version"] == 2
+    assert set(loaded["personal_glossaries_by_lang"].keys()) == {"EN", "FR", "AR"}
+    assert loaded["personal_glossaries_by_lang"] == loaded["glossaries_by_lang"]
+    assert loaded["prompt_addendum_by_lang"] == {"EN": "", "FR": "", "AR": ""}
+    assert loaded["calibration_sample_pages_default"] == 5
+    assert loaded["calibration_user_seed"] == ""
+    assert loaded["calibration_enable_excerpt_storage"] is False
+    assert loaded["calibration_excerpt_max_chars"] == 200
+    assert loaded["study_glossary_entries"] == []
+    assert loaded["study_glossary_include_snippets"] is False
+    assert loaded["study_glossary_snippet_max_chars"] == 120
+    assert loaded["study_glossary_last_run_dirs"] == []
+    assert loaded["study_glossary_default_coverage_percent"] == 80
     assert set(loaded["glossaries_by_lang"].keys()) == {"EN", "FR", "AR"}
     assert loaded["enabled_glossary_tiers_by_target_lang"] == {"EN": [1, 2], "FR": [1, 2], "AR": [1, 2]}
     assert len(loaded["glossaries_by_lang"]["EN"]) == len(default_en_entries())
@@ -70,6 +82,38 @@ def test_load_gui_settings_migrates_old_last_used_fields(tmp_path: Path, monkeyp
     assert loaded["ocr_api_key_env_name"] == "LEGACY_ENV_NAME"
     assert loaded["default_effort_policy"] == "fixed_xhigh"
     assert loaded["effort_policy"] == "fixed_xhigh"
+
+
+def test_load_gui_settings_migrates_legacy_single_scope_to_personal(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "glossary_seed_version": 2,
+                "glossary_seed_preset_version": 2,
+                "glossaries_by_lang": {
+                    "EN": [
+                        {
+                            "source_text": "acusação",
+                            "preferred_translation": "indictment",
+                            "match_mode": "exact",
+                            "source_lang": "PT",
+                            "tier": 2,
+                        }
+                    ],
+                    "FR": [],
+                    "AR": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+    assert loaded["personal_glossaries_by_lang"] == loaded["glossaries_by_lang"]
+    assert loaded["personal_glossaries_by_lang"]["EN"][0]["source_text"] == "acusação"
 
 
 def test_load_gui_settings_maps_legacy_adaptive_flags(tmp_path: Path, monkeypatch) -> None:
@@ -194,6 +238,19 @@ def test_save_and_load_glossaries_by_lang_round_trip(tmp_path: Path, monkeypatch
             "enabled_glossary_tiers_by_target_lang": {"EN": [1, 2], "FR": [1], "AR": [1, 2, 3]},
             "glossary_seed_version": 2,
             "glossary_seed_preset_version": 2,
+            "study_glossary_entries": [
+                {
+                    "term_pt": "acusação",
+                    "translations_by_lang": {"AR": "الاتهام"},
+                    "tf": 5,
+                    "df_pages": 2,
+                    "df_docs": 2,
+                }
+            ],
+            "study_glossary_include_snippets": True,
+            "study_glossary_snippet_max_chars": 150,
+            "study_glossary_last_run_dirs": ["C:/runs/demo_run"],
+            "study_glossary_default_coverage_percent": 85,
         }
     )
 
@@ -209,6 +266,12 @@ def test_save_and_load_glossaries_by_lang_round_trip(tmp_path: Path, monkeypatch
     ]
     assert len(matching_rows) == 1
     assert loaded["enabled_glossary_tiers_by_target_lang"] == {"EN": [1, 2], "FR": [1], "AR": [1, 2, 3]}
+    assert loaded["study_glossary_include_snippets"] is True
+    assert loaded["study_glossary_snippet_max_chars"] == 150
+    assert loaded["study_glossary_last_run_dirs"] == ["C:/runs/demo_run"]
+    assert loaded["study_glossary_default_coverage_percent"] == 85
+    assert loaded["study_glossary_entries"][0]["translations_by_lang"] == {"EN": "", "FR": "", "AR": "الاتهام"}
+    assert loaded["study_glossary_entries"][0]["df_docs"] == 2
 
 
 def test_load_gui_settings_normalizes_enabled_tiers_for_future_langs(tmp_path: Path, monkeypatch) -> None:
@@ -229,3 +292,46 @@ def test_load_gui_settings_normalizes_enabled_tiers_for_future_langs(tmp_path: P
     assert loaded["enabled_glossary_tiers_by_target_lang"]["AR"] == [2, 6]
     assert loaded["enabled_glossary_tiers_by_target_lang"]["EN"] == [1, 2]
     assert loaded["enabled_glossary_tiers_by_target_lang"]["FR"] == [1, 2]
+
+
+def test_load_gui_settings_expands_consistency_glossaries_for_future_langs(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    monkeypatch.setattr(user_settings, "supported_target_langs", lambda: ["EN", "FR", "AR", "ES"])
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "glossary_seed_version": 2,
+                "glossary_seed_preset_version": 2,
+                "glossaries_by_lang": {
+                    "AR": [
+                        {
+                            "source_text": "acusação",
+                            "preferred_translation": "الاتهام",
+                            "match_mode": "exact",
+                            "source_lang": "PT",
+                            "tier": 1,
+                        }
+                    ],
+                    "EN": [],
+                    "FR": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+    assert set(loaded["glossaries_by_lang"].keys()) == {"EN", "FR", "AR", "ES"}
+    assert loaded["glossaries_by_lang"]["AR"] == [
+        {
+            "source_text": "acusação",
+            "preferred_translation": "الاتهام",
+            "match_mode": "exact",
+            "source_lang": "PT",
+            "tier": 1,
+        }
+    ]
+    assert loaded["glossaries_by_lang"]["ES"] == []
+    assert loaded["enabled_glossary_tiers_by_target_lang"]["ES"] == [1, 2]

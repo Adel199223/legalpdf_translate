@@ -16,6 +16,7 @@ from .glossary import (
     serialize_glossaries,
     supported_target_langs,
 )
+from .study_glossary import normalize_study_entries, serialize_study_entries, supported_learning_langs
 
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
@@ -79,11 +80,24 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "default_start_page": 1,
     "default_end_page": None,
     "default_outdir": "",
+    "personal_glossaries_by_lang": {},
     "glossaries_by_lang": {},
     "enabled_glossary_tiers_by_target_lang": {},
     "glossary_seed_version": 0,
     "glossary_seed_preset_version": 0,
     "glossary_file_path": "",
+    "prompt_addendum_by_lang": {},
+    "calibration_sample_pages_default": 5,
+    "calibration_user_seed": "",
+    "calibration_enable_excerpt_storage": False,
+    "calibration_excerpt_max_chars": 200,
+    "study_glossary_entries": [],
+    "study_glossary_include_snippets": False,
+    "study_glossary_snippet_max_chars": 120,
+    "study_glossary_last_run_dirs": [],
+    "study_glossary_corpus_source": "run_folders",
+    "study_glossary_pdf_paths": [],
+    "study_glossary_default_coverage_percent": 80,
     "ocr_mode_default": "auto",
     "ocr_engine_default": "local_then_api",
     "perf_max_transport_retries": 4,
@@ -115,11 +129,24 @@ ALLOWED_GUI_KEYS = {
     "default_start_page",
     "default_end_page",
     "default_outdir",
+    "personal_glossaries_by_lang",
     "glossaries_by_lang",
     "enabled_glossary_tiers_by_target_lang",
     "glossary_seed_version",
     "glossary_seed_preset_version",
     "glossary_file_path",
+    "prompt_addendum_by_lang",
+    "calibration_sample_pages_default",
+    "calibration_user_seed",
+    "calibration_enable_excerpt_storage",
+    "calibration_excerpt_max_chars",
+    "study_glossary_entries",
+    "study_glossary_include_snippets",
+    "study_glossary_snippet_max_chars",
+    "study_glossary_last_run_dirs",
+    "study_glossary_corpus_source",
+    "study_glossary_pdf_paths",
+    "study_glossary_default_coverage_percent",
     "ocr_mode_default",
     "ocr_engine_default",
     "perf_max_transport_retries",
@@ -469,7 +496,13 @@ def load_gui_settings() -> dict[str, Any]:
     merged["default_end_page"] = _coerce_optional_int(merged.get("default_end_page"))
     merged["default_outdir"] = str(merged.get("default_outdir", "") or "")
     supported_langs = supported_target_langs()
-    normalized_glossaries = normalize_glossaries(merged.get("glossaries_by_lang"), supported_langs)
+    has_personal_scope = "personal_glossaries_by_lang" in data
+    personal_source = (
+        merged.get("personal_glossaries_by_lang")
+        if has_personal_scope
+        else merged.get("glossaries_by_lang")
+    )
+    normalized_personal_glossaries = normalize_glossaries(personal_source, supported_langs)
     enabled_tiers = normalize_enabled_tiers_by_target_lang(
         merged.get("enabled_glossary_tiers_by_target_lang"),
         supported_langs,
@@ -477,36 +510,64 @@ def load_gui_settings() -> dict[str, Any]:
     glossary_seed_version = _coerce_int(merged.get("glossary_seed_version"), 0)
     glossary_seed_preset_version = _coerce_int(merged.get("glossary_seed_preset_version"), 0)
     merged["glossary_file_path"] = str(merged.get("glossary_file_path", "") or "")
-    has_any_glossary_rows = any(normalized_glossaries.get(lang) for lang in supported_langs)
+    has_any_glossary_rows = any(normalized_personal_glossaries.get(lang) for lang in supported_langs)
     if not has_any_glossary_rows and merged["glossary_file_path"].strip():
         legacy_glossaries = entries_from_legacy_rules(Path(merged["glossary_file_path"]))
         for lang in supported_langs:
             legacy_rows = legacy_glossaries.get(lang, [])
             if legacy_rows:
-                normalized_glossaries[lang] = legacy_rows
-        has_any_glossary_rows = any(normalized_glossaries.get(lang) for lang in supported_langs)
-    raw_glossaries = data.get("glossaries_by_lang")
+                normalized_personal_glossaries[lang] = legacy_rows
+        has_any_glossary_rows = any(normalized_personal_glossaries.get(lang) for lang in supported_langs)
+    raw_glossaries = data.get("personal_glossaries_by_lang")
+    if not isinstance(raw_glossaries, dict):
+        raw_glossaries = data.get("glossaries_by_lang")
     has_explicit_ar_rows = False
     if isinstance(raw_glossaries, dict):
         for raw_lang in raw_glossaries.keys():
             if str(raw_lang).strip().upper() == "AR":
                 has_explicit_ar_rows = True
                 break
-    if glossary_seed_version < 2 and not normalized_glossaries.get("AR") and not has_explicit_ar_rows:
-        normalized_glossaries["AR"] = default_ar_entries()
+    if glossary_seed_version < 2 and not normalized_personal_glossaries.get("AR") and not has_explicit_ar_rows:
+        normalized_personal_glossaries["AR"] = default_ar_entries()
     if glossary_seed_preset_version < 2:
         for target_lang in ("AR", "EN", "FR"):
-            normalized_glossaries[target_lang] = seed_missing_entries_for_target_lang(
+            normalized_personal_glossaries[target_lang] = seed_missing_entries_for_target_lang(
                 target_lang,
-                normalized_glossaries.get(target_lang, []),
+                normalized_personal_glossaries.get(target_lang, []),
             )
-    merged["glossaries_by_lang"] = serialize_glossaries(normalized_glossaries)
+    serialized_personal = serialize_glossaries(normalized_personal_glossaries, supported_langs)
+    merged["personal_glossaries_by_lang"] = serialized_personal
+    # Backward-compatible mirror for existing UI/tests and downstream consumers.
+    merged["glossaries_by_lang"] = serialized_personal
     merged["enabled_glossary_tiers_by_target_lang"] = {
         lang: list(enabled_tiers.get(lang, [1, 2]))
         for lang in supported_langs
     }
     merged["glossary_seed_version"] = glossary_seed_version if glossary_seed_version >= 2 else 2
     merged["glossary_seed_preset_version"] = glossary_seed_preset_version if glossary_seed_preset_version >= 2 else 2
+    raw_addendum = merged.get("prompt_addendum_by_lang")
+    normalized_addendum: dict[str, str] = {}
+    if isinstance(raw_addendum, dict):
+        for lang in supported_langs:
+            value = str(raw_addendum.get(lang, "") or "").strip()
+            normalized_addendum[lang] = value[:5000]
+    else:
+        for lang in supported_langs:
+            normalized_addendum[lang] = ""
+    merged["prompt_addendum_by_lang"] = normalized_addendum
+    merged["calibration_sample_pages_default"] = max(
+        1,
+        min(20, _coerce_int(merged.get("calibration_sample_pages_default"), 5)),
+    )
+    merged["calibration_user_seed"] = str(merged.get("calibration_user_seed", "") or "").strip()
+    merged["calibration_enable_excerpt_storage"] = _coerce_bool(
+        merged.get("calibration_enable_excerpt_storage"),
+        False,
+    )
+    merged["calibration_excerpt_max_chars"] = max(
+        40,
+        min(500, _coerce_int(merged.get("calibration_excerpt_max_chars"), 200)),
+    )
     merged["ocr_mode_default"] = _coerce_choice(
         merged.get("ocr_mode_default"),
         default="auto",
@@ -540,6 +601,55 @@ def load_gui_settings() -> dict[str, Any]:
         False,
     )
     merged["min_chars_to_accept_ocr"] = max(20, _coerce_int(merged.get("min_chars_to_accept_ocr"), 200))
+    learning_langs = supported_learning_langs()
+    normalized_study_entries = normalize_study_entries(merged.get("study_glossary_entries"), learning_langs)
+    merged["study_glossary_entries"] = serialize_study_entries(normalized_study_entries, learning_langs)
+    merged["study_glossary_include_snippets"] = _coerce_bool(
+        merged.get("study_glossary_include_snippets"),
+        False,
+    )
+    merged["study_glossary_snippet_max_chars"] = max(
+        40,
+        min(300, _coerce_int(merged.get("study_glossary_snippet_max_chars"), 120)),
+    )
+    coverage_percent = _coerce_int(merged.get("study_glossary_default_coverage_percent"), 80)
+    merged["study_glossary_default_coverage_percent"] = max(50, min(95, coverage_percent))
+    raw_study_dirs = merged.get("study_glossary_last_run_dirs")
+    normalized_run_dirs: list[str] = []
+    seen_dirs: set[str] = set()
+    if isinstance(raw_study_dirs, list):
+        for item in raw_study_dirs:
+            if not isinstance(item, str):
+                continue
+            cleaned = item.strip()
+            if cleaned == "":
+                continue
+            key = cleaned.casefold()
+            if key in seen_dirs:
+                continue
+            seen_dirs.add(key)
+            normalized_run_dirs.append(cleaned)
+    merged["study_glossary_last_run_dirs"] = normalized_run_dirs
+    corpus_source = str(merged.get("study_glossary_corpus_source", "run_folders") or "").strip().lower()
+    if corpus_source not in {"run_folders", "current_pdf", "select_pdfs", "joblog_runs"}:
+        corpus_source = "run_folders"
+    merged["study_glossary_corpus_source"] = corpus_source
+    raw_pdf_paths = merged.get("study_glossary_pdf_paths")
+    normalized_pdf_paths: list[str] = []
+    seen_pdf_paths: set[str] = set()
+    if isinstance(raw_pdf_paths, list):
+        for item in raw_pdf_paths:
+            if not isinstance(item, str):
+                continue
+            cleaned = item.strip()
+            if cleaned == "":
+                continue
+            key = cleaned.casefold()
+            if key in seen_pdf_paths:
+                continue
+            seen_pdf_paths.add(key)
+            normalized_pdf_paths.append(cleaned)
+    merged["study_glossary_pdf_paths"] = normalized_pdf_paths
     return merged
 
 

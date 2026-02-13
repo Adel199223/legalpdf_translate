@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import legalpdf_translate.qt_gui.dialogs as dialogs
@@ -273,3 +274,34 @@ def test_new_glossary_tier_combo_uses_first_item_when_find_data_misses(monkeypat
     assert isinstance(combo, _FakeComboFindDataMiss)
     assert combo.currentData() == 1
     assert combo.currentText() == "T1"
+
+
+def test_export_consistency_glossary_markdown_writes_content_only_markdown(tmp_path: Path, monkeypatch) -> None:
+    output_path = (tmp_path / "ai_glossary.md").resolve()
+    monkeypatch.setattr(dialogs, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        dialogs.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(output_path), "Markdown (*.md)"),
+    )
+    monkeypatch.setattr(dialogs.QMessageBox, "information", lambda *args, **kwargs: None)
+    monkeypatch.setattr(dialogs.QMessageBox, "critical", lambda *args, **kwargs: None)
+
+    fake = SimpleNamespace(
+        _save_current_glossary_language_rows=lambda: None,
+        _glossaries_by_lang={
+            "EN": [],
+            "FR": [],
+            "AR": [GlossaryEntry("acusação", "الاتهام", "exact", "PT", 1)],
+        },
+        _enabled_glossary_tiers_by_lang={"EN": [1, 2], "FR": [1], "AR": [1, 2]},
+    )
+
+    QtSettingsDialog._export_consistency_glossary_markdown(fake)
+
+    content = output_path.read_text(encoding="utf-8")
+    assert content.startswith("# AI Glossary")
+    assert "## AR" in content
+    assert "Enabled tiers: T1, T2" in content
+    assert "| Source phrase (PDF text) | Preferred translation | Match | Source lang | Tier |" in content
+    assert "acusação" in content
