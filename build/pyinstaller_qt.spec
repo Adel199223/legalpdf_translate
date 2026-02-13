@@ -4,6 +4,7 @@ from pathlib import Path
 
 project_root = Path(SPECPATH).resolve().parents[0]
 entry_script = project_root / "src" / "legalpdf_translate" / "qt_main.py"
+icon_path = project_root / "resources" / "icons" / "LegalPDFTranslate.ico"
 
 
 a = Analysis(
@@ -36,6 +37,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="LegalPDFTranslate",
+    icon=str(icon_path),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
