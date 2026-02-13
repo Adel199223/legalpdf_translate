@@ -16,3 +16,6 @@ build/*
 # app run outputs
 *_run/
 *.docx
+
+# assistant scratch docs (local archive only)
+docs/assistant/_scratch/
