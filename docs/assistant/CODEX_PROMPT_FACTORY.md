@@ -237,6 +237,32 @@ Commands to run
 - python -m pytest -q
 ```
 
+### Example 9 - RTL DOCX ordering/alignment fix
+```text
+Goal
+- Fix Arabic DOCX right-alignment and mixed RTL/LTR run ordering without changing translation logic.
+
+Scope boundaries
+- Edit: src/legalpdf_translate/docx_writer.py
+- Tests: tests/test_docx_writer_rtl.py (and update tests/test_docx_writer.py only if existing assertions conflict)
+- Keep EN/FR output behavior stable.
+
+Files to inspect first
+- src/legalpdf_translate/docx_writer.py::assemble_docx
+- src/legalpdf_translate/docx_writer.py::sanitize_bidi_controls
+- src/legalpdf_translate/workflow.py::TranslationWorkflow.run (confirm lang passthrough only)
+
+Acceptance criteria
+- Arabic paragraphs get RTL/bidi + right alignment in DOCX XML.
+- No U+2066..U+2069 isolate characters in default Arabic output.
+- Mixed Arabic/Latin/digits retain intended run order.
+
+Commands to run
+- rg -n "assemble_docx|bidi|rtl|2066|2069|\\u200e" src/legalpdf_translate/docx_writer.py tests
+- python -m pytest -q tests/test_docx_writer.py tests/test_docx_writer_rtl.py
+- python -m pytest -q
+```
+
 ## 3) Prompt Quality Checklist
 Before finalizing any Codex prompt/output, confirm:
 - Exact files are listed (real paths in this repo).

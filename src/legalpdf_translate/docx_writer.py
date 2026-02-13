@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+import unicodedata
 from pathlib import Path
 
 from docx import Document
@@ -12,6 +14,16 @@ from docx.oxml.ns import qn
 
 from .types import TargetLang
 
+_LRM = "\u200e"
+_RTL_LANG_BIDI_CODES = {
+    "AR": "ar-SA",
+    "HE": "he-IL",
+    "FA": "fa-IR",
+    "UR": "ur-PK",
+}
+_PLACEHOLDER_RE = re.compile(r"\[\[(.*?)\]\]", re.DOTALL)
+_RTL_STRONG_BIDI_CATEGORIES = {"R", "AL"}
+_LTR_STRONG_BIDI_CATEGORIES = {"L", "EN", "AN"}
 _BIDI_CONTROL_CODEPOINTS = str.maketrans(
     "",
     "",
@@ -25,15 +37,148 @@ def sanitize_bidi_controls(text: str) -> str:
     return text.translate(_BIDI_CONTROL_CODEPOINTS)
 
 
+def unwrap_internal_placeholders(text: str) -> str:
+    if not text:
+        return text
+    return _PLACEHOLDER_RE.sub(lambda match: match.group(1), text)
+
+
+def _is_rtl_target_lang(lang: TargetLang | str) -> bool:
+    if isinstance(lang, TargetLang):
+        code = lang.value
+    else:
+        code = str(lang)
+    return code.strip().upper() in _RTL_LANG_BIDI_CODES
+
+
+def _rtl_bidi_lang_code(lang: TargetLang | str) -> str:
+    if isinstance(lang, TargetLang):
+        code = lang.value
+    else:
+        code = str(lang)
+    return _RTL_LANG_BIDI_CODES.get(code.strip().upper(), "ar-SA")
+
+
+def _classify_directional_char(char: str) -> str:
+    bidi = unicodedata.bidirectional(char)
+    if bidi in _RTL_STRONG_BIDI_CATEGORIES:
+        return "rtl"
+    if bidi in _LTR_STRONG_BIDI_CATEGORIES:
+        return "ltr"
+    return "neutral"
+
+
+def _nearest_strong_kind(segments: list[tuple[str, str]], index: int) -> str | None:
+    for lookup in range(index - 1, -1, -1):
+        kind = segments[lookup][0]
+        if kind != "neutral":
+            return kind
+    for lookup in range(index + 1, len(segments)):
+        kind = segments[lookup][0]
+        if kind != "neutral":
+            return kind
+    return None
+
+
+def _segment_directional_runs(text: str) -> tuple[list[tuple[str, str]], bool]:
+    if not text:
+        return [], False
+
+    raw_segments: list[tuple[str, str]] = []
+    current_kind = _classify_directional_char(text[0])
+    current_chars = [text[0]]
+
+    for char in text[1:]:
+        kind = _classify_directional_char(char)
+        if kind == current_kind:
+            current_chars.append(char)
+            continue
+        raw_segments.append((current_kind, "".join(current_chars)))
+        current_kind = kind
+        current_chars = [char]
+    raw_segments.append((current_kind, "".join(current_chars)))
+
+    relabeled_segments: list[tuple[str, str]] = []
+    for index, (kind, chunk) in enumerate(raw_segments):
+        if kind != "neutral":
+            relabeled_segments.append((kind, chunk))
+            continue
+        neighbor_kind = _nearest_strong_kind(raw_segments, index) or "rtl"
+        relabeled_segments.append((neighbor_kind, chunk))
+
+    merged_segments: list[tuple[str, str]] = []
+    for kind, chunk in relabeled_segments:
+        if merged_segments and merged_segments[-1][0] == kind:
+            prev_kind, prev_chunk = merged_segments[-1]
+            merged_segments[-1] = (prev_kind, f"{prev_chunk}{chunk}")
+            continue
+        merged_segments.append((kind, chunk))
+
+    has_rtl = any(kind == "rtl" for kind, _ in merged_segments)
+    has_ltr = any(kind == "ltr" for kind, _ in merged_segments)
+    return merged_segments, has_rtl and has_ltr
+
+
+def _wrap_ltr_run_with_lrm(text: str) -> str:
+    if not text.strip():
+        return text
+    if text.startswith(_LRM) and text.endswith(_LRM):
+        return text
+    leading_ws = len(text) - len(text.lstrip())
+    trailing_ws = len(text) - len(text.rstrip())
+    core_end = len(text) - trailing_ws if trailing_ws else len(text)
+    core = text[leading_ws:core_end]
+    if not core:
+        return text
+    return f"{text[:leading_ws]}{_LRM}{core}{_LRM}{text[core_end:]}"
+
+
 def _add_rtl_flags(paragraph) -> None:
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    if paragraph.alignment != WD_ALIGN_PARAGRAPH.CENTER:
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     p_pr = paragraph._p.get_or_add_pPr()
-    bidi = OxmlElement("w:bidi")
+    bidi = p_pr.find(qn("w:bidi"))
+    if bidi is None:
+        bidi = OxmlElement("w:bidi")
+        p_pr.append(bidi)
     bidi.set(qn("w:val"), "1")
-    rtl = OxmlElement("w:rtl")
+
+    rtl = p_pr.find(qn("w:rtl"))
+    if rtl is None:
+        rtl = OxmlElement("w:rtl")
+        p_pr.append(rtl)
     rtl.set(qn("w:val"), "1")
-    p_pr.append(bidi)
-    p_pr.append(rtl)
+
+
+def _set_rtl_run_props(run, *, bidi_lang: str) -> None:
+    r_pr = run._r.get_or_add_rPr()
+    rtl = r_pr.find(qn("w:rtl"))
+    if rtl is None:
+        rtl = OxmlElement("w:rtl")
+        r_pr.append(rtl)
+    rtl.set(qn("w:val"), "1")
+
+    lang = r_pr.find(qn("w:lang"))
+    if lang is None:
+        lang = OxmlElement("w:lang")
+        r_pr.append(lang)
+    lang.set(qn("w:val"), bidi_lang)
+    lang.set(qn("w:bidi"), bidi_lang)
+
+
+def _set_ltr_run_props(run, *, lang_code: str = "en-US") -> None:
+    r_pr = run._r.get_or_add_rPr()
+    rtl = r_pr.find(qn("w:rtl"))
+    if rtl is None:
+        rtl = OxmlElement("w:rtl")
+        r_pr.append(rtl)
+    rtl.set(qn("w:val"), "0")
+
+    lang = r_pr.find(qn("w:lang"))
+    if lang is None:
+        lang = OxmlElement("w:lang")
+        r_pr.append(lang)
+    lang.set(qn("w:val"), lang_code)
 
 
 def _verify_non_empty_file(path: Path) -> None:
@@ -126,17 +271,37 @@ def assemble_docx(
     if document.paragraphs and document.paragraphs[0].text == "":
         first = document.paragraphs[0]._element
         first.getparent().remove(first)
+    rtl_lang = _is_rtl_target_lang(lang)
+    rtl_bidi_lang = _rtl_bidi_lang_code(lang)
     for page_idx, page_file in enumerate(page_files):
         page_text = page_file.read_text(encoding="utf-8")
         lines = page_text.split("\n")
         for line in lines:
+            if rtl_lang:
+                line = unwrap_internal_placeholders(line)
             if strip_bidi_controls:
                 line = sanitize_bidi_controls(line)
             if line.strip() == "":
                 continue
-            paragraph = document.add_paragraph(line)
-            if lang == TargetLang.AR:
+            paragraph = document.add_paragraph("")
+            if rtl_lang:
                 _add_rtl_flags(paragraph)
+                directional_runs, has_mixed_direction = _segment_directional_runs(line)
+                if not directional_runs:
+                    continue
+                for kind, run_text in directional_runs:
+                    if not run_text:
+                        continue
+                    if kind == "ltr":
+                        if has_mixed_direction:
+                            run_text = _wrap_ltr_run_with_lrm(run_text)
+                        run = paragraph.add_run(run_text)
+                        _set_ltr_run_props(run)
+                        continue
+                    run = paragraph.add_run(run_text)
+                    _set_rtl_run_props(run, bidi_lang=rtl_bidi_lang)
+            else:
+                paragraph.add_run(line)
         if page_breaks and page_idx < len(page_files) - 1:
             if document.paragraphs:
                 run = document.paragraphs[-1].add_run()

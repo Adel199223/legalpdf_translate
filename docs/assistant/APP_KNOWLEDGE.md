@@ -94,7 +94,7 @@ Core modules:
 - `src/legalpdf_translate/user_settings.py`: GUI/joblog settings persistence and normalization.
 - `src/legalpdf_translate/secrets_store.py`: secure keyring-backed key storage wrappers.
 - `src/legalpdf_translate/joblog_db.py`: SQLite job log schema/migrations/CRUD.
-- `src/legalpdf_translate/docx_writer.py`: DOCX assembly from page outputs.
+- `src/legalpdf_translate/docx_writer.py`: DOCX assembly from page outputs, including RTL paragraph/run direction handling and bidi-control sanitization helpers.
 - `src/legalpdf_translate/cli.py`: command-line parsing and execution path.
 - `src/legalpdf_translate/qt_main.py` + `src/legalpdf_translate/qt_app.py`: Qt app bootstrap.
 
@@ -279,6 +279,7 @@ Useful targeted checks:
 python -m pytest -q tests/test_qt_main_smoke.py tests/test_qt_app_state.py
 python -m pytest -q tests/test_run_report.py tests/test_workflow_logging_safety.py
 python -m pytest -q tests/test_secrets_store.py tests/test_qt_settings_key_toggle.py
+python -m pytest -q tests/test_docx_writer.py tests/test_docx_writer_rtl.py
 python -m pytest -q tests/test_pyinstaller_specs.py tests/test_windows_shortcut_scripts.py
 ```
 
@@ -304,6 +305,8 @@ Assistant routing hint: If asked for "minimum QA after a change", run targeted t
 - Checkpoint/resume logic: `src/legalpdf_translate/checkpoint.py`, `src/legalpdf_translate/workflow.py::_load_or_initialize_run_state`
 - Output/run folder naming: `src/legalpdf_translate/output_paths.py::build_output_paths`
 - DOCX rebuild path: `src/legalpdf_translate/workflow.py::TranslationWorkflow.rebuild_docx`
+- RTL DOCX formatting and mixed-direction run handling: `src/legalpdf_translate/docx_writer.py::assemble_docx`, `sanitize_bidi_controls`, `_segment_directional_runs`
+- RTL DOCX regression tests: `tests/test_docx_writer_rtl.py`
 - User settings persistence: `src/legalpdf_translate/user_settings.py::settings_path`, `load_gui_settings`, `save_gui_settings`
 - Secret storage wrappers: `src/legalpdf_translate/secrets_store.py`
 - Job log database path/schema: `src/legalpdf_translate/joblog_db.py::job_log_db_path`, `ensure_joblog_schema`

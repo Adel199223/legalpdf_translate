@@ -54,3 +54,18 @@ Verification commands/results:
 
 ## Ownership Rule
 If a task owner is unsure whether docs need updates, default to updating docs and citing exact changed paths/symbols.
+
+Date: 2026-02-13
+Code change summary:
+- Finalized Arabic DOCX RTL output handling in `src/legalpdf_translate/docx_writer.py` with run-level directional segmentation, RTL paragraph defaults, and placeholder cleanup before write.
+- Added regression coverage for mixed RTL/LTR output and isolate-control stripping in `tests/test_docx_writer_rtl.py`.
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (sections: C, I, J)
+- docs/assistant/CODEX_PROMPT_FACTORY.md (sections: 2 - added Example 9)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 121 passed in 5.24s
+- python -m compileall src tests -> success
+- git status --short -- src tests -> M src/legalpdf_translate/docx_writer.py; ?? tests/test_docx_writer_rtl.py
