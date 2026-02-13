@@ -2,7 +2,21 @@
 
 from pathlib import Path
 
-project_root = Path(SPECPATH).resolve().parents[0]
+spec_root = Path(SPECPATH).resolve()
+candidates = [spec_root, spec_root.parent]
+project_root = None
+for candidate in candidates:
+    entry_candidate = candidate / "src" / "legalpdf_translate" / "qt_main.py"
+    icon_candidate = candidate / "resources" / "icons" / "LegalPDFTranslate.ico"
+    if entry_candidate.exists() and icon_candidate.exists():
+        project_root = candidate
+        break
+if project_root is None:
+    raise RuntimeError(
+        f"Could not resolve project root from SPECPATH={SPECPATH}. "
+        "Expected src/legalpdf_translate/qt_main.py and resources/icons/LegalPDFTranslate.ico."
+    )
+
 entry_script = project_root / "src" / "legalpdf_translate" / "qt_main.py"
 icon_path = project_root / "resources" / "icons" / "LegalPDFTranslate.ico"
 

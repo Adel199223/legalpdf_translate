@@ -21,3 +21,10 @@ def test_qt_spec_bundles_resources_directory() -> None:
     spec_path = Path("build/pyinstaller_qt.spec")
     text = spec_path.read_text(encoding="utf-8")
     assert "(str(project_root / \"resources\"), \"resources\")" in text
+
+
+def test_qt_spec_resolves_project_root_from_specpath_candidates() -> None:
+    spec_path = Path("build/pyinstaller_qt.spec")
+    text = spec_path.read_text(encoding="utf-8")
+    assert "candidates = [spec_root, spec_root.parent]" in text
+    assert "raise RuntimeError(" in text

@@ -1,8 +1,15 @@
+param(
+    [switch]$SkipIconRefresh
+)
+
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $buildRoot = Join-Path $repoRoot "build"
 $distRoot = Join-Path $repoRoot "dist"
+$shortcutScript = Join-Path $PSScriptRoot "create_desktop_shortcut.ps1"
+$refreshScript = Join-Path $PSScriptRoot "refresh_icon_cache.ps1"
+$icoPath = Join-Path $repoRoot "resources\icons\LegalPDFTranslate.ico"
 $cleanTargets = @()
 
 if (Test-Path -LiteralPath $buildRoot) {
@@ -34,6 +41,20 @@ $exePath = Join-Path $repoRoot "dist\legalpdf_translate\LegalPDFTranslate.exe"
 if (-not (Test-Path -LiteralPath $exePath)) {
     throw "Build completed but EXE was not found at: $exePath"
 }
+if (-not (Test-Path -LiteralPath $icoPath)) {
+    throw "Build completed but ICO was not found at: $icoPath"
+}
+
+$shortcutSummary = & $shortcutScript
+
+if (-not $SkipIconRefresh) {
+    & $refreshScript -Mode Recommended
+} else {
+    Write-Host "Skipping icon cache refresh because -SkipIconRefresh was set."
+}
 
 Write-Host "Built EXE: $exePath"
+Write-Host "Using ICO: $icoPath"
+Write-Host "Shortcut summary:"
+$shortcutSummary | Format-Table ShortcutPath, TargetPath, IconLocation -AutoSize | Out-Host
 Write-Output $exePath
