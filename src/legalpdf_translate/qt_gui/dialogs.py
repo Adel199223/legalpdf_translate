@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QPlainTextEdit,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -38,6 +39,15 @@ from PySide6.QtWidgets import (
 )
 
 from legalpdf_translate.config import OPENAI_MODEL
+from legalpdf_translate.glossary import (
+    GlossaryEntry,
+    builtin_glossary_json,
+    default_ar_entries,
+    load_glossary_from_text,
+    normalize_glossaries,
+    serialize_glossaries,
+    supported_target_langs,
+)
 from legalpdf_translate.joblog_db import (
     insert_job_run,
     list_job_runs,
@@ -60,7 +70,7 @@ from legalpdf_translate.secrets_store import (
     set_openai_key,
     set_ocr_key,
 )
-from legalpdf_translate.user_settings import load_joblog_settings, save_joblog_settings
+from legalpdf_translate.user_settings import app_data_dir, load_joblog_settings, save_joblog_settings
 
 JOBLOG_COLUMNS = [
     "translation_date",
@@ -728,6 +738,112 @@ def _to_float(value: str, *, field: str, min_value: float, max_value: float) -> 
     return parsed
 
 
+class QtGlossaryEditorDialog(QDialog):
+    """Simple JSON editor for glossary content."""
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        initial_text: str,
+        source_label: str,
+        initial_path: Path | None,
+        default_save_path: Path,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Glossary Editor")
+        self.resize(860, 560)
+
+        self._current_path = initial_path
+        self._default_save_path = default_save_path.expanduser().resolve()
+        self.saved_path: Path | None = None
+
+        layout = QVBoxLayout(self)
+        source = source_label.strip() or "Built-in glossary"
+        self.source_label = QLabel(f"Source: {source}")
+        self.source_label.setWordWrap(True)
+        layout.addWidget(self.source_label)
+
+        self.json_edit = QPlainTextEdit()
+        self.json_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.json_edit.setPlainText(initial_text)
+        layout.addWidget(self.json_edit, 1)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.validate_btn = QPushButton("Validate")
+        self.save_btn = QPushButton("Save")
+        self.save_as_btn = QPushButton("Save As...")
+        self.cancel_btn = QPushButton("Cancel")
+        buttons.addWidget(self.validate_btn)
+        buttons.addWidget(self.save_btn)
+        buttons.addWidget(self.save_as_btn)
+        buttons.addWidget(self.cancel_btn)
+        layout.addLayout(buttons)
+
+        self.validate_btn.clicked.connect(self._validate)
+        self.save_btn.clicked.connect(self._save)
+        self.save_as_btn.clicked.connect(self._save_as)
+        self.cancel_btn.clicked.connect(self.reject)
+
+    @staticmethod
+    def _validated_text(text: str, *, source: str) -> str:
+        load_glossary_from_text(text, source=source)
+        return text
+
+    @staticmethod
+    def _write_text_atomically(path: Path, text: str) -> Path:
+        target = path.expanduser().resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp = target.with_suffix(f"{target.suffix}.tmp")
+        temp.write_text(text, encoding="utf-8")
+        temp.replace(target)
+        return target
+
+    def _validate(self) -> None:
+        text = self.json_edit.toPlainText()
+        source = str(self._current_path) if self._current_path is not None else "editor"
+        try:
+            self._validated_text(text, source=source)
+        except ValueError as exc:
+            QMessageBox.critical(self, "Glossary", str(exc))
+            return
+        QMessageBox.information(self, "Glossary", "Glossary JSON is valid.")
+
+    def _save_to(self, path: Path) -> bool:
+        text = self.json_edit.toPlainText()
+        target = path.expanduser().resolve()
+        try:
+            self._validated_text(text, source=str(target))
+            written = self._write_text_atomically(target, text)
+        except ValueError as exc:
+            QMessageBox.critical(self, "Glossary", str(exc))
+            return False
+        except OSError as exc:
+            QMessageBox.critical(self, "Glossary", f"Unable to save glossary file: {target}\n{exc}")
+            return False
+        self._current_path = written
+        self.saved_path = written
+        return True
+
+    def _save(self) -> None:
+        target = self._current_path if self._current_path is not None else self._default_save_path
+        if self._save_to(target):
+            self.accept()
+
+    def _save_as(self) -> None:
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save glossary JSON",
+            str(self._current_path or self._default_save_path),
+            "JSON Files (*.json);;All Files (*.*)",
+        )
+        if not selected:
+            return
+        if self._save_to(Path(selected)):
+            self.accept()
+
+
 class QtSettingsDialog(QDialog):
     """Qt equivalent of the Tk settings dialog."""
 
@@ -746,6 +862,9 @@ class QtSettingsDialog(QDialog):
         self._settings = dict(settings)
         self._apply_callback = apply_callback
         self._collect_debug_paths = collect_debug_paths
+        self._glossaries_by_lang: dict[str, list[GlossaryEntry]] = normalize_glossaries({}, supported_target_langs())
+        self._glossary_current_lang: str | None = None
+        self._glossary_seed_version: int = 1
         self._build_ui()
         self._set_values_from_settings(self._settings)
         self._refresh_key_status()
@@ -761,17 +880,20 @@ class QtSettingsDialog(QDialog):
         self.tab_ocr = QWidget(self)
         self.tab_appearance = QWidget(self)
         self.tab_behaviour = QWidget(self)
+        self.tab_glossary = QWidget(self)
         self.tab_diag = QWidget(self)
         self.tabs.addTab(self.tab_keys, "Keys & Providers")
         self.tabs.addTab(self.tab_ocr, "OCR Defaults")
         self.tabs.addTab(self.tab_appearance, "Appearance")
         self.tabs.addTab(self.tab_behaviour, "Behaviour & Performance")
+        self.tabs.addTab(self.tab_glossary, "Glossary")
         self.tabs.addTab(self.tab_diag, "Diagnostics")
 
         self._build_tab_keys()
         self._build_tab_ocr_defaults()
         self._build_tab_appearance()
         self._build_tab_behaviour()
+        self._build_tab_glossary()
         self._build_tab_diagnostics()
 
         buttons = QHBoxLayout()
@@ -884,6 +1006,10 @@ class QtSettingsDialog(QDialog):
         self.default_end_edit = QLineEdit()
         self.default_outdir_edit = QLineEdit()
         self.default_outdir_btn = QPushButton("Browse")
+        self.glossary_file_edit = QLineEdit()
+        self.glossary_file_btn = QPushButton("Browse")
+        self.glossary_edit_btn = QPushButton("View/Edit...")
+        self.glossary_builtin_btn = QPushButton("Use built-in")
         self.default_resume_check = QCheckBox("Default resume ON")
         self.default_keep_check = QCheckBox("Default keep intermediates ON")
         self.default_breaks_check = QCheckBox("Default page breaks ON")
@@ -911,6 +1037,17 @@ class QtSettingsDialog(QDialog):
         grid.addWidget(outdir_wrap, row, 1)
         row += 1
 
+        glossary_row = QHBoxLayout()
+        glossary_row.addWidget(self.glossary_file_edit, 1)
+        glossary_row.addWidget(self.glossary_file_btn)
+        glossary_row.addWidget(self.glossary_edit_btn)
+        glossary_row.addWidget(self.glossary_builtin_btn)
+        glossary_wrap = QWidget()
+        glossary_wrap.setLayout(glossary_row)
+        grid.addWidget(QLabel("Glossary JSON file"), row, 0)
+        grid.addWidget(glossary_wrap, row, 1)
+        row += 1
+
         grid.addWidget(self.default_resume_check, row, 0, 1, 2); row += 1
         grid.addWidget(self.default_keep_check, row, 0, 1, 2); row += 1
         grid.addWidget(self.default_breaks_check, row, 0, 1, 2); row += 1
@@ -933,7 +1070,143 @@ class QtSettingsDialog(QDialog):
         layout.addStretch(1)
 
         self.default_outdir_btn.clicked.connect(self._pick_default_outdir)
+        self.glossary_file_btn.clicked.connect(self._pick_glossary_file)
+        self.glossary_edit_btn.clicked.connect(self._open_glossary_editor)
+        self.glossary_builtin_btn.clicked.connect(self._use_builtin_glossary)
         self.restore_defaults_btn.clicked.connect(self._restore_defaults)
+
+    def _build_tab_glossary(self) -> None:
+        layout = QVBoxLayout(self.tab_glossary)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Target language"))
+        self.glossary_lang_combo = QComboBox()
+        self.glossary_lang_combo.addItems(supported_target_langs())
+        top.addWidget(self.glossary_lang_combo)
+        top.addStretch(1)
+        layout.addLayout(top)
+
+        self.glossary_table = QTableWidget(0, 3, self.tab_glossary)
+        self.glossary_table.setHorizontalHeaderLabels(["Source text", "Preferred translation", "Match"])
+        self.glossary_table.verticalHeader().setVisible(False)
+        self.glossary_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.glossary_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self.glossary_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.glossary_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.glossary_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        layout.addWidget(self.glossary_table, 1)
+
+        actions = QHBoxLayout()
+        self.glossary_add_row_btn = QPushButton("Add row")
+        self.glossary_remove_rows_btn = QPushButton("Remove selected")
+        actions.addWidget(self.glossary_add_row_btn)
+        actions.addWidget(self.glossary_remove_rows_btn)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
+        hint = QLabel("Glossary rows are per target language and used as preferred translation guidance.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.glossary_lang_combo.currentTextChanged.connect(self._on_glossary_language_changed)
+        self.glossary_add_row_btn.clicked.connect(self._add_glossary_row)
+        self.glossary_remove_rows_btn.clicked.connect(self._remove_selected_glossary_rows)
+
+    def _new_glossary_match_combo(self, selected: str = "exact") -> QComboBox:
+        combo = QComboBox()
+        combo.addItem("Exact", "exact")
+        combo.addItem("Contains", "contains")
+        selected_clean = selected.strip().lower()
+        if selected_clean == "contains":
+            combo.setCurrentIndex(1)
+        else:
+            combo.setCurrentIndex(0)
+        return combo
+
+    def _glossary_match_value(self, combo: object | None) -> str:
+        if combo is None:
+            return "exact"
+        value = combo.currentData() if hasattr(combo, "currentData") else None
+        if isinstance(value, str) and value in {"exact", "contains"}:
+            return value
+        text = combo.currentText().strip().lower() if hasattr(combo, "currentText") else ""
+        return "contains" if text == "contains" else "exact"
+
+    def _set_glossary_table_rows(self, rows: list[GlossaryEntry]) -> None:
+        self.glossary_table.setRowCount(0)
+        for entry in rows:
+            row = self.glossary_table.rowCount()
+            self.glossary_table.insertRow(row)
+            self.glossary_table.setItem(row, 0, QTableWidgetItem(entry.source))
+            self.glossary_table.setItem(row, 1, QTableWidgetItem(entry.target))
+            self.glossary_table.setCellWidget(row, 2, self._new_glossary_match_combo(entry.match))
+
+    def _read_glossary_table_rows(self) -> list[GlossaryEntry]:
+        rows: list[dict[str, str]] = []
+        for row in range(self.glossary_table.rowCount()):
+            source_item = self.glossary_table.item(row, 0)
+            target_item = self.glossary_table.item(row, 1)
+            source = source_item.text().strip() if source_item else ""
+            target = target_item.text().strip() if target_item else ""
+            match = self._glossary_match_value(self.glossary_table.cellWidget(row, 2))
+            rows.append(
+                {
+                    "source": source,
+                    "target": target,
+                    "match": match,
+                }
+            )
+        normalized = normalize_glossaries(
+            {self._glossary_current_lang or "EN": rows},
+            [self._glossary_current_lang or "EN"],
+        )
+        return normalized.get(self._glossary_current_lang or "EN", [])
+
+    def _save_current_glossary_language_rows(self) -> None:
+        if self._glossary_current_lang is None:
+            return
+        self._glossaries_by_lang[self._glossary_current_lang] = self._read_glossary_table_rows()
+
+    def _on_glossary_language_changed(self, lang_text: str) -> None:
+        next_lang = str(lang_text or "").strip().upper()
+        if next_lang == "":
+            return
+        self._save_current_glossary_language_rows()
+        self._glossary_current_lang = next_lang
+        self._set_glossary_table_rows(self._glossaries_by_lang.get(next_lang, []))
+
+    def _set_glossaries_from_settings(self, settings: dict[str, object]) -> None:
+        langs = supported_target_langs()
+        self._glossaries_by_lang = normalize_glossaries(settings.get("glossaries_by_lang"), langs)
+        seed_raw = settings.get("glossary_seed_version", 1)
+        try:
+            self._glossary_seed_version = max(1, int(seed_raw))  # type: ignore[arg-type]
+        except Exception:
+            self._glossary_seed_version = 1
+        preferred = str(settings.get("default_lang", "EN") or "EN").strip().upper()
+        if preferred not in langs:
+            preferred = langs[0]
+
+        self.glossary_lang_combo.blockSignals(True)
+        self.glossary_lang_combo.clear()
+        self.glossary_lang_combo.addItems(langs)
+        self.glossary_lang_combo.setCurrentText(preferred)
+        self.glossary_lang_combo.blockSignals(False)
+        self._glossary_current_lang = preferred
+        self._set_glossary_table_rows(self._glossaries_by_lang.get(preferred, []))
+
+    def _add_glossary_row(self) -> None:
+        row = self.glossary_table.rowCount()
+        self.glossary_table.insertRow(row)
+        self.glossary_table.setItem(row, 0, QTableWidgetItem(""))
+        self.glossary_table.setItem(row, 1, QTableWidgetItem(""))
+        self.glossary_table.setCellWidget(row, 2, self._new_glossary_match_combo("exact"))
+
+    def _remove_selected_glossary_rows(self) -> None:
+        selected_rows = sorted({index.row() for index in self.glossary_table.selectedIndexes()}, reverse=True)
+        if not selected_rows:
+            return
+        for row in selected_rows:
+            self.glossary_table.removeRow(row)
 
     def _build_tab_diagnostics(self) -> None:
         layout = QVBoxLayout(self.tab_diag)
@@ -968,6 +1241,7 @@ class QtSettingsDialog(QDialog):
         default_end = settings.get("default_end_page")
         self.default_end_edit.setText("" if default_end in (None, "") else str(default_end))
         self.default_outdir_edit.setText(str(settings.get("default_outdir", "")))
+        self.glossary_file_edit.setText(str(settings.get("glossary_file_path", "")))
         self.ocr_mode_default_combo.setCurrentText(str(settings.get("ocr_mode_default", "auto")))
         self.ocr_engine_default_combo.setCurrentText(str(settings.get("ocr_engine_default", "local_then_api")))
         self.min_chars_edit.setText(str(settings.get("min_chars_to_accept_ocr", 200)))
@@ -984,11 +1258,74 @@ class QtSettingsDialog(QDialog):
         self.diag_admin_mode_check.setChecked(bool(settings.get("diagnostics_admin_mode", True)))
         self.diag_snippets_check.setChecked(bool(settings.get("diagnostics_include_sanitized_snippets", False)))
         self.diag_snippets_check.setEnabled(self.diag_admin_mode_check.isChecked())
+        self._set_glossaries_from_settings(settings)
 
     def _pick_default_outdir(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "Choose default output folder")
         if chosen:
             self.default_outdir_edit.setText(chosen)
+
+    def _pick_glossary_file(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select glossary JSON file",
+            "",
+            "JSON Files (*.json);;All Files (*.*)",
+        )
+        if selected:
+            self.glossary_file_edit.setText(selected)
+
+    def _resolve_glossary_path(self) -> Path | None:
+        raw = self.glossary_file_edit.text().strip()
+        if raw == "":
+            return None
+        return Path(raw).expanduser().resolve()
+
+    def _default_glossary_save_path(self) -> Path:
+        return (app_data_dir() / "glossary.json").expanduser().resolve()
+
+    def _load_glossary_editor_text(self, glossary_path: Path | None) -> tuple[str, str]:
+        if glossary_path is None:
+            return builtin_glossary_json(indent=2), "Built-in glossary"
+        try:
+            raw = glossary_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(f"Unable to read glossary file: {glossary_path}") from exc
+        return raw, str(glossary_path)
+
+    def _open_glossary_editor(self) -> None:
+        glossary_path = self._resolve_glossary_path()
+        try:
+            initial_text, source_label = self._load_glossary_editor_text(glossary_path)
+        except ValueError as exc:
+            QMessageBox.critical(self, "Glossary", str(exc))
+            return
+
+        editor = QtGlossaryEditorDialog(
+            parent=self,
+            initial_text=initial_text,
+            source_label=source_label,
+            initial_path=glossary_path,
+            default_save_path=self._default_glossary_save_path(),
+        )
+        if editor.exec() == QDialog.DialogCode.Accepted and editor.saved_path is not None:
+            self.glossary_file_edit.setText(str(editor.saved_path))
+
+    def _use_builtin_glossary(self) -> None:
+        if self.glossary_file_edit.text().strip() == "":
+            QMessageBox.information(self, "Glossary", "Built-in glossary is already active.")
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Use built-in glossary",
+            "Clear custom glossary path and use built-in glossary rules?",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if confirm != QMessageBox.StandardButton.Ok:
+            return
+        self.glossary_file_edit.clear()
+        QMessageBox.information(self, "Glossary", "Using built-in glossary rules.")
 
     def _toggle_openai_key(self) -> None:
         if self.openai_key_edit.echoMode() == QLineEdit.EchoMode.Password:
@@ -1193,6 +1530,17 @@ class QtSettingsDialog(QDialog):
         self.default_start_edit.setText("1")
         self.default_end_edit.setText("")
         self.default_outdir_edit.setText("")
+        self.glossary_file_edit.setText("")
+        self._glossaries_by_lang = normalize_glossaries({}, supported_target_langs())
+        self._glossaries_by_lang["AR"] = default_ar_entries()
+        self._glossary_seed_version = 1
+        self._set_glossaries_from_settings(
+            {
+                "default_lang": "EN",
+                "glossaries_by_lang": serialize_glossaries(self._glossaries_by_lang),
+                "glossary_seed_version": self._glossary_seed_version,
+            }
+        )
         self.ocr_mode_default_combo.setCurrentText("auto")
         self.ocr_engine_default_combo.setCurrentText("local_then_api")
         self.retries_edit.setText("4")
@@ -1219,6 +1567,9 @@ class QtSettingsDialog(QDialog):
         if ui_scale not in (1.0, 1.1, 1.25):
             raise ValueError("UI scale must be one of 1.00, 1.10, or 1.25.")
 
+        self._save_current_glossary_language_rows()
+        normalized_glossaries = normalize_glossaries(self._glossaries_by_lang, supported_target_langs())
+
         return {
             "ui_theme": self.ui_theme_combo.currentText().strip(),
             "ui_scale": ui_scale,
@@ -1233,6 +1584,9 @@ class QtSettingsDialog(QDialog):
             "default_start_page": default_start,
             "default_end_page": default_end,
             "default_outdir": self.default_outdir_edit.text().strip(),
+            "glossaries_by_lang": serialize_glossaries(normalized_glossaries),
+            "glossary_seed_version": max(1, int(self._glossary_seed_version)),
+            "glossary_file_path": self.glossary_file_edit.text().strip(),
             "ocr_mode_default": self.ocr_mode_default_combo.currentText().strip().lower(),
             "ocr_engine_default": self.ocr_engine_default_combo.currentText().strip().lower(),
             "ocr_api_base_url": base_url,

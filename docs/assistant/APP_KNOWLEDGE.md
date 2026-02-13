@@ -87,6 +87,7 @@ Core modules:
 - `src/legalpdf_translate/qt_gui/worker.py`: Qt thread workers for run/analyze/rebuild.
 - `src/legalpdf_translate/workflow.py`: translation pipeline orchestration (`TranslationWorkflow`).
 - `src/legalpdf_translate/run_report.py`: event collector, redaction/sanitization, Markdown+JSON report builder.
+- `src/legalpdf_translate/glossary.py`: glossary rule loader + per-language table model helpers (`GlossaryEntry`, `normalize_glossaries`, `format_glossary_for_prompt`) and AR preferred-phrase fallback application.
 - `src/legalpdf_translate/openai_client.py`: transport retries/backoff wrapper around OpenAI Responses API.
 - `src/legalpdf_translate/ocr_engine.py`: OCR engine policy and fallback (`local`, `local_then_api`, `api`).
 - `src/legalpdf_translate/checkpoint.py`: run-state schema/persistence and resume compatibility.
@@ -135,6 +136,8 @@ Assistant routing hint: If asked "which module owns behavior X", start at `workf
 
 7. Validation and page output write
 - Output parsing/validation in `src/legalpdf_translate/workflow.py::_evaluate_output` plus validators in `src/legalpdf_translate/validators.py`.
+- AR glossary enforcement (preferred legal phrasing) is applied in `src/legalpdf_translate/workflow.py::_evaluate_output` via `src/legalpdf_translate/glossary.py::apply_glossary` after parser/validator success and before page write.
+- Per-language glossary prompt guidance is injected in `src/legalpdf_translate/workflow.py::_process_page` via `TranslationWorkflow._append_glossary_prompt` + `src/legalpdf_translate/glossary.py::format_glossary_for_prompt`.
 - Successful page writes to run `pages/` directory.
 
 8. Final DOCX rebuild/export and summaries
@@ -183,6 +186,11 @@ Settings storage:
 - Path resolver: `src/legalpdf_translate/user_settings.py::settings_path`.
 - Load/save: `load_settings`, `save_settings`, `load_gui_settings`, `save_gui_settings`.
 - App data dir helper: `app_data_dir`.
+- Glossary settings keys:
+  - `glossaries_by_lang` (per-target-language table rows)
+  - `glossary_seed_version` (one-time AR seed tracking)
+  - `glossary_file_path` (legacy file-path fallback)
+- Glossary UI now has a dedicated table editor tab in `src/legalpdf_translate/qt_gui/dialogs.py::_build_tab_glossary` (language selector + source/preferred/match rows).
 
 Secret storage:
 - Keyring wrapper module: `src/legalpdf_translate/secrets_store.py`.
@@ -203,6 +211,7 @@ Show/hide behavior in settings UI:
 Loading/fallback behavior:
 - OpenAI key resolution attempts stored key first then env fallback in `src/legalpdf_translate/openai_client.py`.
 - OCR key resolution in `src/legalpdf_translate/ocr_engine.py::_resolve_api_key`.
+- Glossary path resolution: CLI `--glossary-file` (`src/legalpdf_translate/cli.py`) overrides settings `glossary_file_path`; if neither is set, workflow uses built-in glossary rules (`src/legalpdf_translate/glossary.py`).
 
 Must never be logged or shared:
 - API keys/tokens/auth headers.
@@ -305,6 +314,9 @@ Assistant routing hint: If asked for "minimum QA after a change", run targeted t
 - Checkpoint/resume logic: `src/legalpdf_translate/checkpoint.py`, `src/legalpdf_translate/workflow.py::_load_or_initialize_run_state`
 - Output/run folder naming: `src/legalpdf_translate/output_paths.py::build_output_paths`
 - DOCX rebuild path: `src/legalpdf_translate/workflow.py::TranslationWorkflow.rebuild_docx`
+- Glossary table + prompt guidance: `src/legalpdf_translate/qt_gui/dialogs.py::_build_tab_glossary`, `_set_glossaries_from_settings`, `_read_glossary_table_rows`; `src/legalpdf_translate/glossary.py::normalize_glossaries`, `format_glossary_for_prompt`; `src/legalpdf_translate/workflow.py::_append_glossary_prompt`
+- Legacy glossary file fallback: `src/legalpdf_translate/glossary.py::load_glossary`, `apply_glossary`; setting key `glossary_file_path`
+- AR glossary integration point: `src/legalpdf_translate/workflow.py::_evaluate_output`
 - RTL DOCX formatting and mixed-direction run handling: `src/legalpdf_translate/docx_writer.py::assemble_docx`, `sanitize_bidi_controls`, `_segment_directional_runs`
 - RTL DOCX regression tests: `tests/test_docx_writer_rtl.py`
 - User settings persistence: `src/legalpdf_translate/user_settings.py::settings_path`, `load_gui_settings`, `save_gui_settings`

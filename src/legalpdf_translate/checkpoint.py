@@ -95,6 +95,7 @@ def settings_fingerprint(config: RunConfig) -> dict[str, Any]:
         "ocr_engine": config.ocr_engine.value,
         "ocr_api_base_url": (config.ocr_api_base_url or "").strip(),
         "ocr_api_model": (config.ocr_api_model or "").strip(),
+        "glossary_file_path": str(config.glossary_file.expanduser().resolve()) if config.glossary_file else "",
         "page_breaks": config.page_breaks,
         "keep_intermediates": config.keep_intermediates,
         "strip_bidi_controls": bool(config.strip_bidi_controls),
@@ -371,6 +372,8 @@ def resume_incompatibility_reason(
     checkpoint_settings = dict(state.settings)
     if "strip_bidi_controls" not in checkpoint_settings:
         checkpoint_settings["strip_bidi_controls"] = True
+    if "glossary_file_path" not in checkpoint_settings:
+        checkpoint_settings["glossary_file_path"] = ""
     if checkpoint_settings != expected_settings:
         return (
             "settings mismatch: checkpoint="

@@ -26,6 +26,7 @@ from .secrets_store import (
     set_ocr_key,
 )
 from .types import RunConfig, TargetLang
+from .user_settings import load_gui_settings
 from .workflow import TranslationWorkflow
 
 
@@ -80,6 +81,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--context-file",
         default="",
         help="Optional context file path; empty string disables context.",
+    )
+    parser.add_argument(
+        "--glossary-file",
+        default="",
+        help="Optional glossary JSON path (overrides settings value when provided).",
     )
     parser.add_argument(
         "--rebuild-docx",
@@ -195,6 +201,10 @@ def main(argv: list[str] | None = None) -> int:
             effort_policy = parse_effort_policy("fixed_xhigh" if args.effort == "xhigh" else "fixed_high")
         else:
             effort_policy = parse_effort_policy("adaptive")
+        settings = load_gui_settings()
+        glossary_cli = args.glossary_file.strip()
+        glossary_settings = str(settings.get("glossary_file_path", "") or "").strip()
+        glossary_effective = glossary_cli or glossary_settings
         config = RunConfig(
             pdf_path=Path(pdf_arg).resolve(),
             output_dir=outdir_abs,
@@ -216,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
             ocr_api_key_env_name=args.ocr_api_key_env.strip() or "DEEPSEEK_API_KEY",
             context_file=Path(args.context_file).resolve() if args.context_file.strip() != "" else None,
             context_text=None,
+            glossary_file=Path(glossary_effective).expanduser().resolve() if glossary_effective else None,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"[{_timestamp()}] Config error: {exc}", file=sys.stderr)

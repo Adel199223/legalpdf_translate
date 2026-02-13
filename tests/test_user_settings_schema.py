@@ -19,6 +19,12 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert "diagnostics_verbose_metadata_logs" in loaded
     assert loaded["diagnostics_admin_mode"] is True
     assert loaded["diagnostics_include_sanitized_snippets"] is False
+    assert loaded["glossary_file_path"] == ""
+    assert loaded["glossary_seed_version"] == 1
+    assert set(loaded["glossaries_by_lang"].keys()) == {"EN", "FR", "AR"}
+    assert loaded["glossaries_by_lang"]["EN"] == []
+    assert loaded["glossaries_by_lang"]["FR"] == []
+    assert len(loaded["glossaries_by_lang"]["AR"]) == 2
     assert loaded["default_effort_policy"] in {"adaptive", "fixed_high", "fixed_xhigh"}
     assert loaded["effort_policy"] in {"adaptive", "fixed_high", "fixed_xhigh"}
     assert isinstance(loaded["allow_xhigh_escalation"], bool)
@@ -85,3 +91,86 @@ def test_save_gui_settings_writes_schema_version(tmp_path: Path, monkeypatch) ->
 
     assert raw["settings_schema_version"] == user_settings.SETTINGS_SCHEMA_VERSION
     assert raw["ui_theme"] == "dark_simple"
+
+
+def test_load_gui_settings_does_not_reseed_ar_when_user_cleared_rows(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "glossary_seed_version": 1,
+                "glossaries_by_lang": {"EN": [], "FR": [], "AR": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+    assert loaded["glossaries_by_lang"]["AR"] == []
+
+
+def test_load_gui_settings_migrates_legacy_literal_glossary_file(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    legacy_glossary = tmp_path / "legacy_glossary.json"
+    legacy_glossary.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "rules": [
+                    {
+                        "target_lang": "AR",
+                        "match_type": "literal",
+                        "match": "صرف الأتعاب",
+                        "replace": "دفع الأتعاب المستحقة",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "glossary_seed_version": 0,
+                "glossaries_by_lang": {"EN": [], "FR": [], "AR": []},
+                "glossary_file_path": str(legacy_glossary),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+    assert loaded["glossaries_by_lang"]["AR"][0]["source"] == "صرف الأتعاب"
+    assert loaded["glossaries_by_lang"]["AR"][0]["target"] == "دفع الأتعاب المستحقة"
+
+
+def test_save_and_load_glossaries_by_lang_round_trip(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+
+    user_settings.save_gui_settings(
+        {
+            "glossaries_by_lang": {
+                "EN": [],
+                "FR": [],
+                "AR": [
+                    {
+                        "source": "صرف الأتعاب",
+                        "target": "دفع الأتعاب المستحقة",
+                        "match": "contains",
+                    }
+                ],
+            },
+            "glossary_seed_version": 1,
+        }
+    )
+
+    loaded = user_settings.load_gui_settings()
+    assert loaded["glossaries_by_lang"]["AR"][0]["source"] == "صرف الأتعاب"
+    assert loaded["glossaries_by_lang"]["AR"][0]["target"] == "دفع الأتعاب المستحقة"
+    assert loaded["glossaries_by_lang"]["AR"][0]["match"] == "contains"

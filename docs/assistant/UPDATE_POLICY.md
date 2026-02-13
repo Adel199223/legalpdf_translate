@@ -69,3 +69,35 @@ Verification commands/results:
 - python -m pytest -q -> 121 passed in 5.24s
 - python -m compileall src tests -> success
 - git status --short -- src tests -> M src/legalpdf_translate/docx_writer.py; ?? tests/test_docx_writer_rtl.py
+
+Date: 2026-02-13
+Code change summary:
+- Added minimal glossary enforcement for AR legal phrasing with file-based JSON rules and built-in defaults (`src/legalpdf_translate/glossary.py`).
+- Integrated glossary loading/application into workflow output finalization and added config wiring across Qt settings, CLI, and checkpoint fingerprinting.
+- Added regression coverage for glossary behavior, workflow integration, CLI precedence, settings defaults, and resume compatibility.
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (sections: C, D, F, J)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 132 passed in 6.88s
+- python -m compileall src tests -> success
+- git status --short -- src tests -> modified files present for this in-progress change set
+
+Date: 2026-02-13
+Code change summary:
+- Added per-language glossary table support with normalization helpers and prompt formatting in `src/legalpdf_translate/glossary.py`.
+- Added settings schema support for `glossaries_by_lang` + one-time AR seed tracking in `src/legalpdf_translate/user_settings.py`.
+- Added a dedicated Glossary tab in Qt Settings with language selector and editable source/target/match rows in `src/legalpdf_translate/qt_gui/dialogs.py`.
+- Added workflow glossary prompt injection via `src/legalpdf_translate/workflow.py::_append_glossary_prompt` while keeping legacy deterministic fallback behavior.
+- Added regression tests for glossary normalization, settings migration/roundtrip, prompt injection, and glossary-table UI logic.
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (sections: C, D, F, J)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 156 passed in 5.99s
+- python -m compileall src tests -> success
+- git status --short -- src tests -> modified files present for this in-progress change set

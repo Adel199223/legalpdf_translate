@@ -77,6 +77,7 @@ class RunConfig:
     ocr_api_key_env_name: str = "DEEPSEEK_API_KEY"
     context_file: Path | None = None
     context_text: str | None = None
+    glossary_file: Path | None = None
     effort_policy: EffortPolicy = EffortPolicy.ADAPTIVE
     allow_xhigh_escalation: bool = False
     diagnostics_admin_mode: bool = False

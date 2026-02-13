@@ -876,6 +876,8 @@ class QtMainWindow(QMainWindow):
 
         context_file_text = self.context_file_edit.text().strip()
         context_file = Path(context_file_text).expanduser().resolve() if context_file_text else None
+        glossary_file_text = str(self._defaults.get("glossary_file_path", "") or "").strip()
+        glossary_file = Path(glossary_file_text).expanduser().resolve() if glossary_file_text else None
 
         return RunConfig(
             pdf_path=pdf,
@@ -899,6 +901,7 @@ class QtMainWindow(QMainWindow):
             ocr_api_key_env_name=str(self._defaults.get("ocr_api_key_env_name", "DEEPSEEK_API_KEY") or "DEEPSEEK_API_KEY"),
             context_file=context_file,
             context_text=self.context_text.toPlainText().strip() or None,
+            glossary_file=glossary_file,
             diagnostics_admin_mode=bool(self._defaults.get("diagnostics_admin_mode", True)),
             diagnostics_include_sanitized_snippets=bool(
                 self._defaults.get("diagnostics_include_sanitized_snippets", False)

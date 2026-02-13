@@ -7,6 +7,14 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .glossary import (
+    default_ar_entries,
+    entries_from_legacy_rules,
+    normalize_glossaries,
+    serialize_glossaries,
+    supported_target_langs,
+)
+
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
 SETTINGS_SCHEMA_VERSION = 2
@@ -69,6 +77,9 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "default_start_page": 1,
     "default_end_page": None,
     "default_outdir": "",
+    "glossaries_by_lang": {},
+    "glossary_seed_version": 0,
+    "glossary_file_path": "",
     "ocr_mode_default": "auto",
     "ocr_engine_default": "local_then_api",
     "perf_max_transport_retries": 4,
@@ -100,6 +111,9 @@ ALLOWED_GUI_KEYS = {
     "default_start_page",
     "default_end_page",
     "default_outdir",
+    "glossaries_by_lang",
+    "glossary_seed_version",
+    "glossary_file_path",
     "ocr_mode_default",
     "ocr_engine_default",
     "perf_max_transport_retries",
@@ -448,6 +462,22 @@ def load_gui_settings() -> dict[str, Any]:
     merged["default_start_page"] = max(1, _coerce_int(merged.get("default_start_page"), 1))
     merged["default_end_page"] = _coerce_optional_int(merged.get("default_end_page"))
     merged["default_outdir"] = str(merged.get("default_outdir", "") or "")
+    supported_langs = supported_target_langs()
+    normalized_glossaries = normalize_glossaries(merged.get("glossaries_by_lang"), supported_langs)
+    glossary_seed_version = _coerce_int(merged.get("glossary_seed_version"), 0)
+    merged["glossary_file_path"] = str(merged.get("glossary_file_path", "") or "")
+    has_any_glossary_rows = any(normalized_glossaries.get(lang) for lang in supported_langs)
+    if not has_any_glossary_rows and merged["glossary_file_path"].strip():
+        legacy_glossaries = entries_from_legacy_rules(Path(merged["glossary_file_path"]))
+        for lang in supported_langs:
+            legacy_rows = legacy_glossaries.get(lang, [])
+            if legacy_rows:
+                normalized_glossaries[lang] = legacy_rows
+        has_any_glossary_rows = any(normalized_glossaries.get(lang) for lang in supported_langs)
+    if glossary_seed_version < 1 and not normalized_glossaries.get("AR"):
+        normalized_glossaries["AR"] = default_ar_entries()
+    merged["glossaries_by_lang"] = serialize_glossaries(normalized_glossaries)
+    merged["glossary_seed_version"] = glossary_seed_version if glossary_seed_version >= 1 else 1
     merged["ocr_mode_default"] = _coerce_choice(
         merged.get("ocr_mode_default"),
         default="auto",

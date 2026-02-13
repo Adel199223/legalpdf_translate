@@ -36,6 +36,15 @@ from .checkpoint import (
 from .config import load_environment
 from .config import IMAGE_MAX_DATA_URL_BYTES_AR, IMAGE_MAX_DATA_URL_BYTES_ENFR
 from .docx_writer import assemble_docx
+from .glossary import (
+    GlossaryEntry,
+    GlossaryRules,
+    apply_glossary,
+    format_glossary_for_prompt,
+    load_glossary,
+    normalize_glossaries,
+    supported_target_langs,
+)
 from .image_io import render_page_image_data_url, should_include_image
 from .ocr_engine import OCREngine, OcrResult, build_ocr_engine, ocr_engine_config_from_run_config
 from .ocr_helpers import ocr_pdf_page_text
@@ -48,6 +57,7 @@ from .prompt_builder import build_page_prompt, build_retry_prompt
 from .run_report import RunEventCollector
 from .resources_loader import load_system_instructions
 from .types import AnalyzeSummary, ImageMode, OcrMode, PageStatus, ReasoningEffort, RunConfig, RunState, RunSummary, TargetLang
+from .user_settings import load_gui_settings
 from .validators import parse_code_block_output, validate_ar, validate_enfr
 
 
@@ -84,6 +94,11 @@ class TranslationWorkflow:
         self._ocr_provider_configured = False
         self._ocr_unavailable_warned = False
         self._ocr_unavailable_lock = threading.Lock()
+        self._glossary_rules: GlossaryRules = load_glossary(None)
+        self._prompt_glossaries_by_lang: dict[str, list[GlossaryEntry]] = normalize_glossaries(
+            {},
+            supported_target_langs(),
+        )
 
     def cancel(self) -> None:
         self._cancel_event.set()
@@ -101,6 +116,12 @@ class TranslationWorkflow:
 
         config = self._normalize_config(config)
         self._validate_config(config)
+        self._glossary_rules = load_glossary(config.glossary_file)
+        gui_settings = load_gui_settings()
+        self._prompt_glossaries_by_lang = normalize_glossaries(
+            gui_settings.get("glossaries_by_lang"),
+            supported_target_langs(),
+        )
         self._last_config = config
         self._diagnostics_admin_mode = bool(config.diagnostics_admin_mode)
 
@@ -991,6 +1012,7 @@ class TranslationWorkflow:
             source_text=source_text,
             context_text=context_text,
         )
+        prompt_text = self._append_glossary_prompt(prompt_text, config.target_lang)
 
         usage_payload: dict[str, object] = {
             "ocr": {
@@ -1214,6 +1236,15 @@ class TranslationWorkflow:
             page_metadata=page_metadata,
         )
 
+    def _append_glossary_prompt(self, prompt_text: str, lang: TargetLang) -> str:
+        entries = self._prompt_glossaries_by_lang.get(lang.value, [])
+        if not entries:
+            return prompt_text
+        glossary_block = format_glossary_for_prompt(lang.value, entries)
+        if glossary_block == "":
+            return prompt_text
+        return f"{prompt_text}\n{glossary_block}"
+
     def _evaluate_output(self, raw_output: str, lang: TargetLang) -> _Evaluation:
         parsed = parse_code_block_output(raw_output)
         if parsed.block_count == 0:
@@ -1272,9 +1303,10 @@ class TranslationWorkflow:
                 outside_text=True,
                 block_count=1,
             )
+        glossary_normalized = apply_glossary(normalized, lang, self._glossary_rules)
         return _Evaluation(
             ok=True,
-            normalized_text=normalized,
+            normalized_text=glossary_normalized,
             defect_reason=None,
             parser_failed=False,
             validator_failed=False,
@@ -1801,6 +1833,7 @@ class TranslationWorkflow:
             ocr_api_key_env_name=(config.ocr_api_key_env_name or "").strip() or "DEEPSEEK_API_KEY",
             context_file=context_file_abs,
             context_text=config.context_text,
+            glossary_file=config.glossary_file.expanduser().resolve() if config.glossary_file else None,
             diagnostics_admin_mode=bool(config.diagnostics_admin_mode),
             diagnostics_include_sanitized_snippets=bool(config.diagnostics_include_sanitized_snippets),
             strip_bidi_controls=bool(config.strip_bidi_controls),
@@ -1839,6 +1872,10 @@ class TranslationWorkflow:
             raise ValueError("workers must be between 1 and 6.")
         if config.context_file and not config.context_file.exists():
             raise FileNotFoundError(f"Context file not found: {config.context_file}")
+        if config.glossary_file and not config.glossary_file.exists():
+            raise FileNotFoundError(f"Glossary file not found: {config.glossary_file}")
+        if config.glossary_file and not config.glossary_file.is_file():
+            raise ValueError(f"Glossary path must be a file: {config.glossary_file}")
 
     def _resolve_context(self, config: RunConfig) -> tuple[str | None, str]:
         if config.context_file:

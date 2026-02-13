@@ -104,6 +104,34 @@ def test_resume_compatibility_and_done_pages(tmp_path: Path) -> None:
     )
 
 
+def test_resume_compatibility_tolerates_missing_glossary_fingerprint_key(tmp_path: Path) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"fake")
+    config = _config(tmp_path, pdf)
+    paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang, run_started_at="20260213_010101")
+    state = new_run_state(
+        config=config,
+        paths=paths,
+        pdf_fingerprint=sha256_of_file(pdf),
+        context_hash=sha256_of_text("ctx"),
+        total_pages=5,
+        selected_pages=[1, 2, 3],
+    )
+    state.settings.pop("glossary_file_path", None)
+
+    assert is_resume_compatible(
+        state,
+        config=config,
+        paths=paths,
+        pdf_fingerprint=sha256_of_file(pdf),
+        context_hash=sha256_of_text("ctx"),
+        selection_start_page=1,
+        selection_end_page=3,
+        selection_page_count=3,
+        max_pages_effective=3,
+    )
+
+
 def test_resume_mismatch_is_explicit_and_does_not_start_processing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
