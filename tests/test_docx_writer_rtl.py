@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
@@ -43,10 +44,7 @@ def _paragraph_runs(paragraph: ET.Element) -> list[dict[str, str | None]]:
 
 def test_arabic_docx_sets_rtl_paragraph_and_stable_mixed_runs(tmp_path: Path) -> None:
     pages_dir = tmp_path / "pages"
-    line = (
-        "العنوان: Rua Luís de Camões رقم \u20666\u2069، "
-        "7960-011 Marmelar، Pedrógão، Vidigueira \u2066[[REF-84/26.1PBBJA]]\u2069"
-    )
+    line = "العنوان: \u2066[[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]\u2069"
     _write_page(pages_dir / "page_0001.txt", line)
     out = tmp_path / "rtl.docx"
 
@@ -67,11 +65,11 @@ def test_arabic_docx_sets_rtl_paragraph_and_stable_mixed_runs(tmp_path: Path) ->
     assert jc.attrib.get(_W_VAL) == "right"
 
     runs = _paragraph_runs(paragraph)
-    assert len(runs) >= 3
+    assert len(runs) >= 2
     combined = "".join((entry["text"] or "") for entry in runs).replace("\u200e", "")
-    expected = "العنوان: Rua Luís de Camões رقم 6، 7960-011 Marmelar، Pedrógão، Vidigueira REF-84/26.1PBBJA"
+    expected = "العنوان: Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira"
     assert combined == expected
-    assert "رقم 6" in combined
+    assert "no 6" in combined
 
     arabic_runs = [entry for entry in runs if entry["rtl"] == "1" and "العنوان" in (entry["text"] or "")]
     assert arabic_runs
@@ -92,3 +90,22 @@ def test_non_rtl_languages_do_not_get_rtl_paragraph_flags(tmp_path: Path) -> Non
     if p_pr is not None:
         assert p_pr.find("w:bidi", _NS) is None
         assert p_pr.find("w:rtl", _NS) is None
+
+
+def test_arabic_docx_month_date_mixed_direction_order_is_stable(tmp_path: Path) -> None:
+    pages_dir = tmp_path / "pages"
+    _write_page(pages_dir / "page_0001.txt", "بيجا، \u2066[[10]]\u2069 فبراير \u2066[[2026]]\u2069")
+    out = tmp_path / "ar_date.docx"
+
+    assemble_docx(pages_dir, out, lang=TargetLang.AR, page_breaks=False)
+
+    document_xml = _read_document_xml(out)
+    for marker in ("\u2066", "\u2067", "\u2068", "\u2069"):
+        assert marker not in document_xml
+    assert "[[" not in document_xml
+    assert "]]" not in document_xml
+
+    paragraph = _first_paragraph_root(document_xml)
+    combined = "".join((entry["text"] or "") for entry in _paragraph_runs(paragraph)).replace("\u200e", "")
+    assert "فبراير" in combined
+    assert re.search(r"10\s*فبراير\s*2026", combined) is not None

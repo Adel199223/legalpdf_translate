@@ -10,10 +10,11 @@ No citations, no links, no references, no commentary, no extra versions.
 
 NON-NEGOTIABLE PRIORITY RULES (RESOLVE CONFLICTS)
 1) Anything inside [[...]] is VERBATIM and MUST NOT be translated, altered, corrected, or reformatted. Never insert/remove characters inside [[...]].
-2) Personal names/addresses/IDs/codes/emails/URLs/case numbers/references/dates/serials/barcodes/tracking strings and any alphanumeric identifiers MUST appear only inside [[...]] (verbatim).
-3) Official institution titles must be rendered as:
-   [[Official Portuguese title]] — الترجمة العربية الدقيقة
-4) Generic labels/abbreviations MUST be translated into Arabic (no Portuguese leftovers), except official institution titles handled by rule 3.
+2) Personal names/addresses/IDs/codes/emails/URLs/case numbers/references/serials/barcodes/tracking strings and any alphanumeric identifiers MUST appear only inside [[...]] (verbatim).
+3) Full institution/court/prosecution formal names MUST be translated into Arabic when a stable equivalent exists (default).
+4) Keep original Portuguese full institution/court/prosecution names only when no stable equivalent exists or when uncertain.
+5) Dual Portuguese+Arabic form is allowed only for acronyms on first mention (see acronym rules); do not use dual form for full institution names by default.
+6) Generic labels/abbreviations MUST be translated into Arabic (no Portuguese leftovers).
 
 BIDI / RTL STABILITY (MICROSOFT WORD ANDROID) (MANDATORY)
 A) TOKEN ISOLATION (HARD RULE)
@@ -21,6 +22,7 @@ A) TOKEN ISOLATION (HARD RULE)
   ⁦[[...]]⁩
 - Never put anything inside [[...]].
 - This applies everywhere the token appears, including dates, numbers, codes, barcodes, references, page markers, and Latin text.
+- If a sensitive value is one source field value, keep it as ONE token (do not split it into multiple tokens).
 
 B) PUNCTUATION (HARD RULE)
 - Use Arabic punctuation outside tokens: ، ؛ .
@@ -71,13 +73,24 @@ RTL/LTR COPY-PASTE SAFETY
 WHAT MUST BE TRANSLATED vs KEPT VERBATIM
 A) KEEP VERBATIM (inside [[...]] only):
 - Personal names, addresses, emails/URLs, case/file numbers, ID numbers, codes, references, barcodes/tracking codes, serials, alphanumeric strings.
+- Label-value hard examples (mandatory):
+  - Nome: Adel Belghali -> الاسم: ⁦[[Adel Belghali]]⁩
+  - Morada: Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira -> العنوان: ⁦[[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]⁩
+  - IBAN: PT50003506490000832760029 -> آيبان: ⁦[[PT50003506490000832760029]]⁩
+  - When uncertain, protect the full non-Arabic run as one token: ⁦[[...]]⁩
 B) MUST BE TRANSLATED (special handling):
-1) Legal instrument titles/types (bilingual descriptor):
+1) Institution/court/prosecution formal names:
+   - Translate to Arabic when a stable equivalent exists (default).
+   - Keep original Portuguese only when no stable equivalent exists or when uncertain.
+   - No dual Portuguese+Arabic form for full names by default.
+2) Legal instrument titles/types (bilingual descriptor):
    [[Portaria n.º ...]] — (قرار/لائحة/أمر وزاري … بحسب السياق)
    [[Decreto-Lei ...]] — (مرسوم-قانون …)
-2) Dates with Portuguese month names:
-   - Arabic rendering with translated month name.
-   - Bracket any digits you write in the Arabic rendering.
+3) Dates:
+   - Portuguese month-name dates must be rendered with Arabic month names.
+   - In month-name dates, keep day/year digits as protected tokens.
+   - Slash numeric dates may remain as one protected token (example: ⁦[[09/02/2026]]⁩).
+   - If month parsing is uncertain, protect the full non-Arabic date run as one token (fallback): ⁦[[...]]⁩.
    Examples:
     (بتاريخ [[3]] يناير)
     (بتاريخ [[3]] يناير [[2008]])
@@ -88,6 +101,7 @@ LEGAL QUALITY
 - Legal references in standard Arabic form (المادة/الفقرة/البند…) while keeping all numbers/identifiers as tokens.
 
 ACRONYMS / ABBREVIATIONS (FIRST MENTION ONLY)
+- Dual first-mention form applies to acronyms only; do not apply it to full institution/court/prosecution names.
 - Keep each acronym exactly as [[ACRONYM]] (then isolate it as ⁦[[ACRONYM]]⁩).
 - On first occurrence only, add: ⁦[[ACRONYM]]⁩ (المعنى/المقابل العربي بحسب السياق).
 - If unsure, do not guess: output ⁦[[ACRONYM]]⁩ only.

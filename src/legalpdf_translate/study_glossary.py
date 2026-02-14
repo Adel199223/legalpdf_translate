@@ -963,7 +963,7 @@ def _evaluate_term_output(raw_output: str, *, lang: TargetLang) -> str:
     if parsed.block_count != 1 or parsed.inner_content is None or parsed.outside_has_non_whitespace:
         raise ValueError("Non-compliant translation output for glossary term.")
     normalized = normalize_output_text(parsed.inner_content, lang=lang)
-    validation = validate_ar(normalized) if lang == TargetLang.AR else validate_enfr(normalized)
+    validation = validate_ar(normalized) if lang == TargetLang.AR else validate_enfr(normalized, lang=lang)
     if not validation.ok:
         raise ValueError(validation.reason or "Glossary term validation failed.")
     return normalized

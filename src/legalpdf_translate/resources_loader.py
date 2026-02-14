@@ -27,8 +27,10 @@ def get_resources_dir() -> Path:
 
 def load_system_instructions(target_lang: TargetLang) -> str:
     resources_dir = get_resources_dir()
-    if target_lang in (TargetLang.EN, TargetLang.FR):
-        filename = "system_instructions_enfr.txt"
+    if target_lang == TargetLang.EN:
+        filename = "system_instructions_en.txt"
+    elif target_lang == TargetLang.FR:
+        filename = "system_instructions_fr.txt"
     else:
         filename = "system_instructions_ar.txt"
     path = resources_dir / filename
