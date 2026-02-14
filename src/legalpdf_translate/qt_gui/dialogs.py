@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QPlainTextEdit,
+    QScrollArea,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -1180,6 +1181,7 @@ class QtSettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.resize(980, 700)
+        self.setMinimumSize(780, 560)
 
         self._settings = dict(settings)
         self._apply_callback = apply_callback
@@ -1217,10 +1219,17 @@ class QtSettingsDialog(QDialog):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        _scroll_area = QScrollArea()
+        _scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        _scroll_area.setWidgetResizable(True)
+        _scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(_scroll_content)
+        scroll_layout.setContentsMargins(12, 12, 12, 12)
 
         self.tabs = QTabWidget(self)
-        root.addWidget(self.tabs, 1)
+        scroll_layout.addWidget(self.tabs, 1)
 
         self.tab_keys = QWidget(self)
         self.tab_ocr = QWidget(self)
@@ -1253,7 +1262,10 @@ class QtSettingsDialog(QDialog):
         buttons.addWidget(self.apply_btn)
         buttons.addWidget(self.save_btn)
         buttons.addWidget(self.cancel_btn)
-        root.addLayout(buttons)
+        scroll_layout.addLayout(buttons)
+
+        _scroll_area.setWidget(_scroll_content)
+        root.addWidget(_scroll_area)
 
         self.apply_btn.clicked.connect(self._apply)
         self.save_btn.clicked.connect(self._save)

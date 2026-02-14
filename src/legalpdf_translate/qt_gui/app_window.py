@@ -1,4 +1,4 @@
-﻿"""PySide6 main window for LegalPDF Translate."""
+"""PySide6 main window for LegalPDF Translate."""
 
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QToolButton,
@@ -196,6 +197,7 @@ class QtMainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("LegalPDF Translate")
         self.resize(1240, 880)
+        self.setMinimumSize(900, 660)
 
         self._defaults = load_gui_settings()
         self._worker_thread: QThread | None = None
@@ -247,16 +249,33 @@ class QtMainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(34, 30, 34, 24)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        outer.addStretch(1)
+
+        self._scroll_area = QScrollArea()
+        self._scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll_area.setWidgetResizable(True)
+        self._scroll_area.viewport().setAutoFillBackground(False)
+        self._scroll_area.setStyleSheet("QScrollArea{background:transparent;}")
+
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background:transparent;")
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(34, 30, 34, 24)
+        scroll_layout.setSpacing(0)
+        scroll_layout.addStretch(1)
 
         self.content_card = QFrame(objectName="GlassCard")
         self.content_card.setMaximumWidth(1180)
-        self.content_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self.content_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred,
+        )
         apply_soft_shadow(self.content_card, blur_radius=66, offset_y=16)
-        outer.addWidget(self.content_card, 0, Qt.AlignmentFlag.AlignHCenter)
-        outer.addStretch(1)
+        scroll_layout.addWidget(self.content_card, 0, Qt.AlignmentFlag.AlignHCenter)
+        scroll_layout.addStretch(1)
+
+        self._scroll_area.setWidget(scroll_content)
+        outer.addWidget(self._scroll_area, 1)
 
         card_shell = QVBoxLayout(self.content_card)
         card_shell.setContentsMargins(18, 16, 18, 16)
@@ -1657,7 +1676,9 @@ class QtMainWindow(QMainWindow):
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
-        self._refresh_canvas()
+        central = self.centralWidget()
+        if central is not None:
+            central.update()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._busy:

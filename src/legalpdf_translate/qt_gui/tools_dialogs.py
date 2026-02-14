@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -46,6 +48,8 @@ from legalpdf_translate.glossary import (
 from legalpdf_translate.glossary_builder import (
     GlossaryBuilderSuggestion,
     build_glossary_builder_markdown,
+    build_lemma_grouped_stats,
+    compute_selection_delta,
     compute_selection_metadata,
     create_builder_stats,
     finalize_builder_suggestions,
@@ -335,8 +339,20 @@ class _GlossaryBuilderWorker(QObject):
                 except Exception:  # noqa: BLE001
                     pass  # Fallback: lemma mode disabled, surface-form Pareto used
 
-            suggestions = finalize_builder_suggestions(stats, target_lang=self._target_lang)
-            selection_metadata = compute_selection_metadata(stats, final_count=len(suggestions))
+            surface_suggestions = finalize_builder_suggestions(stats, target_lang=self._target_lang)
+
+            selection_delta = None
+            if lemma_result is not None and lemma_result.mapping and not lemma_result.fallback_to_surface:
+                grouped_stats = build_lemma_grouped_stats(stats, lemma_result.mapping)
+                lemma_suggestions = finalize_builder_suggestions(grouped_stats, target_lang=self._target_lang)
+                selection_delta = compute_selection_delta(surface_suggestions, lemma_suggestions)
+                suggestions = lemma_suggestions
+            else:
+                suggestions = surface_suggestions
+
+            selection_metadata = compute_selection_metadata(
+                stats, final_count=len(suggestions), selection_delta=selection_delta,
+            )
             self.finished.emit(
                 {
                     "suggestions": suggestions,
@@ -434,6 +450,7 @@ class QtGlossaryBuilderDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Glossary Builder")
         self.resize(980, 720)
+        self.setMinimumSize(780, 560)
         self._settings = dict(settings)
         self._current_pdf_path = current_pdf_path
         self._current_output_dir = current_output_dir
@@ -449,9 +466,19 @@ class QtGlossaryBuilderDialog(QDialog):
         self._selection_metadata: dict[str, Any] | None = None
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        _scroll_area = QScrollArea()
+        _scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        _scroll_area.setWidgetResizable(True)
+        _scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(_scroll_content)
 
         source_group = QGroupBox("Corpus")
         source_grid = QGridLayout(source_group)
+        source_grid.setColumnStretch(0, 1)
+        source_grid.setColumnStretch(1, 0)
+        source_grid.setColumnStretch(2, 0)
+        source_grid.setColumnStretch(3, 0)
         source_grid.addWidget(QLabel("Source"), 0, 0)
         self.source_combo = QComboBox()
         self.source_combo.addItem("Run folders", "run_folders")
@@ -468,7 +495,7 @@ class QtGlossaryBuilderDialog(QDialog):
         self.mode_combo.addItem("Full text", "full_text")
         self.mode_combo.addItem("Headers only", "headers_only")
         source_grid.addWidget(self.mode_combo, 1, 3)
-        self.lemma_check = QCheckBox("Enable lemma grouping (analytics)")
+        self.lemma_check = QCheckBox("Enable lemma grouping (affects suggestions; may call OpenAI)")
         self.lemma_check.setChecked(False)
         source_grid.addWidget(self.lemma_check, 2, 2)
         self.lemma_effort_combo = QComboBox()
@@ -529,7 +556,7 @@ class QtGlossaryBuilderDialog(QDialog):
         source_grid.addLayout(run_row, 9, 0, 1, 4)
         self.summary_label = QLabel("No suggestions generated yet.")
         source_grid.addWidget(self.summary_label, 10, 0, 1, 4)
-        root.addWidget(source_group)
+        scroll_layout.addWidget(source_group)
 
         table_group = QGroupBox("Suggestions")
         table_layout = QVBoxLayout(table_group)
@@ -559,7 +586,7 @@ class QtGlossaryBuilderDialog(QDialog):
         action_row.addStretch(1)
         action_row.addWidget(self.close_btn)
         table_layout.addLayout(action_row)
-        root.addWidget(table_group, 1)
+        scroll_layout.addWidget(table_group, 1)
 
         # -- Diagnostics section --
         diag_group = QGroupBox("Diagnostics")
@@ -578,7 +605,10 @@ class QtGlossaryBuilderDialog(QDialog):
         diag_layout.addWidget(self.open_run_folder_btn)
         diag_layout.addWidget(self.export_diagnostics_btn)
         diag_layout.addWidget(self.diag_path_label, 1)
-        root.addWidget(diag_group)
+        scroll_layout.addWidget(diag_group)
+
+        _scroll_area.setWidget(_scroll_content)
+        root.addWidget(_scroll_area)
         self._last_artifact_dir: Path | None = None
 
         self.add_run_dir_btn.clicked.connect(self._add_run_folder)
@@ -889,7 +919,13 @@ class QtGlossaryBuilderDialog(QDialog):
                 "pages_failed": 0,
             },
             "pipeline": {},
-            "settings": {},
+            "settings": {
+                "lemma_enabled": bool(self._lemma_result is not None),
+                "lemma_effort": (
+                    self.lemma_effort_combo.currentText().strip().lower()
+                    if self._lemma_result is not None else ""
+                ),
+            },
         }
         (artifact_dir / "run_summary.json").write_text(
             json.dumps(run_summary, ensure_ascii=False, indent=2), encoding="utf-8",
