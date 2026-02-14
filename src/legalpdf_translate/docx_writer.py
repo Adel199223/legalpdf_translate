@@ -262,6 +262,7 @@ def assemble_docx(
     up_to_page: int | None = None,
     strip_bidi_controls: bool = True,
     verify_readable: bool = True,
+    stats: dict[str, int] | None = None,
 ) -> Path:
     page_files = sorted(pages_dir.glob("page_*.txt"))
     if up_to_page is not None:
@@ -273,6 +274,8 @@ def assemble_docx(
         first.getparent().remove(first)
     rtl_lang = _is_rtl_target_lang(lang)
     rtl_bidi_lang = _rtl_bidi_lang_code(lang)
+    _paragraph_count = 0
+    _run_count = 0
     for page_idx, page_file in enumerate(page_files):
         page_text = page_file.read_text(encoding="utf-8")
         lines = page_text.split("\n")
@@ -284,6 +287,7 @@ def assemble_docx(
             if line.strip() == "":
                 continue
             paragraph = document.add_paragraph("")
+            _paragraph_count += 1
             if rtl_lang:
                 _add_rtl_flags(paragraph)
                 directional_runs, has_mixed_direction = _segment_directional_runs(line)
@@ -296,17 +300,26 @@ def assemble_docx(
                         if has_mixed_direction:
                             run_text = _wrap_ltr_run_with_lrm(run_text)
                         run = paragraph.add_run(run_text)
+                        _run_count += 1
                         _set_ltr_run_props(run)
                         continue
                     run = paragraph.add_run(run_text)
+                    _run_count += 1
                     _set_rtl_run_props(run, bidi_lang=rtl_bidi_lang)
             else:
                 paragraph.add_run(line)
+                _run_count += 1
         if page_breaks and page_idx < len(page_files) - 1:
             if document.paragraphs:
                 run = document.paragraphs[-1].add_run()
             else:
                 run = document.add_paragraph().add_run()
+                _paragraph_count += 1
+            _run_count += 1
             run.add_break(WD_BREAK.PAGE)
 
+    if stats is not None:
+        stats["paragraph_count"] = _paragraph_count
+        stats["run_count"] = _run_count
+        stats["page_count"] = len(page_files)
     return save_document_atomic(document, output_path, verify_readable=verify_readable)

@@ -474,6 +474,11 @@ def build_run_report_payload(
             "exception_class": str(page.get("exception_class", "") or ""),
             "error": str(page.get("error", "") or ""),
             "retry_reason": str(page.get("retry_reason", "") or ""),
+            "extracted_text_chars": int(page.get("extracted_text_chars", 0) or 0),
+            "extracted_text_lines": int(page.get("extracted_text_lines", 0) or 0),
+            "prompt_build_ms": float(page.get("prompt_build_ms", 0.0) or 0.0),
+            "attempt1_effort": str(page.get("attempt1_effort", "") or ""),
+            "attempt2_effort": str(page.get("attempt2_effort", "") or ""),
         }
         per_page.append(sanitize_value(row))
 
@@ -674,7 +679,630 @@ def build_run_report_payload(
                 per_page_max_chars=200,
             )
 
+    # Glossary diagnostics (from events emitted by glossary_diagnostics module)
+    glossary_diag: dict[str, Any] = {}
+    for ev in events:
+        et = str(ev.get("event_type", ""))
+        if et == "page_coverage_summary":
+            glossary_diag["coverage_proof"] = ev.get("details", {})
+        elif et == "pkg_pareto_summary":
+            glossary_diag["pkg_pareto"] = ev.get("details", {})
+        elif et == "token_pareto_summary":
+            glossary_diag["token_pareto"] = ev.get("details", {})
+        elif et == "cg_load_summary":
+            glossary_diag["cg_load"] = ev.get("counters", {})
+        elif et == "cg_ambiguous_pareto_summary":
+            glossary_diag["cg_ambiguous_pareto"] = ev.get("details", {})
+        elif et == "cg_drift_candidates":
+            glossary_diag["cg_drift"] = ev.get("details", {})
+        elif et == "lemma_normalization_summary":
+            glossary_diag["lemma_summary"] = ev.get("details", {})
+        elif et == "suggestion_selection_summary":
+            glossary_diag["suggestion_selection"] = ev.get("details", {})
+    cg_per_page = [
+        {**ev.get("counters", {}), "page_index": ev.get("page_index")}
+        for ev in events
+        if str(ev.get("event_type", "")) == "cg_apply_page"
+    ]
+    if cg_per_page:
+        glossary_diag["cg_per_page_matches"] = cg_per_page
+    if glossary_diag:
+        payload["glossary_diagnostics"] = glossary_diag
+
+    # Translation diagnostics (from events emitted by translation_diagnostics module)
+    translation_diag: dict[str, Any] = {}
+    prompt_compiled_pages: list[dict[str, Any]] = []
+    validation_pages: list[dict[str, Any]] = []
+    for ev in events:
+        et = str(ev.get("event_type", ""))
+        if et == "run_config_summary":
+            translation_diag["run_config"] = ev.get("details", {})
+        elif et == "prompt_compiled":
+            prompt_compiled_pages.append(
+                {"page_index": ev.get("page_index"), **ev.get("counters", {}), **ev.get("decisions", {})}
+            )
+        elif et == "translation_validation_summary":
+            validation_pages.append(
+                {"page_index": ev.get("page_index"), **ev.get("counters", {}), **ev.get("decisions", {})}
+            )
+        elif et == "cost_estimate_summary":
+            translation_diag["cost_estimate"] = {
+                **ev.get("counters", {}),
+                **ev.get("details", {}),
+            }
+        elif et == "docx_write_summary":
+            translation_diag["docx_write"] = {
+                "duration_ms": ev.get("duration_ms"),
+                **ev.get("counters", {}),
+            }
+    if prompt_compiled_pages:
+        translation_diag["prompt_compiled_pages"] = prompt_compiled_pages
+    if validation_pages:
+        translation_diag["validation_pages"] = validation_pages
+    if translation_diag:
+        payload["translation_diagnostics"] = translation_diag
+
     return sanitize_value(payload)
+
+
+def _render_glossary_diagnostics_markdown(lines: list[str], gd: dict[str, Any]) -> None:
+    """Append glossary diagnostics sections to *lines*."""
+    # -- Document Coverage Proof --
+    proof = gd.get("coverage_proof")
+    if isinstance(proof, dict):
+        lines.append("")
+        lines.append("## Document Coverage Proof")
+        lines.append(f"- **{proof.get('assertion', 'Processed pages: ?/?')}**")
+        per_page = proof.get("per_page")
+        if isinstance(per_page, list) and per_page:
+            lines.append("")
+            lines.append("| Page | Route | Chars | Segments | PKG Tokens | CG Active | CG Matches |")
+            lines.append("|------|-------|-------|----------|------------|-----------|------------|")
+            for row in per_page:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    f"| {row.get('page_index', '?')}"
+                    f" | {row.get('source_route', '?')}"
+                    f" | {row.get('char_count', 0)}"
+                    f" | {row.get('segment_count', 0)}"
+                    f" | {row.get('pkg_token_count', 0)}"
+                    f" | {row.get('cg_entries_active', 0)}"
+                    f" | {row.get('cg_matches_count', 0)} |"
+                )
+
+    # -- PKG Pareto Analysis --
+    pkg = gd.get("pkg_pareto")
+    if isinstance(pkg, dict):
+        lemma_mode = bool(pkg.get("lemma_mode"))
+        lines.append("")
+        header = "## PKG n-gram Pareto (diagnostic)"
+        if lemma_mode:
+            header += " \u2014 Lemma-grouped"
+        lines.append(header)
+        lines.append(
+            "> n-gram (1\u20134) frequency distribution. "
+            "For primary content analysis, see Content Token Pareto below."
+        )
+        lines.append(f"- Total raw tokens analyzed: **{pkg.get('total_tokens', 0)}**")
+        if lemma_mode:
+            lines.append(f"- Surface unique terms: **{pkg.get('surface_unique_terms', 0)}**")
+            lines.append(f"- Lemma-grouped unique terms: **{pkg.get('lemma_grouped_unique_terms', 0)}**")
+        else:
+            lines.append(f"- Unique terms (n-grams): **{pkg.get('unique_terms', 0)}**")
+        lines.append(f"- Total term occurrences: **{pkg.get('total_term_occurrences', 0)}**")
+        lines.append(
+            f"- Top 20% of terms cover **{round(float(pkg.get('top_20_pct_coverage', 0)) * 100, 1)}%** of occurrences"
+        )
+        core80 = pkg.get("core80_terms")
+        if isinstance(core80, list) and core80:
+            lines.append(f"- Smallest set covering ~80%: **{len(core80)} terms**")
+        suggested = pkg.get("suggested_pkg_candidates")
+        if isinstance(suggested, list) and suggested:
+            lines.append("")
+            lines.append("### Suggested PKG Candidates")
+            lines.append("")
+            if lemma_mode:
+                lines.append("| Rank | Lemma | Surface Forms | Frequency | Pages |")
+                lines.append("|------|-------|---------------|-----------|-------|")
+            else:
+                lines.append("| Rank | Term | Frequency | Pages |")
+                lines.append("|------|------|-----------|-------|")
+            for rank, item in enumerate(suggested[:30], start=1):
+                if not isinstance(item, dict):
+                    continue
+                if lemma_mode:
+                    sf_list = item.get("surface_forms", [])
+                    sf_str = ", ".join(str(s) for s in sf_list) if sf_list else ""
+                    lines.append(
+                        f"| {rank}"
+                        f" | {item.get('term', '?')}"
+                        f" | {sf_str}"
+                        f" | {item.get('tf', 0)}"
+                        f" | {item.get('df_pages', 0)} |"
+                    )
+                else:
+                    lines.append(
+                        f"| {rank}"
+                        f" | {item.get('term', '?')}"
+                        f" | {item.get('tf', 0)}"
+                        f" | {item.get('df_pages', 0)} |"
+                    )
+
+    # -- Content Token Pareto --
+    tok_pareto = gd.get("token_pareto")
+    if isinstance(tok_pareto, dict):
+        tok_lemma = bool(tok_pareto.get("lemma_mode"))
+        lines.append("")
+        tok_header = "## Content Token Pareto"
+        if tok_lemma:
+            tok_header += " (Lemma-grouped)"
+        lines.append(tok_header)
+        lines.append(
+            "> Unigram content tokens (stopword-filtered, len \u2265 3). "
+            "For meaningful coverage analysis without n-gram explosion."
+        )
+        lines.append(f"- Content tokens analyzed: **{tok_pareto.get('total_content_tokens', 0)}**")
+        lines.append(f"- Unique content tokens: **{tok_pareto.get('unique_content_tokens', 0)}**")
+        tok_cov = round(float(tok_pareto.get("top_20_pct_coverage", 0)) * 100, 1)
+        lines.append(f"- Top 20% cover **{tok_cov}%** of occurrences")
+        tok_core80 = tok_pareto.get("core80_terms")
+        if isinstance(tok_core80, list) and tok_core80:
+            lines.append(f"- Core 80% set: **{len(tok_core80)} terms**")
+        tok_candidates = tok_pareto.get("suggested_content_candidates")
+        if isinstance(tok_candidates, list) and tok_candidates:
+            lines.append("")
+            lines.append("### Suggested Content Candidates")
+            lines.append("")
+            if tok_lemma:
+                lines.append("| Rank | Term | Surface Forms | Frequency | Pages |")
+                lines.append("|------|------|---------------|-----------|-------|")
+            else:
+                lines.append("| Rank | Term | Frequency | Pages |")
+                lines.append("|------|------|-----------|-------|")
+            for rank, item in enumerate(tok_candidates[:30], start=1):
+                if not isinstance(item, dict):
+                    continue
+                if tok_lemma:
+                    sf_list = item.get("surface_forms", [])
+                    sf_str = ", ".join(str(s) for s in sf_list) if sf_list else ""
+                    lines.append(
+                        f"| {rank}"
+                        f" | {item.get('term', '?')}"
+                        f" | {sf_str}"
+                        f" | {item.get('tf', 0)}"
+                        f" | {item.get('df_pages', 0)} |"
+                    )
+                else:
+                    lines.append(
+                        f"| {rank}"
+                        f" | {item.get('term', '?')}"
+                        f" | {item.get('tf', 0)}"
+                        f" | {item.get('df_pages', 0)} |"
+                    )
+
+    # -- Lemma Normalization Summary --
+    lemma_sum = gd.get("lemma_summary")
+    if isinstance(lemma_sum, dict):
+        lines.append("")
+        lines.append("### Lemma Normalization")
+        # Check if lemma grouping affected suggestion selection
+        _sel = gd.get("suggestion_selection")
+        _lemma_affected = (
+            isinstance(_sel, dict) and bool(_sel.get("lemma_grouping_affected_selection"))
+        )
+        if _lemma_affected:
+            lines.append(
+                "> Lemma normalization was used for both PKG/token Pareto analytics "
+                "**and** suggestion selection."
+            )
+        else:
+            lines.append(
+                "> Lemma normalization is used for PKG/token Pareto analytics only. "
+                "It did NOT affect the suggestion list in this run."
+            )
+        terms_total = int(lemma_sum.get("terms_total", 0))
+        cache_hits = int(lemma_sum.get("cache_hits", 0))
+        api_calls_count = int(lemma_sum.get("api_calls", 0))
+        lines.append(f"- Terms processed: **{terms_total}**")
+        lines.append(f"- Cache hits: **{cache_hits}**")
+        lines.append(f"- API calls: **{api_calls_count}**")
+        in_tok = int(lemma_sum.get("input_tokens", 0))
+        out_tok = int(lemma_sum.get("output_tokens", 0))
+        if in_tok or out_tok:
+            lines.append(f"- Tokens: **{in_tok}** in / **{out_tok}** out")
+        # Cache explanation
+        if terms_total > 0 and cache_hits >= terms_total:
+            lines.append(
+                f"> All {terms_total} terms resolved from cache (0 API calls). "
+                "Fast run \u2014 lemma cache contained all needed terms."
+            )
+        elif api_calls_count > 0:
+            uncached = terms_total - cache_hits
+            lines.append(
+                f"> {uncached} term(s) required API normalization "
+                f"({api_calls_count} call(s), {in_tok} input tokens)."
+            )
+        failures = int(lemma_sum.get("failures", 0))
+        if failures:
+            lines.append(f"- Batch failures: **{failures}**")
+        wall = lemma_sum.get("wall_seconds")
+        if wall is not None:
+            lines.append(f"- Wall time: **{round(float(wall), 1)}s**")
+        if lemma_sum.get("fallback_to_surface"):
+            lines.append("")
+            lines.append("> **Warning:** All lemma API batches failed. PKG Pareto used surface forms only.")
+
+    # -- Suggestion Selection Diagnostics --
+    sel = gd.get("suggestion_selection")
+    if isinstance(sel, dict):
+        lines.append("")
+        lines.append("## Suggestion Selection Diagnostics")
+        _cand = int(sel.get("candidates_extracted_total", 0))
+        _doc_max_th = sel.get("filter_doc_max_threshold", 5)
+        _corpus_tf_th = sel.get("filter_corpus_tf_threshold", 3)
+        _corpus_df_th = sel.get("filter_corpus_df_threshold", 2)
+        _passed_a = int(sel.get("passed_doc_max_filter", 0))
+        _passed_b = int(sel.get("passed_corpus_filter", 0))
+        _final = int(sel.get("final_suggestions_count", 0))
+        _cap = sel.get("max_suggestions_cap")
+        lines.append(f"- Candidate n-grams extracted: **{_cand}**")
+        lines.append(
+            f"- Filter A — single-document TF \u2265 {_doc_max_th}: **{_passed_a}** terms"
+        )
+        lines.append(
+            f"- Filter B — corpus TF \u2265 {_corpus_tf_th} AND DF \u2265 {_corpus_df_th}: **{_passed_b}** terms"
+        )
+        lines.append(f"- Combined (A OR B): **{_final}** terms")
+        if _cap is not None:
+            lines.append(f"- Max suggestions cap: **{_cap}**")
+        else:
+            lines.append("- Max suggestions cap: **none** (all qualifying terms returned)")
+        lines.append(f"- **Final suggestions: {_final}**")
+        _lemma_used = bool(sel.get("lemma_grouping_affected_selection"))
+        _lemma_changed = bool(sel.get("lemma_selection_changed"))
+        if _lemma_used and _lemma_changed:
+            _so_count = int(sel.get("lemma_surface_only_count", 0))
+            _lo_count = int(sel.get("lemma_only_count", 0))
+            _unch = int(sel.get("lemma_unchanged_count", 0))
+            lines.append("")
+            lines.append(
+                f"> Lemma grouping was used for suggestion selection and changed the results. "
+                f"Delta: {_so_count} surface-only removed, "
+                f"{_lo_count} lemma-grouped added, {_unch} unchanged."
+            )
+            _so_terms = sel.get("lemma_surface_only_terms", [])
+            if isinstance(_so_terms, list) and _so_terms:
+                lines.append(f">  \u2022 Removed (surface-only): {', '.join(str(t) for t in _so_terms)}")
+            _lo_terms = sel.get("lemma_only_terms", [])
+            if isinstance(_lo_terms, list) and _lo_terms:
+                lines.append(f">  \u2022 Added (lemma-grouped): {', '.join(str(t) for t in _lo_terms)}")
+        elif _lemma_used and not _lemma_changed:
+            _sc = int(sel.get("surface_selection_count", 0))
+            _lc = int(sel.get("lemma_selection_count", 0))
+            lines.append("")
+            lines.append(
+                "> Lemma grouping was used for suggestion selection "
+                "but produced the same results as surface-form selection."
+            )
+            lines.append(f"> Surface count: {_sc}, Lemma count: {_lc} (identical sets).")
+        else:
+            lines.append("")
+            lines.append(
+                "> Lemma grouping was not used for suggestion selection in this run. "
+                "The suggestion count is determined entirely by TF/DF threshold filters."
+            )
+
+    # -- CG Match Analysis --
+    cg_ambig = gd.get("cg_ambiguous_pareto")
+    cg_load = gd.get("cg_load")
+    if isinstance(cg_ambig, dict) or isinstance(cg_load, dict):
+        lines.append("")
+        lines.append("## CG Match Analysis")
+        if isinstance(cg_load, dict):
+            lines.append(f"- Entries loaded: **{cg_load.get('entries_loaded', 0)}**")
+        if isinstance(cg_ambig, dict):
+            lines.append(f"- Total match count (all pages): **{cg_ambig.get('total_match_count', 0)}**")
+            lines.append(f"- Unique matched entries: **{cg_ambig.get('unique_matched_entries', 0)}**")
+            never = cg_ambig.get("never_matched_entries")
+            if isinstance(never, list) and never:
+                lines.append(f"- Never matched: {', '.join(str(n) for n in never[:20])}")
+
+        cg_pp = gd.get("cg_per_page_matches")
+        if isinstance(cg_pp, list) and cg_pp:
+            lines.append("")
+            lines.append("| Page | Matches | Active Entries |")
+            lines.append("|------|---------|----------------|")
+            for row in cg_pp:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    f"| {row.get('page_index', '?')}"
+                    f" | {row.get('match_count', 0)}"
+                    f" | {row.get('entries_active', 0)} |"
+                )
+
+        # Ambiguous Pareto sub-section
+        if isinstance(cg_ambig, dict):
+            ambig_candidates = cg_ambig.get("ambiguous_candidates", [])
+            lines.append("")
+            lines.append("### Ambiguous Pareto")
+            lines.append(
+                f"- Total ambiguous frequency: **{cg_ambig.get('ambiguous_total_frequency', 0)}**"
+            )
+            lines.append(f"- Ambiguous candidates: **{len(ambig_candidates)}**")
+            core80 = cg_ambig.get("ambiguous_pareto_core80", [])
+            if isinstance(core80, list) and core80:
+                lines.append(f"- Core 80% set: **{len(core80)} terms**")
+                lines.append("")
+                lines.append("| Term | Frequency | Pages | Heuristics | CG Covered |")
+                lines.append("|------|-----------|-------|------------|------------|")
+                for item in core80:
+                    if not isinstance(item, dict):
+                        continue
+                    tags = ", ".join(item.get("heuristic_tags", []))
+                    lines.append(
+                        f"| {item.get('source_text', '?')}"
+                        f" | {item.get('frequency', 0)}"
+                        f" | {item.get('df_pages', 0)}"
+                        f" | {tags}"
+                        f" | {'yes' if item.get('cg_covered') else 'no'} |"
+                    )
+
+            # Drift candidates
+            drift = gd.get("cg_drift", {})
+            drift_list = drift.get("drift_candidates", []) if isinstance(drift, dict) else []
+            lines.append("")
+            lines.append("### Drift Candidates")
+            if isinstance(drift_list, list) and drift_list:
+                for item in drift_list:
+                    if not isinstance(item, dict):
+                        continue
+                    lines.append(
+                        f"- **{item.get('source_text', '?')}**: "
+                        f"translations seen: {item.get('translations_seen', [])}"
+                    )
+            else:
+                lines.append("- (none detected)")
+
+            lines.append("")
+            lines.append(
+                "> **Reminder:** CG should stay minimal and high-impact. "
+                "These are suggestions only — do not auto-add."
+            )
+
+
+def _render_translation_diagnostics_markdown(
+    lines: list[str],
+    td: dict[str, Any],
+    *,
+    per_page: list[dict[str, Any]] | None = None,
+    snippets: list[dict[str, Any]] | None = None,
+) -> None:
+    """Append translation diagnostics sections to *lines*."""
+    lines.append("")
+    lines.append("## Translation Diagnostics")
+
+    # -- A. Run Configuration --
+    rc = td.get("run_config")
+    if isinstance(rc, dict):
+        lines.append("")
+        lines.append("### A. Run Configuration")
+        lines.append(f"- Model: **{rc.get('model', '?')}**")
+        lines.append(f"- Target language: **{rc.get('target_lang', '?')}**")
+        lines.append(f"- Image mode: `{rc.get('image_mode', '?')}`")
+        lines.append(f"- OCR mode: `{rc.get('ocr_mode', '?')}`")
+        lines.append(f"- Strip bidi controls: `{rc.get('strip_bidi_controls', '?')}`")
+        lines.append(f"- Effort policy: `{rc.get('effort_policy', '?')}`")
+        lines.append(f"- Effort resolved (attempt 1 default): `{rc.get('effort_resolved', '?')}`")
+        lines.append(f"- Page breaks: `{rc.get('page_breaks', '?')}`")
+        lines.append(f"- Workers: `{rc.get('workers', '?')}`")
+        lines.append(f"- Keep intermediates: `{rc.get('keep_intermediates', '?')}`")
+        if rc.get("resume"):
+            lines.append("- Resume: `True`")
+        lines.append(f"- Glossary entries: **{rc.get('glossary_entries_count', 0)}** (tiers: {rc.get('glossary_tiers', '?')})")
+        lines.append(f"- System instructions hash: `{rc.get('system_instructions_hash', '?')}`")
+        lines.append("- Max output tokens: *not set (API default)*")
+        lines.append("- Temperature: *not set (API default)*")
+
+    # -- B. Coverage Proof --
+    if isinstance(per_page, list) and per_page:
+        _total_pp = len(per_page)
+        _done_pp = [p for p in per_page if isinstance(p, dict) and p.get("status") in ("done", "failed")]
+        _processed = len(_done_pp)
+        _failed_list = [p.get("page_number") for p in per_page if isinstance(p, dict) and p.get("status") == "failed"]
+        _retry_list = [
+            p.get("page_number")
+            for p in per_page
+            if isinstance(p, dict) and str(p.get("retry_reason", "") or "").strip()
+        ]
+        lines.append("")
+        lines.append("### B. Coverage Proof")
+        lines.append(f"- **Processed pages: {_processed}/{_total_pp}**")
+        if _failed_list:
+            lines.append(f"- Pages failed: {_failed_list}")
+        if _retry_list:
+            lines.append(f"- Pages with retries: {_retry_list}")
+        lines.append("")
+        lines.append(
+            "| Page | Status | Route | Why | Chars | Lines | Effort | OCR | Image | API | In Tok | Out Tok"
+            " | Extract ms | API ms | Total ms | Cost |"
+        )
+        lines.append(
+            "|------|--------|-------|-----|-------|-------|--------|-----|-------|-----|--------|--------"
+            "|------------|--------|----------|------|"
+        )
+        for _pp in per_page:
+            if not isinstance(_pp, dict):
+                continue
+            _ocr_flag = "Y" if _pp.get("ocr_used") else "-"
+            _img_flag = "Y" if _pp.get("image_used") else "-"
+            _effort = str(_pp.get("attempt1_effort", "") or "")
+            _cost_val = _pp.get("estimated_cost")
+            _cost_str = f"${_cost_val:.6f}" if _cost_val is not None else "-"
+            _extract_ms = round(float(_pp.get("extract_seconds", 0) or 0) * 1000.0)
+            _api_ms = round(float(_pp.get("translate_seconds", 0) or 0) * 1000.0)
+            _total_ms = round(float(_pp.get("wall_seconds", 0) or 0) * 1000.0)
+            _route_reason = str(_pp.get("source_route_reason", "") or "")
+            lines.append(
+                f"| {_pp.get('page_number', '?')}"
+                f" | {_pp.get('status', '?')}"
+                f" | {_pp.get('source_route', '?')}"
+                f" | {_route_reason or '-'}"
+                f" | {_pp.get('extracted_text_chars', 0)}"
+                f" | {_pp.get('extracted_text_lines', 0)}"
+                f" | {_effort or '-'}"
+                f" | {_ocr_flag}"
+                f" | {_img_flag}"
+                f" | {_pp.get('api_calls_count', 0)}"
+                f" | {_pp.get('input_tokens', 0)}"
+                f" | {_pp.get('output_tokens', 0)}"
+                f" | {_extract_ms}"
+                f" | {_api_ms}"
+                f" | {_total_ms}"
+                f" | {_cost_str} |"
+            )
+
+    # -- C. Prompt + Chunking Diagnostics --
+    pcp = td.get("prompt_compiled_pages")
+    if isinstance(pcp, list) and pcp:
+        lines.append("")
+        lines.append("### C. Prompt + Chunking Diagnostics")
+        lines.append("")
+        lines.append("> Pipeline processes each page as a single unit (1 chunk per page). No sub-page chunking or truncation.")
+        lines.append("")
+        lines.append("| Page | Prompt Tokens (est) | System Tokens (est) | Glossary Tokens (est) | Segments | Bloat? |")
+        lines.append("|------|---------------------|---------------------|-----------------------|----------|--------|")
+        for row in pcp:
+            if not isinstance(row, dict):
+                continue
+            bloat = "YES" if row.get("prompt_bloat_warning") else "no"
+            lines.append(
+                f"| {row.get('page_index', '?')}"
+                f" | {row.get('prompt_tokens_est', 0)}"
+                f" | {row.get('system_tokens_est', 0)}"
+                f" | {row.get('glossary_tokens_est', 0)}"
+                f" | {row.get('segment_count', 0)}"
+                f" | {bloat} |"
+            )
+
+    # -- D. Translation Quality Checks --
+    vp = td.get("validation_pages")
+    if isinstance(vp, list) and vp:
+        lines.append("")
+        lines.append("### D. Translation Quality Checks")
+        lines.append("")
+        lines.append("| Page | Lang OK | Detected | Numeric Δ | Citation Δ | Struct Warn | Bidi Warn | Src Para | Out Para |")
+        lines.append("|------|---------|----------|-----------|------------|-------------|-----------|----------|----------|")
+        _numeric_sample_lines: list[str] = []
+        _flagged_pages: set[int | str] = set()
+        for row in vp:
+            if not isinstance(row, dict):
+                continue
+            lang_ok = "yes" if row.get("language_ok") else "NO"
+            _page_idx = row.get("page_index", "?")
+            lines.append(
+                f"| {_page_idx}"
+                f" | {lang_ok}"
+                f" | {row.get('detected_lang', '?')}"
+                f" | {row.get('numeric_mismatches_count', 0)}"
+                f" | {row.get('citation_mismatches_count', 0)}"
+                f" | {row.get('structure_warnings_count', 0)}"
+                f" | {row.get('bidi_warnings_count', 0)}"
+                f" | {row.get('source_paragraphs', '-')}"
+                f" | {row.get('output_paragraphs', '-')} |"
+            )
+            _samples = row.get("numeric_missing_sample")
+            if isinstance(_samples, list) and _samples:
+                _numeric_sample_lines.append(
+                    f"- Page {_page_idx}: missing {_samples[:3]}"
+                )
+            # Track flagged pages for snippet gating
+            _has_warning = (
+                not row.get("language_ok", True)
+                or int(row.get("numeric_mismatches_count", 0) or 0) > 0
+                or int(row.get("citation_mismatches_count", 0) or 0) > 0
+                or int(row.get("structure_warnings_count", 0) or 0) > 0
+                or int(row.get("bidi_warnings_count", 0) or 0) > 0
+            )
+            if _has_warning:
+                _flagged_pages.add(_page_idx)
+        if _numeric_sample_lines:
+            lines.append("")
+            lines.append("#### Numeric Mismatch Samples")
+            lines.extend(_numeric_sample_lines)
+        # Flagged page snippets — only for pages with quality warnings
+        if snippets and _flagged_pages:
+            _flagged_snippet_lines: list[str] = []
+            for _snip in snippets:
+                if not isinstance(_snip, dict):
+                    continue
+                _snip_page = _snip.get("page_number")
+                if _snip_page not in _flagged_pages:
+                    continue
+                _snip_text = str(_snip.get("snippet", "") or "")[:120]
+                if _snip_text:
+                    _flagged_snippet_lines.append(
+                        f"- Page {_snip_page} ({len(_snip_text)} chars): `{_snip_text}`"
+                    )
+            if _flagged_snippet_lines:
+                lines.append("")
+                lines.append("#### Flagged Page Snippets")
+                lines.extend(_flagged_snippet_lines)
+
+    # -- E. Output Construction --
+    dw = td.get("docx_write")
+    if isinstance(dw, dict):
+        lines.append("")
+        lines.append("### E. Output Construction")
+        lines.append(f"- DOCX assembly: **{round(float(dw.get('duration_ms', 0)), 1)} ms** for **{dw.get('page_count', 0)}** pages")
+        _para_count = dw.get("paragraph_count")
+        _run_count_dw = dw.get("run_count")
+        if _para_count is not None or _run_count_dw is not None:
+            lines.append(
+                f"- Paragraphs: **{_para_count or 0}**, Runs: **{_run_count_dw or 0}**"
+            )
+        lines.append("- Tables: 0, Images: 0 (text-only pipeline)")
+
+    # -- F. Cost Estimation --
+    ce = td.get("cost_estimate")
+    if isinstance(ce, dict):
+        lines.append("")
+        lines.append("### F. Cost Estimation")
+        lines.append(f"- Model: **{ce.get('model', '?')}**")
+        lines.append(
+            f"- Tokens: input={ce.get('input_tokens', 0)}, "
+            f"output={ce.get('output_tokens', 0)}, "
+            f"reasoning={ce.get('reasoning_tokens', 0)}, "
+            f"total={ce.get('total_tokens', 0)}"
+        )
+        cost = ce.get("estimated_cost")
+        if cost is not None:
+            lines.append(f"- Estimated cost: **${cost:.6f}**")
+        else:
+            lines.append(f"- Estimated cost: *unavailable* ({ce.get('cost_explanation', 'unknown')})")
+        lines.append(f"- Pricing source: {ce.get('cost_explanation', '?')}")
+        # Per-page cost breakdown
+        if isinstance(per_page, list) and any(
+            isinstance(p, dict) and p.get("estimated_cost") is not None for p in per_page
+        ):
+            lines.append("")
+            lines.append("#### Per-Page Cost Breakdown")
+            lines.append("")
+            lines.append("| Page | In Tokens | Out Tokens | Reas Tokens | Est. Cost |")
+            lines.append("|------|-----------|------------|-------------|-----------|")
+            for _pp_cost in per_page:
+                if not isinstance(_pp_cost, dict):
+                    continue
+                _c = _pp_cost.get("estimated_cost")
+                _c_str = f"${_c:.6f}" if _c is not None else "-"
+                lines.append(
+                    f"| {_pp_cost.get('page_number', '?')}"
+                    f" | {_pp_cost.get('input_tokens', 0)}"
+                    f" | {_pp_cost.get('output_tokens', 0)}"
+                    f" | {_pp_cost.get('reasoning_tokens', 0)}"
+                    f" | {_c_str} |"
+                )
 
 
 def build_run_report_markdown(
@@ -742,11 +1370,102 @@ def build_run_report_markdown(
     optimization_hint = str(pipeline_obj.get("image_mode_optimization_hint", "") or "").strip()
     if optimization_hint:
         lines.append(f"- Optimization hint: {optimization_hint}")
+
+    # Sanity warnings — flag empty/inconsistent reports
+    _sanity_warnings: list[str] = []
+    _detected_pages = int(input_obj.get("detected_page_count", 0) or 0)
+    _wall_secs = float(totals_obj.get("wall_seconds", 0.0) or 0.0)
+    _has_glossary_diag = bool(payload.get("glossary_diagnostics"))
+    _has_translation_diag = bool(payload.get("translation_diagnostics"))
+    if _detected_pages == 0:
+        _sanity_warnings.append(
+            f"WARNING: detected_page_count is 0. "
+            f"The run may not have recorded page-level state. "
+            f"Run dir: {run_obj.get('run_dir', '?')}"
+        )
+    if not _has_glossary_diag and not _has_translation_diag and not timeline_obj:
+        _sanity_warnings.append(
+            "WARNING: No diagnostics events found. "
+            "Diagnostics sections will be empty. "
+            "Check that run_events.jsonl exists and contains events."
+        )
+    if _wall_secs == 0.0 and _detected_pages > 0:
+        _sanity_warnings.append(
+            "WARNING: wall_seconds is 0.0 despite pages being detected. "
+            "Timing data may not have been recorded."
+        )
+    # Check per-page rollup completeness
+    _per_page_data = payload.get("per_page_rollups")
+    _per_page_count = len(_per_page_data) if isinstance(_per_page_data, list) else 0
+    _pages_processed = int(pipeline_obj.get("pages_processed", _per_page_count) or 0)
+    if _pages_processed > 0 and _per_page_count == 0:
+        _sanity_warnings.append(
+            "WARNING: pages_processed > 0 but no per-page rollup data found."
+        )
+    if _per_page_count > 0 and _per_page_count < _pages_processed:
+        _sanity_warnings.append(
+            f"WARNING: per-page rollups ({_per_page_count}) < pages_processed ({_pages_processed}). "
+            "Some pages may not have recorded metadata."
+        )
+    # Check token tracking consistency
+    _api_calls = int(totals_obj.get("api_calls_total", 0) or 0)
+    _total_tokens = int(totals_obj.get("total_tokens", 0) or 0)
+    if _api_calls > 0 and _total_tokens == 0:
+        _sanity_warnings.append(
+            f"WARNING: {_api_calls} API calls recorded but total_tokens is 0. "
+            "Token tracking may be broken."
+        )
+    # Check status=completed but timeline empty
+    _run_status = str(run_obj.get("status", "") or "")
+    if _run_status == "completed" and not timeline_obj:
+        _sanity_warnings.append(
+            "WARNING: Run status is 'completed' but timeline is empty. "
+            "Events may not have been recorded."
+        )
+    # Check processed_pages != total_pages
+    _total_pages = _detected_pages  # detected_page_count from input section
+    _done_pages = len([
+        p for p in (_per_page_data or [])
+        if isinstance(p, dict) and p.get("status") == "done"
+    ])
+    if _total_pages > 0 and _per_page_count > 0 and _done_pages < _total_pages:
+        _sanity_warnings.append(
+            f"WARNING: Only {_done_pages}/{_total_pages} pages completed successfully."
+        )
+    # Store sanity summary in payload for programmatic consumers
+    payload["report_sanity_summary"] = {
+        "detected_page_count": _detected_pages,
+        "processed_pages": _done_pages,
+        "total_pages": _total_pages,
+        "timeline_event_count": len(timeline_obj),
+        "sanity_warnings": list(_sanity_warnings),
+    }
+    if _sanity_warnings:
+        lines.append("")
+        lines.append("## Sanity Warnings")
+        for _w in _sanity_warnings:
+            lines.append(f"- {_w}")
+
     lines.append("")
     lines.append("## Timeline")
     lines.extend(_build_timeline_lines(timeline_obj))
 
-    if admin_mode:
+    # -- Glossary Diagnostics sections --
+    gd = payload.get("glossary_diagnostics")
+    if isinstance(gd, dict) and gd:
+        _render_glossary_diagnostics_markdown(lines, gd)
+
+    # -- Translation Diagnostics sections --
+    td = payload.get("translation_diagnostics")
+    if isinstance(td, dict) and td:
+        _render_translation_diagnostics_markdown(
+            lines, td,
+            per_page=payload.get("per_page_rollups"),
+            snippets=payload.get("translated_snippets"),
+        )
+
+    if admin_mode and not (isinstance(td, dict) and td):
+        # Legacy Per-Page Rollups: only when no translation diagnostics
         per_page = payload.get("per_page_rollups")
         if isinstance(per_page, list):
             lines.append("")
@@ -771,6 +1490,8 @@ def build_run_report_markdown(
             else:
                 lines.append("- (no page rollups available)")
 
+    if admin_mode and not (isinstance(td, dict) and td):
+        # Legacy Sanitized Snippets: only when no translation diagnostics
         snippets = payload.get("translated_snippets")
         if isinstance(snippets, list):
             lines.append("")

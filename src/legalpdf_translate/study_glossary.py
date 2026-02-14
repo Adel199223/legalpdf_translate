@@ -975,6 +975,7 @@ def translate_term_for_lang(
     *,
     client: OpenAIResponsesClient | None = None,
     timeout_seconds: float = 45.0,
+    effort: str = "medium",
 ) -> str:
     lang = _coerce_target_lang(target_lang)
     phrase = _normalize_term(term_pt)
@@ -992,7 +993,7 @@ def translate_term_for_lang(
     result = local_client.create_page_response(
         instructions=instructions,
         prompt_text=prompt_text,
-        effort="medium",
+        effort=effort,
         image_data_url=None,
         timeout_seconds=max(5.0, timeout_seconds),
     )
@@ -1006,6 +1007,7 @@ def fill_translations_for_entry(
     client: OpenAIResponsesClient | None = None,
     timeout_seconds: float = 45.0,
     fill_only_missing: bool = True,
+    effort: str = "medium",
 ) -> StudyGlossaryEntry:
     translations = expand_translations_by_lang(entry.translations_by_lang, supported_langs)
     local_client = client or OpenAIResponsesClient(request_timeout_seconds=max(5.0, timeout_seconds))
@@ -1019,6 +1021,7 @@ def fill_translations_for_entry(
                 lang,
                 client=local_client,
                 timeout_seconds=timeout_seconds,
+                effort=effort,
             )
         except Exception:
             continue

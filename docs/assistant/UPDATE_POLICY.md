@@ -368,3 +368,101 @@ Verification commands/results:
 - python -m pytest -q tests/test_resources_loader.py tests/test_prompt_builder.py -> 8 passed in 0.05s
 - python -m pytest -q -> 271 passed in 5.81s
 - python -m compileall src tests -> success
+
+Date: 2026-02-14
+Code change summary:
+- Added `openai_reasoning_effort_lemma` setting (medium/high, default medium) in `src/legalpdf_translate/user_settings.py` with coercion validation.
+- Added "Translation effort" / "Lemma / utility effort" dropdowns in Settings dialog (`src/legalpdf_translate/qt_gui/dialogs.py`).
+- Added `effort` parameter to `translate_term_for_lang` and `fill_translations_for_entry` in `src/legalpdf_translate/study_glossary.py`, wired through Study translation worker.
+- Created `src/legalpdf_translate/lemma_normalizer.py` with `LemmaCache` (persistent JSON cache), `LemmaBatchResult`, and `batch_normalize_lemmas` (batch OpenAI API normalization with surface-form fallback).
+- Extended `src/legalpdf_translate/glossary_diagnostics.py::GlossaryDiagnosticsAccumulator` with `set_lemma_mapping()` and lemma-grouped PKG Pareto computation in `finalize_pkg_pareto()`.
+- Extended Glossary Builder dialog/worker (`src/legalpdf_translate/qt_gui/tools_dialogs.py`) with opt-in lemma grouping checkbox, lemma normalization phase after page scanning, and `lemma_normalization_summary` event emission.
+- Extended `src/legalpdf_translate/run_report.py` with lemma normalization subsection rendering and lemma-grouped PKG Pareto table (surface forms column).
+- Added `tests/test_effort_settings.py` (6 tests) and `tests/test_lemma_normalizer.py` (22 tests).
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (sections: C, F, G, J)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q tests/test_effort_settings.py tests/test_lemma_normalizer.py -> 28 passed
+- python -m pytest -q -> 355 passed in 7.98s
+- python -m compileall src tests -> success
+
+Date: 2026-02-14
+Code change summary:
+- Enhanced translation admin run report with Document Coverage Proof table, enriched event emitters, per-page cost breakdown, numeric mismatch samples, and strengthened sanity warnings.
+- Enriched `emit_run_config_event()` with `effort_resolved`, `page_breaks`, `workers`, `resume` params in `src/legalpdf_translate/translation_diagnostics.py`.
+- Enriched `emit_validation_summary_event()` with `numeric_missing_sample`, `source_paragraphs`, `output_paragraphs`, `bidi_control_count`, `replacement_char_count`.
+- Enriched `emit_docx_write_event()` with `paragraph_count`, `run_count`.
+- Added `stats` parameter to `assemble_docx()` in `src/legalpdf_translate/docx_writer.py` for paragraph/run counting (non-breaking).
+- Added `prompt_build_ms` timing and enriched `api_call_done` events with `model`/`effort_used` in `src/legalpdf_translate/workflow.py`.
+- Enriched per-page rollup extraction with `extracted_text_chars`, `extracted_text_lines`, `prompt_build_ms`, `attempt1_effort`, `attempt2_effort`.
+- Enhanced `_render_translation_diagnostics_markdown()` with Document Coverage Proof table, numeric mismatch samples, Output Construction paragraph/run counts, per-page cost breakdown.
+- Strengthened Sanity Warnings with rollup/pages_processed mismatch and api_calls/tokens consistency checks.
+- Gated legacy Per-Page Rollups section (only shows when no translation diagnostics present).
+- Added `tests/test_translation_report.py` (11 tests).
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (sections: G, J)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q tests/test_translation_report.py -> 11 passed in 0.59s
+- python -m pytest -q -> 366 passed in 7.14s
+- python -m compileall src tests -> success
+
+Date: 2026-02-14
+Code change summary:
+- Filled remaining gaps in translation admin run report: wrapper heading `## Translation Diagnostics` with `### A–F` lettered sub-sections.
+- Added `keep_intermediates` to `emit_run_config_event()` in `translation_diagnostics.py`; capped `numeric_missing_sample` to 3.
+- Passed `keep_intermediates=getattr(config, "keep_intermediates", True)` in `workflow.py`.
+- Enhanced `run_report.py::_render_translation_diagnostics_markdown()`: wrapper heading, heading demotion, Route Reason ("Why") column in Coverage Proof table, chunking note (1 chunk per page), flagged page snippets gated to quality warnings (truncated 120 chars), text-only pipeline note in Output Construction, max_output_tokens/temperature as "API default" in Run Config.
+- Added 2 new sanity checks: status=completed but timeline empty, done_pages < total_pages (gated on per_page_count > 0).
+- Added `report_sanity_summary` to payload for programmatic consumers.
+- Gated legacy Sanitized Snippets section when translation diagnostics present.
+- Updated `tests/test_translation_report.py`: 20 tests (11 updated + 9 new covering wrapper heading, route reason, sanity warnings, numeric cap, snippet gating, text-only note, chunking note, report_sanity_summary in payload).
+- Updated `tests/test_translation_diagnostics.py` and `tests/test_qt_glossary_builder_diagnostics.py` heading assertions.
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (sections: G, J)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q tests/test_translation_report.py -> 20 passed in 1.19s
+- python -m pytest -q -> 375 passed in 8.87s
+- python -m compileall src tests -> success
+
+Date: 2026-02-14
+Code change summary:
+- Fixed hardcoded zero totals in Glossary Builder run_summary — lemma API token usage (input/output/total, API calls) now populates from `self._lemma_result` in `src/legalpdf_translate/qt_gui/tools_dialogs.py`.
+- Added `compute_selection_metadata()` to `src/legalpdf_translate/glossary_builder.py` — pure function reporting TF/DF filter pipeline stats (candidates, thresholds, pass counts, final count, cap policy).
+- Wired selection metadata through worker → dialog → `suggestion_selection_summary` event in `src/legalpdf_translate/qt_gui/tools_dialogs.py`.
+- Added "Suggestion Selection Diagnostics" section in `src/legalpdf_translate/run_report.py` rendering TF/DF filtering pipeline with explicit analytics-only note for lemma grouping.
+- Added analytics-only note to Lemma Normalization section in report.
+- Expanded `openai_reasoning_effort_lemma` allowed values to include `xhigh` and changed default from `medium` to `high` in `src/legalpdf_translate/user_settings.py`.
+- Added effort dropdown (`high`/`xhigh`) next to lemma checkbox in Glossary Builder dialog and updated Settings dialog combo in `src/legalpdf_translate/qt_gui/dialogs.py`.
+- Added/updated tests: `tests/test_glossary_builder.py` (selection metadata), `tests/test_effort_settings.py` (default/invalid/xhigh), `tests/test_qt_glossary_builder_diagnostics.py` (lemma tokens, suggestion selection section, analytics-only note).
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (sections: F, G)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 380 passed in 12.54s
+- python -m compileall src tests -> success
+
+Date: 2026-02-14
+Code change summary:
+- Replaced layout-invalidation approach with QScrollArea in all three Qt dialogs to fix controls collapsing to 1-2px, empty space after Show Advanced toggle, and clipped/inaccessible buttons.
+- Main window (`src/legalpdf_translate/qt_gui/app_window.py`): wrapped content_card in transparent QScrollArea; changed vertical policy from `Maximum` to `Preferred`; simplified `_refresh_canvas()` to repaint-only (no layout hacks).
+- Glossary Builder (`src/legalpdf_translate/qt_gui/tools_dialogs.py`): wrapped all content in QScrollArea; kept column stretches `(1,0,0,0)`.
+- Settings dialog (`src/legalpdf_translate/qt_gui/dialogs.py`): wrapped tabs+buttons in QScrollArea.
+- Added dark-theme QScrollBar styling in `src/legalpdf_translate/qt_gui/styles.py`.
+
+Docs updated:
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 396 passed in 7.95s
+- python -m compileall src tests -> success

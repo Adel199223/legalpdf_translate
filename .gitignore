@@ -19,3 +19,10 @@ build/*
 
 # assistant scratch docs (local archive only)
 docs/assistant/_scratch/
+
+# Claude Code local settings (machine-specific permissions)
+.claude/settings.local.json
+
+# Local Claude Code settings
+.claude/
+

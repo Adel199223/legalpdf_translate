@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QPlainTextEdit,
+    QScrollArea,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -885,10 +886,12 @@ class _StudyTranslationWorker(QObject):
         *,
         entries: list[StudyGlossaryEntry],
         supported_langs: list[str],
+        lemma_effort: str = "medium",
     ) -> None:
         super().__init__()
         self._entries = list(entries)
         self._supported_langs = list(supported_langs)
+        self._lemma_effort = lemma_effort
 
     def run(self) -> None:
         try:
@@ -906,6 +909,7 @@ class _StudyTranslationWorker(QObject):
                         supported_langs=self._supported_langs,
                         client=client,
                         fill_only_missing=False,
+                        effort=self._lemma_effort,
                     )
                 )
             self.progress.emit(100, "Translation refresh complete.")
@@ -1177,6 +1181,7 @@ class QtSettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.resize(980, 700)
+        self.setMinimumSize(780, 560)
 
         self._settings = dict(settings)
         self._apply_callback = apply_callback
@@ -1214,10 +1219,17 @@ class QtSettingsDialog(QDialog):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        _scroll_area = QScrollArea()
+        _scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        _scroll_area.setWidgetResizable(True)
+        _scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(_scroll_content)
+        scroll_layout.setContentsMargins(12, 12, 12, 12)
 
         self.tabs = QTabWidget(self)
-        root.addWidget(self.tabs, 1)
+        scroll_layout.addWidget(self.tabs, 1)
 
         self.tab_keys = QWidget(self)
         self.tab_ocr = QWidget(self)
@@ -1250,7 +1262,10 @@ class QtSettingsDialog(QDialog):
         buttons.addWidget(self.apply_btn)
         buttons.addWidget(self.save_btn)
         buttons.addWidget(self.cancel_btn)
-        root.addLayout(buttons)
+        scroll_layout.addLayout(buttons)
+
+        _scroll_area.setWidget(_scroll_content)
+        root.addWidget(_scroll_area)
 
         self.apply_btn.clicked.connect(self._apply)
         self.save_btn.clicked.connect(self._save)
@@ -1346,6 +1361,7 @@ class QtSettingsDialog(QDialog):
         self.default_lang_combo = QComboBox(); self.default_lang_combo.addItems(["EN", "FR", "AR"])
         self.default_effort_combo = QComboBox(); self.default_effort_combo.addItems(["high", "xhigh"])
         self.default_effort_policy_combo = QComboBox(); self.default_effort_policy_combo.addItems(["adaptive", "fixed_high", "fixed_xhigh"])
+        self.lemma_effort_combo = QComboBox(); self.lemma_effort_combo.addItems(["medium", "high", "xhigh"])
         self.default_images_combo = QComboBox(); self.default_images_combo.addItems(["off", "auto", "always"])
         self.default_workers_combo = QComboBox(); self.default_workers_combo.addItems(["1", "2", "3", "4", "5", "6"])
         self.default_start_edit = QLineEdit()
@@ -1367,8 +1383,9 @@ class QtSettingsDialog(QDialog):
         self.restore_defaults_btn = QPushButton("Restore defaults")
 
         grid.addWidget(QLabel("Default language"), row, 0); grid.addWidget(self.default_lang_combo, row, 1); row += 1
-        grid.addWidget(QLabel("Default effort"), row, 0); grid.addWidget(self.default_effort_combo, row, 1); row += 1
-        grid.addWidget(QLabel("Default effort policy"), row, 0); grid.addWidget(self.default_effort_policy_combo, row, 1); row += 1
+        grid.addWidget(QLabel("Translation effort"), row, 0); grid.addWidget(self.default_effort_combo, row, 1); row += 1
+        grid.addWidget(QLabel("Translation effort policy"), row, 0); grid.addWidget(self.default_effort_policy_combo, row, 1); row += 1
+        grid.addWidget(QLabel("Lemma / utility effort"), row, 0); grid.addWidget(self.lemma_effort_combo, row, 1); row += 1
         grid.addWidget(QLabel("Default images mode"), row, 0); grid.addWidget(self.default_images_combo, row, 1); row += 1
         grid.addWidget(QLabel("Default workers"), row, 0); grid.addWidget(self.default_workers_combo, row, 1); row += 1
         grid.addWidget(QLabel("Default start page"), row, 0); grid.addWidget(self.default_start_edit, row, 1); row += 1
@@ -2635,7 +2652,10 @@ class QtSettingsDialog(QDialog):
         self.study_progress.setValue(0)
         self.study_summary_label.setText("Refreshing translations...")
         thread = QThread(self)
-        worker = _StudyTranslationWorker(entries=selected_entries, supported_langs=self._study_supported_langs)
+        _lemma_effort = str(self._settings.get("openai_reasoning_effort_lemma", "high") or "high")
+        worker = _StudyTranslationWorker(
+            entries=selected_entries, supported_langs=self._study_supported_langs, lemma_effort=_lemma_effort,
+        )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._on_study_translation_progress)
@@ -2878,6 +2898,7 @@ class QtSettingsDialog(QDialog):
         self.default_lang_combo.setCurrentText(str(settings.get("default_lang", "EN")))
         self.default_effort_combo.setCurrentText(str(settings.get("default_effort", "high")))
         self.default_effort_policy_combo.setCurrentText(str(settings.get("default_effort_policy", "adaptive")))
+        self.lemma_effort_combo.setCurrentText(str(settings.get("openai_reasoning_effort_lemma", "high")))
         self.default_images_combo.setCurrentText(str(settings.get("default_images_mode", "off")))
         self.default_workers_combo.setCurrentText(str(settings.get("default_workers", 3)))
         self.default_resume_check.setChecked(bool(settings.get("default_resume", True)))
@@ -3169,6 +3190,7 @@ class QtSettingsDialog(QDialog):
         self.default_lang_combo.setCurrentText("EN")
         self.default_effort_combo.setCurrentText("high")
         self.default_effort_policy_combo.setCurrentText("adaptive")
+        self.lemma_effort_combo.setCurrentText("high")
         self.default_images_combo.setCurrentText("off")
         self.default_workers_combo.setCurrentText("3")
         self.default_resume_check.setChecked(True)
@@ -3238,6 +3260,7 @@ class QtSettingsDialog(QDialog):
             "default_lang": self.default_lang_combo.currentText().strip().upper(),
             "default_effort": self.default_effort_combo.currentText().strip().lower(),
             "default_effort_policy": self.default_effort_policy_combo.currentText().strip().lower(),
+            "openai_reasoning_effort_lemma": self.lemma_effort_combo.currentText().strip().lower(),
             "default_images_mode": self.default_images_combo.currentText().strip().lower(),
             "default_workers": _to_int(self.default_workers_combo.currentText(), field="Default workers", min_value=1, max_value=6),
             "default_resume": bool(self.default_resume_check.isChecked()),
