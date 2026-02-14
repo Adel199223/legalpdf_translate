@@ -259,6 +259,54 @@ def finalize_builder_suggestions(
     return rows
 
 
+def compute_selection_metadata(
+    stats: dict[str, Any],
+    *,
+    final_count: int,
+    min_tf_per_doc: int = 5,
+    min_tf_corpus: int = 3,
+    min_df_docs: int = 2,
+) -> dict[str, Any]:
+    """Return metadata explaining the suggestion selection pipeline.
+
+    Reads from the same *stats* dict as ``finalize_builder_suggestions`` and
+    reports how many candidate terms passed each filter stage.
+    """
+    term_tf: dict[str, int] = stats.get("term_tf", {}) if isinstance(stats.get("term_tf"), dict) else {}
+    term_docs: dict[str, set[str]] = stats.get("term_docs", {}) if isinstance(stats.get("term_docs"), dict) else {}
+    term_doc_tf: dict[str, dict[str, int]] = (
+        stats.get("term_doc_tf", {}) if isinstance(stats.get("term_doc_tf"), dict) else {}
+    )
+
+    candidates_total = 0
+    passed_doc_max = 0
+    passed_corpus = 0
+    for term, tf in term_tf.items():
+        tf_value = int(tf)
+        if tf_value <= 0:
+            continue
+        candidates_total += 1
+        df_docs = len(term_docs.get(term, set()))
+        per_doc_counts = term_doc_tf.get(term, {})
+        doc_max = max(per_doc_counts.values()) if per_doc_counts else tf_value
+        if doc_max >= int(min_tf_per_doc):
+            passed_doc_max += 1
+        if tf_value >= int(min_tf_corpus) and df_docs >= int(min_df_docs):
+            passed_corpus += 1
+
+    return {
+        "candidates_extracted_total": candidates_total,
+        "filter_doc_max_threshold": min_tf_per_doc,
+        "filter_corpus_tf_threshold": min_tf_corpus,
+        "filter_corpus_df_threshold": min_df_docs,
+        "passed_doc_max_filter": passed_doc_max,
+        "passed_corpus_filter": passed_corpus,
+        "max_suggestions_cap": None,
+        "final_suggestions_count": final_count,
+        "lemma_grouping_affected_selection": False,
+    }
+
+
 def mine_glossary_builder_suggestions(
     corpus_pages: list[dict[str, object]],
     *,

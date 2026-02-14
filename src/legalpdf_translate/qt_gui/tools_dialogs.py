@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -45,10 +46,16 @@ from legalpdf_translate.glossary import (
 from legalpdf_translate.glossary_builder import (
     GlossaryBuilderSuggestion,
     build_glossary_builder_markdown,
+    compute_selection_metadata,
     create_builder_stats,
     finalize_builder_suggestions,
     serialize_glossary_builder_suggestions,
     update_builder_stats_from_page,
+)
+from legalpdf_translate.glossary_diagnostics import (
+    GlossaryDiagnosticsAccumulator,
+    PageCoverageRecord,
+    emit_diagnostics_events,
 )
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
 from legalpdf_translate.types import RunConfig, TargetLang
@@ -141,6 +148,8 @@ class _GlossaryBuilderWorker(QObject):
         pdf_paths: list[str],
         target_lang: str,
         mode: str,
+        lemma_enabled: bool = False,
+        lemma_effort: str = "high",
     ) -> None:
         super().__init__()
         self._source_mode = str(source_mode or "run_folders").strip().lower()
@@ -149,6 +158,8 @@ class _GlossaryBuilderWorker(QObject):
         self._target_lang = str(target_lang or "EN").strip().upper()
         self._mode = mode if mode in {"full_text", "headers_only"} else "full_text"
         self._cancel_requested = False
+        self._lemma_enabled = bool(lemma_enabled)
+        self._lemma_effort = str(lemma_effort or "high").strip().lower()
 
     def cancel(self) -> None:
         self._cancel_requested = True
@@ -177,7 +188,9 @@ class _GlossaryBuilderWorker(QObject):
 
     def run(self) -> None:
         try:
+            t0 = time.monotonic()
             stats = create_builder_stats()
+            accumulator = GlossaryDiagnosticsAccumulator(total_pages=0)
             total_pages_scanned = 0
             total_sources = 0
             source_mode = self._source_mode
@@ -233,6 +246,16 @@ class _GlossaryBuilderWorker(QObject):
                             stats=stats,
                             mode=self._mode,  # type: ignore[arg-type]
                         )
+                        _pkg_tc = accumulator.record_page_pkg_stats(
+                            page_index=page_number, source_text=page_text, doc_id=doc_id,
+                        )
+                        accumulator.record_page_coverage(PageCoverageRecord(
+                            page_index=page_number, total_pages=0, source_route="direct_text",
+                            char_count=len(page_text),
+                            segment_count=len([ln for ln in page_text.splitlines() if ln.strip()]),
+                            pkg_token_count=_pkg_tc,
+                            cg_entries_active=0, cg_matches_count=0, cg_matched_keys=[],
+                        ))
                         total_pages_scanned += 1
                     total_sources += 1
                 else:
@@ -265,6 +288,16 @@ class _GlossaryBuilderWorker(QObject):
                             stats=stats,
                             mode=self._mode,  # type: ignore[arg-type]
                         )
+                        _pkg_tc = accumulator.record_page_pkg_stats(
+                            page_index=page_number, source_text=page_text, doc_id=pdf_path.stem,
+                        )
+                        accumulator.record_page_coverage(PageCoverageRecord(
+                            page_index=page_number, total_pages=0, source_route="direct_text",
+                            char_count=len(page_text),
+                            segment_count=len([ln for ln in page_text.splitlines() if ln.strip()]),
+                            pkg_token_count=_pkg_tc,
+                            cg_entries_active=0, cg_matches_count=0, cg_matched_keys=[],
+                        ))
                         total_pages_scanned += 1
                     total_sources += 1
 
@@ -273,13 +306,47 @@ class _GlossaryBuilderWorker(QObject):
                     f"Processed {source_index}/{source_total} sources; pages scanned: {total_pages_scanned}.",
                 )
 
+            # Patch accumulator with final page count
+            accumulator._total_pages = total_pages_scanned
+            with accumulator._lock:
+                for _rec in accumulator._page_coverage.values():
+                    _rec.total_pages = total_pages_scanned
+
+            # Optional lemma normalization phase (analytics-only)
+            lemma_result = None
+            if self._lemma_enabled and total_pages_scanned > 0:
+                self.progress.emit(95, "Running lemma normalization...")
+                try:
+                    from legalpdf_translate.lemma_normalizer import LemmaCache, batch_normalize_lemmas
+                    from legalpdf_translate.openai_client import OpenAIResponsesClient as _LemmaClient
+
+                    pkg_tf: dict[str, int] = stats.get("term_tf", {})
+                    terms_to_normalize = [t for t, tf in pkg_tf.items() if int(tf) >= 2]
+                    if terms_to_normalize:
+                        _cache = LemmaCache(cache_path=app_data_dir() / "lemma_cache.json")
+                        _client = _LemmaClient()
+                        lemma_result = batch_normalize_lemmas(
+                            terms_to_normalize,
+                            client=_client,
+                            effort=self._lemma_effort,
+                            cache=_cache,
+                        )
+                        accumulator.set_lemma_mapping(lemma_result.mapping)
+                except Exception:  # noqa: BLE001
+                    pass  # Fallback: lemma mode disabled, surface-form Pareto used
+
             suggestions = finalize_builder_suggestions(stats, target_lang=self._target_lang)
+            selection_metadata = compute_selection_metadata(stats, final_count=len(suggestions))
             self.finished.emit(
                 {
                     "suggestions": suggestions,
+                    "selection_metadata": selection_metadata,
                     "sources_processed": total_sources,
                     "pages_scanned": total_pages_scanned,
                     "source_mode": source_mode,
+                    "accumulator": accumulator,
+                    "wall_seconds": time.monotonic() - t0,
+                    "lemma_result": lemma_result,
                 }
             )
         except Exception as exc:  # noqa: BLE001
@@ -376,6 +443,10 @@ class QtGlossaryBuilderDialog(QDialog):
         self._suggestions: list[GlossaryBuilderSuggestion] = []
         self._sources_processed = 0
         self._pages_scanned = 0
+        self._accumulator: GlossaryDiagnosticsAccumulator | None = None
+        self._wall_seconds: float = 0.0
+        self._lemma_result: object | None = None
+        self._selection_metadata: dict[str, Any] | None = None
 
         root = QVBoxLayout(self)
 
@@ -397,6 +468,17 @@ class QtGlossaryBuilderDialog(QDialog):
         self.mode_combo.addItem("Full text", "full_text")
         self.mode_combo.addItem("Headers only", "headers_only")
         source_grid.addWidget(self.mode_combo, 1, 3)
+        self.lemma_check = QCheckBox("Enable lemma grouping (analytics)")
+        self.lemma_check.setChecked(False)
+        source_grid.addWidget(self.lemma_check, 2, 2)
+        self.lemma_effort_combo = QComboBox()
+        self.lemma_effort_combo.addItems(["high", "xhigh"])
+        _default_lemma_effort = str(settings.get("openai_reasoning_effort_lemma", "high") or "high")
+        if _default_lemma_effort in ("high", "xhigh"):
+            self.lemma_effort_combo.setCurrentText(_default_lemma_effort)
+        self.lemma_effort_combo.setEnabled(False)
+        self.lemma_check.toggled.connect(self.lemma_effort_combo.setEnabled)
+        source_grid.addWidget(self.lemma_effort_combo, 2, 3)
 
         source_grid.addWidget(QLabel("Run folders"), 1, 0)
         self.run_dirs_list = QListWidget()
@@ -479,6 +561,26 @@ class QtGlossaryBuilderDialog(QDialog):
         table_layout.addLayout(action_row)
         root.addWidget(table_group, 1)
 
+        # -- Diagnostics section --
+        diag_group = QGroupBox("Diagnostics")
+        diag_layout = QHBoxLayout(diag_group)
+        self.open_run_folder_btn = QPushButton("Open run folder")
+        self.export_diagnostics_btn = QPushButton("Export diagnostics report (.md)\u2026")
+        self.open_run_folder_btn.setEnabled(False)
+        self.export_diagnostics_btn.setEnabled(False)
+        self._diag_admin_mode = bool(settings.get("diagnostics_admin_mode", True))
+        if not self._diag_admin_mode:
+            self.export_diagnostics_btn.setToolTip(
+                "Enable Admin Diagnostics in Settings to export a detailed report"
+            )
+        self.diag_path_label = QLabel("")
+        self.diag_path_label.setWordWrap(True)
+        diag_layout.addWidget(self.open_run_folder_btn)
+        diag_layout.addWidget(self.export_diagnostics_btn)
+        diag_layout.addWidget(self.diag_path_label, 1)
+        root.addWidget(diag_group)
+        self._last_artifact_dir: Path | None = None
+
         self.add_run_dir_btn.clicked.connect(self._add_run_folder)
         self.remove_run_dir_btn.clicked.connect(self._remove_selected_run_folders)
         self.clear_run_dirs_btn.clicked.connect(self._clear_run_folders)
@@ -490,6 +592,8 @@ class QtGlossaryBuilderDialog(QDialog):
         self.cancel_btn.clicked.connect(self._cancel_generation)
         self.apply_btn.clicked.connect(self._apply_selected)
         self.close_btn.clicked.connect(self.close)
+        self.open_run_folder_btn.clicked.connect(self._open_run_folder)
+        self.export_diagnostics_btn.clicked.connect(self._export_diagnostics_report)
 
         run_dirs_raw = self._settings.get("study_glossary_last_run_dirs")
         if isinstance(run_dirs_raw, list):
@@ -619,12 +723,15 @@ class QtGlossaryBuilderDialog(QDialog):
         self._set_busy(True)
 
         thread = QThread(self)
+        _lemma_effort = self.lemma_effort_combo.currentText().strip().lower() or "high"
         worker = _GlossaryBuilderWorker(
             source_mode=source_mode,
             run_dirs=run_dirs,
             pdf_paths=pdf_paths,
             target_lang=self.target_lang_combo.currentText().strip().upper(),
             mode=str(self.mode_combo.currentData() or "full_text"),
+            lemma_enabled=bool(self.lemma_check.isChecked()),
+            lemma_effort=_lemma_effort,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -715,6 +822,108 @@ class QtGlossaryBuilderDialog(QDialog):
         )
         md_path.write_text(markdown, encoding="utf-8")
 
+        if self._diag_admin_mode and self._accumulator is not None:
+            self._write_run_report_artifacts(artifact_dir)
+
+    def _write_run_report_artifacts(self, artifact_dir: Path) -> None:
+        """Write run_state.json, run_summary.json, run_events.jsonl for diagnostics export."""
+        from datetime import UTC
+        from datetime import datetime as _dt
+
+        from legalpdf_translate.run_report import RunEventCollector
+
+        now_iso = _dt.now(UTC).isoformat()
+        target_lang = self.target_lang_combo.currentText().strip().upper()
+        pdf_path_str = str(self._current_pdf_path or "")
+        pages_scanned = int(self._pages_scanned)
+
+        # Clear stale events (RunEventCollector appends)
+        events_path = artifact_dir / "run_events.jsonl"
+        if events_path.exists():
+            events_path.unlink()
+
+        run_state = {
+            "version": 1,
+            "run_started_at": now_iso,
+            "finished_at": now_iso,
+            "run_status": "completed",
+            "halt_reason": None,
+            "lang": target_lang,
+            "pdf_path": pdf_path_str,
+            "total_pages": pages_scanned,
+            "max_pages_effective": pages_scanned,
+            "selection_start_page": 1,
+            "selection_end_page": pages_scanned,
+            "selection_page_count": pages_scanned,
+            "run_dir_abs": str(artifact_dir),
+            "pages": {},
+            "done_count": pages_scanned,
+            "failed_count": 0,
+            "pending_count": 0,
+        }
+        (artifact_dir / "run_state.json").write_text(
+            json.dumps(run_state, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+
+        # Merge lemma API usage into totals (instead of hardcoding 0)
+        _lemma_in = int(getattr(self._lemma_result, "input_tokens", 0)) if self._lemma_result else 0
+        _lemma_out = int(getattr(self._lemma_result, "output_tokens", 0)) if self._lemma_result else 0
+        _lemma_api = int(getattr(self._lemma_result, "api_calls", 0)) if self._lemma_result else 0
+
+        run_summary = {
+            "run_id": f"glossary_builder_{now_iso}",
+            "pdf_path": pdf_path_str,
+            "lang": target_lang,
+            "selected_pages_count": pages_scanned,
+            "totals": {
+                "total_wall_seconds": round(self._wall_seconds, 3),
+                "api_calls_total": _lemma_api,
+                "total_input_tokens": _lemma_in,
+                "total_output_tokens": _lemma_out,
+                "total_reasoning_tokens": 0,
+                "total_tokens": _lemma_in + _lemma_out,
+            },
+            "counts": {
+                "pages_images": 0,
+                "pages_retries": 0,
+                "pages_failed": 0,
+            },
+            "pipeline": {},
+            "settings": {},
+        }
+        (artifact_dir / "run_summary.json").write_text(
+            json.dumps(run_summary, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+
+        collector = RunEventCollector(run_dir=artifact_dir, enabled=True)
+        emit_diagnostics_events(self._accumulator, collector)
+
+        # Emit lemma normalization summary event if lemma phase ran
+        if self._lemma_result is not None:
+            lr = self._lemma_result
+            collector.add_event(
+                event_type="lemma_normalization_summary",
+                stage="glossary_diagnostics",
+                details={
+                    "terms_total": int(getattr(lr, "cache_hits", 0)) + int(getattr(lr, "cache_misses", 0)),
+                    "cache_hits": int(getattr(lr, "cache_hits", 0)),
+                    "api_calls": int(getattr(lr, "api_calls", 0)),
+                    "input_tokens": int(getattr(lr, "input_tokens", 0)),
+                    "output_tokens": int(getattr(lr, "output_tokens", 0)),
+                    "failures": int(getattr(lr, "failures", 0)),
+                    "fallback_to_surface": bool(getattr(lr, "fallback_to_surface", False)),
+                    "wall_seconds": round(float(getattr(lr, "wall_seconds", 0.0)), 3),
+                },
+            )
+
+        # Emit suggestion selection summary event
+        if self._selection_metadata is not None:
+            collector.add_event(
+                event_type="suggestion_selection_summary",
+                stage="glossary_diagnostics",
+                details=self._selection_metadata,
+            )
+
     def _on_generate_finished(self, payload: object) -> None:
         self._set_busy(False)
         data = payload if isinstance(payload, dict) else {}
@@ -722,6 +931,11 @@ class QtGlossaryBuilderDialog(QDialog):
         self._suggestions = [row for row in suggestions if isinstance(row, GlossaryBuilderSuggestion)] if isinstance(suggestions, list) else []
         self._sources_processed = int(data.get("sources_processed", 0) or 0)
         self._pages_scanned = int(data.get("pages_scanned", 0) or 0)
+        self._accumulator = data.get("accumulator") if isinstance(data.get("accumulator"), GlossaryDiagnosticsAccumulator) else None
+        self._wall_seconds = float(data.get("wall_seconds", 0.0) or 0.0)
+        self._lemma_result = data.get("lemma_result")
+        _sm = data.get("selection_metadata")
+        self._selection_metadata = _sm if isinstance(_sm, dict) else None
         self._populate_table()
         self.progress.setValue(100)
         self.summary_label.setText(
@@ -733,6 +947,22 @@ class QtGlossaryBuilderDialog(QDialog):
             QMessageBox.warning(self, "Glossary Builder", f"Suggestions generated but artifact save failed: {exc}")
         self._worker = None
         self._worker_thread = None
+        self._update_diagnostics_buttons()
+
+    def _update_diagnostics_buttons(self) -> None:
+        try:
+            artifact_dir = self._artifact_dir().expanduser().resolve()
+        except Exception:
+            artifact_dir = None
+        self._last_artifact_dir = artifact_dir
+        has_dir = artifact_dir is not None and artifact_dir.exists()
+        self.open_run_folder_btn.setEnabled(has_dir)
+        can_export = has_dir and self._diag_admin_mode
+        self.export_diagnostics_btn.setEnabled(can_export)
+        if has_dir:
+            self.diag_path_label.setText(str(artifact_dir))
+        else:
+            self.diag_path_label.setText("")
 
     def _on_generate_cancelled(self) -> None:
         self._set_busy(False)
@@ -748,6 +978,66 @@ class QtGlossaryBuilderDialog(QDialog):
         self._worker = None
         self._worker_thread = None
         QMessageBox.critical(self, "Glossary Builder", message or "Failed to generate suggestions.")
+
+    def _open_run_folder(self) -> None:
+        target = self._last_artifact_dir
+        if target is None or not target.exists():
+            QMessageBox.information(self, "Glossary Builder", "No run folder available.")
+            return
+        import os
+        import subprocess
+
+        try:
+            if os.name == "nt":
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["xdg-open", str(target)])
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Glossary Builder", f"Failed to open folder: {exc}")
+
+    def _export_diagnostics_report(self) -> None:
+        run_dir = self._last_artifact_dir
+        if run_dir is None or not run_dir.exists():
+            QMessageBox.information(self, "Glossary Builder", "No run folder available.")
+            return
+        from legalpdf_translate.run_report import build_run_report_markdown
+
+        include_snippets = bool(self._settings.get("diagnostics_include_sanitized_snippets", False))
+        try:
+            report_text = build_run_report_markdown(
+                run_dir=run_dir,
+                admin_mode=True,
+                include_sanitized_snippets=include_snippets,
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(
+                self,
+                "Glossary Builder",
+                f"Failed to generate diagnostics report:\n{exc}\n\n"
+                f"Run folder: {run_dir}\n"
+                "Check that run_events.jsonl and run_summary.json exist.",
+            )
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"glossary_run_report_{timestamp}.md"
+        default_path = run_dir / default_name
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Diagnostics Report",
+            str(default_path),
+            "Markdown (*.md);;Text (*.txt);;All Files (*.*)",
+        )
+        if not save_path:
+            return
+        output_path = Path(save_path).expanduser().resolve()
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(report_text, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Glossary Builder", f"Failed to save report: {exc}")
+            return
+        self.summary_label.setText(f"Diagnostics report exported: {output_path.name}")
 
     def _selected_rows(self) -> list[tuple[GlossaryBuilderSuggestion, str, str]]:
         selected: list[tuple[GlossaryBuilderSuggestion, str, str]] = []

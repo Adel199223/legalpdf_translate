@@ -39,7 +39,7 @@ from .checkpoint import (
     sha256_of_file,
     sha256_of_text,
 )
-from .config import load_environment
+from .config import load_environment, OPENAI_MODEL
 from .config import IMAGE_MAX_DATA_URL_BYTES_AR, IMAGE_MAX_DATA_URL_BYTES_ENFR
 from .docx_writer import assemble_docx
 from .glossary import (
@@ -233,6 +233,7 @@ class TranslationWorkflow:
         self._event_collector: RunEventCollector | None = None
         self._run_stage_timings_ms: dict[str, float] = {}
         self._diagnostics_admin_mode = False
+        self._glossary_diagnostics: Any | None = None
         self._ocr_provider_configured = False
         self._ocr_preflight_checked = False
         self._ocr_unavailable_warned = False
@@ -384,7 +385,41 @@ class TranslationWorkflow:
             },
         )
 
+        self._glossary_diagnostics = None
+        if self._diagnostics_admin_mode:
+            from .glossary_diagnostics import GlossaryDiagnosticsAccumulator
+            self._glossary_diagnostics = GlossaryDiagnosticsAccumulator(total_pages=selection_page_count)
+            self._glossary_diagnostics.set_cg_entries(
+                self._prompt_glossaries_by_lang.get(config.target_lang.value, [])
+            )
+
         instructions = load_system_instructions(config.target_lang)
+        self._system_instructions_text = instructions
+
+        if self._diagnostics_admin_mode:
+            from .translation_diagnostics import (
+                emit_run_config_event,
+                system_instructions_hash as _si_hash,
+            )
+            _gl_entries = self._prompt_glossaries_by_lang.get(config.target_lang.value, [])
+            _gl_tiers = str(self._enabled_glossary_tiers_by_lang.get(config.target_lang.value, [1, 2]))
+            emit_run_config_event(
+                self._event_collector,
+                model=OPENAI_MODEL,
+                system_instructions_hash=_si_hash(instructions),
+                image_mode=config.image_mode.value,
+                ocr_mode=config.ocr_mode.value,
+                strip_bidi_controls=config.strip_bidi_controls,
+                effort_policy=config.effort_policy.value,
+                glossary_entries_count=len(_gl_entries),
+                glossary_tiers=_gl_tiers,
+                target_lang=config.target_lang.value,
+                effort_resolved=self._resolve_effort_policy_label(config),
+                page_breaks=config.page_breaks,
+                workers=config.workers,
+                resume=config.resume,
+                keep_intermediates=getattr(config, "keep_intermediates", True),
+            )
 
         state_lock = threading.Lock()
         failed_page: int | None = None
@@ -644,17 +679,63 @@ class TranslationWorkflow:
         self._last_state = run_state
         completed_pages = run_state.done_count
 
+        if self._glossary_diagnostics is not None and self._event_collector is not None:
+            from .glossary_diagnostics import emit_diagnostics_events
+            emit_diagnostics_events(self._glossary_diagnostics, self._event_collector)
+
+        if self._diagnostics_admin_mode:
+            from .translation_diagnostics import estimate_cost, emit_cost_estimate_event
+            _page_rows = []
+            for _k, _pg in run_state.pages.items():
+                if isinstance(_pg, dict):
+                    _page_rows.append(_pg)
+            _total_in = sum(int(p.get("input_tokens", 0) or 0) for p in _page_rows)
+            _total_out = sum(int(p.get("output_tokens", 0) or 0) for p in _page_rows)
+            _total_reas = sum(int(p.get("reasoning_tokens", 0) or 0) for p in _page_rows)
+            _env_in = float(os.environ["LEGALPDF_COST_INPUT_PER_1M"]) if os.environ.get("LEGALPDF_COST_INPUT_PER_1M") else None
+            _env_out = float(os.environ["LEGALPDF_COST_OUTPUT_PER_1M"]) if os.environ.get("LEGALPDF_COST_OUTPUT_PER_1M") else None
+            _env_reas = float(os.environ["LEGALPDF_COST_REASONING_PER_1M"]) if os.environ.get("LEGALPDF_COST_REASONING_PER_1M") else None
+            _cost, _cost_expl = estimate_cost(
+                model=OPENAI_MODEL,
+                input_tokens=_total_in,
+                output_tokens=_total_out,
+                reasoning_tokens=_total_reas,
+                env_input_rate=_env_in,
+                env_output_rate=_env_out,
+                env_reasoning_rate=_env_reas,
+            )
+            emit_cost_estimate_event(
+                self._event_collector,
+                model=OPENAI_MODEL,
+                input_tokens=_total_in,
+                output_tokens=_total_out,
+                reasoning_tokens=_total_reas,
+                estimated_cost=_cost,
+                cost_explanation=_cost_expl,
+            )
+
         if failed_page is None and not self._cancel_event.is_set() and run_state.failed_count == 0:
             try:
                 docx_started = time.perf_counter()
+                _docx_stats: dict[str, int] = {}
                 output_docx = assemble_docx(
                     paths.pages_dir,
                     paths.final_docx_path,
                     lang=config.target_lang,
                     page_breaks=config.page_breaks,
                     strip_bidi_controls=config.strip_bidi_controls,
+                    stats=_docx_stats,
                 )
                 self._run_stage_timings_ms["docx_rebuild"] = round((time.perf_counter() - docx_started) * 1000.0, 3)
+                if self._diagnostics_admin_mode:
+                    from .translation_diagnostics import emit_docx_write_event
+                    emit_docx_write_event(
+                        self._event_collector,
+                        write_ms=self._run_stage_timings_ms["docx_rebuild"],
+                        page_count=completed_pages,
+                        paragraph_count=_docx_stats.get("paragraph_count", 0),
+                        run_count=_docx_stats.get("run_count", 0),
+                    )
             except Exception as exc:  # noqa: BLE001
                 self._run_stage_timings_ms["docx_rebuild"] = round((time.perf_counter() - docx_started) * 1000.0, 3)
                 self._run_stage_timings_ms["run_total"] = round((time.perf_counter() - run_started_perf) * 1000.0, 3)
@@ -1235,6 +1316,13 @@ class TranslationWorkflow:
         )
 
         glossary_source_text = source_text
+        _diag_pkg_token_count = 0
+        if self._glossary_diagnostics is not None:
+            _diag_pkg_token_count = self._glossary_diagnostics.record_page_pkg_stats(
+                page_index=page_number,
+                source_text=glossary_source_text,
+                doc_id=str(config.pdf_path.stem),
+            )
         expected_ar_tokens: list[str] | None = None
         if config.target_lang == TargetLang.AR:
             source_text = pretokenize_arabic_source(source_text)
@@ -1308,6 +1396,7 @@ class TranslationWorkflow:
             f"ocr_failed_reason={ocr_reason}"
         )
 
+        _prompt_build_t0 = time.perf_counter()
         prompt_text = build_page_prompt(
             lang=config.target_lang,
             page_number=page_number,
@@ -1315,8 +1404,35 @@ class TranslationWorkflow:
             source_text=source_text,
             context_text=context_text,
         )
-        prompt_text = self._append_glossary_prompt(prompt_text, config.target_lang, source_text=glossary_source_text)
+        prompt_text = self._append_glossary_prompt(
+            prompt_text, config.target_lang, source_text=glossary_source_text, page_index=page_number,
+        )
         prompt_text = self._append_prompt_addendum(prompt_text, config.target_lang)
+        page_metadata["prompt_build_ms"] = round((time.perf_counter() - _prompt_build_t0) * 1000.0, 3)
+
+        if self._glossary_diagnostics is not None:
+            from .glossary_diagnostics import PageCoverageRecord
+            _diag_cg_matches = self._glossary_diagnostics._cg_page_matches.get(page_number, {})
+            self._glossary_diagnostics.record_page_coverage(PageCoverageRecord(
+                page_index=page_number,
+                total_pages=total_pages,
+                source_route=source_route,
+                char_count=int(page_metadata.get("extracted_text_chars", 0) or 0),
+                segment_count=len([ln for ln in glossary_source_text.splitlines() if ln.strip()]),
+                pkg_token_count=_diag_pkg_token_count,
+                cg_entries_active=self._glossary_diagnostics._cg_page_active_counts.get(page_number, 0),
+                cg_matches_count=sum(_diag_cg_matches.values()),
+                cg_matched_keys=sorted(_diag_cg_matches.keys())[:10],
+            ))
+
+        if self._diagnostics_admin_mode:
+            from .translation_diagnostics import compute_prompt_metrics, emit_prompt_compiled_event
+            _pm = compute_prompt_metrics(
+                prompt_text=prompt_text,
+                system_instructions=getattr(self, "_system_instructions_text", ""),
+                glossary_source_text=glossary_source_text,
+            )
+            emit_prompt_compiled_event(self._event_collector, page_index=page_number, metrics=_pm)
 
         usage_payload: dict[str, object] = {
             "ocr": {
@@ -1449,6 +1565,8 @@ class TranslationWorkflow:
                 "transport_retries_count": int(initial.transport_retries_count),
                 "backoff_wait_seconds_total": float(initial.total_backoff_seconds),
                 "rate_limit_hit": bool(initial.rate_limit_hit),
+                "model": OPENAI_MODEL,
+                "effort_used": attempt1_effort.value,
             },
         )
         initial_eval = self._evaluate_output(
@@ -1461,6 +1579,14 @@ class TranslationWorkflow:
         page_metadata["validator_failed"] = bool(initial_eval.validator_failed)
         page_metadata["compliance_defect_outside_text"] = bool(initial_eval.outside_text)
         if initial_eval.ok and initial_eval.normalized_text is not None:
+            if self._diagnostics_admin_mode:
+                from .translation_diagnostics import run_all_quality_checks, emit_validation_summary_event
+                _qc = run_all_quality_checks(
+                    source_text=glossary_source_text,
+                    output_text=initial_eval.normalized_text,
+                    target_lang=config.target_lang.value,
+                )
+                emit_validation_summary_event(self._event_collector, page_index=page_number, checks=_qc)
             output_path = paths.pages_dir / f"page_{page_number:04d}.txt"
             output_path.write_text(initial_eval.normalized_text, encoding="utf-8")
             _finalize_page_metadata()
@@ -1558,6 +1684,8 @@ class TranslationWorkflow:
                 "transport_retries_count": int(retry.transport_retries_count),
                 "backoff_wait_seconds_total": float(retry.total_backoff_seconds),
                 "rate_limit_hit": bool(retry.rate_limit_hit),
+                "model": OPENAI_MODEL,
+                "effort_used": retry_effort.value,
             },
         )
         retry_eval = self._evaluate_output(
@@ -1572,6 +1700,14 @@ class TranslationWorkflow:
             retry_eval.outside_text
         )
         if retry_eval.ok and retry_eval.normalized_text is not None:
+            if self._diagnostics_admin_mode:
+                from .translation_diagnostics import run_all_quality_checks, emit_validation_summary_event
+                _qc = run_all_quality_checks(
+                    source_text=glossary_source_text,
+                    output_text=retry_eval.normalized_text,
+                    target_lang=config.target_lang.value,
+                )
+                emit_validation_summary_event(self._event_collector, page_index=page_number, checks=_qc)
             output_path = paths.pages_dir / f"page_{page_number:04d}.txt"
             output_path.write_text(retry_eval.normalized_text, encoding="utf-8")
             _finalize_page_metadata()
@@ -1601,7 +1737,9 @@ class TranslationWorkflow:
             page_metadata=page_metadata,
         )
 
-    def _append_glossary_prompt(self, prompt_text: str, lang: TargetLang, *, source_text: str) -> str:
+    def _append_glossary_prompt(
+        self, prompt_text: str, lang: TargetLang, *, source_text: str, page_index: int | None = None,
+    ) -> str:
         entries = self._prompt_glossaries_by_lang.get(lang.value, [])
         if not entries:
             return prompt_text
@@ -1624,6 +1762,12 @@ class TranslationWorkflow:
         )
         if not capped_entries:
             return prompt_text
+        if self._glossary_diagnostics is not None and page_index is not None:
+            self._glossary_diagnostics.record_page_cg_matches(
+                page_index=page_index,
+                active_entries=capped_entries,
+                source_text=source_text,
+            )
         glossary_block = format_glossary_for_prompt(
             lang.value,
             capped_entries,

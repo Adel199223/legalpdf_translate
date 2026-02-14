@@ -96,6 +96,7 @@ Core modules:
 - `src/legalpdf_translate/glossary_builder.py`: consistency glossary suggestion mining (frequency/dispersion thresholds + markdown/json suggestion rendering).
 - `src/legalpdf_translate/study_glossary.py`: learning-only glossary mining/scoring/coverage helpers (`mine_study_candidates`, `compute_non_overlapping_tier_assignment`, `apply_subsumption_suppression`, `normalize_study_entries`) and translation-fill helpers for short term cards.
 - `src/legalpdf_translate/calibration_audit.py`: deterministic page sampling, forced-OCR QA checks, verifier-LLM JSON retry handling, calibration artifact writing.
+- `src/legalpdf_translate/lemma_normalizer.py`: analytics-only Portuguese lemma normalization via batch OpenAI API calls (`LemmaCache`, `batch_normalize_lemmas`, `LemmaBatchResult`); used by PKG Pareto grouping in glossary diagnostics, does NOT affect glossary matching or translation prompts.
 - `src/legalpdf_translate/openai_client.py`: transport retries/backoff wrapper around OpenAI Responses API.
 - `src/legalpdf_translate/ocr_engine.py`: OCR engine policy and fallback (`local`, `local_then_api`, `api`).
 - `src/legalpdf_translate/checkpoint.py`: run-state schema/persistence and resume compatibility.
@@ -228,6 +229,9 @@ Settings storage:
   - `enabled_glossary_tiers_by_target_lang` (per-target-language active tiers for prompt injection)
   - `glossary_seed_version` (one-time AR seed tracking)
   - `glossary_file_path` (legacy file-path fallback)
+- Reasoning effort settings keys:
+  - `openai_reasoning_effort_lemma` (effort for lemma normalization / utility calls; allowed: `medium`, `high`, `xhigh`; default: `high`)
+  - Translation effort uses existing `default_effort` key (no separate `openai_reasoning_effort_translation` key needed)
 - Calibration settings keys:
   - `calibration_sample_pages_default`
   - `calibration_user_seed`
@@ -323,6 +327,22 @@ Run artifacts and folders:
 Report export path:
 - UI action `_open_run_report` in app window supports save Markdown and copy-to-clipboard.
 - Report generation: `src/legalpdf_translate/run_report.py::build_run_report_markdown`.
+- Translation diagnostics rendering: `src/legalpdf_translate/run_report.py::_render_translation_diagnostics_markdown` — renders under `## Translation Diagnostics` wrapper heading with 6 lettered sub-sections (`### A–F`): A. Run Configuration (model, effort, workers, keep_intermediates, max_output_tokens/temperature as "API default"), B. Coverage Proof (per-page table with Route, Why/route_reason, chars/lines/effort/tokens/timings/cost; failed/retry lists), C. Prompt + Chunking Diagnostics (1 chunk per page note, prompt/system/glossary token estimates, bloat flag), D. Translation Quality Checks (language/numeric/citation/structure/bidi per page, numeric mismatch samples capped at 3, flagged page snippets gated to pages with warnings and truncated to 120 chars), E. Output Construction (paragraph/run counts, "Tables: 0, Images: 0 (text-only pipeline)" note), F. Cost Estimation (with per-page cost breakdown).
+- Translation diagnostics events: emitted by `src/legalpdf_translate/translation_diagnostics.py` — 5 event types: `run_config_summary` (model, effort_resolved, workers, page_breaks, keep_intermediates), `prompt_compiled`, `translation_validation_summary` (includes numeric_missing_sample capped at 3, source/output paragraphs), `cost_estimate_summary`, `docx_write_summary` (includes paragraph_count, run_count). All enriched `api_call_done` events carry `model` and `effort_used` fields.
+- Sanity Warnings: 7 checks for empty/inconsistent reports — detected_page_count=0, no events, wall=0, rollup/pages_processed mismatch, api_calls>0 but tokens=0, status=completed but timeline empty, done_pages < total_pages.
+- Report payload includes `report_sanity_summary` key with `detected_page_count`, `processed_pages`, `total_pages`, `timeline_event_count`, and `sanity_warnings` list for programmatic consumers.
+- Snippet privacy: flagged page snippets only rendered when quality warnings fire (language_ok=False, numeric>0, citation>0, structure>0, bidi>0), capped at 120 chars. Legacy `## Sanitized Snippets` section suppressed when translation diagnostics present.
+
+Glossary diagnostics export:
+- The Glossary Builder dialog (`src/legalpdf_translate/qt_gui/tools_dialogs.py::QtGlossaryBuilderDialog`) includes a "Diagnostics" section with:
+  - "Open run folder" button — opens the artifact directory in the OS file explorer.
+  - "Export diagnostics report (.md)…" button — saves a Markdown report via `build_run_report_markdown` with glossary diagnostics sections (PKG Pareto, CG match analysis, coverage proof).
+- Both buttons are disabled until a generation run completes and the artifact directory exists.
+- "Export diagnostics report" requires **Admin Diagnostics** enabled in Settings (`diagnostics_admin_mode`); otherwise the button is disabled with a tooltip.
+- Glossary diagnostics data (`src/legalpdf_translate/glossary_diagnostics.py`) is emitted as JSONL events during admin-mode translation runs and rendered in the report's "Document Coverage Proof", "PKG Pareto Analysis", and "CG Match Analysis" sections.
+- Optional lemma grouping (`src/legalpdf_translate/lemma_normalizer.py`) normalizes Portuguese surface forms to dictionary lemmas via batch OpenAI API calls for PKG Pareto grouping. Opt-in via "Enable lemma grouping (analytics)" checkbox in Glossary Builder dialog with effort dropdown (`high`/`xhigh`). Uses persistent cache (`AppData/LegalPDFTranslate/lemma_cache.json`). Report includes "Lemma Normalization" subsection with cache hits, API calls, token usage, fallback warnings, and an explicit analytics-only note. PKG Pareto table shows lemma-grouped terms with surface form lists when enabled.
+- Suggestion Selection Diagnostics: when enabled, the report includes a "Suggestion Selection Diagnostics" section showing the TF/DF filtering pipeline (candidates extracted, Filter A doc_max, Filter B corpus TF+DF, combined count, cap policy, final count) with an explicit note that lemma grouping does NOT affect suggestion selection.
+- Run summary totals now reflect actual lemma API token usage (input/output/total tokens, API call count) instead of hardcoded zeros.
 
 Debug bundle grounding:
 - Current implementation in `src/legalpdf_translate/qt_gui/dialogs.py::_create_debug_bundle`.
@@ -396,7 +416,10 @@ Assistant routing hint: If asked for "minimum QA after a change", run targeted t
 - OCR quality classifier + request reason routing: `src/legalpdf_translate/workflow.py::classify_extracted_text_quality`, `src/legalpdf_translate/workflow.py::_process_page`
 - Arabic lock pipeline: `src/legalpdf_translate/arabic_pre_tokenize.py::pretokenize_arabic_source`, `src/legalpdf_translate/arabic_pre_tokenize.py::extract_locked_tokens`, `src/legalpdf_translate/arabic_pre_tokenize.py::is_portuguese_month_date_token`, `src/legalpdf_translate/output_normalize.py::normalize_ar_portuguese_month_dates`, `src/legalpdf_translate/workflow.py::_evaluate_output`, `src/legalpdf_translate/validators.py::validate_ar`
 - OpenAI transport retries: `src/legalpdf_translate/openai_client.py::OpenAIResponsesClient.create_page_response`
-- Run report rendering/redaction: `src/legalpdf_translate/run_report.py::build_run_report_markdown`, `sanitize_text`
+- Run report rendering/redaction: `src/legalpdf_translate/run_report.py::build_run_report_markdown`, `sanitize_text`; translation diagnostics rendering: `_render_translation_diagnostics_markdown` (receives per_page rollups + snippets, renders ## Translation Diagnostics with ### A–F sub-sections, includes report_sanity_summary in payload)
+- Translation diagnostics event emitters: `src/legalpdf_translate/translation_diagnostics.py::emit_run_config_event` (effort_resolved, page_breaks, workers, resume, keep_intermediates), `emit_validation_summary_event` (numeric_missing_sample capped at 3, source/output paragraphs, bidi counts), `emit_docx_write_event` (paragraph_count, run_count), `emit_cost_estimate_event`, `emit_prompt_compiled_event`
+- DOCX assembly stats: `src/legalpdf_translate/docx_writer.py::assemble_docx` (optional `stats` dict param collects paragraph_count, run_count, page_count)
+- Prompt build timing: `src/legalpdf_translate/workflow.py::_process_page` records `page_metadata["prompt_build_ms"]`
 - OCR report fields to inspect: `pipeline.ocr_requested_pages`, `pipeline.ocr_used_pages`, `pipeline.ocr_required_pages`, `pipeline.ocr_helpful_pages`, `pipeline.ocr_preflight_checked`, per-page `ocr_request_reason`, `extraction_quality_signals`
 - Export run report from UI: `src/legalpdf_translate/qt_gui/app_window.py::_open_run_report`
 - Checkpoint/resume logic: `src/legalpdf_translate/checkpoint.py`, `src/legalpdf_translate/workflow.py::_load_or_initialize_run_state`
@@ -409,6 +432,8 @@ Assistant routing hint: If asked for "minimum QA after a change", run targeted t
 - Calibration Audit dialog/actions: `src/legalpdf_translate/qt_gui/app_window.py::_open_calibration_audit_dialog`, `src/legalpdf_translate/qt_gui/tools_dialogs.py::QtCalibrationAuditDialog`, `_CalibrationAuditWorker`; backend `src/legalpdf_translate/calibration_audit.py::run_calibration_audit`, `pick_sample_pages`
 - Study Glossary (learning-only): `src/legalpdf_translate/qt_gui/dialogs.py::_build_tab_study`, `_generate_study_candidates`, `_cancel_study_generation`, `_export_study_glossary_markdown`, `_add_selected_candidates_to_study_glossary`; `src/legalpdf_translate/study_glossary.py::tokenize_pt`, `build_ngram_index`, `count_non_overlapping_matches`, `compute_non_overlapping_tier_assignment`, `apply_subsumption_suppression`, `update_candidate_stats_from_page`, `finalize_study_candidates`, `build_study_glossary_markdown`, `normalize_study_entries`, `merge_study_entries`
 - Study Glossary settings keys/normalization: `src/legalpdf_translate/user_settings.py::load_gui_settings` (`study_glossary_entries`, snippet/corpus/coverage keys)
+- Lemma normalizer (analytics-only): `src/legalpdf_translate/lemma_normalizer.py::LemmaCache`, `batch_normalize_lemmas`, `LemmaBatchResult`; wired in `src/legalpdf_translate/qt_gui/tools_dialogs.py::_GlossaryBuilderWorker`; PKG Pareto grouping in `src/legalpdf_translate/glossary_diagnostics.py::GlossaryDiagnosticsAccumulator.set_lemma_mapping`, `finalize_pkg_pareto`; report rendering in `src/legalpdf_translate/run_report.py::_render_glossary_diagnostics_markdown`
+- Reasoning effort settings: `src/legalpdf_translate/user_settings.py` (`openai_reasoning_effort_lemma`); UI dropdown in `src/legalpdf_translate/qt_gui/dialogs.py::QtSettingsDialog`; wired into `src/legalpdf_translate/study_glossary.py::translate_term_for_lang`, `fill_translations_for_entry`
 - Legacy glossary file fallback: `src/legalpdf_translate/glossary.py::load_glossary`, `entries_from_legacy_rules`; setting key `glossary_file_path`
 - AR glossary integration point: `src/legalpdf_translate/workflow.py::_process_page` (prompt block injection)
 - RTL DOCX formatting and mixed-direction run handling: `src/legalpdf_translate/docx_writer.py::assemble_docx`, `sanitize_bidi_controls`, `_segment_directional_runs`

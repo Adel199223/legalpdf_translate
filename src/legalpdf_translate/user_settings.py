@@ -112,6 +112,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "diagnostics_admin_mode": True,
     "diagnostics_include_sanitized_snippets": False,
     "min_chars_to_accept_ocr": 200,
+    "openai_reasoning_effort_lemma": "high",
 }
 ALLOWED_GUI_KEYS = {
     "settings_schema_version",
@@ -161,6 +162,7 @@ ALLOWED_GUI_KEYS = {
     "diagnostics_admin_mode",
     "diagnostics_include_sanitized_snippets",
     "min_chars_to_accept_ocr",
+    "openai_reasoning_effort_lemma",
     "last_outdir",
     "last_lang",
     "effort",
@@ -601,6 +603,11 @@ def load_gui_settings() -> dict[str, Any]:
         False,
     )
     merged["min_chars_to_accept_ocr"] = max(20, _coerce_int(merged.get("min_chars_to_accept_ocr"), 200))
+    merged["openai_reasoning_effort_lemma"] = _coerce_choice(
+        merged.get("openai_reasoning_effort_lemma"),
+        default="high",
+        allowed={"medium", "high", "xhigh"},
+    )
     learning_langs = supported_learning_langs()
     normalized_study_entries = normalize_study_entries(merged.get("study_glossary_entries"), learning_langs)
     merged["study_glossary_entries"] = serialize_study_entries(normalized_study_entries, learning_langs)
