@@ -17,7 +17,11 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Callable
 
-from .arabic_pre_tokenize import pretokenize_arabic_source
+from .arabic_pre_tokenize import (
+    extract_locked_tokens,
+    is_portuguese_month_date_token,
+    pretokenize_arabic_source,
+)
 from .checkpoint import (
     RunPaths,
     build_run_paths,
@@ -61,11 +65,11 @@ from .ocr_engine import (
 )
 from .ocr_helpers import ocr_pdf_page_text
 from .openai_client import ApiCallError, OpenAIResponsesClient
-from .output_normalize import normalize_output_text
+from .output_normalize import normalize_output_text_with_stats
 from .output_paths import require_writable_output_dir
 from .page_selection import resolve_page_selection
 from .pdf_text_order import extract_ordered_page_text, get_page_count
-from .prompt_builder import build_page_prompt, build_retry_prompt
+from .prompt_builder import build_language_retry_prompt, build_page_prompt, build_retry_prompt
 from .run_report import RunEventCollector
 from .resources_loader import load_system_instructions
 from .types import (
@@ -206,6 +210,8 @@ class _Evaluation:
     validator_failed: bool = False
     outside_text: bool = False
     block_count: int = 0
+    ar_autofix_applied_count: int = 0
+    ar_token_details: dict[str, int] | None = None
 
 
 class TranslationWorkflow:
@@ -1109,6 +1115,8 @@ class TranslationWorkflow:
             "ocr_engine_used": "",
             "ocr_failed_reason": "",
             "extraction_quality_signals": [],
+            "ar_locked_tokens_expected": 0,
+            "ar_locked_token_autofix_applied": 0,
             "estimated_cost": None,
             "newline_to_char_ratio": float(ordered.newline_to_char_ratio),
             "ordered_blocks_count": int(ordered.block_count),
@@ -1227,8 +1235,12 @@ class TranslationWorkflow:
         )
 
         glossary_source_text = source_text
+        expected_ar_tokens: list[str] | None = None
         if config.target_lang == TargetLang.AR:
             source_text = pretokenize_arabic_source(source_text)
+            all_tokens = extract_locked_tokens(source_text)
+            expected_ar_tokens = [token for token in all_tokens if not is_portuguese_month_date_token(token)]
+            page_metadata["ar_locked_tokens_expected"] = int(len(expected_ar_tokens))
 
         image_used = should_include_image(
             config.image_mode,
@@ -1313,6 +1325,52 @@ class TranslationWorkflow:
                 "failed_reason": ocr_result.failed_reason,
             }
         }
+
+        def _record_ar_eval_diagnostics(evaluation: _Evaluation, *, attempt: int) -> None:
+            if config.target_lang != TargetLang.AR:
+                return
+            if evaluation.ar_autofix_applied_count > 0:
+                page_metadata["ar_locked_token_autofix_applied"] = int(
+                    int(page_metadata.get("ar_locked_token_autofix_applied", 0) or 0)
+                    + int(evaluation.ar_autofix_applied_count)
+                )
+                self._record_event(
+                    event_type="ar_locked_token_autofix_applied",
+                    stage="translate",
+                    page_index=page_number,
+                    decisions={"attempt": int(attempt)},
+                    counters={"applied_count": int(evaluation.ar_autofix_applied_count)},
+                )
+            if evaluation.ok and evaluation.ar_token_details is not None:
+                unexpected_count = int(evaluation.ar_token_details.get("unexpected_count", 0) or 0)
+                if unexpected_count > 0:
+                    detail_counters = {
+                        key: int(value)
+                        for key, value in evaluation.ar_token_details.items()
+                        if isinstance(value, int)
+                    }
+                    self._record_event(
+                        event_type="ar_locked_token_extra_tokens",
+                        stage="translate",
+                        page_index=page_number,
+                        decisions={"attempt": int(attempt)},
+                        counters=detail_counters,
+                    )
+            if evaluation.validator_failed and evaluation.ar_token_details is not None:
+                detail_counters = {
+                    key: int(value)
+                    for key, value in evaluation.ar_token_details.items()
+                    if isinstance(value, int)
+                }
+                self._record_event(
+                    event_type="ar_locked_token_violation",
+                    stage="translate",
+                    page_index=page_number,
+                    decisions={"attempt": int(attempt)},
+                    counters=detail_counters,
+                    error=evaluation.defect_reason or "Expected locked token mismatch.",
+                )
+
         def _finalize_page_metadata() -> None:
             page_metadata["api_calls_count"] = int(api_calls_count)
             page_metadata["translate_seconds"] = round(
@@ -1393,7 +1451,12 @@ class TranslationWorkflow:
                 "rate_limit_hit": bool(initial.rate_limit_hit),
             },
         )
-        initial_eval = self._evaluate_output(initial.raw_output, config.target_lang)
+        initial_eval = self._evaluate_output(
+            initial.raw_output,
+            config.target_lang,
+            expected_ar_tokens=expected_ar_tokens,
+        )
+        _record_ar_eval_diagnostics(initial_eval, attempt=1)
         page_metadata["parser_failed"] = bool(initial_eval.parser_failed)
         page_metadata["validator_failed"] = bool(initial_eval.validator_failed)
         page_metadata["compliance_defect_outside_text"] = bool(initial_eval.outside_text)
@@ -1416,7 +1479,12 @@ class TranslationWorkflow:
             fallback_reason=initial_eval.defect_reason,
         )
         page_metadata["retry_reason"] = retry_reason
-        retry_prompt = build_retry_prompt(config.target_lang, initial.raw_output)
+        if retry_reason == "pt_language_leak" and config.target_lang in (TargetLang.EN, TargetLang.FR):
+            retry_prompt = build_language_retry_prompt(config.target_lang, initial.raw_output)
+            page_metadata["retry_prompt_type"] = "language_correction"
+        else:
+            retry_prompt = build_retry_prompt(config.target_lang, initial.raw_output)
+            page_metadata["retry_prompt_type"] = "formatting"
         retry_effort = self._resolve_retry_effort(config=config)
         page_metadata["attempt2_effort"] = retry_effort.value
         attempt2_started = time.perf_counter()
@@ -1492,7 +1560,12 @@ class TranslationWorkflow:
                 "rate_limit_hit": bool(retry.rate_limit_hit),
             },
         )
-        retry_eval = self._evaluate_output(retry.raw_output, config.target_lang)
+        retry_eval = self._evaluate_output(
+            retry.raw_output,
+            config.target_lang,
+            expected_ar_tokens=expected_ar_tokens,
+        )
+        _record_ar_eval_diagnostics(retry_eval, attempt=2)
         page_metadata["parser_failed"] = bool(page_metadata["parser_failed"]) or bool(retry_eval.parser_failed)
         page_metadata["validator_failed"] = bool(page_metadata["validator_failed"]) or bool(retry_eval.validator_failed)
         page_metadata["compliance_defect_outside_text"] = bool(page_metadata["compliance_defect_outside_text"]) or bool(
@@ -1573,7 +1646,13 @@ class TranslationWorkflow:
             ]
         )
 
-    def _evaluate_output(self, raw_output: str, lang: TargetLang) -> _Evaluation:
+    def _evaluate_output(
+        self,
+        raw_output: str,
+        lang: TargetLang,
+        *,
+        expected_ar_tokens: list[str] | None = None,
+    ) -> _Evaluation:
         parsed = parse_code_block_output(raw_output)
         if parsed.block_count == 0:
             return _Evaluation(
@@ -1584,6 +1663,8 @@ class TranslationWorkflow:
                 validator_failed=False,
                 outside_text=False,
                 block_count=0,
+                ar_autofix_applied_count=0,
+                ar_token_details=None,
             )
         if parsed.block_count > 1:
             return _Evaluation(
@@ -1594,6 +1675,8 @@ class TranslationWorkflow:
                 validator_failed=False,
                 outside_text=False,
                 block_count=parsed.block_count,
+                ar_autofix_applied_count=0,
+                ar_token_details=None,
             )
         if parsed.inner_content is None:
             return _Evaluation(
@@ -1604,13 +1687,19 @@ class TranslationWorkflow:
                 validator_failed=False,
                 outside_text=False,
                 block_count=1,
+                ar_autofix_applied_count=0,
+                ar_token_details=None,
             )
 
-        normalized = normalize_output_text(parsed.inner_content, lang=lang)
+        normalized, ar_autofix_applied_count = normalize_output_text_with_stats(
+            parsed.inner_content,
+            lang=lang,
+            expected_ar_tokens=expected_ar_tokens,
+        )
         if lang in (TargetLang.EN, TargetLang.FR):
-            validation = validate_enfr(normalized)
+            validation = validate_enfr(normalized, lang=lang)
         else:
-            validation = validate_ar(normalized)
+            validation = validate_ar(normalized, expected_tokens=expected_ar_tokens)
         if not validation.ok:
             return _Evaluation(
                 ok=False,
@@ -1620,6 +1709,8 @@ class TranslationWorkflow:
                 validator_failed=True,
                 outside_text=False,
                 block_count=1,
+                ar_autofix_applied_count=int(ar_autofix_applied_count),
+                ar_token_details=validation.details,
             )
         if parsed.outside_has_non_whitespace:
             return _Evaluation(
@@ -1630,6 +1721,8 @@ class TranslationWorkflow:
                 validator_failed=False,
                 outside_text=True,
                 block_count=1,
+                ar_autofix_applied_count=int(ar_autofix_applied_count),
+                ar_token_details=validation.details,
             )
         return _Evaluation(
             ok=True,
@@ -1639,6 +1732,8 @@ class TranslationWorkflow:
             validator_failed=False,
             outside_text=False,
             block_count=1,
+            ar_autofix_applied_count=int(ar_autofix_applied_count),
+            ar_token_details=validation.details,
         )
 
     def _accumulate_usage_totals(self, page_metadata: dict[str, object], usage: dict[str, Any]) -> None:
@@ -1666,6 +1761,8 @@ class TranslationWorkflow:
         reason = (fallback_reason or "").strip().lower()
         if "blank line" in reason:
             return "blank_lines"
+        if "portuguese" in reason and "leak" in reason:
+            return "pt_language_leak"
         if lang == TargetLang.AR:
             if "latin" in reason or "digit" in reason or "token" in reason or "wrapped" in reason:
                 return "ar_token_violation"

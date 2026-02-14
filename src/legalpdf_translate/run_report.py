@@ -250,6 +250,34 @@ def _sorted_pages_from_run_state(run_state_payload: dict[str, Any]) -> list[tupl
     return rows
 
 
+def _slice_events_for_run(events: list[dict[str, Any]], *, run_id: str) -> list[dict[str, Any]]:
+    if not events or run_id.strip() == "":
+        return events
+    start_index: int | None = None
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("event_type", "") or "") != "run_started":
+            continue
+        details = event.get("details")
+        if not isinstance(details, dict):
+            continue
+        if str(details.get("run_id", "") or "") == run_id:
+            start_index = index
+            break
+    if start_index is None:
+        return events
+    end_index = len(events)
+    for index in range(start_index + 1, len(events)):
+        event = events[index]
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("event_type", "") or "") == "run_started":
+            end_index = index
+            break
+    return events[start_index:end_index]
+
+
 def _build_timeline_lines(events: list[dict[str, Any]], *, limit: int | None = None) -> list[str]:
     rows = list(events)
     rows.sort(key=lambda item: str(item.get("timestamp", "")))
@@ -323,6 +351,33 @@ def _ocr_summary_line(pipeline_obj: dict[str, Any]) -> str:
     return "- OCR not used; direct text route was sufficient."
 
 
+def _image_mode_optimization_hint(
+    *,
+    target_language: str,
+    image_mode: str,
+    pages: list[tuple[int, dict[str, Any]]],
+) -> str:
+    if image_mode.strip().lower() != "always":
+        return ""
+    if target_language.strip().upper() not in {"EN", "FR"}:
+        return ""
+    if not pages:
+        return ""
+    for _, page in pages:
+        source_route = str(page.get("source_route", "") or "").strip().lower()
+        try:
+            extracted_chars = int(page.get("extracted_text_chars", -1) or -1)
+        except Exception:
+            return ""
+        # EN/FR auto-image attaches only on extraction failure or near-empty text.
+        if source_route != "direct_text" or extracted_chars < 20:
+            return ""
+    return (
+        "image_mode=always attached images on all pages while EN/FR auto-image "
+        "heuristics would skip image attachments for this run; consider image_mode=auto."
+    )
+
+
 def build_run_report_payload(
     *,
     run_dir: Path,
@@ -331,7 +386,9 @@ def build_run_report_payload(
 ) -> dict[str, Any]:
     run_state = load_json_file(run_dir / "run_state.json")
     run_summary = load_json_file(run_dir / "run_summary.json")
-    events = load_events_jsonl(run_dir / "run_events.jsonl")
+    run_id = str(run_state.get("run_started_at") or run_summary.get("run_id") or run_dir.name)
+    all_events = load_events_jsonl(run_dir / "run_events.jsonl")
+    events = _slice_events_for_run(all_events, run_id=run_id)
 
     pages = _sorted_pages_from_run_state(run_state)
     per_page: list[dict[str, Any]] = []
@@ -345,6 +402,8 @@ def build_run_report_payload(
     ocr_required_pages = 0
     ocr_helpful_pages = 0
     ocr_required_unavailable_pages = 0
+    pt_language_leak_failures = 0
+    pt_language_leak_retries = 0
 
     for page_number, page in pages:
         status = str(page.get("status", "") or "").strip().lower()
@@ -377,6 +436,12 @@ def build_run_report_payload(
                 ocr_required_unavailable_pages += 1
         elif ocr_request_reason == "helpful":
             ocr_helpful_pages += 1
+        retry_reason_text = str(page.get("retry_reason", "") or "").strip().lower()
+        error_text = str(page.get("error", "") or "").strip().lower()
+        if retry_reason_text == "pt_language_leak":
+            pt_language_leak_retries += 1
+            if status == "failed" and error_text == "compliance_failure":
+                pt_language_leak_failures += 1
         raw_signals = page.get("extraction_quality_signals", [])
         extraction_signals = raw_signals if isinstance(raw_signals, list) else []
         row = {
@@ -419,7 +484,6 @@ def build_run_report_payload(
     if not isinstance(counts_obj, dict):
         counts_obj = {}
 
-    run_id = str(run_state.get("run_started_at") or run_summary.get("run_id") or run_dir.name)
     lang = str(run_state.get("lang") or run_summary.get("lang") or "")
     pdf_path = str(run_state.get("pdf_path") or run_summary.get("pdf_path") or "")
     final_docx = str(run_state.get("final_docx_path_abs") or "")
@@ -430,6 +494,12 @@ def build_run_report_payload(
     summary_pipeline_obj = run_summary.get("pipeline")
     if not isinstance(summary_pipeline_obj, dict):
         summary_pipeline_obj = {}
+    settings_image_mode = str(settings_obj.get("image_mode", run_summary.get("image_mode", "")) or "")
+    image_mode_optimization_hint = _image_mode_optimization_hint(
+        target_language=lang,
+        image_mode=settings_image_mode,
+        pages=pages,
+    )
     resume_value = bool(settings_obj.get("resume", False))
     for event in events:
         if not isinstance(event, dict):
@@ -554,7 +624,7 @@ def build_run_report_payload(
             },
         },
         "pipeline": {
-            "image_mode": str(settings_obj.get("image_mode", run_summary.get("image_mode", "")) or ""),
+            "image_mode": settings_image_mode,
             "ocr_mode": str(settings_obj.get("ocr_mode", summary_pipeline_obj.get("ocr_mode", "")) or ""),
             "ocr_engine": str(settings_obj.get("ocr_engine", summary_pipeline_obj.get("ocr_engine", "")) or ""),
             "ocr_requested": bool(ocr_requested_value),
@@ -566,6 +636,9 @@ def build_run_report_payload(
             "ocr_helpful_pages": int(ocr_helpful_pages_value),
             "ocr_required_unavailable_pages": int(ocr_required_unavailable_pages_value),
             "ocr_preflight_checked": bool(ocr_preflight_checked_value),
+            "pt_language_leak_failures": int(pt_language_leak_failures),
+            "pt_language_leak_retries": int(pt_language_leak_retries),
+            "image_mode_optimization_hint": image_mode_optimization_hint,
         },
         "totals": {
             "wall_seconds": float(totals_obj.get("total_wall_seconds", 0.0) or 0.0),
@@ -659,6 +732,16 @@ def build_run_report_markdown(
         f"({warnings_obj.get('failed_pages', [])})."
     )
     lines.append(_ocr_summary_line(pipeline_obj))
+    pt_language_leak_failures = int(pipeline_obj.get("pt_language_leak_failures", 0) or 0)
+    pt_language_leak_retries = int(pipeline_obj.get("pt_language_leak_retries", 0) or 0)
+    if pt_language_leak_retries > 0 or pt_language_leak_failures > 0:
+        lines.append(
+            "- Portuguese residual-language guardrail: "
+            f"retries `{pt_language_leak_retries}`, failures `{pt_language_leak_failures}`."
+        )
+    optimization_hint = str(pipeline_obj.get("image_mode_optimization_hint", "") or "").strip()
+    if optimization_hint:
+        lines.append(f"- Optimization hint: {optimization_hint}")
     lines.append("")
     lines.append("## Timeline")
     lines.extend(_build_timeline_lines(timeline_obj))

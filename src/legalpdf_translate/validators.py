@@ -3,13 +3,44 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 from .output_normalize import LRI, PDI
+from .types import TargetLang
 
 
 CODE_BLOCK_RE = re.compile(r"```(?:[^\n`]*)\n?(.*?)```", re.DOTALL)
 AR_VALID_TOKEN_RE = re.compile(rf"{re.escape(LRI)}\[\[.*?\]\]{re.escape(PDI)}", re.DOTALL)
+PT_MONTH_PATTERN = r"(?:janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)"
+PT_MONTH_DATE_LEAK_RE = re.compile(
+    rf"(?<!\w)(?:\d{{1,2}}(?:\.\s*[ºo])?)\s+(?:de\s+)?{PT_MONTH_PATTERN}(?:(?:\s+de)?\s+\d{{4}})?(?!\w)",
+    re.IGNORECASE,
+)
+ADDRESS_CONTEXT_HINT_RE = re.compile(
+    r"\b(?:rua|avenida|av\.?|travessa|largo|praça|praca|estrada|alameda|bairro)\b",
+    re.IGNORECASE,
+)
+ADDRESS_ONLY_LINE_RE = re.compile(
+    r"^\s*(?:rua|avenida|av\.?|travessa|largo|praça|praca|estrada|alameda|bairro)\b",
+    re.IGNORECASE,
+)
+EMAIL_OR_URL_RE = re.compile(
+    r"(?:\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b|https?://\S+|www\.\S+)",
+    re.IGNORECASE,
+)
+PT_INSTITUTION_LEAK_RE = re.compile(
+    r"\b(?:tribunal judicial|ju[íi]zo|procuradoria|comarca|minist[eé]rio p[úu]blico|inqu[eé]rito(?:s)?)\b",
+    re.IGNORECASE,
+)
+PT_LEGAL_LEAK_RE = re.compile(
+    r"\b(?:c\.\s*p\.\s*penal|c[oó]digo de processo penal|arguido|of[ií]cio(?:\s+de\s+notifica[cç][aã]o)?)\b",
+    re.IGNORECASE,
+)
+PT_MIXED_ADDRESS_PREP_LEAK_RE = re.compile(
+    r"\b(?:na|no)\s+(?:rua|avenida|av\.?|travessa|largo|praça|praca|estrada|alameda|bairro)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -23,6 +54,7 @@ class CodeBlockParseResult:
 class ValidationResult:
     ok: bool
     reason: str | None = None
+    details: dict[str, int] | None = None
 
 
 def parse_code_block_output(raw_output: str) -> CodeBlockParseResult:
@@ -42,22 +74,119 @@ def parse_code_block_output(raw_output: str) -> CodeBlockParseResult:
     )
 
 
-def validate_enfr(normalized_text: str) -> ValidationResult:
+def _count_pt_month_date_leaks(text: str) -> int:
+    leak_count = 0
+    for line in text.split("\n"):
+        if ADDRESS_CONTEXT_HINT_RE.search(line):
+            continue
+        leak_count += len(list(PT_MONTH_DATE_LEAK_RE.finditer(line)))
+    return leak_count
+
+
+def _sanitize_line_for_leak_checks(line: str) -> str:
+    return EMAIL_OR_URL_RE.sub(" ", line)
+
+
+def _count_pt_language_leaks(text: str) -> dict[str, int]:
+    pt_month_leak_count = 0
+    pt_legal_leak_count = 0
+    pt_institution_leak_count = 0
+    exempted_address_hits = 0
+    for raw_line in text.split("\n"):
+        line = _sanitize_line_for_leak_checks(raw_line)
+        if line.strip() == "":
+            continue
+        has_address_hint = bool(ADDRESS_CONTEXT_HINT_RE.search(line))
+        is_address_only = bool(ADDRESS_ONLY_LINE_RE.match(line))
+        if has_address_hint:
+            exempted_address_hits += 1
+        if not has_address_hint:
+            pt_month_leak_count += len(list(PT_MONTH_DATE_LEAK_RE.finditer(line)))
+        # Address-only lines are intentionally preserved verbatim in EN/FR.
+        if is_address_only:
+            continue
+        pt_institution_leak_count += len(list(PT_INSTITUTION_LEAK_RE.finditer(line)))
+        pt_legal_leak_count += len(list(PT_LEGAL_LEAK_RE.finditer(line)))
+        pt_legal_leak_count += len(list(PT_MIXED_ADDRESS_PREP_LEAK_RE.finditer(line)))
+    return {
+        "pt_month_leak_count": int(pt_month_leak_count),
+        "pt_legal_leak_count": int(pt_legal_leak_count),
+        "pt_institution_leak_count": int(pt_institution_leak_count),
+        "exempted_address_hits": int(exempted_address_hits),
+    }
+
+
+def validate_enfr(normalized_text: str, *, lang: TargetLang | None = None) -> ValidationResult:
     if normalized_text.strip() == "":
         return ValidationResult(ok=False, reason="EN/FR output is empty.")
     if any(line.strip() == "" for line in normalized_text.split("\n")):
         return ValidationResult(ok=False, reason="EN/FR output contains blank lines.")
+    if lang in (TargetLang.EN, TargetLang.FR):
+        leak_counts = _count_pt_language_leaks(normalized_text)
+        if leak_counts["pt_month_leak_count"] > 0:
+            return ValidationResult(
+                ok=False,
+                reason="Portuguese month-name date leaked after normalization.",
+                details=leak_counts,
+            )
+        if (leak_counts["pt_legal_leak_count"] + leak_counts["pt_institution_leak_count"]) > 0:
+            return ValidationResult(
+                ok=False,
+                reason="Portuguese legal/institution terms leaked after normalization.",
+                details=leak_counts,
+            )
     return ValidationResult(ok=True)
 
 
-def validate_ar(normalized_text: str) -> ValidationResult:
+def _extract_wrapped_token_contents(text: str) -> list[str]:
+    values: list[str] = []
+    for match in AR_VALID_TOKEN_RE.finditer(text):
+        token = match.group(0)
+        if not token.startswith(LRI) or not token.endswith(PDI):
+            continue
+        inner = token[len(LRI) : len(token) - len(PDI)]
+        if not inner.startswith("[[") or not inner.endswith("]]"):
+            continue
+        values.append(inner[2:-2])
+    return values
+
+
+def validate_ar(normalized_text: str, expected_tokens: list[str] | None = None) -> ValidationResult:
     if normalized_text.strip() == "":
         return ValidationResult(ok=False, reason="Arabic output is empty.")
     if re.search(rf"(?<!{re.escape(LRI)})\[\[", normalized_text):
         return ValidationResult(ok=False, reason="Found unwrapped [[ token start.")
     if re.search(rf"\]\](?!{re.escape(PDI)})", normalized_text):
         return ValidationResult(ok=False, reason="Found unwrapped ]] token end.")
+    token_details: dict[str, int] | None = None
+    if expected_tokens is not None:
+        expected = [token for token in expected_tokens if isinstance(token, str) and token != ""]
+        expected_counts = Counter(expected)
+        actual_counts = Counter(_extract_wrapped_token_contents(normalized_text))
+        missing_count = sum(
+            max(0, expected_counts[token] - actual_counts.get(token, 0))
+            for token in expected_counts
+        )
+        extra_count = sum(
+            max(0, actual_counts[token] - expected_counts.get(token, 0))
+            for token in actual_counts
+        )
+        token_details = {
+            "expected_total": int(sum(expected_counts.values())),
+            "actual_total": int(sum(actual_counts.values())),
+            "missing_count": int(missing_count),
+            "altered_count": int(min(missing_count, extra_count)),
+            "unexpected_count": int(extra_count),
+        }
+        if missing_count > 0:
+            return ValidationResult(
+                ok=False,
+                reason="Expected locked token mismatch.",
+                details=token_details,
+            )
     text_without_tokens = AR_VALID_TOKEN_RE.sub("", normalized_text)
     if re.search(r"[A-Za-z0-9]", text_without_tokens):
         return ValidationResult(ok=False, reason="Latin letters or digits found outside wrapped tokens.")
+    if token_details is not None and token_details.get("unexpected_count", 0) > 0:
+        return ValidationResult(ok=True, details=token_details)
     return ValidationResult(ok=True)

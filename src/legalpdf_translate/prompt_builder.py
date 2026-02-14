@@ -30,10 +30,38 @@ def build_page_prompt(
 
 
 def build_retry_prompt(lang: TargetLang, prior_output: str) -> str:
-    _ = lang
+    if lang == TargetLang.EN:
+        language_hint = " Keep the output strictly in English."
+    elif lang == TargetLang.FR:
+        language_hint = " Keep the output strictly in French."
+    else:
+        language_hint = ""
     header = (
         "COMPLIANCE FIX ONLY: Re-emit the SAME content, fix formatting only, "
         "as ONE plain-text code block and NOTHING ELSE."
+        f"{language_hint}"
+    )
+    return "\n".join(
+        [
+            header,
+            "<<<BEGIN PRIOR OUTPUT>>>",
+            prior_output,
+            "<<<END PRIOR OUTPUT>>>",
+        ]
+    )
+
+
+def build_language_retry_prompt(lang: TargetLang, prior_output: str) -> str:
+    if lang == TargetLang.EN:
+        language_hint = " Re-emit in legal English only; remove Portuguese residual terms except verbatim-allowed fields."
+    elif lang == TargetLang.FR:
+        language_hint = " Re-emit in legal French only; remove Portuguese residual terms except verbatim-allowed fields."
+    else:
+        language_hint = " Re-emit in target language only."
+    header = (
+        "LANGUAGE CORRECTION ONLY: Re-emit the SAME content, fix language compliance only, "
+        "as ONE plain-text code block and NOTHING ELSE."
+        f"{language_hint}"
     )
     return "\n".join(
         [
