@@ -10,13 +10,17 @@
 - Calibration verifier prompts: `src/legalpdf_translate/calibration_audit.py::_verifier_prompt`, `_verifier_retry_prompt`, `_call_verifier_with_retries`.
 - System instructions loader: `src/legalpdf_translate/resources_loader.py::load_system_instructions`.
 - System instruction files:
-  - `resources/system_instructions_enfr.txt`
+  - `resources/system_instructions_en.txt`
+  - `resources/system_instructions_fr.txt`
   - `resources/system_instructions_ar.txt`
 - Compliance parser/validators used after model output:
   - `src/legalpdf_translate/validators.py::parse_code_block_output`
   - `src/legalpdf_translate/validators.py::validate_enfr`
 - `src/legalpdf_translate/validators.py::validate_ar`
 - `src/legalpdf_translate/output_normalize.py::normalize_output_text`
+- `src/legalpdf_translate/arabic_pre_tokenize.py::pretokenize_arabic_source`
+- `src/legalpdf_translate/arabic_pre_tokenize.py::extract_locked_tokens`
+- `src/legalpdf_translate/arabic_pre_tokenize.py::is_portuguese_month_date_token`
 
 How to inspect in repo:
 ```powershell
@@ -24,14 +28,18 @@ rg -n "build_page_prompt|build_retry_prompt|create_page_response|_append_glossar
 Get-Content src/legalpdf_translate/prompt_builder.py
 Get-Content src/legalpdf_translate/openai_client.py
 Get-Content src/legalpdf_translate/workflow.py
-Get-Content resources/system_instructions_enfr.txt
+Get-Content resources/system_instructions_en.txt
+Get-Content resources/system_instructions_fr.txt
 Get-Content resources/system_instructions_ar.txt
 ```
 
 System instructions safe summary:
-- `resources/system_instructions_enfr.txt`: legal translation role + strict single code-block output + layout/ordering constraints.
+- `resources/system_instructions_en.txt`: legal-English-only instruction set + strict single code-block output + layout/ordering constraints.
+- `resources/system_instructions_fr.txt`: legal-French-only instruction set + strict single code-block output + layout/ordering constraints.
 - `resources/system_instructions_ar.txt`: legal Arabic role + strict token wrapping/RTL constraints + single code-block output.
-- Very short excerpt (`resources/system_instructions_enfr.txt`): `Return ONLY the translation inside ONE plain-text code block.`
+- `resources/system_instructions_ar.txt` naming policy: translate full institution/court/prosecution names when a stable Arabic equivalent exists; keep Portuguese original only when uncertain/no stable equivalent; dual first mention is for acronyms only.
+- Very short excerpt (`resources/system_instructions_en.txt`): `Return ONLY the English translation inside ONE plain-text code block.`
+- Very short excerpt (`resources/system_instructions_fr.txt`): `Retourner UNIQUEMENT la traduction francaise dans UN seul bloc de code texte brut.`
 - Very short excerpt (`resources/system_instructions_ar.txt`): `Return ONLY the Arabic translation inside ONE plain-text code block.`
 
 ## B. Primary request template (per language: EN, FR, AR)
@@ -96,26 +104,44 @@ EN/FR validator contract:
 - `src/legalpdf_translate/validators.py::validate_enfr` requires:
   - Non-empty output.
   - No blank lines.
+  - When called with `lang=EN|FR`, rejects remaining Portuguese month-name date leaks after normalization.
+  - Date-leak check is context-aware and skips likely address lines (e.g., `Rua 1.º de Dezembro ...`).
 
 AR validator contract:
 - `src/legalpdf_translate/validators.py::validate_ar` requires:
   - Non-empty output.
   - No unwrapped `[[` / `]]` tokens.
   - No Latin letters or digits outside wrapped tokens.
+  - If `expected_tokens` are provided, every locked token must be preserved with matching multiplicity (missing/altered token mismatch fails validation).
 
 Normalization contract:
 - `src/legalpdf_translate/output_normalize.py::normalize_output_text`:
   - normalizes line endings,
   - strips trailing spaces,
   - removes blank lines,
-  - for AR, wraps existing `[[...]]` tokens with LRI/PDI via `wrap_existing_tokens_with_isolates(...)`.
+  - for EN/FR, deterministically converts Portuguese month-name dates to target-language month names while preserving day-month-year order:
+    - with year: `10 de fevereiro de 2026` -> `10 February 2026` / `10 février 2026`,
+    - without year: `20 de Março às 11:30` -> `20 March às 11:30` / `20 mars às 11:30`,
+  - for EN/FR, slash numeric dates remain unchanged (e.g., `09/02/2026`),
+  - for AR, deterministically normalizes Portuguese month-name dates to Arabic month + tokenized day/year (`[[DD]] <ArabicMonth> [[YYYY]]`) via `normalize_ar_portuguese_month_dates(...)`,
+  - for AR month-name date parsing uncertainty, falls back to one protected token (`[[...]]`) to preserve LTR stability,
+  - for AR, applies deterministic expected-token auto-fix (when expected token list is provided),
+  - then wraps existing `[[...]]` tokens with LRI/PDI via `wrap_existing_tokens_with_isolates(...)`.
+
+AR source-token lock contract:
+- `src/legalpdf_translate/workflow.py::_process_page` pretokenizes Arabic source text via `pretokenize_arabic_source(...)`.
+- Locked source tokens are extracted with `extract_locked_tokens(...)`.
+- Portuguese month-name date tokens are classified by `is_portuguese_month_date_token(...)` and excluded from strict expected-token matching.
+- The filtered expected token list is enforced in both initial and retry output evaluation.
 
 ## F. Retry template(s) (formatting-only retry, including “prior output” wrapper)
 Template source (translation compliance retry): `src/legalpdf_translate/prompt_builder.py::build_retry_prompt`.
 
 Retry prompt structure:
 - Header line (formatting fix only):
-  - `COMPLIANCE FIX ONLY: Re-emit the SAME content, fix formatting only, as ONE plain-text code block and NOTHING ELSE.`
+  - EN: `COMPLIANCE FIX ONLY: Re-emit the SAME content, fix formatting only, as ONE plain-text code block and NOTHING ELSE. Keep the output strictly in English.`
+  - FR: `COMPLIANCE FIX ONLY: Re-emit the SAME content, fix formatting only, as ONE plain-text code block and NOTHING ELSE. Keep the output strictly in French.`
+  - AR: `COMPLIANCE FIX ONLY: Re-emit the SAME content, fix formatting only, as ONE plain-text code block and NOTHING ELSE.`
 - Wrapped prior output:
   - `<<<BEGIN PRIOR OUTPUT>>>`
   - `{PRIOR_OUTPUT}`
@@ -145,6 +171,7 @@ Calibration verifier JSON retry:
 - `{GLOSSARY_BLOCK}`: optional appended block from `format_glossary_for_prompt(...)` via `_append_glossary_prompt`.
 - `{ADDENDUM_TEXT}`: optional per-language addendum from settings key `prompt_addendum_by_lang` appended by `_append_prompt_addendum`.
 - `{PRIOR_OUTPUT}`: first model output passed into `build_retry_prompt(...)`.
+- `{LANGUAGE_HINT_OPTIONAL}`: EN adds ` Keep the output strictly in English.`; FR adds ` Keep the output strictly in French.`; AR adds empty suffix.
 - `{SYSTEM_INSTRUCTIONS}`: loaded text from `load_system_instructions(...)`.
 - `{EFFORT}`: reasoning effort passed to API call (`high`, `xhigh`, `medium`).
 - `{IMAGE_DATA_URL}`: optional rendered image data URL.
@@ -215,7 +242,7 @@ FR
 
 ### 7) Retry formatting-only prompt
 ```text
-COMPLIANCE FIX ONLY: Re-emit the SAME content, fix formatting only, as ONE plain-text code block and NOTHING ELSE.
+COMPLIANCE FIX ONLY: Re-emit the SAME content, fix formatting only, as ONE plain-text code block and NOTHING ELSE.{LANGUAGE_HINT_OPTIONAL}
 <<<BEGIN PRIOR OUTPUT>>>
 {PRIOR_OUTPUT}
 <<<END PRIOR OUTPUT>>>

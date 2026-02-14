@@ -89,6 +89,7 @@ Core modules:
 - `src/legalpdf_translate/qt_gui/tools_dialogs.py`: Glossary Builder and Calibration Audit dialogs/workers.
 - `src/legalpdf_translate/qt_gui/worker.py`: Qt thread workers for run/analyze/rebuild.
 - `src/legalpdf_translate/workflow.py`: translation pipeline orchestration (`TranslationWorkflow`).
+- `src/legalpdf_translate/arabic_pre_tokenize.py`: Arabic source-side sensitive-value locking (`pretokenize_arabic_source`, `extract_locked_tokens`) plus Portuguese month-date token classification (`is_portuguese_month_date_token`).
 - `docs/assistant/API_PROMPTS.md`: canonical assistant-facing catalog of system/user prompt templates and API payload shapes (grounded to code symbols).
 - `src/legalpdf_translate/run_report.py`: event collector, redaction/sanitization, Markdown+JSON report builder.
 - `src/legalpdf_translate/glossary.py`: glossary schema/normalization helpers (`GlossaryEntry`, `normalize_glossaries`), tier controls (`tier`, `normalize_enabled_tiers_by_target_lang`), source-language detection/filtering for prompt guidance (`detect_source_lang_for_glossary`, `filter_entries_for_prompt`), prompt sort/cap helpers, and legacy file-rule compatibility helpers.
@@ -149,6 +150,23 @@ Assistant routing hint: If asked "which module owns behavior X", start at `workf
 
 7. Validation and page output write
 - Output parsing/validation in `src/legalpdf_translate/workflow.py::_evaluate_output` plus validators in `src/legalpdf_translate/validators.py`.
+- EN/FR normalization path:
+  - `src/legalpdf_translate/output_normalize.py::normalize_output_text_with_stats` performs deterministic Portuguese month-name date conversion to target-language month names for both forms:
+    - `DD de <month> de YYYY`
+    - `DD de <month>`
+  - EN output keeps `DD Month [YYYY]`; FR output keeps `DD mois [YYYY]`.
+  - Slash numeric dates remain unchanged.
+  - Unknown/typo month names remain unchanged (non-fatal).
+  - `src/legalpdf_translate/validators.py::validate_enfr(..., lang=...)` adds a leak gate for unresolved Portuguese month-name dates with address-context exemptions.
+  - This EN/FR date conversion does not change AR token-lock/RTL behavior.
+- Arabic stability path:
+  - Source pretokenization lock in `src/legalpdf_translate/arabic_pre_tokenize.py::pretokenize_arabic_source`.
+  - Expected locked tokens extracted via `src/legalpdf_translate/arabic_pre_tokenize.py::extract_locked_tokens`.
+  - Portuguese month-name date tokens are excluded from strict expected-token matching in `src/legalpdf_translate/workflow.py::_process_page` using `is_portuguese_month_date_token`.
+  - Output normalization auto-fix in `src/legalpdf_translate/output_normalize.py::normalize_output_text_with_stats`.
+  - AR date normalization in `src/legalpdf_translate/output_normalize.py::normalize_ar_portuguese_month_dates` converts month-name dates to Arabic month + tokenized day/year, with one-token fallback for uncertain month parsing.
+  - Strict expected-token preservation validation in `src/legalpdf_translate/validators.py::validate_ar`.
+  - Institution/court/prosecution naming is prompt-governed in `resources/system_instructions_ar.txt`: translate to Arabic when a stable equivalent exists, keep Portuguese original only when uncertain/no stable equivalent, and use dual first mention for acronyms only.
 - Per-language glossary prompt guidance is injected in `src/legalpdf_translate/workflow.py::_process_page` via `TranslationWorkflow._append_glossary_prompt` + `src/legalpdf_translate/glossary.py::format_glossary_for_prompt`.
 - Source-language-aware + tier-aware filtering happens before prompt injection (`detect_source_lang_for_glossary`, `filter_entries_for_prompt`) so rows can target source language (`PT|EN|FR|ANY|AUTO`) and only active tiers are injected.
 - Injection is token-controlled: entries are sorted by tier/impact and capped (`max 50` entries and `max 6000` chars) before prompt append.
@@ -376,6 +394,7 @@ Assistant routing hint: If asked for "minimum QA after a change", run targeted t
 - Per-page processing logic: `src/legalpdf_translate/workflow.py::_process_page`
 - OCR policy and engines: `src/legalpdf_translate/ocr_engine.py::build_ocr_engine`
 - OCR quality classifier + request reason routing: `src/legalpdf_translate/workflow.py::classify_extracted_text_quality`, `src/legalpdf_translate/workflow.py::_process_page`
+- Arabic lock pipeline: `src/legalpdf_translate/arabic_pre_tokenize.py::pretokenize_arabic_source`, `src/legalpdf_translate/arabic_pre_tokenize.py::extract_locked_tokens`, `src/legalpdf_translate/arabic_pre_tokenize.py::is_portuguese_month_date_token`, `src/legalpdf_translate/output_normalize.py::normalize_ar_portuguese_month_dates`, `src/legalpdf_translate/workflow.py::_evaluate_output`, `src/legalpdf_translate/validators.py::validate_ar`
 - OpenAI transport retries: `src/legalpdf_translate/openai_client.py::OpenAIResponsesClient.create_page_response`
 - Run report rendering/redaction: `src/legalpdf_translate/run_report.py::build_run_report_markdown`, `sanitize_text`
 - OCR report fields to inspect: `pipeline.ocr_requested_pages`, `pipeline.ocr_used_pages`, `pipeline.ocr_required_pages`, `pipeline.ocr_helpful_pages`, `pipeline.ocr_preflight_checked`, per-page `ocr_request_reason`, `extraction_quality_signals`
@@ -401,5 +420,5 @@ Assistant routing hint: If asked for "minimum QA after a change", run targeted t
 - Packaging/build: `build/pyinstaller_qt.spec`, `scripts/build_qt.ps1`
 - API prompts/templates catalog: `docs/assistant/API_PROMPTS.md`; implementation paths: `src/legalpdf_translate/prompt_builder.py::build_page_prompt`, `src/legalpdf_translate/prompt_builder.py::build_retry_prompt`, `src/legalpdf_translate/openai_client.py::OpenAIResponsesClient.create_page_response`, `src/legalpdf_translate/workflow.py::_process_page`
 - Retry formatting prompt location: `docs/assistant/API_PROMPTS.md` section `F`; implementation: `src/legalpdf_translate/prompt_builder.py::build_retry_prompt`
-- System instruction files location: `docs/assistant/API_PROMPTS.md` section `A`; files: `resources/system_instructions_enfr.txt`, `resources/system_instructions_ar.txt`; loader: `src/legalpdf_translate/resources_loader.py::load_system_instructions`
+- System instruction files location: `docs/assistant/API_PROMPTS.md` section `A`; files: `resources/system_instructions_en.txt`, `resources/system_instructions_fr.txt`, `resources/system_instructions_ar.txt`; loader: `src/legalpdf_translate/resources_loader.py::load_system_instructions`
 - Assistant routing hint: For unknown feature location, run `rg -n "keyword" src tests` and map hits to this index.

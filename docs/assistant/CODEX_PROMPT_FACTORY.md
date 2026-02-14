@@ -271,7 +271,7 @@ Goal
 
 Scope boundaries
 - Edit only: src/legalpdf_translate/prompt_builder.py, src/legalpdf_translate/workflow.py, src/legalpdf_translate/openai_client.py
-- Inspect also: src/legalpdf_translate/resources_loader.py, resources/system_instructions_enfr.txt, resources/system_instructions_ar.txt
+- Inspect also: src/legalpdf_translate/resources_loader.py, resources/system_instructions_en.txt, resources/system_instructions_fr.txt, resources/system_instructions_ar.txt
 - Documentation must be updated: docs/assistant/API_PROMPTS.md
 - Do not change OCR logic, DOCX writer behavior, or unrelated workflow paths.
 
@@ -360,6 +360,158 @@ Acceptance criteria
 Commands to run
 - rg -n "classify_extracted_text_quality|ocr_request_reason|ocr_preflight_checked|ocr_required_but_unavailable|ocr_helpful_but_unavailable" src/legalpdf_translate tests
 - python -m pytest -q tests/test_workflow_ocr_routing.py tests/test_run_report.py
+- python -m pytest -q
+- python -m compileall src tests
+```
+
+### Example 13 - Arabic token lock + Word stability
+```text
+Goal
+- Prevent Arabic output from reordering or partially translating sensitive LTR values (name/address/IBAN/case IDs), with stable Word rendering.
+- Ensure Portuguese month-name dates do not leak in final Arabic output.
+
+Scope boundaries
+- Edit only:
+  - src/legalpdf_translate/arabic_pre_tokenize.py
+  - src/legalpdf_translate/output_normalize.py
+  - src/legalpdf_translate/validators.py
+  - src/legalpdf_translate/workflow.py
+  - resources/system_instructions_ar.txt
+  - tests/test_arabic_pre_tokenize.py
+  - tests/test_output_normalize.py
+  - tests/test_validators_ar.py
+  - tests/test_workflow_ar_token_lock.py
+  - tests/test_docx_writer_rtl.py
+- Keep API payload shape and code-block contract unchanged.
+
+Files to inspect first
+- src/legalpdf_translate/arabic_pre_tokenize.py::pretokenize_arabic_source
+- src/legalpdf_translate/arabic_pre_tokenize.py::extract_locked_tokens
+- src/legalpdf_translate/arabic_pre_tokenize.py::is_portuguese_month_date_token
+- src/legalpdf_translate/workflow.py::_process_page
+- src/legalpdf_translate/workflow.py::_evaluate_output
+- src/legalpdf_translate/validators.py::validate_ar
+- src/legalpdf_translate/output_normalize.py::normalize_output_text_with_stats
+- src/legalpdf_translate/output_normalize.py::normalize_ar_portuguese_month_dates
+
+Acceptance criteria
+- Full `Nome`/`Morada`/`IBAN` values are locked as single tokens in AR pretokenization.
+- Portuguese month-name dates are date-flex: Arabic month translation with tokenized day/year, while slash dates can remain one protected token.
+- AR output auto-fixes recoverable unwrapped expected tokens.
+- Missing/altered expected locked tokens fail AR validation after retry.
+- DOCX RTL regression confirms address segment keeps `no 6` order.
+
+Commands to run
+- rg -n "pretokenize_arabic_source|extract_locked_tokens|is_portuguese_month_date_token|expected_ar_tokens|validate_ar|normalize_ar_portuguese_month_dates|normalize_output_text_with_stats" src/legalpdf_translate tests resources/system_instructions_ar.txt
+- python -m pytest -q tests/test_arabic_pre_tokenize.py tests/test_validators_ar.py tests/test_output_normalize.py tests/test_workflow_ar_token_lock.py tests/test_docx_writer_rtl.py
+- python -m pytest -q
+- python -m compileall src tests
+```
+
+### Example 14 - EN/FR prompt hardening without RTL impact
+```text
+Goal
+- Improve EN/FR translation quality and legal fidelity without touching Arabic RTL/token-lock behavior.
+
+Scope boundaries
+- Edit only:
+  - resources/system_instructions_en.txt (new)
+  - resources/system_instructions_fr.txt (new)
+  - src/legalpdf_translate/resources_loader.py
+  - src/legalpdf_translate/prompt_builder.py
+  - tests/test_resource_path_resolution.py
+  - tests/test_resources_loader.py (add if missing)
+  - tests/test_prompt_builder.py
+  - docs/assistant/API_PROMPTS.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/CODEX_PROMPT_FACTORY.md
+  - docs/assistant/UPDATE_POLICY.md
+- Do not change:
+  - resources/system_instructions_ar.txt
+  - Arabic validators/token-lock logic
+  - API payload shape
+  - code-block contract
+
+Files to inspect first
+- src/legalpdf_translate/resources_loader.py::load_system_instructions
+- src/legalpdf_translate/prompt_builder.py::build_retry_prompt
+- resources/system_instructions_en.txt
+- resources/system_instructions_fr.txt
+
+Acceptance criteria
+- EN and FR use separate instruction files.
+- EN retry prompt adds an English-only hint; FR retry prompt adds a French-only hint.
+- AR retry behavior and AR system instructions remain unchanged.
+- tests and compile pass.
+
+Commands to run
+- rg -n "load_system_instructions|build_retry_prompt|system_instructions_en|system_instructions_fr|system_instructions_ar" src tests resources docs
+- python -m pytest -q tests/test_resource_path_resolution.py tests/test_resources_loader.py tests/test_prompt_builder.py
+- python -m pytest -q
+- python -m compileall src tests
+```
+
+### Example 15 - EN/FR Portuguese month-date leak fix
+```text
+Goal
+- Stop Portuguese month-name dates from leaking into FR/EN outputs.
+
+Scope boundaries
+- Edit only:
+  - src/legalpdf_translate/output_normalize.py
+  - resources/system_instructions_en.txt
+  - resources/system_instructions_fr.txt
+  - tests/test_output_normalize.py
+  - tests/test_resources_loader.py
+  - docs/assistant/API_PROMPTS.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/CODEX_PROMPT_FACTORY.md
+  - docs/assistant/UPDATE_POLICY.md
+- Do not change AR token-lock/RTL code paths.
+
+Acceptance criteria
+- FR converts `10 de fevereiro de 2026` -> `10 février 2026`.
+- EN converts `10 de fevereiro de 2026` -> `10 February 2026`.
+- FR/EN also convert no-year month dates (`20 de Março` -> `20 mars` / `20 March`).
+- Slash numeric dates remain unchanged.
+- Unknown month typos remain unchanged (non-fatal).
+- Remaining Portuguese month-date leaks in FR/EN fail validation after normalization (retry/fail guardrail), with address-context exemptions.
+- AR behavior remains unchanged.
+
+Commands to run
+- rg -n "normalize_output_text_with_stats|PORTUGUESE_MONTH_DATE|system_instructions_en|system_instructions_fr" src tests resources docs
+- python -m pytest -q tests/test_output_normalize.py tests/test_resources_loader.py tests/test_prompt_builder.py
+- python -m pytest -q
+- python -m compileall src tests
+```
+
+### Example 16 - Arabic institution naming policy alignment (prompt-only)
+```text
+Goal
+- Align Arabic institution/court naming policy with EN/FR policy without changing AR runtime token-lock/RTL behavior.
+
+Scope boundaries
+- Edit only:
+  - resources/system_instructions_ar.txt
+  - tests/test_resources_loader.py
+  - docs/assistant/API_PROMPTS.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/CODEX_PROMPT_FACTORY.md
+  - docs/assistant/UPDATE_POLICY.md
+- Do not change:
+  - src/legalpdf_translate/workflow.py
+  - src/legalpdf_translate/validators.py
+  - src/legalpdf_translate/output_normalize.py
+  - src/legalpdf_translate/docx_writer.py
+
+Acceptance criteria
+- AR instructions say full institution/court/prosecution names are translated to Arabic by default when stable equivalents exist.
+- AR instructions say Portuguese full names are kept only when uncertain/no stable equivalent.
+- AR instructions say dual form is only for acronyms (first mention), not full names.
+- AR runtime enforcement/token-lock/RTL behavior remains unchanged.
+
+Commands to run
+- python -m pytest -q tests/test_resources_loader.py tests/test_prompt_builder.py
 - python -m pytest -q
 - python -m compileall src tests
 ```

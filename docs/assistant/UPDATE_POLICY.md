@@ -225,3 +225,146 @@ Verification commands/results:
 - python -m pytest -q -> 232 passed in 5.50s
 - python -m compileall src tests -> success
 - git status --short -- src tests -> M src/legalpdf_translate/ocr_engine.py; M src/legalpdf_translate/run_report.py; M src/legalpdf_translate/workflow.py; M tests/test_run_report.py; ?? tests/test_workflow_ocr_routing.py
+
+Date: 2026-02-13
+Code change summary:
+- Hardened Arabic sensitive-value locking in `src/legalpdf_translate/arabic_pre_tokenize.py` by tokenizing full `Nome`/`Morada`/`IBAN`/case-value spans as single `[[...]]` tokens and adding `extract_locked_tokens(...)`.
+- Extended Arabic normalization in `src/legalpdf_translate/output_normalize.py` with deterministic expected-token auto-fix before isolate wrapping (`normalize_output_text_with_stats`, `autofix_expected_ar_tokens`).
+- Extended `src/legalpdf_translate/validators.py::validate_ar` to accept `expected_tokens` and fail on locked-token mismatch with count diagnostics (`missing_count`, `altered_count`, `unexpected_count`).
+- Wired expected-token enforcement through `src/legalpdf_translate/workflow.py` for both initial and retry evaluation, with diagnostics-only events `ar_locked_token_autofix_applied` and `ar_locked_token_violation`.
+- Hardened Arabic system prompt constraints in `resources/system_instructions_ar.txt` with explicit label-value preservation examples and anti-splitting guidance for Word-stable LTR runs.
+- Added/updated regression coverage for pretokenization locks, normalize/validator enforcement, workflow auto-fix/fail behavior, and RTL DOCX mixed-direction stability.
+
+Docs updated:
+- docs/assistant/API_PROMPTS.md (sections: A, E)
+- docs/assistant/APP_KNOWLEDGE.md (sections: C, D, J)
+- docs/assistant/CODEX_PROMPT_FACTORY.md (sections: 2 - added Example 13)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 243 passed in 5.72s
+- python -m compileall src tests -> success
+- git status --short -- src tests -> M src/legalpdf_translate/arabic_pre_tokenize.py; M src/legalpdf_translate/output_normalize.py; M src/legalpdf_translate/validators.py; M src/legalpdf_translate/workflow.py; M tests/test_docx_writer_rtl.py; M tests/test_output_normalize.py; M tests/test_validators_ar.py; ?? tests/test_arabic_pre_tokenize.py; ?? tests/test_workflow_ar_token_lock.py
+
+Date: 2026-02-13
+Code change summary:
+- Split shared EN/FR system instructions into language-specific resources:
+  - `resources/system_instructions_en.txt` (new)
+  - `resources/system_instructions_fr.txt` (new)
+- Updated `src/legalpdf_translate/resources_loader.py::load_system_instructions` routing:
+  - EN -> `system_instructions_en.txt`
+  - FR -> `system_instructions_fr.txt`
+  - AR unchanged -> `system_instructions_ar.txt`
+- Updated `src/legalpdf_translate/prompt_builder.py::build_retry_prompt` to include language-specific retry compliance hints for EN/FR while keeping wrapper markers and payload shape unchanged.
+- Added/updated tests:
+  - `tests/test_resources_loader.py` (new)
+  - `tests/test_resource_path_resolution.py`
+  - `tests/test_prompt_builder.py`
+- Updated prompt-contract docs/pointers:
+  - `docs/assistant/API_PROMPTS.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/CODEX_PROMPT_FACTORY.md` (added worked EN/FR hardening example)
+
+Verification commands/results:
+- python -m pytest -q tests/test_resource_path_resolution.py tests/test_resources_loader.py tests/test_prompt_builder.py -> 9 passed in 0.08s
+- python -m pytest -q -> 252 passed in 5.71s
+- python -m compileall src tests -> success
+
+Date: 2026-02-13
+Code change summary:
+- Added Portuguese month-date token classifier `is_portuguese_month_date_token(...)` in `src/legalpdf_translate/arabic_pre_tokenize.py`.
+- Updated Arabic workflow enforcement in `src/legalpdf_translate/workflow.py::_process_page` to keep strict token-lock for sensitive values while excluding Portuguese month-name date tokens from strict expected-token matching.
+- Added deterministic AR date normalization in `src/legalpdf_translate/output_normalize.py`:
+  - recognized month-name dates (`[[10 de fevereiro de 2026]]` or plain `10 de fevereiro de 2026`) normalize to `[[10]] فبراير [[2026]]`,
+  - uncertain month parsing falls back to one protected token `[[...]]`,
+  - slash dates remain single-token style.
+- Updated Arabic instruction contract in `resources/system_instructions_ar.txt` to remove date-rule contradiction and define month-name date behavior + fallback.
+- Added/updated tests for month-date classification, AR date normalization/fallback, workflow token-lock compatibility for month-date transformation, and DOCX mixed-direction date stability.
+
+Docs updated:
+- docs/assistant/API_PROMPTS.md (sections: A, E)
+- docs/assistant/APP_KNOWLEDGE.md (sections: C, D, J)
+- docs/assistant/CODEX_PROMPT_FACTORY.md (sections: 2 - updated Example 13)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q tests/test_arabic_pre_tokenize.py tests/test_output_normalize.py tests/test_workflow_ar_token_lock.py tests/test_docx_writer_rtl.py -> 24 passed in 1.07s
+- python -m pytest -q -> 259 passed in 6.89s
+- python -m compileall src tests -> success
+
+Date: 2026-02-13
+Code change summary:
+- Fixed EN/FR Portuguese month-date leakage by extending `src/legalpdf_translate/output_normalize.py` normalization:
+  - Added deterministic PT month-name date conversion for EN (`10 February 2026`) and FR (`10 février 2026`) in `normalize_output_text_with_stats`.
+  - Kept slash numeric dates unchanged.
+  - Kept unknown/typo month names unchanged (non-fatal).
+- Kept AR/RTL behavior unchanged; AR date/token-lock path remains isolated.
+- Updated EN/FR system instruction contracts:
+  - `resources/system_instructions_en.txt`: removed dates from verbatim-only list and added explicit month-name date translation rule + example.
+  - `resources/system_instructions_fr.txt`: removed dates from verbatim-only list and added explicit month-name date translation rule + example.
+- Added/updated regression tests:
+  - `tests/test_output_normalize.py` for EN/FR month-date conversion, slash-date unchanged, unknown-month unchanged.
+  - `tests/test_resources_loader.py` assertions for updated EN/FR instruction content.
+
+Docs updated:
+- docs/assistant/API_PROMPTS.md (section: E normalization contract)
+- docs/assistant/APP_KNOWLEDGE.md (section: D pipeline normalization notes)
+- docs/assistant/CODEX_PROMPT_FACTORY.md (section: 2 - added Example 15)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q tests/test_output_normalize.py tests/test_resources_loader.py tests/test_prompt_builder.py -> 24 passed in 0.09s
+- python -m pytest -q -> 263 passed in 6.02s
+- python -m compileall src tests -> success
+
+Date: 2026-02-13
+Code change summary:
+- Extended EN/FR date normalization in `src/legalpdf_translate/output_normalize.py` from year-only month-name dates to both forms:
+  - `DD de <PT_MONTH> de YYYY`
+  - `DD de <PT_MONTH>`
+  with deterministic conversion to EN (`DD Month [YYYY]`) and FR (`DD mois [YYYY]`), while preserving slash numeric dates.
+- Kept AR date/token-lock behavior unchanged and isolated.
+- Extended `src/legalpdf_translate/validators.py::validate_enfr` to support `lang`-aware month-date leak checks after normalization, with address-context exemptions to avoid false positives (e.g., `Rua 1.º de Dezembro`).
+- Wired EN/FR validator language context through:
+  - `src/legalpdf_translate/workflow.py::_evaluate_output`
+  - `src/legalpdf_translate/calibration_audit.py`
+  - `src/legalpdf_translate/study_glossary.py`
+- Updated EN/FR system instructions to:
+  - translate institution/court names when stable equivalents exist,
+  - keep originals only when uncertain/no stable equivalent,
+  - allow dual form only for acronyms (first mention),
+  - include anti-calque guidance (`illustre défenseur`, `office de notification`).
+- Added/updated tests:
+  - `tests/test_output_normalize.py` (no-year month-date conversion + address no-rewrite)
+  - `tests/test_validators_enfr.py` (leak rejection + address exemption + legacy no-lang behavior)
+  - `tests/test_retry_reason_mapping.py` (workflow evaluate pass/fail for EN/FR month-date guardrail)
+  - `tests/test_resources_loader.py` (new EN/FR instruction policy assertions)
+
+Docs updated:
+- docs/assistant/API_PROMPTS.md (section: E validator + normalization contract)
+- docs/assistant/APP_KNOWLEDGE.md (section: D pipeline validation/normalization notes)
+- docs/assistant/CODEX_PROMPT_FACTORY.md (section: 2 - updated Example 15 acceptance criteria)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q tests/test_output_normalize.py tests/test_validators_enfr.py tests/test_resources_loader.py tests/test_prompt_builder.py -> 33 passed in 0.11s
+- python -m pytest -q -> 271 passed in 6.02s
+- python -m compileall src tests -> success
+
+Date: 2026-02-13
+Code change summary:
+- Aligned Arabic prompt contract in `resources/system_instructions_ar.txt` for institution/court/prosecution naming:
+  - translate full names to Arabic when a stable equivalent exists (default),
+  - keep Portuguese full names only when uncertain/no stable equivalent,
+  - allow dual form only for acronyms on first mention,
+  - removed deprecated forced full-name bilingual template rule.
+- Extended AR resource contract test in `tests/test_resources_loader.py` to assert the new naming-policy text and absence of the old mandatory dual template line.
+- Updated prompt/docs references for this AR naming policy:
+  - `docs/assistant/API_PROMPTS.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/CODEX_PROMPT_FACTORY.md` (added Example 16)
+
+Verification commands/results:
+- python -m pytest -q tests/test_resources_loader.py tests/test_prompt_builder.py -> 8 passed in 0.05s
+- python -m pytest -q -> 271 passed in 5.81s
+- python -m compileall src tests -> success
