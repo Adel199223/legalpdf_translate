@@ -687,6 +687,8 @@ def build_run_report_payload(
             glossary_diag["coverage_proof"] = ev.get("details", {})
         elif et == "pkg_pareto_summary":
             glossary_diag["pkg_pareto"] = ev.get("details", {})
+        elif et == "token_pareto_summary":
+            glossary_diag["token_pareto"] = ev.get("details", {})
         elif et == "cg_load_summary":
             glossary_diag["cg_load"] = ev.get("counters", {})
         elif et == "cg_ambiguous_pareto_summary":
@@ -774,10 +776,14 @@ def _render_glossary_diagnostics_markdown(lines: list[str], gd: dict[str, Any]) 
     if isinstance(pkg, dict):
         lemma_mode = bool(pkg.get("lemma_mode"))
         lines.append("")
-        header = "## PKG Pareto Analysis"
+        header = "## PKG n-gram Pareto (diagnostic)"
         if lemma_mode:
-            header += " (Lemma-grouped)"
+            header += " \u2014 Lemma-grouped"
         lines.append(header)
+        lines.append(
+            "> n-gram (1\u20134) frequency distribution. "
+            "For primary content analysis, see Content Token Pareto below."
+        )
         lines.append(f"- Total raw tokens analyzed: **{pkg.get('total_tokens', 0)}**")
         if lemma_mode:
             lines.append(f"- Surface unique terms: **{pkg.get('surface_unique_terms', 0)}**")
@@ -823,22 +829,100 @@ def _render_glossary_diagnostics_markdown(lines: list[str], gd: dict[str, Any]) 
                         f" | {item.get('df_pages', 0)} |"
                     )
 
+    # -- Content Token Pareto --
+    tok_pareto = gd.get("token_pareto")
+    if isinstance(tok_pareto, dict):
+        tok_lemma = bool(tok_pareto.get("lemma_mode"))
+        lines.append("")
+        tok_header = "## Content Token Pareto"
+        if tok_lemma:
+            tok_header += " (Lemma-grouped)"
+        lines.append(tok_header)
+        lines.append(
+            "> Unigram content tokens (stopword-filtered, len \u2265 3). "
+            "For meaningful coverage analysis without n-gram explosion."
+        )
+        lines.append(f"- Content tokens analyzed: **{tok_pareto.get('total_content_tokens', 0)}**")
+        lines.append(f"- Unique content tokens: **{tok_pareto.get('unique_content_tokens', 0)}**")
+        tok_cov = round(float(tok_pareto.get("top_20_pct_coverage", 0)) * 100, 1)
+        lines.append(f"- Top 20% cover **{tok_cov}%** of occurrences")
+        tok_core80 = tok_pareto.get("core80_terms")
+        if isinstance(tok_core80, list) and tok_core80:
+            lines.append(f"- Core 80% set: **{len(tok_core80)} terms**")
+        tok_candidates = tok_pareto.get("suggested_content_candidates")
+        if isinstance(tok_candidates, list) and tok_candidates:
+            lines.append("")
+            lines.append("### Suggested Content Candidates")
+            lines.append("")
+            if tok_lemma:
+                lines.append("| Rank | Term | Surface Forms | Frequency | Pages |")
+                lines.append("|------|------|---------------|-----------|-------|")
+            else:
+                lines.append("| Rank | Term | Frequency | Pages |")
+                lines.append("|------|------|-----------|-------|")
+            for rank, item in enumerate(tok_candidates[:30], start=1):
+                if not isinstance(item, dict):
+                    continue
+                if tok_lemma:
+                    sf_list = item.get("surface_forms", [])
+                    sf_str = ", ".join(str(s) for s in sf_list) if sf_list else ""
+                    lines.append(
+                        f"| {rank}"
+                        f" | {item.get('term', '?')}"
+                        f" | {sf_str}"
+                        f" | {item.get('tf', 0)}"
+                        f" | {item.get('df_pages', 0)} |"
+                    )
+                else:
+                    lines.append(
+                        f"| {rank}"
+                        f" | {item.get('term', '?')}"
+                        f" | {item.get('tf', 0)}"
+                        f" | {item.get('df_pages', 0)} |"
+                    )
+
     # -- Lemma Normalization Summary --
     lemma_sum = gd.get("lemma_summary")
     if isinstance(lemma_sum, dict):
         lines.append("")
         lines.append("### Lemma Normalization")
-        lines.append(
-            "> Lemma normalization is used for PKG Pareto analytics only. "
-            "It does NOT affect the suggestion list or glossary matching."
+        # Check if lemma grouping affected suggestion selection
+        _sel = gd.get("suggestion_selection")
+        _lemma_affected = (
+            isinstance(_sel, dict) and bool(_sel.get("lemma_grouping_affected_selection"))
         )
-        lines.append(f"- Terms processed: **{lemma_sum.get('terms_total', 0)}**")
-        lines.append(f"- Cache hits: **{lemma_sum.get('cache_hits', 0)}**")
-        lines.append(f"- API calls: **{lemma_sum.get('api_calls', 0)}**")
+        if _lemma_affected:
+            lines.append(
+                "> Lemma normalization was used for both PKG/token Pareto analytics "
+                "**and** suggestion selection."
+            )
+        else:
+            lines.append(
+                "> Lemma normalization is used for PKG/token Pareto analytics only. "
+                "It did NOT affect the suggestion list in this run."
+            )
+        terms_total = int(lemma_sum.get("terms_total", 0))
+        cache_hits = int(lemma_sum.get("cache_hits", 0))
+        api_calls_count = int(lemma_sum.get("api_calls", 0))
+        lines.append(f"- Terms processed: **{terms_total}**")
+        lines.append(f"- Cache hits: **{cache_hits}**")
+        lines.append(f"- API calls: **{api_calls_count}**")
         in_tok = int(lemma_sum.get("input_tokens", 0))
         out_tok = int(lemma_sum.get("output_tokens", 0))
         if in_tok or out_tok:
             lines.append(f"- Tokens: **{in_tok}** in / **{out_tok}** out")
+        # Cache explanation
+        if terms_total > 0 and cache_hits >= terms_total:
+            lines.append(
+                f"> All {terms_total} terms resolved from cache (0 API calls). "
+                "Fast run \u2014 lemma cache contained all needed terms."
+            )
+        elif api_calls_count > 0:
+            uncached = terms_total - cache_hits
+            lines.append(
+                f"> {uncached} term(s) required API normalization "
+                f"({api_calls_count} call(s), {in_tok} input tokens)."
+            )
         failures = int(lemma_sum.get("failures", 0))
         if failures:
             lines.append(f"- Batch failures: **{failures}**")
@@ -875,11 +959,39 @@ def _render_glossary_diagnostics_markdown(lines: list[str], gd: dict[str, Any]) 
         else:
             lines.append("- Max suggestions cap: **none** (all qualifying terms returned)")
         lines.append(f"- **Final suggestions: {_final}**")
-        lines.append("")
-        lines.append(
-            "> Lemma grouping is analytics-only and does NOT affect suggestion selection. "
-            "The suggestion count is determined entirely by TF/DF threshold filters."
-        )
+        _lemma_used = bool(sel.get("lemma_grouping_affected_selection"))
+        _lemma_changed = bool(sel.get("lemma_selection_changed"))
+        if _lemma_used and _lemma_changed:
+            _so_count = int(sel.get("lemma_surface_only_count", 0))
+            _lo_count = int(sel.get("lemma_only_count", 0))
+            _unch = int(sel.get("lemma_unchanged_count", 0))
+            lines.append("")
+            lines.append(
+                f"> Lemma grouping was used for suggestion selection and changed the results. "
+                f"Delta: {_so_count} surface-only removed, "
+                f"{_lo_count} lemma-grouped added, {_unch} unchanged."
+            )
+            _so_terms = sel.get("lemma_surface_only_terms", [])
+            if isinstance(_so_terms, list) and _so_terms:
+                lines.append(f">  \u2022 Removed (surface-only): {', '.join(str(t) for t in _so_terms)}")
+            _lo_terms = sel.get("lemma_only_terms", [])
+            if isinstance(_lo_terms, list) and _lo_terms:
+                lines.append(f">  \u2022 Added (lemma-grouped): {', '.join(str(t) for t in _lo_terms)}")
+        elif _lemma_used and not _lemma_changed:
+            _sc = int(sel.get("surface_selection_count", 0))
+            _lc = int(sel.get("lemma_selection_count", 0))
+            lines.append("")
+            lines.append(
+                "> Lemma grouping was used for suggestion selection "
+                "but produced the same results as surface-form selection."
+            )
+            lines.append(f"> Surface count: {_sc}, Lemma count: {_lc} (identical sets).")
+        else:
+            lines.append("")
+            lines.append(
+                "> Lemma grouping was not used for suggestion selection in this run. "
+                "The suggestion count is determined entirely by TF/DF threshold filters."
+            )
 
     # -- CG Match Analysis --
     cg_ambig = gd.get("cg_ambiguous_pareto")

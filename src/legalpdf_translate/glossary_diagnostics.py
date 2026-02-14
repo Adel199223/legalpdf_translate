@@ -302,6 +302,121 @@ class GlossaryDiagnosticsAccumulator:
             result["surface_unique_terms"] = len(term_tf)
         return result
 
+    def finalize_token_pareto(self) -> dict[str, Any]:
+        """Compute unigram, stopword-filtered content token Pareto.
+
+        Uses lemma normalization when available.  Provides a meaningful
+        80/20 analysis without n-gram explosion.
+        """
+        from .glossary_builder import _STOPWORDS_PT
+
+        with self._lock:
+            term_tf: dict[str, int] = dict(self._pkg_stats.get("term_tf", {}))
+            term_pages: dict[str, set[str]] = {
+                k: set(v) for k, v in self._pkg_stats.get("term_pages", {}).items()
+            }
+            lemma_map = dict(self._lemma_mapping) if self._lemma_mapping is not None else None
+
+        lemma_mode = lemma_map is not None and len(lemma_map) > 0
+
+        # Filter to unigrams (no spaces), min length 3, not stopwords
+        filtered_tf: dict[str, int] = {}
+        filtered_pages: dict[str, set[str]] = {}
+        for term, tf in term_tf.items():
+            if " " in term:
+                continue
+            if len(term) < 3:
+                continue
+            if term in _STOPWORDS_PT:
+                continue
+            filtered_tf[term] = tf
+            filtered_pages[term] = term_pages.get(term, set())
+
+        if not filtered_tf:
+            return {
+                "total_content_tokens": 0,
+                "unique_content_tokens": 0,
+                "top_20_pct_coverage": 0.0,
+                "core80_count": 0,
+                "core80_terms": [],
+                "suggested_content_candidates": [],
+                "lemma_mode": lemma_mode,
+            }
+
+        # Optionally group by lemma
+        if lemma_mode:
+            assert lemma_map is not None
+            l_tf: dict[str, int] = {}
+            l_sf: dict[str, list[str]] = {}
+            l_pages: dict[str, set[str]] = {}
+            for surface, tf in filtered_tf.items():
+                lemma = lemma_map.get(surface.casefold(), surface.casefold())
+                l_tf[lemma] = l_tf.get(lemma, 0) + tf
+                l_sf.setdefault(lemma, []).append(surface)
+                l_pages.setdefault(lemma, set()).update(filtered_pages.get(surface, set()))
+            effective_tf = l_tf
+            effective_pages = l_pages
+            lemma_surface_forms = l_sf
+        else:
+            effective_tf = filtered_tf
+            effective_pages = filtered_pages
+            lemma_surface_forms = {}
+
+        ranked = sorted(effective_tf.items(), key=lambda kv: (-kv[1], kv[0]))
+        unique_tokens = len(ranked)
+        total_occ = sum(tf for _, tf in ranked)
+
+        # Core 80%
+        cumulative = 0
+        core80: list[dict[str, Any]] = []
+        for term, tf in ranked:
+            cumulative += tf
+            entry: dict[str, Any] = {
+                "term": term,
+                "tf": tf,
+                "df_pages": len(effective_pages.get(term, set())),
+            }
+            if lemma_mode and term in lemma_surface_forms:
+                forms = sorted(set(lemma_surface_forms[term]))
+                if len(forms) > 1 or (len(forms) == 1 and forms[0] != term):
+                    entry["surface_forms"] = forms
+            core80.append(entry)
+            if cumulative / max(1, total_occ) >= 0.80:
+                break
+
+        # Top 20% coverage
+        top_20_count = max(1, math.ceil(unique_tokens * 0.20))
+        top_20_tf = sum(tf for _, tf in ranked[:top_20_count])
+        top_20_pct = top_20_tf / max(1, total_occ)
+
+        # Suggested candidates (top 50)
+        suggested: list[dict[str, Any]] = []
+        for term, tf in ranked[:50]:
+            entry_s: dict[str, Any] = {
+                "term": term,
+                "tf": tf,
+                "df_pages": len(effective_pages.get(term, set())),
+            }
+            if lemma_mode and term in lemma_surface_forms:
+                forms = sorted(set(lemma_surface_forms[term]))
+                if len(forms) > 1 or (len(forms) == 1 and forms[0] != term):
+                    entry_s["surface_forms"] = forms
+            suggested.append(entry_s)
+
+        result: dict[str, Any] = {
+            "total_content_tokens": total_occ,
+            "unique_content_tokens": unique_tokens,
+            "top_20_pct_coverage": round(top_20_pct, 4),
+            "core80_count": len(core80),
+            "core80_terms": core80,
+            "suggested_content_candidates": suggested,
+            "lemma_mode": lemma_mode,
+        }
+        if lemma_mode:
+            result["lemma_grouped_unique_tokens"] = unique_tokens
+            result["surface_unique_tokens"] = len(filtered_tf)
+        return result
+
     def finalize_cg_summary(self) -> dict[str, Any]:
         with self._lock:
             entries_loaded = len(self._cg_entries)
@@ -467,6 +582,14 @@ def emit_diagnostics_events(
         event_type="pkg_pareto_summary",
         stage=stage,
         details=pkg_pareto,
+    )
+
+    # 3b) Content Token Pareto summary
+    token_pareto = accumulator.finalize_token_pareto()
+    collector.add_event(
+        event_type="token_pareto_summary",
+        stage=stage,
+        details=token_pareto,
     )
 
     # 4) CG load summary

@@ -70,6 +70,18 @@ class GlossaryBuilderSuggestion:
     recommended_scope: BuilderScope
 
 
+@dataclass(slots=True, frozen=True)
+class SelectionDelta:
+    """Comparison between surface-form and lemma-grouped suggestion sets."""
+
+    surface_only_terms: list[str]
+    lemma_only_terms: list[str]
+    unchanged_count: int
+    surface_count: int
+    lemma_count: int
+    affected: bool
+
+
 def _normalize_text(value: object) -> str:
     return _SPACE_RE.sub(" ", str(value or "").strip())
 
@@ -131,6 +143,66 @@ def create_builder_stats() -> dict[str, Any]:
         "term_doc_tf": {},
         "term_header_hits": {},
     }
+
+
+def build_lemma_grouped_stats(
+    stats: dict[str, Any],
+    lemma_mapping: dict[str, str],
+) -> dict[str, Any]:
+    """Build a new stats dict where surface forms are grouped by lemma.
+
+    For each lemma group the **highest-TF surface form** becomes the
+    representative key so ``finalize_builder_suggestions`` can be called
+    on the result without modification.
+    """
+    term_tf: dict[str, int] = stats.get("term_tf", {}) if isinstance(stats.get("term_tf"), dict) else {}
+    term_pages: dict[str, set[str]] = stats.get("term_pages", {}) if isinstance(stats.get("term_pages"), dict) else {}
+    term_docs: dict[str, set[str]] = stats.get("term_docs", {}) if isinstance(stats.get("term_docs"), dict) else {}
+    term_doc_tf: dict[str, dict[str, int]] = (
+        stats.get("term_doc_tf", {}) if isinstance(stats.get("term_doc_tf"), dict) else {}
+    )
+    term_header_hits: dict[str, int] = (
+        stats.get("term_header_hits", {}) if isinstance(stats.get("term_header_hits"), dict) else {}
+    )
+
+    # Phase 1: accumulate per-lemma aggregates
+    lemma_tf: dict[str, int] = {}
+    lemma_pages: dict[str, set[str]] = {}
+    lemma_docs: dict[str, set[str]] = {}
+    lemma_doc_tf: dict[str, dict[str, int]] = {}
+    lemma_header_hits: dict[str, int] = {}
+    lemma_best_surface: dict[str, tuple[str, int]] = {}  # lemma -> (best_surface, best_tf)
+
+    for surface, tf in term_tf.items():
+        lemma = lemma_mapping.get(surface.casefold(), surface.casefold())
+        lemma_tf[lemma] = lemma_tf.get(lemma, 0) + tf
+        lemma_pages.setdefault(lemma, set()).update(term_pages.get(surface, set()))
+        lemma_docs.setdefault(lemma, set()).update(term_docs.get(surface, set()))
+        for doc_id, doc_count in term_doc_tf.get(surface, {}).items():
+            per_doc = lemma_doc_tf.setdefault(lemma, {})
+            per_doc[doc_id] = per_doc.get(doc_id, 0) + doc_count
+        lemma_header_hits[lemma] = lemma_header_hits.get(lemma, 0) + term_header_hits.get(surface, 0)
+        prev = lemma_best_surface.get(lemma)
+        if prev is None or tf > prev[1]:
+            lemma_best_surface[lemma] = (surface, tf)
+
+    # Phase 2: build grouped stats keyed by representative surface form
+    grouped: dict[str, Any] = create_builder_stats()
+    g_tf: dict[str, int] = grouped["term_tf"]
+    g_pages: dict[str, set[str]] = grouped["term_pages"]
+    g_docs: dict[str, set[str]] = grouped["term_docs"]
+    g_doc_tf: dict[str, dict[str, int]] = grouped["term_doc_tf"]
+    g_header: dict[str, int] = grouped["term_header_hits"]
+
+    for lemma in lemma_tf:
+        rep = lemma_best_surface[lemma][0]
+        g_tf[rep] = lemma_tf[lemma]
+        g_pages[rep] = lemma_pages.get(lemma, set())
+        g_docs[rep] = lemma_docs.get(lemma, set())
+        g_doc_tf[rep] = lemma_doc_tf.get(lemma, {})
+        g_header[rep] = lemma_header_hits.get(lemma, 0)
+
+    return grouped
 
 
 def update_builder_stats_from_page(
@@ -259,6 +331,26 @@ def finalize_builder_suggestions(
     return rows
 
 
+def compute_selection_delta(
+    surface_suggestions: list[GlossaryBuilderSuggestion],
+    lemma_suggestions: list[GlossaryBuilderSuggestion],
+) -> SelectionDelta:
+    """Compare surface-based and lemma-based suggestion sets."""
+    surface_terms = {s.source_term for s in surface_suggestions}
+    lemma_terms = {s.source_term for s in lemma_suggestions}
+    surface_only = sorted(surface_terms - lemma_terms)
+    lemma_only = sorted(lemma_terms - surface_terms)
+    unchanged = len(surface_terms & lemma_terms)
+    return SelectionDelta(
+        surface_only_terms=surface_only,
+        lemma_only_terms=lemma_only,
+        unchanged_count=unchanged,
+        surface_count=len(surface_terms),
+        lemma_count=len(lemma_terms),
+        affected=bool(surface_only or lemma_only),
+    )
+
+
 def compute_selection_metadata(
     stats: dict[str, Any],
     *,
@@ -266,6 +358,7 @@ def compute_selection_metadata(
     min_tf_per_doc: int = 5,
     min_tf_corpus: int = 3,
     min_df_docs: int = 2,
+    selection_delta: SelectionDelta | None = None,
 ) -> dict[str, Any]:
     """Return metadata explaining the suggestion selection pipeline.
 
@@ -294,7 +387,7 @@ def compute_selection_metadata(
         if tf_value >= int(min_tf_corpus) and df_docs >= int(min_df_docs):
             passed_corpus += 1
 
-    return {
+    result: dict[str, Any] = {
         "candidates_extracted_total": candidates_total,
         "filter_doc_max_threshold": min_tf_per_doc,
         "filter_corpus_tf_threshold": min_tf_corpus,
@@ -303,8 +396,18 @@ def compute_selection_metadata(
         "passed_corpus_filter": passed_corpus,
         "max_suggestions_cap": None,
         "final_suggestions_count": final_count,
-        "lemma_grouping_affected_selection": False,
+        "lemma_grouping_affected_selection": selection_delta is not None,
+        "lemma_selection_changed": selection_delta.affected if selection_delta is not None else False,
     }
+    if selection_delta is not None:
+        result["surface_selection_count"] = selection_delta.surface_count
+        result["lemma_selection_count"] = selection_delta.lemma_count
+        result["lemma_surface_only_count"] = len(selection_delta.surface_only_terms)
+        result["lemma_only_count"] = len(selection_delta.lemma_only_terms)
+        result["lemma_unchanged_count"] = selection_delta.unchanged_count
+        result["lemma_surface_only_terms"] = selection_delta.surface_only_terms[:10]
+        result["lemma_only_terms"] = selection_delta.lemma_only_terms[:10]
+    return result
 
 
 def mine_glossary_builder_suggestions(

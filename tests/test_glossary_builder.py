@@ -115,6 +115,7 @@ def test_compute_selection_metadata_keys_and_counts() -> None:
         "max_suggestions_cap",
         "final_suggestions_count",
         "lemma_grouping_affected_selection",
+        "lemma_selection_changed",
     }
     assert set(meta.keys()) == expected_keys
 

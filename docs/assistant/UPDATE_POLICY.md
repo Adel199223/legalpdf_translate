@@ -451,3 +451,18 @@ Docs updated:
 Verification commands/results:
 - python -m pytest -q -> 380 passed in 12.54s
 - python -m compileall src tests -> success
+
+Date: 2026-02-14
+Code change summary:
+- Replaced layout-invalidation approach with QScrollArea in all three Qt dialogs to fix controls collapsing to 1-2px, empty space after Show Advanced toggle, and clipped/inaccessible buttons.
+- Main window (`src/legalpdf_translate/qt_gui/app_window.py`): wrapped content_card in transparent QScrollArea; changed vertical policy from `Maximum` to `Preferred`; simplified `_refresh_canvas()` to repaint-only (no layout hacks).
+- Glossary Builder (`src/legalpdf_translate/qt_gui/tools_dialogs.py`): wrapped all content in QScrollArea; kept column stretches `(1,0,0,0)`.
+- Settings dialog (`src/legalpdf_translate/qt_gui/dialogs.py`): wrapped tabs+buttons in QScrollArea.
+- Added dark-theme QScrollBar styling in `src/legalpdf_translate/qt_gui/styles.py`.
+
+Docs updated:
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 396 passed in 7.95s
+- python -m compileall src tests -> success

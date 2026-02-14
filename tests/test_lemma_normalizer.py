@@ -442,7 +442,7 @@ def test_report_pareto_shows_surface_forms() -> None:
     lines: list[str] = []
     _render_glossary_diagnostics_markdown(lines, gd)
     text = "\n".join(lines)
-    assert "(Lemma-grouped)" in text
+    assert "Lemma-grouped" in text
     assert "Surface Forms" in text
     assert "arguida, arguido, arguidos" in text
     assert "Surface unique terms: **6**" in text
@@ -469,6 +469,6 @@ def test_report_pareto_no_lemma_mode() -> None:
     lines: list[str] = []
     _render_glossary_diagnostics_markdown(lines, gd)
     text = "\n".join(lines)
-    assert "(Lemma-grouped)" not in text
+    assert "Lemma-grouped" not in text
     assert "Surface Forms" not in text
     assert "Unique terms (n-grams): **6**" in text

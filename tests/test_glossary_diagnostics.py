@@ -258,6 +258,7 @@ def test_events_emitted_to_collector(tmp_path: Path) -> None:
     event_types = {e["event_type"] for e in events}
     assert "page_coverage_summary" in event_types
     assert "pkg_pareto_summary" in event_types
+    assert "token_pareto_summary" in event_types
     assert "pkg_token_stats_page" in event_types
     assert "cg_load_summary" in event_types
     assert "cg_apply_page" in event_types
@@ -271,12 +272,51 @@ def test_events_emitted_count(tmp_path: Path) -> None:
     emit_diagnostics_events(acc, collector)
     events = collector.snapshot()
     # 1 page_coverage_summary + 3 pkg_token_stats_page + 1 pkg_pareto_summary
-    # + 1 cg_load_summary + 3 cg_apply_page + 1 cg_ambiguous_pareto_summary
-    # + 1 cg_drift_candidates = 11
-    assert len(events) == 11
+    # + 1 token_pareto_summary + 1 cg_load_summary + 3 cg_apply_page
+    # + 1 cg_ambiguous_pareto_summary + 1 cg_drift_candidates = 12
+    assert len(events) == 12
 
 
 def test_events_none_collector() -> None:
     """emit_diagnostics_events should not crash with None collector."""
     acc = _make_accumulator()
     emit_diagnostics_events(acc, None)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Content Token Pareto
+# ---------------------------------------------------------------------------
+
+
+def test_token_pareto_filters_stopwords() -> None:
+    """Token Pareto excludes Portuguese stopwords."""
+    acc = _make_accumulator()
+    result = acc.finalize_token_pareto()
+    candidates = result.get("suggested_content_candidates", [])
+    candidate_terms = {c["term"].casefold() for c in candidates}
+    # Common PT stopwords should not appear
+    for sw in ("que", "para", "com", "uma"):
+        assert sw not in candidate_terms
+
+
+def test_token_pareto_unigrams_only() -> None:
+    """Token Pareto only includes unigrams (no spaces in terms)."""
+    acc = _make_accumulator()
+    result = acc.finalize_token_pareto()
+    candidates = result.get("suggested_content_candidates", [])
+    for item in candidates:
+        assert " " not in item["term"], f"Multi-word term found: {item['term']}"
+
+
+def test_token_pareto_with_lemma_grouping() -> None:
+    """Token Pareto uses lemma mapping when set."""
+    acc = _make_accumulator()
+    acc.set_lemma_mapping({"arguido": "arguido", "arguidos": "arguido"})
+    result = acc.finalize_token_pareto()
+    assert result.get("lemma_mode") is True
+    # When lemma mode is on, candidates may have surface_forms lists
+    candidates = result.get("suggested_content_candidates", [])
+    if candidates:
+        # At least one candidate should exist
+        assert isinstance(candidates[0], dict)
+        assert "term" in candidates[0]

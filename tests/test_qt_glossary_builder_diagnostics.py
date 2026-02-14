@@ -230,7 +230,7 @@ def test_export_writes_md_with_diagnostics_sections(tmp_path: Path) -> None:
     content = output_path.read_text(encoding="utf-8")
     assert output_path.exists()
     assert "Processed pages: 2/2" in content
-    assert "PKG Pareto" in content
+    assert "PKG n-gram Pareto" in content
     assert "CG Match" in content
 
 
@@ -339,7 +339,7 @@ def test_glossary_builder_report_has_coverage_proof(tmp_path: Path) -> None:
     assert "Processed pages: 3/3" in report
     assert "sentenca_example.pdf" in report
     assert "1.234" in report  # wall_seconds
-    assert "PKG Pareto" in report
+    assert "PKG n-gram Pareto" in report
     assert "Sanity Warnings" not in report
 
 
@@ -530,7 +530,7 @@ def test_report_includes_suggestion_selection_section(tmp_path: Path) -> None:
     assert "Suggestion Selection Diagnostics" in report
     assert "Candidate n-grams extracted: **250**" in report
     assert "Final suggestions: 68" in report
-    assert "analytics-only" in report.lower()
+    assert "was not used for suggestion selection" in report.lower()
 
 
 def test_lemma_analytics_only_note(tmp_path: Path) -> None:
@@ -544,5 +544,175 @@ def test_lemma_analytics_only_note(tmp_path: Path) -> None:
         run_dir=run_dir, admin_mode=True, include_sanitized_snippets=False,
     )
     assert "### Lemma Normalization" in report
-    assert "PKG Pareto analytics only" in report
-    assert "does NOT affect the suggestion list" in report
+    assert "PKG/token Pareto analytics only" in report
+    assert "did NOT affect the suggestion list" in report
+
+
+def _create_run_artifacts_all_cached(run_dir: Path) -> None:
+    """Write run artifacts where all lemma terms came from cache."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    from legalpdf_translate.glossary_diagnostics import (
+        GlossaryDiagnosticsAccumulator,
+        PageCoverageRecord,
+        emit_diagnostics_events,
+    )
+    from legalpdf_translate.run_report import RunEventCollector
+
+    acc = GlossaryDiagnosticsAccumulator(total_pages=1)
+    text = "O arguido foi notificado."
+    acc.record_page_pkg_stats(page_index=1, source_text=text, doc_id="test")
+    acc.record_page_coverage(PageCoverageRecord(
+        page_index=1, total_pages=1, source_route="direct_text",
+        char_count=len(text), segment_count=1, pkg_token_count=5,
+        cg_entries_active=0, cg_matches_count=0, cg_matched_keys=[],
+    ))
+
+    state = {
+        "version": 1, "total_pages": 1, "max_pages_effective": 1,
+        "selection_start_page": 1, "selection_end_page": 1,
+        "selection_page_count": 1, "run_status": "completed",
+        "run_dir_abs": str(run_dir), "halt_reason": None,
+        "finished_at": "2026-02-14T10:00:00+00:00", "pages": {},
+        "done_count": 1, "failed_count": 0, "pending_count": 0,
+    }
+    (run_dir / "run_state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    summary = {
+        "run_id": "test-cache-run", "pdf_path": "test.pdf", "lang": "EN",
+        "selected_pages_count": 1,
+        "totals": {"total_wall_seconds": 0.5, "api_calls_total": 0,
+                   "total_input_tokens": 0, "total_output_tokens": 0,
+                   "total_reasoning_tokens": 0, "total_tokens": 0},
+        "counts": {"pages_images": 0, "pages_retries": 0, "pages_failed": 0},
+        "pipeline": {}, "settings": {},
+    }
+    (run_dir / "run_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+    collector = RunEventCollector(run_dir=run_dir, enabled=True)
+    emit_diagnostics_events(acc, collector)
+    collector.add_event(
+        event_type="lemma_normalization_summary",
+        stage="glossary_diagnostics",
+        details={
+            "terms_total": 20, "cache_hits": 20, "api_calls": 0,
+            "input_tokens": 0, "output_tokens": 0, "failures": 0,
+            "wall_seconds": 0.1, "fallback_to_surface": False,
+        },
+    )
+    collector.add_event(
+        event_type="suggestion_selection_summary",
+        stage="glossary_diagnostics",
+        details={
+            "candidates_extracted_total": 50,
+            "filter_doc_max_threshold": 5, "filter_corpus_tf_threshold": 3,
+            "filter_corpus_df_threshold": 2, "passed_doc_max_filter": 3,
+            "passed_corpus_filter": 10, "max_suggestions_cap": None,
+            "final_suggestions_count": 12,
+            "lemma_grouping_affected_selection": False,
+        },
+    )
+
+
+def test_report_lemma_cache_all_cached(tmp_path: Path) -> None:
+    """When all lemma terms came from cache, the report shows the fast-run note."""
+    run_dir = tmp_path / "all_cached_run"
+    _create_run_artifacts_all_cached(run_dir)
+
+    from legalpdf_translate.run_report import build_run_report_markdown
+
+    report = build_run_report_markdown(
+        run_dir=run_dir, admin_mode=True, include_sanitized_snippets=False,
+    )
+    assert "All 20 terms resolved from cache" in report
+    assert "Fast run" in report
+
+
+def _create_run_artifacts_with_selection_delta(run_dir: Path) -> None:
+    """Write run artifacts where lemma grouping affected selection."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    from legalpdf_translate.glossary_diagnostics import (
+        GlossaryDiagnosticsAccumulator,
+        PageCoverageRecord,
+        emit_diagnostics_events,
+    )
+    from legalpdf_translate.run_report import RunEventCollector
+
+    acc = GlossaryDiagnosticsAccumulator(total_pages=1)
+    text = "O arguido foi notificado."
+    acc.record_page_pkg_stats(page_index=1, source_text=text, doc_id="test")
+    acc.record_page_coverage(PageCoverageRecord(
+        page_index=1, total_pages=1, source_route="direct_text",
+        char_count=len(text), segment_count=1, pkg_token_count=5,
+        cg_entries_active=0, cg_matches_count=0, cg_matched_keys=[],
+    ))
+
+    state = {
+        "version": 1, "total_pages": 1, "max_pages_effective": 1,
+        "selection_start_page": 1, "selection_end_page": 1,
+        "selection_page_count": 1, "run_status": "completed",
+        "run_dir_abs": str(run_dir), "halt_reason": None,
+        "finished_at": "2026-02-14T10:00:00+00:00", "pages": {},
+        "done_count": 1, "failed_count": 0, "pending_count": 0,
+    }
+    (run_dir / "run_state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    summary = {
+        "run_id": "test-delta-run", "pdf_path": "test.pdf", "lang": "EN",
+        "selected_pages_count": 1,
+        "totals": {"total_wall_seconds": 1.0, "api_calls_total": 2,
+                   "total_input_tokens": 1000, "total_output_tokens": 500,
+                   "total_reasoning_tokens": 0, "total_tokens": 1500},
+        "counts": {"pages_images": 0, "pages_retries": 0, "pages_failed": 0},
+        "pipeline": {}, "settings": {},
+    }
+    (run_dir / "run_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+    collector = RunEventCollector(run_dir=run_dir, enabled=True)
+    emit_diagnostics_events(acc, collector)
+    collector.add_event(
+        event_type="lemma_normalization_summary",
+        stage="glossary_diagnostics",
+        details={
+            "terms_total": 30, "cache_hits": 25, "api_calls": 2,
+            "input_tokens": 1000, "output_tokens": 500, "failures": 0,
+            "wall_seconds": 0.8, "fallback_to_surface": False,
+        },
+    )
+    collector.add_event(
+        event_type="suggestion_selection_summary",
+        stage="glossary_diagnostics",
+        details={
+            "candidates_extracted_total": 200,
+            "filter_doc_max_threshold": 5, "filter_corpus_tf_threshold": 3,
+            "filter_corpus_df_threshold": 2, "passed_doc_max_filter": 10,
+            "passed_corpus_filter": 40, "max_suggestions_cap": None,
+            "final_suggestions_count": 55,
+            "lemma_grouping_affected_selection": True,
+            "lemma_selection_changed": True,
+            "lemma_surface_only_count": 3,
+            "lemma_only_count": 5,
+            "lemma_unchanged_count": 47,
+            "lemma_surface_only_terms": ["sentença", "arguida", "réu"],
+            "lemma_only_terms": ["arguido", "sentença", "tribunal", "acusação", "recurso"],
+        },
+    )
+
+
+def test_report_selection_delta_shown(tmp_path: Path) -> None:
+    """When lemma grouping affected selection, the report shows the delta."""
+    run_dir = tmp_path / "delta_run"
+    _create_run_artifacts_with_selection_delta(run_dir)
+
+    from legalpdf_translate.run_report import build_run_report_markdown
+
+    report = build_run_report_markdown(
+        run_dir=run_dir, admin_mode=True, include_sanitized_snippets=False,
+    )
+    assert "Lemma grouping was used for suggestion selection and changed the results" in report
+    assert "3 surface-only removed" in report
+    assert "5 lemma-grouped added" in report
+    assert "47 unchanged" in report
+    assert "Removed (surface-only)" in report
+    assert "Added (lemma-grouped)" in report
