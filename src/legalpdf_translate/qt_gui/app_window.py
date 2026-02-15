@@ -196,8 +196,9 @@ class QtMainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("LegalPDF Translate")
-        self.resize(1240, 880)
-        self.setMinimumSize(900, 660)
+        self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.setMinimumSize(720, 540)
+        self._initial_resize_done = False
 
         self._defaults = load_gui_settings()
         self._worker_thread: QThread | None = None
@@ -249,7 +250,7 @@ class QtMainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setContentsMargins(16, 96, 16, 18)
         outer.setSpacing(0)
 
         self._scroll_area = QScrollArea()
@@ -257,11 +258,14 @@ class QtMainWindow(QMainWindow):
         self._scroll_area.setWidgetResizable(True)
         self._scroll_area.viewport().setAutoFillBackground(False)
         self._scroll_area.setStyleSheet("QScrollArea{background:transparent;}")
+        self._scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
 
         scroll_content = QWidget()
         scroll_content.setStyleSheet("background:transparent;")
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(34, 30, 34, 24)
+        scroll_layout.setContentsMargins(18, 14, 18, 6)
         scroll_layout.setSpacing(0)
         scroll_layout.addStretch(1)
 
@@ -389,6 +393,7 @@ class QtMainWindow(QMainWindow):
         card_shell.addWidget(self.details_card)
 
         self.footer_card = QFrame(objectName="SurfacePanel")
+        self.footer_card.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         footer = QVBoxLayout(self.footer_card)
         footer.setContentsMargins(14, 10, 14, 10)
         footer.setSpacing(10)
@@ -399,7 +404,6 @@ class QtMainWindow(QMainWindow):
         footer.addWidget(self.status_label)
         footer.addWidget(self.live_counters_label)
 
-        buttons = QHBoxLayout(); buttons.setSpacing(8)
         self.translate_btn = QPushButton("Translate", objectName="PrimaryButton")
         self.cancel_btn = QPushButton("Cancel", objectName="DangerButton")
         self.new_btn = QPushButton("New Run")
@@ -409,20 +413,21 @@ class QtMainWindow(QMainWindow):
         self.report_btn = QPushButton("Export Run Report")
         self.save_joblog_btn = QPushButton("Save to Job Log")
         self.open_joblog_btn = QPushButton("Job Log")
-        for btn in (
-            self.translate_btn,
-            self.cancel_btn,
-            self.new_btn,
-            self.partial_btn,
-            self.rebuild_btn,
-            self.open_btn,
-            self.report_btn,
-            self.save_joblog_btn,
-            self.open_joblog_btn,
-        ):
-            buttons.addWidget(btn)
-        buttons.addStretch(1)
-        footer.addLayout(buttons)
+
+        btn_grid = QGridLayout()
+        btn_grid.setSpacing(8)
+        row0 = [self.translate_btn, self.cancel_btn, self.new_btn,
+                self.partial_btn, self.rebuild_btn]
+        row1 = [self.open_btn, self.report_btn, self.save_joblog_btn,
+                self.open_joblog_btn]
+        for col, btn in enumerate(row0):
+            btn.setToolTip(btn.text())
+            btn_grid.addWidget(btn, 0, col)
+        for col, btn in enumerate(row1):
+            btn.setToolTip(btn.text())
+            btn_grid.addWidget(btn, 1, col)
+        btn_grid.setColumnStretch(len(row0), 1)
+        footer.addLayout(btn_grid)
         card_shell.addWidget(self.footer_card)
 
         apply_primary_glow(self.translate_btn, blur_radius=28)
@@ -1674,11 +1679,39 @@ class QtMainWindow(QMainWindow):
                 self._append_log(f"[click-debug] widgetAt={target.__class__.__name__} objectName={object_name}")
         super().mousePressEvent(event)
 
+    def _update_card_max_width(self) -> None:
+        vp = self._scroll_area.viewport()
+        if vp is not None:
+            scroll_layout = self._scroll_area.widget().layout()
+            lr = scroll_layout.contentsMargins()
+            available = vp.width() - lr.left() - lr.right()
+            self.content_card.setMaximumWidth(max(600, min(1180, available)))
+
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
+        self._update_card_max_width()
         central = self.centralWidget()
         if central is not None:
             central.update()
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if self._initial_resize_done:
+            return
+        self._initial_resize_done = True
+        screen = self.screen()
+        if screen is None:
+            from PySide6.QtGui import QGuiApplication
+            screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            w = int(avail.width() * 0.92)
+            h = int(avail.height() * 0.92)
+            self.resize(w, h)
+            self.move(
+                avail.x() + (avail.width() - w) // 2,
+                avail.y() + (avail.height() - h) // 2,
+            )
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._busy:
