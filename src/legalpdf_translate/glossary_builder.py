@@ -68,6 +68,7 @@ class GlossaryBuilderSuggestion:
     suggested_translation: str
     confidence: float
     recommended_scope: BuilderScope
+    header_hits: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -312,6 +313,7 @@ def finalize_builder_suggestions(
                 suggested_translation="",
                 confidence=confidence,
                 recommended_scope=recommended_scope,
+                header_hits=header_hits,
             )
         )
     rows.sort(
@@ -320,7 +322,7 @@ def finalize_builder_suggestions(
                 item.occurrences_corpus,
                 item.df_pages,
                 item.df_docs,
-                1 if item.recommended_scope == "project" else 0,
+                item.header_hits,
             ),
             -item.occurrences_corpus,
             -item.df_docs,

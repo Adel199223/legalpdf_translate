@@ -23,6 +23,10 @@ docs/assistant/_scratch/
 # Claude Code local settings (machine-specific permissions)
 .claude/settings.local.json
 
+# Investigation scratch artifacts
+rg_*_hotspots*.txt
+ui_*_search*.txt
+
 # Local Claude Code settings
 .claude/
 

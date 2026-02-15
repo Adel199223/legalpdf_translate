@@ -8,6 +8,13 @@
 - If a claim cannot be proven from files/grep output, label it `Uncertain` and provide a command.
 - Assistant routing hint: If asked "where does X live", inspect the "J. Where is X? index" section first, then verify with `rg -n "symbol_or_keyword" src tests`.
 
+## 0b. How we work / Workflow
+- Git + AI agent workflow checklist: `docs/assistant/WORKFLOW_GIT_AI.md`
+  - State snapshot commands (branch, diff, tests, compile)
+  - Safe change flow (branch → tests → commit → push → PR → sync)
+  - AI agent rule: must run snapshot and paste outputs in final response
+  - Common git errors and fixes (PowerShell quoting, diverged main, first push)
+
 ## A. What the app does (user workflows)
 LegalPDF Translate is a Windows-focused Python app that translates legal PDFs to DOCX using a page-by-page workflow. The primary interface is a Qt GUI (`src/legalpdf_translate/qt_gui/app_window.py::QtMainWindow`) with a CLI path (`src/legalpdf_translate/cli.py::main`). Translation is executed per page (not whole-document batching) and can produce run artifacts for resume, rebuild, and diagnostics (`src/legalpdf_translate/workflow.py::TranslationWorkflow.run`, `README.md`).
 
@@ -443,7 +450,11 @@ Assistant routing hint: If asked for "minimum QA after a change", run targeted t
 - Job log database path/schema: `src/legalpdf_translate/joblog_db.py::job_log_db_path`, `ensure_joblog_schema`
 - CLI flags/flow: `src/legalpdf_translate/cli.py::build_arg_parser`, `main`
 - Packaging/build: `build/pyinstaller_qt.spec`, `scripts/build_qt.ps1`
+- Glossary builder deep-dive (scoring, thresholds, lemma grouping, diagnostics): `docs/assistant/GLOSSARY_BUILDER_KNOWLEDGE.md`
+- Prompt construction deep-dive (prompt_builder, system instructions, glossary injection, validators): `docs/assistant/PROMPTS_KNOWLEDGE.md`
 - API prompts/templates catalog: `docs/assistant/API_PROMPTS.md`; implementation paths: `src/legalpdf_translate/prompt_builder.py::build_page_prompt`, `src/legalpdf_translate/prompt_builder.py::build_retry_prompt`, `src/legalpdf_translate/openai_client.py::OpenAIResponsesClient.create_page_response`, `src/legalpdf_translate/workflow.py::_process_page`
 - Retry formatting prompt location: `docs/assistant/API_PROMPTS.md` section `F`; implementation: `src/legalpdf_translate/prompt_builder.py::build_retry_prompt`
 - System instruction files location: `docs/assistant/API_PROMPTS.md` section `A`; files: `resources/system_instructions_en.txt`, `resources/system_instructions_fr.txt`, `resources/system_instructions_ar.txt`; loader: `src/legalpdf_translate/resources_loader.py::load_system_instructions`
+- Qt UI layout deep-dive (widget tree, invariants, recipes): `docs/assistant/QT_UI_KNOWLEDGE.md`
+- Qt UI operational playbook (rules, search recipes, checklists): `docs/assistant/QT_UI_PLAYBOOK.md`
 - Assistant routing hint: For unknown feature location, run `rg -n "keyword" src tests` and map hits to this index.
