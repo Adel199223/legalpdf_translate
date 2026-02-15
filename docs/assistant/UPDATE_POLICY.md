@@ -466,3 +466,20 @@ Docs updated:
 Verification commands/results:
 - python -m pytest -q -> 396 passed in 7.95s
 - python -m compileall src tests -> success
+
+Date: 2026-02-15
+Code change summary:
+- Added Inno Setup installer script (`installer/legalpdf_translate.iss`): per-user install, stable AppId GUID, Start Menu + optional Desktop shortcuts, file exclusions for secrets/logs/artifacts.
+- Added secret scanner (`scripts/scan_secrets.ps1`): ripgrep-based scan for API-key-like patterns in dist or installed folders.
+- Added simple mode toggle in `src/legalpdf_translate/qt_gui/app_window.py`: `_is_simple_mode()` function + `self._simple_mode` instance attribute; hides Glossary Builder and Calibration Audit buttons/menus in release builds (frozen EXE); overrideable via `LEGALPDF_SIMPLE_MODE` env var.
+- Re-applied drift-proof `_FRAME_INSETS` constant in `app_window.py`.
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (section J: installer, simple mode, secret scanner pointers)
+- docs/assistant/UPDATE_POLICY.md (sections: Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> pending
+- python -m compileall src tests -> pending
+- git diff --name-only -> pending
+- git status --short -> pending

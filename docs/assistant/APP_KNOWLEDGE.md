@@ -457,4 +457,7 @@ Assistant routing hint: If asked for "minimum QA after a change", run targeted t
 - System instruction files location: `docs/assistant/API_PROMPTS.md` section `A`; files: `resources/system_instructions_en.txt`, `resources/system_instructions_fr.txt`, `resources/system_instructions_ar.txt`; loader: `src/legalpdf_translate/resources_loader.py::load_system_instructions`
 - Qt UI layout deep-dive (widget tree, invariants, recipes): `docs/assistant/QT_UI_KNOWLEDGE.md`
 - Qt UI operational playbook (rules, search recipes, checklists): `docs/assistant/QT_UI_PLAYBOOK.md`
+- Windows installer (Inno Setup): `installer/legalpdf_translate.iss`; per-user install to `%LOCALAPPDATA%\Programs\LegalPDF Translate`; build with `ISCC.exe installer\legalpdf_translate.iss`
+- Simple mode toggle: `src/legalpdf_translate/qt_gui/app_window.py::_is_simple_mode`; hides Glossary Builder and Calibration Audit in release builds; override via `LEGALPDF_SIMPLE_MODE` env var
+- Secret scanner: `scripts/scan_secrets.ps1`; ripgrep-based scan for API-key-like strings in dist or installed folder
 - Assistant routing hint: For unknown feature location, run `rg -n "keyword" src tests` and map hits to this index.

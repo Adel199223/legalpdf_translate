@@ -52,3 +52,8 @@ PowerShell treats @{u} as a hashtable; quote it:
 ```powershell
 git rev-parse --abbrev-ref --symbolic-full-name "@{u}"
 ```
+## Secrets / safety (mandatory)
+- Never request or output real secrets (API keys, auth headers).
+- Never run `rg --hidden --no-ignore` across the whole repo unless explicitly asked.
+- Never read, print, or summarize `.env` contents. Treat `.env` as sensitive.
+- If a secret might be present, instruct the user to rotate/revoke it and verify with `git grep` (tracked files only).

@@ -243,6 +243,8 @@ def test_report_button_enabled_during_and_after_run() -> None:
         report_btn=report_button,
         save_joblog_btn=_FakeButton(),
         open_joblog_btn=_FakeButton(),
+        glossary_builder_btn=_FakeButton(),
+        calibration_audit_btn=_FakeButton(),
         _set_menu_enabled=lambda key, enabled: menu_calls.__setitem__(key, enabled),
     )
 

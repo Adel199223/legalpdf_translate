@@ -103,6 +103,17 @@ from legalpdf_translate.user_settings import (
 from legalpdf_translate.workflow import TranslationWorkflow
 
 
+_FRAME_INSETS = (16, 96, 16, 18)  # (left, top, right, bottom)
+
+
+def _is_simple_mode() -> bool:
+    """True when advanced tools (Glossary Builder, Calibration Audit) should be hidden."""
+    env = os.getenv("LEGALPDF_SIMPLE_MODE")
+    if env is not None:
+        return env.strip().lower() not in {"0", "false", "no"}
+    return getattr(sys, "frozen", False)
+
+
 def _is_truthy_env(value: str | None) -> bool:
     if value is None:
         return False
@@ -158,7 +169,8 @@ class _FuturisticCanvas(QWidget):
         top_bar.setColorAt(1.0, QColor(20, 154, 204, 46))
         painter.fillRect(0, 26, rect.width(), 64, top_bar)
 
-        frame_rect = rect.adjusted(16, 96, -16, -18)
+        _l, _t, _r, _b = _FRAME_INSETS
+        frame_rect = rect.adjusted(_l, _t, -_r, -_b)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         outer_pen = QPen(QColor(51, 205, 255, 124), 2.0)
         painter.setPen(outer_pen)
@@ -199,6 +211,7 @@ class QtMainWindow(QMainWindow):
         self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.setMinimumSize(720, 540)
         self._initial_resize_done = False
+        self._simple_mode = _is_simple_mode()
 
         self._defaults = load_gui_settings()
         self._worker_thread: QThread | None = None
@@ -250,7 +263,7 @@ class QtMainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(16, 96, 16, 18)
+        outer.setContentsMargins(*_FRAME_INSETS)
         outer.setSpacing(0)
 
         self._scroll_area = QScrollArea()
@@ -324,15 +337,21 @@ class QtMainWindow(QMainWindow):
 
         self.show_adv = QCheckBox("Show Advanced")
         self.settings_btn = QPushButton("Settings...")
-        self.glossary_builder_btn = QPushButton("Glossary Builder...")
-        self.calibration_audit_btn = QPushButton("Calibration Audit...")
+        if not self._simple_mode:
+            self.glossary_builder_btn = QPushButton("Glossary Builder...")
+            self.calibration_audit_btn = QPushButton("Calibration Audit...")
+        else:
+            self.glossary_builder_btn = None
+            self.calibration_audit_btn = None
         grid.addWidget(self.show_adv, 3, 0, 1, 2)
         tools_row = QWidget()
         tools_row_layout = QHBoxLayout(tools_row)
         tools_row_layout.setContentsMargins(0, 0, 0, 0)
         tools_row_layout.setSpacing(8)
-        tools_row_layout.addWidget(self.glossary_builder_btn)
-        tools_row_layout.addWidget(self.calibration_audit_btn)
+        if self.glossary_builder_btn is not None:
+            tools_row_layout.addWidget(self.glossary_builder_btn)
+        if self.calibration_audit_btn is not None:
+            tools_row_layout.addWidget(self.calibration_audit_btn)
         tools_row_layout.addWidget(self.settings_btn)
         grid.addWidget(tools_row, 3, 2, 1, 2, Qt.AlignmentFlag.AlignRight)
         main_layout.addLayout(grid)
@@ -436,8 +455,10 @@ class QtMainWindow(QMainWindow):
         self.outdir_btn.clicked.connect(self._pick_outdir)
         self.context_btn.clicked.connect(self._pick_context)
         self.settings_btn.clicked.connect(self._open_settings_dialog)
-        self.glossary_builder_btn.clicked.connect(self._open_glossary_builder_dialog)
-        self.calibration_audit_btn.clicked.connect(self._open_calibration_audit_dialog)
+        if self.glossary_builder_btn is not None:
+            self.glossary_builder_btn.clicked.connect(self._open_glossary_builder_dialog)
+        if self.calibration_audit_btn is not None:
+            self.calibration_audit_btn.clicked.connect(self._open_calibration_audit_dialog)
         self.show_adv.toggled.connect(self._set_adv_visible)
         self.details_btn.toggled.connect(self._set_details_visible)
         self.translate_btn.clicked.connect(self._start)
@@ -570,11 +591,15 @@ class QtMainWindow(QMainWindow):
         tools_menu = menu_bar.addMenu("Tools")
         tools_settings = tools_menu.addAction("Settings...")
         tools_settings.triggered.connect(self._open_settings_dialog)
-        tools_menu.addSeparator()
-        tools_glossary_builder = tools_menu.addAction("Glossary Builder...")
-        tools_glossary_builder.triggered.connect(self._open_glossary_builder_dialog)
-        tools_calibration_audit = tools_menu.addAction("Calibration Audit...")
-        tools_calibration_audit.triggered.connect(self._open_calibration_audit_dialog)
+        if not self._simple_mode:
+            tools_menu.addSeparator()
+            tools_glossary_builder = tools_menu.addAction("Glossary Builder...")
+            tools_glossary_builder.triggered.connect(self._open_glossary_builder_dialog)
+            tools_calibration_audit = tools_menu.addAction("Calibration Audit...")
+            tools_calibration_audit.triggered.connect(self._open_calibration_audit_dialog)
+        else:
+            tools_glossary_builder = None
+            tools_calibration_audit = None
         tools_menu.addSeparator()
         tools_test = tools_menu.addAction("Test API Keys...")
         tools_test.triggered.connect(self._test_api_keys)
@@ -599,13 +624,15 @@ class QtMainWindow(QMainWindow):
             "open_output_folder": file_open,
             "export_partial": file_export,
             "settings": tools_settings,
-            "glossary_builder": tools_glossary_builder,
-            "calibration_audit": tools_calibration_audit,
             "test_api_keys": tools_test,
             "about": help_about,
             "open_logs": help_logs,
             "how_it_works": help_how,
         }
+        if tools_glossary_builder is not None:
+            self._menu_actions["glossary_builder"] = tools_glossary_builder
+        if tools_calibration_audit is not None:
+            self._menu_actions["calibration_audit"] = tools_calibration_audit
 
     def _set_menu_enabled(self, key: str, enabled: bool) -> None:
         action = self._menu_actions.get(key)
@@ -1095,8 +1122,10 @@ class QtMainWindow(QMainWindow):
 
         self._set_menu_enabled("open_output_folder", can_open)
         self._set_menu_enabled("export_partial", (not self._busy) and self._can_export_partial)
-        self._set_menu_enabled("glossary_builder", not self._busy)
-        self._set_menu_enabled("calibration_audit", not self._busy)
+        if self.glossary_builder_btn is not None:
+            self._set_menu_enabled("glossary_builder", not self._busy)
+        if self.calibration_audit_btn is not None:
+            self._set_menu_enabled("calibration_audit", not self._busy)
 
     def _set_busy(self, busy: bool, *, translation: bool) -> None:
         self._busy = busy
@@ -1109,7 +1138,8 @@ class QtMainWindow(QMainWindow):
             self.resume_check, self.breaks_check, self.keep_check,
             self.context_file_edit, self.context_btn, self.context_text,
         ):
-            w.setEnabled(not busy)
+            if w is not None:
+                w.setEnabled(not busy)
         self._update_controls()
 
     def _start(self) -> None:
