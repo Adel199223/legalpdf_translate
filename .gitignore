@@ -30,3 +30,4 @@ ui_*_search*.txt
 # Local Claude Code settings
 .claude/
 
+requirements_freeze.txt
