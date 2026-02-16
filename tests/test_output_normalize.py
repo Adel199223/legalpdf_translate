@@ -125,6 +125,21 @@ def test_arabic_unknown_month_date_falls_back_to_single_protected_token() -> Non
     assert normalized == f"بتاريخ {LRI}[[10 de fevereirx de 2026]]{PDI}"
 
 
+def test_standalone_numeric_list_marker_merged_with_next_line() -> None:
+    text = "1.\nLe texte"
+    assert normalize_output_text(text, lang=TargetLang.FR) == "1. Le texte"
+
+
+def test_standalone_alpha_list_marker_merged_with_next_line() -> None:
+    text = "A)\nLe texte"
+    assert normalize_output_text(text, lang=TargetLang.FR) == "A) Le texte"
+
+
+def test_bare_digit_line_is_not_merged() -> None:
+    text = "1\nSENTENÇA."
+    assert normalize_output_text(text, lang=TargetLang.FR) == "1\nSENTENÇA."
+
+
 def test_arabic_slash_date_remains_single_protected_token() -> None:
     text = "بتاريخ [[09/02/2026]]"
     normalized = normalize_output_text(text, lang=TargetLang.AR)

@@ -94,6 +94,15 @@ def build_stylesheet() -> str:
         background-color: {PALETTE['field_focus']};
     }}
 
+    QComboBox#GlossaryTableCombo {{
+        padding: 2px 6px;
+        border-radius: 4px;
+    }}
+
+    QComboBox#GlossaryTableCombo::drop-down {{
+        width: 18px;
+    }}
+
     QComboBox::drop-down {{
         border-left: 1px solid rgba(116, 187, 217, 112);
         width: 26px;

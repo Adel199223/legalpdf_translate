@@ -11,6 +11,7 @@ LRI = "\u2066"
 PDI = "\u2069"
 
 TOKEN_RE = re.compile(r"\[\[.*?\]\]", re.DOTALL)
+_STANDALONE_LIST_MARKER_RE = re.compile(r"^\s*(?:\d+|[A-Za-z])[.)]\s*$")
 PT_MONTH_PATTERN = r"(?:janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)"
 PORTUGUESE_MONTH_DATE_PLAIN_RE = re.compile(
     r"(?<!\w)(?P<full>(?P<day>\d{1,2})\s+(?:de\s+)?(?P<month>[A-Za-zÀ-ÖØ-öø-ÿ]+)(?:\s+de)?\s+(?P<year>\d{4}))(?!\w)",
@@ -75,6 +76,24 @@ PT_MONTH_TO_EN = {
 }
 
 
+def _merge_standalone_list_markers(lines: list[str]) -> list[str]:
+    """Merge standalone list markers (e.g. '1.', 'A)') with the following line."""
+    merged: list[str] = []
+    i = 0
+    while i < len(lines):
+        if (
+            _STANDALONE_LIST_MARKER_RE.match(lines[i])
+            and i + 1 < len(lines)
+            and lines[i + 1].strip()
+        ):
+            merged.append(f"{lines[i].strip()} {lines[i + 1].strip()}")
+            i += 2
+        else:
+            merged.append(lines[i])
+            i += 1
+    return merged
+
+
 def normalize_output_text(
     text: str,
     *,
@@ -103,6 +122,7 @@ def normalize_output_text_with_stats(
     if strip_trailing_spaces:
         lines = [line.rstrip() for line in lines]
     lines = [line for line in lines if line.strip() != ""]
+    lines = _merge_standalone_list_markers(lines)
     normalized = "\n".join(lines)
 
     autofix_applied_count = 0
