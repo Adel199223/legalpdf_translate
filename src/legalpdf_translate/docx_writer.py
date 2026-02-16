@@ -6,6 +6,7 @@ import os
 import re
 import unicodedata
 from pathlib import Path
+from zipfile import ZipFile
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
@@ -253,6 +254,54 @@ def save_document_atomic(
     return final_path
 
 
+# Surgical regex patterns for removing compatibilityMode from settings.xml
+# without re-serializing the entire XML (which can break namespace prefixes).
+_COMPAT_SETTING_RE = re.compile(
+    r'<w:compatSetting\b[^>]*\bw:name\s*=\s*"compatibilityMode"[^>]*/>'
+    r"|"
+    r'<w:compatSetting\b[^>]*\bw:name\s*=\s*"compatibilityMode"[^>]*>.*?</w:compatSetting>',
+    re.DOTALL,
+)
+_EMPTY_COMPAT_RE = re.compile(
+    r"<w:compat\b[^>]*/>\s*"
+    r"|"
+    r"<w:compat\b[^>]*>\s*</w:compat>\s*",
+    re.DOTALL,
+)
+
+
+def _remove_compatibility_mode(docx_path: Path) -> None:
+    """Remove compatibilityMode from word/settings.xml to avoid Word upgrade prompt.
+
+    Uses regex surgery on the raw XML text so that namespace declarations,
+    prefix mappings, and mc:Ignorable contracts are preserved byte-for-byte.
+    """
+    with ZipFile(docx_path, "r") as zin:
+        if "word/settings.xml" not in zin.namelist():
+            return
+        settings_text = zin.read("word/settings.xml").decode("utf-8")
+
+    modified = _COMPAT_SETTING_RE.sub("", settings_text)
+    if modified == settings_text:
+        return  # Nothing to remove.
+
+    # Clean up empty <w:compat> element if all children were removed.
+    modified = _EMPTY_COMPAT_RE.sub("", modified)
+
+    tmp_path = docx_path.with_name(f"{docx_path.name}.compat_tmp")
+    try:
+        with ZipFile(docx_path, "r") as zin, ZipFile(tmp_path, "w") as zout:
+            for item in zin.infolist():
+                if item.filename == "word/settings.xml":
+                    zout.writestr(item, modified.encode("utf-8"))
+                else:
+                    zout.writestr(item, zin.read(item.filename))
+        os.replace(tmp_path, docx_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+
+
 def assemble_docx(
     pages_dir: Path,
     output_path: Path,
@@ -322,4 +371,6 @@ def assemble_docx(
         stats["paragraph_count"] = _paragraph_count
         stats["run_count"] = _run_count
         stats["page_count"] = len(page_files)
-    return save_document_atomic(document, output_path, verify_readable=verify_readable)
+    result_path = save_document_atomic(document, output_path, verify_readable=verify_readable)
+    _remove_compatibility_mode(result_path)
+    return result_path

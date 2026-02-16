@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from openai import OpenAI
-from PySide6.QtCore import QObject, QThread, Qt, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -102,7 +102,7 @@ from legalpdf_translate.study_glossary import (
     tokenize_page_for_mode,
     update_candidate_stats_from_page,
 )
-from legalpdf_translate.user_settings import app_data_dir, load_joblog_settings, save_joblog_settings
+from legalpdf_translate.user_settings import app_data_dir, load_joblog_settings, save_gui_settings, save_joblog_settings
 
 JOBLOG_COLUMNS = [
     "translation_date",
@@ -1197,6 +1197,7 @@ class QtSettingsDialog(QDialog):
         self._glossary_search_text: str = ""
         self._glossary_view_keys: list[tuple[str, str, str, str, int]] = []
         self._glossary_seed_version: int = 2
+        self._glossary_populating: bool = False
         self._study_supported_langs: list[str] = supported_learning_langs()
         self._study_entries: list[StudyGlossaryEntry] = normalize_study_entries([], self._study_supported_langs)
         self._study_candidate_rows: list[StudyCandidate] = []
@@ -1464,6 +1465,10 @@ class QtSettingsDialog(QDialog):
         layout.addLayout(search_row)
         self._glossary_search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self.tab_glossary)
         self._glossary_search_shortcut.activated.connect(self._focus_glossary_search)
+        self._shortcut_add_row_ctrl_n = QShortcut(QKeySequence("Ctrl+N"), self.tab_glossary)
+        self._shortcut_add_row_ctrl_n.activated.connect(self._add_glossary_row_and_focus)
+        self._shortcut_add_row_insert = QShortcut(QKeySequence("Insert"), self.tab_glossary)
+        self._shortcut_add_row_insert.activated.connect(self._add_glossary_row_and_focus)
 
         active_tiers_row = QHBoxLayout()
         active_tiers_row.addWidget(QLabel("Active tiers for prompt"))
@@ -1484,10 +1489,22 @@ class QtSettingsDialog(QDialog):
         self.glossary_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.glossary_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.glossary_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.glossary_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.glossary_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.glossary_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header = self.glossary_table.horizontalHeader()
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.glossary_table.setColumnWidth(2, 110)  # Match
+        self.glossary_table.setColumnWidth(3, 90)   # Source lang
+        self.glossary_table.setColumnWidth(4, 60)   # Tier
         layout.addWidget(self.glossary_table, 1)
+
+        add_row_inline = QHBoxLayout()
+        self.glossary_add_row_top_btn = QPushButton("+")
+        self.glossary_add_row_top_btn.setFixedWidth(36)
+        self.glossary_add_row_top_btn.setToolTip("Add glossary row (Ctrl+N)")
+        add_row_inline.addWidget(self.glossary_add_row_top_btn)
+        add_row_inline.addStretch(1)
+        layout.addLayout(add_row_inline)
 
         actions = QHBoxLayout()
         self.glossary_add_row_btn = QPushButton("Add row")
@@ -1518,13 +1535,22 @@ class QtSettingsDialog(QDialog):
         self.glossary_tier_combo.currentIndexChanged.connect(self._on_glossary_tier_changed)
         self.glossary_search_edit.textChanged.connect(self._on_glossary_search_changed)
         self.glossary_add_row_btn.clicked.connect(self._add_glossary_row)
+        self.glossary_add_row_top_btn.clicked.connect(self._add_glossary_row_and_focus)
         self.glossary_remove_rows_btn.clicked.connect(self._remove_selected_glossary_rows)
         self.glossary_export_btn.clicked.connect(self._export_consistency_glossary_markdown)
         for tier, check in self._glossary_active_tier_checks.items():
             check.toggled.connect(lambda checked, tier=tier: self._on_glossary_active_tier_changed(tier, checked))
 
+        self._glossary_auto_save_timer = QTimer(self)
+        self._glossary_auto_save_timer.setSingleShot(True)
+        self._glossary_auto_save_timer.setInterval(500)
+        self._glossary_auto_save_timer.timeout.connect(self._persist_glossary_to_disk)
+        self.glossary_table.cellChanged.connect(self._on_glossary_cell_changed)
+
     def _new_glossary_match_combo(self, selected: str = "exact") -> QComboBox:
         combo = QComboBox()
+        combo.setObjectName("GlossaryTableCombo")
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         combo.addItem("Exact", "exact")
         combo.addItem("Contains", "contains")
         selected_clean = selected.strip().lower()
@@ -1545,6 +1571,8 @@ class QtSettingsDialog(QDialog):
 
     def _new_glossary_source_lang_combo(self, selected: str = "AUTO") -> QComboBox:
         combo = QComboBox()
+        combo.setObjectName("GlossaryTableCombo")
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         for value in valid_source_langs():
             combo.addItem(value, value)
         selected_clean = coerce_source_lang(selected, default="AUTO")
@@ -1553,6 +1581,8 @@ class QtSettingsDialog(QDialog):
 
     def _new_glossary_tier_combo(self, selected: int = 2) -> QComboBox:
         combo = QComboBox()
+        combo.setObjectName("GlossaryTableCombo")
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         for value in valid_glossary_tiers():
             combo.addItem(f"T{value}", value)
         selected_tier = coerce_glossary_tier(selected, default=2)
@@ -1657,16 +1687,26 @@ class QtSettingsDialog(QDialog):
         self.glossary_search_edit.selectAll()
 
     def _set_glossary_table_rows(self, rows: list[GlossaryEntry]) -> None:
-        self.glossary_table.setRowCount(0)
-        self._glossary_view_keys = [self._glossary_entry_key(entry) for entry in rows]
-        for entry in rows:
-            row = self.glossary_table.rowCount()
-            self.glossary_table.insertRow(row)
-            self.glossary_table.setItem(row, 0, QTableWidgetItem(entry.source_text))
-            self.glossary_table.setItem(row, 1, QTableWidgetItem(entry.preferred_translation))
-            self.glossary_table.setCellWidget(row, 2, self._new_glossary_match_combo(entry.match_mode))
-            self.glossary_table.setCellWidget(row, 3, self._new_glossary_source_lang_combo(entry.source_lang))
-            self.glossary_table.setCellWidget(row, 4, self._new_glossary_tier_combo(entry.tier))
+        self._glossary_populating = True
+        try:
+            self.glossary_table.setRowCount(0)
+            self._glossary_view_keys = [self._glossary_entry_key(entry) for entry in rows]
+            for entry in rows:
+                row = self.glossary_table.rowCount()
+                self.glossary_table.insertRow(row)
+                self.glossary_table.setItem(row, 0, QTableWidgetItem(entry.source_text))
+                self.glossary_table.setItem(row, 1, QTableWidgetItem(entry.preferred_translation))
+                match_c = self._new_glossary_match_combo(entry.match_mode)
+                self.glossary_table.setCellWidget(row, 2, match_c)
+                src_c = self._new_glossary_source_lang_combo(entry.source_lang)
+                self.glossary_table.setCellWidget(row, 3, src_c)
+                tier_c = self._new_glossary_tier_combo(entry.tier)
+                self.glossary_table.setCellWidget(row, 4, tier_c)
+                match_c.currentIndexChanged.connect(self._schedule_glossary_auto_save)
+                src_c.currentIndexChanged.connect(self._schedule_glossary_auto_save)
+                tier_c.currentIndexChanged.connect(self._schedule_glossary_auto_save)
+        finally:
+            self._glossary_populating = False
 
     def _read_glossary_table_rows(self) -> list[GlossaryEntry]:
         rows: list[dict[str, str]] = []
@@ -1675,6 +1715,8 @@ class QtSettingsDialog(QDialog):
             target_item = self.glossary_table.item(row, 1)
             source = source_item.text().strip() if source_item else ""
             target = target_item.text().strip() if target_item else ""
+            if source and not target:
+                target = "..."
             match = self._glossary_match_value(self.glossary_table.cellWidget(row, 2))
             source_lang = self._glossary_source_lang_value(self.glossary_table.cellWidget(row, 3))
             tier = self._glossary_tier_value(self.glossary_table.cellWidget(row, 4))
@@ -1704,6 +1746,7 @@ class QtSettingsDialog(QDialog):
         normalized = normalize_glossaries({lang: merged_rows}, [lang])
         self._glossaries_by_lang[lang] = normalized.get(lang, [])
         self._enabled_glossary_tiers_by_lang[lang] = self._read_active_tier_checks()
+        self._glossary_view_keys = [self._glossary_entry_key(e) for e in self._read_glossary_table_rows()]
 
     def _on_glossary_tier_changed(self, _: int) -> None:
         self._save_current_glossary_language_rows()
@@ -1730,6 +1773,7 @@ class QtSettingsDialog(QDialog):
             tiers = [coerce_glossary_tier(tier, default=1)]
         self._enabled_glossary_tiers_by_lang[self._glossary_current_lang] = sorted(tiers)
         self._refresh_glossary_tier_counts()
+        self._schedule_glossary_auto_save()
 
     def _on_glossary_language_changed(self, lang_text: str) -> None:
         next_lang = str(lang_text or "").strip().upper()
@@ -1775,9 +1819,23 @@ class QtSettingsDialog(QDialog):
         self.glossary_table.insertRow(row)
         self.glossary_table.setItem(row, 0, QTableWidgetItem(""))
         self.glossary_table.setItem(row, 1, QTableWidgetItem(""))
-        self.glossary_table.setCellWidget(row, 2, self._new_glossary_match_combo("exact"))
-        self.glossary_table.setCellWidget(row, 3, self._new_glossary_source_lang_combo("AUTO"))
-        self.glossary_table.setCellWidget(row, 4, self._new_glossary_tier_combo(self._glossary_selected_tier))
+        match_c = self._new_glossary_match_combo("exact")
+        self.glossary_table.setCellWidget(row, 2, match_c)
+        src_c = self._new_glossary_source_lang_combo("PT")
+        self.glossary_table.setCellWidget(row, 3, src_c)
+        tier_c = self._new_glossary_tier_combo(self._glossary_selected_tier)
+        self.glossary_table.setCellWidget(row, 4, tier_c)
+        match_c.currentIndexChanged.connect(self._schedule_glossary_auto_save)
+        src_c.currentIndexChanged.connect(self._schedule_glossary_auto_save)
+        tier_c.currentIndexChanged.connect(self._schedule_glossary_auto_save)
+        self._schedule_glossary_auto_save()
+
+    def _add_glossary_row_and_focus(self) -> None:
+        self._add_glossary_row()
+        new_row = self.glossary_table.rowCount() - 1
+        self.glossary_table.scrollToItem(self.glossary_table.item(new_row, 0))
+        self.glossary_table.setCurrentCell(new_row, 0)
+        self.glossary_table.editItem(self.glossary_table.item(new_row, 0))
 
     def _remove_selected_glossary_rows(self) -> None:
         selected_rows = sorted({index.row() for index in self.glossary_table.selectedIndexes()}, reverse=True)
@@ -1786,6 +1844,98 @@ class QtSettingsDialog(QDialog):
         for row in selected_rows:
             self.glossary_table.removeRow(row)
         self._update_glossary_warning_label(self._read_glossary_table_rows())
+        self._schedule_glossary_auto_save()
+
+    def _on_glossary_cell_changed(self, row: int, column: int) -> None:
+        _ = row, column
+        if self._glossary_populating:
+            return
+        self._schedule_glossary_auto_save()
+
+    def _schedule_glossary_auto_save(self, *_args: object) -> None:
+        if self._glossary_populating:
+            return
+        timer = getattr(self, "_glossary_auto_save_timer", None)
+        if timer is not None:
+            timer.start()
+
+    def _commit_glossary_cell_editor(self) -> None:
+        """Force any active glossary cell editor to commit its data."""
+        # Moving focus away from the table causes the delegate's editor
+        # to lose focus, which triggers commitData automatically in Qt.
+        if hasattr(self, "apply_btn"):
+            self.apply_btn.setFocus()
+
+    def _persist_glossary_to_disk(self) -> None:
+        """Save only glossary keys to disk (no full settings validation)."""
+        self._commit_glossary_cell_editor()
+        timer = getattr(self, "_glossary_auto_save_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._save_current_glossary_language_rows()
+        self._propagate_glossary_source_phrases()
+        normalized = normalize_glossaries(self._glossaries_by_lang, supported_target_langs())
+        norm_tiers = normalize_enabled_tiers_by_target_lang(
+            self._enabled_glossary_tiers_by_lang,
+            supported_target_langs(),
+        )
+        glossary_values: dict[str, object] = {
+            "personal_glossaries_by_lang": serialize_glossaries(normalized),
+            "glossaries_by_lang": serialize_glossaries(normalized),
+            "enabled_glossary_tiers_by_target_lang": {
+                lang: list(norm_tiers.get(lang, [1, 2]))
+                for lang in supported_target_langs()
+            },
+            "glossary_seed_version": max(2, int(self._glossary_seed_version)),
+        }
+        try:
+            save_gui_settings(glossary_values)
+        except Exception:  # noqa: BLE001
+            pass  # silent fail on auto-save; user can still Save explicitly
+
+    def _propagate_glossary_source_phrases(self) -> None:
+        """Ensure each source phrase exists in all target languages' glossaries."""
+        langs = supported_target_langs()
+
+        def _norm_key(text: str) -> str:
+            return " ".join(text.strip().casefold().split())
+
+        by_lang: dict[str, dict[str, GlossaryEntry]] = {}
+        for lang in langs:
+            seen: dict[str, GlossaryEntry] = {}
+            for entry in self._glossaries_by_lang.get(lang, []):
+                key = _norm_key(entry.source_text)
+                if key and key not in seen:
+                    seen[key] = entry
+            by_lang[lang] = seen
+
+        changed = False
+        for lang in langs:
+            existing = by_lang[lang]
+            additions: list[GlossaryEntry] = []
+            for other in langs:
+                if other == lang:
+                    continue
+                for key, entry in by_lang[other].items():
+                    if key not in existing:
+                        additions.append(
+                            GlossaryEntry(
+                                source_text=entry.source_text,
+                                preferred_translation="...",
+                                match_mode=entry.match_mode,
+                                source_lang=entry.source_lang,
+                                tier=entry.tier,
+                            )
+                        )
+                        existing[key] = additions[-1]
+            if additions:
+                self._glossaries_by_lang[lang] = list(self._glossaries_by_lang.get(lang, [])) + additions
+                changed = True
+
+        if changed:
+            for lang in langs:
+                norm = normalize_glossaries({lang: self._glossaries_by_lang.get(lang, [])}, [lang])
+                self._glossaries_by_lang[lang] = norm.get(lang, [])
 
     def _export_consistency_glossary_markdown(self) -> None:
         self._save_current_glossary_language_rows()
@@ -3230,6 +3380,7 @@ class QtSettingsDialog(QDialog):
         self.allow_xhigh_check.setChecked(False)
 
     def _collect_values(self) -> dict[str, object]:
+        self._commit_glossary_cell_editor()
         base_url = self.ocr_base_url_edit.text().strip()
         if not _validate_url_or_blank(base_url):
             raise ValueError("OCR base URL must be a valid http/https URL.")
@@ -3313,6 +3464,15 @@ class QtSettingsDialog(QDialog):
             return
         self._apply_callback(values, True)
         QMessageBox.information(self, "Settings", "Saved")
+
+    def reject(self) -> None:
+        """Commit any pending cell edit and auto-save glossary before closing."""
+        self._commit_glossary_cell_editor()
+        timer = getattr(self, "_glossary_auto_save_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._persist_glossary_to_disk()
+        super().reject()
 
     def _create_debug_bundle(self) -> None:
         try:

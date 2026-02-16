@@ -16,6 +16,7 @@ _PROTECTED_TOKEN_RE = re.compile(r"(?:[\u2066\u2067\u2068])?\[\[.*?\]\](?:\u2069
 _VALID_TABLE_MATCHES = {"exact", "contains"}
 _VALID_SOURCE_LANGS = ("AUTO", "ANY", "PT", "EN", "FR")
 _VALID_GLOSSARY_TIERS = (1, 2, 3, 4, 5, 6)
+_CASELESS_TARGET_LANGS: frozenset[str] = frozenset({"AR"})
 _PT_AR_COURT_JUDGMENT_PRESET_NAME = "PT→AR Court/Judgment (Tiered)"
 _PT_HINT_RE = re.compile(
     r"(?:\b(?:não|para|com|de|dos|das|honorários|retenção|processo|tribunal)\b|[ãõç]|\b(?:ção|ções|ões)\b)",
@@ -765,6 +766,7 @@ def format_glossary_for_prompt(
         return ""
     lang = _lang_code(target_lang)
     detected = coerce_source_lang(detected_source_lang, default="AUTO")
+    has_case = lang not in _CASELESS_TARGET_LANGS
     lines = [
         "<<<BEGIN GLOSSARY>>>",
         f"Target language: {lang}",
@@ -772,12 +774,26 @@ def format_glossary_for_prompt(
         "Use preferred translations exactly when source phrase matches.",
         "Do not rewrite IDs, IBANs, case numbers, addresses, dates, or names.",
     ]
+    if has_case:
+        lines.append(
+            "Preserve capitalization style of the source phrase when applying glossary entries."
+        )
     for index, entry in enumerate(entries, start=1):
         source_text = entry.source_text.replace("\r", " ").replace("\n", " ").strip()
         target_text = entry.preferred_translation.replace("\r", " ").replace("\n", " ").strip()
-        lines.append(
-            f"{index}. [T{int(entry.tier)}][{entry.source_lang}][{entry.match_mode}] '{source_text}' => '{target_text}'"
-        )
+        tag = f"[T{int(entry.tier)}][{entry.source_lang}][{entry.match_mode}]"
+        lines.append(f"{index}. {tag} '{source_text}' => '{target_text}'")
+        if (
+            has_case
+            and source_text
+            and target_text
+            and source_text[0].isupper()
+            and target_text[0].islower()
+        ):
+            variant = target_text[0].upper() + target_text[1:]
+            lines.append(
+                f"{index}a. {tag} '{source_text}' => '{variant}' (capitalized variant)"
+            )
     lines.append("<<<END GLOSSARY>>>")
     return "\n".join(lines)
 

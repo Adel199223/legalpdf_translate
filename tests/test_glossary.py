@@ -357,6 +357,45 @@ def test_format_glossary_for_prompt_includes_guardrails() -> None:
     assert "Do not rewrite IDs, IBANs, case numbers, addresses, dates, or names." in block
     assert "Detected source language: PT" in block
     assert "[T1][PT][contains] 'honorários devidos' => 'دفع الأتعاب المستحقة'" in block
+    assert "Preserve capitalization style" not in block  # AR is caseless
+
+
+def test_format_glossary_adds_casing_variant_en() -> None:
+    entries = [GlossaryEntry("Tribunal", "court", "exact", "PT", 2)]
+    block = format_glossary_for_prompt("EN", entries, detected_source_lang="PT")
+    assert "'Tribunal' => 'court'" in block
+    assert "'Tribunal' => 'Court' (capitalized variant)" in block
+    assert "Preserve capitalization style" in block
+
+
+def test_format_glossary_adds_casing_variant_fr() -> None:
+    entries = [GlossaryEntry("Processo", "procédure", "exact", "PT", 2)]
+    block = format_glossary_for_prompt("FR", entries, detected_source_lang="PT")
+    assert "'Processo' => 'procédure'" in block
+    assert "'Processo' => 'Procédure' (capitalized variant)" in block
+    assert "Preserve capitalization style" in block
+
+
+def test_format_glossary_no_casing_variant_ar() -> None:
+    entries = [GlossaryEntry("Tribunal", "محكمة", "exact", "PT", 2)]
+    block = format_glossary_for_prompt("AR", entries, detected_source_lang="PT")
+    assert "'Tribunal' => 'محكمة'" in block
+    assert "(capitalized variant)" not in block
+    assert "Preserve capitalization style" not in block
+
+
+def test_format_glossary_no_variant_when_case_matches() -> None:
+    entries = [GlossaryEntry("Tribunal", "Court", "exact", "PT", 2)]
+    block = format_glossary_for_prompt("EN", entries, detected_source_lang="PT")
+    assert "'Tribunal' => 'Court'" in block
+    assert "(capitalized variant)" not in block
+
+
+def test_format_glossary_no_variant_when_source_lowercase() -> None:
+    entries = [GlossaryEntry("arguido", "defendant", "exact", "PT", 2)]
+    block = format_glossary_for_prompt("EN", entries, detected_source_lang="PT")
+    assert "'arguido' => 'defendant'" in block
+    assert "(capitalized variant)" not in block
 
 
 def test_normalize_glossaries_migrates_legacy_row_shape_to_canonical() -> None:
