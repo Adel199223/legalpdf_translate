@@ -97,10 +97,17 @@ Target language: EN
 Detected source language: PT
 Use preferred translations exactly when source phrase matches.
 Do not rewrite IDs, IBANs, case numbers, addresses, dates, or names.
-1. [T2][PT][exact] 'source phrase' => 'preferred translation'
+Preserve capitalization style of the source phrase when applying glossary entries.
+1. [T2][PT][exact] 'Tribunal' => 'court'
+1a. [T2][PT][exact] 'Tribunal' => 'Court' (capitalized variant)
 2. [T1][ANY][contains] 'another phrase' => 'another translation'
 <<<END GLOSSARY>>>
 ```
+
+> The `Preserve capitalization style …` instruction and `{N}a.` variant lines are
+> emitted only for case-sensitive target languages (EN, FR). AR is caseless and
+> skips them. A variant is added when the source starts uppercase but the target
+> starts lowercase.
 
 ### Addendum
 

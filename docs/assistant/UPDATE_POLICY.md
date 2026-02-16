@@ -483,3 +483,23 @@ Verification commands/results:
 - python -m compileall src tests -> pending
 - git diff --name-only -> pending
 - git status --short -> pending
+
+### 2026-02-15 — Glossary tab productivity improvements
+
+Code changes:
+- Auto-save glossary edits via 500 ms debounced `QTimer` calling `save_gui_settings()` with glossary-only keys (no Apply required)
+- `+` button beside search box + `Ctrl+N` / `Insert` keyboard shortcuts for adding rows with auto-focus
+- New rows default Source lang to `PT` instead of `AUTO`
+- Cross-language propagation: new source phrases auto-propagated to all target languages with `"..."` placeholder translation
+- Fixed in-table QComboBox clipping via `GlossaryTableCombo` objectName + targeted QSS override (`padding: 2px 4px; border-radius: 4px`) + `setSizeAdjustPolicy(AdjustToContents)`
+
+Docs updated:
+- docs/assistant/APP_KNOWLEDGE.md (section F: glossary UI — auto-save, shortcuts, default PT, propagation)
+- docs/assistant/QT_UI_KNOWLEDGE.md (objectName table: GlossaryTableCombo)
+- docs/assistant/UPDATE_POLICY.md (Mini Changelog)
+
+Verification commands/results:
+- python -m pytest -q -> 427 passed
+- python -m compileall src tests -> OK
+- git diff --name-only -> pending
+- git status --short -> pending

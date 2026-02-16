@@ -112,7 +112,7 @@ Core modules:
 - `src/legalpdf_translate/qt_gui/dialogs.py::_build_tab_study`: Study Glossary settings-tab UI (run-folder builder, streaming generation worker, cancel, search/Ctrl+F, quiz/review, Markdown export).
 - `src/legalpdf_translate/secrets_store.py`: secure keyring-backed key storage wrappers.
 - `src/legalpdf_translate/joblog_db.py`: SQLite job log schema/migrations/CRUD.
-- `src/legalpdf_translate/docx_writer.py`: DOCX assembly from page outputs, including RTL paragraph/run direction handling and bidi-control sanitization helpers.
+- `src/legalpdf_translate/docx_writer.py`: DOCX assembly from page outputs, including RTL paragraph/run direction handling, bidi-control sanitization helpers, and regex-based surgical removal of `compatibilityMode` from `word/settings.xml` (preserves all namespace prefixes and `mc:Ignorable` contracts).
 - `src/legalpdf_translate/cli.py`: command-line parsing and execution path.
 - `src/legalpdf_translate/qt_main.py` + `src/legalpdf_translate/qt_app.py`: Qt app bootstrap.
 
@@ -178,6 +178,7 @@ Assistant routing hint: If asked "which module owns behavior X", start at `workf
 - Per-language glossary prompt guidance is injected in `src/legalpdf_translate/workflow.py::_process_page` via `TranslationWorkflow._append_glossary_prompt` + `src/legalpdf_translate/glossary.py::format_glossary_for_prompt`.
 - Source-language-aware + tier-aware filtering happens before prompt injection (`detect_source_lang_for_glossary`, `filter_entries_for_prompt`) so rows can target source language (`PT|EN|FR|ANY|AUTO`) and only active tiers are injected.
 - Injection is token-controlled: entries are sorted by tier/impact and capped (`max 50` entries and `max 6000` chars) before prompt append.
+- For case-sensitive target languages (EN, FR), `format_glossary_for_prompt` automatically emits a capitalized variant line when a glossary source starts uppercase but the target starts lowercase, plus a `"Preserve capitalization style …"` instruction. Arabic (AR) is caseless and skips this.
 - Optional per-language addendum text is appended after glossary block in `src/legalpdf_translate/workflow.py::TranslationWorkflow._append_prompt_addendum` (settings key `prompt_addendum_by_lang`).
 - Workflow output finalization keeps parser/normalizer/validator behavior and no longer applies glossary blind post-replacements in `_evaluate_output`.
 - Study Glossary is intentionally isolated from translation prompt injection: its data lives in `study_glossary_entries` (settings) and UI/helpers under `src/legalpdf_translate/study_glossary.py` + `src/legalpdf_translate/qt_gui/dialogs.py`; translation still only uses `glossaries_by_lang` in `TranslationWorkflow._append_glossary_prompt`.
@@ -262,8 +263,12 @@ Settings storage:
   - `Match`
   - `Source lang` (`AUTO|ANY|PT|EN|FR`)
   - `Tier` (`1..6`)
-  - Search filter + `Ctrl+F` focus shortcut
+  - Search filter + `Ctrl+F` focus shortcut; `+` button beside search for quick add
+  - Keyboard shortcuts: `Ctrl+N` / `Insert` — add row and focus source phrase cell
   - Active tier checkboxes (`T1..T6`) controlling prompt injection
+  - **Auto-save**: glossary edits (cell edits, combo changes, add/remove rows, tier checkbox changes) auto-persist to disk via a 500 ms debounced `QTimer` calling `save_gui_settings()` with glossary keys only — no need to click Apply
+  - **Default source lang**: new rows default to `PT` (not `AUTO`)
+  - **Cross-language propagation**: when a source phrase is added in one target language, it is auto-propagated to the other target languages with `"..."` as placeholder translation (deduped by casefold + strip + collapse whitespace)
   - content-only Markdown export (`Export...`) for consistency glossary review (`AI_Glossary_YYYY-MM-DD.md`)
 - Study Glossary UI lives in `src/legalpdf_translate/qt_gui/dialogs.py::_build_tab_study` and is separate from AI Glossary:
   - candidate builder supports corpus source modes:

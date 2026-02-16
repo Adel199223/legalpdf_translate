@@ -23,6 +23,7 @@
 | `MutedLabel` | QLabel | `QLabel#MutedLabel` — subdued text |
 | `PathLabel` | QLabel | `QLabel#PathLabel` — accent status text |
 | `DisclosureButton` | QToolButton (Show details) | `QToolButton#DisclosureButton` — transparent, accent text |
+| `GlossaryTableCombo` | QComboBox (Match / Source lang / Tier in glossary table) | `QComboBox#GlossaryTableCombo` — compact padding (`2px 4px`), smaller border-radius (`4px`) for in-table fit |
 
 ## B. Layout Tree
 
