@@ -336,24 +336,7 @@ class QtMainWindow(QMainWindow):
         grid.addWidget(self.outdir_btn, 2, 2)
 
         self.show_adv = QCheckBox("Show Advanced")
-        self.settings_btn = QPushButton("Settings...")
-        if not self._simple_mode:
-            self.glossary_builder_btn = QPushButton("Glossary Builder...")
-            self.calibration_audit_btn = QPushButton("Calibration Audit...")
-        else:
-            self.glossary_builder_btn = None
-            self.calibration_audit_btn = None
         grid.addWidget(self.show_adv, 3, 0, 1, 2)
-        tools_row = QWidget()
-        tools_row_layout = QHBoxLayout(tools_row)
-        tools_row_layout.setContentsMargins(0, 0, 0, 0)
-        tools_row_layout.setSpacing(8)
-        if self.glossary_builder_btn is not None:
-            tools_row_layout.addWidget(self.glossary_builder_btn)
-        if self.calibration_audit_btn is not None:
-            tools_row_layout.addWidget(self.calibration_audit_btn)
-        tools_row_layout.addWidget(self.settings_btn)
-        grid.addWidget(tools_row, 3, 2, 1, 2, Qt.AlignmentFlag.AlignRight)
         main_layout.addLayout(grid)
 
         self.adv_frame = QFrame(objectName="SurfacePanel")
@@ -454,11 +437,6 @@ class QtMainWindow(QMainWindow):
         self.pdf_btn.clicked.connect(self._pick_pdf)
         self.outdir_btn.clicked.connect(self._pick_outdir)
         self.context_btn.clicked.connect(self._pick_context)
-        self.settings_btn.clicked.connect(self._open_settings_dialog)
-        if self.glossary_builder_btn is not None:
-            self.glossary_builder_btn.clicked.connect(self._open_glossary_builder_dialog)
-        if self.calibration_audit_btn is not None:
-            self.calibration_audit_btn.clicked.connect(self._open_calibration_audit_dialog)
         self.show_adv.toggled.connect(self._set_adv_visible)
         self.details_btn.toggled.connect(self._set_details_visible)
         self.translate_btn.clicked.connect(self._start)
@@ -1122,17 +1100,16 @@ class QtMainWindow(QMainWindow):
 
         self._set_menu_enabled("open_output_folder", can_open)
         self._set_menu_enabled("export_partial", (not self._busy) and self._can_export_partial)
-        if self.glossary_builder_btn is not None:
+        if not self._simple_mode:
             self._set_menu_enabled("glossary_builder", not self._busy)
-        if self.calibration_audit_btn is not None:
             self._set_menu_enabled("calibration_audit", not self._busy)
+        self._set_menu_enabled("settings", not self._busy)
 
     def _set_busy(self, busy: bool, *, translation: bool) -> None:
         self._busy = busy
         self._running = busy and translation
         for w in (
-            self.pdf_edit, self.pdf_btn, self.lang_combo, self.outdir_edit, self.outdir_btn, self.show_adv, self.settings_btn,
-            self.glossary_builder_btn, self.calibration_audit_btn,
+            self.pdf_edit, self.pdf_btn, self.lang_combo, self.outdir_edit, self.outdir_btn, self.show_adv,
             self.effort_policy_combo, self.effort_combo, self.images_combo, self.ocr_mode_combo, self.ocr_engine_combo,
             self.start_edit, self.end_edit, self.max_edit, self.workers_spin,
             self.resume_check, self.breaks_check, self.keep_check,
