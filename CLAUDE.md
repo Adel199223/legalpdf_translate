@@ -43,6 +43,16 @@ If you can’t prove a claim from repo files or from command output, label it Un
 - Avoid unrelated repo-wide cleanup (mass renames/reformatting/reorganizing folders) unless explicitly requested.
 - If touching many files, justify each file’s necessity in the final report.
 
+## Deferred docs tracking (DOCS_REFRESH_NOTES)
+Default: do NOT update docs/assistant/* unless the user explicitly requests a docs refresh.
+
+If you changed anything under src/ or tests/ AND the user did NOT request a docs refresh:
+- Append a short entry to docs/assistant/DOCS_REFRESH_NOTES.md (create the file if missing).
+- Do not modify other docs/assistant/*.
+
+When the user later requests “docs refresh”:
+- Use DOCS_REFRESH_NOTES.md as the source to update docs/assistant/* efficiently.
+
 ## Trigger Checklist: when to consult AGENT_ADDONS.md
 Only open docs/assistant/AGENT_ADDONS.md if the task touches ANY of:
 
