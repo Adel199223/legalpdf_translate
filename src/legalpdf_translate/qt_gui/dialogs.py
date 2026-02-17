@@ -1507,10 +1507,8 @@ class QtSettingsDialog(QDialog):
         layout.addLayout(add_row_inline)
 
         actions = QHBoxLayout()
-        self.glossary_add_row_btn = QPushButton("Add row")
         self.glossary_remove_rows_btn = QPushButton("Remove selected")
         self.glossary_export_btn = QPushButton("Export...")
-        actions.addWidget(self.glossary_add_row_btn)
         actions.addWidget(self.glossary_remove_rows_btn)
         actions.addWidget(self.glossary_export_btn)
         actions.addStretch(1)
@@ -1534,7 +1532,6 @@ class QtSettingsDialog(QDialog):
         self.glossary_lang_combo.currentTextChanged.connect(self._on_glossary_language_changed)
         self.glossary_tier_combo.currentIndexChanged.connect(self._on_glossary_tier_changed)
         self.glossary_search_edit.textChanged.connect(self._on_glossary_search_changed)
-        self.glossary_add_row_btn.clicked.connect(self._add_glossary_row)
         self.glossary_add_row_top_btn.clicked.connect(self._add_glossary_row_and_focus)
         self.glossary_remove_rows_btn.clicked.connect(self._remove_selected_glossary_rows)
         self.glossary_export_btn.clicked.connect(self._export_consistency_glossary_markdown)
