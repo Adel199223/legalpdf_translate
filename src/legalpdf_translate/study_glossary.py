@@ -1010,7 +1010,8 @@ def fill_translations_for_entry(
     effort: str = "medium",
 ) -> StudyGlossaryEntry:
     translations = expand_translations_by_lang(entry.translations_by_lang, supported_langs)
-    local_client = client or OpenAIResponsesClient(request_timeout_seconds=max(5.0, timeout_seconds))
+    # Do NOT create an OpenAI client here (tests may mock translate_term_for_lang).
+    local_client = client
     for lang in supported_langs:
         current = translations.get(lang, "").strip()
         if fill_only_missing and current != "":
