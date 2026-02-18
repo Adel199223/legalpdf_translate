@@ -1,60 +1,47 @@
 # UPDATE_POLICY
 
-## Mandatory Policy
-Any task that changes files under `src/` or `tests/` must also update relevant documentation under `docs/assistant/*` in the same task. This keeps the ChatGPT Project knowledge pack accurate.
+Purpose
+This file defines when and how to update the ChatGPT “knowledge pack” under `docs/assistant/*`.
+It is a policy document (not a running history). Use Git history + `DOCS_REFRESH_NOTES.md` for change history.
 
-## Doc-Update Checklist
-When code changes, update the matching documentation sections:
-- Architecture map updates:
-  - New/removed/renamed modules, classes, functions, entrypoints.
-- Pipeline updates:
-  - Stage order, routing decisions, retry behavior, output flow.
-- Knobs/flags/settings updates:
-  - New defaults, renamed settings keys, changed CLI flags.
-- Diagnostics/report artifacts:
-  - Added/removed fields, files, run-folder outputs, export paths.
-- Prompt factory updates:
-  - Add/adjust examples that reflect new real paths and tests.
-- API prompt catalog updates:
-  - If prompt templates, system instructions, prompt builder logic, retry prompt wrappers, or API payload shape changes, update `docs/assistant/API_PROMPTS.md` (sections B-H).
-- Uncertainty notes refresh:
-  - Remove stale `Uncertain` notes when verified, or add new ones with commands.
+## Default rule (user-controlled)
+- Do NOT update `docs/assistant/*` automatically as part of code-change tasks.
+- Only update `docs/assistant/*` when the user explicitly requests a “docs refresh / update assistant docs”.
 
-## Required Verification on Doc Updates
-Run and capture results when docs are updated after code changes:
+## Deferred docs workflow (default for code changes)
+If a task changes anything under `src/` or `tests/` AND the user did NOT request a docs refresh:
+1) Append a short entry to `docs/assistant/DOCS_REFRESH_NOTES.md` (create it if missing).
+2) Do not edit other `docs/assistant/*` files.
+
+Required evidence to include in the notes entry:
+- branch name + commit hash (or “working tree” if not committed yet)
+- files changed
+- key symbols/entrypoints affected (only what actually matters)
+- user-visible behavior changes
+- tests run + results
+
+## Docs refresh workflow (only when requested by user)
+When the user requests “docs refresh / update assistant docs”:
+1) Read `docs/assistant/DOCS_REFRESH_NOTES.md` first (it is the queue of what drifted).
+2) Update only the relevant knowledge docs under `docs/assistant/*` based on the notes + current repo state.
+3) Keep edits focused on accuracy (no rewriting for style).
+
+Typical docs to refresh (as applicable to the changes):
+- `docs/assistant/APP_KNOWLEDGE.md` (repo map, entrypoints, “where is X?”)
+- `docs/assistant/API_PROMPTS.md` + `docs/assistant/PROMPTS_KNOWLEDGE.md` (prompt/pipeline contract)
+- `docs/assistant/QT_UI_KNOWLEDGE.md` + `docs/assistant/QT_UI_PLAYBOOK.md` (UI invariants & workflow)
+- `docs/assistant/GLOSSARY_BUILDER_KNOWLEDGE.md` (builder behavior and diagnostics)
+- `docs/assistant/WORKFLOW_GIT_AI.md` (workflow guidance)
+- `docs/assistant/CODEX_PROMPT_FACTORY.md` (prompt patterns/examples), only if prompt patterns changed
+
+## Protected docs (do not edit unless explicitly requested)
+- `docs/assistant/PROJECT_INSTRUCTIONS.txt`
+- `docs/assistant/UPDATE_POLICY.md`
+
+## Verification (required whenever you claim “done” on a change)
+Run and report:
 ```powershell
-git status --short
-git diff --name-only
 python -m pytest -q
 python -m compileall src tests
-```
-
-## Docs Refresh Workflow (Manual, Repeatable)
-When code changes, run a docs-only Codex refresh task that updates `docs/assistant/*` from current repo state.
-- Refresh `APP_KNOWLEDGE.md`, `CODEX_PROMPT_FACTORY.md`, and `UPDATE_POLICY.md` (and `PROJECT_INSTRUCTIONS.txt` if guidance changed).
-- In that refresh task, do not modify `src/` or `tests/`.
-
-## Mini Changelog (Append-Only)
-Append an entry for each update using this format:
-
-```text
-Date: YYYY-MM-DD
-Code change summary:
-- <brief bullets>
-
-Docs updated:
-- docs/assistant/APP_KNOWLEDGE.md (sections: <...>)
-- docs/assistant/PROJECT_INSTRUCTIONS.txt (sections: <...>)
-- docs/assistant/CODEX_PROMPT_FACTORY.md (sections: <...>)
-- docs/assistant/UPDATE_POLICY.md (sections: <...>)
-
-Verification commands/results:
-- python -m pytest -q -> <result>
-- python -m compileall src tests -> <result>
-- git status --short -- src tests -> <result>
-```
-
-## Ownership Rule
-If a task owner is unsure whether docs need updates, default to updating docs and citing exact changed paths/symbols.
-
-(Note) Legacy update-log entries were moved to docs/assistant/DOCS_REFRESH_NOTES.md on 2026-02-17.
+git diff --name-only
+git status --short
