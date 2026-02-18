@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Python dependencies (pyproject.toml / pip)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # Keep GitHub Actions used in workflows up to date (checkout, setup-python, etc.)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
