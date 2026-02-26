@@ -1,0 +1,201 @@
+{
+  "version": "1.0.0",
+  "canonical": [
+    "APP_KNOWLEDGE.md",
+    "docs/assistant/GOLDEN_PRINCIPLES.md",
+    "docs/assistant/LOCALIZATION_GLOSSARY.md",
+    "docs/assistant/PERFORMANCE_BASELINES.md"
+  ],
+  "bridges": [
+    {
+      "doc": "docs/assistant/APP_KNOWLEDGE.md",
+      "canonical_doc": "APP_KNOWLEDGE.md",
+      "purpose": "Short routing bridge that defers to canonical app knowledge"
+    }
+  ],
+  "user_guides": [
+    "docs/assistant/features/APP_USER_GUIDE.md",
+    "docs/assistant/features/PRIMARY_FEATURE_USER_GUIDE.md",
+    "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md"
+  ],
+  "workflows": [
+    {
+      "id": "feature_workflow",
+      "doc": "docs/assistant/workflows/FEATURE_WORKFLOW.md",
+      "scope": "template-compatible feature workflow routing",
+      "primary_files": [
+        "docs/assistant/workflows/TRANSLATION_WORKFLOW.md"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart"
+      ]
+    },
+    {
+      "id": "data_workflow",
+      "doc": "docs/assistant/workflows/DATA_WORKFLOW.md",
+      "scope": "template-compatible data workflow routing",
+      "primary_files": [
+        "docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart"
+      ]
+    },
+    {
+      "id": "translation_workflow",
+      "doc": "docs/assistant/workflows/TRANSLATION_WORKFLOW.md",
+      "scope": "core PDF-to-DOCX translation behavior",
+      "primary_files": [
+        "src/legalpdf_translate/workflow.py",
+        "src/legalpdf_translate/prompt_builder.py",
+        "src/legalpdf_translate/validators.py"
+      ],
+      "targeted_tests": [
+        "python -m pytest -q tests/test_workflow_parallel.py tests/test_prompt_builder.py"
+      ],
+      "validation_commands": [
+        "python -m pytest -q tests/test_translation_diagnostics.py tests/test_run_report.py"
+      ]
+    },
+    {
+      "id": "persistence_data_workflow",
+      "doc": "docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md",
+      "scope": "schema/settings/checkpoint persistence and migration safety",
+      "primary_files": [
+        "src/legalpdf_translate/joblog_db.py",
+        "src/legalpdf_translate/checkpoint.py",
+        "src/legalpdf_translate/user_settings.py"
+      ],
+      "targeted_tests": [
+        "python -m pytest -q tests/test_db_migration_joblog_v2.py tests/test_checkpoint_resume.py"
+      ],
+      "validation_commands": [
+        "python -m pytest -q tests/test_user_settings_schema.py"
+      ]
+    },
+    {
+      "id": "localization_workflow",
+      "doc": "docs/assistant/workflows/LOCALIZATION_WORKFLOW.md",
+      "scope": "localization terminology and routing contracts",
+      "primary_files": [
+        "docs/assistant/LOCALIZATION_GLOSSARY.md",
+        "docs/assistant/manifest.json"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart --scope localization"
+      ]
+    },
+    {
+      "id": "workspace_performance_workflow",
+      "doc": "docs/assistant/workflows/PERFORMANCE_WORKFLOW.md",
+      "scope": "workspace performance baselines and hygiene",
+      "primary_files": [
+        "docs/assistant/PERFORMANCE_BASELINES.md",
+        ".vscode/settings.json"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_workspace_hygiene_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_workspace_hygiene.dart"
+      ]
+    },
+    {
+      "id": "reference_discovery",
+      "doc": "docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md",
+      "scope": "external parity/inspiration discovery and adaptation",
+      "primary_files": [
+        "docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart"
+      ]
+    },
+    {
+      "id": "ci_repo_ops",
+      "doc": "docs/assistant/workflows/CI_REPO_WORKFLOW.md",
+      "scope": "CI and repository operations",
+      "primary_files": [
+        ".github/workflows/python-package.yml",
+        "docs/assistant/workflows/CI_REPO_WORKFLOW.md"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart",
+        "dart run test/tooling/validate_workspace_hygiene_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart",
+        "dart run tooling/validate_workspace_hygiene.dart"
+      ]
+    },
+    {
+      "id": "commit_publish_ops",
+      "doc": "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md",
+      "scope": "commit/push/publish safety and triage",
+      "primary_files": [
+        "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart"
+      ]
+    },
+    {
+      "id": "docs_maintenance_workflow",
+      "doc": "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md",
+      "scope": "assistant docs sync and drift control",
+      "primary_files": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/INDEX.md",
+        "docs/assistant/manifest.json"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart",
+        "dart run test/tooling/validate_workspace_hygiene_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart",
+        "dart run tooling/validate_workspace_hygiene.dart"
+      ]
+    }
+  ],
+  "global_commands": [
+    "python -m pytest -q",
+    "python -m compileall src tests",
+    "dart run tooling/validate_agent_docs.dart",
+    "dart run tooling/validate_workspace_hygiene.dart"
+  ],
+  "contracts": {
+    "template_read_policy": "docs/assistant/templates/* is read-on-demand only unless explicitly requested.",
+    "localization_glossary_source_of_truth": "docs/assistant/LOCALIZATION_GLOSSARY.md",
+    "workspace_performance_source_of_truth": "docs/assistant/PERFORMANCE_BASELINES.md",
+    "environment_outside_workspace_default_policy": "Keep heavyweight environments/artifacts outside workspace root when feasible.",
+    "post_change_docs_sync_prompt_policy": "After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now?",
+    "inspiration_reference_discovery_policy": "Named parity/inspiration requests must run REFERENCE_DISCOVERY_WORKFLOW before implementation decisions.",
+    "golden_principles_source_of_truth": "docs/assistant/GOLDEN_PRINCIPLES.md",
+    "execplan_policy": "Major/multi-file work requires ExecPlans in docs/assistant/exec_plans/active/.",
+    "approval_gates_policy": "AGENTS.md and agent.md enforce ask-before-execute gates for destructive/risky actions.",
+    "worktree_isolation_policy": "Parallel work uses git worktree isolation and branch safety gates.",
+    "doc_gardening_policy": "Docs sync updates only touched-scope docs and avoids blanket rewrites.",
+    "user_guides_support_usage_policy": "Support/non-technical tasks route to APP_USER_GUIDE and primary workflow user guide first.",
+    "user_guides_canonical_deference_policy": "User guides are explanatory and defer to canonical technical docs.",
+    "user_guides_update_sync_policy": "Major feature changes update relevant user-guide sections with matching technical docs.",
+    "template_path_routing_regression_protection": "INDEX.md and validators enforce template-path routing and read policy protections."
+  },
+  "last_updated": "2026-02-25"
+}
