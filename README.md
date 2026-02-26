@@ -11,14 +11,23 @@ Windows 11 desktop app (Qt/PySide6) and CLI for page-by-page legal PDF translati
 
 ## Requirements
 - Windows 11
-- Python 3.11 or 3.12
+- Python 3.11 (recommended)
 - OpenAI API key
 
-## Setup
+## Beginner Safe Setup (Recommended)
+Use the recovery-safe setup script. It creates `.venv311`, installs dependencies, and verifies Python health.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1
+. .\.venv311\Scripts\Activate.ps1
+copy .env.example .env
+```
+
+## Manual Setup
 ```powershell
 cd legalpdf_translate
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+py -3.11 -m venv .venv311
+.venv311\Scripts\Activate.ps1
 pip install --upgrade pip
 pip install -e .
 pip install -e .[dev]
@@ -26,6 +35,16 @@ copy .env.example .env
 ```
 
 Set `OPENAI_API_KEY` in `.env` or environment.
+
+## If Python/Pytest Suddenly Breaks
+If you see import errors like `html.entities` or `idna` during `pip`/`pytest`, your machine Python install is corrupted.
+
+Run:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate
+. .\.venv311\Scripts\Activate.ps1
+python -m pytest -q
+```
 
 ## Run GUI
 ```powershell

@@ -37,3 +37,11 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 ## Common Help Paths
 - Translation behavior basics: `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
 - Technical canonical check: `APP_KNOWLEDGE.md`
+
+## If Setup Fails (Beginner Recovery)
+If `pip` or `pytest` shows errors about `html.entities` or `idna`, your Python install is broken on the machine, not in your project.
+
+Use this fix:
+1. Run: `powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate`
+2. Activate: `. .\.venv311\Scripts\Activate.ps1`
+3. Retry your command.

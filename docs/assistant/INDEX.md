@@ -33,6 +33,9 @@
 - `test/tooling/validate_agent_docs_test.dart`
 - `test/tooling/validate_workspace_hygiene_test.dart`
 
+## Use when local Python is broken
+- `scripts/setup_python311_env.ps1`: rebuilds a clean `.venv311` with project dependencies.
+
 ## Legacy supplemental deep docs
 - `docs/assistant/API_PROMPTS.md`
 - `docs/assistant/PROMPTS_KNOWLEDGE.md`

@@ -25,9 +25,10 @@ Managing CI and repository operations safely, including branch hygiene and requi
 ## Minimal Commands
 ```powershell
 git status --short --branch
+.venv311\Scripts\python.exe --version
 dart run tooling/validate_agent_docs.dart
 dart run tooling/validate_workspace_hygiene.dart
-python -m pytest -q
+.venv311\Scripts\python.exe -m pytest -q
 ```
 
 ## Targeted Tests
@@ -38,6 +39,7 @@ python -m pytest -q
 - CI false negatives: align command scope and parser expectations.
 - CI runtime blow-up: run targeted regression first, then full suite.
 - Branch contamination: isolate changes with worktree and scoped commits.
+- Local Python import corruption (`html.entities`/`idna`/`pip`): rebuild env with `powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate`.
 
 ## Handoff Checklist
 1. Confirm worktree isolation guidance remains explicit.

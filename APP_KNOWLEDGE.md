@@ -69,3 +69,12 @@ These remain valid supplemental references for implementation detail:
 - `python -m compileall src tests`
 - `dart run tooling/validate_agent_docs.dart`
 - `dart run tooling/validate_workspace_hygiene.dart`
+
+## Local Python Baseline (Windows)
+- Preferred interpreter: Python `3.11`.
+- Preferred local environment path: `.venv311`.
+- Bootstrap/recovery script: `scripts/setup_python311_env.ps1`.
+
+If local `pip`/`pytest` fails with import errors like `html.entities` or `idna`, treat it as a machine Python issue and rebuild `.venv311`:
+- `powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate`
+- `. .\.venv311\Scripts\Activate.ps1`

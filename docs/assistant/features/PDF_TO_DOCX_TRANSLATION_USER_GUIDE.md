@@ -38,10 +38,11 @@ This user guide is not canonical architecture truth. Defer to `APP_KNOWLEDGE.md`
 - Run summary: A final report about what happened in the run.
 
 ## Troubleshooting
-1. If output is missing pages, check if run stopped early and use resume.
-2. If run is slow, lower worker count and retry.
-3. If text quality is poor, test analyze-only and inspect OCR routing.
-4. If terminology is inconsistent, review glossary settings and rerun affected pages.
+1. If setup commands fail with `html.entities` or `idna` import errors, run `powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate`, then activate `. .\.venv311\Scripts\Activate.ps1`.
+2. If output is missing pages, check if run stopped early and use resume.
+3. If run is slow, lower worker count and retry.
+4. If text quality is poor, test analyze-only and inspect OCR routing.
+5. If terminology is inconsistent, review glossary settings and rerun affected pages.
 
 ## Canonical Checkpoints for Agents
 - Runtime behavior: `APP_KNOWLEDGE.md`
