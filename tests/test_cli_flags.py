@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from legalpdf_translate import cli
+from legalpdf_translate.queue_runner import QueueRunSummary
 from legalpdf_translate.types import AnalyzeSummary, BudgetExceedPolicy, EffortPolicy, RunSummary
 
 
@@ -573,3 +574,103 @@ def test_cli_review_export_failure_is_non_fatal(tmp_path: Path, monkeypatch) -> 
     )
 
     assert exit_code == 0
+
+
+def test_cli_parser_accepts_queue_flags() -> None:
+    args = cli.build_arg_parser().parse_args(["--queue-manifest", "queue.jsonl", "--rerun-failed-only", "true"])
+    assert args.queue_manifest == "queue.jsonl"
+    assert args.rerun_failed_only == "true"
+
+
+def test_cli_queue_mode_runs_manifest_jobs(tmp_path: Path, monkeypatch) -> None:
+    manifest_path = tmp_path / "queue.json"
+    manifest_path.write_text("[]", encoding="utf-8")
+    pdf_path = tmp_path / "queued.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    captured: dict[str, object] = {}
+
+    class _FakeWorkflow:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
+            _ = kwargs
+
+        def run(self, config):  # type: ignore[no-untyped-def]
+            captured["config"] = config
+            return RunSummary(
+                success=True,
+                exit_code=0,
+                output_docx=outdir / "dummy.docx",
+                partial_docx=None,
+                run_dir=outdir,
+                completed_pages=1,
+                failed_page=None,
+            )
+
+    def _fake_run_queue_manifest(  # type: ignore[no-untyped-def]
+        *,
+        manifest_path: Path,
+        run_job,
+        rerun_failed_only: bool,
+        log_callback=None,
+    ):
+        _ = log_callback
+        captured["manifest_path"] = manifest_path
+        captured["rerun_failed_only"] = rerun_failed_only
+        captured["run_job_result"] = run_job(
+            {"pdf": str(pdf_path), "lang": "FR", "outdir": str(outdir), "workers": 2}
+        )
+        checkpoint_path = tmp_path / "queue.queue_checkpoint.json"
+        summary_path = tmp_path / "queue.queue_summary.json"
+        checkpoint_path.write_text("{}", encoding="utf-8")
+        summary_path.write_text("{}", encoding="utf-8")
+        return QueueRunSummary(
+            success=True,
+            total_jobs=1,
+            done_jobs=1,
+            failed_jobs=0,
+            skipped_jobs=0,
+            checkpoint_path=checkpoint_path,
+            queue_summary_path=summary_path,
+            jobs=[{"job_id": "job_0001", "status": "done"}],
+        )
+
+    monkeypatch.setattr(cli, "TranslationWorkflow", _FakeWorkflow)
+    monkeypatch.setattr(cli, "run_queue_manifest", _fake_run_queue_manifest)
+    monkeypatch.setattr(cli, "require_writable_output_dir_text", lambda _: outdir)
+    _stub_cli_settings(monkeypatch)
+
+    exit_code = cli.main(
+        [
+            "--queue-manifest",
+            str(manifest_path),
+            "--rerun-failed-only",
+            "true",
+            "--lang",
+            "EN",
+            "--outdir",
+            str(outdir),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["manifest_path"] == manifest_path.resolve()
+    assert captured["rerun_failed_only"] is True
+    assert getattr(captured["run_job_result"], "success", False) is True
+    assert captured["config"].target_lang.value == "FR"
+
+
+def test_cli_queue_mode_rejects_invalid_rerun_flag(tmp_path: Path, monkeypatch) -> None:
+    manifest_path = tmp_path / "queue.json"
+    manifest_path.write_text("[]", encoding="utf-8")
+    _stub_cli_settings(monkeypatch)
+    exit_code = cli.main(
+        [
+            "--queue-manifest",
+            str(manifest_path),
+            "--rerun-failed-only",
+            "maybe",
+        ]
+    )
+    assert exit_code == 1

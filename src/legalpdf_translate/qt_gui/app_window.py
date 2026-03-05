@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,7 @@ from legalpdf_translate.output_paths import (
     require_writable_output_dir_text,
 )
 from legalpdf_translate.pdf_text_order import get_page_count
+from legalpdf_translate.queue_runner import QueueRunSummary
 from legalpdf_translate.qt_gui.dialogs import (
     JobLogSeed,
     QtJobLogWindow,
@@ -80,6 +82,7 @@ from legalpdf_translate.qt_gui.tools_dialogs import QtCalibrationAuditDialog, Qt
 from legalpdf_translate.qt_gui.styles import apply_primary_glow, apply_soft_shadow
 from legalpdf_translate.qt_gui.worker import (
     AnalyzeWorker,
+    QueueRunWorker,
     RebuildDocxWorker,
     TranslationRunWorker,
 )
@@ -158,6 +161,24 @@ def _coerce_float_or_none(value: object) -> float | None:
             return float(cleaned)
         except ValueError:
             return None
+    return None
+
+
+def _coerce_bool_or_none(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "y", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "n", "off"}:
+            return False
     return None
 
 
@@ -350,6 +371,8 @@ class QtMainWindow(QMainWindow):
         self._last_joblog_seed: JobLogSeed | None = None
         self._last_review_queue: list[dict[str, object]] = []
         self._last_run_report_path: Path | None = None
+        self._last_queue_summary_path: Path | None = None
+        self._queue_status_rows: list[dict[str, Any]] = []
         self._advisor_recommendation: dict[str, Any] | None = None
         self._advisor_recommendation_applied: bool | None = None
         self._advisor_override_ocr_mode: str | None = None
@@ -493,6 +516,17 @@ class QtMainWindow(QMainWindow):
         cf = QWidget(); cfl = QHBoxLayout(cf); cfl.setContentsMargins(0, 0, 0, 0); cfl.setSpacing(8); cfl.addWidget(self.context_file_edit); cfl.addWidget(self.context_btn)
         self.context_text = QPlainTextEdit(); self.context_text.setFixedHeight(90); self.context_text.setPlaceholderText("Optional context text...")
         self.analyze_btn = QPushButton("Analyze")
+        self.queue_manifest_edit = QLineEdit(placeholderText="Optional queue manifest (.json/.jsonl)...")
+        self.queue_manifest_btn = QPushButton("Browse")
+        queue_manifest_row = QWidget()
+        queue_manifest_layout = QHBoxLayout(queue_manifest_row)
+        queue_manifest_layout.setContentsMargins(0, 0, 0, 0)
+        queue_manifest_layout.setSpacing(8)
+        queue_manifest_layout.addWidget(self.queue_manifest_edit)
+        queue_manifest_layout.addWidget(self.queue_manifest_btn)
+        self.queue_rerun_failed_only_check = QCheckBox("Rerun failed only")
+        self.run_queue_btn = QPushButton("Run Queue")
+        self.queue_status_label = QLabel("Queue: idle", objectName="MutedLabel")
         toggles = QWidget(); tl = QHBoxLayout(toggles); tl.setContentsMargins(0, 0, 0, 0); tl.setSpacing(12); tl.addWidget(self.resume_check); tl.addWidget(self.breaks_check); tl.addWidget(self.keep_check); tl.addStretch(1)
         adv.addRow("Effort policy", self.effort_policy_combo)
         adv.addRow("Reasoning effort", self.effort_combo)
@@ -507,6 +541,10 @@ class QtMainWindow(QMainWindow):
         adv.addRow("Context file", cf)
         adv.addRow("Context text", self.context_text)
         adv.addRow("", self.analyze_btn)
+        adv.addRow("Queue manifest", queue_manifest_row)
+        adv.addRow("", self.queue_rerun_failed_only_check)
+        adv.addRow("", self.run_queue_btn)
+        adv.addRow("Queue status", self.queue_status_label)
         main_layout.addWidget(self.adv_frame)
 
         self.advisor_frame = QFrame(objectName="SurfacePanel")
@@ -589,6 +627,8 @@ class QtMainWindow(QMainWindow):
         self.details_btn.toggled.connect(self._set_details_visible)
         self.translate_btn.clicked.connect(self._start)
         self.analyze_btn.clicked.connect(self._start_analyze)
+        self.run_queue_btn.clicked.connect(self._start_queue)
+        self.queue_manifest_btn.clicked.connect(self._pick_queue_manifest)
         self.advisor_apply_btn.clicked.connect(self._apply_advisor_recommendation)
         self.advisor_ignore_btn.clicked.connect(self._ignore_advisor_recommendation)
         self.cancel_btn.clicked.connect(self._cancel)
@@ -617,6 +657,8 @@ class QtMainWindow(QMainWindow):
         self.resume_check.toggled.connect(self._on_form_changed)
         self.breaks_check.toggled.connect(self._on_form_changed)
         self.keep_check.toggled.connect(self._on_form_changed)
+        self.queue_manifest_edit.textChanged.connect(self._on_form_changed)
+        self.queue_rerun_failed_only_check.toggled.connect(self._on_form_changed)
 
         self._set_adv_visible(False)
         self._set_details_visible(False)
@@ -658,6 +700,8 @@ class QtMainWindow(QMainWindow):
         self.resume_check.setChecked(bool(defaults.get("resume", defaults.get("default_resume", True))))
         self.breaks_check.setChecked(bool(defaults.get("page_breaks", defaults.get("default_page_breaks", True))))
         self.keep_check.setChecked(bool(defaults.get("keep_intermediates", defaults.get("default_keep_intermediates", True))))
+        self.queue_manifest_edit.setText(str(defaults.get("queue_manifest_path", "") or ""))
+        self.queue_rerun_failed_only_check.setChecked(bool(defaults.get("queue_rerun_failed_only", False)))
 
     def _save_settings(self) -> None:
         timer = getattr(self, "_settings_save_timer", None)
@@ -696,6 +740,8 @@ class QtMainWindow(QMainWindow):
             "resume": self.resume_check.isChecked(),
             "page_breaks": self.breaks_check.isChecked(),
             "keep_intermediates": self.keep_check.isChecked(),
+            "queue_manifest_path": self.queue_manifest_edit.text().strip(),
+            "queue_rerun_failed_only": self.queue_rerun_failed_only_check.isChecked(),
         }
         try:
             save_gui_settings(values)
@@ -1157,6 +1203,77 @@ class QtMainWindow(QMainWindow):
         if path:
             self.context_file_edit.setText(path)
 
+    def _pick_queue_manifest(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select queue manifest",
+            "",
+            "Queue Manifests (*.json *.jsonl);;JSON (*.json);;JSONL (*.jsonl);;All Files (*.*)",
+        )
+        if path:
+            self.queue_manifest_edit.setText(path)
+
+    @staticmethod
+    def _build_queue_job_config_from_base(base_config: RunConfig, job_payload: dict[str, Any]) -> RunConfig:
+        pdf_value = str(job_payload.get("pdf", job_payload.get("pdf_path", "")) or "").strip()
+        if pdf_value == "":
+            raise ValueError("Queue job is missing required field: pdf")
+        lang_value = str(job_payload.get("lang", base_config.target_lang.value) or "").strip().upper()
+        if lang_value not in {"EN", "FR", "AR"}:
+            raise ValueError(f"Queue job has invalid lang: {lang_value}")
+        outdir_value = str(
+            job_payload.get("outdir", job_payload.get("output_dir", str(base_config.output_dir)))
+            or ""
+        ).strip()
+        if outdir_value == "":
+            raise ValueError("Queue job is missing required field: outdir/output_dir")
+
+        config = replace(
+            base_config,
+            pdf_path=Path(pdf_value).expanduser().resolve(),
+            output_dir=require_writable_output_dir_text(outdir_value),
+            target_lang=TargetLang(lang_value),
+        )
+        start_page = _coerce_int_or_none(job_payload.get("start_page"))
+        end_page = _coerce_int_or_none(job_payload.get("end_page"))
+        max_pages = _coerce_int_or_none(job_payload.get("max_pages"))
+        workers = _coerce_int_or_none(job_payload.get("workers"))
+        if start_page is not None:
+            if start_page <= 0:
+                raise ValueError(f"Queue job start_page must be >= 1 (job pdf={pdf_value}).")
+            config = replace(config, start_page=int(start_page))
+        if end_page is not None:
+            if end_page <= 0:
+                raise ValueError(f"Queue job end_page must be >= 1 (job pdf={pdf_value}).")
+            config = replace(config, end_page=int(end_page))
+        if max_pages is not None:
+            if max_pages <= 0:
+                raise ValueError(f"Queue job max_pages must be >= 1 (job pdf={pdf_value}).")
+            config = replace(config, max_pages=int(max_pages))
+        if workers is not None:
+            config = replace(config, workers=max(1, min(6, int(workers))))
+
+        image_override = _normalized_mode_or_none(job_payload.get("image_mode", job_payload.get("images")))
+        if image_override is not None:
+            config = replace(config, image_mode=parse_image_mode(image_override))
+        ocr_override = _normalized_mode_or_none(job_payload.get("ocr_mode"))
+        if ocr_override is not None:
+            config = replace(config, ocr_mode=parse_ocr_mode(ocr_override))
+        ocr_engine_override = str(job_payload.get("ocr_engine", "") or "").strip().lower()
+        if ocr_engine_override in {"local", "local_then_api", "api"}:
+            config = replace(config, ocr_engine=parse_ocr_engine_policy(ocr_engine_override))
+        resume_override = _coerce_bool_or_none(job_payload.get("resume"))
+        if resume_override is not None:
+            config = replace(config, resume=bool(resume_override))
+        page_breaks_override = _coerce_bool_or_none(job_payload.get("page_breaks"))
+        if page_breaks_override is not None:
+            config = replace(config, page_breaks=bool(page_breaks_override))
+        keep_override = _coerce_bool_or_none(job_payload.get("keep_intermediates"))
+        if keep_override is not None:
+            config = replace(config, keep_intermediates=bool(keep_override))
+
+        return config
+
     def _append_log(self, message: str) -> None:
         stamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.appendPlainText(f"[{stamp}] {message}")
@@ -1201,9 +1318,19 @@ class QtMainWindow(QMainWindow):
             return "cancel"
         return "cancel"
 
-    def _build_config(self) -> RunConfig:
-        pdf_text = self.pdf_edit.text().strip()
-        outdir_text = self.outdir_edit.text().strip()
+    def _build_config(
+        self,
+        *,
+        pdf_override: str | None = None,
+        outdir_override: str | None = None,
+        lang_override: str | None = None,
+    ) -> RunConfig:
+        pdf_text = pdf_override.strip() if isinstance(pdf_override, str) else self.pdf_edit.text().strip()
+        outdir_text = (
+            outdir_override.strip()
+            if isinstance(outdir_override, str)
+            else self.outdir_edit.text().strip()
+        )
         if not pdf_text:
             raise ValueError("PDF path is required.")
         if not outdir_text:
@@ -1245,7 +1372,9 @@ class QtMainWindow(QMainWindow):
         return RunConfig(
             pdf_path=pdf,
             output_dir=outdir,
-            target_lang=TargetLang(self.lang_combo.currentText().strip().upper()),
+            target_lang=TargetLang(
+                (lang_override.strip() if isinstance(lang_override, str) else self.lang_combo.currentText().strip()).upper()
+            ),
             effort=parse_effort(self.effort_combo.currentText()),
             effort_policy=parse_effort_policy(self.effort_policy_combo.currentText()),
             allow_xhigh_escalation=bool(self._defaults.get("allow_xhigh_escalation", False)),
@@ -1327,8 +1456,24 @@ class QtMainWindow(QMainWindow):
 
     def _update_controls(self) -> None:
         can_start = self._can_start()
+        queue_manifest_edit = getattr(self, "queue_manifest_edit", None)
+        queue_manifest_text = (
+            queue_manifest_edit.text().strip()
+            if queue_manifest_edit is not None and hasattr(queue_manifest_edit, "text")
+            else ""
+        )
+        queue_manifest_path = Path(queue_manifest_text).expanduser().resolve() if queue_manifest_text else None
+        can_start_queue = (
+            (not self._busy)
+            and queue_manifest_path is not None
+            and queue_manifest_path.exists()
+            and queue_manifest_path.is_file()
+        )
         self.translate_btn.setEnabled(can_start)
         self.analyze_btn.setEnabled(can_start and not self._busy)
+        run_queue_btn = getattr(self, "run_queue_btn", None)
+        if run_queue_btn is not None:
+            run_queue_btn.setEnabled(can_start_queue)
         self.cancel_btn.setEnabled(self._running)
         self.new_btn.setEnabled(not self._busy)
         self.partial_btn.setEnabled((not self._busy) and self._can_export_partial and self._last_workflow is not None)
@@ -1369,12 +1514,16 @@ class QtMainWindow(QMainWindow):
         self._running = busy and translation
         advisor_apply_btn = getattr(self, "advisor_apply_btn", None)
         advisor_ignore_btn = getattr(self, "advisor_ignore_btn", None)
+        queue_manifest_edit = getattr(self, "queue_manifest_edit", None)
+        queue_manifest_btn = getattr(self, "queue_manifest_btn", None)
+        queue_rerun_failed_only_check = getattr(self, "queue_rerun_failed_only_check", None)
         for w in (
             self.pdf_edit, self.pdf_btn, self.lang_combo, self.outdir_edit, self.outdir_btn, self.show_adv,
             self.effort_policy_combo, self.effort_combo, self.images_combo, self.ocr_mode_combo, self.ocr_engine_combo,
             self.start_edit, self.end_edit, self.max_edit, self.workers_spin,
             self.resume_check, self.breaks_check, self.keep_check,
             self.context_file_edit, self.context_btn, self.context_text,
+            queue_manifest_edit, queue_manifest_btn, queue_rerun_failed_only_check,
             advisor_apply_btn, advisor_ignore_btn,
         ):
             if w is not None:
@@ -1417,6 +1566,7 @@ class QtMainWindow(QMainWindow):
             self._review_queue_dialog = None
         self._last_summary = None
         self._last_run_report_path = None
+        self._last_queue_summary_path = None
         self._last_run_dir = build_output_paths(config.output_dir, config.pdf_path, config.target_lang).run_dir
         self._last_output_docx = None
         self._last_run_config = config
@@ -1429,6 +1579,7 @@ class QtMainWindow(QMainWindow):
         self.page_label.setText("Page: -/-")
         self.status_label.setText("Starting...")
         self.header_status_label.setText("Starting...")
+        self.queue_status_label.setText("Queue: idle")
         self._reset_live_counters()
         if advisor_applied is not None:
             self._append_log(f"OCR advisor choice for this run: applied={advisor_applied}")
@@ -1458,6 +1609,146 @@ class QtMainWindow(QMainWindow):
         self._set_busy(True, translation=True)
         thread.start()
 
+    def _start_queue(self) -> None:
+        if self._busy:
+            return
+        manifest_text = self.queue_manifest_edit.text().strip()
+        if manifest_text == "":
+            QMessageBox.information(self, "Run Queue", "Select a queue manifest first.")
+            return
+        manifest_path = Path(manifest_text).expanduser().resolve()
+        if not manifest_path.exists() or not manifest_path.is_file():
+            QMessageBox.critical(self, "Run Queue", f"Queue manifest not found:\n{manifest_path}")
+            return
+
+        try:
+            base_config = self._build_config()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Invalid configuration", str(exc))
+            return
+
+        base_config = replace(
+            base_config,
+            advisor_recommendation_applied=None,
+            advisor_recommendation=None,
+        )
+        rerun_failed_only = self.queue_rerun_failed_only_check.isChecked()
+        self._save_settings()
+        self._consume_advisor_choice()
+        if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
+            self._review_queue_dialog.close()
+            self._review_queue_dialog = None
+        self._last_summary = None
+        self._last_run_report_path = None
+        self._last_queue_summary_path = None
+        self._last_run_dir = None
+        self._last_output_docx = None
+        self._last_run_config = base_config
+        self._last_joblog_seed = None
+        self._last_review_queue = []
+        self._last_workflow = None
+        self._can_export_partial = False
+        self._queue_status_rows = []
+        self.final_docx_edit.clear()
+        self.progress.setValue(0)
+        self.page_label.setText("Queue: -")
+        self.status_label.setText("Queue starting...")
+        self.header_status_label.setText("Queue starting...")
+        self.queue_status_label.setText("Queue: pending")
+        self._reset_live_counters()
+
+        max_retries = int(self._defaults.get("perf_max_transport_retries", 4) or 4)
+        backoff_cap = float(self._defaults.get("perf_backoff_cap_seconds", 12.0) or 12.0)
+
+        thread = QThread(self)
+        worker = QueueRunWorker(
+            manifest_path=manifest_path,
+            rerun_failed_only=rerun_failed_only,
+            build_config=lambda payload: self._build_queue_job_config_from_base(base_config, payload),
+            max_transport_retries=max_retries,
+            backoff_cap_seconds=backoff_cap,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.log.connect(self._append_log)
+        worker.queue_status.connect(self._on_queue_status)
+        worker.finished.connect(self._on_queue_finished)
+        worker.error.connect(self._on_queue_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(self._cleanup_worker)
+        self.request_cancel.connect(worker.cancel, Qt.ConnectionType.QueuedConnection)
+
+        self._worker_thread = thread
+        self._worker = worker
+        self._set_busy(True, translation=True)
+        thread.start()
+
+    def _on_queue_status(self, row_obj: object) -> None:
+        if not isinstance(row_obj, dict):
+            return
+        row = dict(row_obj)
+        self._queue_status_rows.append(row)
+        status = str(row.get("status", "") or "").strip().lower()
+        job_id = str(row.get("job_id", "") or "").strip() or "unknown"
+        self.queue_status_label.setText(f"Queue: {job_id} -> {status or 'pending'}")
+        if status == "running":
+            self.status_label.setText(f"Queue running: {job_id}")
+            self.header_status_label.setText("Queue running")
+        elif status in {"done", "failed", "skipped"}:
+            self._append_log(f"Queue status: {job_id} -> {status}")
+
+    def _on_queue_finished(self, summary_obj: object) -> None:
+        self._set_busy(False, translation=False)
+        if not isinstance(summary_obj, QueueRunSummary):
+            self.status_label.setText("Queue failed")
+            self.header_status_label.setText("Queue failed")
+            self.queue_status_label.setText("Queue: failed")
+            QMessageBox.critical(self, "Queue failed", "Queue worker returned an invalid summary.")
+            self._update_controls()
+            return
+
+        summary = summary_obj
+        self._last_queue_summary_path = summary.queue_summary_path.expanduser().resolve()
+        self._append_log(f"Queue summary: {self._last_queue_summary_path}")
+        self._append_log(f"Queue checkpoint: {summary.checkpoint_path}")
+        for row in reversed(summary.jobs):
+            run_dir_text = str(row.get("run_dir", "") or "").strip()
+            if run_dir_text == "":
+                continue
+            candidate = Path(run_dir_text).expanduser().resolve()
+            self._last_run_dir = candidate
+            break
+
+        queue_result_text = (
+            f"Queue complete.\n\nTotal jobs: {summary.total_jobs}\n"
+            f"Done: {summary.done_jobs}\nFailed: {summary.failed_jobs}\nSkipped: {summary.skipped_jobs}\n\n"
+            f"Summary: {summary.queue_summary_path}"
+        )
+        if summary.success:
+            self.status_label.setText("Queue completed")
+            self.header_status_label.setText("Queue completed")
+            self.queue_status_label.setText(
+                f"Queue: done={summary.done_jobs} failed={summary.failed_jobs} skipped={summary.skipped_jobs}"
+            )
+            QMessageBox.information(self, "Queue complete", queue_result_text)
+        else:
+            self.status_label.setText("Queue completed with failures")
+            self.header_status_label.setText("Queue warnings")
+            self.queue_status_label.setText(
+                f"Queue: done={summary.done_jobs} failed={summary.failed_jobs} skipped={summary.skipped_jobs}"
+            )
+            QMessageBox.warning(self, "Queue completed with failures", queue_result_text)
+        self._update_controls()
+
+    def _on_queue_error(self, message: str) -> None:
+        self._set_busy(False, translation=False)
+        self.status_label.setText("Queue failed")
+        self.header_status_label.setText("Queue failed")
+        self.queue_status_label.setText("Queue: failed")
+        self._append_log(f"Queue failed: {message}")
+        QMessageBox.critical(self, "Queue failed", message)
+
     def _start_analyze(self) -> None:
         if self._busy:
             return
@@ -1474,11 +1765,13 @@ class QtMainWindow(QMainWindow):
             self._review_queue_dialog = None
         self._last_summary = None
         self._last_run_report_path = None
+        self._last_queue_summary_path = None
         self._last_output_docx = None
         self._last_joblog_seed = None
         self._last_review_queue = []
         self.status_label.setText("Analyzing...")
         self.header_status_label.setText("Analyzing...")
+        self.queue_status_label.setText("Queue: idle")
         self.progress.setValue(0)
         self.page_label.setText("Page: -/-")
         self._reset_live_counters()
@@ -1525,6 +1818,7 @@ class QtMainWindow(QMainWindow):
         if self._worker is not None and hasattr(self._worker, "workflow"):
             self._last_workflow = getattr(self._worker, "workflow")
         self._set_busy(False, translation=False)
+        self.queue_status_label.setText("Queue: idle")
         if summary is None:
             self.status_label.setText("Run finished with invalid summary")
             self.header_status_label.setText("Error")
@@ -1576,6 +1870,7 @@ class QtMainWindow(QMainWindow):
         self._set_busy(False, translation=False)
         self._last_joblog_seed = None
         self._last_review_queue = []
+        self.queue_status_label.setText("Queue: idle")
         self.status_label.setText("Error")
         self.header_status_label.setText("Error")
         self._append_log(f"Runtime error: {message}")
@@ -1626,6 +1921,7 @@ class QtMainWindow(QMainWindow):
         self._set_busy(False, translation=False)
         self._set_advisor_recommendation(None)
         self._last_review_queue = []
+        self.queue_status_label.setText("Queue: idle")
         self.status_label.setText("Analyze failed")
         self.header_status_label.setText("Analyze failed")
         self._append_log(f"Analyze failed: {message}")
@@ -1664,11 +1960,13 @@ class QtMainWindow(QMainWindow):
             self._review_queue_dialog = None
         self._last_summary = None
         self._last_run_report_path = None
+        self._last_queue_summary_path = None
         self._last_run_dir = None
         self._last_output_docx = None
         self._last_run_config = None
         self._last_joblog_seed = None
         self._last_review_queue = []
+        self._queue_status_rows = []
         self._advisor_recommendation = None
         self._advisor_recommendation_applied = None
         self._advisor_override_ocr_mode = None
@@ -1681,6 +1979,9 @@ class QtMainWindow(QMainWindow):
         self.page_label.setText("Page: -/-")
         self.status_label.setText("Idle")
         self.header_status_label.setText("Idle")
+        queue_label = getattr(self, "queue_status_label", None)
+        if queue_label is not None:
+            queue_label.setText("Queue: idle")
         self._reset_live_counters()
         self.final_docx_edit.clear()
         self.log_text.clear()
@@ -1722,9 +2023,11 @@ class QtMainWindow(QMainWindow):
             self._review_queue_dialog.close()
             self._review_queue_dialog = None
         self._last_summary = None
+        self._last_queue_summary_path = None
         self._last_run_config = config
         self._last_joblog_seed = None
         self._last_review_queue = []
+        self.queue_status_label.setText("Queue: idle")
         self._set_busy(True, translation=False)
         self.status_label.setText("Rebuilding DOCX...")
         self.header_status_label.setText("Rebuilding DOCX...")

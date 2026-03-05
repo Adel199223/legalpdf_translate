@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import re
 import threading
+from pathlib import Path
+from typing import Any, Callable
 
 from PySide6.QtCore import QObject, Signal, Slot
 
 from legalpdf_translate.openai_client import OpenAIResponsesClient
+from legalpdf_translate.queue_runner import (
+    queue_result_from_run_summary,
+    run_queue_manifest,
+)
 from legalpdf_translate.types import RunConfig
 from legalpdf_translate.workflow import TranslationWorkflow
 
@@ -135,3 +141,70 @@ class AnalyzeWorker(QObject):
             self.finished.emit(summary)
         except Exception as exc:  # noqa: BLE001
             self.error.emit(str(exc))
+
+
+class QueueRunWorker(QObject):
+    """Run queue-manifest jobs sequentially without blocking the GUI thread."""
+
+    log = Signal(str)
+    queue_status = Signal(object)
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        manifest_path: Path,
+        rerun_failed_only: bool,
+        build_config: Callable[[dict[str, Any]], RunConfig],
+        max_transport_retries: int,
+        backoff_cap_seconds: float,
+    ) -> None:
+        super().__init__()
+        self._manifest_path = manifest_path.expanduser().resolve()
+        self._rerun_failed_only = bool(rerun_failed_only)
+        self._build_config = build_config
+        self._max_transport_retries = max_transport_retries
+        self._backoff_cap_seconds = backoff_cap_seconds
+        self._cancel_requested = False
+        self._current_workflow: TranslationWorkflow | None = None
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            def _run_job(job_payload: dict[str, Any]):
+                if self._cancel_requested:
+                    raise RuntimeError("queue_cancelled_by_user")
+                config = self._build_config(job_payload)
+                client = OpenAIResponsesClient(
+                    max_transport_retries=self._max_transport_retries,
+                    backoff_cap_seconds=self._backoff_cap_seconds,
+                    logger=self.log.emit,
+                )
+                workflow = TranslationWorkflow(
+                    client=client,
+                    log_callback=self.log.emit,
+                )
+                self._current_workflow = workflow
+                return queue_result_from_run_summary(workflow.run(config))
+
+            summary = run_queue_manifest(
+                manifest_path=self._manifest_path,
+                run_job=_run_job,
+                rerun_failed_only=self._rerun_failed_only,
+                log_callback=self.log.emit,
+                status_callback=lambda row: self.queue_status.emit(dict(row)),
+            )
+            self.finished.emit(summary)
+        except Exception as exc:  # noqa: BLE001
+            self.error.emit(str(exc))
+        finally:
+            self._current_workflow = None
+
+    @Slot()
+    def cancel(self) -> None:
+        self._cancel_requested = True
+        workflow = self._current_workflow
+        if workflow is not None:
+            workflow.cancel()
+        self.log.emit("Queue cancellation requested.")

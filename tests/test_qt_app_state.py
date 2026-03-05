@@ -189,6 +189,8 @@ def test_save_settings_uses_existing_gui_keys(monkeypatch) -> None:
         resume_check=_FakeCheck(True),
         breaks_check=_FakeCheck(False),
         keep_check=_FakeCheck(True),
+        queue_manifest_edit=_FakeEdit("C:/tmp/queue.json"),
+        queue_rerun_failed_only_check=_FakeCheck(False),
     )
 
     QtMainWindow._save_settings(fake)
@@ -208,6 +210,8 @@ def test_save_settings_uses_existing_gui_keys(monkeypatch) -> None:
         "resume",
         "page_breaks",
         "keep_intermediates",
+        "queue_manifest_path",
+        "queue_rerun_failed_only",
     }
     assert set(captured.keys()) == expected
     assert fake._defaults["last_lang"] == "FR"

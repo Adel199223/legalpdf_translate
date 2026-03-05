@@ -17,6 +17,7 @@ from .checkpoint import (
     parse_ocr_mode,
 )
 from .output_paths import require_writable_output_dir_text
+from .queue_runner import queue_result_from_run_summary, run_queue_manifest
 from .review_export import export_review_queue
 from .secrets_store import (
     delete_openai_key,
@@ -115,6 +116,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional output path prefix or directory for review queue export (.csv + .md).",
     )
+    parser.add_argument(
+        "--queue-manifest",
+        default="",
+        help="Optional queue manifest path (.json or .jsonl).",
+    )
+    parser.add_argument(
+        "--rerun-failed-only",
+        default="false",
+        help="Queue mode only: rerun only previously failed jobs true|false.",
+    )
     parser.add_argument("--ocr-mode", default="auto", choices=["off", "auto", "always"], help="OCR mode.")
     parser.add_argument(
         "--ocr-engine",
@@ -201,6 +212,58 @@ def _clamp_workers(value: int) -> int:
     return value
 
 
+def _build_run_config_from_args(
+    *,
+    args: argparse.Namespace,
+    raw_args: list[str],
+    settings: dict[str, object],
+    pdf_arg: str,
+    lang_arg: TargetLang,
+    outdir_abs: Path,
+) -> RunConfig:
+    effort_flag_explicit = "--effort" in raw_args
+    if args.effort_policy is not None:
+        effort_policy = parse_effort_policy(args.effort_policy)
+    elif effort_flag_explicit:
+        effort_policy = parse_effort_policy("fixed_xhigh" if args.effort == "xhigh" else "fixed_high")
+    else:
+        effort_policy = parse_effort_policy("adaptive")
+
+    glossary_cli = args.glossary_file.strip()
+    glossary_settings = str(settings.get("glossary_file_path", "") or "").strip()
+    glossary_effective = glossary_cli or glossary_settings
+    budget_cap_usd = args.budget_cap_usd
+    if budget_cap_usd is not None and float(budget_cap_usd) < 0.0:
+        raise ValueError("--budget-cap-usd must be >= 0 when provided.")
+    cost_profile_id = (args.cost_profile_id or "").strip() or "default_local"
+    return RunConfig(
+        pdf_path=Path(pdf_arg).resolve(),
+        output_dir=outdir_abs,
+        target_lang=lang_arg,
+        effort=parse_effort(args.effort),
+        effort_policy=effort_policy,
+        allow_xhigh_escalation=bool_from_text(args.allow_xhigh_escalation),
+        image_mode=parse_image_mode(args.images),
+        max_pages=args.max_pages,
+        workers=_clamp_workers(int(args.workers)),
+        resume=bool_from_text(args.resume),
+        page_breaks=bool_from_text(args.page_breaks),
+        keep_intermediates=bool_from_text(args.keep_intermediates),
+        strip_bidi_controls=not bool(args.preserve_bidi_controls),
+        ocr_mode=parse_ocr_mode(args.ocr_mode),
+        ocr_engine=parse_ocr_engine_policy(args.ocr_engine),
+        ocr_api_base_url=args.ocr_api_base_url.strip() or None,
+        ocr_api_model=args.ocr_api_model.strip() or None,
+        ocr_api_key_env_name=args.ocr_api_key_env.strip() or "DEEPSEEK_API_KEY",
+        context_file=Path(args.context_file).resolve() if args.context_file.strip() != "" else None,
+        context_text=None,
+        glossary_file=Path(glossary_effective).expanduser().resolve() if glossary_effective else None,
+        budget_cap_usd=budget_cap_usd,
+        cost_profile_id=cost_profile_id,
+        budget_on_exceed=BudgetExceedPolicy(args.budget_on_exceed.strip().lower()),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     parser = build_arg_parser()
@@ -209,59 +272,87 @@ def main(argv: list[str] | None = None) -> int:
     if key_command_result is not None:
         return key_command_result
 
-    try:
-        pdf_arg, lang_arg, outdir_arg = _validate_required_run_args(args)
-        outdir_abs = require_writable_output_dir_text(outdir_arg)
-        effort_flag_explicit = "--effort" in raw_args
-        if args.effort_policy is not None:
-            effort_policy = parse_effort_policy(args.effort_policy)
-        elif effort_flag_explicit:
-            effort_policy = parse_effort_policy("fixed_xhigh" if args.effort == "xhigh" else "fixed_high")
-        else:
-            effort_policy = parse_effort_policy("adaptive")
-        settings = load_gui_settings()
-        glossary_cli = args.glossary_file.strip()
-        glossary_settings = str(settings.get("glossary_file_path", "") or "").strip()
-        glossary_effective = glossary_cli or glossary_settings
-        budget_cap_usd = args.budget_cap_usd
-        if budget_cap_usd is not None and float(budget_cap_usd) < 0.0:
-            raise ValueError("--budget-cap-usd must be >= 0 when provided.")
-        cost_profile_id = (args.cost_profile_id or "").strip() or "default_local"
-        config = RunConfig(
-            pdf_path=Path(pdf_arg).resolve(),
-            output_dir=outdir_abs,
-            target_lang=lang_arg,
-            effort=parse_effort(args.effort),
-            effort_policy=effort_policy,
-            allow_xhigh_escalation=bool_from_text(args.allow_xhigh_escalation),
-            image_mode=parse_image_mode(args.images),
-            max_pages=args.max_pages,
-            workers=_clamp_workers(int(args.workers)),
-            resume=bool_from_text(args.resume),
-            page_breaks=bool_from_text(args.page_breaks),
-            keep_intermediates=bool_from_text(args.keep_intermediates),
-            strip_bidi_controls=not bool(args.preserve_bidi_controls),
-            ocr_mode=parse_ocr_mode(args.ocr_mode),
-            ocr_engine=parse_ocr_engine_policy(args.ocr_engine),
-            ocr_api_base_url=args.ocr_api_base_url.strip() or None,
-            ocr_api_model=args.ocr_api_model.strip() or None,
-            ocr_api_key_env_name=args.ocr_api_key_env.strip() or "DEEPSEEK_API_KEY",
-            context_file=Path(args.context_file).resolve() if args.context_file.strip() != "" else None,
-            context_text=None,
-            glossary_file=Path(glossary_effective).expanduser().resolve() if glossary_effective else None,
-            budget_cap_usd=budget_cap_usd,
-            cost_profile_id=cost_profile_id,
-            budget_on_exceed=BudgetExceedPolicy(args.budget_on_exceed.strip().lower()),
-        )
-    except Exception as exc:  # noqa: BLE001
-        print(f"[{_timestamp()}] Config error: {exc}", file=sys.stderr)
-        return 1
-
     def log_callback(message: str) -> None:
         print(f"[{_timestamp()}] {message}")
 
     def progress_callback(page: int, total: int, status: str) -> None:
         print(f"[{_timestamp()}] page={page}/{total} status={status}")
+
+    settings = load_gui_settings()
+
+    queue_manifest_raw = str(args.queue_manifest or "").strip()
+    if queue_manifest_raw != "":
+        try:
+            rerun_failed_only = bool_from_text(args.rerun_failed_only)
+            manifest_path = Path(queue_manifest_raw).expanduser().resolve()
+
+            def _run_job(job_payload: dict[str, object]):
+                pdf_value = str(
+                    job_payload.get("pdf", job_payload.get("pdf_path", ""))
+                    or ""
+                ).strip()
+                if pdf_value == "":
+                    raise ValueError("Queue job missing required 'pdf' field.")
+                lang_value = str(
+                    job_payload.get("lang", args.lang.value if args.lang is not None else "")
+                    or ""
+                ).strip()
+                if lang_value == "":
+                    raise ValueError("Queue job missing required language (set job.lang or CLI --lang).")
+                outdir_value = str(
+                    job_payload.get("outdir", job_payload.get("output_dir", args.outdir or ""))
+                    or ""
+                ).strip()
+                if outdir_value == "":
+                    raise ValueError(
+                        "Queue job missing required output dir (set job.outdir/output_dir or CLI --outdir)."
+                    )
+                lang_arg = _parse_lang(lang_value)
+                outdir_abs = require_writable_output_dir_text(outdir_value)
+                config = _build_run_config_from_args(
+                    args=args,
+                    raw_args=raw_args,
+                    settings=settings,
+                    pdf_arg=pdf_value,
+                    lang_arg=lang_arg,
+                    outdir_abs=outdir_abs,
+                )
+                workflow = TranslationWorkflow(log_callback=log_callback, progress_callback=progress_callback)
+                return queue_result_from_run_summary(workflow.run(config))
+
+            queue_summary = run_queue_manifest(
+                manifest_path=manifest_path,
+                run_job=_run_job,
+                rerun_failed_only=rerun_failed_only,
+                log_callback=log_callback,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{_timestamp()}] Queue error: {exc}", file=sys.stderr)
+            return 1
+
+        print(
+            f"[{_timestamp()}] Queue finished: total={queue_summary.total_jobs}, "
+            f"done={queue_summary.done_jobs}, failed={queue_summary.failed_jobs}, "
+            f"skipped={queue_summary.skipped_jobs}"
+        )
+        print(f"[{_timestamp()}] Queue summary: {queue_summary.queue_summary_path}")
+        print(f"[{_timestamp()}] Queue checkpoint: {queue_summary.checkpoint_path}")
+        return 0 if queue_summary.success else 1
+
+    try:
+        pdf_arg, lang_arg, outdir_arg = _validate_required_run_args(args)
+        outdir_abs = require_writable_output_dir_text(outdir_arg)
+        config = _build_run_config_from_args(
+            args=args,
+            raw_args=raw_args,
+            settings=settings,
+            pdf_arg=pdf_arg,
+            lang_arg=lang_arg,
+            outdir_abs=outdir_abs,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[{_timestamp()}] Config error: {exc}", file=sys.stderr)
+        return 1
 
     workflow = TranslationWorkflow(log_callback=log_callback, progress_callback=progress_callback)
 
