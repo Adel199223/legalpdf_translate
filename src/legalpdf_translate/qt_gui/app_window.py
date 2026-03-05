@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -118,6 +119,76 @@ def _is_truthy_env(value: str | None) -> bool:
     if value is None:
         return False
     return value.strip().lower() in {"1", "true", "yes"}
+
+
+def _coerce_int_or_none(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned == "":
+            return None
+        try:
+            return int(cleaned)
+        except ValueError:
+            try:
+                return int(float(cleaned))
+            except ValueError:
+                return None
+    return None
+
+
+def _coerce_float_or_none(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", ".")
+        if cleaned == "":
+            return None
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+    return None
+
+
+def _load_run_summary_metrics(summary_path: Path) -> dict[str, object]:
+    defaults: dict[str, object] = {
+        "run_id": "",
+        "target_lang": "",
+        "total_tokens": None,
+        "estimated_api_cost": None,
+        "quality_risk_score": None,
+    }
+    if not summary_path.exists() or not summary_path.is_file():
+        return defaults
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return defaults
+    if not isinstance(payload, dict):
+        return defaults
+
+    totals_payload = payload.get("totals", {})
+    totals = totals_payload if isinstance(totals_payload, dict) else {}
+    run_id = str(payload.get("run_id", "") or "").strip()
+    target_lang = str(payload.get("lang", "") or "").strip()
+    total_tokens = _coerce_int_or_none(totals.get("total_tokens"))
+    estimated_api_cost = _coerce_float_or_none(totals.get("total_cost_estimate_if_available"))
+    quality_risk_score = _coerce_float_or_none(payload.get("quality_risk_score"))
+    return {
+        "run_id": run_id,
+        "target_lang": target_lang,
+        "total_tokens": total_tokens,
+        "estimated_api_cost": estimated_api_cost,
+        "quality_risk_score": quality_risk_score,
+    }
 
 
 class _FuturisticCanvas(QWidget):
@@ -1507,6 +1578,25 @@ class QtMainWindow(QMainWindow):
             self._append_log(f"Job log seed preparation failed: {exc}")
             self._last_joblog_seed = None
             return
+
+        summary_path = summary.run_summary_path
+        if summary_path is None:
+            summary_path = summary.run_dir / "run_summary.json"
+        metrics = _load_run_summary_metrics(summary_path.expanduser().resolve())
+        run_id = str(metrics.get("run_id", "") or "").strip()
+        target_lang = str(metrics.get("target_lang", "") or "").strip()
+        total_tokens = _coerce_int_or_none(metrics.get("total_tokens"))
+        estimated_api_cost = _coerce_float_or_none(metrics.get("estimated_api_cost"))
+        quality_risk_score = _coerce_float_or_none(metrics.get("quality_risk_score"))
+
+        seed.run_id = run_id or summary.run_dir.name
+        seed.target_lang = target_lang or self._last_run_config.target_lang.value
+        seed.total_tokens = total_tokens
+        seed.estimated_api_cost = estimated_api_cost
+        seed.quality_risk_score = quality_risk_score
+        if estimated_api_cost is not None:
+            seed.api_cost = float(estimated_api_cost)
+            seed.profit = round(seed.expected_total - seed.api_cost, 2)
 
         suggestion = extract_pdf_header_metadata(
             seed.pdf_path,

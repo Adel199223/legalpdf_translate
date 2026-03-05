@@ -46,16 +46,21 @@ DEFAULT_VOCAB_JOB_TYPES = ["Translation", "Interpretation"]
 DEFAULT_JOBLOG_VISIBLE_COLUMNS = [
     "translation_date",
     "case_number",
+    "run_id",
     "job_type",
     "service_entity",
     "service_city",
     "lang",
+    "target_lang",
     "pages",
     "word_count",
+    "total_tokens",
     "rate_per_word",
     "expected_total",
     "amount_paid",
     "api_cost",
+    "estimated_api_cost",
+    "quality_risk_score",
     "profit",
 ]
 DEFAULT_OCR_SETTINGS: dict[str, Any] = {

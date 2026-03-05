@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 from legalpdf_translate.qt_gui.app_window import QtMainWindow
+from legalpdf_translate.qt_gui.dialogs import JobLogSeed, QtSaveToJobLogDialog
 
 
 class _FakeEdit:
@@ -258,3 +261,203 @@ def test_report_button_enabled_during_and_after_run() -> None:
     fake._resolve_report_run_dir = lambda: None
     QtMainWindow._update_controls(fake)
     assert report_button.enabled is False
+
+
+def test_prepare_joblog_seed_prefills_metrics_from_run_summary(tmp_path: Path, monkeypatch) -> None:
+    pdf_path = tmp_path / "sample.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    run_dir = tmp_path / "run"
+    pages_dir = run_dir / "pages"
+    pages_dir.mkdir(parents=True)
+    (pages_dir / "page_0001.txt").write_text("hello world", encoding="utf-8")
+    run_summary_path = run_dir / "run_summary.json"
+    run_summary_path.write_text(
+        json.dumps(
+            {
+                "run_id": "run-20260305-120000",
+                "lang": "FR",
+                "quality_risk_score": 0.37,
+                "totals": {
+                    "total_tokens": 8123,
+                    "total_cost_estimate_if_available": 4.56,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _fake_seed_from_run(**_: object) -> JobLogSeed:
+        return JobLogSeed(
+            completed_at=datetime.now().isoformat(timespec="seconds"),
+            translation_date="2026-03-05",
+            job_type="Translation",
+            case_number="",
+            case_entity="",
+            case_city="",
+            service_entity="",
+            service_city="",
+            service_date="2026-03-05",
+            lang="FR",
+            pages=1,
+            word_count=2,
+            rate_per_word=0.08,
+            expected_total=0.16,
+            amount_paid=0.0,
+            api_cost=0.0,
+            run_id="",
+            target_lang="FR",
+            total_tokens=None,
+            estimated_api_cost=None,
+            quality_risk_score=None,
+            profit=0.16,
+            pdf_path=pdf_path,
+        )
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.app_window.load_joblog_settings",
+        lambda: {
+            "default_rate_per_word": {"FR": 0.08},
+            "vocab_cities": [],
+        },
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.app_window.build_seed_from_run",
+        _fake_seed_from_run,
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.app_window.extract_pdf_header_metadata",
+        lambda *_args, **_kwargs: SimpleNamespace(case_entity="", case_city="", case_number=""),
+    )
+    fake = SimpleNamespace(
+        _last_run_config=SimpleNamespace(
+            target_lang=SimpleNamespace(value="FR"),
+            pdf_path=pdf_path,
+        ),
+        _append_log=lambda _msg: None,
+        _last_joblog_seed=None,
+    )
+    summary = SimpleNamespace(
+        run_dir=run_dir,
+        completed_pages=1,
+        run_summary_path=run_summary_path,
+    )
+
+    QtMainWindow._prepare_joblog_seed(fake, summary)
+
+    assert fake._last_joblog_seed is not None
+    assert fake._last_joblog_seed.run_id == "run-20260305-120000"
+    assert fake._last_joblog_seed.target_lang == "FR"
+    assert fake._last_joblog_seed.total_tokens == 8123
+    assert fake._last_joblog_seed.estimated_api_cost == 4.56
+    assert fake._last_joblog_seed.quality_risk_score == 0.37
+    assert fake._last_joblog_seed.api_cost == 4.56
+
+
+def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path: Path) -> None:
+    captured_payload: dict[str, object] = {}
+    saved_settings: dict[str, object] = {}
+    callback_state = {"called": False, "accepted": False}
+
+    class _FakeConn:
+        def close(self) -> None:
+            return
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.open_job_log",
+        lambda _path: _FakeConn(),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.insert_job_run",
+        lambda _conn, payload: captured_payload.update(payload),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.save_joblog_settings",
+        lambda payload: saved_settings.update(payload),
+    )
+
+    seed = JobLogSeed(
+        completed_at="2026-03-05T10:00:00",
+        translation_date="2026-03-05",
+        job_type="Translation",
+        case_number="",
+        case_entity="Case Entity",
+        case_city="Beja",
+        service_entity="Case Entity",
+        service_city="Beja",
+        service_date="2026-03-05",
+        lang="FR",
+        pages=3,
+        word_count=1000,
+        rate_per_word=0.08,
+        expected_total=80.0,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="run-1",
+        target_lang="FR",
+        total_tokens=5000,
+        estimated_api_cost=2.5,
+        quality_risk_score=0.2,
+        profit=77.5,
+        pdf_path=tmp_path / "sample.pdf",
+    )
+
+    fake = SimpleNamespace(
+        _seed=seed,
+        _db_path=tmp_path / "joblog.sqlite3",
+        _settings={
+            "vocab_case_entities": [],
+            "vocab_service_entities": [],
+            "vocab_cities": [],
+            "vocab_job_types": [],
+            "default_rate_per_word": {"FR": 0.08},
+            "joblog_visible_columns": [],
+            "metadata_ai_enabled": True,
+            "metadata_photo_enabled": True,
+            "service_equals_case_by_default": True,
+            "non_court_service_entities": [],
+            "ocr_mode": "auto",
+            "ocr_engine": "local_then_api",
+            "ocr_api_base_url": "",
+            "ocr_api_model": "",
+            "ocr_api_key_env_name": "DEEPSEEK_API_KEY",
+        },
+        _on_saved=lambda: callback_state.__setitem__("called", True),
+        _saved=False,
+        _ensure_in_vocab=lambda _key, _value: None,
+        accept=lambda: callback_state.__setitem__("accepted", True),
+        _parse_float=None,
+        _parse_optional_int=None,
+        _parse_optional_float=None,
+        rate_edit=_FakeEdit("0.08"),
+        expected_total_edit=_FakeEdit("80"),
+        amount_paid_edit=_FakeEdit("0"),
+        api_cost_edit=_FakeEdit("2.50"),
+        profit_edit=_FakeEdit("77.50"),
+        total_tokens_edit=_FakeEdit("5300"),
+        estimated_api_cost_edit=_FakeEdit("2.90"),
+        quality_risk_score_edit=_FakeEdit("0.44"),
+        service_date_edit=_FakeEdit("2026-03-05"),
+        case_entity_combo=_FakeCombo("Case Entity"),
+        case_city_combo=_FakeCombo("Beja"),
+        service_entity_combo=_FakeCombo("Case Entity"),
+        service_city_combo=_FakeCombo("Beja"),
+        service_same_check=_FakeCheck(False),
+        job_type_combo=_FakeCombo("Translation"),
+        case_number_edit=_FakeEdit("ABC-1"),
+        run_id_edit=_FakeEdit("run-override"),
+        target_lang_edit=_FakeEdit("AR"),
+    )
+    fake._parse_float = QtSaveToJobLogDialog._parse_float.__get__(fake, QtSaveToJobLogDialog)
+    fake._parse_optional_int = QtSaveToJobLogDialog._parse_optional_int.__get__(fake, QtSaveToJobLogDialog)
+    fake._parse_optional_float = QtSaveToJobLogDialog._parse_optional_float.__get__(fake, QtSaveToJobLogDialog)
+
+    QtSaveToJobLogDialog._save(fake)
+
+    assert captured_payload["run_id"] == "run-override"
+    assert captured_payload["target_lang"] == "AR"
+    assert captured_payload["total_tokens"] == 5300
+    assert captured_payload["estimated_api_cost"] == 2.9
+    assert captured_payload["quality_risk_score"] == 0.44
+    assert captured_payload["api_cost"] == 2.5
+    assert callback_state == {"called": True, "accepted": True}
+    assert saved_settings["ocr_mode"] == "auto"

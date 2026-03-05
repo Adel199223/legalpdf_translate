@@ -107,6 +107,7 @@ from legalpdf_translate.user_settings import app_data_dir, load_joblog_settings,
 JOBLOG_COLUMNS = [
     "translation_date",
     "case_number",
+    "run_id",
     "job_type",
     "case_entity",
     "case_city",
@@ -114,18 +115,23 @@ JOBLOG_COLUMNS = [
     "service_city",
     "service_date",
     "lang",
+    "target_lang",
     "pages",
     "word_count",
+    "total_tokens",
     "rate_per_word",
     "expected_total",
     "amount_paid",
     "api_cost",
+    "estimated_api_cost",
+    "quality_risk_score",
     "profit",
 ]
 
 JOBLOG_COLUMN_LABELS = {
     "translation_date": "Date",
     "case_number": "Case #",
+    "run_id": "Run ID",
     "job_type": "Job Type",
     "case_entity": "Case Entity",
     "case_city": "Case City",
@@ -133,12 +139,16 @@ JOBLOG_COLUMN_LABELS = {
     "service_city": "Service City",
     "service_date": "Service Date",
     "lang": "Lang",
+    "target_lang": "Target",
     "pages": "Pages",
     "word_count": "Words",
+    "total_tokens": "Total Tokens",
     "rate_per_word": "Rate/Word",
     "expected_total": "Expected",
     "amount_paid": "Paid",
     "api_cost": "API Cost",
+    "estimated_api_cost": "Est. API Cost",
+    "quality_risk_score": "Risk Score",
     "profit": "Profit",
 }
 
@@ -161,6 +171,11 @@ class JobLogSeed:
     expected_total: float
     amount_paid: float
     api_cost: float
+    run_id: str
+    target_lang: str
+    total_tokens: int | None
+    estimated_api_cost: float | None
+    quality_risk_score: float | None
     profit: float
     pdf_path: Path
 
@@ -212,6 +227,11 @@ def build_seed_from_run(
         expected_total=expected_total,
         amount_paid=0.0,
         api_cost=float(api_cost),
+        run_id="",
+        target_lang=lang,
+        total_tokens=None,
+        estimated_api_cost=None,
+        quality_risk_score=None,
         profit=round(expected_total - float(api_cost), 2),
         pdf_path=pdf_path,
     )
@@ -349,6 +369,33 @@ class QtSaveToJobLogDialog(QDialog):
         autofill_row.addStretch(1)
         autofill_row.addWidget(self.photo_hint)
         root.addLayout(autofill_row)
+
+        metrics_group = QGroupBox("Run Metrics (auto-filled)")
+        metrics_form = QGridLayout(metrics_group)
+        metrics_form.addWidget(QLabel("Run ID"), 0, 0)
+        self.run_id_edit = QLineEdit(self._seed.run_id)
+        metrics_form.addWidget(self.run_id_edit, 0, 1)
+        metrics_form.addWidget(QLabel("Target lang"), 0, 2)
+        self.target_lang_edit = QLineEdit(self._seed.target_lang)
+        metrics_form.addWidget(self.target_lang_edit, 0, 3)
+        metrics_form.addWidget(QLabel("Total tokens"), 1, 0)
+        self.total_tokens_edit = QLineEdit(
+            "" if self._seed.total_tokens is None else str(int(self._seed.total_tokens))
+        )
+        metrics_form.addWidget(self.total_tokens_edit, 1, 1)
+        metrics_form.addWidget(QLabel("Est. API cost"), 1, 2)
+        self.estimated_api_cost_edit = QLineEdit(
+            "" if self._seed.estimated_api_cost is None else f"{float(self._seed.estimated_api_cost):.2f}"
+        )
+        metrics_form.addWidget(self.estimated_api_cost_edit, 1, 3)
+        metrics_form.addWidget(QLabel("Quality risk score"), 2, 0)
+        self.quality_risk_score_edit = QLineEdit(
+            "" if self._seed.quality_risk_score is None else f"{float(self._seed.quality_risk_score):.4f}"
+        )
+        metrics_form.addWidget(self.quality_risk_score_edit, 2, 1)
+        metrics_form.setColumnStretch(1, 1)
+        metrics_form.setColumnStretch(3, 1)
+        root.addWidget(metrics_group)
 
         finance_group = QGroupBox("Amounts (EUR)")
         finance_form = QGridLayout(finance_group)
@@ -558,6 +605,24 @@ class QtSaveToJobLogDialog(QDialog):
         except ValueError as exc:
             raise ValueError(f"{label} must be numeric.") from exc
 
+    def _parse_optional_int(self, value: str, label: str) -> int | None:
+        cleaned = value.strip()
+        if cleaned == "":
+            return None
+        try:
+            return int(cleaned)
+        except ValueError as exc:
+            raise ValueError(f"{label} must be an integer.") from exc
+
+    def _parse_optional_float(self, value: str, label: str) -> float | None:
+        cleaned = value.strip().replace(",", ".")
+        if cleaned == "":
+            return None
+        try:
+            return float(cleaned)
+        except ValueError as exc:
+            raise ValueError(f"{label} must be numeric.") from exc
+
     def _save(self) -> None:
         try:
             rate = self._parse_float(self.rate_edit.text(), "Rate/word")
@@ -565,6 +630,15 @@ class QtSaveToJobLogDialog(QDialog):
             amount_paid = self._parse_float(self.amount_paid_edit.text(), "Amount paid")
             api_cost = self._parse_float(self.api_cost_edit.text(), "API cost")
             profit = self._parse_float(self.profit_edit.text(), "Profit")
+            total_tokens = self._parse_optional_int(self.total_tokens_edit.text(), "Total tokens")
+            estimated_api_cost = self._parse_optional_float(
+                self.estimated_api_cost_edit.text(),
+                "Estimated API cost",
+            )
+            quality_risk_score = self._parse_optional_float(
+                self.quality_risk_score_edit.text(),
+                "Quality risk score",
+            )
         except ValueError as exc:
             QMessageBox.critical(self, "Invalid values", str(exc))
             return
@@ -604,12 +678,17 @@ class QtSaveToJobLogDialog(QDialog):
             "service_city": service_city,
             "service_date": service_date,
             "lang": self._seed.lang,
+            "target_lang": self.target_lang_edit.text().strip() or self._seed.target_lang,
+            "run_id": self.run_id_edit.text().strip(),
             "pages": int(self._seed.pages),
             "word_count": int(self._seed.word_count),
+            "total_tokens": total_tokens,
             "rate_per_word": rate,
             "expected_total": expected_total,
             "amount_paid": amount_paid,
             "api_cost": api_cost,
+            "estimated_api_cost": estimated_api_cost,
+            "quality_risk_score": quality_risk_score,
             "profit": profit,
         }
 
