@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from legalpdf_translate.queue_runner import QueueJobRunResult, parse_queue_manifest, run_queue_manifest
+from legalpdf_translate.queue_runner import (
+    QueueJobRunResult,
+    QueueRunCancelled,
+    parse_queue_manifest,
+    run_queue_manifest,
+)
 
 
 def _write_manifest(path: Path) -> None:
@@ -75,3 +80,33 @@ def test_queue_runner_resume_skips_completed_jobs(tmp_path: Path) -> None:
     assert second_summary.done_jobs == 3
     assert second_summary.failed_jobs == 0
     assert second_summary.success is True
+
+
+def test_queue_runner_cancel_stops_before_failing_remaining_jobs(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "queue.json"
+    _write_manifest(manifest_path)
+
+    calls: list[str] = []
+
+    def _run_job(payload: dict[str, object]) -> QueueJobRunResult:
+        job_id = str(payload.get("job_id", "") or "")
+        calls.append(job_id)
+        if job_id == "job_b":
+            raise QueueRunCancelled("queue_cancelled_by_user")
+        return QueueJobRunResult(success=True, exit_code=0)
+
+    summary = run_queue_manifest(
+        manifest_path=manifest_path,
+        run_job=_run_job,
+        rerun_failed_only=False,
+    )
+
+    assert calls == ["job_a", "job_b"]
+    assert summary.success is False
+    assert summary.done_jobs == 1
+    assert summary.failed_jobs == 0
+    by_job_id = {str(row.get("job_id")): row for row in summary.jobs}
+    assert by_job_id["job_b"]["status"] == "pending"
+    assert by_job_id["job_b"]["skip_reason"] == "queue_cancelled_before_start"
+    assert by_job_id["job_b"]["attempt_count"] == 0
+    assert by_job_id["job_c"]["status"] == "pending"

@@ -15,6 +15,10 @@ from .types import RunSummary
 _ALLOWED_QUEUE_STATUSES = {"pending", "running", "done", "failed", "skipped"}
 
 
+class QueueRunCancelled(RuntimeError):
+    """Signal queue interruption without failing untouched jobs."""
+
+
 @dataclass(slots=True)
 class QueueJobRunResult:
     success: bool
@@ -353,6 +357,20 @@ def run_queue_manifest(
         started = time.perf_counter()
         try:
             run_result = run_job(payload)
+        except QueueRunCancelled as exc:
+            job["status"] = "pending"
+            job["error"] = ""
+            job["skip_reason"] = "queue_cancelled_before_start"
+            job["started_at"] = ""
+            job["finished_at"] = ""
+            job["duration_seconds"] = 0.0
+            job["attempt_count"] = max(0, int(job.get("attempt_count", 1) or 1) - 1)
+            if log_callback is not None:
+                log_callback(f"Queue cancelled before job {job.get('job_id')} started: {exc}")
+            _persist()
+            if status_callback is not None:
+                status_callback(dict(job))
+            break
         except Exception as exc:  # noqa: BLE001
             run_result = QueueJobRunResult(success=False, exit_code=2, error=f"{type(exc).__name__}: {exc}")
 

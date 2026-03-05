@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from legalpdf_translate.openai_client import OpenAIResponsesClient
 from legalpdf_translate.queue_runner import (
+    QueueRunCancelled,
     queue_result_from_run_summary,
     run_queue_manifest,
 )
@@ -174,7 +175,7 @@ class QueueRunWorker(QObject):
         try:
             def _run_job(job_payload: dict[str, Any]):
                 if self._cancel_requested:
-                    raise RuntimeError("queue_cancelled_by_user")
+                    raise QueueRunCancelled("queue_cancelled_by_user")
                 config = self._build_config(job_payload)
                 client = OpenAIResponsesClient(
                     max_transport_retries=self._max_transport_retries,

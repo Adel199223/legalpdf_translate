@@ -218,6 +218,29 @@ def test_save_settings_uses_existing_gui_keys(monkeypatch) -> None:
     assert fake._defaults["workers"] == 4
 
 
+def test_derive_queue_base_inputs_uses_manifest_when_form_is_blank() -> None:
+    jobs = [
+        {
+            "payload": {
+                "pdf": "C:/docs/job-a.pdf",
+                "outdir": "C:/exports",
+                "lang": "FR",
+            }
+        }
+    ]
+
+    pdf_value, outdir_value, lang_value = QtMainWindow._derive_queue_base_inputs(
+        jobs=jobs,
+        current_pdf="",
+        current_outdir="",
+        current_lang="",
+    )
+
+    assert pdf_value == "C:/docs/job-a.pdf"
+    assert outdir_value == "C:/exports"
+    assert lang_value == "FR"
+
+
 def test_on_form_changed_uses_scheduled_save() -> None:
     calls = {"scheduled": False, "page_count": False, "controls": False}
     fake = SimpleNamespace(

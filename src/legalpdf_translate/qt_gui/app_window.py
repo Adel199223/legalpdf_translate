@@ -68,7 +68,7 @@ from legalpdf_translate.output_paths import (
     require_writable_output_dir_text,
 )
 from legalpdf_translate.pdf_text_order import get_page_count
-from legalpdf_translate.queue_runner import QueueRunSummary
+from legalpdf_translate.queue_runner import QueueRunSummary, parse_queue_manifest
 from legalpdf_translate.qt_gui.dialogs import (
     JobLogSeed,
     QtJobLogWindow,
@@ -1274,6 +1274,33 @@ class QtMainWindow(QMainWindow):
 
         return config
 
+    @staticmethod
+    def _derive_queue_base_inputs(
+        *,
+        jobs: list[dict[str, Any]],
+        current_pdf: str,
+        current_outdir: str,
+        current_lang: str,
+    ) -> tuple[str, str, str]:
+        pdf_value = current_pdf.strip()
+        outdir_value = current_outdir.strip()
+        lang_value = current_lang.strip().upper()
+        for row in jobs:
+            payload = row.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if pdf_value == "":
+                pdf_value = str(payload.get("pdf", payload.get("pdf_path", "")) or "").strip()
+            if outdir_value == "":
+                outdir_value = str(payload.get("outdir", payload.get("output_dir", "")) or "").strip()
+            if lang_value not in {"EN", "FR", "AR"}:
+                lang_value = str(payload.get("lang", "") or "").strip().upper()
+            if pdf_value != "" and outdir_value != "" and lang_value in {"EN", "FR", "AR"}:
+                break
+        if lang_value not in {"EN", "FR", "AR"}:
+            lang_value = "EN"
+        return pdf_value, outdir_value, lang_value
+
     def _append_log(self, message: str) -> None:
         stamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.appendPlainText(f"[{stamp}] {message}")
@@ -1622,7 +1649,18 @@ class QtMainWindow(QMainWindow):
             return
 
         try:
-            base_config = self._build_config()
+            manifest_jobs = parse_queue_manifest(manifest_path)
+            queue_pdf, queue_outdir, queue_lang = self._derive_queue_base_inputs(
+                jobs=manifest_jobs,
+                current_pdf=self.pdf_edit.text(),
+                current_outdir=self.outdir_edit.text(),
+                current_lang=self.lang_combo.currentText(),
+            )
+            base_config = self._build_config(
+                pdf_override=queue_pdf,
+                outdir_override=queue_outdir,
+                lang_override=queue_lang,
+            )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Invalid configuration", str(exc))
             return
