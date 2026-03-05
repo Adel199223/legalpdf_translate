@@ -141,3 +141,43 @@ def test_auto_mode_warns_only_when_ocr_needed_and_unavailable(tmp_path: Path, mo
     assert len(unavailable_events) == 1
     assert "OCR provider not configured for OCR-requested pages" in str(unavailable_events[0].get("warning", ""))
     assert any("OCR provider not configured for OCR-requested pages" in line for line in logs)
+
+
+def test_run_summary_and_page_metadata_include_ocr_observability_fields(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(
+        workflow_module,
+        "extract_ordered_page_text",
+        lambda _pdf, _idx: _ordered_text_result("This page has enough extracted text for direct route."),
+    )
+    monkeypatch.setattr(workflow_module, "should_include_image", lambda *args, **kwargs: False)
+
+    summary = TranslationWorkflow(client=_FakeClient()).run(_config(pdf, outdir))
+    assert summary.success is True
+    assert summary.run_summary_path is not None
+
+    summary_payload = json.loads(summary.run_summary_path.read_text(encoding="utf-8"))
+    pipeline = summary_payload["pipeline"]
+    assert pipeline["ocr_source_profile"] == "pt_latin_default"
+    assert pipeline["ocr_local_pass_strategy"] == "single_pass_baseline"
+    assert pipeline["ocr_api_fallback_policy"] == "required_only_for_paid_fallback"
+    assert isinstance(pipeline["ocr_quality_score_avg"], float)
+
+    run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
+    page = run_state["pages"]["1"]
+    assert page["ocr_track"] == "enfr"
+    assert page["ocr_source_profile"] == "pt_latin_default"
+    assert page["ocr_local_pass_strategy"] == "single_pass_baseline"
+    assert page["ocr_api_fallback_policy"] == "required_only_for_paid_fallback"
+    assert page["ocr_failure_category"] in {"none", "not_requested"}
+    assert isinstance(page["ocr_quality_score"], float)

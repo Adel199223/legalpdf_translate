@@ -941,3 +941,30 @@ def test_run_report_renders_quality_risk_summary_when_present(tmp_path: Path) ->
     )
 
     assert "Quality risk score `0.4721` with `3` flagged review page(s)." in markdown
+
+
+def test_run_report_renders_ocr_observability_summary_when_present(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    summary_path = run_dir / "run_summary.json"
+    run_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    pipeline = dict(run_summary.get("pipeline", {}))
+    pipeline.update(
+        {
+            "ocr_source_profile": "pt_latin_default",
+            "ocr_local_pass_strategy": "single_pass_baseline",
+            "ocr_api_fallback_policy": "required_only_for_paid_fallback",
+            "ocr_quality_score_avg": 0.8123,
+        }
+    )
+    run_summary["pipeline"] = pipeline
+    _write_json(summary_path, run_summary)
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "OCR observability: profile `pt_latin_default`" in markdown
+    assert '"ocr_local_pass_strategy": "single_pass_baseline"' in markdown
+    assert '"ocr_api_fallback_policy": "required_only_for_paid_fallback"' in markdown

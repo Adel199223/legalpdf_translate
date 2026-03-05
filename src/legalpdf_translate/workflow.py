@@ -121,6 +121,10 @@ SIGNAL_NEWLINE_MIN_RATIO = 0.22
 SIGNAL_NEWLINE_MIN_CHARS = 120
 SIGNAL_SHORTLINES_MIN_RATIO = 0.55
 SIGNAL_SHORTLINES_MIN_LINES = 16
+OCR_SOURCE_PROFILE_PT_LATIN = "pt_latin_default"
+OCR_SOURCE_PROFILE_AR_TRACK = "ar_track_default"
+OCR_LOCAL_PASS_STRATEGY = "single_pass_baseline"
+OCR_API_FALLBACK_POLICY = "required_only_for_paid_fallback"
 
 
 def _is_usable_source_text_value(value: str) -> bool:
@@ -221,6 +225,53 @@ def classify_extracted_text_quality(text: str) -> dict[str, object]:
         "ocr_required": bool(ocr_required),
         "ocr_helpful": bool(ocr_helpful),
     }
+
+
+def _ocr_track_for_target(target_lang: TargetLang) -> str:
+    return "ar" if target_lang == TargetLang.AR else "enfr"
+
+
+def _ocr_source_profile_for_track(track: str) -> str:
+    if track == "ar":
+        return OCR_SOURCE_PROFILE_AR_TRACK
+    return OCR_SOURCE_PROFILE_PT_LATIN
+
+
+def _ocr_quality_score(extraction_quality: dict[str, object]) -> float:
+    extracted_chars = int(extraction_quality.get("extracted_char_count", 0) or 0)
+    junk_ratio = float(extraction_quality.get("junk_ratio", 0.0) or 0.0)
+    ocr_required = bool(extraction_quality.get("ocr_required", False))
+    ocr_helpful = bool(extraction_quality.get("ocr_helpful", False))
+    signals = extraction_quality.get("signals", [])
+    signal_count = len(signals) if isinstance(signals, list) else 0
+    char_score = min(1.0, extracted_chars / 420.0)
+    junk_penalty = min(0.7, junk_ratio * 2.5)
+    signal_penalty = min(0.24, signal_count * 0.06)
+    required_penalty = 0.45 if ocr_required else 0.0
+    helpful_penalty = 0.12 if ocr_helpful else 0.0
+    score = char_score - junk_penalty - signal_penalty - required_penalty - helpful_penalty
+    return round(max(0.0, min(1.0, score)), 4)
+
+
+def _ocr_failure_category(reason: str | None) -> str:
+    lowered = str(reason or "").strip().lower()
+    if lowered == "":
+        return "none"
+    if "not_requested" in lowered:
+        return "not_requested"
+    if "unavailable" in lowered:
+        return "unavailable"
+    if "render failed" in lowered:
+        return "render_failed"
+    if "tesseract execution failed" in lowered or "tesseract exited with code" in lowered:
+        return "local_engine_error"
+    if "empty output" in lowered or "empty_result" in lowered:
+        return "empty_result"
+    if "api ocr request failed" in lowered:
+        return "api_error"
+    if "fallback" in lowered:
+        return "fallback_exhausted"
+    return "other"
 
 
 class TranslationWorkflow:
@@ -1138,6 +1189,8 @@ class TranslationWorkflow:
             return None, False
 
         policy_value = config.ocr_engine.value if request_reason == "required" else "local"
+        ocr_track = _ocr_track_for_target(config.target_lang)
+        ocr_source_profile = _ocr_source_profile_for_track(ocr_track)
         checked_now = False
         configured = False
         engine: OCREngine | None = None
@@ -1179,6 +1232,10 @@ class TranslationWorkflow:
                     "request_reason": request_reason,
                     "engine_policy": policy_value,
                     "configured": bool(configured),
+                    "ocr_track": ocr_track,
+                    "ocr_source_profile": ocr_source_profile,
+                    "ocr_local_pass_strategy": OCR_LOCAL_PASS_STRATEGY,
+                    "ocr_api_fallback_policy": OCR_API_FALLBACK_POLICY,
                 },
             )
 
@@ -1264,11 +1321,14 @@ class TranslationWorkflow:
         extract_seconds = time.perf_counter() - extract_started
         extracted_text = ordered.text
         extraction_quality = classify_extracted_text_quality(extracted_text)
+        ocr_quality_score = _ocr_quality_score(extraction_quality)
         extracted_usable = self._is_usable_source_text(extracted_text)
         extracted_lines = int(extraction_quality.get("line_count", 0) or 0)
         extraction_signals = [str(item) for item in extraction_quality.get("signals", []) if isinstance(item, str)]
         ocr_required = bool(extraction_quality.get("ocr_required", False))
         ocr_helpful = bool(extraction_quality.get("ocr_helpful", False))
+        ocr_track = _ocr_track_for_target(config.target_lang)
+        ocr_source_profile = _ocr_source_profile_for_track(ocr_track)
         ocr_request_reason = "not_requested"
         if config.ocr_mode == OcrMode.ALWAYS:
             ocr_request_reason = "required"
@@ -1309,6 +1369,12 @@ class TranslationWorkflow:
             "ocr_provider_configured": False,
             "ocr_engine_used": "",
             "ocr_failed_reason": "",
+            "ocr_failure_category": "none",
+            "ocr_quality_score": float(ocr_quality_score),
+            "ocr_track": ocr_track,
+            "ocr_source_profile": ocr_source_profile,
+            "ocr_local_pass_strategy": OCR_LOCAL_PASS_STRATEGY,
+            "ocr_api_fallback_policy": OCR_API_FALLBACK_POLICY,
             "extraction_quality_signals": [],
             "ar_locked_tokens_expected": 0,
             "ar_locked_token_autofix_applied": 0,
@@ -1409,6 +1475,7 @@ class TranslationWorkflow:
         page_metadata["ocr_provider_configured"] = bool(ocr_provider_configured)
         page_metadata["ocr_engine_used"] = ocr_result.engine
         page_metadata["ocr_failed_reason"] = ocr_result.failed_reason or ""
+        page_metadata["ocr_failure_category"] = _ocr_failure_category(ocr_result.failed_reason)
         page_metadata["extraction_quality_signals"] = extraction_signals
 
         self._record_event(
@@ -1426,6 +1493,12 @@ class TranslationWorkflow:
                 "median_line_len": float(extraction_quality.get("median_line_len", 0.0) or 0.0),
                 "ocr_engine": ocr_result.engine,
                 "ocr_chars": int(ocr_result.chars),
+                "ocr_quality_score": float(ocr_quality_score),
+                "ocr_failure_category": str(page_metadata.get("ocr_failure_category", "")),
+                "ocr_track": ocr_track,
+                "ocr_source_profile": ocr_source_profile,
+                "ocr_local_pass_strategy": OCR_LOCAL_PASS_STRATEGY,
+                "ocr_api_fallback_policy": OCR_API_FALLBACK_POLICY,
             },
         )
 
@@ -2005,6 +2078,44 @@ class TranslationWorkflow:
                 or not bool(page.get("ocr_provider_configured", False))
             )
         )
+        ocr_source_profile_values = [
+            str(page.get("ocr_source_profile", "") or "").strip()
+            for _, page in page_rows
+            if str(page.get("ocr_source_profile", "") or "").strip() != ""
+        ]
+        ocr_local_pass_strategy_values = [
+            str(page.get("ocr_local_pass_strategy", "") or "").strip()
+            for _, page in page_rows
+            if str(page.get("ocr_local_pass_strategy", "") or "").strip() != ""
+        ]
+        ocr_api_fallback_policy_values = [
+            str(page.get("ocr_api_fallback_policy", "") or "").strip()
+            for _, page in page_rows
+            if str(page.get("ocr_api_fallback_policy", "") or "").strip() != ""
+        ]
+        ocr_quality_score_values = [
+            float(page.get("ocr_quality_score", 0.0) or 0.0)
+            for _, page in page_rows
+        ]
+        ocr_source_profile = (
+            Counter(ocr_source_profile_values).most_common(1)[0][0]
+            if ocr_source_profile_values
+            else _ocr_source_profile_for_track(_ocr_track_for_target(config.target_lang))
+        )
+        ocr_local_pass_strategy = (
+            Counter(ocr_local_pass_strategy_values).most_common(1)[0][0]
+            if ocr_local_pass_strategy_values
+            else OCR_LOCAL_PASS_STRATEGY
+        )
+        ocr_api_fallback_policy = (
+            Counter(ocr_api_fallback_policy_values).most_common(1)[0][0]
+            if ocr_api_fallback_policy_values
+            else OCR_API_FALLBACK_POLICY
+        )
+        ocr_quality_score_avg = round(
+            sum(ocr_quality_score_values) / float(len(ocr_quality_score_values) or 1),
+            4,
+        )
         ocr_requested = config.ocr_mode == OcrMode.ALWAYS or ocr_requested_pages > 0
         if config.ocr_mode == OcrMode.OFF:
             ocr_requested = False
@@ -2090,6 +2201,10 @@ class TranslationWorkflow:
                 "ocr_helpful_pages": int(ocr_helpful_pages),
                 "ocr_required_unavailable_pages": int(ocr_required_unavailable_pages),
                 "ocr_preflight_checked": bool(ocr_preflight_checked),
+                "ocr_source_profile": ocr_source_profile,
+                "ocr_local_pass_strategy": ocr_local_pass_strategy,
+                "ocr_api_fallback_policy": ocr_api_fallback_policy,
+                "ocr_quality_score_avg": float(ocr_quality_score_avg),
             },
             "totals": {
                 "total_wall_seconds": round(total_wall_seconds, 3),
@@ -2136,6 +2251,12 @@ class TranslationWorkflow:
                     "ocr_provider_configured": bool(page.get("ocr_provider_configured", False)),
                     "ocr_engine_used": str(page.get("ocr_engine_used", "") or ""),
                     "ocr_failed_reason": str(page.get("ocr_failed_reason", "") or ""),
+                    "ocr_failure_category": str(page.get("ocr_failure_category", "") or ""),
+                    "ocr_quality_score": float(page.get("ocr_quality_score", 0.0) or 0.0),
+                    "ocr_track": str(page.get("ocr_track", "") or ""),
+                    "ocr_source_profile": str(page.get("ocr_source_profile", "") or ""),
+                    "ocr_local_pass_strategy": str(page.get("ocr_local_pass_strategy", "") or ""),
+                    "ocr_api_fallback_policy": str(page.get("ocr_api_fallback_policy", "") or ""),
                     "extraction_quality_signals": (
                         list(page.get("extraction_quality_signals", []))
                         if isinstance(page.get("extraction_quality_signals", []), list)

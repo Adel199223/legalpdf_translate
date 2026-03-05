@@ -519,6 +519,10 @@ def build_run_report_payload(
         break
 
     ocr_mode_value = str(settings_obj.get("ocr_mode", summary_pipeline_obj.get("ocr_mode", "")) or "").strip().lower()
+    ocr_source_profile_value = str(summary_pipeline_obj.get("ocr_source_profile", "") or "").strip()
+    ocr_local_pass_strategy_value = str(summary_pipeline_obj.get("ocr_local_pass_strategy", "") or "").strip()
+    ocr_api_fallback_policy_value = str(summary_pipeline_obj.get("ocr_api_fallback_policy", "") or "").strip()
+    ocr_quality_score_avg_value = summary_pipeline_obj.get("ocr_quality_score_avg")
     if ocr_mode_value == "always":
         fallback_ocr_requested = True
     elif ocr_mode_value == "off":
@@ -660,6 +664,10 @@ def build_run_report_payload(
             "ocr_helpful_pages": int(ocr_helpful_pages_value),
             "ocr_required_unavailable_pages": int(ocr_required_unavailable_pages_value),
             "ocr_preflight_checked": bool(ocr_preflight_checked_value),
+            "ocr_source_profile": ocr_source_profile_value,
+            "ocr_local_pass_strategy": ocr_local_pass_strategy_value,
+            "ocr_api_fallback_policy": ocr_api_fallback_policy_value,
+            "ocr_quality_score_avg": ocr_quality_score_avg_value,
             "pt_language_leak_failures": int(pt_language_leak_failures),
             "pt_language_leak_retries": int(pt_language_leak_retries),
             "image_mode_optimization_hint": image_mode_optimization_hint,
@@ -1416,6 +1424,22 @@ def build_run_report_markdown(
         f"({warnings_obj.get('failed_pages', [])})."
     )
     lines.append(_ocr_summary_line(pipeline_obj))
+    ocr_source_profile = str(pipeline_obj.get("ocr_source_profile", "") or "").strip()
+    ocr_local_pass_strategy = str(pipeline_obj.get("ocr_local_pass_strategy", "") or "").strip()
+    ocr_api_fallback_policy = str(pipeline_obj.get("ocr_api_fallback_policy", "") or "").strip()
+    ocr_quality_score_avg = pipeline_obj.get("ocr_quality_score_avg")
+    if (
+        ocr_source_profile
+        or ocr_local_pass_strategy
+        or ocr_api_fallback_policy
+        or ocr_quality_score_avg is not None
+    ):
+        lines.append(
+            f"- OCR observability: profile `{ocr_source_profile or 'n/a'}`, "
+            f"local strategy `{ocr_local_pass_strategy or 'n/a'}`, "
+            f"fallback policy `{ocr_api_fallback_policy or 'n/a'}`, "
+            f"quality score avg `{ocr_quality_score_avg}`."
+        )
     pt_language_leak_failures = int(pipeline_obj.get("pt_language_leak_failures", 0) or 0)
     pt_language_leak_retries = int(pipeline_obj.get("pt_language_leak_retries", 0) or 0)
     if pt_language_leak_retries > 0 or pt_language_leak_failures > 0:
