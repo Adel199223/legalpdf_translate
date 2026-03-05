@@ -91,6 +91,8 @@ class RunConfig:
     diagnostics_admin_mode: bool = False
     diagnostics_include_sanitized_snippets: bool = False
     strip_bidi_controls: bool = True
+    advisor_recommendation_applied: bool | None = None
+    advisor_recommendation: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)

@@ -109,7 +109,7 @@ def test_translate_gating_requires_output_folder(tmp_path: Path) -> None:
 
 
 def test_new_run_resets_runtime_state() -> None:
-    calls = {"details": None, "save_settings": False, "update_controls": False}
+    calls = {"details": None, "save_settings": False, "update_controls": False, "advisor_refreshed": False}
     fake = SimpleNamespace(
         _busy=False,
         _review_queue_dialog=None,
@@ -119,6 +119,10 @@ def test_new_run_resets_runtime_state() -> None:
         _last_run_config=object(),
         _last_joblog_seed=object(),
         _last_review_queue=[{"page_number": 1}],
+        _advisor_recommendation={"recommended_ocr_mode": "auto"},
+        _advisor_recommendation_applied=True,
+        _advisor_override_ocr_mode="auto",
+        _advisor_override_image_mode="auto",
         _last_workflow=object(),
         _worker=object(),
         _worker_thread=object(),
@@ -131,6 +135,7 @@ def test_new_run_resets_runtime_state() -> None:
         log_text=_FakeTextBox(),
         details_btn=_FakeButton(),
         _set_details_visible=lambda visible: calls.__setitem__("details", visible),
+        _refresh_advisor_banner=lambda: calls.__setitem__("advisor_refreshed", True),
         _save_settings=lambda: calls.__setitem__("save_settings", True),
         _update_controls=lambda: calls.__setitem__("update_controls", True),
         _reset_live_counters=lambda: None,
@@ -144,6 +149,10 @@ def test_new_run_resets_runtime_state() -> None:
     assert fake._last_run_config is None
     assert fake._last_joblog_seed is None
     assert fake._last_review_queue == []
+    assert fake._advisor_recommendation is None
+    assert fake._advisor_recommendation_applied is None
+    assert fake._advisor_override_ocr_mode is None
+    assert fake._advisor_override_image_mode is None
     assert fake._last_workflow is None
     assert fake._worker is None
     assert fake._worker_thread is None
@@ -154,7 +163,7 @@ def test_new_run_resets_runtime_state() -> None:
     assert fake.final_docx_edit.text() == ""
     assert fake.log_text.cleared is True
     assert fake.details_btn.checked is False
-    assert calls == {"details": False, "save_settings": True, "update_controls": True}
+    assert calls == {"details": False, "save_settings": True, "update_controls": True, "advisor_refreshed": True}
 
 
 def test_save_settings_uses_existing_gui_keys(monkeypatch) -> None:

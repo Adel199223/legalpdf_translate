@@ -81,7 +81,17 @@ def test_run_summary_written_on_failure(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr(TranslationWorkflow, "_process_page", _fail_page)
 
-    summary = TranslationWorkflow(client=object()).run(_base_config(pdf, outdir))
+    config = _base_config(pdf, outdir)
+    config.advisor_recommendation_applied = True
+    config.advisor_recommendation = {
+        "recommended_ocr_mode": "auto",
+        "recommended_image_mode": "auto",
+        "advisor_track": "enfr",
+        "confidence": 0.81,
+        "recommendation_reasons": ["enfr_layout_or_text_quality_requires_ocr"],
+    }
+
+    summary = TranslationWorkflow(client=object()).run(config)
 
     assert summary.success is False
     assert summary.run_summary_path is not None
@@ -100,6 +110,7 @@ def test_run_summary_written_on_failure(tmp_path: Path, monkeypatch) -> None:
     assert "review_queue" in payload
     assert "advisor_recommendation_applied" in payload
     assert "advisor_recommendation" in payload
+    assert payload["advisor_recommendation_applied"] is True
 
 
 def test_telemetry_no_content_fields(tmp_path: Path, monkeypatch) -> None:

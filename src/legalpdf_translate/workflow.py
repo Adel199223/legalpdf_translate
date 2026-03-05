@@ -324,6 +324,7 @@ class TranslationWorkflow:
         self._cost_estimation_status: str = "unavailable"
         self._cost_profile_id: str = "default_local"
         self._budget_cap_usd: float | None = None
+        self._advisor_recommendation_applied: bool | None = None
 
     def cancel(self) -> None:
         self._cancel_event.set()
@@ -350,11 +351,17 @@ class TranslationWorkflow:
         self._cost_estimation_status = "unavailable"
         self._cost_profile_id = "default_local"
         self._budget_cap_usd = None
+        self._advisor_recommendation_applied = None
 
         config = self._normalize_config(config)
         self._validate_config(config)
         self._cost_profile_id = normalize_cost_profile_id(config.cost_profile_id)
         self._budget_cap_usd = config.budget_cap_usd
+        self._advisor_recommendation_applied = (
+            config.advisor_recommendation_applied
+            if isinstance(config.advisor_recommendation_applied, bool)
+            else None
+        )
         gui_settings = load_gui_settings()
         personal_glossaries = normalize_glossaries(
             gui_settings.get("personal_glossaries_by_lang", gui_settings.get("glossaries_by_lang")),
@@ -2257,13 +2264,11 @@ class TranslationWorkflow:
             current_image_mode=config.image_mode.value,
             source="run_summary",
         )
-        settings_obj = run_state.settings if isinstance(run_state.settings, dict) else {}
-        advisor_applied_raw = settings_obj.get("advisor_recommendation_applied")
-        advisor_recommendation_applied: bool | None
-        if isinstance(advisor_applied_raw, bool):
-            advisor_recommendation_applied = advisor_applied_raw
-        else:
-            advisor_recommendation_applied = None
+        advisor_recommendation_applied = (
+            self._advisor_recommendation_applied
+            if isinstance(self._advisor_recommendation_applied, bool)
+            else None
+        )
         self._budget_post_run_packet = self._build_budget_post_run_packet(
             total_input_tokens=total_input_tokens,
             total_output_tokens=total_output_tokens,
@@ -2831,6 +2836,16 @@ class TranslationWorkflow:
             diagnostics_admin_mode=bool(config.diagnostics_admin_mode),
             diagnostics_include_sanitized_snippets=bool(config.diagnostics_include_sanitized_snippets),
             strip_bidi_controls=bool(config.strip_bidi_controls),
+            advisor_recommendation_applied=(
+                config.advisor_recommendation_applied
+                if isinstance(config.advisor_recommendation_applied, bool)
+                else None
+            ),
+            advisor_recommendation=(
+                dict(config.advisor_recommendation)
+                if isinstance(config.advisor_recommendation, dict)
+                else None
+            ),
         )
 
     def _is_usable_source_text(self, value: str) -> bool:

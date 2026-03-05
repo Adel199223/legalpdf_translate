@@ -9,6 +9,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from openai import OpenAI
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
@@ -205,6 +206,46 @@ def _load_review_queue_entries(summary_path: Path) -> list[dict[str, object]]:
     return normalize_review_queue_entries(payload.get("review_queue", []))
 
 
+def _normalized_mode_or_none(value: object) -> str | None:
+    text = str(value or "").strip().lower()
+    if text in {"off", "auto", "always"}:
+        return text
+    return None
+
+
+def _load_advisor_recommendation(report_path: Path) -> dict[str, Any] | None:
+    if not report_path.exists() or not report_path.is_file():
+        return None
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    recommended_ocr_mode = _normalized_mode_or_none(payload.get("recommended_ocr_mode"))
+    recommended_image_mode = _normalized_mode_or_none(payload.get("recommended_image_mode"))
+    if recommended_ocr_mode is None and recommended_image_mode is None:
+        return None
+
+    reasons = [
+        str(item).strip()
+        for item in payload.get("recommendation_reasons", [])
+        if isinstance(item, str) and str(item).strip()
+    ]
+    confidence = _coerce_float_or_none(payload.get("confidence"))
+    advisor_track = str(payload.get("advisor_track", "") or "").strip().lower()
+    if advisor_track not in {"enfr", "ar"}:
+        advisor_track = "enfr"
+    return {
+        "recommended_ocr_mode": recommended_ocr_mode or "auto",
+        "recommended_image_mode": recommended_image_mode or "auto",
+        "recommendation_reasons": reasons,
+        "confidence": confidence if confidence is not None else 0.5,
+        "advisor_track": advisor_track,
+    }
+
+
 class _FuturisticCanvas(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -309,6 +350,10 @@ class QtMainWindow(QMainWindow):
         self._last_joblog_seed: JobLogSeed | None = None
         self._last_review_queue: list[dict[str, object]] = []
         self._last_run_report_path: Path | None = None
+        self._advisor_recommendation: dict[str, Any] | None = None
+        self._advisor_recommendation_applied: bool | None = None
+        self._advisor_override_ocr_mode: str | None = None
+        self._advisor_override_image_mode: str | None = None
         self._joblog_window: QtJobLogWindow | None = None
         self._review_queue_dialog: QtReviewQueueDialog | None = None
         self._settings_dialog: QtSettingsDialog | None = None
@@ -463,6 +508,21 @@ class QtMainWindow(QMainWindow):
         adv.addRow("Context text", self.context_text)
         adv.addRow("", self.analyze_btn)
         main_layout.addWidget(self.adv_frame)
+
+        self.advisor_frame = QFrame(objectName="SurfacePanel")
+        advisor_layout = QHBoxLayout(self.advisor_frame)
+        advisor_layout.setContentsMargins(10, 8, 10, 8)
+        advisor_layout.setSpacing(10)
+        advisor_title = QLabel("Advisor", objectName="MutedLabel")
+        self.advisor_label = QLabel("", objectName="PathLabel")
+        self.advisor_apply_btn = QPushButton("Apply")
+        self.advisor_ignore_btn = QPushButton("Ignore")
+        advisor_layout.addWidget(advisor_title)
+        advisor_layout.addWidget(self.advisor_label, 1)
+        advisor_layout.addWidget(self.advisor_apply_btn)
+        advisor_layout.addWidget(self.advisor_ignore_btn)
+        self.advisor_frame.setVisible(False)
+        main_layout.addWidget(self.advisor_frame)
         card_shell.addWidget(self.main_card)
 
         self.details_card = QFrame(objectName="SurfacePanel")
@@ -529,6 +589,8 @@ class QtMainWindow(QMainWindow):
         self.details_btn.toggled.connect(self._set_details_visible)
         self.translate_btn.clicked.connect(self._start)
         self.analyze_btn.clicked.connect(self._start_analyze)
+        self.advisor_apply_btn.clicked.connect(self._apply_advisor_recommendation)
+        self.advisor_ignore_btn.clicked.connect(self._ignore_advisor_recommendation)
         self.cancel_btn.clicked.connect(self._cancel)
         self.new_btn.clicked.connect(self._new_run)
         self.partial_btn.clicked.connect(self._export_partial)
@@ -972,6 +1034,85 @@ class QtMainWindow(QMainWindow):
         self.adv_frame.setVisible(visible)
         self._refresh_canvas()
 
+    def _set_advisor_recommendation(self, recommendation: dict[str, Any] | None) -> None:
+        self._advisor_recommendation = dict(recommendation) if isinstance(recommendation, dict) else None
+        self._advisor_recommendation_applied = None
+        self._advisor_override_ocr_mode = None
+        self._advisor_override_image_mode = None
+        self._refresh_advisor_banner()
+
+    def _refresh_advisor_banner(self) -> None:
+        recommendation = self._advisor_recommendation if isinstance(self._advisor_recommendation, dict) else None
+        frame = getattr(self, "advisor_frame", None)
+        label = getattr(self, "advisor_label", None)
+        apply_btn = getattr(self, "advisor_apply_btn", None)
+        ignore_btn = getattr(self, "advisor_ignore_btn", None)
+        if frame is None or label is None or apply_btn is None or ignore_btn is None:
+            return
+
+        if recommendation is None:
+            frame.setVisible(False)
+            label.setText("")
+            apply_btn.setEnabled(False)
+            ignore_btn.setEnabled(False)
+            return
+
+        rec_ocr = _normalized_mode_or_none(recommendation.get("recommended_ocr_mode")) or "auto"
+        rec_image = _normalized_mode_or_none(recommendation.get("recommended_image_mode")) or "auto"
+        track = str(recommendation.get("advisor_track", "enfr") or "enfr").strip().lower()
+        confidence = _coerce_float_or_none(recommendation.get("confidence"))
+        confidence_text = f"{confidence:.2f}" if confidence is not None else "n/a"
+        status_text = "pending"
+        if self._advisor_recommendation_applied is True:
+            status_text = "applied"
+        elif self._advisor_recommendation_applied is False:
+            status_text = "ignored"
+        label.setText(
+            f"Track {track.upper()} recommends OCR={rec_ocr}, Images={rec_image}, "
+            f"confidence={confidence_text} ({status_text})."
+        )
+        frame.setVisible(True)
+        can_choose = (not self._busy) and (self._advisor_recommendation_applied is None)
+        apply_btn.setEnabled(can_choose)
+        ignore_btn.setEnabled(can_choose)
+        self._refresh_canvas()
+
+    def _apply_advisor_recommendation(self) -> None:
+        recommendation = self._advisor_recommendation if isinstance(self._advisor_recommendation, dict) else None
+        if recommendation is None:
+            return
+        rec_ocr = _normalized_mode_or_none(recommendation.get("recommended_ocr_mode"))
+        rec_image = _normalized_mode_or_none(recommendation.get("recommended_image_mode"))
+        if rec_ocr is None or rec_image is None:
+            QMessageBox.warning(self, "Advisor", "Recommendation is incomplete. Run Analyze again.")
+            return
+        self._advisor_recommendation_applied = True
+        self._advisor_override_ocr_mode = rec_ocr
+        self._advisor_override_image_mode = rec_image
+        self._append_log(
+            "Advisor applied for next run only: "
+            f"ocr_mode={rec_ocr}, image_mode={rec_image}"
+        )
+        self._refresh_advisor_banner()
+        self._update_controls()
+
+    def _ignore_advisor_recommendation(self) -> None:
+        recommendation = self._advisor_recommendation if isinstance(self._advisor_recommendation, dict) else None
+        if recommendation is None:
+            return
+        self._advisor_recommendation_applied = False
+        self._advisor_override_ocr_mode = None
+        self._advisor_override_image_mode = None
+        self._append_log("Advisor recommendation ignored for next run.")
+        self._refresh_advisor_banner()
+        self._update_controls()
+
+    def _consume_advisor_choice(self) -> None:
+        self._advisor_recommendation_applied = None
+        self._advisor_override_ocr_mode = None
+        self._advisor_override_image_mode = None
+        self._refresh_advisor_banner()
+
     def _on_form_changed(self) -> None:
         self._schedule_save_settings()
         self._refresh_page_count()
@@ -1089,6 +1230,17 @@ class QtMainWindow(QMainWindow):
         context_file = Path(context_file_text).expanduser().resolve() if context_file_text else None
         glossary_file_text = str(self._defaults.get("glossary_file_path", "") or "").strip()
         glossary_file = Path(glossary_file_text).expanduser().resolve() if glossary_file_text else None
+        selected_image_mode = self.images_combo.currentText()
+        selected_ocr_mode = self.ocr_mode_combo.currentText()
+        advisor_applied = getattr(self, "_advisor_recommendation_applied", None)
+        advisor_override_image = getattr(self, "_advisor_override_image_mode", None)
+        advisor_override_ocr = getattr(self, "_advisor_override_ocr_mode", None)
+        advisor_payload = getattr(self, "_advisor_recommendation", None)
+        if advisor_applied is True:
+            if advisor_override_image in {"off", "auto", "always"}:
+                selected_image_mode = str(advisor_override_image)
+            if advisor_override_ocr in {"off", "auto", "always"}:
+                selected_ocr_mode = str(advisor_override_ocr)
 
         return RunConfig(
             pdf_path=pdf,
@@ -1097,7 +1249,7 @@ class QtMainWindow(QMainWindow):
             effort=parse_effort(self.effort_combo.currentText()),
             effort_policy=parse_effort_policy(self.effort_policy_combo.currentText()),
             allow_xhigh_escalation=bool(self._defaults.get("allow_xhigh_escalation", False)),
-            image_mode=parse_image_mode(self.images_combo.currentText()),
+            image_mode=parse_image_mode(selected_image_mode),
             start_page=start_page,
             end_page=opt_int(self.end_edit.text(), "End page"),
             max_pages=opt_int(self.max_edit.text(), "Max pages"),
@@ -1105,7 +1257,7 @@ class QtMainWindow(QMainWindow):
             resume=self.resume_check.isChecked(),
             page_breaks=self.breaks_check.isChecked(),
             keep_intermediates=self.keep_check.isChecked(),
-            ocr_mode=parse_ocr_mode(self.ocr_mode_combo.currentText()),
+            ocr_mode=parse_ocr_mode(selected_ocr_mode),
             ocr_engine=parse_ocr_engine_policy(self.ocr_engine_combo.currentText()),
             ocr_api_base_url=str(self._defaults.get("ocr_api_base_url", "") or "") or None,
             ocr_api_model=str(self._defaults.get("ocr_api_model", "") or "") or None,
@@ -1116,6 +1268,16 @@ class QtMainWindow(QMainWindow):
             diagnostics_admin_mode=bool(self._defaults.get("diagnostics_admin_mode", True)),
             diagnostics_include_sanitized_snippets=bool(
                 self._defaults.get("diagnostics_include_sanitized_snippets", False)
+            ),
+            advisor_recommendation_applied=(
+                advisor_applied
+                if isinstance(advisor_applied, bool)
+                else None
+            ),
+            advisor_recommendation=(
+                dict(advisor_payload)
+                if isinstance(advisor_payload, dict)
+                else None
             ),
         )
 
@@ -1198,16 +1360,22 @@ class QtMainWindow(QMainWindow):
             self._set_menu_enabled("glossary_builder", not self._busy)
             self._set_menu_enabled("calibration_audit", not self._busy)
         self._set_menu_enabled("settings", not self._busy)
+        refresh_advisor = getattr(self, "_refresh_advisor_banner", None)
+        if callable(refresh_advisor):
+            refresh_advisor()
 
     def _set_busy(self, busy: bool, *, translation: bool) -> None:
         self._busy = busy
         self._running = busy and translation
+        advisor_apply_btn = getattr(self, "advisor_apply_btn", None)
+        advisor_ignore_btn = getattr(self, "advisor_ignore_btn", None)
         for w in (
             self.pdf_edit, self.pdf_btn, self.lang_combo, self.outdir_edit, self.outdir_btn, self.show_adv,
             self.effort_policy_combo, self.effort_combo, self.images_combo, self.ocr_mode_combo, self.ocr_engine_combo,
             self.start_edit, self.end_edit, self.max_edit, self.workers_spin,
             self.resume_check, self.breaks_check, self.keep_check,
             self.context_file_edit, self.context_btn, self.context_text,
+            advisor_apply_btn, advisor_ignore_btn,
         ):
             if w is not None:
                 w.setEnabled(not busy)
@@ -1237,7 +1405,13 @@ class QtMainWindow(QMainWindow):
             elif decision != "proceed":
                 return
 
+        advisor_applied = (
+            config.advisor_recommendation_applied
+            if isinstance(config.advisor_recommendation_applied, bool)
+            else None
+        )
         self._save_settings()
+        self._consume_advisor_choice()
         if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
             self._review_queue_dialog.close()
             self._review_queue_dialog = None
@@ -1256,6 +1430,8 @@ class QtMainWindow(QMainWindow):
         self.status_label.setText("Starting...")
         self.header_status_label.setText("Starting...")
         self._reset_live_counters()
+        if advisor_applied is not None:
+            self._append_log(f"OCR advisor choice for this run: applied={advisor_applied}")
 
         max_retries = int(self._defaults.get("perf_max_transport_retries", 4) or 4)
         backoff_cap = float(self._defaults.get("perf_backoff_cap_seconds", 12.0) or 12.0)
@@ -1292,6 +1468,7 @@ class QtMainWindow(QMainWindow):
             return
 
         self._save_settings()
+        self._set_advisor_recommendation(None)
         if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
             self._review_queue_dialog.close()
             self._review_queue_dialog = None
@@ -1422,6 +1599,15 @@ class QtMainWindow(QMainWindow):
             f"would_attach_images={summary.pages_would_attach_images}"
         )
         self._append_log(f"Analyze report: {summary.analyze_report_path}")
+        advisor_recommendation = _load_advisor_recommendation(summary.analyze_report_path)
+        self._set_advisor_recommendation(advisor_recommendation)
+        advisor_message = "none"
+        if advisor_recommendation is not None:
+            advisor_message = (
+                f"OCR={advisor_recommendation.get('recommended_ocr_mode', 'auto')}, "
+                f"Images={advisor_recommendation.get('recommended_image_mode', 'auto')}"
+            )
+            self._append_log(f"Advisor recommendation ready: {advisor_message}")
         self._progress_done_pages = 0
         self._progress_total_pages = int(summary.selected_pages_count)
         self._update_live_counters()
@@ -1431,12 +1617,14 @@ class QtMainWindow(QMainWindow):
             "Analyze-only finished.\n\n"
             f"Selected pages: {summary.selected_pages_count}\n"
             f"Would attach images: {summary.pages_would_attach_images}\n"
+            f"Advisor recommendation: {advisor_message}\n"
             f"Report: {summary.analyze_report_path}",
         )
         self._update_controls()
 
     def _on_analyze_error(self, message: str) -> None:
         self._set_busy(False, translation=False)
+        self._set_advisor_recommendation(None)
         self._last_review_queue = []
         self.status_label.setText("Analyze failed")
         self.header_status_label.setText("Analyze failed")
@@ -1481,6 +1669,10 @@ class QtMainWindow(QMainWindow):
         self._last_run_config = None
         self._last_joblog_seed = None
         self._last_review_queue = []
+        self._advisor_recommendation = None
+        self._advisor_recommendation_applied = None
+        self._advisor_override_ocr_mode = None
+        self._advisor_override_image_mode = None
         self._last_workflow = None
         self._worker = None
         self._worker_thread = None
@@ -1494,6 +1686,9 @@ class QtMainWindow(QMainWindow):
         self.log_text.clear()
         self.details_btn.setChecked(False)
         self._set_details_visible(False)
+        refresh_advisor = getattr(self, "_refresh_advisor_banner", None)
+        if callable(refresh_advisor):
+            refresh_advisor()
         self._save_settings()
         self._update_controls()
 
