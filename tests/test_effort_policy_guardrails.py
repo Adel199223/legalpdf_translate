@@ -95,6 +95,9 @@ def test_run_summary_written_on_failure(tmp_path: Path, monkeypatch) -> None:
     assert "budget_decision_reason" in payload
     assert "budget_pre_run" in payload
     assert "budget_post_run" in payload
+    assert "quality_risk_score" in payload
+    assert "review_queue_count" in payload
+    assert "review_queue" in payload
 
 
 def test_telemetry_no_content_fields(tmp_path: Path, monkeypatch) -> None:

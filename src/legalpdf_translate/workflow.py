@@ -104,6 +104,9 @@ from .workflow_components.evaluation import (
 from .workflow_components.summary import (
     classify_suspected_cause as classify_summary_cause,
 )
+from .workflow_components.quality_risk import (
+    build_quality_risk_summary,
+)
 
 MIN_CHARS_REQUIRED = 64
 MAX_JUNK_RATIO_REQUIRED = 0.12
@@ -2051,6 +2054,7 @@ class TranslationWorkflow:
             total_output_tokens=total_output_tokens,
             total_reasoning_tokens=total_reasoning_tokens,
         )
+        quality_risk_payload = build_quality_risk_summary(page_rows)
         self._budget_post_run_packet = self._build_budget_post_run_packet(
             total_input_tokens=total_input_tokens,
             total_output_tokens=total_output_tokens,
@@ -2106,6 +2110,9 @@ class TranslationWorkflow:
             "top_reasoning_pages": [_row(page_number, page) for page_number, page in top_reasoning],
             "suspected_cause": suspected_cause,
             "evidence": evidence,
+            "quality_risk_score": quality_risk_payload.get("quality_risk_score", 0.0),
+            "review_queue_count": quality_risk_payload.get("review_queue_count", 0),
+            "review_queue": quality_risk_payload.get("review_queue", []),
         }
         if self._diagnostics_admin_mode:
             api_calls_total = sum(int(page.get("api_calls_count", 0) or 0) for _, page in page_rows)

@@ -467,3 +467,109 @@ def test_cli_rejects_negative_budget_cap(tmp_path: Path, monkeypatch) -> None:
     )
 
     assert exit_code == 1
+
+
+def test_cli_review_export_flag_triggers_export(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+    summary_path = outdir / "run_summary.json"
+    summary_path.write_text("{}", encoding="utf-8")
+    export_target = tmp_path / "exports" / "review_bundle"
+
+    captured: dict[str, object] = {}
+
+    class _FakeWorkflow:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
+            _ = kwargs
+
+        def run(self, config):  # type: ignore[no-untyped-def]
+            _ = config
+            return RunSummary(
+                success=True,
+                exit_code=0,
+                output_docx=outdir / "dummy.docx",
+                partial_docx=None,
+                run_dir=outdir,
+                completed_pages=1,
+                failed_page=None,
+                run_summary_path=summary_path,
+            )
+
+    def _fake_export(*, summary_path: Path, output_path: Path):  # type: ignore[no-untyped-def]
+        captured["summary_path"] = summary_path
+        captured["output_path"] = output_path
+        return (output_path.with_suffix(".csv"), output_path.with_suffix(".md"), 2)
+
+    monkeypatch.setattr(cli, "TranslationWorkflow", _FakeWorkflow)
+    monkeypatch.setattr(cli, "require_writable_output_dir_text", lambda _: outdir)
+    monkeypatch.setattr(cli, "export_review_queue", _fake_export)
+    _stub_cli_settings(monkeypatch)
+
+    exit_code = cli.main(
+        [
+            "--pdf",
+            str(pdf),
+            "--lang",
+            "EN",
+            "--outdir",
+            str(outdir),
+            "--review-export",
+            str(export_target),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["summary_path"] == summary_path
+    assert captured["output_path"] == export_target
+
+
+def test_cli_review_export_failure_is_non_fatal(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+    summary_path = outdir / "run_summary.json"
+    summary_path.write_text("{}", encoding="utf-8")
+
+    class _FakeWorkflow:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
+            _ = kwargs
+
+        def run(self, config):  # type: ignore[no-untyped-def]
+            _ = config
+            return RunSummary(
+                success=True,
+                exit_code=0,
+                output_docx=outdir / "dummy.docx",
+                partial_docx=None,
+                run_dir=outdir,
+                completed_pages=1,
+                failed_page=None,
+                run_summary_path=summary_path,
+            )
+
+    def _explode_export(*, summary_path: Path, output_path: Path):  # type: ignore[no-untyped-def]
+        _ = summary_path, output_path
+        raise RuntimeError("export failed")
+
+    monkeypatch.setattr(cli, "TranslationWorkflow", _FakeWorkflow)
+    monkeypatch.setattr(cli, "require_writable_output_dir_text", lambda _: outdir)
+    monkeypatch.setattr(cli, "export_review_queue", _explode_export)
+    _stub_cli_settings(monkeypatch)
+
+    exit_code = cli.main(
+        [
+            "--pdf",
+            str(pdf),
+            "--lang",
+            "EN",
+            "--outdir",
+            str(outdir),
+            "--review-export",
+            str(tmp_path / "exports" / "bundle"),
+        ]
+    )
+
+    assert exit_code == 0

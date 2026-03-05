@@ -920,3 +920,24 @@ def test_run_report_legacy_summary_without_budget_keys_remains_compatible(tmp_pa
 
     assert "## Summary" in markdown
     assert "Budget guardrail decision" not in markdown
+
+
+def test_run_report_renders_quality_risk_summary_when_present(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    summary_path = run_dir / "run_summary.json"
+    run_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    run_summary.update(
+        {
+            "quality_risk_score": 0.4721,
+            "review_queue_count": 3,
+        }
+    )
+    _write_json(summary_path, run_summary)
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "Quality risk score `0.4721` with `3` flagged review page(s)." in markdown

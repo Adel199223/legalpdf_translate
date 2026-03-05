@@ -17,6 +17,7 @@ from .checkpoint import (
     parse_ocr_mode,
 )
 from .output_paths import require_writable_output_dir_text
+from .review_export import export_review_queue
 from .secrets_store import (
     delete_openai_key,
     delete_ocr_key,
@@ -108,6 +109,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--analyze-only",
         action="store_true",
         help="Analyze extraction/image heuristics only (no API calls).",
+    )
+    parser.add_argument(
+        "--review-export",
+        default="",
+        help="Optional output path prefix or directory for review queue export (.csv + .md).",
     )
     parser.add_argument("--ocr-mode", default="auto", choices=["off", "auto", "always"], help="OCR mode.")
     parser.add_argument(
@@ -298,6 +304,21 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001
         print(f"[{_timestamp()}] Runtime error: {exc}", file=sys.stderr)
         return 2
+
+    review_export_path = str(args.review_export or "").strip()
+    if review_export_path != "":
+        summary_path = summary.run_summary_path or (summary.run_dir / "run_summary.json")
+        try:
+            csv_path, md_path, review_count = export_review_queue(
+                summary_path=summary_path,
+                output_path=Path(review_export_path),
+            )
+            print(
+                f"[{_timestamp()}] Review export: {csv_path} and {md_path} "
+                f"(items={review_count})"
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{_timestamp()}] Review export warning: {exc}", file=sys.stderr)
 
     if summary.success and summary.output_docx is not None:
         print(f"[{_timestamp()}] Saved DOCX: {summary.output_docx}")

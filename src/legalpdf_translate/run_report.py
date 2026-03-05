@@ -615,6 +615,10 @@ def build_run_report_payload(
         "budget_pre_run": budget_pre_obj,
         "budget_post_run": budget_post_obj,
     }
+    quality_obj: dict[str, Any] = {
+        "quality_risk_score": run_summary.get("quality_risk_score"),
+        "review_queue_count": int(run_summary.get("review_queue_count", 0) or 0),
+    }
 
     payload: dict[str, Any] = {
         "schema_version": "admin_run_report_v1" if admin_mode else "basic_run_report_v1",
@@ -684,6 +688,7 @@ def build_run_report_payload(
             "failed_pages_count": int(counts_obj.get("pages_failed", len(page_failures)) or len(page_failures)),
         },
         "budget": budget_obj,
+        "quality": quality_obj,
     }
 
     if admin_mode:
@@ -1340,6 +1345,7 @@ def build_run_report_markdown(
     warnings_obj = payload.get("warnings_errors", {})
     pipeline_obj = payload.get("pipeline", {})
     budget_obj = payload.get("budget", {})
+    quality_obj = payload.get("quality", {})
     timeline_obj = payload.get("timeline_events", [])
     if not isinstance(run_obj, dict):
         run_obj = {}
@@ -1355,6 +1361,8 @@ def build_run_report_markdown(
         pipeline_obj = {}
     if not isinstance(budget_obj, dict):
         budget_obj = {}
+    if not isinstance(quality_obj, dict):
+        quality_obj = {}
     if not isinstance(timeline_obj, list):
         timeline_obj = []
 
@@ -1396,6 +1404,13 @@ def build_run_report_markdown(
         )
         if budget_reason:
             lines.append(f"- Budget decision reason: `{budget_reason}`.")
+    quality_risk_score = quality_obj.get("quality_risk_score")
+    review_queue_count = int(quality_obj.get("review_queue_count", 0) or 0)
+    if quality_risk_score is not None or review_queue_count > 0:
+        lines.append(
+            f"- Quality risk score `{quality_risk_score}` with "
+            f"`{review_queue_count}` flagged review page(s)."
+        )
     lines.append(
         f"- Failed pages `{warnings_obj.get('failed_pages_count', 0)}` "
         f"({warnings_obj.get('failed_pages', [])})."
