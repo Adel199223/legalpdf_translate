@@ -34,6 +34,15 @@
 ## Use when you need source-backed external decisions
 - `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md`
 
+## Use when you need audit packets and roadmap outputs
+- `docs/assistant/audits/AUDIT_USAGE_PACKET_2026-03-05.md`
+- `docs/assistant/audits/AUDIT_USAGE_PACKET_2026-03-05.json`
+- `docs/assistant/audits/SIMILAR_APP_BENCHMARK_2026-03-05.md`
+- `docs/assistant/audits/GAP_OPPORTUNITY_MAP_2026-03-05.md`
+- `docs/assistant/audits/TOP5_UPGRADE_SPECS_2026-03-05.md`
+- `docs/assistant/audits/ROADMAP_30_60_90_2026-03-05.md`
+- `docs/assistant/audits/RELIABILITY_SIGNOFF_2026-03-05.md`
+
 ## Use when you need validation
 - `tooling/validate_agent_docs.dart`
 - `tooling/validate_workspace_hygiene.dart`
