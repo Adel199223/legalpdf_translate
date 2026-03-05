@@ -17,6 +17,7 @@ Implementing or modifying the core PDF-to-DOCX translation product flow.
 
 ## Primary Files
 - `src/legalpdf_translate/workflow.py`
+- `src/legalpdf_translate/cost_guardrails.py`
 - `src/legalpdf_translate/workflow_components/contracts.py`
 - `src/legalpdf_translate/workflow_components/evaluation.py`
 - `src/legalpdf_translate/workflow_components/summary.py`
@@ -41,6 +42,7 @@ python3 -m pytest -q tests/test_translation_report.py tests/test_run_report.py
 - `tests/test_workflow_logging_safety.py`
 - `tests/test_prompt_builder.py`
 - `tests/test_translation_diagnostics.py`
+- `tests/test_cost_guardrails.py`
 
 ## Failure Modes and Fallback Steps
 - Regression in page-level routing: revert to last known-good route decision block and rerun targeted tests.

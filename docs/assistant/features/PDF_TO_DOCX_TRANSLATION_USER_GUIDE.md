@@ -44,6 +44,19 @@ This user guide is not canonical architecture truth. Defer to `APP_KNOWLEDGE.md`
 4. If text quality is poor, test analyze-only and inspect OCR routing.
 5. If terminology is inconsistent, review glossary settings and rerun affected pages.
 
+## Cost Guardrails (CLI)
+Use this when you run from terminal and want cost protection.
+
+1. Set a budget cap:
+   - `legalpdf-translate --pdf <file> --lang EN --outdir <dir> --budget-cap-usd 3.50`
+2. Choose behavior if estimate exceeds cap:
+   - `--budget-on-exceed warn` (default): shows warning and continues.
+   - `--budget-on-exceed block`: stops before page processing.
+3. Optional profile label:
+   - `--cost-profile-id default_local`
+4. Check the run report and `run_summary.json` for:
+   - `budget_decision`, `budget_decision_reason`, `budget_pre_run`, `budget_post_run`.
+
 ## Canonical Checkpoints for Agents
 - Runtime behavior: `APP_KNOWLEDGE.md`
 - Workflow specifics: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`

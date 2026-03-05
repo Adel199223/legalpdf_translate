@@ -22,6 +22,9 @@ For support/non-technical explanations, start with:
 - `docs/assistant/features/APP_USER_GUIDE.md`
 - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
 
+Cost-guardrail support routing:
+- CLI budget cap/policy behavior (`warn` vs `block`) is documented in the primary workflow user guide.
+
 ## Workflow Routing
 - Core translation: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
 - Data/persistence: `docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md`

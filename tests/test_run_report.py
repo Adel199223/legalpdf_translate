@@ -875,3 +875,48 @@ def test_run_report_adds_pt_leak_counters_and_image_mode_optimization_hint(tmp_p
     assert '"pt_language_leak_retries": 1' in markdown
     assert '"image_mode_optimization_hint": "image_mode=always attached images on all pages while EN/FR auto-image heuristics would skip image attachments for this run; consider image_mode=auto."' in markdown
     assert "Optimization hint: image_mode=always attached images on all pages" in markdown
+
+
+def test_run_report_renders_budget_guardrail_section_when_present(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    summary_path = run_dir / "run_summary.json"
+    run_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    run_summary.update(
+        {
+            "cost_estimation_status": "available",
+            "cost_profile_id": "default_local",
+            "budget_cap_usd": 0.01,
+            "budget_decision": "warn",
+            "budget_decision_reason": "estimate_exceeds_budget_cap",
+            "budget_pre_run": {
+                "estimated_cost_usd": 0.023,
+                "estimation_status": "available",
+            },
+            "budget_post_run": {
+                "estimated_cost_usd": 0.003,
+                "estimation_status": "available",
+            },
+        }
+    )
+    _write_json(summary_path, run_summary)
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "Budget guardrail decision `warn`" in markdown
+    assert "Budget decision reason: `estimate_exceeds_budget_cap`." in markdown
+
+
+def test_run_report_legacy_summary_without_budget_keys_remains_compatible(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "## Summary" in markdown
+    assert "Budget guardrail decision" not in markdown

@@ -44,6 +44,11 @@ class OcrEnginePolicy(str, Enum):
     API = "api"
 
 
+class BudgetExceedPolicy(str, Enum):
+    WARN = "warn"
+    BLOCK = "block"
+
+
 class ApiKeySource(str, Enum):
     ENV = "env"
     CREDMAN = "credman"
@@ -80,6 +85,9 @@ class RunConfig:
     glossary_file: Path | None = None
     effort_policy: EffortPolicy = EffortPolicy.ADAPTIVE
     allow_xhigh_escalation: bool = False
+    budget_cap_usd: float | None = None
+    cost_profile_id: str = "default_local"
+    budget_on_exceed: BudgetExceedPolicy = BudgetExceedPolicy.WARN
     diagnostics_admin_mode: bool = False
     diagnostics_include_sanitized_snippets: bool = False
     strip_bidi_controls: bool = True

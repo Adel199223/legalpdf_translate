@@ -40,6 +40,14 @@ from .checkpoint import (
 )
 from .config import load_environment, OPENAI_MODEL
 from .config import IMAGE_MAX_DATA_URL_BYTES_AR, IMAGE_MAX_DATA_URL_BYTES_ENFR
+from .cost_guardrails import (
+    deterministic_sample_pages,
+    estimate_cost_usd,
+    estimate_pre_run_tokens,
+    evaluate_budget_decision,
+    normalize_cost_profile_id,
+    resolve_pricing,
+)
 from .docx_writer import assemble_docx
 from .glossary import (
     cap_entries_for_prompt,
@@ -72,6 +80,7 @@ from .run_report import RunEventCollector
 from .resources_loader import load_system_instructions
 from .types import (
     AnalyzeSummary,
+    BudgetExceedPolicy,
     ImageMode,
     OcrMode,
     PageStatus,
@@ -83,7 +92,6 @@ from .types import (
 )
 from .user_settings import load_gui_settings
 from .workflow_components.contracts import (
-    CostEstimateInputs,
     OutputEvaluation,
     SummarySignalInputs,
 )
@@ -95,9 +103,6 @@ from .workflow_components.evaluation import (
 )
 from .workflow_components.summary import (
     classify_suspected_cause as classify_summary_cause,
-)
-from .workflow_components.summary import (
-    estimate_cost_if_available as estimate_run_cost,
 )
 
 MIN_CHARS_REQUIRED = 64
@@ -253,6 +258,13 @@ class TranslationWorkflow:
             supported_target_langs(),
         )
         self._prompt_addendum_by_lang: dict[str, str] = {lang: "" for lang in supported_target_langs()}
+        self._budget_pre_run_packet: dict[str, Any] | None = None
+        self._budget_post_run_packet: dict[str, Any] | None = None
+        self._budget_decision: str = "n/a"
+        self._budget_decision_reason: str = ""
+        self._cost_estimation_status: str = "unavailable"
+        self._cost_profile_id: str = "default_local"
+        self._budget_cap_usd: float | None = None
 
     def cancel(self) -> None:
         self._cancel_event.set()
@@ -272,9 +284,18 @@ class TranslationWorkflow:
         self._ocr_helpful_engine = None
         self._ocr_required_engine_checked = False
         self._ocr_helpful_engine_checked = False
+        self._budget_pre_run_packet = None
+        self._budget_post_run_packet = None
+        self._budget_decision = "n/a"
+        self._budget_decision_reason = ""
+        self._cost_estimation_status = "unavailable"
+        self._cost_profile_id = "default_local"
+        self._budget_cap_usd = None
 
         config = self._normalize_config(config)
         self._validate_config(config)
+        self._cost_profile_id = normalize_cost_profile_id(config.cost_profile_id)
+        self._budget_cap_usd = config.budget_cap_usd
         gui_settings = load_gui_settings()
         personal_glossaries = normalize_glossaries(
             gui_settings.get("personal_glossaries_by_lang", gui_settings.get("glossaries_by_lang")),
@@ -463,6 +484,95 @@ class TranslationWorkflow:
                 )
                 continue
             pending_pages.append(page_number)
+
+        self._budget_pre_run_packet = self._build_budget_pre_run_packet(
+            config=config,
+            selected_pages=selected_pages,
+            selected_pages_count=selection_page_count,
+        )
+        self._cost_estimation_status = str(self._budget_pre_run_packet.get("estimation_status", "unavailable") or "unavailable")
+        pre_run_estimated_cost = self._budget_pre_run_packet.get("estimated_cost_usd")
+        if isinstance(pre_run_estimated_cost, (int, float)):
+            pre_run_cost_value: float | None = float(pre_run_estimated_cost)
+        else:
+            pre_run_cost_value = None
+        decision = evaluate_budget_decision(
+            budget_cap_usd=config.budget_cap_usd,
+            estimated_cost_usd=pre_run_cost_value,
+            budget_on_exceed=config.budget_on_exceed,
+        )
+        self._budget_decision = decision.decision
+        self._budget_decision_reason = decision.reason
+
+        self._record_event(
+            event_type="run_budget_preflight",
+            stage="run",
+            counters={
+                "selected_pages_count": int(selection_page_count),
+                "sample_pages_count": int(self._budget_pre_run_packet.get("sample_pages_count", 0) or 0),
+                "estimated_total_tokens": int(self._budget_pre_run_packet.get("estimated_total_tokens", 0) or 0),
+            },
+            decisions={
+                "cost_profile_id": self._cost_profile_id,
+                "cost_estimation_status": self._cost_estimation_status,
+                "budget_cap_configured": config.budget_cap_usd is not None,
+                "budget_on_exceed": config.budget_on_exceed.value,
+                "budget_decision": self._budget_decision,
+                "budget_decision_reason": self._budget_decision_reason,
+            },
+            details={
+                "estimated_cost_usd": pre_run_cost_value,
+                "budget_cap_usd": config.budget_cap_usd,
+                "pricing_source": self._budget_pre_run_packet.get("pricing_source"),
+                "pricing_explanation": self._budget_pre_run_packet.get("pricing_explanation"),
+            },
+        )
+
+        if self._budget_decision == "warn":
+            self._log(
+                "Budget preflight warning: estimated cost exceeds configured cap "
+                f"(estimate={pre_run_cost_value}, cap={config.budget_cap_usd}). Continuing by policy."
+            )
+        elif self._budget_decision == "n/a" and config.budget_cap_usd is not None:
+            self._log(
+                "Budget preflight unavailable: estimate could not be computed with configured cap; "
+                "continuing by policy."
+            )
+        elif self._budget_decision == "block":
+            with state_lock:
+                run_state.run_status = "budget_blocked"
+                run_state.finished_at = self._utc_now()
+                run_state.final_docx_path_abs = None
+                run_state.halt_reason = "budget_cap_exceeded"
+                save_run_state_atomic(paths.run_state_path, run_state)
+            self._last_state = run_state
+            self._run_stage_timings_ms["run_total"] = round((time.perf_counter() - run_started_perf) * 1000.0, 3)
+            run_summary_path = self._write_run_summary(
+                config=config,
+                paths=paths,
+                run_state=run_state,
+            )
+            self._record_event(
+                event_type="run_budget_blocked",
+                stage="run",
+                error="budget_cap_exceeded",
+                details={
+                    "estimated_cost_usd": pre_run_cost_value,
+                    "budget_cap_usd": config.budget_cap_usd,
+                    "decision_reason": self._budget_decision_reason,
+                },
+            )
+            return RunSummary(
+                success=False,
+                exit_code=1,
+                output_docx=None,
+                partial_docx=None,
+                run_dir=paths.run_dir,
+                completed_pages=0,
+                failed_page=None,
+                error="budget_cap_exceeded",
+                run_summary_path=run_summary_path,
+            )
 
         if run_state.done_count > 0:
             self._progress(run_state.done_count, selection_page_count, f"Resumed {run_state.done_count} page(s)")
@@ -1941,6 +2051,13 @@ class TranslationWorkflow:
             total_output_tokens=total_output_tokens,
             total_reasoning_tokens=total_reasoning_tokens,
         )
+        self._budget_post_run_packet = self._build_budget_post_run_packet(
+            total_input_tokens=total_input_tokens,
+            total_output_tokens=total_output_tokens,
+            total_reasoning_tokens=total_reasoning_tokens,
+        )
+        post_status = str(self._budget_post_run_packet.get("estimation_status", "unavailable") or "unavailable")
+        cost_estimation_status = str(self._cost_estimation_status or "").strip() or post_status
 
         payload: dict[str, Any] = {
             "run_id": run_state.run_started_at or paths.run_started_at,
@@ -1949,6 +2066,13 @@ class TranslationWorkflow:
             "selected_pages_count": selected_pages_count,
             "effort_policy": effort_policy,
             "image_mode": config.image_mode.value,
+            "cost_estimation_status": cost_estimation_status,
+            "cost_profile_id": self._cost_profile_id,
+            "budget_cap_usd": self._budget_cap_usd,
+            "budget_decision": self._budget_decision,
+            "budget_decision_reason": self._budget_decision_reason,
+            "budget_pre_run": dict(self._budget_pre_run_packet or {}),
+            "budget_post_run": dict(self._budget_post_run_packet or {}),
             "pipeline": {
                 "image_mode": config.image_mode.value,
                 "ocr_mode": config.ocr_mode.value,
@@ -2128,25 +2252,149 @@ class TranslationWorkflow:
         total_output_tokens: int,
         total_reasoning_tokens: int,
     ) -> float | None:
-        return estimate_run_cost(
-            CostEstimateInputs(
-                total_input_tokens=total_input_tokens,
-                total_output_tokens=total_output_tokens,
-                total_reasoning_tokens=total_reasoning_tokens,
-                input_rate=self._env_float("LEGALPDF_COST_INPUT_PER_1M"),
-                output_rate=self._env_float("LEGALPDF_COST_OUTPUT_PER_1M"),
-                reasoning_rate=self._env_float("LEGALPDF_COST_REASONING_PER_1M"),
-            )
+        pricing = resolve_pricing(OPENAI_MODEL)
+        if pricing.status != "available" or pricing.rates is None:
+            return None
+        return estimate_cost_usd(
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            reasoning_tokens=total_reasoning_tokens,
+            rates=pricing.rates,
         )
 
-    def _env_float(self, key: str) -> float | None:
-        raw = os.getenv(key, "").strip()
-        if raw == "":
-            return None
-        try:
-            return float(raw)
-        except ValueError:
-            return None
+    def _build_budget_pre_run_packet(
+        self,
+        *,
+        config: RunConfig,
+        selected_pages: list[int],
+        selected_pages_count: int,
+    ) -> dict[str, Any]:
+        sample_pages = deterministic_sample_pages(selected_pages, max_samples=3)
+        sampled_char_counts: list[int] = []
+        sample_failures: list[str] = []
+        for page_number in sample_pages:
+            try:
+                ordered = extract_ordered_page_text(config.pdf_path, page_number - 1)
+                sampled_char_counts.append(len((ordered.text or "").strip()))
+            except Exception as exc:  # noqa: BLE001
+                sample_failures.append(f"page={page_number}:{type(exc).__name__}")
+
+        pre_run_tokens = estimate_pre_run_tokens(
+            selected_pages_count=selected_pages_count,
+            sampled_page_char_counts=sampled_char_counts,
+            target_lang=config.target_lang,
+            effort_policy=config.effort_policy,
+            image_mode=config.image_mode,
+            ocr_mode=config.ocr_mode,
+        )
+        pricing = resolve_pricing(OPENAI_MODEL)
+        estimated_cost: float | None = None
+        estimation_status = "unavailable"
+        estimation_reason = "sample_extraction_failed"
+        pricing_source = ""
+        pricing_explanation = ""
+        if pricing.rates is not None:
+            pricing_source = pricing.rates.source
+            pricing_explanation = pricing.rates.explanation
+
+        if pre_run_tokens is None:
+            if not sample_pages:
+                estimation_reason = "no_selected_pages"
+            elif sampled_char_counts:
+                estimation_reason = "insufficient_sample_for_estimate"
+            elif sample_failures:
+                estimation_reason = "sample_extraction_failed"
+            else:
+                estimation_reason = "sample_unavailable"
+            if pricing.status == "failed":
+                estimation_status = "failed"
+                estimation_reason = pricing.reason
+        elif pricing.status != "available" or pricing.rates is None:
+            estimation_status = pricing.status
+            estimation_reason = pricing.reason
+        else:
+            estimation_status = "available"
+            estimation_reason = pricing.reason
+            estimated_cost = estimate_cost_usd(
+                input_tokens=pre_run_tokens.estimated_input_tokens,
+                output_tokens=pre_run_tokens.estimated_output_tokens,
+                reasoning_tokens=pre_run_tokens.estimated_reasoning_tokens,
+                rates=pricing.rates,
+            )
+
+        packet: dict[str, Any] = {
+            "model": OPENAI_MODEL,
+            "cost_profile_id": self._cost_profile_id,
+            "selected_pages_count": int(selected_pages_count),
+            "sample_pages": list(sample_pages),
+            "sample_pages_count": int(len(sample_pages)),
+            "sampled_page_char_counts": list(sampled_char_counts),
+            "sample_failures": list(sample_failures),
+            "estimation_status": estimation_status,
+            "estimation_reason": estimation_reason,
+            "pricing_source": pricing_source,
+            "pricing_explanation": pricing_explanation,
+            "estimated_cost_usd": estimated_cost,
+        }
+        if pre_run_tokens is not None:
+            packet.update(pre_run_tokens.to_dict())
+        else:
+            packet.update(
+                {
+                    "source_tokens_per_page_estimate": None,
+                    "prompt_overhead_tokens_per_page": None,
+                    "output_multiplier": None,
+                    "reasoning_ratio": None,
+                    "image_multiplier": None,
+                    "ocr_multiplier": None,
+                    "estimated_input_tokens": None,
+                    "estimated_output_tokens": None,
+                    "estimated_reasoning_tokens": None,
+                    "estimated_total_tokens": None,
+                }
+            )
+        return packet
+
+    def _build_budget_post_run_packet(
+        self,
+        *,
+        total_input_tokens: int,
+        total_output_tokens: int,
+        total_reasoning_tokens: int,
+    ) -> dict[str, Any]:
+        pricing = resolve_pricing(OPENAI_MODEL)
+        estimated_cost: float | None = None
+        pricing_source = ""
+        pricing_explanation = ""
+        if pricing.rates is not None:
+            pricing_source = pricing.rates.source
+            pricing_explanation = pricing.rates.explanation
+        if pricing.status == "available" and pricing.rates is not None:
+            estimated_cost = estimate_cost_usd(
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                reasoning_tokens=total_reasoning_tokens,
+                rates=pricing.rates,
+            )
+        return {
+            "model": OPENAI_MODEL,
+            "cost_profile_id": self._cost_profile_id,
+            "estimation_status": pricing.status,
+            "estimation_reason": pricing.reason,
+            "pricing_source": pricing_source,
+            "pricing_explanation": pricing_explanation,
+            "budget_cap_usd": self._budget_cap_usd,
+            "cap_exceeded": (
+                None
+                if self._budget_cap_usd is None or estimated_cost is None
+                else bool(estimated_cost > self._budget_cap_usd)
+            ),
+            "input_tokens": int(total_input_tokens),
+            "output_tokens": int(total_output_tokens),
+            "reasoning_tokens": int(total_reasoning_tokens),
+            "total_tokens": int(total_input_tokens + total_output_tokens + total_reasoning_tokens),
+            "estimated_cost_usd": estimated_cost,
+        }
 
     def _image_cap_for_lang(self, lang: TargetLang) -> int:
         if lang == TargetLang.AR:
@@ -2305,6 +2553,13 @@ class TranslationWorkflow:
     def _normalize_config(self, config: RunConfig) -> RunConfig:
         outdir_abs = require_writable_output_dir(config.output_dir)
         context_file_abs = config.context_file.expanduser().resolve() if config.context_file else None
+        budget_policy = config.budget_on_exceed
+        if not isinstance(budget_policy, BudgetExceedPolicy):
+            normalized_policy = str(budget_policy or "").strip().lower()
+            if normalized_policy == BudgetExceedPolicy.BLOCK.value:
+                budget_policy = BudgetExceedPolicy.BLOCK
+            else:
+                budget_policy = BudgetExceedPolicy.WARN
         return RunConfig(
             pdf_path=config.pdf_path.expanduser().resolve(),
             output_dir=outdir_abs,
@@ -2328,6 +2583,9 @@ class TranslationWorkflow:
             context_file=context_file_abs,
             context_text=config.context_text,
             glossary_file=config.glossary_file.expanduser().resolve() if config.glossary_file else None,
+            budget_cap_usd=None if config.budget_cap_usd is None else float(config.budget_cap_usd),
+            cost_profile_id=normalize_cost_profile_id(config.cost_profile_id),
+            budget_on_exceed=budget_policy,
             diagnostics_admin_mode=bool(config.diagnostics_admin_mode),
             diagnostics_include_sanitized_snippets=bool(config.diagnostics_include_sanitized_snippets),
             strip_bidi_controls=bool(config.strip_bidi_controls),
@@ -2351,6 +2609,8 @@ class TranslationWorkflow:
             raise ValueError("max_pages must be a positive integer when provided.")
         if config.workers < 1 or config.workers > 6:
             raise ValueError("workers must be between 1 and 6.")
+        if config.budget_cap_usd is not None and float(config.budget_cap_usd) < 0.0:
+            raise ValueError("budget_cap_usd must be >= 0 when provided.")
         if config.context_file and not config.context_file.exists():
             raise FileNotFoundError(f"Context file not found: {config.context_file}")
         if config.glossary_file and not config.glossary_file.exists():

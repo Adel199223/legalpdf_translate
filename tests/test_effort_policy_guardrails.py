@@ -88,6 +88,13 @@ def test_run_summary_written_on_failure(tmp_path: Path, monkeypatch) -> None:
     assert summary.run_summary_path.exists()
     payload = json.loads(summary.run_summary_path.read_text(encoding="utf-8"))
     assert payload["counts"]["pages_failed"] == 1
+    assert "cost_estimation_status" in payload
+    assert "cost_profile_id" in payload
+    assert "budget_cap_usd" in payload
+    assert "budget_decision" in payload
+    assert "budget_decision_reason" in payload
+    assert "budget_pre_run" in payload
+    assert "budget_post_run" in payload
 
 
 def test_telemetry_no_content_fields(tmp_path: Path, monkeypatch) -> None:

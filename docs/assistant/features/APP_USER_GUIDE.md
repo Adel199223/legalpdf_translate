@@ -33,6 +33,8 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 - Run folder: A folder containing translation progress and diagnostics files.
 - Resume: Continue from where a previous run stopped.
 - Glossary: A preferred term list that keeps wording consistent.
+- Budget cap: A spend limit you can set for a CLI run.
+- Budget decision: What the app does when estimated cost is above cap (`warn` continues, `block` stops early).
 
 ## Common Help Paths
 - Translation behavior basics: `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`

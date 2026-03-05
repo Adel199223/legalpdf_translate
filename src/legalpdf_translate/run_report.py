@@ -600,6 +600,21 @@ def build_run_report_payload(
         ocr_required_unavailable_pages_value = int(summary_pipeline_obj.get("ocr_required_unavailable_pages") or 0)
     else:
         ocr_required_unavailable_pages_value = int(ocr_required_unavailable_pages)
+    budget_pre_obj = run_summary.get("budget_pre_run")
+    if not isinstance(budget_pre_obj, dict):
+        budget_pre_obj = {}
+    budget_post_obj = run_summary.get("budget_post_run")
+    if not isinstance(budget_post_obj, dict):
+        budget_post_obj = {}
+    budget_obj: dict[str, Any] = {
+        "cost_estimation_status": str(run_summary.get("cost_estimation_status", "") or ""),
+        "cost_profile_id": str(run_summary.get("cost_profile_id", "") or ""),
+        "budget_cap_usd": run_summary.get("budget_cap_usd"),
+        "budget_decision": str(run_summary.get("budget_decision", "") or ""),
+        "budget_decision_reason": str(run_summary.get("budget_decision_reason", "") or ""),
+        "budget_pre_run": budget_pre_obj,
+        "budget_post_run": budget_post_obj,
+    }
 
     payload: dict[str, Any] = {
         "schema_version": "admin_run_report_v1" if admin_mode else "basic_run_report_v1",
@@ -668,6 +683,7 @@ def build_run_report_payload(
             "failed_pages": page_failures,
             "failed_pages_count": int(counts_obj.get("pages_failed", len(page_failures)) or len(page_failures)),
         },
+        "budget": budget_obj,
     }
 
     if admin_mode:
@@ -1323,6 +1339,7 @@ def build_run_report_markdown(
     output_obj = payload.get("output", {})
     warnings_obj = payload.get("warnings_errors", {})
     pipeline_obj = payload.get("pipeline", {})
+    budget_obj = payload.get("budget", {})
     timeline_obj = payload.get("timeline_events", [])
     if not isinstance(run_obj, dict):
         run_obj = {}
@@ -1336,6 +1353,8 @@ def build_run_report_markdown(
         warnings_obj = {}
     if not isinstance(pipeline_obj, dict):
         pipeline_obj = {}
+    if not isinstance(budget_obj, dict):
+        budget_obj = {}
     if not isinstance(timeline_obj, list):
         timeline_obj = []
 
@@ -1355,6 +1374,28 @@ def build_run_report_markdown(
         f"- API calls `{totals_obj.get('api_calls_total', 0)}`, retries `{totals_obj.get('transport_retries_total', 0)}`, "
         f"rate-limit hits `{totals_obj.get('rate_limit_hits', 0)}`."
     )
+    budget_decision = str(budget_obj.get("budget_decision", "") or "")
+    budget_reason = str(budget_obj.get("budget_decision_reason", "") or "")
+    cost_status = str(budget_obj.get("cost_estimation_status", "") or "")
+    cost_profile_id = str(budget_obj.get("cost_profile_id", "") or "")
+    budget_cap = budget_obj.get("budget_cap_usd")
+    budget_pre = budget_obj.get("budget_pre_run")
+    if not isinstance(budget_pre, dict):
+        budget_pre = {}
+    budget_pre_cost = budget_pre.get("estimated_cost_usd")
+    if (
+        budget_decision
+        or cost_status
+        or cost_profile_id
+        or budget_cap is not None
+    ):
+        lines.append(
+            f"- Budget guardrail decision `{budget_decision or 'n/a'}` "
+            f"(status `{cost_status or 'unknown'}`, cap `{budget_cap}`, profile `{cost_profile_id or 'default_local'}`, "
+            f"pre-run estimate `{budget_pre_cost}`)."
+        )
+        if budget_reason:
+            lines.append(f"- Budget decision reason: `{budget_reason}`.")
     lines.append(
         f"- Failed pages `{warnings_obj.get('failed_pages_count', 0)}` "
         f"({warnings_obj.get('failed_pages', [])})."

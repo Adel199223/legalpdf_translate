@@ -13,10 +13,12 @@ LegalPDF Translate is a Windows-first Python app that translates one PDF into on
 ## Entrypoints
 - GUI: `python -m legalpdf_translate.qt_gui`
 - CLI: `legalpdf-translate --pdf <file> --lang EN|FR|AR --outdir <dir>`
+  - Cost guardrails (optional): `--budget-cap-usd <float> --cost-profile-id <string> --budget-on-exceed warn|block`
 - Build: `powershell -ExecutionPolicy Bypass -File scripts/build_qt.ps1`
 
 ## Core Runtime Modules
 - `src/legalpdf_translate/workflow.py`: translation pipeline orchestration.
+- `src/legalpdf_translate/cost_guardrails.py`: deterministic pre-run/post-run cost estimation and budget decisions.
 - `src/legalpdf_translate/workflow_components/contracts.py`: typed workflow internal contracts.
 - `src/legalpdf_translate/workflow_components/evaluation.py`: output-evaluation and retry-reason delegation.
 - `src/legalpdf_translate/workflow_components/summary.py`: run-summary and cost/suspected-cause delegation.
@@ -34,6 +36,7 @@ LegalPDF Translate is a Windows-first Python app that translates one PDF into on
 3. Resume interrupted runs from checkpoint artifacts.
 4. Rebuild DOCX from existing page outputs.
 5. Use glossary and diagnostics workflows for consistency and QA.
+6. Optionally apply CLI budget guardrails (`warn` continue or `block` before page processing).
 
 ## Output and Run Artifacts
 Run artifacts live under:
@@ -45,6 +48,15 @@ Typical files:
 - `run_summary.json`
 - `run_events.jsonl`
 - `analyze_report.json` (analyze-only)
+
+`run_summary.json` keeps existing totals and now also supports additive cost-guardrail fields:
+- `cost_estimation_status`
+- `cost_profile_id`
+- `budget_cap_usd`
+- `budget_decision`
+- `budget_decision_reason`
+- `budget_pre_run`
+- `budget_post_run`
 
 ## Governance and Routing Docs
 - Assistant docs index: `docs/assistant/INDEX.md`

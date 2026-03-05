@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from legalpdf_translate import cli
-from legalpdf_translate.types import AnalyzeSummary, EffortPolicy, RunSummary
+from legalpdf_translate.types import AnalyzeSummary, BudgetExceedPolicy, EffortPolicy, RunSummary
 
 
 def test_cli_parser_accepts_analyze_only_flag() -> None:
@@ -348,3 +348,122 @@ def test_cli_uses_settings_glossary_when_flag_missing(tmp_path: Path, monkeypatc
 
     assert exit_code == 0
     assert captured["config"].glossary_file == settings_glossary.resolve()
+
+
+def test_cli_budget_flags_are_parsed_and_wired(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    captured: dict[str, object] = {}
+
+    class _FakeWorkflow:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
+            _ = kwargs
+
+        def run(self, config):  # type: ignore[no-untyped-def]
+            captured["config"] = config
+            return RunSummary(
+                success=True,
+                exit_code=0,
+                output_docx=outdir / "dummy.docx",
+                partial_docx=None,
+                run_dir=outdir,
+                completed_pages=1,
+                failed_page=None,
+            )
+
+    monkeypatch.setattr(cli, "TranslationWorkflow", _FakeWorkflow)
+    monkeypatch.setattr(cli, "require_writable_output_dir_text", lambda _: outdir)
+    _stub_cli_settings(monkeypatch)
+
+    exit_code = cli.main(
+        [
+            "--pdf",
+            str(pdf),
+            "--lang",
+            "EN",
+            "--outdir",
+            str(outdir),
+            "--budget-cap-usd",
+            "2.5",
+            "--cost-profile-id",
+            "  legal_ops_profile  ",
+            "--budget-on-exceed",
+            "block",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["config"].budget_cap_usd == 2.5
+    assert captured["config"].cost_profile_id == "legal_ops_profile"
+    assert captured["config"].budget_on_exceed == BudgetExceedPolicy.BLOCK
+
+
+def test_cli_budget_policy_defaults_to_warn(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    captured: dict[str, object] = {}
+
+    class _FakeWorkflow:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
+            _ = kwargs
+
+        def run(self, config):  # type: ignore[no-untyped-def]
+            captured["config"] = config
+            return RunSummary(
+                success=True,
+                exit_code=0,
+                output_docx=outdir / "dummy.docx",
+                partial_docx=None,
+                run_dir=outdir,
+                completed_pages=1,
+                failed_page=None,
+            )
+
+    monkeypatch.setattr(cli, "TranslationWorkflow", _FakeWorkflow)
+    monkeypatch.setattr(cli, "require_writable_output_dir_text", lambda _: outdir)
+    _stub_cli_settings(monkeypatch)
+
+    exit_code = cli.main(
+        [
+            "--pdf",
+            str(pdf),
+            "--lang",
+            "EN",
+            "--outdir",
+            str(outdir),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["config"].budget_on_exceed == BudgetExceedPolicy.WARN
+
+
+def test_cli_rejects_negative_budget_cap(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(cli, "require_writable_output_dir_text", lambda _: outdir)
+    _stub_cli_settings(monkeypatch)
+
+    exit_code = cli.main(
+        [
+            "--pdf",
+            str(pdf),
+            "--lang",
+            "EN",
+            "--outdir",
+            str(outdir),
+            "--budget-cap-usd",
+            "-0.01",
+        ]
+    )
+
+    assert exit_code == 1
