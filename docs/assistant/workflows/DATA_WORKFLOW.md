@@ -17,7 +17,12 @@ Use only when a template/tool requests `DATA_WORKFLOW.md`.
 - `docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md`
 
 ## Minimal Commands
+PowerShell:
 ```powershell
+dart run tooling/validate_agent_docs.dart
+```
+POSIX:
+```bash
 dart run tooling/validate_agent_docs.dart
 ```
 

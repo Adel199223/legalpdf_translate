@@ -43,8 +43,12 @@ String _fixtureRoot() {
     'docs/assistant',
     'tooling/validate_agent_docs.dart',
     'tooling/validate_workspace_hygiene.dart',
+    'tooling/automation_preflight.dart',
+    'tooling/cloud_eval_preflight.dart',
     'test/tooling/validate_agent_docs_test.dart',
     'test/tooling/validate_workspace_hygiene_test.dart',
+    'test/tooling/automation_preflight_test.dart',
+    'test/tooling/cloud_eval_preflight_test.dart',
   ];
 
   for (final String path in seedPaths) {
@@ -376,6 +380,95 @@ void main() {
     _expect(_hasRule(issues, 'AD028'), 'Expected AD028');
   }, failures);
 
+  _runCase('fails when module_flags missing', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> manifest = _readJson(root, 'docs/assistant/manifest.json');
+    manifest.remove('module_flags');
+    _writeJson(root, 'docs/assistant/manifest.json', manifest);
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD002') || _hasRule(issues, 'AD029'),
+        'Expected AD002 or AD029');
+  }, failures);
+
+  _runCase('fails when module-conditioned workflow missing', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> manifest = _readJson(root, 'docs/assistant/manifest.json');
+    final List<dynamic> workflows = manifest['workflows'] as List<dynamic>;
+    workflows.removeWhere((dynamic item) =>
+        item is Map<String, dynamic> && item['id'] == 'staged_execution_workflow');
+    _writeJson(root, 'docs/assistant/manifest.json', manifest);
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD030'), 'Expected AD030');
+  }, failures);
+
+  _runCase('fails when module-conditioned contracts missing', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> manifest = _readJson(root, 'docs/assistant/manifest.json');
+    final Map<String, dynamic> contracts = manifest['contracts'] as Map<String, dynamic>;
+    contracts.remove('stage_gate_policy');
+    contracts.remove('openai_docs_citation_freshness_policy');
+    _writeJson(root, 'docs/assistant/manifest.json', manifest);
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD033'), 'Expected AD033');
+  }, failures);
+
+  _runCase('fails when workflow misses POSIX commands', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/workflows/TRANSLATION_WORKFLOW.md',
+      '```bash',
+      '```txt',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD031'), 'Expected AD031');
+  }, failures);
+
+  _runCase('fails when staged workflow token guidance missing', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md',
+      'NEXT_STAGE_X',
+      'NEXT TOKEN',
+    );
+    _replaceInFile(
+      root,
+      'docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md',
+      'NEXT_STAGE_2',
+      'NEXT TOKEN 2',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD032'), 'Expected AD032');
+  }, failures);
+
+  _runCase('fails when external source registry missing', () {
+    final String root = _fixtureRoot();
+    _removePath(root, 'docs/assistant/EXTERNAL_SOURCE_REGISTRY.md');
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD001') || _hasRule(issues, 'AD034'),
+        'Expected AD001 or AD034');
+  }, failures);
+
+  _runCase('fails when source registry includes non-official domain', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/EXTERNAL_SOURCE_REGISTRY.md',
+      'https://developers.openai.com/api/reference/resources/responses/methods/create',
+      'https://example.com/not-official',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD035'), 'Expected AD035');
+  }, failures);
+
   _runCase('fails localization scope when glossary contract missing', () {
     final String root = _fixtureRoot();
     final Map<String, dynamic> manifest = _readJson(root, 'docs/assistant/manifest.json');
@@ -397,5 +490,5 @@ void main() {
     exit(1);
   }
 
-  stdout.writeln('All agent docs validator tests passed (22 cases).');
+  stdout.writeln('All agent docs validator tests passed (29 cases).');
 }

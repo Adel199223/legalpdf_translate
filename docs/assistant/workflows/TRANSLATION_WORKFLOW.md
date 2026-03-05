@@ -17,14 +17,23 @@ Implementing or modifying the core PDF-to-DOCX translation product flow.
 
 ## Primary Files
 - `src/legalpdf_translate/workflow.py`
+- `src/legalpdf_translate/workflow_components/contracts.py`
+- `src/legalpdf_translate/workflow_components/evaluation.py`
+- `src/legalpdf_translate/workflow_components/summary.py`
 - `src/legalpdf_translate/prompt_builder.py`
 - `src/legalpdf_translate/validators.py`
 - `src/legalpdf_translate/docx_writer.py`
 
 ## Minimal Commands
+PowerShell:
 ```powershell
 python -m pytest -q tests/test_workflow_parallel.py tests/test_prompt_builder.py
 python -m pytest -q tests/test_translation_report.py tests/test_run_report.py
+```
+POSIX:
+```bash
+python3 -m pytest -q tests/test_workflow_parallel.py tests/test_prompt_builder.py
+python3 -m pytest -q tests/test_translation_report.py tests/test_run_report.py
 ```
 
 ## Targeted Tests

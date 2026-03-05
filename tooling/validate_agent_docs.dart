@@ -20,6 +20,7 @@ const List<String> _requiredFiles = <String>[
   'docs/assistant/manifest.json',
   'docs/assistant/DB_DRIFT_KNOWLEDGE.md',
   'docs/assistant/GOLDEN_PRINCIPLES.md',
+  'docs/assistant/EXTERNAL_SOURCE_REGISTRY.md',
   'docs/assistant/exec_plans/PLANS.md',
   'docs/assistant/exec_plans/active/.gitkeep',
   'docs/assistant/exec_plans/completed/.gitkeep',
@@ -35,6 +36,10 @@ const List<String> _requiredFiles = <String>[
   'docs/assistant/workflows/LOCALIZATION_WORKFLOW.md',
   'docs/assistant/workflows/PERFORMANCE_WORKFLOW.md',
   'docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md',
+  'docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md',
+  'docs/assistant/workflows/BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md',
+  'docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md',
+  'docs/assistant/workflows/OPENAI_DOCS_CITATION_WORKFLOW.md',
   'docs/assistant/workflows/CI_REPO_WORKFLOW.md',
   'docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md',
   'docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md',
@@ -42,6 +47,10 @@ const List<String> _requiredFiles = <String>[
   'test/tooling/validate_agent_docs_test.dart',
   'tooling/validate_workspace_hygiene.dart',
   'test/tooling/validate_workspace_hygiene_test.dart',
+  'tooling/automation_preflight.dart',
+  'test/tooling/automation_preflight_test.dart',
+  'tooling/cloud_eval_preflight.dart',
+  'test/tooling/cloud_eval_preflight_test.dart',
 ];
 
 const List<String> _requiredWorkflowIds = <String>[
@@ -54,6 +63,29 @@ const List<String> _requiredWorkflowIds = <String>[
   'commit_publish_ops',
   'docs_maintenance_workflow',
 ];
+
+const List<String> _requiredModuleFlags = <String>[
+  'core_contract',
+  'beginner_layer',
+  'localization_performance',
+  'reference_discovery',
+  'browser_automation_environment_provenance',
+  'cloud_machine_evaluation_local_acceptance',
+  'staged_execution',
+  'openai_docs_citation',
+];
+
+const Map<String, List<String>> _requiredWorkflowIdsByModule =
+    <String, List<String>>{
+      'staged_execution': <String>['staged_execution_workflow'],
+      'browser_automation_environment_provenance': <String>[
+        'browser_automation_env_provenance'
+      ],
+      'cloud_machine_evaluation_local_acceptance': <String>[
+        'cloud_machine_evaluation'
+      ],
+      'openai_docs_citation': <String>['openai_docs_citation'],
+    };
 
 const List<String> _requiredWorkflowHeadings = <String>[
   '## What This Workflow Is For',
@@ -93,6 +125,31 @@ const List<String> _requiredContractKeys = <String>[
   'user_guides_update_sync_policy',
   'template_path_routing_regression_protection',
 ];
+
+const Map<String, List<String>> _requiredContractKeysByModule =
+    <String, List<String>>{
+      'staged_execution': <String>['stage_gate_policy'],
+      'reference_discovery': <String>['reference_discovery_policy'],
+      'openai_docs_citation': <String>[
+        'openai_docs_citation_freshness_policy'
+      ],
+      'browser_automation_environment_provenance': <String>[
+        'browser_automation_reliability_policy',
+        'workspace_provenance_lock_policy',
+        'automation_host_fallback_policy',
+        'machine_operator_split_validation_policy',
+        'restricted_browser_page_policy',
+        'browser_binary_strategy_policy',
+        'chromium_for_testing_conditional_install_policy',
+        'automation_binary_provenance_packet_policy',
+      ],
+      'cloud_machine_evaluation_local_acceptance': <String>[
+        'cloud_heavy_scoring_default_policy',
+        'cloud_scoring_preflight_gate_policy',
+        'cloud_scoring_failure_recovery_policy',
+        'cloud_local_apply_separation_policy',
+      ],
+    };
 
 const String _docsSyncPrompt =
     'Would you like me to run Assistant Docs Sync for this change now?';
@@ -135,6 +192,7 @@ List<ValidationIssue> validateAgentDocs({
 
   if (!localizationScope) {
     _validateManifestPaths(manifest, issues, exists);
+    _validateModuleFlags(manifest, issues);
     _validateWorkflowIds(manifest, issues);
     _validateWorkflowDocs(manifest, issues, readText, exists);
     _validateCanonicalBridgePolicies(issues, readText);
@@ -144,6 +202,7 @@ List<ValidationIssue> validateAgentDocs({
     _validateUserGuides(manifest, issues, readText, exists);
     _validateDocsMaintenance(issues, readText);
     _validateTemplatePolicy(manifest, issues, readText);
+    _validateExternalSourceRegistry(issues, readText, exists);
   } else {
     _validateLocalizationScope(manifest, issues, readText, exists);
   }
@@ -226,6 +285,7 @@ Map<String, dynamic>? _loadManifest(
 
   const List<String> requiredTopLevelKeys = <String>[
     'version',
+    'module_flags',
     'canonical',
     'bridges',
     'user_guides',
@@ -281,6 +341,55 @@ Map<String, dynamic>? _loadManifest(
   }
 
   return manifest;
+}
+
+Map<String, bool> _extractModuleFlags(Map<String, dynamic> manifest) {
+  final dynamic raw = manifest['module_flags'];
+  if (raw is! Map<String, dynamic>) {
+    return <String, bool>{};
+  }
+  final Map<String, bool> flags = <String, bool>{};
+  for (final String key in _requiredModuleFlags) {
+    final dynamic value = raw[key];
+    if (value is bool) {
+      flags[key] = value;
+    }
+  }
+  return flags;
+}
+
+void _validateModuleFlags(
+  Map<String, dynamic> manifest,
+  List<ValidationIssue> issues,
+) {
+  final dynamic raw = manifest['module_flags'];
+  if (raw is! Map<String, dynamic>) {
+    issues.add(ValidationIssue(
+      'AD029',
+      'Manifest module_flags must exist as a JSON object.',
+    ));
+    return;
+  }
+
+  final List<String> missing = _requiredModuleFlags
+      .where((String key) => !raw.containsKey(key))
+      .toList();
+  if (missing.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD029',
+      'Manifest module_flags missing required keys: ${missing.join(', ')}',
+    ));
+  }
+
+  final List<String> nonBool = _requiredModuleFlags
+      .where((String key) => raw.containsKey(key) && raw[key] is! bool)
+      .toList();
+  if (nonBool.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD029',
+      'Manifest module_flags must be boolean for keys: ${nonBool.join(', ')}',
+    ));
+  }
 }
 
 void _validateManifestPaths(
@@ -388,6 +497,26 @@ void _validateWorkflowIds(
       'Manifest missing reference_discovery workflow id.',
     ));
   }
+
+  final Map<String, bool> moduleFlags = _extractModuleFlags(manifest);
+  final List<String> missingModuleWorkflowIds = <String>[];
+  for (final MapEntry<String, List<String>> entry
+      in _requiredWorkflowIdsByModule.entries) {
+    if (moduleFlags[entry.key] != true) {
+      continue;
+    }
+    for (final String workflowId in entry.value) {
+      if (!workflowIds.contains(workflowId)) {
+        missingModuleWorkflowIds.add(workflowId);
+      }
+    }
+  }
+  if (missingModuleWorkflowIds.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD030',
+      'Manifest missing module-conditioned workflow IDs: ${missingModuleWorkflowIds.join(', ')}',
+    ));
+  }
 }
 
 void _validateWorkflowDocs(
@@ -413,6 +542,8 @@ void _validateWorkflowDocs(
   final List<String> missingHeadings = <String>[];
   final List<String> missingExpected = <String>[];
   final List<String> missingNegativeRouting = <String>[];
+  final List<String> missingCrossPlatformCommands = <String>[];
+  final List<String> missingStageTokenText = <String>[];
   for (final String docPath in workflowDocs) {
     if (!exists(docPath)) {
       continue;
@@ -429,6 +560,17 @@ void _validateWorkflowDocs(
     if (!text.contains("Don't use this workflow when") ||
         !text.contains('Instead use')) {
       missingNegativeRouting.add(docPath);
+    }
+    final String lower = text.toLowerCase();
+    final bool hasPowerShell = lower.contains('```powershell');
+    final bool hasPosix =
+        lower.contains('```bash') || lower.contains('```sh');
+    if (!hasPowerShell || !hasPosix) {
+      missingCrossPlatformCommands.add(docPath);
+    }
+    if (docPath.endsWith('STAGED_EXECUTION_WORKFLOW.md') &&
+        !RegExp(r'NEXT_STAGE_\d+').hasMatch(text)) {
+      missingStageTokenText.add(docPath);
     }
   }
 
@@ -448,6 +590,18 @@ void _validateWorkflowDocs(
     issues.add(ValidationIssue(
       'AD007',
       'Workflow docs missing explicit negative-routing text: ${missingNegativeRouting.join(', ')}',
+    ));
+  }
+  if (missingCrossPlatformCommands.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD031',
+      'Workflow docs missing cross-platform command blocks (PowerShell + POSIX): ${missingCrossPlatformCommands.join(', ')}',
+    ));
+  }
+  if (missingStageTokenText.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD032',
+      'Staged execution workflow is missing NEXT_STAGE_X token guidance: ${missingStageTokenText.join(', ')}',
     ));
   }
 
@@ -556,6 +710,14 @@ void _validateCoreContracts(
   final List<String> missing = _requiredContractKeys
       .where((String key) => !contracts.containsKey(key))
       .toList();
+  for (final String key in <String>[
+    'canonical_precedence_policy',
+    'docs_sync_prompt_policy',
+  ]) {
+    if (!contracts.containsKey(key)) {
+      missing.add(key);
+    }
+  }
   if (missing.isNotEmpty) {
     issues.add(ValidationIssue(
       'AD018',
@@ -583,6 +745,26 @@ void _validateCoreContracts(
     issues.add(ValidationIssue(
       'AD027',
       'Manifest missing user-guide contract keys: ${missingUserGuideContracts.join(', ')}',
+    ));
+  }
+
+  final Map<String, bool> moduleFlags = _extractModuleFlags(manifest);
+  final List<String> missingModuleContracts = <String>[];
+  for (final MapEntry<String, List<String>> entry
+      in _requiredContractKeysByModule.entries) {
+    if (moduleFlags[entry.key] != true) {
+      continue;
+    }
+    for (final String contractKey in entry.value) {
+      if (!contracts.containsKey(contractKey)) {
+        missingModuleContracts.add(contractKey);
+      }
+    }
+  }
+  if (missingModuleContracts.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD033',
+      'Manifest missing module-conditioned contract keys: ${missingModuleContracts.join(', ')}',
     ));
   }
 }
@@ -725,6 +907,74 @@ void _validateDocsMaintenance(
     issues.add(ValidationIssue(
       'AD028',
       'Docs maintenance workflow lacks user-guide sync guidance.',
+    ));
+  }
+}
+
+void _validateExternalSourceRegistry(
+  List<ValidationIssue> issues,
+  String Function(String relPath) readText,
+  bool Function(String relPath) exists,
+) {
+  const String path = 'docs/assistant/EXTERNAL_SOURCE_REGISTRY.md';
+  if (!exists(path)) {
+    issues.add(ValidationIssue(
+      'AD034',
+      'External source registry is missing at $path.',
+    ));
+    return;
+  }
+
+  final String text = readText(path);
+  final String lower = text.toLowerCase();
+  for (final String key in <String>[
+    'source_url',
+    'contract_or_workflow',
+    'fact_summary',
+    'verification_date'
+  ]) {
+    if (!lower.contains(key)) {
+      issues.add(ValidationIssue(
+        'AD034',
+        'External source registry missing required field marker: $key',
+      ));
+    }
+  }
+
+  final RegExp rowPattern = RegExp(
+    r'^\|\s*(https?://[^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(\d{4}-\d{2}-\d{2})\s*\|$',
+    multiLine: true,
+  );
+  final Iterable<RegExpMatch> rows = rowPattern.allMatches(text);
+  if (rows.isEmpty) {
+    issues.add(ValidationIssue(
+      'AD034',
+      'External source registry has no valid source rows.',
+    ));
+    return;
+  }
+
+  const List<String> allowedHosts = <String>[
+    'developers.openai.com',
+    'platform.openai.com',
+    'playwright.dev',
+    'developer.chrome.com',
+    'docs.github.com',
+    'learn.microsoft.com',
+  ];
+  final List<String> badHosts = <String>[];
+  for (final RegExpMatch match in rows) {
+    final String url = (match.group(1) ?? '').trim();
+    final Uri? parsed = Uri.tryParse(url);
+    final String host = (parsed?.host ?? '').toLowerCase();
+    if (!allowedHosts.contains(host)) {
+      badHosts.add(url);
+    }
+  }
+  if (badHosts.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD035',
+      'External source registry includes non-official domains: ${badHosts.join(', ')}',
     ));
   }
 }

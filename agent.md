@@ -47,6 +47,22 @@ Always follow `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`.
 ## Inspiration/Parity Routing
 If a user asks for behavior "like X", "same as X", "closest to X", or explicit parity with a named product/site/app, run `docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md` before implementation decisions.
 
+## OpenAI Docs + Citation Routing
+If a task depends on OpenAI products/APIs, date-sensitive external facts, or unstable limits/pricing behavior:
+1. Use `docs/assistant/workflows/OPENAI_DOCS_CITATION_WORKFLOW.md`.
+2. Prefer official primary sources.
+3. Include source links and explicit verification dates (`YYYY-MM-DD`) for material external decisions.
+
+## Browser/Cloud Module Routing
+- Browser automation reliability/provenance tasks -> `docs/assistant/workflows/BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md`
+- Cloud-heavy machine evaluation tasks -> `docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md`
+
+## Stage-Gate Protocol
+For risk-triggered complex work:
+1. Follow `docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md`.
+2. Stop at each stage and publish the required stage packet schema.
+3. Require exact continuation token format: `NEXT_STAGE_X`.
+
 ## Docs Sync Policy
 After significant implementation changes, always ask exactly:
 "Would you like me to run Assistant Docs Sync for this change now?"

@@ -15,6 +15,7 @@ Use this file to route quickly to canonical and workflow docs. Do not treat this
 - Human index: `docs/assistant/INDEX.md`
 - Runbook: `agent.md`
 - Golden rules: `docs/assistant/GOLDEN_PRINCIPLES.md`
+- Source registry: `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md`
 
 ## User Support Routing
 For support/non-technical explanations, start with:
@@ -27,6 +28,10 @@ For support/non-technical explanations, start with:
 - Localization: `docs/assistant/workflows/LOCALIZATION_WORKFLOW.md`
 - Performance: `docs/assistant/workflows/PERFORMANCE_WORKFLOW.md`
 - Parity/inspiration: `docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md`
+- Stage-gate execution: `docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md`
+- Browser automation provenance: `docs/assistant/workflows/BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md`
+- Cloud machine evaluation: `docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md`
+- OpenAI docs citation: `docs/assistant/workflows/OPENAI_DOCS_CITATION_WORKFLOW.md`
 - CI/repo operations: `docs/assistant/workflows/CI_REPO_WORKFLOW.md`
 - Commit/publish: `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
 - Docs maintenance: `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`

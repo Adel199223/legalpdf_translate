@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import random
 import shutil
@@ -65,7 +64,6 @@ from .ocr_engine import (
 )
 from .ocr_helpers import ocr_pdf_page_text
 from .openai_client import ApiCallError, OpenAIResponsesClient
-from .output_normalize import normalize_output_text_with_stats
 from .output_paths import require_writable_output_dir
 from .page_selection import resolve_page_selection
 from .pdf_text_order import extract_ordered_page_text, get_page_count
@@ -84,7 +82,23 @@ from .types import (
     TargetLang,
 )
 from .user_settings import load_gui_settings
-from .validators import parse_code_block_output, validate_ar, validate_enfr
+from .workflow_components.contracts import (
+    CostEstimateInputs,
+    OutputEvaluation,
+    SummarySignalInputs,
+)
+from .workflow_components.evaluation import (
+    evaluate_output as evaluate_workflow_output,
+)
+from .workflow_components.evaluation import (
+    retry_reason_from_evaluation as derive_retry_reason,
+)
+from .workflow_components.summary import (
+    classify_suspected_cause as classify_summary_cause,
+)
+from .workflow_components.summary import (
+    estimate_cost_if_available as estimate_run_cost,
+)
 
 MIN_CHARS_REQUIRED = 64
 MAX_JUNK_RATIO_REQUIRED = 0.12
@@ -199,19 +213,6 @@ def classify_extracted_text_quality(text: str) -> dict[str, object]:
         "ocr_required": bool(ocr_required),
         "ocr_helpful": bool(ocr_helpful),
     }
-
-
-@dataclass(slots=True)
-class _Evaluation:
-    ok: bool
-    normalized_text: str | None
-    defect_reason: str | None
-    parser_failed: bool = False
-    validator_failed: bool = False
-    outside_text: bool = False
-    block_count: int = 0
-    ar_autofix_applied_count: int = 0
-    ar_token_details: dict[str, int] | None = None
 
 
 class TranslationWorkflow:
@@ -1442,7 +1443,7 @@ class TranslationWorkflow:
             }
         }
 
-        def _record_ar_eval_diagnostics(evaluation: _Evaluation, *, attempt: int) -> None:
+        def _record_ar_eval_diagnostics(evaluation: OutputEvaluation, *, attempt: int) -> None:
             if config.target_lang != TargetLang.AR:
                 return
             if evaluation.ar_autofix_applied_count > 0:
@@ -1796,88 +1797,11 @@ class TranslationWorkflow:
         lang: TargetLang,
         *,
         expected_ar_tokens: list[str] | None = None,
-    ) -> _Evaluation:
-        parsed = parse_code_block_output(raw_output)
-        if parsed.block_count == 0:
-            return _Evaluation(
-                ok=False,
-                normalized_text=None,
-                defect_reason="No code block in model output.",
-                parser_failed=True,
-                validator_failed=False,
-                outside_text=False,
-                block_count=0,
-                ar_autofix_applied_count=0,
-                ar_token_details=None,
-            )
-        if parsed.block_count > 1:
-            return _Evaluation(
-                ok=False,
-                normalized_text=None,
-                defect_reason="More than one code block in model output.",
-                parser_failed=True,
-                validator_failed=False,
-                outside_text=False,
-                block_count=parsed.block_count,
-                ar_autofix_applied_count=0,
-                ar_token_details=None,
-            )
-        if parsed.inner_content is None:
-            return _Evaluation(
-                ok=False,
-                normalized_text=None,
-                defect_reason="Missing inner code block content.",
-                parser_failed=True,
-                validator_failed=False,
-                outside_text=False,
-                block_count=1,
-                ar_autofix_applied_count=0,
-                ar_token_details=None,
-            )
-
-        normalized, ar_autofix_applied_count = normalize_output_text_with_stats(
-            parsed.inner_content,
-            lang=lang,
+    ) -> OutputEvaluation:
+        return evaluate_workflow_output(
+            raw_output,
+            lang,
             expected_ar_tokens=expected_ar_tokens,
-        )
-        if lang in (TargetLang.EN, TargetLang.FR):
-            validation = validate_enfr(normalized, lang=lang)
-        else:
-            validation = validate_ar(normalized, expected_tokens=expected_ar_tokens)
-        if not validation.ok:
-            return _Evaluation(
-                ok=False,
-                normalized_text=normalized,
-                defect_reason=validation.reason,
-                parser_failed=False,
-                validator_failed=True,
-                outside_text=False,
-                block_count=1,
-                ar_autofix_applied_count=int(ar_autofix_applied_count),
-                ar_token_details=validation.details,
-            )
-        if parsed.outside_has_non_whitespace:
-            return _Evaluation(
-                ok=False,
-                normalized_text=normalized,
-                defect_reason="Non-whitespace text found outside code block.",
-                parser_failed=False,
-                validator_failed=False,
-                outside_text=True,
-                block_count=1,
-                ar_autofix_applied_count=int(ar_autofix_applied_count),
-                ar_token_details=validation.details,
-            )
-        return _Evaluation(
-            ok=True,
-            normalized_text=normalized,
-            defect_reason=None,
-            parser_failed=False,
-            validator_failed=False,
-            outside_text=False,
-            block_count=1,
-            ar_autofix_applied_count=int(ar_autofix_applied_count),
-            ar_token_details=validation.details,
         )
 
     def _accumulate_usage_totals(self, page_metadata: dict[str, object], usage: dict[str, Any]) -> None:
@@ -1891,26 +1815,16 @@ class TranslationWorkflow:
 
     def _retry_reason_from_evaluation(
         self,
-        evaluation: _Evaluation,
+        evaluation: OutputEvaluation,
         *,
         lang: TargetLang,
         fallback_reason: str | None,
     ) -> str:
-        if evaluation.outside_text:
-            return "outside_text"
-        if evaluation.block_count == 0:
-            return "no_code_block"
-        if evaluation.block_count > 1:
-            return "multi_code_block"
-        reason = (fallback_reason or "").strip().lower()
-        if "blank line" in reason:
-            return "blank_lines"
-        if "portuguese" in reason and "leak" in reason:
-            return "pt_language_leak"
-        if lang == TargetLang.AR:
-            if "latin" in reason or "digit" in reason or "token" in reason or "wrapped" in reason:
-                return "ar_token_violation"
-        return "other"
+        return derive_retry_reason(
+            evaluation,
+            lang=lang,
+            fallback_reason=fallback_reason,
+        )
 
     def _write_run_summary(
         self,
@@ -2193,33 +2107,19 @@ class TranslationWorkflow:
         rate_limit_hits: int,
         transport_retries_total: int,
     ) -> tuple[str, list[str]]:
-        evidence: list[str] = []
-        selected = max(1, selected_pages_count)
-        images_ratio = pages_with_images / float(selected)
-        retries_ratio = pages_with_retries / float(selected)
-        reasoning_ratio = total_reasoning_tokens / float(max(1, total_tokens))
-        transport_threshold = max(3, int(math.ceil(0.5 * selected)))
-
-        if images_ratio >= 0.30 and avg_image_bytes >= 1_048_576:
-            evidence.append(
-                f"images_ratio={images_ratio:.3f}>=0.300 and avg_image_bytes={int(avg_image_bytes)}>=1048576"
+        return classify_summary_cause(
+            SummarySignalInputs(
+                selected_pages_count=selected_pages_count,
+                pages_with_images=pages_with_images,
+                avg_image_bytes=avg_image_bytes,
+                total_reasoning_tokens=total_reasoning_tokens,
+                total_tokens=total_tokens,
+                effort_policy=effort_policy,
+                pages_with_retries=pages_with_retries,
+                rate_limit_hits=rate_limit_hits,
+                transport_retries_total=transport_retries_total,
             )
-            return "image_auto_triggering", evidence
-        if reasoning_ratio >= 0.60 and effort_policy == "fixed_xhigh":
-            evidence.append(
-                f"reasoning_ratio={reasoning_ratio:.3f}>=0.600 and effort_policy=fixed_xhigh"
-            )
-            return "xhigh_reasoning_tokens", evidence
-        if retries_ratio >= 0.20:
-            evidence.append(f"retries_ratio={retries_ratio:.3f}>=0.200")
-            return "compliance_retries", evidence
-        if rate_limit_hits > 0 or transport_retries_total >= transport_threshold:
-            evidence.append(
-                f"rate_limit_hits={rate_limit_hits}, transport_retries_total={transport_retries_total}, threshold={transport_threshold}"
-            )
-            return "rate_limiting", evidence
-        evidence.append("no primary threshold fired")
-        return "mixed_or_unknown", evidence
+        )
 
     def _estimate_cost_if_available(
         self,
@@ -2228,17 +2128,16 @@ class TranslationWorkflow:
         total_output_tokens: int,
         total_reasoning_tokens: int,
     ) -> float | None:
-        input_rate = self._env_float("LEGALPDF_COST_INPUT_PER_1M")
-        output_rate = self._env_float("LEGALPDF_COST_OUTPUT_PER_1M")
-        reasoning_rate = self._env_float("LEGALPDF_COST_REASONING_PER_1M")
-        if input_rate is None or output_rate is None or reasoning_rate is None:
-            return None
-        estimate = (
-            (total_input_tokens / 1_000_000.0) * input_rate
-            + (total_output_tokens / 1_000_000.0) * output_rate
-            + (total_reasoning_tokens / 1_000_000.0) * reasoning_rate
+        return estimate_run_cost(
+            CostEstimateInputs(
+                total_input_tokens=total_input_tokens,
+                total_output_tokens=total_output_tokens,
+                total_reasoning_tokens=total_reasoning_tokens,
+                input_rate=self._env_float("LEGALPDF_COST_INPUT_PER_1M"),
+                output_rate=self._env_float("LEGALPDF_COST_OUTPUT_PER_1M"),
+                reasoning_rate=self._env_float("LEGALPDF_COST_REASONING_PER_1M"),
+            )
         )
-        return round(estimate, 6)
 
     def _env_float(self, key: str) -> float | None:
         raw = os.getenv(key, "").strip()

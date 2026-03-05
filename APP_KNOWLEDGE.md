@@ -17,6 +17,9 @@ LegalPDF Translate is a Windows-first Python app that translates one PDF into on
 
 ## Core Runtime Modules
 - `src/legalpdf_translate/workflow.py`: translation pipeline orchestration.
+- `src/legalpdf_translate/workflow_components/contracts.py`: typed workflow internal contracts.
+- `src/legalpdf_translate/workflow_components/evaluation.py`: output-evaluation and retry-reason delegation.
+- `src/legalpdf_translate/workflow_components/summary.py`: run-summary and cost/suspected-cause delegation.
 - `src/legalpdf_translate/cli.py`: CLI parsing/execution.
 - `src/legalpdf_translate/qt_gui/app_window.py`: main GUI workflow orchestration.
 - `src/legalpdf_translate/openai_client.py`: OpenAI transport and retry handling.
@@ -49,6 +52,17 @@ Typical files:
 - Golden rules: `docs/assistant/GOLDEN_PRINCIPLES.md`
 - Workflow runbooks: `docs/assistant/workflows/`
 - User guides: `docs/assistant/features/`
+- External-source registry: `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md`
+
+## Module Status (Bootstrap v2)
+All optional modules are enabled and enforced:
+- Beginner Layer
+- Localization + Performance
+- Reference Discovery
+- Browser Automation + Environment Provenance
+- Cloud Machine Evaluation + Local Acceptance Gate
+- Staged Execution
+- OpenAI Docs + Citation
 
 ## Canonical and Bridge Contract
 - Canonical app truth lives here.
@@ -65,8 +79,15 @@ These remain valid supplemental references for implementation detail:
 - `docs/assistant/WORKFLOW_GIT_AI.md`
 
 ## Verification Commands
+PowerShell:
 - `python -m pytest -q`
 - `python -m compileall src tests`
+- `dart run tooling/validate_agent_docs.dart`
+- `dart run tooling/validate_workspace_hygiene.dart`
+
+POSIX:
+- `python3 -m pytest -q`
+- `python3 -m compileall src tests`
 - `dart run tooling/validate_agent_docs.dart`
 - `dart run tooling/validate_workspace_hygiene.dart`
 

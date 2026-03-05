@@ -23,9 +23,16 @@ Maintaining assistant docs contracts with minimal drift and scoped updates.
 - `docs/assistant/manifest.json`
 - `docs/assistant/INDEX.md`
 - `docs/assistant/features/*.md`
+- `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md`
 
 ## Minimal Commands
+PowerShell:
 ```powershell
+dart run tooling/validate_agent_docs.dart
+dart run tooling/validate_workspace_hygiene.dart
+```
+POSIX:
+```bash
 dart run tooling/validate_agent_docs.dart
 dart run tooling/validate_workspace_hygiene.dart
 ```
@@ -47,3 +54,4 @@ dart run tooling/validate_workspace_hygiene.dart
 4. Sync relevant user-guide sections when major feature behavior changes.
 5. Keep template read policy and routing protections intact.
 6. For parallel docs threads, use worktree isolation.
+7. If external behavior facts were used, update verification dates in `EXTERNAL_SOURCE_REGISTRY.md`.

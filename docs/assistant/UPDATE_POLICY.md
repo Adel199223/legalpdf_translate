@@ -1,47 +1,66 @@
 # UPDATE_POLICY
 
 Purpose
-This file defines when and how to update the ChatGPT “knowledge pack” under `docs/assistant/*`.
-It is a policy document (not a running history). Use Git history + `DOCS_REFRESH_NOTES.md` for change history.
+This file defines when and how to update the assistant knowledge pack under `docs/assistant/*`.
+It is policy guidance (not a running history). Use Git history + `DOCS_REFRESH_NOTES.md` for change history.
 
 ## Default rule (user-controlled)
-- Do NOT update `docs/assistant/*` automatically as part of code-change tasks.
-- Only update `docs/assistant/*` when the user explicitly requests a “docs refresh / update assistant docs”.
+- Do NOT perform blanket docs rewrites automatically.
+- Use scoped docs updates when the user approves docs sync or when governance contracts require same-task synchronization.
 
-## Deferred docs workflow (default for code changes)
-If a task changes anything under `src/` or `tests/` AND the user did NOT request a docs refresh:
-1) Append a short entry to `docs/assistant/DOCS_REFRESH_NOTES.md` (create it if missing).
-2) Do not edit other `docs/assistant/*` files.
+## Significant-change docs sync gate
+After significant implementation changes, ask exactly:
+- "Would you like me to run Assistant Docs Sync for this change now?"
 
-Required evidence to include in the notes entry:
-- branch name + commit hash (or “working tree” if not committed yet)
+If approved:
+1. Update only touched-scope docs.
+2. Keep canonical-first order (`APP_KNOWLEDGE.md` -> bridge/workflows/user guides).
+3. Re-run docs validators before completion.
+
+## Deferred docs workflow (when docs sync not approved)
+If a task changes `src/` or `tests/` and docs sync is not approved:
+1. Append a short entry to `docs/assistant/DOCS_REFRESH_NOTES.md`.
+2. Avoid unrelated `docs/assistant/*` rewrites.
+
+Required evidence in deferred notes:
+- branch name + commit hash (or "working tree")
 - files changed
-- key symbols/entrypoints affected (only what actually matters)
+- key symbols/entrypoints affected
 - user-visible behavior changes
 - tests run + results
 
-## Docs refresh workflow (only when requested by user)
-When the user requests “docs refresh / update assistant docs”:
-1) Read `docs/assistant/DOCS_REFRESH_NOTES.md` first (it is the queue of what drifted).
-2) Update only the relevant knowledge docs under `docs/assistant/*` based on the notes + current repo state.
-3) Keep edits focused on accuracy (no rewriting for style).
+## OpenAI / external fact freshness
+When decisions depend on external or unstable facts:
+1. Prefer official primary sources.
+2. Record sources and verification dates (`YYYY-MM-DD`) in `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md`.
+3. Separate confirmed facts from assumptions in summaries.
 
-Typical docs to refresh (as applicable to the changes):
-- `docs/assistant/APP_KNOWLEDGE.md` (repo map, entrypoints, “where is X?”)
-- `docs/assistant/API_PROMPTS.md` + `docs/assistant/PROMPTS_KNOWLEDGE.md` (prompt/pipeline contract)
-- `docs/assistant/QT_UI_KNOWLEDGE.md` + `docs/assistant/QT_UI_PLAYBOOK.md` (UI invariants & workflow)
-- `docs/assistant/GLOSSARY_BUILDER_KNOWLEDGE.md` (builder behavior and diagnostics)
-- `docs/assistant/WORKFLOW_GIT_AI.md` (workflow guidance)
-- `docs/assistant/CODEX_PROMPT_FACTORY.md` (prompt patterns/examples), only if prompt patterns changed
+## Stage-gate alignment
+For risk-triggered complex work using staged execution:
+1. Keep stage packet evidence in active ExecPlan notes.
+2. Preserve exact continuation token format `NEXT_STAGE_X` in workflow docs.
 
-## Protected docs (do not edit unless explicitly requested)
+## Protected docs
+These files are governance-sensitive and should be edited only with explicit user intent or contract-alignment need:
 - `docs/assistant/PROJECT_INSTRUCTIONS.txt`
 - `docs/assistant/UPDATE_POLICY.md`
 
-## Verification (required whenever you claim “done” on a change)
-Run and report:
+## Verification (required whenever claiming done)
+PowerShell:
 ```powershell
 python -m pytest -q
 python -m compileall src tests
+dart run tooling/validate_agent_docs.dart
+dart run tooling/validate_workspace_hygiene.dart
 git diff --name-only
 git status --short
+```
+POSIX:
+```bash
+python3 -m pytest -q
+python3 -m compileall src tests
+dart run tooling/validate_agent_docs.dart
+dart run tooling/validate_workspace_hygiene.dart
+git diff --name-only
+git status --short
+```

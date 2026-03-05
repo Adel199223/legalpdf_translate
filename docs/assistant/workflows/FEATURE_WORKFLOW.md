@@ -17,7 +17,12 @@ Use only when a template/tool requests `FEATURE_WORKFLOW.md`.
 - `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
 
 ## Minimal Commands
+PowerShell:
 ```powershell
+dart run tooling/validate_agent_docs.dart
+```
+POSIX:
+```bash
 dart run tooling/validate_agent_docs.dart
 ```
 
