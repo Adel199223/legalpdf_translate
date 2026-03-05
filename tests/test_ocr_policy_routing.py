@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 import legalpdf_translate.ocr_engine as ocr_engine
-from legalpdf_translate.ocr_engine import ApiOcrEngine, LocalThenApiEngine, OcrEngineConfig, build_ocr_engine
+from legalpdf_translate.ocr_engine import ApiOcrEngine, LocalThenApiEngine, OcrEngineConfig, OcrResult, build_ocr_engine
 from legalpdf_translate.types import OcrEnginePolicy
 
 
@@ -63,3 +63,28 @@ def test_stored_ocr_key_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
     config = OcrEngineConfig(api_key_env_name="DEEPSEEK_API_KEY")
     resolved = ocr_engine._resolve_api_key(config)
     assert resolved == "stored-key"
+
+
+def test_local_then_api_uses_api_only_when_local_is_unusable() -> None:
+    class _LocalUnusable:
+        def ocr_image(self, image_bytes: bytes, lang_hint: str | None = None) -> OcrResult:
+            _ = image_bytes, lang_hint
+            return OcrResult(
+                text="",
+                engine="local",
+                failed_reason="local OCR result below acceptance threshold (score=0.0500, pass=pass_b_sparse)",
+                chars=0,
+                quality_score=0.05,
+                selected_pass="pass_b_sparse",
+                attempts=[],
+            )
+
+    class _ApiGood:
+        def ocr_image(self, image_bytes: bytes, lang_hint: str | None = None) -> OcrResult:
+            _ = image_bytes, lang_hint
+            return OcrResult(text="api result", engine="api", failed_reason=None, chars=10, quality_score=0.7)
+
+    routed = LocalThenApiEngine(local_engine=_LocalUnusable(), api_engine=_ApiGood())  # type: ignore[arg-type]
+    result = routed.ocr_image(b"x", lang_hint="pt_latin_default")
+    assert result.engine == "api"
+    assert result.chars > 0

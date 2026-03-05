@@ -523,6 +523,14 @@ def build_run_report_payload(
     ocr_local_pass_strategy_value = str(summary_pipeline_obj.get("ocr_local_pass_strategy", "") or "").strip()
     ocr_api_fallback_policy_value = str(summary_pipeline_obj.get("ocr_api_fallback_policy", "") or "").strip()
     ocr_quality_score_avg_value = summary_pipeline_obj.get("ocr_quality_score_avg")
+    ocr_track_enfr_pages_value = int(summary_pipeline_obj.get("ocr_track_enfr_pages", 0) or 0)
+    ocr_track_ar_pages_value = int(summary_pipeline_obj.get("ocr_track_ar_pages", 0) or 0)
+    ocr_track_weighting_value = summary_pipeline_obj.get("ocr_track_weighting")
+    if not isinstance(ocr_track_weighting_value, dict):
+        ocr_track_weighting_value = {"enfr": 0.60, "ar": 0.40}
+    ocr_track_quality_packet_value = summary_pipeline_obj.get("ocr_track_quality_packet")
+    if not isinstance(ocr_track_quality_packet_value, dict):
+        ocr_track_quality_packet_value = {}
     if ocr_mode_value == "always":
         fallback_ocr_requested = True
     elif ocr_mode_value == "off":
@@ -668,6 +676,10 @@ def build_run_report_payload(
             "ocr_local_pass_strategy": ocr_local_pass_strategy_value,
             "ocr_api_fallback_policy": ocr_api_fallback_policy_value,
             "ocr_quality_score_avg": ocr_quality_score_avg_value,
+            "ocr_track_enfr_pages": int(ocr_track_enfr_pages_value),
+            "ocr_track_ar_pages": int(ocr_track_ar_pages_value),
+            "ocr_track_weighting": ocr_track_weighting_value,
+            "ocr_track_quality_packet": ocr_track_quality_packet_value,
             "pt_language_leak_failures": int(pt_language_leak_failures),
             "pt_language_leak_retries": int(pt_language_leak_retries),
             "image_mode_optimization_hint": image_mode_optimization_hint,
@@ -1439,6 +1451,15 @@ def build_run_report_markdown(
             f"local strategy `{ocr_local_pass_strategy or 'n/a'}`, "
             f"fallback policy `{ocr_api_fallback_policy or 'n/a'}`, "
             f"quality score avg `{ocr_quality_score_avg}`."
+        )
+    ocr_track_quality_packet = pipeline_obj.get("ocr_track_quality_packet")
+    if isinstance(ocr_track_quality_packet, dict):
+        lines.append(
+            "- OCR track quality packet: "
+            f"EN/FR avg `{ocr_track_quality_packet.get('enfr_avg')}`, "
+            f"AR avg `{ocr_track_quality_packet.get('ar_avg')}`, "
+            f"weighted `{ocr_track_quality_packet.get('weighted_score')}` "
+            "(weights EN/FR=0.60, AR=0.40)."
         )
     pt_language_leak_failures = int(pipeline_obj.get("pt_language_leak_failures", 0) or 0)
     pt_language_leak_retries = int(pipeline_obj.get("pt_language_leak_retries", 0) or 0)

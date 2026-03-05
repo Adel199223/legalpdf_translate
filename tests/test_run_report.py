@@ -954,6 +954,11 @@ def test_run_report_renders_ocr_observability_summary_when_present(tmp_path: Pat
             "ocr_local_pass_strategy": "single_pass_baseline",
             "ocr_api_fallback_policy": "required_only_for_paid_fallback",
             "ocr_quality_score_avg": 0.8123,
+            "ocr_track_quality_packet": {
+                "enfr_avg": 0.81,
+                "ar_avg": 0.66,
+                "weighted_score": 0.75,
+            },
         }
     )
     run_summary["pipeline"] = pipeline
@@ -966,5 +971,6 @@ def test_run_report_renders_ocr_observability_summary_when_present(tmp_path: Pat
     )
 
     assert "OCR observability: profile `pt_latin_default`" in markdown
+    assert "OCR track quality packet: EN/FR avg `0.81`, AR avg `0.66`, weighted `0.75`" in markdown
     assert '"ocr_local_pass_strategy": "single_pass_baseline"' in markdown
     assert '"ocr_api_fallback_policy": "required_only_for_paid_fallback"' in markdown

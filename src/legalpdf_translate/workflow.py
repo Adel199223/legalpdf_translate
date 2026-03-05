@@ -265,6 +265,8 @@ def _ocr_failure_category(reason: str | None) -> str:
         return "render_failed"
     if "tesseract execution failed" in lowered or "tesseract exited with code" in lowered:
         return "local_engine_error"
+    if "below acceptance threshold" in lowered or "unusable" in lowered:
+        return "local_unusable"
     if "empty output" in lowered or "empty_result" in lowered:
         return "empty_result"
     if "api ocr request failed" in lowered:
@@ -1371,6 +1373,9 @@ class TranslationWorkflow:
             "ocr_failed_reason": "",
             "ocr_failure_category": "none",
             "ocr_quality_score": float(ocr_quality_score),
+            "ocr_candidate_quality_score": 0.0,
+            "ocr_selected_pass": "",
+            "ocr_attempts_count": 0,
             "ocr_track": ocr_track,
             "ocr_source_profile": ocr_source_profile,
             "ocr_local_pass_strategy": OCR_LOCAL_PASS_STRATEGY,
@@ -1446,7 +1451,7 @@ class TranslationWorkflow:
                 mode=OcrMode.ALWAYS,
                 engine=ocr_engine,
                 prefer_header=False,
-                lang_hint=config.target_lang.value,
+                lang_hint=ocr_source_profile,
             )
             page_metadata["ocr_seconds"] = round(time.perf_counter() - ocr_started, 3)
 
@@ -1476,6 +1481,9 @@ class TranslationWorkflow:
         page_metadata["ocr_engine_used"] = ocr_result.engine
         page_metadata["ocr_failed_reason"] = ocr_result.failed_reason or ""
         page_metadata["ocr_failure_category"] = _ocr_failure_category(ocr_result.failed_reason)
+        page_metadata["ocr_candidate_quality_score"] = float(ocr_result.quality_score or 0.0)
+        page_metadata["ocr_selected_pass"] = str(ocr_result.selected_pass or "")
+        page_metadata["ocr_attempts_count"] = int(len(ocr_result.attempts or []))
         page_metadata["extraction_quality_signals"] = extraction_signals
 
         self._record_event(
@@ -1494,6 +1502,9 @@ class TranslationWorkflow:
                 "ocr_engine": ocr_result.engine,
                 "ocr_chars": int(ocr_result.chars),
                 "ocr_quality_score": float(ocr_quality_score),
+                "ocr_candidate_quality_score": float(ocr_result.quality_score or 0.0),
+                "ocr_selected_pass": str(ocr_result.selected_pass or ""),
+                "ocr_attempts_count": int(len(ocr_result.attempts or [])),
                 "ocr_failure_category": str(page_metadata.get("ocr_failure_category", "")),
                 "ocr_track": ocr_track,
                 "ocr_source_profile": ocr_source_profile,
@@ -1580,7 +1591,8 @@ class TranslationWorkflow:
         ocr_reason = ocr_result.failed_reason or "none"
         self._log(
             f"page={page_number} ocr_used={ocr_result.engine} ocr_chars={ocr_result.chars} "
-            f"ocr_failed_reason={ocr_reason}"
+            f"ocr_failed_reason={ocr_reason} ocr_selected_pass={ocr_result.selected_pass or 'n/a'} "
+            f"ocr_candidate_score={float(ocr_result.quality_score or 0.0):.4f}"
         )
 
         _prompt_build_t0 = time.perf_counter()
@@ -1626,6 +1638,9 @@ class TranslationWorkflow:
                 "engine": ocr_result.engine,
                 "chars": ocr_result.chars,
                 "failed_reason": ocr_result.failed_reason,
+                "quality_score": float(ocr_result.quality_score or 0.0),
+                "selected_pass": str(ocr_result.selected_pass or ""),
+                "attempts_count": int(len(ocr_result.attempts or [])),
             }
         }
 
@@ -2097,6 +2112,34 @@ class TranslationWorkflow:
             float(page.get("ocr_quality_score", 0.0) or 0.0)
             for _, page in page_rows
         ]
+        ocr_track_enfr_pages = sum(
+            1 for _, page in page_rows if str(page.get("ocr_track", "") or "").strip().lower() == "enfr"
+        )
+        ocr_track_ar_pages = sum(
+            1 for _, page in page_rows if str(page.get("ocr_track", "") or "").strip().lower() == "ar"
+        )
+        ocr_track_enfr_scores = [
+            float(page.get("ocr_quality_score", 0.0) or 0.0)
+            for _, page in page_rows
+            if str(page.get("ocr_track", "") or "").strip().lower() == "enfr"
+        ]
+        ocr_track_ar_scores = [
+            float(page.get("ocr_quality_score", 0.0) or 0.0)
+            for _, page in page_rows
+            if str(page.get("ocr_track", "") or "").strip().lower() == "ar"
+        ]
+        ocr_track_enfr_avg = round(
+            sum(ocr_track_enfr_scores) / float(len(ocr_track_enfr_scores) or 1),
+            4,
+        )
+        ocr_track_ar_avg = round(
+            sum(ocr_track_ar_scores) / float(len(ocr_track_ar_scores) or 1),
+            4,
+        )
+        ocr_track_weighted_score = round(
+            (0.60 * ocr_track_enfr_avg) + (0.40 * ocr_track_ar_avg),
+            4,
+        )
         ocr_source_profile = (
             Counter(ocr_source_profile_values).most_common(1)[0][0]
             if ocr_source_profile_values
@@ -2205,6 +2248,17 @@ class TranslationWorkflow:
                 "ocr_local_pass_strategy": ocr_local_pass_strategy,
                 "ocr_api_fallback_policy": ocr_api_fallback_policy,
                 "ocr_quality_score_avg": float(ocr_quality_score_avg),
+                "ocr_track_enfr_pages": int(ocr_track_enfr_pages),
+                "ocr_track_ar_pages": int(ocr_track_ar_pages),
+                "ocr_track_weighting": {
+                    "enfr": 0.60,
+                    "ar": 0.40,
+                },
+                "ocr_track_quality_packet": {
+                    "enfr_avg": float(ocr_track_enfr_avg),
+                    "ar_avg": float(ocr_track_ar_avg),
+                    "weighted_score": float(ocr_track_weighted_score),
+                },
             },
             "totals": {
                 "total_wall_seconds": round(total_wall_seconds, 3),
@@ -2253,6 +2307,9 @@ class TranslationWorkflow:
                     "ocr_failed_reason": str(page.get("ocr_failed_reason", "") or ""),
                     "ocr_failure_category": str(page.get("ocr_failure_category", "") or ""),
                     "ocr_quality_score": float(page.get("ocr_quality_score", 0.0) or 0.0),
+                    "ocr_candidate_quality_score": float(page.get("ocr_candidate_quality_score", 0.0) or 0.0),
+                    "ocr_selected_pass": str(page.get("ocr_selected_pass", "") or ""),
+                    "ocr_attempts_count": int(page.get("ocr_attempts_count", 0) or 0),
                     "ocr_track": str(page.get("ocr_track", "") or ""),
                     "ocr_source_profile": str(page.get("ocr_source_profile", "") or ""),
                     "ocr_local_pass_strategy": str(page.get("ocr_local_pass_strategy", "") or ""),
