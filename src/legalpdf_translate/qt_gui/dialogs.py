@@ -16,6 +16,7 @@ from openai import OpenAI
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -75,6 +76,7 @@ from legalpdf_translate.metadata_autofill import (
 )
 from legalpdf_translate.openai_client import OpenAIResponsesClient
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
+from legalpdf_translate.review_export import export_review_queue
 from legalpdf_translate.secrets_store import (
     delete_openai_key,
     delete_ocr_key,
@@ -818,6 +820,269 @@ class QtJobLogWindow(QDialog):
 
         apply_btn.clicked.connect(apply_columns)
         dialog.exec()
+
+
+REVIEW_QUEUE_COLUMNS = [
+    "page_number",
+    "score",
+    "status",
+    "reasons",
+    "recommended_action",
+]
+
+REVIEW_QUEUE_COLUMN_LABELS = {
+    "page_number": "Page",
+    "score": "Score",
+    "status": "Status",
+    "reasons": "Reasons",
+    "recommended_action": "Action",
+}
+
+
+def _coerce_queue_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned == "":
+            return default
+        try:
+            return int(cleaned)
+        except ValueError:
+            try:
+                return int(float(cleaned))
+            except ValueError:
+                return default
+    return default
+
+
+def _coerce_queue_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", ".")
+        if cleaned == "":
+            return default
+        try:
+            return float(cleaned)
+        except ValueError:
+            return default
+    return default
+
+
+def _coerce_queue_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def normalize_review_queue_entries(review_queue: object) -> list[dict[str, object]]:
+    if not isinstance(review_queue, list):
+        return []
+    entries: list[dict[str, object]] = []
+    for raw_item in review_queue:
+        if not isinstance(raw_item, dict):
+            continue
+        page_number = _coerce_queue_int(raw_item.get("page_number", 0), 0)
+        if page_number <= 0:
+            continue
+        reasons_raw = raw_item.get("reasons", [])
+        reasons: list[str] = []
+        if isinstance(reasons_raw, list):
+            for reason in reasons_raw:
+                reason_text = _coerce_queue_text(reason)
+                if reason_text:
+                    reasons.append(reason_text)
+        entries.append(
+            {
+                "page_number": int(page_number),
+                "score": round(min(1.0, max(0.0, _coerce_queue_float(raw_item.get("score", 0.0), 0.0))), 4),
+                "status": _coerce_queue_text(raw_item.get("status", "")),
+                "reasons": reasons,
+                "recommended_action": _coerce_queue_text(raw_item.get("recommended_action", "")),
+                "retry_reason": _coerce_queue_text(raw_item.get("retry_reason", "")),
+            }
+        )
+    entries.sort(
+        key=lambda item: (
+            -_coerce_queue_float(item.get("score", 0.0), 0.0),
+            _coerce_queue_int(item.get("page_number", 0), 0),
+        )
+    )
+    return entries
+
+
+def build_review_queue_markdown(entries: list[dict[str, object]]) -> str:
+    lines: list[str] = []
+    lines.append("# Review Queue")
+    lines.append("")
+    if not entries:
+        lines.append("No flagged pages were found for the current run.")
+        lines.append("")
+        return "\n".join(lines)
+    lines.append("| Page | Score | Status | Action | Reasons |")
+    lines.append("|------|-------|--------|--------|---------|")
+    for entry in entries:
+        reasons = entry.get("reasons", [])
+        reason_text = " | ".join(reasons) if isinstance(reasons, list) else str(reasons or "")
+        lines.append(
+            f"| {entry.get('page_number', '')} | {entry.get('score', '')} "
+            f"| {entry.get('status', '') or '-'} | {entry.get('recommended_action', '') or '-'} "
+            f"| {reason_text or '-'} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+class QtReviewQueueDialog(QDialog):
+    """Review queue panel for flagged pages from latest run summary."""
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        review_queue: object,
+        run_dir: Path | None,
+        run_summary_path: Path | None,
+        open_path_callback: Callable[[Path], None] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Review Queue")
+        self.resize(980, 560)
+        self._entries = normalize_review_queue_entries(review_queue)
+        self._run_dir = run_dir.expanduser().resolve() if isinstance(run_dir, Path) else None
+        self._run_summary_path = (
+            run_summary_path.expanduser().resolve() if isinstance(run_summary_path, Path) else None
+        )
+        self._open_path_callback = open_path_callback
+        self._build_ui()
+        self._populate_table()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        self.summary_label = QLabel("")
+        self.summary_label.setWordWrap(True)
+        root.addWidget(self.summary_label)
+
+        self.table = QTableWidget(0, len(REVIEW_QUEUE_COLUMNS), self)
+        self.table.setHorizontalHeaderLabels([REVIEW_QUEUE_COLUMN_LABELS[col] for col in REVIEW_QUEUE_COLUMNS])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        root.addWidget(self.table, 1)
+
+        actions = QHBoxLayout()
+        self.export_btn = QPushButton("Export...")
+        self.copy_btn = QPushButton("Copy list")
+        self.open_page_btn = QPushButton("Open page file")
+        self.close_btn = QPushButton("Close")
+        actions.addWidget(self.export_btn)
+        actions.addWidget(self.copy_btn)
+        actions.addWidget(self.open_page_btn)
+        actions.addStretch(1)
+        actions.addWidget(self.close_btn)
+        root.addLayout(actions)
+
+        self.export_btn.clicked.connect(self._export_queue)
+        self.copy_btn.clicked.connect(self._copy_queue)
+        self.open_page_btn.clicked.connect(self._open_selected_page_file)
+        self.close_btn.clicked.connect(self.accept)
+
+    def _populate_table(self) -> None:
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(0)
+        for entry in self._entries:
+            row_idx = self.table.rowCount()
+            self.table.insertRow(row_idx)
+            reasons = entry.get("reasons", [])
+            reason_text = " | ".join(reasons) if isinstance(reasons, list) else str(reasons or "")
+            values = {
+                "page_number": str(int(_coerce_queue_int(entry.get("page_number", 0), 0))),
+                "score": f"{_coerce_queue_float(entry.get('score', 0.0), 0.0):.4f}",
+                "status": _coerce_queue_text(entry.get("status", "")),
+                "reasons": reason_text,
+                "recommended_action": _coerce_queue_text(entry.get("recommended_action", "")),
+            }
+            for col_idx, col in enumerate(REVIEW_QUEUE_COLUMNS):
+                self.table.setItem(row_idx, col_idx, QTableWidgetItem(values[col]))
+        self.table.setSortingEnabled(True)
+        if self.table.rowCount() > 0:
+            self.table.sortItems(1, Qt.SortOrder.DescendingOrder)
+            self.summary_label.setText(f"Flagged pages: {self.table.rowCount()} (sorted by score).")
+        else:
+            self.summary_label.setText("No flagged pages found for this run.")
+
+    def _selected_entry(self) -> dict[str, object] | None:
+        row = self.table.currentRow()
+        if row < 0:
+            selection_model = self.table.selectionModel()
+            if selection_model is not None:
+                selected_rows = selection_model.selectedRows()
+                if selected_rows:
+                    row = int(selected_rows[0].row())
+        if row < 0 or row >= len(self._entries):
+            return None
+        return self._entries[row]
+
+    def _copy_queue(self) -> None:
+        markdown = build_review_queue_markdown(self._entries)
+        QApplication.clipboard().setText(markdown)
+        QMessageBox.information(self, "Review Queue", "Review queue copied to clipboard.")
+
+    def _export_queue(self) -> None:
+        if self._run_summary_path is None:
+            QMessageBox.warning(self, "Review Queue", "Run summary path is unavailable for export.")
+            return
+        default_base = self._run_summary_path.parent / "review_queue"
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export review queue",
+            str(default_base),
+            "All Files (*.*)",
+        )
+        if not selected:
+            return
+        try:
+            csv_path, markdown_path, count = export_review_queue(
+                self._run_summary_path,
+                Path(selected),
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Review Queue", f"Failed to export review queue:\n{exc}")
+            return
+        QMessageBox.information(
+            self,
+            "Review Queue",
+            f"Exported {count} item(s).\n\nCSV: {csv_path}\nMarkdown: {markdown_path}",
+        )
+
+    def _open_selected_page_file(self) -> None:
+        entry = self._selected_entry()
+        if entry is None:
+            QMessageBox.information(self, "Review Queue", "Select one row first.")
+            return
+        if self._run_dir is None:
+            QMessageBox.warning(self, "Review Queue", "Run folder is unavailable.")
+            return
+        page_number = _coerce_queue_int(entry.get("page_number", 0), 0)
+        page_file = self._run_dir / "pages" / f"page_{page_number:04d}.txt"
+        if not page_file.exists():
+            QMessageBox.warning(self, "Review Queue", f"Page file not found:\n{page_file}")
+            return
+        if self._open_path_callback is not None:
+            self._open_path_callback(page_file)
+            return
+        QMessageBox.information(self, "Review Queue", f"Page file:\n{page_file}")
 
 
 def _validate_url_or_blank(value: str) -> bool:

@@ -69,9 +69,11 @@ from legalpdf_translate.pdf_text_order import get_page_count
 from legalpdf_translate.qt_gui.dialogs import (
     JobLogSeed,
     QtJobLogWindow,
+    QtReviewQueueDialog,
     QtSaveToJobLogDialog,
     QtSettingsDialog,
     build_seed_from_run,
+    normalize_review_queue_entries,
 )
 from legalpdf_translate.qt_gui.tools_dialogs import QtCalibrationAuditDialog, QtGlossaryBuilderDialog
 from legalpdf_translate.qt_gui.styles import apply_primary_glow, apply_soft_shadow
@@ -191,6 +193,18 @@ def _load_run_summary_metrics(summary_path: Path) -> dict[str, object]:
     }
 
 
+def _load_review_queue_entries(summary_path: Path) -> list[dict[str, object]]:
+    if not summary_path.exists() or not summary_path.is_file():
+        return []
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    return normalize_review_queue_entries(payload.get("review_queue", []))
+
+
 class _FuturisticCanvas(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -293,8 +307,10 @@ class QtMainWindow(QMainWindow):
         self._last_run_config: RunConfig | None = None
         self._last_run_dir: Path | None = None
         self._last_joblog_seed: JobLogSeed | None = None
+        self._last_review_queue: list[dict[str, object]] = []
         self._last_run_report_path: Path | None = None
         self._joblog_window: QtJobLogWindow | None = None
+        self._review_queue_dialog: QtReviewQueueDialog | None = None
         self._settings_dialog: QtSettingsDialog | None = None
         self._glossary_builder_dialog: QtGlossaryBuilderDialog | None = None
         self._calibration_dialog: QtCalibrationAuditDialog | None = None
@@ -484,6 +500,7 @@ class QtMainWindow(QMainWindow):
         self.rebuild_btn = QPushButton("Rebuild DOCX")
         self.open_btn = QPushButton("Open output folder")
         self.report_btn = QPushButton("Export Run Report")
+        self.review_queue_btn = QPushButton("Review Queue")
         self.save_joblog_btn = QPushButton("Save to Job Log")
         self.open_joblog_btn = QPushButton("Job Log")
 
@@ -491,7 +508,7 @@ class QtMainWindow(QMainWindow):
         btn_grid.setSpacing(8)
         row0 = [self.translate_btn, self.cancel_btn, self.new_btn,
                 self.partial_btn, self.rebuild_btn]
-        row1 = [self.open_btn, self.report_btn, self.save_joblog_btn,
+        row1 = [self.open_btn, self.report_btn, self.review_queue_btn, self.save_joblog_btn,
                 self.open_joblog_btn]
         for col, btn in enumerate(row0):
             btn.setToolTip(btn.text())
@@ -518,6 +535,7 @@ class QtMainWindow(QMainWindow):
         self.rebuild_btn.clicked.connect(self._start_rebuild_docx)
         self.open_btn.clicked.connect(self._open_output_folder)
         self.report_btn.clicked.connect(self._open_run_report)
+        self.review_queue_btn.clicked.connect(self._open_review_queue_dialog)
         self.save_joblog_btn.clicked.connect(self._open_save_to_joblog_dialog)
         self.open_joblog_btn.clicked.connect(self._open_joblog_window)
 
@@ -1166,6 +1184,11 @@ class QtMainWindow(QMainWindow):
         elif not self._busy:
             can_report = self._resolve_report_run_dir() is not None
         self.report_btn.setEnabled(can_report)
+        can_review_queue = (not self._busy) and (
+            bool(self._last_review_queue)
+            or self._resolve_report_run_dir() is not None
+        )
+        self.review_queue_btn.setEnabled(can_review_queue)
         self.save_joblog_btn.setEnabled((not self._busy) and (self._last_joblog_seed is not None))
         self.open_joblog_btn.setEnabled(not self._busy)
 
@@ -1215,12 +1238,16 @@ class QtMainWindow(QMainWindow):
                 return
 
         self._save_settings()
+        if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
+            self._review_queue_dialog.close()
+            self._review_queue_dialog = None
         self._last_summary = None
         self._last_run_report_path = None
         self._last_run_dir = build_output_paths(config.output_dir, config.pdf_path, config.target_lang).run_dir
         self._last_output_docx = None
         self._last_run_config = config
         self._last_joblog_seed = None
+        self._last_review_queue = []
         self._last_workflow = None
         self._can_export_partial = False
         self.final_docx_edit.clear()
@@ -1265,10 +1292,14 @@ class QtMainWindow(QMainWindow):
             return
 
         self._save_settings()
+        if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
+            self._review_queue_dialog.close()
+            self._review_queue_dialog = None
         self._last_summary = None
         self._last_run_report_path = None
         self._last_output_docx = None
         self._last_joblog_seed = None
+        self._last_review_queue = []
         self.status_label.setText("Analyzing...")
         self.header_status_label.setText("Analyzing...")
         self.progress.setValue(0)
@@ -1321,10 +1352,15 @@ class QtMainWindow(QMainWindow):
             self.status_label.setText("Run finished with invalid summary")
             self.header_status_label.setText("Error")
             self._last_joblog_seed = None
+            self._last_review_queue = []
             return
         self._last_summary = summary
         self._last_run_dir = summary.run_dir
         self._last_run_report_path = summary.run_summary_path
+        summary_path = summary.run_summary_path
+        if summary_path is None:
+            summary_path = summary.run_dir / "run_summary.json"
+        self._last_review_queue = _load_review_queue_entries(summary_path.expanduser().resolve())
         if summary.success and summary.output_docx is not None:
             output = summary.output_docx.expanduser().resolve()
             self._last_output_docx = output
@@ -1362,6 +1398,7 @@ class QtMainWindow(QMainWindow):
     def _on_error(self, message: str) -> None:
         self._set_busy(False, translation=False)
         self._last_joblog_seed = None
+        self._last_review_queue = []
         self.status_label.setText("Error")
         self.header_status_label.setText("Error")
         self._append_log(f"Runtime error: {message}")
@@ -1376,6 +1413,7 @@ class QtMainWindow(QMainWindow):
             self._update_controls()
             return
         summary = summary_obj
+        self._last_review_queue = []
         self.status_label.setText("Analyze complete")
         self.header_status_label.setText("Analyze complete")
         self._append_log(
@@ -1399,6 +1437,7 @@ class QtMainWindow(QMainWindow):
 
     def _on_analyze_error(self, message: str) -> None:
         self._set_busy(False, translation=False)
+        self._last_review_queue = []
         self.status_label.setText("Analyze failed")
         self.header_status_label.setText("Analyze failed")
         self._append_log(f"Analyze failed: {message}")
@@ -1432,12 +1471,16 @@ class QtMainWindow(QMainWindow):
     def _new_run(self) -> None:
         if self._busy:
             return
+        if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
+            self._review_queue_dialog.close()
+            self._review_queue_dialog = None
         self._last_summary = None
         self._last_run_report_path = None
         self._last_run_dir = None
         self._last_output_docx = None
         self._last_run_config = None
         self._last_joblog_seed = None
+        self._last_review_queue = []
         self._last_workflow = None
         self._worker = None
         self._worker_thread = None
@@ -1480,9 +1523,13 @@ class QtMainWindow(QMainWindow):
             return
 
         self._save_settings()
+        if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
+            self._review_queue_dialog.close()
+            self._review_queue_dialog = None
         self._last_summary = None
         self._last_run_config = config
         self._last_joblog_seed = None
+        self._last_review_queue = []
         self._set_busy(True, translation=False)
         self.status_label.setText("Rebuilding DOCX...")
         self.header_status_label.setText("Rebuilding DOCX...")
@@ -1512,6 +1559,7 @@ class QtMainWindow(QMainWindow):
         output = output_obj.expanduser().resolve()
         self._last_output_docx = output
         self._last_joblog_seed = None
+        self._last_review_queue = []
         self.final_docx_edit.setText(str(output))
         self.status_label.setText("Completed")
         self.header_status_label.setText("Completed")
@@ -1521,10 +1569,26 @@ class QtMainWindow(QMainWindow):
 
     def _on_rebuild_error(self, message: str) -> None:
         self._set_busy(False, translation=False)
+        self._last_review_queue = []
         self.status_label.setText("Rebuild failed")
         self.header_status_label.setText("Rebuild failed")
         self._append_log(f"Rebuild failed: {message}")
         QMessageBox.critical(self, "Rebuild failed", message)
+
+    def _open_path_in_system(self, target: Path) -> None:
+        resolved = target.expanduser().resolve()
+        if not resolved.exists():
+            QMessageBox.critical(self, "Open file failed", f"Path not found:\n{resolved}")
+            return
+        try:
+            if os.name == "nt":
+                os.startfile(str(resolved))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(resolved)])
+            else:
+                subprocess.Popen(["xdg-open", str(resolved)])
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Open file failed", str(exc))
 
     def _open_output_file(self) -> None:
         if self._last_output_docx is None:
@@ -1533,15 +1597,7 @@ class QtMainWindow(QMainWindow):
         if not output_path.exists():
             QMessageBox.critical(self, "Open file failed", f"Output file not found:\n{output_path}")
             return
-        try:
-            if os.name == "nt":
-                os.startfile(str(output_path))  # type: ignore[attr-defined]
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", str(output_path)])
-            else:
-                subprocess.Popen(["xdg-open", str(output_path)])
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Open file failed", str(exc))
+        self._open_path_in_system(output_path)
 
     def _show_saved_docx_dialog(self, title: str) -> None:
         if self._last_output_docx is None:
@@ -1687,6 +1743,44 @@ class QtMainWindow(QMainWindow):
                 if isinstance(run_dir, Path):
                     return run_dir.expanduser().resolve()
         return None
+
+    def _open_review_queue_dialog(self) -> None:
+        if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
+            self._review_queue_dialog.raise_()
+            self._review_queue_dialog.activateWindow()
+            return
+        run_dir = self._resolve_report_run_dir()
+        if run_dir is None:
+            QMessageBox.information(self, "Review Queue", "No run context available.")
+            return
+        summary_path: Path | None = None
+        if self._last_summary is not None and self._last_summary.run_summary_path is not None:
+            summary_path = self._last_summary.run_summary_path.expanduser().resolve()
+        elif self._last_run_report_path is not None:
+            summary_path = self._last_run_report_path.expanduser().resolve()
+        else:
+            fallback = run_dir / "run_summary.json"
+            summary_path = fallback if fallback.exists() else None
+
+        review_entries = list(self._last_review_queue)
+        if summary_path is not None:
+            review_entries = _load_review_queue_entries(summary_path)
+            self._last_review_queue = list(review_entries)
+
+        dialog = QtReviewQueueDialog(
+            parent=self,
+            review_queue=review_entries,
+            run_dir=run_dir,
+            run_summary_path=summary_path,
+            open_path_callback=self._open_path_in_system,
+        )
+        dialog.setModal(False)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(lambda _obj=None: setattr(self, "_review_queue_dialog", None))
+        self._review_queue_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _open_run_report(self) -> None:
         run_dir = self._resolve_report_run_dir()

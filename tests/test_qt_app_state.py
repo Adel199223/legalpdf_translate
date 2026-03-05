@@ -112,11 +112,13 @@ def test_new_run_resets_runtime_state() -> None:
     calls = {"details": None, "save_settings": False, "update_controls": False}
     fake = SimpleNamespace(
         _busy=False,
+        _review_queue_dialog=None,
         _last_summary=object(),
         _last_run_report_path=object(),
         _last_output_docx=object(),
         _last_run_config=object(),
         _last_joblog_seed=object(),
+        _last_review_queue=[{"page_number": 1}],
         _last_workflow=object(),
         _worker=object(),
         _worker_thread=object(),
@@ -141,6 +143,7 @@ def test_new_run_resets_runtime_state() -> None:
     assert fake._last_output_docx is None
     assert fake._last_run_config is None
     assert fake._last_joblog_seed is None
+    assert fake._last_review_queue == []
     assert fake._last_workflow is None
     assert fake._worker is None
     assert fake._worker_thread is None
@@ -235,6 +238,7 @@ def test_report_button_enabled_during_and_after_run() -> None:
         _last_output_docx=None,
         _last_run_report_path=None,
         _last_joblog_seed=None,
+        _last_review_queue=[],
         _resolve_report_run_dir=lambda: Path("C:/tmp/run"),
         translate_btn=_FakeButton(),
         analyze_btn=_FakeButton(),
@@ -244,6 +248,7 @@ def test_report_button_enabled_during_and_after_run() -> None:
         rebuild_btn=_FakeButton(),
         open_btn=_FakeButton(),
         report_btn=report_button,
+        review_queue_btn=_FakeButton(),
         save_joblog_btn=_FakeButton(),
         open_joblog_btn=_FakeButton(),
         _simple_mode=False,
@@ -252,15 +257,19 @@ def test_report_button_enabled_during_and_after_run() -> None:
 
     QtMainWindow._update_controls(fake)
     assert report_button.enabled is True
+    assert fake.review_queue_btn.enabled is False
 
     fake._busy = False
     fake._running = False
     QtMainWindow._update_controls(fake)
     assert report_button.enabled is True
+    assert fake.review_queue_btn.enabled is True
 
     fake._resolve_report_run_dir = lambda: None
+    fake._last_review_queue = []
     QtMainWindow._update_controls(fake)
     assert report_button.enabled is False
+    assert fake.review_queue_btn.enabled is False
 
 
 def test_prepare_joblog_seed_prefills_metrics_from_run_summary(tmp_path: Path, monkeypatch) -> None:
