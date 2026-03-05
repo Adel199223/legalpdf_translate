@@ -163,3 +163,11 @@
   - `dart run test/tooling/cloud_eval_preflight_test.dart` -> PASS (3 cases)
   - `python3 -m compileall src tests` -> PASS
   - `python3 -m pytest -q` -> unavailable (`No module named pytest`)
+
+## Docs Sync Execution Record (Main Repo Consolidation)
+- Verification date: `2026-03-05`.
+- Context: optimization snapshot consolidated into Windows-native repo path `C:\Users\FA507\.codex\legalpdf_translate` on branch `chore/import-optmax-2026-03-05` (commit `acef861`).
+- Popup safeguard outcome: Python preflight completed successfully with recreated `.venv311` and package health check.
+- Post-consolidation docs sync validation:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
