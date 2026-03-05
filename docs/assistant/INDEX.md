@@ -11,8 +11,8 @@
 - `docs/assistant/exec_plans/PLANS.md`: ExecPlan format and lifecycle.
 
 ## Use when you need user-facing explanations
-- `docs/assistant/features/APP_USER_GUIDE.md`: full app support guide.
-- `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`: primary workflow support guide.
+- `docs/assistant/features/APP_USER_GUIDE.md`: beginner support guide covering OCR advisor, review queue, job log save, and queue runs.
+- `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`: primary workflow guide covering cost guardrails, review export, OCR advisor, and queue runner behavior.
 - `docs/assistant/features/PRIMARY_FEATURE_USER_GUIDE.md`: compatibility shim to primary workflow guide.
 
 ## Use when you need workflow routing
@@ -41,7 +41,7 @@
 - `docs/assistant/audits/GAP_OPPORTUNITY_MAP_2026-03-05.md`
 - `docs/assistant/audits/TOP5_UPGRADE_SPECS_2026-03-05.md`
 - `docs/assistant/audits/ROADMAP_30_60_90_2026-03-05.md`
-- `docs/assistant/audits/RELIABILITY_SIGNOFF_2026-03-05.md`
+- `docs/assistant/audits/RELIABILITY_SIGNOFF_2026-03-05.md`: live final signoff packet for the 2026-03-05 staged implementation set.
 
 ## Use when you need validation
 - `tooling/validate_agent_docs.dart`

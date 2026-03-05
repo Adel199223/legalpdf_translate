@@ -3,7 +3,7 @@
 This file is canonical for app-level architecture and status.
 
 ## App Summary
-LegalPDF Translate is a Windows-first Python app that translates one PDF into one DOCX using one-page-per-request processing.
+LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX using one-page-per-request processing for each translation job, and now also supports sequential multi-document queue execution.
 
 - Primary UI: Qt/PySide6 desktop app.
 - Secondary interface: CLI.
@@ -14,13 +14,18 @@ LegalPDF Translate is a Windows-first Python app that translates one PDF into on
 - GUI: `python -m legalpdf_translate.qt_gui`
 - CLI: `legalpdf-translate --pdf <file> --lang EN|FR|AR --outdir <dir>`
   - Cost guardrails (optional): `--budget-cap-usd <float> --cost-profile-id <string> --budget-on-exceed warn|block`
+  - Queue mode (optional): `legalpdf-translate --queue-manifest <manifest.jsonl> --rerun-failed-only true --lang EN --outdir <dir>`
 - Build: `powershell -ExecutionPolicy Bypass -File scripts/build_qt.ps1`
 
 ## Core Runtime Modules
 - `src/legalpdf_translate/workflow.py`: translation pipeline orchestration.
 - `src/legalpdf_translate/cost_guardrails.py`: deterministic pre-run/post-run cost estimation and budget decisions.
+- `src/legalpdf_translate/queue_runner.py`: sequential queue execution, checkpointing, and queue summaries.
+- `src/legalpdf_translate/review_export.py`: review queue export to CSV and Markdown.
 - `src/legalpdf_translate/workflow_components/contracts.py`: typed workflow internal contracts.
 - `src/legalpdf_translate/workflow_components/evaluation.py`: output-evaluation and retry-reason delegation.
+- `src/legalpdf_translate/workflow_components/quality_risk.py`: deterministic quality risk scoring and review queue construction.
+- `src/legalpdf_translate/workflow_components/ocr_advisor.py`: deterministic OCR/image recommendation logic.
 - `src/legalpdf_translate/workflow_components/summary.py`: run-summary and cost/suspected-cause delegation.
 - `src/legalpdf_translate/cli.py`: CLI parsing/execution.
 - `src/legalpdf_translate/qt_gui/app_window.py`: main GUI workflow orchestration.
@@ -37,6 +42,10 @@ LegalPDF Translate is a Windows-first Python app that translates one PDF into on
 4. Rebuild DOCX from existing page outputs.
 5. Use glossary and diagnostics workflows for consistency and QA.
 6. Optionally apply CLI budget guardrails (`warn` continue or `block` before page processing).
+7. Run analyze-only first and inspect/apply an OCR advisor recommendation before translation.
+8. Inspect or export a Review Queue when high-risk pages are flagged.
+9. Save completed runs to the Job Log with prefilled run metrics.
+10. Execute a queue manifest with checkpoint-aware resume and failed-only rerun behavior.
 
 ## Output and Run Artifacts
 Run artifacts live under:
@@ -49,7 +58,7 @@ Typical files:
 - `run_events.jsonl`
 - `analyze_report.json` (analyze-only)
 
-`run_summary.json` keeps existing totals and now also supports additive cost-guardrail fields:
+`run_summary.json` keeps existing totals and now also supports additive cost/risk/advisor fields:
 - `cost_estimation_status`
 - `cost_profile_id`
 - `budget_cap_usd`
@@ -57,6 +66,30 @@ Typical files:
 - `budget_decision_reason`
 - `budget_pre_run`
 - `budget_post_run`
+- `quality_risk_score`
+- `review_queue_count`
+- `review_queue`
+- `advisor_recommendation_applied`
+- `advisor_recommendation`
+
+`analyze_report.json` now also supports additive OCR advisor keys:
+- `recommended_ocr_mode`
+- `recommended_image_mode`
+- `recommendation_reasons`
+- `confidence`
+- `advisor_track`
+
+Queue manifests create sidecar artifacts beside the manifest file:
+- `<manifest_stem>.queue_checkpoint.json`
+- `<manifest_stem>.queue_summary.json`
+
+## Persistence Notes
+- The job log SQLite schema now includes additive run-metric/risk columns: `run_id`, `target_lang`, `total_tokens`, `estimated_api_cost`, and `quality_risk_score`.
+- Save-to-Job-Log pre-fills those values from `run_summary.json` when available, while preserving user edit control before save.
+
+## Queue Behavior Notes
+- Queue execution is sequential and checkpoint-aware.
+- Queue cancellation is cooperative and leaves untouched jobs resumable instead of converting them into failures.
 
 ## Governance and Routing Docs
 - Assistant docs index: `docs/assistant/INDEX.md`

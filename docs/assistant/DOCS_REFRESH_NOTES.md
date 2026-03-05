@@ -16,6 +16,33 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-05 — chore/import-optmax-2026-03-05 (d29c163)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DB_DRIFT_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/QT_UI_KNOWLEDGE.md
+  - docs/assistant/audits/RELIABILITY_SIGNOFF_2026-03-05.md
+  - docs/assistant/exec_plans/active/2026-03-05_assistant_docs_sync_catchup.md
+  - docs/assistant/exec_plans/active/2026-03-05_ocr_first_stage_rollout.md
+  - docs/assistant/exec_plans/active/2026-03-05_product_workflow_benchmark_upgrade.md
+  - docs/assistant/exec_plans/active/2026-03-05_remaining_top5_stage_rollout.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md
+- Key symbols / entrypoints changed:
+  - docs-only sync for shipped features through final signoff `d29c163`
+- User-visible behavior:
+  - Synced assistant docs for cost guardrails, job-log auto-sync, quality risk/review export, review queue GUI, OCR advisor backend + GUI, queue runner + failed-only rerun, and final queue hardening/signoff.
+  - Preserved dated benchmark/audit packets as historical snapshots instead of rewriting them as current state.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `./.venv311/Scripts/python.exe -m compileall src tests` -> PASS
+  - `./.venv311/Scripts/python.exe -m pytest -q` -> `497 passed`
+
 ## 2026-02-17 — fix/qt-settings-claude-guardrails (eb6f84e)
 - Files changed:
   - CLAUDE.md

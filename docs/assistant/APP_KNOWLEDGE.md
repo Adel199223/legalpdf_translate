@@ -24,6 +24,13 @@ For support/non-technical explanations, start with:
 
 Cost-guardrail support routing:
 - CLI budget cap/policy behavior (`warn` vs `block`) is documented in the primary workflow user guide.
+- OCR advisor and analyze-only support route to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`.
+- Review queue and review export support route to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`.
+- Queue runner support routes to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`.
+- Job-log metric prefill and migration concerns route to `docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md` and `docs/assistant/DB_DRIFT_KNOWLEDGE.md`.
+
+## Current-Truth Note
+- Canonical current-truth now includes queue runner support, OCR advisor flows, review queue handling, and job-log metric sync.
 
 ## Workflow Routing
 - Core translation: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`

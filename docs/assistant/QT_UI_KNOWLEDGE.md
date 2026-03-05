@@ -4,7 +4,7 @@
 
 | File | Key Classes / Functions |
 |------|----------------------|
-| `src/legalpdf_translate/qt_gui/app_window.py` | `_FuturisticCanvas` (paintEvent — decorative frame), `QtMainWindow` (_build_ui, resizeEvent, showEvent, _update_card_max_width, _set_adv_visible, _set_details_visible, _refresh_canvas) |
+| `src/legalpdf_translate/qt_gui/app_window.py` | `_FuturisticCanvas` (paintEvent — decorative frame), `QtMainWindow` (_build_ui, resizeEvent, showEvent, _update_card_max_width, `_start`, `_start_analyze`, `_start_queue`, `_refresh_advisor_banner`, `_open_review_queue_dialog`) |
 | `src/legalpdf_translate/qt_gui/styles.py` | `build_stylesheet()` (full QSS), `PALETTE` dict, `apply_soft_shadow()`, `apply_primary_glow()` |
 | `src/legalpdf_translate/qt_gui/dialogs.py` | `QtSettingsDialog` (launched via `QtMainWindow._open_settings_dialog`) |
 | `src/legalpdf_translate/qt_gui/tools_dialogs.py` | `QtGlossaryBuilderDialog`, `QtCalibrationAuditDialog` (launched via main window toolbar buttons) |
@@ -53,7 +53,12 @@ QtMainWindow
                     │       │   └── QVBoxLayout → QGridLayout (PDF/lang/outdir rows + tools)
                     │       │
                     │       ├── QFrame#SurfacePanel [adv_frame]  (hidden by default)
-                    │       │   └── QFormLayout (effort/images/OCR/pages/workers/context)
+                    │       │   └── QFormLayout (effort/images/OCR/pages/workers/context/analyze/queue controls)
+                    │       │       Includes: Analyze button, queue manifest picker,
+                    │       │       rerun-failed-only checkbox, Run Queue button, Queue status label
+                    │       │
+                    │       ├── QFrame#SurfacePanel [advisor_frame]
+                    │       │   └── QHBoxLayout: Advisor label + Apply + Ignore
                     │       │
                     │       ├── QFrame#SurfacePanel [details_card]
                     │       │   └── QVBoxLayout: DisclosureButton + log QPlainTextEdit
@@ -62,7 +67,7 @@ QtMainWindow
                     │           └── QVBoxLayout: Final DOCX row, progress bar,
                     │               status labels, QGridLayout [btn_grid]:
                     │               Row 0: Translate | Cancel | New Run | Export partial DOCX | Rebuild DOCX
-                    │               Row 1: Open output folder | Export Run Report | Save to Job Log | Job Log
+                    │               Row 1: Open output folder | Export Run Report | Review Queue | Save to Job Log | Job Log
                     │
                     └── stretch(1)
 ```
@@ -110,10 +115,10 @@ QtMainWindow
 
 ### 5. Footer Button Labels
 
-- **What:** All 9 footer buttons must show complete labels (no truncation).
+- **What:** All 10 footer buttons must show complete labels (no truncation).
 - **Where:** `_build_ui` creates a QGridLayout with 2 rows:
   - Row 0 (5 buttons): Translate, Cancel, New Run, Export partial DOCX, Rebuild DOCX
-  - Row 1 (4 buttons): Open output folder, Export Run Report, Save to Job Log, Job Log
+  - Row 1 (5 buttons): Open output folder, Export Run Report, Review Queue, Save to Job Log, Job Log
   - `btn_grid.setColumnStretch(len(row0), 1)` pushes content left
   - `btn.setToolTip(btn.text())` on each button
 - **How to verify:** All labels fully readable at default window width.
@@ -144,6 +149,13 @@ Edit the `1180` value in both:
 
 Edit the `row0` and `row1` lists in `_build_ui`. Keep the QGridLayout pattern with `setColumnStretch` on the column after the last button. Remember to add `setToolTip(btn.text())` on any new button.
 
+### Change advisor or queue controls
+
+Edit `_build_ui` in `app_window.py`:
+1. Queue controls live in `adv_frame`.
+2. The advisor banner lives in `advisor_frame`.
+3. Queue behavior wiring lives in `_start_queue()`, `_on_queue_status()`, and `_on_queue_finished()`.
+
 ### Improve primary button contrast
 
 1. Edit `QPushButton#PrimaryButton` section in `build_stylesheet()` in `styles.py` (border width, color, background)
@@ -170,3 +182,6 @@ python -m compileall src tests
 4. Restore to normal size → card adapts
 5. Check all footer button labels are fully readable
 6. Toggle Show Advanced → card grows, vertical scrollbar appears if needed
+7. Run Analyze on a difficult PDF → advisor banner appears when recommendation data exists
+8. Finish a run with flagged pages → `Review Queue` button enables
+9. Load a queue manifest in Advanced settings → `Run Queue` starts and status text updates

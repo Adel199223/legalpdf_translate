@@ -1,5 +1,10 @@
 # Remaining Top-5 Implementation Program (Stage-Gated, App-Test-Driven)
 
+## Closure Note
+- Stages 0-3 executed under this plan.
+- Stage 4 onward was superseded by the OCR-first replan in `docs/assistant/exec_plans/active/2026-03-05_ocr_first_stage_rollout.md`.
+- Continuation token lineage under this file: `NEXT_STAGE_1` -> `NEXT_STAGE_2` -> `NEXT_STAGE_3` -> `NEXT_STAGE_4`.
+
 ## 1) Title
 Remaining Top-5 Implementation Program (staged, app-test-driven)
 
@@ -74,14 +79,55 @@ Remaining Top-5 Implementation Program (staged, app-test-driven)
 - No history rewrite.
 
 ## Stage Packet — Stage 0
-- Status: in progress.
+- Status: completed.
+- Commit: `d252471` (`chore(plan): scaffold remaining top5 staged rollout`)
 - Scope:
   - ExecPlan scaffold creation.
   - Baseline branch/cleanliness capture.
   - Mandatory baseline validators/tests.
-- Mandatory commands:
-  - `dart run tooling/validate_agent_docs.dart`
-  - `dart run tooling/validate_workspace_hygiene.dart`
-  - `./.venv311/Scripts/python.exe -m compileall src tests`
-  - `./.venv311/Scripts/python.exe -m pytest -q`
-- Continuation token: `NEXT_STAGE_1`
+- Validation:
+  - Validated during stage execution.
+  - Exact stage-local counts were not preserved in this file.
+  - Final authoritative validation for the whole rollout later completed on `d29c163`.
+- Continuation token satisfied: `NEXT_STAGE_1`
+
+## Stage Packet — Stage 1
+- Status: completed.
+- Commit: `54b824b` (`feat(joblog): auto-sync run metrics into job log`)
+- Scope:
+  - Add additive `job_runs` columns for run metrics and risk.
+  - Prefill Save-to-Job-Log from `run_summary.json`.
+  - Preserve user edit authority before saving.
+- Validation:
+  - Validated during stage execution with migration and Qt-flow coverage.
+  - Exact historical counts are intentionally not reconstructed here.
+  - Later superseded by final full validation on `d29c163`.
+- Continuation token satisfied: `NEXT_STAGE_2`
+
+## Stage Packet — Stage 2
+- Status: completed.
+- Commit: `4951609` (`feat(quality): add deterministic risk scoring and review export`)
+- Scope:
+  - Add deterministic review-risk scoring.
+  - Add review export surfaces and run-summary keys.
+  - Extend CLI/report coverage for review export.
+- Validation:
+  - Validated during stage execution with targeted workflow/report/CLI tests.
+  - Later superseded by final full validation on `d29c163`.
+- Continuation token satisfied: `NEXT_STAGE_3`
+
+## Stage Packet — Stage 3
+- Status: completed.
+- Commit: `ee7e826` (`feat(gui): add review queue panel for flagged pages`)
+- Scope:
+  - Add Review Queue GUI dialog and button wiring.
+  - Support empty/filled states and export/copy flows.
+  - Extend Qt regression coverage.
+- Validation:
+  - Validated during stage execution with targeted Qt tests.
+  - Later superseded by final full validation on `d29c163`.
+- Continuation token satisfied: `NEXT_STAGE_4`
+
+## Handoff
+- After Stage 3, the queued remainder was intentionally replanned to prioritize OCR reliability ahead of queue orchestration.
+- Execution continued under `docs/assistant/exec_plans/active/2026-03-05_ocr_first_stage_rollout.md`.

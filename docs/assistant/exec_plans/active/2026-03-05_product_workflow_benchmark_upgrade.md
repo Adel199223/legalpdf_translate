@@ -94,3 +94,10 @@
 - Cloud evidence:
   - `gh run list --workflow CI --branch chore/import-optmax-2026-03-05 --limit 3`
   - latest run ids: `22723888520`, `22723883895`, `22723872295` (all success)
+
+## Lineage Note
+- The benchmark/top-5 outputs from this plan were later implemented under:
+  - `docs/assistant/exec_plans/active/2026-03-05_remaining_top5_stage_rollout.md`
+  - `docs/assistant/exec_plans/active/2026-03-05_ocr_first_stage_rollout.md`
+- The live final signoff for the implemented work is:
+  - `docs/assistant/audits/RELIABILITY_SIGNOFF_2026-03-05.md`

@@ -37,12 +37,77 @@ This user guide is not canonical architecture truth. Defer to `APP_KNOWLEDGE.md`
 - OCR: Reading text from page images when normal extraction is poor.
 - Run summary: A final report about what happened in the run.
 
+## Analyze + OCR Advisor
+Use Analyze when you want the app to inspect the PDF before spending translation time or money.
+
+1. Click `Analyze`.
+2. Wait for the app to generate `analyze_report.json`.
+3. If the app sees weak text extraction or layout risk, it can show an OCR Advisor recommendation.
+4. The recommendation can suggest a different OCR mode and image mode.
+5. In the GUI, `Apply` uses that recommendation for the next run only.
+6. `Ignore` keeps your current settings and records that choice in the run metadata.
+
+If no advisor appears, that usually means the app did not see enough evidence to recommend a change.
+
+## Review Queue
+After a run, the app can mark higher-risk pages for human review.
+
+1. Open `Review Queue` from the main window.
+2. Check the flagged page numbers, scores, reasons, and suggested action.
+3. Export the queue if you want review files outside the app.
+4. The export creates both CSV and Markdown files for the same queue.
+
+If the Review Queue opens empty, the app did not flag any pages for extra review in that run.
+
+## Save to Job Log
+After a successful run, the app can prefill the Job Log dialog using the latest run artifacts.
+
+1. Finish a translation.
+2. Open `Save to Job Log`.
+3. Confirm the prefilled values when available:
+   - run ID
+   - target language
+   - total tokens
+   - estimated API cost
+   - quality risk score
+4. Edit any field you want before saving.
+
+The prefill helps, but you still stay in control of the saved row.
+
+## Queue Runs
+Use queue mode when you want several PDFs to run in order.
+
+### GUI queue flow
+1. Open `Show Advanced`.
+2. Pick a queue manifest file (`.json` or `.jsonl`).
+3. Click `Run Queue`.
+4. Watch `Queue status` as jobs move through `pending`, `running`, `done`, `failed`, or `skipped`.
+5. If you stop the queue, completed jobs stay completed and untouched jobs remain resumable.
+6. Turn on `Rerun failed only` if you want the next queue run to retry only failed jobs from checkpoint state.
+
+### CLI queue flow
+Run queue mode from terminal like this:
+
+```bash
+legalpdf-translate --queue-manifest queue.jsonl --lang EN --outdir out
+legalpdf-translate --queue-manifest queue.jsonl --rerun-failed-only true --lang EN --outdir out
+```
+
+Queue mode writes these sidecar files next to the manifest:
+- `<manifest_stem>.queue_checkpoint.json`
+- `<manifest_stem>.queue_summary.json`
+
 ## Troubleshooting
 1. If setup commands fail with `html.entities` or `idna` import errors, run `powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate`, then activate `. .\.venv311\Scripts\Activate.ps1`.
 2. If output is missing pages, check if run stopped early and use resume.
 3. If run is slow, lower worker count and retry.
-4. If text quality is poor, test analyze-only and inspect OCR routing.
+4. If text quality is poor, run Analyze first and inspect OCR routing or advisor recommendations before translating again.
 5. If terminology is inconsistent, review glossary settings and rerun affected pages.
+6. If no advisor appears after Analyze, the app may have found no strong signal for a better OCR/image setting.
+7. If queue mode will not start, confirm the manifest file exists and each job has valid PDF/output information.
+8. If a queue was interrupted, rerun it with the same manifest; completed jobs should be skipped automatically.
+9. If the Review Queue is empty, that means no pages crossed the app's current risk threshold.
+10. OCR can improve difficult scans, but it still depends on source quality and cannot fully repair a badly scanned page.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.
