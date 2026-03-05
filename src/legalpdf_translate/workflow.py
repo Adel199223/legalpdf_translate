@@ -101,6 +101,9 @@ from .workflow_components.evaluation import (
 from .workflow_components.evaluation import (
     retry_reason_from_evaluation as derive_retry_reason,
 )
+from .workflow_components.ocr_advisor import (
+    build_ocr_image_advisor,
+)
 from .workflow_components.summary import (
     classify_suspected_cause as classify_summary_cause,
 )
@@ -1062,6 +1065,17 @@ class TranslationWorkflow:
         for page_number in selected_pages:
             ordered = extract_ordered_page_text(config.pdf_path, page_number - 1)
             extracted_text = ordered.text
+            extraction_quality = classify_extracted_text_quality(extracted_text)
+            ocr_required = bool(extraction_quality.get("ocr_required", False))
+            ocr_helpful = bool(extraction_quality.get("ocr_helpful", False))
+            ocr_request_reason = "not_requested"
+            if config.ocr_mode == OcrMode.ALWAYS:
+                ocr_request_reason = "required"
+            elif config.ocr_mode == OcrMode.AUTO:
+                if ocr_required:
+                    ocr_request_reason = "required"
+                elif ocr_helpful:
+                    ocr_request_reason = "helpful"
             would_attach_image = should_include_image(
                 config.image_mode,
                 extracted_text,
@@ -1079,6 +1093,12 @@ class TranslationWorkflow:
                     "blocks_count": int(ordered.block_count),
                     "two_column_detected": bool(ordered.two_column_detected),
                     "would_attach_image": would_attach_image,
+                    "ocr_request_reason": ocr_request_reason,
+                    "extraction_quality_signals": [
+                        str(item)
+                        for item in extraction_quality.get("signals", [])
+                        if isinstance(item, str)
+                    ],
                     "reason": self._analyze_image_reason(
                         lang=config.target_lang,
                         mode=config.image_mode.value,
@@ -1090,6 +1110,13 @@ class TranslationWorkflow:
                 }
             )
 
+        advisor_recommendation = build_ocr_image_advisor(
+            rows=rows,
+            target_lang=config.target_lang.value,
+            current_ocr_mode=config.ocr_mode.value,
+            current_image_mode=config.image_mode.value,
+            source="analyze_report",
+        )
         payload = {
             "run_id": paths.run_started_at,
             "pdf_path": str(config.pdf_path),
@@ -1097,6 +1124,19 @@ class TranslationWorkflow:
             "image_mode": config.image_mode.value,
             "selected_pages_count": len(selected_pages),
             "pages_would_attach_images": pages_would_attach_images,
+            "recommended_ocr_mode": str(
+                advisor_recommendation.get("recommended_ocr_mode", config.ocr_mode.value) or config.ocr_mode.value
+            ),
+            "recommended_image_mode": str(
+                advisor_recommendation.get("recommended_image_mode", config.image_mode.value) or config.image_mode.value
+            ),
+            "recommendation_reasons": [
+                str(item)
+                for item in advisor_recommendation.get("recommendation_reasons", [])
+                if isinstance(item, str)
+            ],
+            "confidence": float(advisor_recommendation.get("confidence", 0.5) or 0.5),
+            "advisor_track": str(advisor_recommendation.get("advisor_track", "enfr") or "enfr"),
             "pages": rows,
         }
         analyze_report_path = paths.run_dir / "analyze_report.json"
@@ -2209,6 +2249,21 @@ class TranslationWorkflow:
             total_reasoning_tokens=total_reasoning_tokens,
         )
         quality_risk_payload = build_quality_risk_summary(page_rows)
+        advisor_rows = [page for _, page in page_rows]
+        advisor_recommendation = build_ocr_image_advisor(
+            rows=advisor_rows,
+            target_lang=config.target_lang.value,
+            current_ocr_mode=config.ocr_mode.value,
+            current_image_mode=config.image_mode.value,
+            source="run_summary",
+        )
+        settings_obj = run_state.settings if isinstance(run_state.settings, dict) else {}
+        advisor_applied_raw = settings_obj.get("advisor_recommendation_applied")
+        advisor_recommendation_applied: bool | None
+        if isinstance(advisor_applied_raw, bool):
+            advisor_recommendation_applied = advisor_applied_raw
+        else:
+            advisor_recommendation_applied = None
         self._budget_post_run_packet = self._build_budget_post_run_packet(
             total_input_tokens=total_input_tokens,
             total_output_tokens=total_output_tokens,
@@ -2279,6 +2334,8 @@ class TranslationWorkflow:
             "top_reasoning_pages": [_row(page_number, page) for page_number, page in top_reasoning],
             "suspected_cause": suspected_cause,
             "evidence": evidence,
+            "advisor_recommendation_applied": advisor_recommendation_applied,
+            "advisor_recommendation": dict(advisor_recommendation),
             "quality_risk_score": quality_risk_payload.get("quality_risk_score", 0.0),
             "review_queue_count": quality_risk_payload.get("review_queue_count", 0),
             "review_queue": quality_risk_payload.get("review_queue", []),

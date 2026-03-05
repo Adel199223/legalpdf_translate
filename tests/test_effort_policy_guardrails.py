@@ -98,6 +98,8 @@ def test_run_summary_written_on_failure(tmp_path: Path, monkeypatch) -> None:
     assert "quality_risk_score" in payload
     assert "review_queue_count" in payload
     assert "review_queue" in payload
+    assert "advisor_recommendation_applied" in payload
+    assert "advisor_recommendation" in payload
 
 
 def test_telemetry_no_content_fields(tmp_path: Path, monkeypatch) -> None:

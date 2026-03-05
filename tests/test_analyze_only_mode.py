@@ -61,6 +61,11 @@ def test_analyze_only_no_api_calls(tmp_path: Path, monkeypatch) -> None:
     payload = json.loads(summary.analyze_report_path.read_text(encoding="utf-8"))
     assert payload["selected_pages_count"] == 2
     assert len(payload["pages"]) == 2
+    assert payload["recommended_ocr_mode"] in {"off", "auto", "always"}
+    assert payload["recommended_image_mode"] in {"off", "auto", "always"}
+    assert isinstance(payload["recommendation_reasons"], list)
+    assert isinstance(payload["confidence"], float)
+    assert payload["advisor_track"] == "enfr"
     for row in payload["pages"]:
         assert "page_number" in row
         assert "would_attach_image" in row

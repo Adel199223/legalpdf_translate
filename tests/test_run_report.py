@@ -974,3 +974,32 @@ def test_run_report_renders_ocr_observability_summary_when_present(tmp_path: Pat
     assert "OCR track quality packet: EN/FR avg `0.81`, AR avg `0.66`, weighted `0.75`" in markdown
     assert '"ocr_local_pass_strategy": "single_pass_baseline"' in markdown
     assert '"ocr_api_fallback_policy": "required_only_for_paid_fallback"' in markdown
+
+
+def test_run_report_renders_ocr_advisor_summary_when_present(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    summary_path = run_dir / "run_summary.json"
+    run_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    run_summary.update(
+        {
+            "advisor_recommendation_applied": False,
+            "advisor_recommendation": {
+                "recommended_ocr_mode": "auto",
+                "recommended_image_mode": "auto",
+                "recommendation_reasons": ["enfr_layout_or_text_quality_requires_ocr"],
+                "confidence": 0.8123,
+                "advisor_track": "enfr",
+            },
+        }
+    )
+    _write_json(summary_path, run_summary)
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "OCR advisor recommends OCR mode `auto`, image mode `auto`" in markdown
+    assert "OCR advisor reasons: `enfr_layout_or_text_quality_requires_ocr`." in markdown
+    assert "OCR advisor recommendation applied: `False`." in markdown

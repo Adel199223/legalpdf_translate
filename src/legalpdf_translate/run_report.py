@@ -160,6 +160,24 @@ def load_events_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _parse_optional_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "y", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "n", "off"}:
+            return False
+    return None
+
+
 def _truncate(value: str, *, max_chars: int) -> str:
     if len(value) <= max_chars:
         return value
@@ -630,6 +648,12 @@ def build_run_report_payload(
     quality_obj: dict[str, Any] = {
         "quality_risk_score": run_summary.get("quality_risk_score"),
         "review_queue_count": int(run_summary.get("review_queue_count", 0) or 0),
+        "advisor_recommendation_applied": _parse_optional_bool(run_summary.get("advisor_recommendation_applied")),
+        "advisor_recommendation": (
+            run_summary.get("advisor_recommendation")
+            if isinstance(run_summary.get("advisor_recommendation"), dict)
+            else {}
+        ),
     }
 
     payload: dict[str, Any] = {
@@ -1431,6 +1455,30 @@ def build_run_report_markdown(
             f"- Quality risk score `{quality_risk_score}` with "
             f"`{review_queue_count}` flagged review page(s)."
         )
+    advisor_applied = _parse_optional_bool(quality_obj.get("advisor_recommendation_applied"))
+    advisor_obj = quality_obj.get("advisor_recommendation")
+    if not isinstance(advisor_obj, dict):
+        advisor_obj = {}
+    advisor_ocr_mode = str(advisor_obj.get("recommended_ocr_mode", "") or "").strip()
+    advisor_image_mode = str(advisor_obj.get("recommended_image_mode", "") or "").strip()
+    advisor_track = str(advisor_obj.get("advisor_track", "") or "").strip()
+    advisor_confidence = advisor_obj.get("confidence")
+    advisor_reasons = [
+        str(item)
+        for item in advisor_obj.get("recommendation_reasons", [])
+        if isinstance(item, str) and str(item).strip()
+    ]
+    if advisor_ocr_mode or advisor_image_mode or advisor_track or advisor_confidence is not None:
+        lines.append(
+            f"- OCR advisor recommends OCR mode `{advisor_ocr_mode or 'n/a'}`, "
+            f"image mode `{advisor_image_mode or 'n/a'}`, "
+            f"track `{advisor_track or 'n/a'}`, "
+            f"confidence `{advisor_confidence}`."
+        )
+        if advisor_reasons:
+            lines.append(f"- OCR advisor reasons: `{', '.join(advisor_reasons)}`.")
+    if advisor_applied is not None:
+        lines.append(f"- OCR advisor recommendation applied: `{advisor_applied}`.")
     lines.append(
         f"- Failed pages `{warnings_obj.get('failed_pages_count', 0)}` "
         f"({warnings_obj.get('failed_pages', [])})."
