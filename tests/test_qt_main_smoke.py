@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 
 
 class _FakeQt:
@@ -131,3 +132,8 @@ def test_qt_main_smoke(monkeypatch) -> None:
     qt_main.main()
     assert called["run"] is True
 
+
+def test_qt_app_module_main_guard_invokes_run() -> None:
+    source = Path("src/legalpdf_translate/qt_app.py").read_text(encoding="utf-8")
+    assert 'if __name__ == "__main__":' in source
+    assert "raise SystemExit(run())" in source
