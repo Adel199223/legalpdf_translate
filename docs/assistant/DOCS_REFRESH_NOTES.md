@@ -20,6 +20,39 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 - Files changed:
   - APP_KNOWLEDGE.md
   - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DB_DRIFT_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/QT_UI_KNOWLEDGE.md
+  - docs/assistant/QT_UI_PLAYBOOK.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md
+  - docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md
+  - docs/assistant/exec_plans/active/2026-03-06_ocr_runtime_stabilization_auto1.md
+  - docs/assistant/exec_plans/active/2026-03-06_safe_ocr_defaults_no_wheel.md
+  - docs/assistant/exec_plans/active/2026-03-06_joblog_output_word_count_fix.md
+- Key symbols / entrypoints changed:
+  - src/legalpdf_translate/openai_client.py::OpenAIResponsesClient.call
+  - src/legalpdf_translate/workflow.py::failure_context
+  - src/legalpdf_translate/qt_gui/app_window.py::_show_ocr_heavy_runtime_warning
+  - src/legalpdf_translate/qt_gui/guarded_inputs.py::NoWheelComboBox
+  - src/legalpdf_translate/qt_gui/guarded_inputs.py::NoWheelSpinBox
+  - src/legalpdf_translate/qt_gui/dialogs.py::count_words_from_output_artifacts
+- User-visible behavior:
+  - OCR-heavy runs now use bounded request deadlines and a bounded cooperative `Cancel and wait` flow instead of effectively unbounded waiting.
+  - The GUI now offers a non-persistent `Apply safe OCR profile` action for risky OCR-heavy runs and `Switch to fixed high` for the EN/FR xhigh cost/time warning.
+  - Run-critical selectors now ignore accidental mouse-wheel changes when closed.
+  - Save to Job Log now treats `Words` as translated output words using DOCX-first precedence, which fixes `Words: 0` on successful OCR-heavy runs.
+- Tests:
+  - `./.venv311/Scripts/python.exe -m pytest -q` -> `556 passed`
+  - `./.venv311/Scripts/python.exe -m compileall src tests` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
+## 2026-03-06 — feat/ocr-runtime-stabilization-20260306 (working tree)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
   - docs/assistant/INDEX.md
   - docs/assistant/QT_UI_PLAYBOOK.md
   - docs/assistant/manifest.json

@@ -42,14 +42,16 @@ python ./tooling/ocr_translation_probe.py --pdf "<path-to-pdf>" --lang AR --page
 - `tests/test_workflow_ocr_routing.py`
 
 ## Failure Modes and Fallback Steps
-- Local OCR unavailable: switch the triage runbook to `ocr_mode=always`, `ocr_engine=api`, `image_mode=off`, `workers=1`, `keep_intermediates=on`.
+- Local OCR unavailable: use the OCR-heavy warning action `Apply safe OCR profile` or manually switch the triage runbook to `ocr_mode=always`, `ocr_engine=api`, `image_mode=off`, `workers=1`, `keep_intermediates=on`.
 - Full-document OCR run stalls: prove page `1-2` first, then continue in small page slices instead of repeating the same 7-page failure.
-- OCR succeeds but translation still stalls: verify that the effective OCR text path is being used without redundant image attachment.
-- Partial failure leaves the user thinking the app froze: surface report/run-summary paths and treat cancel/close behavior as a separate UI/runtime symptom.
+- OCR succeeds but translation still stalls: verify that the effective OCR text path is being used without redundant image attachment. OCR-success pages should now stay text-first unless there is a concrete reason to attach the image.
+- Partial failure leaves the user thinking the app froze: surface report/run-summary paths and check the bounded cancel-wait status. `Cancel and wait` is still cooperative, but it is now limited by the active request deadline instead of waiting indefinitely.
 
 ## Handoff Checklist
 1. Run OCR preflight before diagnosing the document.
 2. Record whether local OCR is available and whether the document is effectively API-only.
 3. Start with a one-page or `1-2` page probe before any full rerun.
-4. Keep OCR-success pages text-first unless there is a concrete reason to retain image attachment.
-5. Distinguish transport instability from true rate limiting and capture summary/report artifacts when available.
+4. If the app shows the xhigh warning, choose `Switch to fixed high` for OCR-heavy triage.
+5. If the app shows the OCR-heavy warning, choose `Apply safe OCR profile` unless there is a deliberate reason to continue unchanged.
+6. Keep OCR-success pages text-first unless there is a concrete reason to retain image attachment.
+7. Distinguish transport instability from true rate limiting and capture summary/report artifacts when available.

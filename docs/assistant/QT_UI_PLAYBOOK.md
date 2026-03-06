@@ -9,6 +9,7 @@
 5. **Test layout changes visually with deterministic renders first.** Run `tooling/qt_render_review.py` before relying on ad hoc desktop screenshots.
 6. **Preserve LTR direction overrides.** The window and footer card force `LeftToRight` so that RTL target languages don't flip UI chrome. Do not remove these.
 7. **Do not add a horizontal scrollbar.** `ScrollBarAlwaysOff` is intentional — if content clips, fix the content width, don't enable horizontal scroll.
+8. **Do not let run-critical selectors drift on wheel events.** Translation-critical combo/spin controls are intentionally guarded; keep accidental wheel changes blocked unless the popup is intentionally open.
 
 ## B. Search Recipes
 
@@ -76,4 +77,5 @@ rg -n "_refresh_lang_badge|_LANG_FLAG_ICON_BY_CODE|FieldChrome|LangCaretButton|F
 - [ ] Desktop compact: still two-column, no clipped field chrome
 - [ ] Stacked compact: setup/output stack cleanly, footer reflows to two rows
 - [ ] Verify `...` menu actions and `Tools` menu routes still match the dashboard shell contract
+- [ ] If warning flows were touched, verify `Switch to fixed high` and `Apply safe OCR profile` still behave exactly as documented
 - [ ] Update `docs/assistant/QT_UI_KNOWLEDGE.md` if any invariant changed

@@ -136,6 +136,23 @@ QtMainWindow
 - **Where:** `_apply_responsive_layout()` changes `body_layout` direction to `TopToBottom` and calls `_configure_footer_layout(compact=True)`.
 - **Verify:** setup panel above output panel; `Start Translate` on row 1; `Cancel` and `...` on row 2.
 
+### 9. Run-critical selectors use no-wheel guards
+- **What:** Translation-critical combo boxes ignore mouse-wheel changes when closed, and the workers spin box ignores wheel changes entirely.
+- **Where:** `qt_gui/guarded_inputs.py`, `QtMainWindow` run controls, and matching settings-dialog controls.
+- **Verify:** scrolling over a closed target-language, effort, OCR, image, or workers control does not silently change the value; opening the combo popup still allows intentional list scrolling.
+
+### 10. Warning dialog contract
+- **What:** There are two important runtime warning actions:
+  - `Switch to fixed high` for EN/FR `fixed_xhigh`
+  - `Apply safe OCR profile` for OCR-heavy API-only runs
+- **Behavior:** `Apply safe OCR profile` changes the current form only and does not persist new defaults.
+- **Verify:** after applying the safe OCR profile, the form shows `always/api/off/1/fixed_high/resume-off/keep-intermediates-on` for the current run, but reopening the app restores the saved defaults.
+
+### 11. Bounded cancel-wait contract
+- **What:** `Cancel and wait` remains cooperative, but it is bounded by the active request deadline and updates the status text while waiting.
+- **Where:** `QtMainWindow._resolve_busy_close_choice()`, `_begin_cancel_wait()`, and cancel-wait status refresh logic.
+- **Verify:** cancelling an OCR-heavy run shows wait-state progress and resolves within the request budget instead of appearing indefinitely frozen.
+
 ## E. How to Change X
 
 ### Change sidebar width or nav rhythm
@@ -186,3 +203,6 @@ python -m compileall src tests
    - `Generate Run Report`
    - `View Job Log`
 8. Open `Tools` and confirm `Review Queue...` and `Save to Job Log...` remain reachable
+9. Scroll over the closed run-critical selectors and confirm they do not change by accident
+10. Trigger the EN/FR xhigh warning and confirm `Switch to fixed high` changes the current effort policy
+11. Trigger the OCR-heavy warning and confirm `Apply safe OCR profile` changes the current run only
