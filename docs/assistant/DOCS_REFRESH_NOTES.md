@@ -16,6 +16,66 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-06 — chore/import-optmax-2026-03-05 (85250eb + working tree)
+- Files changed:
+  - src/legalpdf_translate/qt_app.py
+  - src/legalpdf_translate/qt_gui/app_window.py
+  - src/legalpdf_translate/qt_gui/styles.py
+  - tests/test_qt_app_state.py
+  - tests/test_qt_main_smoke.py
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/QT_UI_KNOWLEDGE.md
+  - docs/assistant/QT_UI_PLAYBOOK.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/exec_plans/active/2026-03-05_ui_screenshot_match_rollout.md
+- Key symbols / entrypoints changed:
+  - src/legalpdf_translate/qt_app.py::run
+  - src/legalpdf_translate/qt_app.py::__main__ guard
+  - src/legalpdf_translate/qt_gui/app_window.py::QtMainWindow
+  - src/legalpdf_translate/qt_gui/app_window.py::_apply_responsive_layout
+  - src/legalpdf_translate/qt_gui/app_window.py::_refresh_lang_badge
+  - src/legalpdf_translate/qt_gui/app_window.py::_install_overflow_menu
+- User-visible behavior:
+  - The Qt desktop shell now uses the screenshot-driven dashboard layout with a left sidebar, centered hero title, setup/output cards, and bottom action rail.
+  - The GUI launch path is now documented correctly as `python -m legalpdf_translate.qt_app`, and the module can be run directly because `qt_app.py` now has a `__main__` guard.
+  - Assistant docs now reflect the real visible menu split: `...` for output/report actions, `Tools` for Review Queue and Save to Job Log.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `./.venv311/Scripts/python.exe -m compileall src tests` -> PASS
+  - `./.venv311/Scripts/python.exe -m pytest -q` -> `508 passed`
+
+## 2026-03-05 — chore/import-optmax-2026-03-05 (d29c163)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DB_DRIFT_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/QT_UI_KNOWLEDGE.md
+  - docs/assistant/audits/RELIABILITY_SIGNOFF_2026-03-05.md
+  - docs/assistant/exec_plans/active/2026-03-05_assistant_docs_sync_catchup.md
+  - docs/assistant/exec_plans/active/2026-03-05_ocr_first_stage_rollout.md
+  - docs/assistant/exec_plans/active/2026-03-05_product_workflow_benchmark_upgrade.md
+  - docs/assistant/exec_plans/active/2026-03-05_remaining_top5_stage_rollout.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md
+- Key symbols / entrypoints changed:
+  - docs-only sync for shipped features through final signoff `d29c163`
+- User-visible behavior:
+  - Synced assistant docs for cost guardrails, job-log auto-sync, quality risk/review export, review queue GUI, OCR advisor backend + GUI, queue runner + failed-only rerun, and final queue hardening/signoff.
+  - Preserved dated benchmark/audit packets as historical snapshots instead of rewriting them as current state.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `./.venv311/Scripts/python.exe -m compileall src tests` -> PASS
+  - `./.venv311/Scripts/python.exe -m pytest -q` -> `497 passed`
+
 ## 2026-02-17 — fix/qt-settings-claude-guardrails (eb6f84e)
 - Files changed:
   - CLAUDE.md

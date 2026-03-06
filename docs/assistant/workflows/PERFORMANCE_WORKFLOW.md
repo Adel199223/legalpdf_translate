@@ -23,7 +23,13 @@ Keeping workspace/editor performance predictable through canonical baseline poli
 - `tooling/validate_workspace_hygiene.dart`
 
 ## Minimal Commands
+PowerShell:
 ```powershell
+code --status
+dart run tooling/validate_workspace_hygiene.dart
+```
+POSIX:
+```bash
 code --status
 dart run tooling/validate_workspace_hygiene.dart
 ```

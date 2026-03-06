@@ -24,9 +24,15 @@ Managing persistence/data concerns including joblog schema, run-state artifacts,
 - `docs/assistant/DB_DRIFT_KNOWLEDGE.md`
 
 ## Minimal Commands
+PowerShell:
 ```powershell
 python -m pytest -q tests/test_db_migration_joblog_v2.py tests/test_checkpoint_resume.py
 python -m pytest -q tests/test_user_settings_schema.py
+```
+POSIX:
+```bash
+python3 -m pytest -q tests/test_db_migration_joblog_v2.py tests/test_checkpoint_resume.py
+python3 -m pytest -q tests/test_user_settings_schema.py
 ```
 
 ## Targeted Tests

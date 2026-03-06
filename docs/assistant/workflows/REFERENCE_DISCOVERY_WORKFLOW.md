@@ -23,9 +23,15 @@ Trigger on phrases like:
 ## Primary Files
 - `docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md`
 - `docs/assistant/manifest.json`
+- `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md`
 
 ## Minimal Commands
+PowerShell:
 ```powershell
+dart run tooling/validate_agent_docs.dart
+```
+POSIX:
+```bash
 dart run tooling/validate_agent_docs.dart
 ```
 
@@ -38,7 +44,7 @@ dart run tooling/validate_agent_docs.dart
 - Source mismatch for model/data/inference tasks: include Hugging Face only when scope requires it.
 
 ## Handoff Checklist
-1. Prioritize official repo/docs first.
-2. Then use actively maintained high-quality GitHub repositories.
-3. Include Hugging Face only when model/data/inference scope applies or user explicitly asks.
+1. Prioritize official product docs/repos first.
+2. Then use actively maintained high-quality repositories.
+3. Include links, rationale, and adaptation notes.
 4. Include no blind code copying statement.

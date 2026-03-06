@@ -23,7 +23,13 @@ Managing localization terminology consistency and localized behavior contracts.
 - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
 
 ## Minimal Commands
+PowerShell:
 ```powershell
+dart run tooling/validate_agent_docs.dart --scope localization
+dart run tooling/validate_agent_docs.dart
+```
+POSIX:
+```bash
 dart run tooling/validate_agent_docs.dart --scope localization
 dart run tooling/validate_agent_docs.dart
 ```

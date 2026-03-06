@@ -16,18 +16,24 @@ JOB_RUN_COLUMNS = [
     "translation_date",
     "job_type",
     "case_number",
+    "court_email",
     "case_entity",
     "case_city",
     "service_entity",
     "service_city",
     "service_date",
     "lang",
+    "target_lang",
+    "run_id",
     "pages",
     "word_count",
+    "total_tokens",
     "rate_per_word",
     "expected_total",
     "amount_paid",
     "api_cost",
+    "estimated_api_cost",
+    "quality_risk_score",
     "profit",
 ]
 
@@ -54,18 +60,24 @@ def ensure_joblog_schema(conn: sqlite3.Connection) -> None:
             translation_date TEXT,
             job_type TEXT DEFAULT 'Translation',
             case_number TEXT,
+            court_email TEXT,
             case_entity TEXT,
             case_city TEXT,
             service_entity TEXT,
             service_city TEXT,
             service_date TEXT,
             lang TEXT,
+            target_lang TEXT,
+            run_id TEXT,
             pages INTEGER,
             word_count INTEGER,
+            total_tokens INTEGER,
             rate_per_word REAL,
             expected_total REAL,
             amount_paid REAL,
             api_cost REAL,
+            estimated_api_cost REAL,
+            quality_risk_score REAL,
             profit REAL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
@@ -146,11 +158,17 @@ def migrate_joblog_v2(conn: sqlite3.Connection) -> None:
     columns = _table_columns(conn, "job_runs")
     _add_column_if_missing(conn, columns, "job_type", "TEXT DEFAULT 'Translation'")
     _add_column_if_missing(conn, columns, "translation_date", "TEXT")
+    _add_column_if_missing(conn, columns, "court_email", "TEXT")
     _add_column_if_missing(conn, columns, "case_entity", "TEXT")
     _add_column_if_missing(conn, columns, "case_city", "TEXT")
     _add_column_if_missing(conn, columns, "service_entity", "TEXT")
     _add_column_if_missing(conn, columns, "service_city", "TEXT")
     _add_column_if_missing(conn, columns, "service_date", "TEXT")
+    _add_column_if_missing(conn, columns, "target_lang", "TEXT")
+    _add_column_if_missing(conn, columns, "run_id", "TEXT")
+    _add_column_if_missing(conn, columns, "total_tokens", "INTEGER")
+    _add_column_if_missing(conn, columns, "estimated_api_cost", "REAL")
+    _add_column_if_missing(conn, columns, "quality_risk_score", "REAL")
 
     columns = _table_columns(conn, "job_runs")
     has_entity = "entity" in columns
@@ -187,6 +205,20 @@ def migrate_joblog_v2(conn: sqlite3.Connection) -> None:
         WHERE service_city IS NULL OR trim(service_city) = ''
         """
     )
+    conn.execute(
+        """
+        UPDATE job_runs
+        SET target_lang = COALESCE(NULLIF(trim(target_lang), ''), NULLIF(trim(lang), ''))
+        WHERE target_lang IS NULL OR trim(target_lang) = ''
+        """
+    )
+    conn.execute(
+        """
+        UPDATE job_runs
+        SET estimated_api_cost = COALESCE(estimated_api_cost, api_cost)
+        WHERE estimated_api_cost IS NULL
+        """
+    )
     _backfill_translation_date_from_completed_at(conn)
     _backfill_service_date_from_completed_at(conn)
 
@@ -212,18 +244,24 @@ def list_job_runs(conn: sqlite3.Connection, *, limit: int = 500) -> list[sqlite3
             COALESCE(NULLIF(trim(translation_date), ''), date(completed_at)) AS translation_date,
             job_type,
             case_number,
+            court_email,
             case_entity,
             case_city,
             service_entity,
             service_city,
             service_date,
             lang,
+            COALESCE(NULLIF(trim(target_lang), ''), NULLIF(trim(lang), '')) AS target_lang,
+            run_id,
             pages,
             word_count,
+            total_tokens,
             rate_per_word,
             expected_total,
             amount_paid,
             api_cost,
+            COALESCE(estimated_api_cost, api_cost) AS estimated_api_cost,
+            quality_risk_score,
             profit
         FROM job_runs
         ORDER BY completed_at DESC, id DESC
@@ -244,18 +282,24 @@ def update_joblog_visible_columns(
         "completed_at",
         "job_type",
         "case_number",
+        "court_email",
         "case_entity",
         "case_city",
         "service_entity",
         "service_city",
         "service_date",
         "lang",
+        "target_lang",
+        "run_id",
         "pages",
         "word_count",
+        "total_tokens",
         "rate_per_word",
         "expected_total",
         "amount_paid",
         "api_cost",
+        "estimated_api_cost",
+        "quality_risk_score",
         "profit",
     }
     for name in visible_columns:

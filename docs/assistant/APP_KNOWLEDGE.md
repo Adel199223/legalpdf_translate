@@ -15,11 +15,24 @@ Use this file to route quickly to canonical and workflow docs. Do not treat this
 - Human index: `docs/assistant/INDEX.md`
 - Runbook: `agent.md`
 - Golden rules: `docs/assistant/GOLDEN_PRINCIPLES.md`
+- Source registry: `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md`
 
 ## User Support Routing
 For support/non-technical explanations, start with:
 - `docs/assistant/features/APP_USER_GUIDE.md`
 - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+- Qt dashboard shell/launch behavior routes to `docs/assistant/QT_UI_KNOWLEDGE.md` and `docs/assistant/QT_UI_PLAYBOOK.md`.
+
+Cost-guardrail support routing:
+- CLI budget cap/policy behavior (`warn` vs `block`) is documented in the primary workflow user guide.
+- OCR advisor and analyze-only support route to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`.
+- Review queue and review export support route to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`.
+- Queue runner support routes to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`.
+- Job-log metric prefill and migration concerns route to `docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md` and `docs/assistant/DB_DRIFT_KNOWLEDGE.md`.
+
+## Current-Truth Note
+- Canonical current-truth now includes queue runner support, OCR advisor flows, review queue handling, and job-log metric sync.
+- Canonical current-truth also includes the screenshot-driven Qt dashboard shell and the real GUI module entrypoint: `python -m legalpdf_translate.qt_app`.
 
 ## Workflow Routing
 - Core translation: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
@@ -27,6 +40,10 @@ For support/non-technical explanations, start with:
 - Localization: `docs/assistant/workflows/LOCALIZATION_WORKFLOW.md`
 - Performance: `docs/assistant/workflows/PERFORMANCE_WORKFLOW.md`
 - Parity/inspiration: `docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md`
+- Stage-gate execution: `docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md`
+- Browser automation provenance: `docs/assistant/workflows/BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md`
+- Cloud machine evaluation: `docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md`
+- OpenAI docs citation: `docs/assistant/workflows/OPENAI_DOCS_CITATION_WORKFLOW.md`
 - CI/repo operations: `docs/assistant/workflows/CI_REPO_WORKFLOW.md`
 - Commit/publish: `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
 - Docs maintenance: `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`

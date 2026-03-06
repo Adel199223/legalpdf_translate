@@ -136,13 +136,12 @@ class OpenAIResponsesClient:
                         rate_limit_hit=rate_limit_hit,
                     ) from exc
                 retry_after = _retry_after_seconds(exc)
-                if retry_after is not None:
-                    sleep_seconds = min(self._backoff_cap_seconds, retry_after + random.uniform(0.0, 0.25))
-                else:
-                    sleep_seconds = min(
-                        self._backoff_cap_seconds,
-                        self._base_backoff_seconds * (2**attempt) + random.uniform(0.0, 0.4),
-                    )
+                sleep_seconds = _compute_sleep_seconds(
+                    attempt=attempt,
+                    retry_after=retry_after,
+                    backoff_cap_seconds=self._backoff_cap_seconds,
+                    base_backoff_seconds=self._base_backoff_seconds,
+                )
                 if self._logger:
                     self._logger(
                         f"Transient API error ({type(exc).__name__}), retrying in {sleep_seconds:.2f}s."
@@ -250,6 +249,21 @@ def _retry_after_seconds(exc: Exception) -> float | None:
         return max(0.0, delay)
     except Exception:
         return None
+
+
+def _compute_sleep_seconds(
+    *,
+    attempt: int,
+    retry_after: float | None,
+    backoff_cap_seconds: float,
+    base_backoff_seconds: float,
+) -> float:
+    if retry_after is not None:
+        return min(backoff_cap_seconds, retry_after + random.uniform(0.0, 0.25))
+    return min(
+        backoff_cap_seconds,
+        base_backoff_seconds * (2**attempt) + random.uniform(0.0, 0.4),
+    )
 
 
 def _status_code_from_exception(exc: Exception) -> int | None:

@@ -21,7 +21,16 @@ Safe, deterministic commit/push/publish flow with triage and validation gates.
 - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
 
 ## Minimal Commands
+PowerShell:
 ```powershell
+git fetch --prune origin
+git status --short --branch
+git diff --name-only
+git diff --cached --name-only
+git ls-files --others --exclude-standard
+```
+POSIX:
+```bash
 git fetch --prune origin
 git status --short --branch
 git diff --name-only
@@ -44,12 +53,7 @@ git ls-files --others --exclude-standard
    - for parallel threads, use `git worktree` isolation first
    - if change is major and branch is `main`, create/switch to `feat/<scope-name>`
    - keep `main` as stable integration branch
-2. Fetch/prune and inspect state:
-   - `git fetch --prune origin`
-   - `git status --short --branch`
-   - `git diff --name-only`
-   - `git diff --cached --name-only`
-   - `git ls-files --others --exclude-standard`
+2. Fetch/prune and inspect state.
 3. Triage:
    - what to stage
    - what to ignore

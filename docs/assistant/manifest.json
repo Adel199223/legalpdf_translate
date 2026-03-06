@@ -1,5 +1,15 @@
 {
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "module_flags": {
+    "core_contract": true,
+    "beginner_layer": true,
+    "localization_performance": true,
+    "reference_discovery": true,
+    "browser_automation_environment_provenance": true,
+    "cloud_machine_evaluation_local_acceptance": true,
+    "staged_execution": true,
+    "openai_docs_citation": true
+  },
   "canonical": [
     "APP_KNOWLEDGE.md",
     "docs/assistant/GOLDEN_PRINCIPLES.md",
@@ -53,6 +63,9 @@
       "scope": "core PDF-to-DOCX translation behavior",
       "primary_files": [
         "src/legalpdf_translate/workflow.py",
+        "src/legalpdf_translate/workflow_components/contracts.py",
+        "src/legalpdf_translate/workflow_components/evaluation.py",
+        "src/legalpdf_translate/workflow_components/summary.py",
         "src/legalpdf_translate/prompt_builder.py",
         "src/legalpdf_translate/validators.py"
       ],
@@ -114,7 +127,72 @@
       "doc": "docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md",
       "scope": "external parity/inspiration discovery and adaptation",
       "primary_files": [
-        "docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md"
+        "docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md",
+        "docs/assistant/EXTERNAL_SOURCE_REGISTRY.md"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart"
+      ]
+    },
+    {
+      "id": "staged_execution_workflow",
+      "doc": "docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md",
+      "scope": "hard gate protocol for risk-triggered complex work",
+      "primary_files": [
+        "docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md",
+        "docs/assistant/exec_plans/active"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart"
+      ]
+    },
+    {
+      "id": "browser_automation_env_provenance",
+      "doc": "docs/assistant/workflows/BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md",
+      "scope": "browser automation reliability with host/binary provenance",
+      "primary_files": [
+        "tooling/automation_preflight.dart",
+        "test/tooling/automation_preflight_test.dart",
+        "docs/assistant/workflows/BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/automation_preflight_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/automation_preflight.dart",
+        "dart run tooling/validate_agent_docs.dart"
+      ]
+    },
+    {
+      "id": "cloud_machine_evaluation",
+      "doc": "docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md",
+      "scope": "cloud-first heavy evaluation and local acceptance separation",
+      "primary_files": [
+        "tooling/cloud_eval_preflight.dart",
+        "test/tooling/cloud_eval_preflight_test.dart",
+        "docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/cloud_eval_preflight_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/cloud_eval_preflight.dart",
+        "dart run tooling/validate_agent_docs.dart"
+      ]
+    },
+    {
+      "id": "openai_docs_citation",
+      "doc": "docs/assistant/workflows/OPENAI_DOCS_CITATION_WORKFLOW.md",
+      "scope": "official OpenAI docs citation and freshness governance",
+      "primary_files": [
+        "docs/assistant/workflows/OPENAI_DOCS_CITATION_WORKFLOW.md",
+        "docs/assistant/EXTERNAL_SOURCE_REGISTRY.md"
       ],
       "targeted_tests": [
         "dart run test/tooling/validate_agent_docs_test.dart"
@@ -178,7 +256,9 @@
     "python -m pytest -q",
     "python -m compileall src tests",
     "dart run tooling/validate_agent_docs.dart",
-    "dart run tooling/validate_workspace_hygiene.dart"
+    "dart run tooling/validate_workspace_hygiene.dart",
+    "dart run tooling/automation_preflight.dart",
+    "dart run tooling/cloud_eval_preflight.dart"
   ],
   "contracts": {
     "template_read_policy": "docs/assistant/templates/* is read-on-demand only unless explicitly requested.",
@@ -195,7 +275,24 @@
     "user_guides_support_usage_policy": "Support/non-technical tasks route to APP_USER_GUIDE and primary workflow user guide first.",
     "user_guides_canonical_deference_policy": "User guides are explanatory and defer to canonical technical docs.",
     "user_guides_update_sync_policy": "Major feature changes update relevant user-guide sections with matching technical docs.",
-    "template_path_routing_regression_protection": "INDEX.md and validators enforce template-path routing and read policy protections."
+    "template_path_routing_regression_protection": "INDEX.md and validators enforce template-path routing and read policy protections.",
+    "canonical_precedence_policy": "Source code is final truth; APP_KNOWLEDGE.md is canonical; bridge/user guides defer to canonical.",
+    "docs_sync_prompt_policy": "After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now?",
+    "stage_gate_policy": "For risk-triggered complex work stop at each stage and require exact continuation token format NEXT_STAGE_X.",
+    "reference_discovery_policy": "Parity/inspiration requests against named products/sites/apps require REFERENCE_DISCOVERY_WORKFLOW first.",
+    "openai_docs_citation_freshness_policy": "OpenAI/external unstable claims must use official primary sources with explicit verification date in EXTERNAL_SOURCE_REGISTRY.md.",
+    "browser_automation_reliability_policy": "Browser automation tasks require preflight capability checks, machine-first validation, and artifact packet output.",
+    "workspace_provenance_lock_policy": "Browser automation tasks must declare canonical workspace path before execution.",
+    "automation_host_fallback_policy": "Automation host failures must be classified as unavailable (tooling/env) or failed (assertion/flow).",
+    "machine_operator_split_validation_policy": "Run deterministic machine checks first; reserve manual checks for perceptual outcomes.",
+    "restricted_browser_page_policy": "Restricted browser pages must use normal-webpage/manual-input fallback when scripting is blocked.",
+    "browser_binary_strategy_policy": "Prefer healthy existing browser first; use Chrome for Testing only when reproducibility/mismatch risk appears.",
+    "chromium_for_testing_conditional_install_policy": "Do not force browser install for API-only/non-UI tasks; allow conditional install only for automation reproducibility risk.",
+    "automation_binary_provenance_packet_policy": "Automation packet must emit automation_browser_binary, automation_browser_version, automation_browser_source.",
+    "cloud_heavy_scoring_default_policy": "Heavy machine evaluation runs default to cloud execution venue with local-only smoke/acceptance/apply checks.",
+    "cloud_scoring_preflight_gate_policy": "Cloud evaluation requires dispatch/secrets/tooling preflight before heavy run start.",
+    "cloud_scoring_failure_recovery_policy": "Cloud failure semantics use unavailable|failed and recovery order is cloud-fix-rerun before local-heavy fallback.",
+    "cloud_local_apply_separation_policy": "Cloud evaluation outputs must not auto-apply runtime config/state; local manual acceptance gate is required before final apply."
   },
-  "last_updated": "2026-02-25"
+  "last_updated": "2026-03-05"
 }

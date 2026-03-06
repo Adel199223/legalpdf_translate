@@ -160,6 +160,24 @@ def load_events_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _parse_optional_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "y", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "n", "off"}:
+            return False
+    return None
+
+
 def _truncate(value: str, *, max_chars: int) -> str:
     if len(value) <= max_chars:
         return value
@@ -519,6 +537,18 @@ def build_run_report_payload(
         break
 
     ocr_mode_value = str(settings_obj.get("ocr_mode", summary_pipeline_obj.get("ocr_mode", "")) or "").strip().lower()
+    ocr_source_profile_value = str(summary_pipeline_obj.get("ocr_source_profile", "") or "").strip()
+    ocr_local_pass_strategy_value = str(summary_pipeline_obj.get("ocr_local_pass_strategy", "") or "").strip()
+    ocr_api_fallback_policy_value = str(summary_pipeline_obj.get("ocr_api_fallback_policy", "") or "").strip()
+    ocr_quality_score_avg_value = summary_pipeline_obj.get("ocr_quality_score_avg")
+    ocr_track_enfr_pages_value = int(summary_pipeline_obj.get("ocr_track_enfr_pages", 0) or 0)
+    ocr_track_ar_pages_value = int(summary_pipeline_obj.get("ocr_track_ar_pages", 0) or 0)
+    ocr_track_weighting_value = summary_pipeline_obj.get("ocr_track_weighting")
+    if not isinstance(ocr_track_weighting_value, dict):
+        ocr_track_weighting_value = {"enfr": 0.60, "ar": 0.40}
+    ocr_track_quality_packet_value = summary_pipeline_obj.get("ocr_track_quality_packet")
+    if not isinstance(ocr_track_quality_packet_value, dict):
+        ocr_track_quality_packet_value = {}
     if ocr_mode_value == "always":
         fallback_ocr_requested = True
     elif ocr_mode_value == "off":
@@ -600,6 +630,31 @@ def build_run_report_payload(
         ocr_required_unavailable_pages_value = int(summary_pipeline_obj.get("ocr_required_unavailable_pages") or 0)
     else:
         ocr_required_unavailable_pages_value = int(ocr_required_unavailable_pages)
+    budget_pre_obj = run_summary.get("budget_pre_run")
+    if not isinstance(budget_pre_obj, dict):
+        budget_pre_obj = {}
+    budget_post_obj = run_summary.get("budget_post_run")
+    if not isinstance(budget_post_obj, dict):
+        budget_post_obj = {}
+    budget_obj: dict[str, Any] = {
+        "cost_estimation_status": str(run_summary.get("cost_estimation_status", "") or ""),
+        "cost_profile_id": str(run_summary.get("cost_profile_id", "") or ""),
+        "budget_cap_usd": run_summary.get("budget_cap_usd"),
+        "budget_decision": str(run_summary.get("budget_decision", "") or ""),
+        "budget_decision_reason": str(run_summary.get("budget_decision_reason", "") or ""),
+        "budget_pre_run": budget_pre_obj,
+        "budget_post_run": budget_post_obj,
+    }
+    quality_obj: dict[str, Any] = {
+        "quality_risk_score": run_summary.get("quality_risk_score"),
+        "review_queue_count": int(run_summary.get("review_queue_count", 0) or 0),
+        "advisor_recommendation_applied": _parse_optional_bool(run_summary.get("advisor_recommendation_applied")),
+        "advisor_recommendation": (
+            run_summary.get("advisor_recommendation")
+            if isinstance(run_summary.get("advisor_recommendation"), dict)
+            else {}
+        ),
+    }
 
     payload: dict[str, Any] = {
         "schema_version": "admin_run_report_v1" if admin_mode else "basic_run_report_v1",
@@ -641,6 +696,14 @@ def build_run_report_payload(
             "ocr_helpful_pages": int(ocr_helpful_pages_value),
             "ocr_required_unavailable_pages": int(ocr_required_unavailable_pages_value),
             "ocr_preflight_checked": bool(ocr_preflight_checked_value),
+            "ocr_source_profile": ocr_source_profile_value,
+            "ocr_local_pass_strategy": ocr_local_pass_strategy_value,
+            "ocr_api_fallback_policy": ocr_api_fallback_policy_value,
+            "ocr_quality_score_avg": ocr_quality_score_avg_value,
+            "ocr_track_enfr_pages": int(ocr_track_enfr_pages_value),
+            "ocr_track_ar_pages": int(ocr_track_ar_pages_value),
+            "ocr_track_weighting": ocr_track_weighting_value,
+            "ocr_track_quality_packet": ocr_track_quality_packet_value,
             "pt_language_leak_failures": int(pt_language_leak_failures),
             "pt_language_leak_retries": int(pt_language_leak_retries),
             "image_mode_optimization_hint": image_mode_optimization_hint,
@@ -668,6 +731,8 @@ def build_run_report_payload(
             "failed_pages": page_failures,
             "failed_pages_count": int(counts_obj.get("pages_failed", len(page_failures)) or len(page_failures)),
         },
+        "budget": budget_obj,
+        "quality": quality_obj,
     }
 
     if admin_mode:
@@ -1323,6 +1388,8 @@ def build_run_report_markdown(
     output_obj = payload.get("output", {})
     warnings_obj = payload.get("warnings_errors", {})
     pipeline_obj = payload.get("pipeline", {})
+    budget_obj = payload.get("budget", {})
+    quality_obj = payload.get("quality", {})
     timeline_obj = payload.get("timeline_events", [])
     if not isinstance(run_obj, dict):
         run_obj = {}
@@ -1336,6 +1403,10 @@ def build_run_report_markdown(
         warnings_obj = {}
     if not isinstance(pipeline_obj, dict):
         pipeline_obj = {}
+    if not isinstance(budget_obj, dict):
+        budget_obj = {}
+    if not isinstance(quality_obj, dict):
+        quality_obj = {}
     if not isinstance(timeline_obj, list):
         timeline_obj = []
 
@@ -1355,11 +1426,89 @@ def build_run_report_markdown(
         f"- API calls `{totals_obj.get('api_calls_total', 0)}`, retries `{totals_obj.get('transport_retries_total', 0)}`, "
         f"rate-limit hits `{totals_obj.get('rate_limit_hits', 0)}`."
     )
+    budget_decision = str(budget_obj.get("budget_decision", "") or "")
+    budget_reason = str(budget_obj.get("budget_decision_reason", "") or "")
+    cost_status = str(budget_obj.get("cost_estimation_status", "") or "")
+    cost_profile_id = str(budget_obj.get("cost_profile_id", "") or "")
+    budget_cap = budget_obj.get("budget_cap_usd")
+    budget_pre = budget_obj.get("budget_pre_run")
+    if not isinstance(budget_pre, dict):
+        budget_pre = {}
+    budget_pre_cost = budget_pre.get("estimated_cost_usd")
+    if (
+        budget_decision
+        or cost_status
+        or cost_profile_id
+        or budget_cap is not None
+    ):
+        lines.append(
+            f"- Budget guardrail decision `{budget_decision or 'n/a'}` "
+            f"(status `{cost_status or 'unknown'}`, cap `{budget_cap}`, profile `{cost_profile_id or 'default_local'}`, "
+            f"pre-run estimate `{budget_pre_cost}`)."
+        )
+        if budget_reason:
+            lines.append(f"- Budget decision reason: `{budget_reason}`.")
+    quality_risk_score = quality_obj.get("quality_risk_score")
+    review_queue_count = int(quality_obj.get("review_queue_count", 0) or 0)
+    if quality_risk_score is not None or review_queue_count > 0:
+        lines.append(
+            f"- Quality risk score `{quality_risk_score}` with "
+            f"`{review_queue_count}` flagged review page(s)."
+        )
+    advisor_applied = _parse_optional_bool(quality_obj.get("advisor_recommendation_applied"))
+    advisor_obj = quality_obj.get("advisor_recommendation")
+    if not isinstance(advisor_obj, dict):
+        advisor_obj = {}
+    advisor_ocr_mode = str(advisor_obj.get("recommended_ocr_mode", "") or "").strip()
+    advisor_image_mode = str(advisor_obj.get("recommended_image_mode", "") or "").strip()
+    advisor_track = str(advisor_obj.get("advisor_track", "") or "").strip()
+    advisor_confidence = advisor_obj.get("confidence")
+    advisor_reasons = [
+        str(item)
+        for item in advisor_obj.get("recommendation_reasons", [])
+        if isinstance(item, str) and str(item).strip()
+    ]
+    if advisor_ocr_mode or advisor_image_mode or advisor_track or advisor_confidence is not None:
+        lines.append(
+            f"- OCR advisor recommends OCR mode `{advisor_ocr_mode or 'n/a'}`, "
+            f"image mode `{advisor_image_mode or 'n/a'}`, "
+            f"track `{advisor_track or 'n/a'}`, "
+            f"confidence `{advisor_confidence}`."
+        )
+        if advisor_reasons:
+            lines.append(f"- OCR advisor reasons: `{', '.join(advisor_reasons)}`.")
+    if advisor_applied is not None:
+        lines.append(f"- OCR advisor recommendation applied: `{advisor_applied}`.")
     lines.append(
         f"- Failed pages `{warnings_obj.get('failed_pages_count', 0)}` "
         f"({warnings_obj.get('failed_pages', [])})."
     )
     lines.append(_ocr_summary_line(pipeline_obj))
+    ocr_source_profile = str(pipeline_obj.get("ocr_source_profile", "") or "").strip()
+    ocr_local_pass_strategy = str(pipeline_obj.get("ocr_local_pass_strategy", "") or "").strip()
+    ocr_api_fallback_policy = str(pipeline_obj.get("ocr_api_fallback_policy", "") or "").strip()
+    ocr_quality_score_avg = pipeline_obj.get("ocr_quality_score_avg")
+    if (
+        ocr_source_profile
+        or ocr_local_pass_strategy
+        or ocr_api_fallback_policy
+        or ocr_quality_score_avg is not None
+    ):
+        lines.append(
+            f"- OCR observability: profile `{ocr_source_profile or 'n/a'}`, "
+            f"local strategy `{ocr_local_pass_strategy or 'n/a'}`, "
+            f"fallback policy `{ocr_api_fallback_policy or 'n/a'}`, "
+            f"quality score avg `{ocr_quality_score_avg}`."
+        )
+    ocr_track_quality_packet = pipeline_obj.get("ocr_track_quality_packet")
+    if isinstance(ocr_track_quality_packet, dict):
+        lines.append(
+            "- OCR track quality packet: "
+            f"EN/FR avg `{ocr_track_quality_packet.get('enfr_avg')}`, "
+            f"AR avg `{ocr_track_quality_packet.get('ar_avg')}`, "
+            f"weighted `{ocr_track_quality_packet.get('weighted_score')}` "
+            "(weights EN/FR=0.60, AR=0.40)."
+        )
     pt_language_leak_failures = int(pipeline_obj.get("pt_language_leak_failures", 0) or 0)
     pt_language_leak_retries = int(pipeline_obj.get("pt_language_leak_retries", 0) or 0)
     if pt_language_leak_retries > 0 or pt_language_leak_failures > 0:

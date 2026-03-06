@@ -16,6 +16,7 @@ from openai import OpenAI
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -69,12 +70,15 @@ from legalpdf_translate.metadata_autofill import (
     MetadataAutofillConfig,
     MetadataSuggestion,
     apply_service_case_default_rule,
-    extract_pdf_header_metadata,
+    choose_court_email_suggestion,
+    extract_pdf_header_metadata_priority_pages,
     extract_photo_metadata_from_image,
     metadata_config_from_settings,
+    rank_court_email_suggestions,
 )
 from legalpdf_translate.openai_client import OpenAIResponsesClient
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
+from legalpdf_translate.review_export import export_review_queue
 from legalpdf_translate.secrets_store import (
     delete_openai_key,
     delete_ocr_key,
@@ -107,6 +111,8 @@ from legalpdf_translate.user_settings import app_data_dir, load_joblog_settings,
 JOBLOG_COLUMNS = [
     "translation_date",
     "case_number",
+    "court_email",
+    "run_id",
     "job_type",
     "case_entity",
     "case_city",
@@ -114,18 +120,24 @@ JOBLOG_COLUMNS = [
     "service_city",
     "service_date",
     "lang",
+    "target_lang",
     "pages",
     "word_count",
+    "total_tokens",
     "rate_per_word",
     "expected_total",
     "amount_paid",
     "api_cost",
+    "estimated_api_cost",
+    "quality_risk_score",
     "profit",
 ]
 
 JOBLOG_COLUMN_LABELS = {
     "translation_date": "Date",
     "case_number": "Case #",
+    "court_email": "Court Email",
+    "run_id": "Run ID",
     "job_type": "Job Type",
     "case_entity": "Case Entity",
     "case_city": "Case City",
@@ -133,12 +145,16 @@ JOBLOG_COLUMN_LABELS = {
     "service_city": "Service City",
     "service_date": "Service Date",
     "lang": "Lang",
+    "target_lang": "Target",
     "pages": "Pages",
     "word_count": "Words",
+    "total_tokens": "Total Tokens",
     "rate_per_word": "Rate/Word",
     "expected_total": "Expected",
     "amount_paid": "Paid",
     "api_cost": "API Cost",
+    "estimated_api_cost": "Est. API Cost",
+    "quality_risk_score": "Risk Score",
     "profit": "Profit",
 }
 
@@ -149,6 +165,7 @@ class JobLogSeed:
     translation_date: str
     job_type: str
     case_number: str
+    court_email: str
     case_entity: str
     case_city: str
     service_entity: str
@@ -161,6 +178,11 @@ class JobLogSeed:
     expected_total: float
     amount_paid: float
     api_cost: float
+    run_id: str
+    target_lang: str
+    total_tokens: int | None
+    estimated_api_cost: float | None
+    quality_risk_score: float | None
     profit: float
     pdf_path: Path
 
@@ -200,6 +222,7 @@ def build_seed_from_run(
         translation_date=_date_from_completed_at(completed_at),
         job_type="Translation",
         case_number="",
+        court_email="",
         case_entity="",
         case_city="",
         service_entity="",
@@ -212,6 +235,11 @@ def build_seed_from_run(
         expected_total=expected_total,
         amount_paid=0.0,
         api_cost=float(api_cost),
+        run_id="",
+        target_lang=lang,
+        total_tokens=None,
+        estimated_api_cost=None,
+        quality_risk_score=None,
         profit=round(expected_total - float(api_cost), 2),
         pdf_path=pdf_path,
     )
@@ -303,6 +331,12 @@ class QtSaveToJobLogDialog(QDialog):
         case_form.addWidget(QLabel("Case number"), 1, 0)
         self.case_number_edit = QLineEdit(self._seed.case_number)
         case_form.addWidget(self.case_number_edit, 1, 1, 1, 2)
+        case_form.addWidget(QLabel("Court Email"), 1, 3)
+        self.court_email_combo = QComboBox()
+        self.court_email_combo.setEditable(True)
+        self.court_email_combo.addItems(list(self._settings["vocab_court_emails"]))
+        self.court_email_combo.setCurrentText(self._seed.court_email)
+        case_form.addWidget(self.court_email_combo, 1, 4, 1, 2)
         case_form.setColumnStretch(1, 1)
         case_form.setColumnStretch(4, 1)
         root.addWidget(case_group)
@@ -349,6 +383,33 @@ class QtSaveToJobLogDialog(QDialog):
         autofill_row.addStretch(1)
         autofill_row.addWidget(self.photo_hint)
         root.addLayout(autofill_row)
+
+        metrics_group = QGroupBox("Run Metrics (auto-filled)")
+        metrics_form = QGridLayout(metrics_group)
+        metrics_form.addWidget(QLabel("Run ID"), 0, 0)
+        self.run_id_edit = QLineEdit(self._seed.run_id)
+        metrics_form.addWidget(self.run_id_edit, 0, 1)
+        metrics_form.addWidget(QLabel("Target lang"), 0, 2)
+        self.target_lang_edit = QLineEdit(self._seed.target_lang)
+        metrics_form.addWidget(self.target_lang_edit, 0, 3)
+        metrics_form.addWidget(QLabel("Total tokens"), 1, 0)
+        self.total_tokens_edit = QLineEdit(
+            "" if self._seed.total_tokens is None else str(int(self._seed.total_tokens))
+        )
+        metrics_form.addWidget(self.total_tokens_edit, 1, 1)
+        metrics_form.addWidget(QLabel("Est. API cost"), 1, 2)
+        self.estimated_api_cost_edit = QLineEdit(
+            "" if self._seed.estimated_api_cost is None else f"{float(self._seed.estimated_api_cost):.2f}"
+        )
+        metrics_form.addWidget(self.estimated_api_cost_edit, 1, 3)
+        metrics_form.addWidget(QLabel("Quality risk score"), 2, 0)
+        self.quality_risk_score_edit = QLineEdit(
+            "" if self._seed.quality_risk_score is None else f"{float(self._seed.quality_risk_score):.4f}"
+        )
+        metrics_form.addWidget(self.quality_risk_score_edit, 2, 1)
+        metrics_form.setColumnStretch(1, 1)
+        metrics_form.setColumnStretch(3, 1)
+        root.addWidget(metrics_group)
 
         finance_group = QGroupBox("Amounts (EUR)")
         finance_form = QGridLayout(finance_group)
@@ -423,12 +484,26 @@ class QtSaveToJobLogDialog(QDialog):
         self._fill_combo(self.case_city_combo, list(self._settings["vocab_cities"]))
         self._fill_combo(self.service_city_combo, list(self._settings["vocab_cities"]))
         self._fill_combo(self.job_type_combo, list(self._settings["vocab_job_types"]))
+        self._fill_combo(self.court_email_combo, list(self._settings["vocab_court_emails"]))
+
+    def _set_court_email_from_context(self, *, exact_email: str | None = None, force: bool = False) -> None:
+        if not force and exact_email is None and self.court_email_combo.currentText().strip():
+            return
+        suggestion = choose_court_email_suggestion(
+            exact_email=exact_email,
+            case_entity=self.case_entity_combo.currentText().strip(),
+            case_city=self.case_city_combo.currentText().strip(),
+            vocab_court_emails=list(self._settings["vocab_court_emails"]),
+        )
+        if suggestion:
+            self.court_email_combo.setCurrentText(suggestion)
 
     def _on_case_fields_changed(self) -> None:
         self._case_entity_user_set = True
         self._case_city_user_set = True
         if self.service_same_check.isChecked():
             self._sync_service_with_case()
+        self._set_court_email_from_context()
 
     def _on_service_fields_changed(self) -> None:
         self._apply_non_court_default_rule()
@@ -485,19 +560,27 @@ class QtSaveToJobLogDialog(QDialog):
                 self._ensure_in_vocab("vocab_cities", suggestion.service_city)
                 self.service_city_combo.setCurrentText(suggestion.service_city)
         self._apply_non_court_default_rule()
+        ranked = rank_court_email_suggestions(
+            exact_email=suggestion.court_email,
+            case_entity=self.case_entity_combo.currentText().strip(),
+            case_city=self.case_city_combo.currentText().strip(),
+            vocab_court_emails=list(self._settings["vocab_court_emails"]),
+        )
+        if ranked:
+            self.court_email_combo.setCurrentText(ranked[0])
 
     def _autofill_from_pdf_header(self) -> None:
-        suggestion = extract_pdf_header_metadata(
+        suggestion = extract_pdf_header_metadata_priority_pages(
             self._seed.pdf_path,
             vocab_cities=list(self._settings["vocab_cities"]),
             config=self._metadata_config,
-            page_number=1,
         )
         if not any(
             (
                 suggestion.case_entity,
                 suggestion.case_city,
                 suggestion.case_number,
+                suggestion.court_email,
                 suggestion.service_entity,
                 suggestion.service_city,
             )
@@ -558,6 +641,24 @@ class QtSaveToJobLogDialog(QDialog):
         except ValueError as exc:
             raise ValueError(f"{label} must be numeric.") from exc
 
+    def _parse_optional_int(self, value: str, label: str) -> int | None:
+        cleaned = value.strip()
+        if cleaned == "":
+            return None
+        try:
+            return int(cleaned)
+        except ValueError as exc:
+            raise ValueError(f"{label} must be an integer.") from exc
+
+    def _parse_optional_float(self, value: str, label: str) -> float | None:
+        cleaned = value.strip().replace(",", ".")
+        if cleaned == "":
+            return None
+        try:
+            return float(cleaned)
+        except ValueError as exc:
+            raise ValueError(f"{label} must be numeric.") from exc
+
     def _save(self) -> None:
         try:
             rate = self._parse_float(self.rate_edit.text(), "Rate/word")
@@ -565,6 +666,15 @@ class QtSaveToJobLogDialog(QDialog):
             amount_paid = self._parse_float(self.amount_paid_edit.text(), "Amount paid")
             api_cost = self._parse_float(self.api_cost_edit.text(), "API cost")
             profit = self._parse_float(self.profit_edit.text(), "Profit")
+            total_tokens = self._parse_optional_int(self.total_tokens_edit.text(), "Total tokens")
+            estimated_api_cost = self._parse_optional_float(
+                self.estimated_api_cost_edit.text(),
+                "Estimated API cost",
+            )
+            quality_risk_score = self._parse_optional_float(
+                self.quality_risk_score_edit.text(),
+                "Quality risk score",
+            )
         except ValueError as exc:
             QMessageBox.critical(self, "Invalid values", str(exc))
             return
@@ -598,18 +708,24 @@ class QtSaveToJobLogDialog(QDialog):
             "translation_date": self._seed.translation_date,
             "job_type": self.job_type_combo.currentText().strip() or "Translation",
             "case_number": self.case_number_edit.text().strip(),
+            "court_email": self.court_email_combo.currentText().strip(),
             "case_entity": case_entity,
             "case_city": case_city,
             "service_entity": service_entity,
             "service_city": service_city,
             "service_date": service_date,
             "lang": self._seed.lang,
+            "target_lang": self.target_lang_edit.text().strip() or self._seed.target_lang,
+            "run_id": self.run_id_edit.text().strip(),
             "pages": int(self._seed.pages),
             "word_count": int(self._seed.word_count),
+            "total_tokens": total_tokens,
             "rate_per_word": rate,
             "expected_total": expected_total,
             "amount_paid": amount_paid,
             "api_cost": api_cost,
+            "estimated_api_cost": estimated_api_cost,
+            "quality_risk_score": quality_risk_score,
             "profit": profit,
         }
 
@@ -625,6 +741,8 @@ class QtSaveToJobLogDialog(QDialog):
             self._ensure_in_vocab("vocab_cities", case_city)
         if service_city:
             self._ensure_in_vocab("vocab_cities", service_city)
+        if payload["court_email"]:
+            self._ensure_in_vocab("vocab_court_emails", str(payload["court_email"]))
 
         save_joblog_settings(
             {
@@ -632,6 +750,7 @@ class QtSaveToJobLogDialog(QDialog):
                 "vocab_service_entities": self._settings["vocab_service_entities"],
                 "vocab_cities": self._settings["vocab_cities"],
                 "vocab_job_types": self._settings["vocab_job_types"],
+                "vocab_court_emails": self._settings["vocab_court_emails"],
                 "default_rate_per_word": self._settings["default_rate_per_word"],
                 "joblog_visible_columns": self._settings["joblog_visible_columns"],
                 "metadata_ai_enabled": self._settings["metadata_ai_enabled"],
@@ -739,6 +858,269 @@ class QtJobLogWindow(QDialog):
 
         apply_btn.clicked.connect(apply_columns)
         dialog.exec()
+
+
+REVIEW_QUEUE_COLUMNS = [
+    "page_number",
+    "score",
+    "status",
+    "reasons",
+    "recommended_action",
+]
+
+REVIEW_QUEUE_COLUMN_LABELS = {
+    "page_number": "Page",
+    "score": "Score",
+    "status": "Status",
+    "reasons": "Reasons",
+    "recommended_action": "Action",
+}
+
+
+def _coerce_queue_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned == "":
+            return default
+        try:
+            return int(cleaned)
+        except ValueError:
+            try:
+                return int(float(cleaned))
+            except ValueError:
+                return default
+    return default
+
+
+def _coerce_queue_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", ".")
+        if cleaned == "":
+            return default
+        try:
+            return float(cleaned)
+        except ValueError:
+            return default
+    return default
+
+
+def _coerce_queue_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def normalize_review_queue_entries(review_queue: object) -> list[dict[str, object]]:
+    if not isinstance(review_queue, list):
+        return []
+    entries: list[dict[str, object]] = []
+    for raw_item in review_queue:
+        if not isinstance(raw_item, dict):
+            continue
+        page_number = _coerce_queue_int(raw_item.get("page_number", 0), 0)
+        if page_number <= 0:
+            continue
+        reasons_raw = raw_item.get("reasons", [])
+        reasons: list[str] = []
+        if isinstance(reasons_raw, list):
+            for reason in reasons_raw:
+                reason_text = _coerce_queue_text(reason)
+                if reason_text:
+                    reasons.append(reason_text)
+        entries.append(
+            {
+                "page_number": int(page_number),
+                "score": round(min(1.0, max(0.0, _coerce_queue_float(raw_item.get("score", 0.0), 0.0))), 4),
+                "status": _coerce_queue_text(raw_item.get("status", "")),
+                "reasons": reasons,
+                "recommended_action": _coerce_queue_text(raw_item.get("recommended_action", "")),
+                "retry_reason": _coerce_queue_text(raw_item.get("retry_reason", "")),
+            }
+        )
+    entries.sort(
+        key=lambda item: (
+            -_coerce_queue_float(item.get("score", 0.0), 0.0),
+            _coerce_queue_int(item.get("page_number", 0), 0),
+        )
+    )
+    return entries
+
+
+def build_review_queue_markdown(entries: list[dict[str, object]]) -> str:
+    lines: list[str] = []
+    lines.append("# Review Queue")
+    lines.append("")
+    if not entries:
+        lines.append("No flagged pages were found for the current run.")
+        lines.append("")
+        return "\n".join(lines)
+    lines.append("| Page | Score | Status | Action | Reasons |")
+    lines.append("|------|-------|--------|--------|---------|")
+    for entry in entries:
+        reasons = entry.get("reasons", [])
+        reason_text = " | ".join(reasons) if isinstance(reasons, list) else str(reasons or "")
+        lines.append(
+            f"| {entry.get('page_number', '')} | {entry.get('score', '')} "
+            f"| {entry.get('status', '') or '-'} | {entry.get('recommended_action', '') or '-'} "
+            f"| {reason_text or '-'} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+class QtReviewQueueDialog(QDialog):
+    """Review queue panel for flagged pages from latest run summary."""
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        review_queue: object,
+        run_dir: Path | None,
+        run_summary_path: Path | None,
+        open_path_callback: Callable[[Path], None] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Review Queue")
+        self.resize(980, 560)
+        self._entries = normalize_review_queue_entries(review_queue)
+        self._run_dir = run_dir.expanduser().resolve() if isinstance(run_dir, Path) else None
+        self._run_summary_path = (
+            run_summary_path.expanduser().resolve() if isinstance(run_summary_path, Path) else None
+        )
+        self._open_path_callback = open_path_callback
+        self._build_ui()
+        self._populate_table()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        self.summary_label = QLabel("")
+        self.summary_label.setWordWrap(True)
+        root.addWidget(self.summary_label)
+
+        self.table = QTableWidget(0, len(REVIEW_QUEUE_COLUMNS), self)
+        self.table.setHorizontalHeaderLabels([REVIEW_QUEUE_COLUMN_LABELS[col] for col in REVIEW_QUEUE_COLUMNS])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        root.addWidget(self.table, 1)
+
+        actions = QHBoxLayout()
+        self.export_btn = QPushButton("Export...")
+        self.copy_btn = QPushButton("Copy list")
+        self.open_page_btn = QPushButton("Open page file")
+        self.close_btn = QPushButton("Close")
+        actions.addWidget(self.export_btn)
+        actions.addWidget(self.copy_btn)
+        actions.addWidget(self.open_page_btn)
+        actions.addStretch(1)
+        actions.addWidget(self.close_btn)
+        root.addLayout(actions)
+
+        self.export_btn.clicked.connect(self._export_queue)
+        self.copy_btn.clicked.connect(self._copy_queue)
+        self.open_page_btn.clicked.connect(self._open_selected_page_file)
+        self.close_btn.clicked.connect(self.accept)
+
+    def _populate_table(self) -> None:
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(0)
+        for entry in self._entries:
+            row_idx = self.table.rowCount()
+            self.table.insertRow(row_idx)
+            reasons = entry.get("reasons", [])
+            reason_text = " | ".join(reasons) if isinstance(reasons, list) else str(reasons or "")
+            values = {
+                "page_number": str(int(_coerce_queue_int(entry.get("page_number", 0), 0))),
+                "score": f"{_coerce_queue_float(entry.get('score', 0.0), 0.0):.4f}",
+                "status": _coerce_queue_text(entry.get("status", "")),
+                "reasons": reason_text,
+                "recommended_action": _coerce_queue_text(entry.get("recommended_action", "")),
+            }
+            for col_idx, col in enumerate(REVIEW_QUEUE_COLUMNS):
+                self.table.setItem(row_idx, col_idx, QTableWidgetItem(values[col]))
+        self.table.setSortingEnabled(True)
+        if self.table.rowCount() > 0:
+            self.table.sortItems(1, Qt.SortOrder.DescendingOrder)
+            self.summary_label.setText(f"Flagged pages: {self.table.rowCount()} (sorted by score).")
+        else:
+            self.summary_label.setText("No flagged pages found for this run.")
+
+    def _selected_entry(self) -> dict[str, object] | None:
+        row = self.table.currentRow()
+        if row < 0:
+            selection_model = self.table.selectionModel()
+            if selection_model is not None:
+                selected_rows = selection_model.selectedRows()
+                if selected_rows:
+                    row = int(selected_rows[0].row())
+        if row < 0 or row >= len(self._entries):
+            return None
+        return self._entries[row]
+
+    def _copy_queue(self) -> None:
+        markdown = build_review_queue_markdown(self._entries)
+        QApplication.clipboard().setText(markdown)
+        QMessageBox.information(self, "Review Queue", "Review queue copied to clipboard.")
+
+    def _export_queue(self) -> None:
+        if self._run_summary_path is None:
+            QMessageBox.warning(self, "Review Queue", "Run summary path is unavailable for export.")
+            return
+        default_base = self._run_summary_path.parent / "review_queue"
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export review queue",
+            str(default_base),
+            "All Files (*.*)",
+        )
+        if not selected:
+            return
+        try:
+            csv_path, markdown_path, count = export_review_queue(
+                self._run_summary_path,
+                Path(selected),
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Review Queue", f"Failed to export review queue:\n{exc}")
+            return
+        QMessageBox.information(
+            self,
+            "Review Queue",
+            f"Exported {count} item(s).\n\nCSV: {csv_path}\nMarkdown: {markdown_path}",
+        )
+
+    def _open_selected_page_file(self) -> None:
+        entry = self._selected_entry()
+        if entry is None:
+            QMessageBox.information(self, "Review Queue", "Select one row first.")
+            return
+        if self._run_dir is None:
+            QMessageBox.warning(self, "Review Queue", "Run folder is unavailable.")
+            return
+        page_number = _coerce_queue_int(entry.get("page_number", 0), 0)
+        page_file = self._run_dir / "pages" / f"page_{page_number:04d}.txt"
+        if not page_file.exists():
+            QMessageBox.warning(self, "Review Queue", f"Page file not found:\n{page_file}")
+            return
+        if self._open_path_callback is not None:
+            self._open_path_callback(page_file)
+            return
+        QMessageBox.information(self, "Review Queue", f"Page file:\n{page_file}")
 
 
 def _validate_url_or_blank(value: str) -> bool:
