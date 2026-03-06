@@ -21,6 +21,8 @@
 - `docs/assistant/workflows/LOCALIZATION_WORKFLOW.md`
 - `docs/assistant/workflows/PERFORMANCE_WORKFLOW.md`
 - `docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md`
+- `docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md`
+- `docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md`
 - `docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md`
 - `docs/assistant/workflows/BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md`
 - `docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md`
@@ -48,6 +50,8 @@
 - `tooling/validate_workspace_hygiene.dart`
 - `tooling/automation_preflight.dart`
 - `tooling/cloud_eval_preflight.dart`
+- `tooling/qt_render_review.py` (deterministic wide/medium/narrow Qt renders for reference-locked UI review)
+- `tooling/ocr_translation_probe.py` (small-slice OCR-heavy translation probe and safe-run packet)
 - `test/tooling/validate_agent_docs_test.dart`
 - `test/tooling/validate_workspace_hygiene_test.dart`
 - `test/tooling/automation_preflight_test.dart`
@@ -60,7 +64,7 @@
 - `docs/assistant/API_PROMPTS.md`
 - `docs/assistant/PROMPTS_KNOWLEDGE.md`
 - `docs/assistant/QT_UI_KNOWLEDGE.md` (current Qt dashboard shell, launch path, and responsive invariants)
-- `docs/assistant/QT_UI_PLAYBOOK.md` (Qt dashboard change recipes and verification checklist)
+- `docs/assistant/QT_UI_PLAYBOOK.md` (Qt dashboard change recipes, deterministic render checks, and verification checklist)
 - `docs/assistant/GLOSSARY_BUILDER_KNOWLEDGE.md`
 - `docs/assistant/WORKFLOW_GIT_AI.md`
 

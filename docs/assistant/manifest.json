@@ -138,6 +138,40 @@
       ]
     },
     {
+      "id": "reference_locked_qt_ui_workflow",
+      "doc": "docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md",
+      "scope": "reference-locked Qt UI replication with deterministic render review",
+      "primary_files": [
+        "docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md",
+        "docs/assistant/QT_UI_PLAYBOOK.md",
+        "tooling/qt_render_review.py"
+      ],
+      "targeted_tests": [
+        "python -m pytest -q tests/test_qt_render_review.py tests/test_qt_app_state.py"
+      ],
+      "validation_commands": [
+        "python tooling/qt_render_review.py --help",
+        "dart run tooling/validate_agent_docs.dart"
+      ]
+    },
+    {
+      "id": "ocr_heavy_translation_triage_workflow",
+      "doc": "docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md",
+      "scope": "OCR-heavy translation troubleshooting and small-slice acceptance",
+      "primary_files": [
+        "docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md",
+        "tooling/ocr_preflight.py",
+        "tooling/ocr_translation_probe.py"
+      ],
+      "targeted_tests": [
+        "python -m pytest -q tests/test_ocr_translation_probe.py tests/test_workflow_ocr_availability.py"
+      ],
+      "validation_commands": [
+        "python tooling/ocr_translation_probe.py --help",
+        "python tooling/ocr_preflight.py --compact"
+      ]
+    },
+    {
       "id": "staged_execution_workflow",
       "doc": "docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md",
       "scope": "hard gate protocol for risk-triggered complex work",

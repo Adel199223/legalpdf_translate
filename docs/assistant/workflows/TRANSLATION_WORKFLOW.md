@@ -14,10 +14,13 @@ Implementing or modifying the core PDF-to-DOCX translation product flow.
 - Changes to OCR advisor behavior or OCR/image recommendation logic.
 - Changes to quality-risk scoring, review queue construction, or review export behavior.
 - Changes to queue orchestration when it affects translation/report behavior.
+- OCR-heavy runtime triage only after the dedicated triage workflow has isolated whether the failure is OCR, transport, or UI-close related.
 
 ## What Not To Do
 - Don't use this workflow when the task is primarily DB/schema lifecycle work.
 - Instead use `docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md`.
+- Don't use this workflow when the task is primarily OCR-heavy runtime troubleshooting on a real failing document.
+- Instead use `docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md`.
 
 ## Primary Files
 - `src/legalpdf_translate/workflow.py`

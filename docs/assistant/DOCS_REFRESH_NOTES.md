@@ -16,6 +16,40 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-06 — feat/ocr-runtime-stabilization-20260306 (working tree)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/QT_UI_PLAYBOOK.md
+  - docs/assistant/manifest.json
+  - docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md
+  - docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
+  - docs/assistant/exec_plans/active/2026-03-06_workflow_hardening_ui_ocr.md
+  - tooling/qt_render_review.py
+  - tooling/ocr_translation_probe.py
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+  - tests/test_qt_render_review.py
+  - tests/test_ocr_translation_probe.py
+- Key symbols / entrypoints changed:
+  - tooling/qt_render_review.py::render_profiles
+  - tooling/qt_render_review.py::apply_reference_sample
+  - tooling/ocr_translation_probe.py::collect_probe_packet
+  - tooling/validate_agent_docs.dart::_validateWorkflowDocs
+- User-visible behavior:
+  - Assistant workflow docs now include a reusable reference-locked Qt UI workflow and a reusable OCR-heavy translation triage workflow.
+  - The docs/index/manifest routing now makes those workflows and their helper tools discoverable instead of leaving the lessons only in historical ExecPlans.
+  - Internal helper tooling now supports deterministic Qt wide/medium/narrow render review and small-slice OCR-heavy probe packets for urgent document triage.
+- Tests:
+  - `./.venv311/Scripts/python.exe -m pytest -q tests/test_qt_render_review.py tests/test_ocr_translation_probe.py tests/test_qt_app_state.py tests/test_workflow_ocr_availability.py` -> `32 passed`
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> `29 cases passed`
+  - `./.venv311/Scripts/python.exe -m compileall src tests tooling` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
 ## 2026-03-06 — chore/import-optmax-2026-03-05 (85250eb + working tree)
 - Files changed:
   - src/legalpdf_translate/qt_app.py

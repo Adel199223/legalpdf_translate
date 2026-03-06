@@ -107,6 +107,20 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Queue execution is sequential and checkpoint-aware.
 - Queue cancellation is cooperative and leaves untouched jobs resumable instead of converting them into failures.
 
+## Operational Guidance
+- Windows-native GUI launch is canonical for this repo:
+  - attached launch: `python -m legalpdf_translate.qt_app`
+  - detached Windows launch: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`
+- Screenshot-driven Qt UI work should use the fixed render contract in `docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md` rather than approximate visual review.
+- OCR-heavy documents should start with a small slice and safe settings:
+  - `ocr_mode=always`
+  - `ocr_engine=api` when local OCR is unavailable
+  - `image_mode=off`
+  - `workers=1`
+  - `keep_intermediates=on`
+  - first prove pages `1-2`, then continue in small batches
+- OCR-heavy runtime triage routes to `docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md`.
+
 ## Governance and Routing Docs
 - Assistant docs index: `docs/assistant/INDEX.md`
 - Machine routing map: `docs/assistant/manifest.json`

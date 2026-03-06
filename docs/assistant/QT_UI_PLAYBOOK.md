@@ -2,12 +2,13 @@
 
 ## A. Rules of Engagement
 
-1. **Prefer the responsive size-class path over one-off geometry tweaks.** Desktop behavior is driven by `_layout_mode_for_budget()` and `_apply_responsive_layout()`. Change that first.
-2. **Never change paint geometry in isolation.** `_FuturisticCanvas.paintEvent()` must stay aligned with live widget geometry, especially `sidebar_frame.width()` and the computed `content_card` width.
-3. **Keep UI changes isolated to `qt_gui/`** unless the change absolutely requires touching other modules (e.g., adding a new `RunConfig` field that the UI exposes).
-4. **Test layout changes visually** — automated tests catch imports and smoke, but layout regressions (clipping, overflow, misalignment) require a manual resize/maximize/restore check.
-5. **Preserve LTR direction overrides.** The window and footer card force `LeftToRight` so that RTL target languages don't flip UI chrome. Do not remove these.
-6. **Do not add a horizontal scrollbar.** `ScrollBarAlwaysOff` is intentional — if content clips, fix the content width, don't enable horizontal scroll.
+1. **Use `REFERENCE_LOCKED_QT_UI_WORKFLOW.md` when a visual reference is the acceptance target.** Desktop exactness is a binary contract, not a “close enough” discussion.
+2. **Prefer the responsive size-class path over one-off geometry tweaks.** Desktop behavior is driven by `_layout_mode_for_budget()` and `_apply_responsive_layout()`. Change that first.
+3. **Never change paint geometry in isolation.** `_FuturisticCanvas.paintEvent()` must stay aligned with live widget geometry, especially `sidebar_frame.width()` and the computed `content_card` width.
+4. **Keep UI changes isolated to `qt_gui/`** unless the change absolutely requires touching other modules (e.g., adding a new `RunConfig` field that the UI exposes).
+5. **Test layout changes visually with deterministic renders first.** Run `tooling/qt_render_review.py` before relying on ad hoc desktop screenshots.
+6. **Preserve LTR direction overrides.** The window and footer card force `LeftToRight` so that RTL target languages don't flip UI chrome. Do not remove these.
+7. **Do not add a horizontal scrollbar.** `ScrollBarAlwaysOff` is intentional — if content clips, fix the content width, don't enable horizontal scroll.
 
 ## B. Search Recipes
 
@@ -43,6 +44,14 @@ rg -n "_refresh_lang_badge|_LANG_FLAG_ICON_BY_CODE|FieldChrome|LangCaretButton|F
 
 ## C. Change Checklists
 
+### Reference-locked review contract
+
+- [ ] Freeze one desktop validation size and keep it constant through the pass
+- [ ] Review these regions independently: sidebar, hero row, setup card, output card, footer rail, overflow menu, background scene
+- [ ] Mark each region pass/fail; do not advance on vague “closer” language
+- [ ] Treat desktop exact as authoritative; medium/narrow are stability checks only
+- [ ] Generate deterministic wide/medium/narrow renders with `tooling/qt_render_review.py`
+
 ### Before making a Qt UI change
 
 - [ ] Read `docs/assistant/QT_UI_KNOWLEDGE.md` — especially the invariants (section C)
@@ -62,6 +71,7 @@ rg -n "_refresh_lang_badge|_LANG_FLAG_ICON_BY_CODE|FieldChrome|LangCaretButton|F
 - [ ] Run `python -m pytest -q`
 - [ ] Run `python -m compileall src tests`
 - [ ] Launch app: `python -m legalpdf_translate.qt_app`
+- [ ] Generate deterministic review renders: `python tooling/qt_render_review.py --outdir tmp_ui_review --preview reference_sample`
 - [ ] Desktop exact: readable sidebar labels, `Conversion Output`, two-column shell
 - [ ] Desktop compact: still two-column, no clipped field chrome
 - [ ] Stacked compact: setup/output stack cleanly, footer reflows to two rows
