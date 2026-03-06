@@ -63,7 +63,8 @@ from legalpdf_translate.checkpoint import (
 from legalpdf_translate.config import OPENAI_MODEL
 from legalpdf_translate.joblog_db import job_log_db_path
 from legalpdf_translate.metadata_autofill import (
-    extract_pdf_header_metadata,
+    choose_court_email_suggestion,
+    extract_pdf_header_metadata_priority_pages,
     metadata_config_from_settings,
 )
 from legalpdf_translate.output_paths import (
@@ -2966,11 +2967,10 @@ class QtMainWindow(QMainWindow):
             seed.api_cost = float(estimated_api_cost)
             seed.profit = round(seed.expected_total - seed.api_cost, 2)
 
-        suggestion = extract_pdf_header_metadata(
+        suggestion = extract_pdf_header_metadata_priority_pages(
             seed.pdf_path,
             vocab_cities=list(settings["vocab_cities"]),
             config=metadata_config_from_settings(settings),
-            page_number=1,
         )
         if suggestion.case_entity:
             seed.case_entity = suggestion.case_entity
@@ -2980,6 +2980,12 @@ class QtMainWindow(QMainWindow):
             seed.service_city = suggestion.case_city
         if suggestion.case_number:
             seed.case_number = suggestion.case_number
+        seed.court_email = choose_court_email_suggestion(
+            exact_email=suggestion.court_email,
+            case_entity=seed.case_entity,
+            case_city=seed.case_city,
+            vocab_court_emails=list(settings.get("vocab_court_emails", [])),
+        ) or ""
 
         self._last_joblog_seed = seed
 

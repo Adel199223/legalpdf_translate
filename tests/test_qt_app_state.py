@@ -580,6 +580,7 @@ def test_prepare_joblog_seed_prefills_metrics_from_run_summary(tmp_path: Path, m
             translation_date="2026-03-05",
             job_type="Translation",
             case_number="",
+            court_email="",
             case_entity="",
             case_city="",
             service_entity="",
@@ -606,6 +607,7 @@ def test_prepare_joblog_seed_prefills_metrics_from_run_summary(tmp_path: Path, m
         lambda: {
             "default_rate_per_word": {"FR": 0.08},
             "vocab_cities": [],
+            "vocab_court_emails": ["beja.judicial@tribunais.org.pt"],
         },
     )
     monkeypatch.setattr(
@@ -613,8 +615,13 @@ def test_prepare_joblog_seed_prefills_metrics_from_run_summary(tmp_path: Path, m
         _fake_seed_from_run,
     )
     monkeypatch.setattr(
-        "legalpdf_translate.qt_gui.app_window.extract_pdf_header_metadata",
-        lambda *_args, **_kwargs: SimpleNamespace(case_entity="", case_city="", case_number=""),
+        "legalpdf_translate.qt_gui.app_window.extract_pdf_header_metadata_priority_pages",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            case_entity="",
+            case_city="",
+            case_number="",
+            court_email="tribunal@example.pt",
+        ),
     )
     fake = SimpleNamespace(
         _last_run_config=SimpleNamespace(
@@ -639,6 +646,87 @@ def test_prepare_joblog_seed_prefills_metrics_from_run_summary(tmp_path: Path, m
     assert fake._last_joblog_seed.estimated_api_cost == 4.56
     assert fake._last_joblog_seed.quality_risk_score == 0.37
     assert fake._last_joblog_seed.api_cost == 4.56
+    assert fake._last_joblog_seed.court_email == "tribunal@example.pt"
+
+
+def test_prepare_joblog_seed_uses_ranked_court_email_suggestion_when_no_exact_email(tmp_path: Path, monkeypatch) -> None:
+    pdf_path = tmp_path / "sample.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    run_dir = tmp_path / "run"
+    pages_dir = run_dir / "pages"
+    pages_dir.mkdir(parents=True)
+    (pages_dir / "page_0001.txt").write_text("hello world", encoding="utf-8")
+
+    def _fake_seed_from_run(**_: object) -> JobLogSeed:
+        return JobLogSeed(
+            completed_at=datetime.now().isoformat(timespec="seconds"),
+            translation_date="2026-03-05",
+            job_type="Translation",
+            case_number="",
+            court_email="",
+            case_entity="",
+            case_city="",
+            service_entity="",
+            service_city="",
+            service_date="2026-03-05",
+            lang="FR",
+            pages=1,
+            word_count=2,
+            rate_per_word=0.08,
+            expected_total=0.16,
+            amount_paid=0.0,
+            api_cost=0.0,
+            run_id="",
+            target_lang="FR",
+            total_tokens=None,
+            estimated_api_cost=None,
+            quality_risk_score=None,
+            profit=0.16,
+            pdf_path=pdf_path,
+        )
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.app_window.load_joblog_settings",
+        lambda: {
+            "default_rate_per_word": {"FR": 0.08},
+            "vocab_cities": ["Beja"],
+            "vocab_court_emails": [
+                "beja.ministeriopublico@tribunais.org.pt",
+                "beja.judicial@tribunais.org.pt",
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.app_window.build_seed_from_run",
+        _fake_seed_from_run,
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.app_window.extract_pdf_header_metadata_priority_pages",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            case_entity="Ministério Público",
+            case_city="Beja",
+            case_number="140/22.5JAFAR",
+            court_email=None,
+        ),
+    )
+    fake = SimpleNamespace(
+        _last_run_config=SimpleNamespace(
+            target_lang=SimpleNamespace(value="FR"),
+            pdf_path=pdf_path,
+        ),
+        _append_log=lambda _msg: None,
+        _last_joblog_seed=None,
+    )
+    summary = SimpleNamespace(
+        run_dir=run_dir,
+        completed_pages=1,
+        run_summary_path=None,
+    )
+
+    QtMainWindow._prepare_joblog_seed(fake, summary)
+
+    assert fake._last_joblog_seed is not None
+    assert fake._last_joblog_seed.court_email == "beja.ministeriopublico@tribunais.org.pt"
 
 
 def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path: Path) -> None:
@@ -668,6 +756,7 @@ def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path
         translation_date="2026-03-05",
         job_type="Translation",
         case_number="",
+        court_email="seed@example.pt",
         case_entity="Case Entity",
         case_city="Beja",
         service_entity="Case Entity",
@@ -689,29 +778,43 @@ def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path
         pdf_path=tmp_path / "sample.pdf",
     )
 
+    settings = {
+        "vocab_case_entities": [],
+        "vocab_service_entities": [],
+        "vocab_cities": [],
+        "vocab_job_types": [],
+        "vocab_court_emails": [],
+        "default_rate_per_word": {"FR": 0.08},
+        "joblog_visible_columns": [],
+        "metadata_ai_enabled": True,
+        "metadata_photo_enabled": True,
+        "service_equals_case_by_default": True,
+        "non_court_service_entities": [],
+        "ocr_mode": "auto",
+        "ocr_engine": "local_then_api",
+        "ocr_api_base_url": "",
+        "ocr_api_model": "",
+        "ocr_api_key_env_name": "DEEPSEEK_API_KEY",
+    }
+
+    def _ensure_in_vocab(key: str, value: str) -> None:
+        cleaned = value.strip()
+        if not cleaned:
+            return
+        bucket = list(settings[key])
+        lowered = {item.casefold() for item in bucket}
+        if cleaned.casefold() in lowered:
+            return
+        bucket.append(cleaned)
+        settings[key] = bucket
+
     fake = SimpleNamespace(
         _seed=seed,
         _db_path=tmp_path / "joblog.sqlite3",
-        _settings={
-            "vocab_case_entities": [],
-            "vocab_service_entities": [],
-            "vocab_cities": [],
-            "vocab_job_types": [],
-            "default_rate_per_word": {"FR": 0.08},
-            "joblog_visible_columns": [],
-            "metadata_ai_enabled": True,
-            "metadata_photo_enabled": True,
-            "service_equals_case_by_default": True,
-            "non_court_service_entities": [],
-            "ocr_mode": "auto",
-            "ocr_engine": "local_then_api",
-            "ocr_api_base_url": "",
-            "ocr_api_model": "",
-            "ocr_api_key_env_name": "DEEPSEEK_API_KEY",
-        },
+        _settings=settings,
         _on_saved=lambda: callback_state.__setitem__("called", True),
         _saved=False,
-        _ensure_in_vocab=lambda _key, _value: None,
+        _ensure_in_vocab=_ensure_in_vocab,
         accept=lambda: callback_state.__setitem__("accepted", True),
         _parse_float=None,
         _parse_optional_int=None,
@@ -732,6 +835,7 @@ def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path
         service_same_check=_FakeCheck(False),
         job_type_combo=_FakeCombo("Translation"),
         case_number_edit=_FakeEdit("ABC-1"),
+        court_email_combo=_FakeCombo("court@example.pt"),
         run_id_edit=_FakeEdit("run-override"),
         target_lang_edit=_FakeEdit("AR"),
     )
@@ -747,5 +851,7 @@ def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path
     assert captured_payload["estimated_api_cost"] == 2.9
     assert captured_payload["quality_risk_score"] == 0.44
     assert captured_payload["api_cost"] == 2.5
+    assert captured_payload["court_email"] == "court@example.pt"
     assert callback_state == {"called": True, "accepted": True}
     assert saved_settings["ocr_mode"] == "auto"
+    assert saved_settings["vocab_court_emails"] == ["court@example.pt"]

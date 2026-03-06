@@ -70,9 +70,11 @@ from legalpdf_translate.metadata_autofill import (
     MetadataAutofillConfig,
     MetadataSuggestion,
     apply_service_case_default_rule,
-    extract_pdf_header_metadata,
+    choose_court_email_suggestion,
+    extract_pdf_header_metadata_priority_pages,
     extract_photo_metadata_from_image,
     metadata_config_from_settings,
+    rank_court_email_suggestions,
 )
 from legalpdf_translate.openai_client import OpenAIResponsesClient
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
@@ -109,6 +111,7 @@ from legalpdf_translate.user_settings import app_data_dir, load_joblog_settings,
 JOBLOG_COLUMNS = [
     "translation_date",
     "case_number",
+    "court_email",
     "run_id",
     "job_type",
     "case_entity",
@@ -133,6 +136,7 @@ JOBLOG_COLUMNS = [
 JOBLOG_COLUMN_LABELS = {
     "translation_date": "Date",
     "case_number": "Case #",
+    "court_email": "Court Email",
     "run_id": "Run ID",
     "job_type": "Job Type",
     "case_entity": "Case Entity",
@@ -161,6 +165,7 @@ class JobLogSeed:
     translation_date: str
     job_type: str
     case_number: str
+    court_email: str
     case_entity: str
     case_city: str
     service_entity: str
@@ -217,6 +222,7 @@ def build_seed_from_run(
         translation_date=_date_from_completed_at(completed_at),
         job_type="Translation",
         case_number="",
+        court_email="",
         case_entity="",
         case_city="",
         service_entity="",
@@ -325,6 +331,12 @@ class QtSaveToJobLogDialog(QDialog):
         case_form.addWidget(QLabel("Case number"), 1, 0)
         self.case_number_edit = QLineEdit(self._seed.case_number)
         case_form.addWidget(self.case_number_edit, 1, 1, 1, 2)
+        case_form.addWidget(QLabel("Court Email"), 1, 3)
+        self.court_email_combo = QComboBox()
+        self.court_email_combo.setEditable(True)
+        self.court_email_combo.addItems(list(self._settings["vocab_court_emails"]))
+        self.court_email_combo.setCurrentText(self._seed.court_email)
+        case_form.addWidget(self.court_email_combo, 1, 4, 1, 2)
         case_form.setColumnStretch(1, 1)
         case_form.setColumnStretch(4, 1)
         root.addWidget(case_group)
@@ -472,12 +484,26 @@ class QtSaveToJobLogDialog(QDialog):
         self._fill_combo(self.case_city_combo, list(self._settings["vocab_cities"]))
         self._fill_combo(self.service_city_combo, list(self._settings["vocab_cities"]))
         self._fill_combo(self.job_type_combo, list(self._settings["vocab_job_types"]))
+        self._fill_combo(self.court_email_combo, list(self._settings["vocab_court_emails"]))
+
+    def _set_court_email_from_context(self, *, exact_email: str | None = None, force: bool = False) -> None:
+        if not force and exact_email is None and self.court_email_combo.currentText().strip():
+            return
+        suggestion = choose_court_email_suggestion(
+            exact_email=exact_email,
+            case_entity=self.case_entity_combo.currentText().strip(),
+            case_city=self.case_city_combo.currentText().strip(),
+            vocab_court_emails=list(self._settings["vocab_court_emails"]),
+        )
+        if suggestion:
+            self.court_email_combo.setCurrentText(suggestion)
 
     def _on_case_fields_changed(self) -> None:
         self._case_entity_user_set = True
         self._case_city_user_set = True
         if self.service_same_check.isChecked():
             self._sync_service_with_case()
+        self._set_court_email_from_context()
 
     def _on_service_fields_changed(self) -> None:
         self._apply_non_court_default_rule()
@@ -534,19 +560,27 @@ class QtSaveToJobLogDialog(QDialog):
                 self._ensure_in_vocab("vocab_cities", suggestion.service_city)
                 self.service_city_combo.setCurrentText(suggestion.service_city)
         self._apply_non_court_default_rule()
+        ranked = rank_court_email_suggestions(
+            exact_email=suggestion.court_email,
+            case_entity=self.case_entity_combo.currentText().strip(),
+            case_city=self.case_city_combo.currentText().strip(),
+            vocab_court_emails=list(self._settings["vocab_court_emails"]),
+        )
+        if ranked:
+            self.court_email_combo.setCurrentText(ranked[0])
 
     def _autofill_from_pdf_header(self) -> None:
-        suggestion = extract_pdf_header_metadata(
+        suggestion = extract_pdf_header_metadata_priority_pages(
             self._seed.pdf_path,
             vocab_cities=list(self._settings["vocab_cities"]),
             config=self._metadata_config,
-            page_number=1,
         )
         if not any(
             (
                 suggestion.case_entity,
                 suggestion.case_city,
                 suggestion.case_number,
+                suggestion.court_email,
                 suggestion.service_entity,
                 suggestion.service_city,
             )
@@ -674,6 +708,7 @@ class QtSaveToJobLogDialog(QDialog):
             "translation_date": self._seed.translation_date,
             "job_type": self.job_type_combo.currentText().strip() or "Translation",
             "case_number": self.case_number_edit.text().strip(),
+            "court_email": self.court_email_combo.currentText().strip(),
             "case_entity": case_entity,
             "case_city": case_city,
             "service_entity": service_entity,
@@ -706,6 +741,8 @@ class QtSaveToJobLogDialog(QDialog):
             self._ensure_in_vocab("vocab_cities", case_city)
         if service_city:
             self._ensure_in_vocab("vocab_cities", service_city)
+        if payload["court_email"]:
+            self._ensure_in_vocab("vocab_court_emails", str(payload["court_email"]))
 
         save_joblog_settings(
             {
@@ -713,6 +750,7 @@ class QtSaveToJobLogDialog(QDialog):
                 "vocab_service_entities": self._settings["vocab_service_entities"],
                 "vocab_cities": self._settings["vocab_cities"],
                 "vocab_job_types": self._settings["vocab_job_types"],
+                "vocab_court_emails": self._settings["vocab_court_emails"],
                 "default_rate_per_word": self._settings["default_rate_per_word"],
                 "joblog_visible_columns": self._settings["joblog_visible_columns"],
                 "metadata_ai_enabled": self._settings["metadata_ai_enabled"],

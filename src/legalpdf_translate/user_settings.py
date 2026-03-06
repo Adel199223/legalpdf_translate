@@ -43,6 +43,19 @@ DEFAULT_VOCAB_CITIES = [
     "Serpa",
 ]
 DEFAULT_VOCAB_JOB_TYPES = ["Translation", "Interpretation"]
+DEFAULT_VOCAB_COURT_EMAILS = [
+    "beja.ministeriopublico@tribunais.org.pt",
+    "beja.trabalho.ministeriopublico@tribunais.org.pt",
+    "beja.familia.ministeriopublico@tribunais.org.pt",
+    "moita.ministeriopublico@tribunais.org.pt",
+    "cuba.ministeriopublico@tribunais.org.pt",
+    "beja.judicial@tribunais.org.pt",
+    "falentejo.judicial@tribunais.org.pt",
+    "serpa.judicial@tribunais.org.pt",
+    "moura.judicial@tribunais.org.pt",
+    "rmonsaraz.judicial@tribunais.org.pt",
+    "cuba.judicial@tribunais.org.pt",
+]
 DEFAULT_JOBLOG_VISIBLE_COLUMNS = [
     "translation_date",
     "case_number",
@@ -190,6 +203,7 @@ ALLOWED_JOBLOG_KEYS = {
     "vocab_service_entities",
     "vocab_cities",
     "vocab_job_types",
+    "vocab_court_emails",
     "default_rate_per_word",
     "joblog_visible_columns",
     "metadata_ai_enabled",
@@ -224,6 +238,7 @@ DEFAULT_JOBLOG_SETTINGS: dict[str, Any] = {
     "vocab_service_entities": list(DEFAULT_VOCAB_SERVICE_ENTITIES),
     "vocab_cities": list(DEFAULT_VOCAB_CITIES),
     "vocab_job_types": list(DEFAULT_VOCAB_JOB_TYPES),
+    "vocab_court_emails": list(DEFAULT_VOCAB_COURT_EMAILS),
     "default_rate_per_word": {"EN": 0.08, "FR": 0.08, "AR": 0.09},
     "joblog_visible_columns": list(DEFAULT_JOBLOG_VISIBLE_COLUMNS),
     "metadata_ai_enabled": True,
@@ -696,6 +711,10 @@ def load_joblog_settings() -> dict[str, Any]:
     merged["vocab_job_types"] = _coerce_str_list(
         merged.get("vocab_job_types"),
         fallback=DEFAULT_VOCAB_JOB_TYPES,
+    )
+    merged["vocab_court_emails"] = _coerce_str_list(
+        merged.get("vocab_court_emails"),
+        fallback=DEFAULT_VOCAB_COURT_EMAILS,
     )
     merged["vocab_entities"] = _coerce_str_list(
         merged.get("vocab_entities"),

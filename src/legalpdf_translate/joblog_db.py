@@ -16,6 +16,7 @@ JOB_RUN_COLUMNS = [
     "translation_date",
     "job_type",
     "case_number",
+    "court_email",
     "case_entity",
     "case_city",
     "service_entity",
@@ -59,6 +60,7 @@ def ensure_joblog_schema(conn: sqlite3.Connection) -> None:
             translation_date TEXT,
             job_type TEXT DEFAULT 'Translation',
             case_number TEXT,
+            court_email TEXT,
             case_entity TEXT,
             case_city TEXT,
             service_entity TEXT,
@@ -156,6 +158,7 @@ def migrate_joblog_v2(conn: sqlite3.Connection) -> None:
     columns = _table_columns(conn, "job_runs")
     _add_column_if_missing(conn, columns, "job_type", "TEXT DEFAULT 'Translation'")
     _add_column_if_missing(conn, columns, "translation_date", "TEXT")
+    _add_column_if_missing(conn, columns, "court_email", "TEXT")
     _add_column_if_missing(conn, columns, "case_entity", "TEXT")
     _add_column_if_missing(conn, columns, "case_city", "TEXT")
     _add_column_if_missing(conn, columns, "service_entity", "TEXT")
@@ -241,6 +244,7 @@ def list_job_runs(conn: sqlite3.Connection, *, limit: int = 500) -> list[sqlite3
             COALESCE(NULLIF(trim(translation_date), ''), date(completed_at)) AS translation_date,
             job_type,
             case_number,
+            court_email,
             case_entity,
             case_city,
             service_entity,
@@ -278,6 +282,7 @@ def update_joblog_visible_columns(
         "completed_at",
         "job_type",
         "case_number",
+        "court_email",
         "case_entity",
         "case_city",
         "service_entity",

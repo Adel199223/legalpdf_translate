@@ -69,6 +69,7 @@ def test_migration_adds_v2_columns_and_backfills(tmp_path: Path) -> None:
     assert "run_id" in columns
     assert "target_lang" in columns
     assert "total_tokens" in columns
+    assert "court_email" in columns
     assert "estimated_api_cost" in columns
     assert "quality_risk_score" in columns
     assert "header_text" not in columns
@@ -78,7 +79,7 @@ def test_migration_adds_v2_columns_and_backfills(tmp_path: Path) -> None:
     row = migrated.execute(
         """
         SELECT case_entity, case_city, service_entity, service_city, service_date, translation_date,
-               target_lang, estimated_api_cost, run_id, total_tokens, quality_risk_score
+               target_lang, court_email, estimated_api_cost, run_id, total_tokens, quality_risk_score
         FROM job_runs
         LIMIT 1
         """
@@ -93,7 +94,8 @@ def test_migration_adds_v2_columns_and_backfills(tmp_path: Path) -> None:
     assert row[4] == "2026-02-11"
     assert row[5] == "2026-02-11"
     assert row[6] == "EN"
-    assert float(row[7]) == 2.0
-    assert row[8] is None
+    assert row[7] is None
+    assert float(row[8]) == 2.0
     assert row[9] is None
     assert row[10] is None
+    assert row[11] is None
