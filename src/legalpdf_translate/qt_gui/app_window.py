@@ -69,11 +69,23 @@ from legalpdf_translate.metadata_autofill import (
     extract_pdf_header_metadata_priority_pages,
     metadata_config_from_settings,
 )
+from legalpdf_translate.ocr_engine import (
+    OcrEngineConfig,
+    default_ocr_api_env_name,
+    default_ocr_api_model,
+    normalize_ocr_api_provider,
+    test_ocr_provider_connection,
+)
 from legalpdf_translate.output_paths import (
     build_output_paths,
     require_writable_output_dir_text,
 )
-from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
+from legalpdf_translate.source_document import (
+    SOURCE_FILE_DIALOG_FILTER,
+    extract_ordered_source_text as extract_ordered_page_text,
+    get_source_page_count as get_page_count,
+    is_supported_source_file,
+)
 from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
 from legalpdf_translate.queue_runner import QueueRunSummary, parse_queue_manifest
 from legalpdf_translate.qt_gui.dialogs import (
@@ -691,7 +703,7 @@ class QtMainWindow(QMainWindow):
         setup_grid.setColumnMinimumWidth(0, 176)
         setup_grid.setColumnStretch(1, 1)
 
-        self.pdf_edit = QLineEdit(placeholderText="Select PDF file...")
+        self.pdf_edit = QLineEdit(placeholderText="Select PDF or image file...")
         self.pdf_edit.setProperty("embeddedField", True)
         self.pdf_edit.setMinimumWidth(220)
         self.pdf_btn = QToolButton(objectName="FieldBrowseButton")
@@ -723,7 +735,7 @@ class QtMainWindow(QMainWindow):
         pdf_field_layout.addWidget(pdf_support_cluster, 0)
         pdf_field_layout.addWidget(pdf_btn_divider, 0)
         pdf_field_layout.addWidget(self.pdf_btn, 0)
-        setup_grid.addWidget(QLabel("Source PDF", objectName="FieldLabel"), 0, 0)
+        setup_grid.addWidget(QLabel("Source File", objectName="FieldLabel"), 0, 0)
         setup_grid.addWidget(pdf_field, 0, 1)
 
         self.lang_combo = NoWheelComboBox()
@@ -1668,24 +1680,32 @@ class QtMainWindow(QMainWindow):
         if not ocr_key:
             lines.append("OCR API: missing key")
         else:
-            ocr_base_url = str(self._defaults.get("ocr_api_base_url", "") or "").strip()
-            ocr_model = str(self._defaults.get("ocr_api_model", "") or "").strip() or "gpt-4o-mini"
-            if ocr_base_url == "":
-                lines.append("OCR API: key present (base URL not set)")
-            else:
-                started = time.perf_counter()
-                try:
-                    client = OpenAI(api_key=ocr_key, base_url=ocr_base_url)
-                    client.responses.create(
-                        model=ocr_model,
-                        input=[{"role": "user", "content": [{"type": "input_text", "text": "Reply exactly with OK."}]}],
-                        max_output_tokens=8,
-                        store=False,
-                    )
-                    latency_ms = int((time.perf_counter() - started) * 1000)
-                    lines.append(f"OCR API: PASS ({latency_ms} ms)")
-                except Exception as exc:  # noqa: BLE001
-                    lines.append(f"OCR API: FAIL ({type(exc).__name__})")
+            provider = normalize_ocr_api_provider(
+                self._defaults.get("ocr_api_provider", self._defaults.get("ocr_api_provider_default", "openai"))
+            )
+            started = time.perf_counter()
+            try:
+                test_ocr_provider_connection(
+                    OcrEngineConfig(
+                        policy=parse_ocr_engine_policy(self.ocr_engine_combo.currentText()),
+                        api_provider=provider,
+                        api_base_url=str(self._defaults.get("ocr_api_base_url", "") or "").strip() or None,
+                        api_model=str(self._defaults.get("ocr_api_model", "") or "").strip()
+                        or default_ocr_api_model(provider),
+                        api_key_env_name=str(
+                            self._defaults.get(
+                                "ocr_api_key_env_name",
+                                default_ocr_api_env_name(provider),
+                            )
+                            or default_ocr_api_env_name(provider)
+                        ),
+                    ),
+                    api_key=ocr_key,
+                )
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                lines.append(f"OCR API ({provider.value}): PASS ({latency_ms} ms)")
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"OCR API ({provider.value}): FAIL ({type(exc).__name__})")
 
         QMessageBox.information(self, "API Key Test", "\n".join(lines))
 
@@ -1990,12 +2010,15 @@ class QtMainWindow(QMainWindow):
             self._refresh_dashboard_counters()
             return
         try:
-            self.pages_label.setText(f"Pages: {get_page_count(pdf_path)}")
+            if not is_supported_source_file(pdf_path):
+                self.pages_label.setText("Pages: ?")
+            else:
+                self.pages_label.setText(f"Pages: {get_source_page_count(pdf_path)}")
         except Exception:
             self.pages_label.setText("Pages: ?")
         self._refresh_dashboard_counters()
     def _pick_pdf(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select PDF", "", "PDF Files (*.pdf);;All Files (*.*)")
+        path, _ = QFileDialog.getOpenFileName(self, "Select source file", "", SOURCE_FILE_DIALOG_FILTER)
         if path:
             self.pdf_edit.setText(path)
 
@@ -2224,10 +2247,14 @@ class QtMainWindow(QMainWindow):
             else self.outdir_edit.text().strip()
         )
         if not pdf_text:
-            raise ValueError("PDF path is required.")
+            raise ValueError("Source file path is required.")
         if not outdir_text:
             raise ValueError("Output folder is required.")
         pdf = Path(pdf_text).expanduser().resolve()
+        if not pdf.exists() or not pdf.is_file():
+            raise ValueError("Source file must exist.")
+        if not is_supported_source_file(pdf):
+            raise ValueError("Source file must be a PDF or supported image.")
         outdir = require_writable_output_dir_text(outdir_text)
 
         def opt_int(value: str, field: str) -> int | None:
@@ -2280,9 +2307,26 @@ class QtMainWindow(QMainWindow):
             keep_intermediates=self.keep_check.isChecked(),
             ocr_mode=parse_ocr_mode(selected_ocr_mode),
             ocr_engine=parse_ocr_engine_policy(self.ocr_engine_combo.currentText()),
+            ocr_api_provider=normalize_ocr_api_provider(
+                self._defaults.get("ocr_api_provider", self._defaults.get("ocr_api_provider_default", "openai"))
+            ),
             ocr_api_base_url=str(self._defaults.get("ocr_api_base_url", "") or "") or None,
             ocr_api_model=str(self._defaults.get("ocr_api_model", "") or "") or None,
-            ocr_api_key_env_name=str(self._defaults.get("ocr_api_key_env_name", "DEEPSEEK_API_KEY") or "DEEPSEEK_API_KEY"),
+            ocr_api_key_env_name=str(
+                self._defaults.get(
+                    "ocr_api_key_env_name",
+                    default_ocr_api_env_name(
+                        normalize_ocr_api_provider(
+                            self._defaults.get("ocr_api_provider", self._defaults.get("ocr_api_provider_default", "openai"))
+                        )
+                    ),
+                )
+                or default_ocr_api_env_name(
+                    normalize_ocr_api_provider(
+                        self._defaults.get("ocr_api_provider", self._defaults.get("ocr_api_provider_default", "openai"))
+                    )
+                )
+            ),
             context_file=context_file,
             context_text=self.context_text.toPlainText().strip() or None,
             glossary_file=glossary_file,

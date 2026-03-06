@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import subprocess
 import tempfile
@@ -10,12 +11,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
 from typing import Any, Literal, Protocol
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from openai import OpenAI
 
 from .config import DEFAULT_OCR_API_TIMEOUT_SECONDS
 from .secrets_store import get_ocr_key
-from .types import OcrEnginePolicy, RunConfig, TargetLang
+from .types import OcrApiProvider, OcrEnginePolicy, RunConfig, TargetLang
 
 _PROFILE_PT_LATIN_DEFAULT = "pt_latin_default"
 _PROFILE_AR_TRACK_DEFAULT = "ar_track_default"
@@ -23,6 +27,15 @@ _PT_LATIN_LANG_PACK = "por+eng+fra"
 _AR_TRACK_LANG_PACK = "ara+eng"
 _EARLY_ACCEPT_SCORE = 0.82
 _MIN_ACCEPTABLE_LOCAL_SCORE = 0.18
+OPENAI_OCR_DEFAULT_MODEL = "gpt-4o-mini"
+OPENAI_OCR_DEFAULT_ENV = "DEEPSEEK_API_KEY"
+GEMINI_OCR_DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+GEMINI_OCR_BENCHMARK_MODEL = "gemini-3-flash-preview"
+GEMINI_OCR_DEFAULT_ENV = "GEMINI_API_KEY"
+GEMINI_OCR_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+_GEMINI_TIMEOUT_SECONDS = 120
+GEMINI_MEDIA_RESOLUTION_PDF = "MEDIUM"
+GEMINI_MEDIA_RESOLUTION_IMAGE = "HIGH"
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,22 +57,46 @@ class OcrResult:
 
 
 class OCREngine(Protocol):
-    def ocr_image(self, image_bytes: bytes, lang_hint: str | None = None) -> OcrResult:
+    def ocr_image(
+        self,
+        image_bytes: bytes,
+        lang_hint: str | None = None,
+        *,
+        source_type: Literal["pdf", "image"] = "pdf",
+    ) -> OcrResult:
         ...
+
+
+def invoke_ocr_image(
+    engine: OCREngine,
+    image_bytes: bytes,
+    lang_hint: str | None = None,
+    *,
+    source_type: Literal["pdf", "image"] = "pdf",
+) -> OcrResult:
+    try:
+        return engine.ocr_image(image_bytes, lang_hint=lang_hint, source_type=source_type)
+    except TypeError as exc:
+        message = str(exc)
+        if "source_type" not in message:
+            raise
+        return engine.ocr_image(image_bytes, lang_hint=lang_hint)
 
 
 @dataclass(slots=True)
 class OcrEngineConfig:
     policy: OcrEnginePolicy = OcrEnginePolicy.LOCAL_THEN_API
+    api_provider: OcrApiProvider = OcrApiProvider.OPENAI
     api_base_url: str | None = None
     api_model: str | None = None
-    api_key_env_name: str = "DEEPSEEK_API_KEY"
+    api_key_env_name: str = OPENAI_OCR_DEFAULT_ENV
     api_timeout_seconds: float = float(DEFAULT_OCR_API_TIMEOUT_SECONDS)
 
 
 def ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngineConfig:
     return OcrEngineConfig(
         policy=config.ocr_engine,
+        api_provider=config.ocr_api_provider,
         api_base_url=config.ocr_api_base_url,
         api_model=config.ocr_api_model,
         api_key_env_name=config.ocr_api_key_env_name,
@@ -70,11 +107,41 @@ def ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngineConfig:
 def local_only_ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngineConfig:
     return OcrEngineConfig(
         policy=OcrEnginePolicy.LOCAL,
+        api_provider=config.ocr_api_provider,
         api_base_url=config.ocr_api_base_url,
         api_model=config.ocr_api_model,
         api_key_env_name=config.ocr_api_key_env_name,
         api_timeout_seconds=float(DEFAULT_OCR_API_TIMEOUT_SECONDS),
     )
+
+
+def normalize_ocr_api_provider(value: object, default: OcrApiProvider = OcrApiProvider.OPENAI) -> OcrApiProvider:
+    if isinstance(value, OcrApiProvider):
+        return value
+    cleaned = str(value or "").strip().lower()
+    if cleaned == OcrApiProvider.GEMINI.value:
+        return OcrApiProvider.GEMINI
+    if cleaned == OcrApiProvider.OPENAI.value:
+        return OcrApiProvider.OPENAI
+    return default
+
+
+def default_ocr_api_model(provider: OcrApiProvider) -> str:
+    if provider == OcrApiProvider.GEMINI:
+        return GEMINI_OCR_DEFAULT_MODEL
+    return OPENAI_OCR_DEFAULT_MODEL
+
+
+def default_ocr_api_env_name(provider: OcrApiProvider) -> str:
+    if provider == OcrApiProvider.GEMINI:
+        return GEMINI_OCR_DEFAULT_ENV
+    return OPENAI_OCR_DEFAULT_ENV
+
+
+def default_ocr_api_base_url(provider: OcrApiProvider) -> str:
+    if provider == OcrApiProvider.GEMINI:
+        return GEMINI_OCR_DEFAULT_BASE_URL
+    return ""
 
 
 def _lang_hint_to_tesseract(lang_hint: str | None) -> str:
@@ -159,9 +226,16 @@ def _text_quality_score(text: str) -> float:
 
 
 class NoopOcrEngine:
-    def ocr_image(self, image_bytes: bytes, lang_hint: str | None = None) -> OcrResult:
+    def ocr_image(
+        self,
+        image_bytes: bytes,
+        lang_hint: str | None = None,
+        *,
+        source_type: Literal["pdf", "image"] = "pdf",
+    ) -> OcrResult:
         _ = image_bytes
         _ = lang_hint
+        _ = source_type
         return OcrResult(text="", engine="none", failed_reason="ocr disabled", chars=0)
 
 
@@ -204,7 +278,14 @@ class LocalTesseractEngine:
         stderr = completed.stderr.decode("utf-8", errors="ignore")
         return completed.returncode, stdout, stderr
 
-    def ocr_image(self, image_bytes: bytes, lang_hint: str | None = None) -> OcrResult:
+    def ocr_image(
+        self,
+        image_bytes: bytes,
+        lang_hint: str | None = None,
+        *,
+        source_type: Literal["pdf", "image"] = "pdf",
+    ) -> OcrResult:
+        _ = source_type
         if not self._tesseract_path:
             return OcrResult(
                 text="",
@@ -373,7 +454,14 @@ class ApiOcrEngine:
         self._model = model.strip()
         self._timeout_seconds = max(0.1, float(timeout_seconds))
 
-    def ocr_image(self, image_bytes: bytes, lang_hint: str | None = None) -> OcrResult:
+    def ocr_image(
+        self,
+        image_bytes: bytes,
+        lang_hint: str | None = None,
+        *,
+        source_type: Literal["pdf", "image"] = "pdf",
+    ) -> OcrResult:
+        _ = source_type
         prompt = "Extract all visible text. Preserve line breaks. No commentary. Return plain text only."
         if lang_hint:
             prompt += f" Language hint: {lang_hint}."
@@ -421,13 +509,163 @@ class ApiOcrEngine:
         )
 
 
+def _gemini_extract_output_text(payload: dict[str, Any]) -> str:
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        return ""
+    chunks: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        content = candidate.get("content")
+        if not isinstance(content, dict):
+            continue
+        parts = content.get("parts")
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str):
+                    chunks.append(text)
+    return "\n".join(chunk.strip() for chunk in chunks if chunk.strip()).strip()
+
+
+def _gemini_post_json(
+    *,
+    api_key: str,
+    model: str,
+    base_url: str | None,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    root = (base_url or GEMINI_OCR_DEFAULT_BASE_URL).strip().rstrip("/")
+    endpoint = f"{root}/models/{model}:generateContent?{urlencode({'key': api_key})}"
+    body = json.dumps(payload).encode("utf-8")
+    request = Request(
+        endpoint,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=_GEMINI_TIMEOUT_SECONDS) as response:  # noqa: S310
+            raw = response.read().decode("utf-8", errors="ignore")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"gemini HTTP {exc.code}: {detail or exc.reason}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"gemini transport error: {exc.reason}") from exc
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("gemini returned invalid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("gemini returned an invalid payload type")
+    return parsed
+
+
+class GeminiApiOcrEngine:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        base_url: str | None = None,
+    ) -> None:
+        if not api_key.strip():
+            raise ValueError("OCR API key is required for Gemini OCR engine.")
+        if not model.strip():
+            raise ValueError("OCR API model is required for Gemini OCR engine.")
+        self._api_key = api_key.strip()
+        self._model = model.strip()
+        self._base_url = (base_url or GEMINI_OCR_DEFAULT_BASE_URL).strip()
+
+    def ocr_image(
+        self,
+        image_bytes: bytes,
+        lang_hint: str | None = None,
+        *,
+        source_type: Literal["pdf", "image"] = "pdf",
+    ) -> OcrResult:
+        prompt = "Extract all visible text. Preserve line breaks. Return plain text only. No commentary."
+        if lang_hint:
+            prompt += f" Language hint: {lang_hint}."
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/png",
+                                "data": base64.b64encode(image_bytes).decode("ascii"),
+                            }
+                        },
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0,
+                "mediaResolution": (
+                    GEMINI_MEDIA_RESOLUTION_IMAGE
+                    if source_type == "image"
+                    else GEMINI_MEDIA_RESOLUTION_PDF
+                ),
+            },
+        }
+        try:
+            parsed = _gemini_post_json(
+                api_key=self._api_key,
+                model=self._model,
+                base_url=self._base_url,
+                payload=payload,
+            )
+            text = _gemini_extract_output_text(parsed)
+        except Exception as exc:  # noqa: BLE001
+            return OcrResult(text="", engine="api", failed_reason=f"api OCR request failed: {exc}", chars=0)
+
+        if not text:
+            return OcrResult(text="", engine="api", failed_reason="api OCR returned empty output", chars=0)
+        score = _text_quality_score(text)
+        return OcrResult(
+            text=text,
+            engine="api",
+            failed_reason=None,
+            chars=len(text),
+            quality_score=score,
+            selected_pass="gemini_single_pass",
+            attempts=[
+                {
+                    "pass": "gemini_single_pass",
+                    "lang": _source_profile_from_hint(lang_hint),
+                    "psm": 0,
+                    "status": "ok",
+                    "reason": "",
+                    "chars": len(text),
+                    "score": score,
+                }
+            ],
+        )
+
+
 class LocalThenApiEngine:
-    def __init__(self, *, local_engine: LocalTesseractEngine, api_engine: ApiOcrEngine | None) -> None:
+    def __init__(self, *, local_engine: LocalTesseractEngine, api_engine: OCREngine | None) -> None:
         self.local_engine = local_engine
         self.api_engine = api_engine
 
-    def ocr_image(self, image_bytes: bytes, lang_hint: str | None = None) -> OcrResult:
-        local_result = self.local_engine.ocr_image(image_bytes, lang_hint=lang_hint)
+    def ocr_image(
+        self,
+        image_bytes: bytes,
+        lang_hint: str | None = None,
+        *,
+        source_type: Literal["pdf", "image"] = "pdf",
+    ) -> OcrResult:
+        local_result = invoke_ocr_image(
+            self.local_engine,
+            image_bytes,
+            lang_hint=lang_hint,
+            source_type=source_type,
+        )
         if local_result.chars > 0:
             return local_result
         if self.api_engine is None:
@@ -437,7 +675,12 @@ class LocalThenApiEngine:
                 failed_reason=local_result.failed_reason or "local OCR failed and API fallback is unavailable",
                 chars=0,
             )
-        api_result = self.api_engine.ocr_image(image_bytes, lang_hint=lang_hint)
+        api_result = invoke_ocr_image(
+            self.api_engine,
+            image_bytes,
+            lang_hint=lang_hint,
+            source_type=source_type,
+        )
         if api_result.chars > 0:
             return api_result
         reason_parts = [part for part in (local_result.failed_reason, api_result.failed_reason) if part]
@@ -456,12 +699,47 @@ def _resolve_api_key(config: OcrEngineConfig) -> str | None:
         stored = None
     if stored:
         return stored
-    env_name = (config.api_key_env_name or "").strip() or "DEEPSEEK_API_KEY"
+    env_name = (config.api_key_env_name or "").strip() or default_ocr_api_env_name(config.api_provider)
     from_env = os.getenv(env_name, "").strip()
     return from_env or None
 
 
+def test_ocr_provider_connection(config: OcrEngineConfig, *, api_key: str) -> None:
+    provider = normalize_ocr_api_provider(config.api_provider)
+    model = (config.api_model or "").strip() or default_ocr_api_model(provider)
+    base_url = (config.api_base_url or "").strip() or default_ocr_api_base_url(provider)
+    if provider == OcrApiProvider.GEMINI:
+        payload = {
+            "contents": [{"parts": [{"text": "Reply exactly with OK."}]}],
+            "generationConfig": {"temperature": 0},
+        }
+        parsed = _gemini_post_json(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            payload=payload,
+        )
+        if "OK" not in _gemini_extract_output_text(parsed):
+            raise RuntimeError("gemini OCR provider test did not return OK")
+        return
+
+    client = OpenAI(api_key=api_key, base_url=(base_url or None))
+    response = client.responses.create(
+        model=model,
+        input=[{"role": "user", "content": [{"type": "input_text", "text": "Reply exactly with OK."}]}],
+        max_output_tokens=8,
+        store=False,
+    )
+    output_text = _extract_output_text(response)
+    if "OK" not in output_text:
+        raise RuntimeError("openai OCR provider test did not return OK")
+
+
+test_ocr_provider_connection.__test__ = False
+
+
 def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
+    provider = normalize_ocr_api_provider(config.api_provider)
     if config.policy == OcrEnginePolicy.LOCAL:
         return LocalTesseractEngine(strict_unavailable=True)
 
@@ -469,7 +747,13 @@ def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
         api_key = _resolve_api_key(config)
         if not api_key:
             raise ValueError("OCR API key is not configured.")
-        model = (config.api_model or "").strip() or "gpt-4o-mini"
+        model = (config.api_model or "").strip() or default_ocr_api_model(provider)
+        if provider == OcrApiProvider.GEMINI:
+            return GeminiApiOcrEngine(
+                api_key=api_key,
+                model=model,
+                base_url=(config.api_base_url or "").strip() or default_ocr_api_base_url(provider),
+            )
         return ApiOcrEngine(
             api_key=api_key,
             model=model,
@@ -480,13 +764,20 @@ def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
     # local_then_api
     local_engine = LocalTesseractEngine(strict_unavailable=False)
     api_key = _resolve_api_key(config)
-    api_engine: ApiOcrEngine | None = None
+    api_engine: OCREngine | None = None
     if api_key:
-        model = (config.api_model or "").strip() or "gpt-4o-mini"
-        api_engine = ApiOcrEngine(
-            api_key=api_key,
-            model=model,
-            base_url=config.api_base_url,
-            timeout_seconds=float(config.api_timeout_seconds or DEFAULT_OCR_API_TIMEOUT_SECONDS),
-        )
+        model = (config.api_model or "").strip() or default_ocr_api_model(provider)
+        if provider == OcrApiProvider.GEMINI:
+            api_engine = GeminiApiOcrEngine(
+                api_key=api_key,
+                model=model,
+                base_url=(config.api_base_url or "").strip() or default_ocr_api_base_url(provider),
+            )
+        else:
+            api_engine = ApiOcrEngine(
+                api_key=api_key,
+                model=model,
+                base_url=config.api_base_url,
+                timeout_seconds=float(config.api_timeout_seconds or DEFAULT_OCR_API_TIMEOUT_SECONDS),
+            )
     return LocalThenApiEngine(local_engine=local_engine, api_engine=api_engine)

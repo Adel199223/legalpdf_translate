@@ -16,10 +16,11 @@ from PIL import Image
 
 from .config import DEFAULT_METADATA_AI_TIMEOUT_SECONDS, DEFAULT_OCR_API_TIMEOUT_SECONDS
 from .ocr_engine import OcrEngineConfig, OcrResult, build_ocr_engine
+from .ocr_engine import default_ocr_api_env_name, invoke_ocr_image, normalize_ocr_api_provider
 from .ocr_helpers import ocr_pdf_page_text
 from .pdf_text_order import extract_ordered_page_text
 from .secrets_store import get_ocr_key
-from .types import OcrEnginePolicy, OcrMode
+from .types import OcrApiProvider, OcrEnginePolicy, OcrMode
 
 GENERIC_CASE_ENTITIES = {"", "unknown", "desconhecido", "n/a", "na", "sem informação", "sem informacao"}
 
@@ -77,9 +78,10 @@ class MetadataSuggestion:
 class MetadataAutofillConfig:
     ocr_mode: OcrMode = OcrMode.AUTO
     ocr_engine_policy: OcrEnginePolicy = OcrEnginePolicy.LOCAL_THEN_API
+    ocr_api_provider: OcrApiProvider = OcrApiProvider.OPENAI
     ocr_api_base_url: str | None = None
     ocr_api_model: str | None = None
-    ocr_api_key_env_name: str = "DEEPSEEK_API_KEY"
+    ocr_api_key_env_name: str = default_ocr_api_env_name(OcrApiProvider.OPENAI)
     ocr_api_timeout_seconds: float = float(DEFAULT_OCR_API_TIMEOUT_SECONDS)
     metadata_ai_timeout_seconds: float = float(DEFAULT_METADATA_AI_TIMEOUT_SECONDS)
     metadata_ai_enabled: bool = True
@@ -93,16 +95,18 @@ def metadata_config_from_settings(settings: dict[str, object]) -> MetadataAutofi
     ocr_engine_text = str(settings.get("ocr_engine", "local_then_api") or "local_then_api").strip().lower()
     if ocr_engine_text not in {"local", "local_then_api", "api"}:
         ocr_engine_text = "local_then_api"
+    provider = normalize_ocr_api_provider(settings.get("ocr_api_provider", settings.get("ocr_api_provider_default", "openai")))
     key_env_name = str(
         settings.get(
             "ocr_api_key_env_name",
-            settings.get("ocr_api_key_env", "DEEPSEEK_API_KEY"),
+            settings.get("ocr_api_key_env", default_ocr_api_env_name(provider)),
         )
-        or "DEEPSEEK_API_KEY"
-    ).strip() or "DEEPSEEK_API_KEY"
+        or default_ocr_api_env_name(provider)
+    ).strip() or default_ocr_api_env_name(provider)
     return MetadataAutofillConfig(
         ocr_mode=OcrMode(ocr_mode_text),
         ocr_engine_policy=OcrEnginePolicy(ocr_engine_text),
+        ocr_api_provider=provider,
         ocr_api_base_url=str(settings.get("ocr_api_base_url", "") or "").strip() or None,
         ocr_api_model=str(settings.get("ocr_api_model", "") or "").strip() or None,
         ocr_api_key_env_name=key_env_name,
@@ -365,12 +369,14 @@ def _parse_json_object(raw: str) -> dict[str, Any] | None:
 
 
 def _resolve_api_client(config: MetadataAutofillConfig) -> OpenAI | None:
+    if config.ocr_api_provider != OcrApiProvider.OPENAI:
+        return None
     try:
         key = get_ocr_key()
     except RuntimeError:
         key = None
     if not key:
-        env_name = (config.ocr_api_key_env_name or "").strip() or "DEEPSEEK_API_KEY"
+        env_name = (config.ocr_api_key_env_name or "").strip() or default_ocr_api_env_name(config.ocr_api_provider)
         from_env = os.getenv(env_name, "").strip()
         key = from_env or None
     if not key:
@@ -610,6 +616,7 @@ def _build_ocr_engine_from_config(config: MetadataAutofillConfig):
     return build_ocr_engine(
         OcrEngineConfig(
             policy=config.ocr_engine_policy,
+            api_provider=config.ocr_api_provider,
             api_base_url=config.ocr_api_base_url,
             api_model=config.ocr_api_model,
             api_key_env_name=config.ocr_api_key_env_name,
@@ -793,7 +800,7 @@ def _ocr_photo_text(image_path: Path, config: MetadataAutofillConfig) -> OcrResu
         image_bytes = image_path.read_bytes()
     except Exception as exc:  # noqa: BLE001
         return OcrResult(text="", engine="none", failed_reason=f"photo read failed: {exc}", chars=0)
-    return engine.ocr_image(image_bytes, lang_hint="PT")
+    return invoke_ocr_image(engine, image_bytes, lang_hint="PT", source_type="image")
 
 
 def extract_photo_metadata_from_image(

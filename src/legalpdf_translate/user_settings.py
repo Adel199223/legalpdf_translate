@@ -83,6 +83,7 @@ DEFAULT_JOBLOG_VISIBLE_COLUMNS = [
 DEFAULT_OCR_SETTINGS: dict[str, Any] = {
     "ocr_mode": "auto",
     "ocr_engine": "local_then_api",
+    "ocr_api_provider": "openai",
     "ocr_api_base_url": "",
     "ocr_api_model": "",
     "ocr_api_key_env_name": "DEEPSEEK_API_KEY",
@@ -122,6 +123,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "study_glossary_default_coverage_percent": 80,
     "ocr_mode_default": "auto",
     "ocr_engine_default": "local_then_api",
+    "ocr_api_provider_default": "openai",
     "perf_max_transport_retries": 4,
     "perf_backoff_cap_seconds": 12.0,
     "perf_timeout_text_seconds": DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
@@ -198,6 +200,7 @@ ALLOWED_GUI_KEYS = {
     "max_pages",
     "ocr_mode",
     "ocr_engine",
+    "ocr_api_provider",
     "ocr_api_base_url",
     "ocr_api_model",
     "ocr_api_key_env_name",
@@ -216,6 +219,7 @@ ALLOWED_JOBLOG_KEYS = {
     "non_court_service_entities",
     "ocr_mode",
     "ocr_engine",
+    "ocr_api_provider",
     "ocr_api_base_url",
     "ocr_api_model",
     "ocr_api_key_env_name",
@@ -477,12 +481,20 @@ def load_gui_settings() -> dict[str, Any]:
         default="local_then_api",
         allowed={"local", "local_then_api", "api"},
     )
+    merged["ocr_api_provider"] = _coerce_choice(
+        merged.get("ocr_api_provider"),
+        default="openai",
+        allowed={"openai", "gemini"},
+    )
     merged["ocr_api_base_url"] = str(merged.get("ocr_api_base_url", "") or "")
     merged["ocr_api_model"] = str(merged.get("ocr_api_model", "") or "")
     ocr_env_value = merged.get("ocr_api_key_env_name")
     if "ocr_api_key_env_name" not in data or not str(ocr_env_value or "").strip():
-        ocr_env_value = data.get("ocr_api_key_env", "DEEPSEEK_API_KEY")
-    merged["ocr_api_key_env_name"] = str(ocr_env_value or "DEEPSEEK_API_KEY")
+        fallback_env = "GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY"
+        ocr_env_value = data.get("ocr_api_key_env", fallback_env)
+    merged["ocr_api_key_env_name"] = str(
+        ocr_env_value or ("GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY")
+    )
     merged["settings_schema_version"] = _coerce_int(
         merged.get("settings_schema_version"),
         SETTINGS_SCHEMA_VERSION,
@@ -521,6 +533,11 @@ def load_gui_settings() -> dict[str, Any]:
     merged["default_start_page"] = max(1, _coerce_int(merged.get("default_start_page"), 1))
     merged["default_end_page"] = _coerce_optional_int(merged.get("default_end_page"))
     merged["default_outdir"] = str(merged.get("default_outdir", "") or "")
+    merged["ocr_api_provider_default"] = _coerce_choice(
+        merged.get("ocr_api_provider_default"),
+        default="openai",
+        allowed={"openai", "gemini"},
+    )
     supported_langs = supported_target_langs()
     has_personal_scope = "personal_glossaries_by_lang" in data
     personal_source = (
@@ -778,12 +795,20 @@ def load_joblog_settings() -> dict[str, Any]:
         default="local_then_api",
         allowed={"local", "local_then_api", "api"},
     )
+    merged["ocr_api_provider"] = _coerce_choice(
+        merged.get("ocr_api_provider"),
+        default="openai",
+        allowed={"openai", "gemini"},
+    )
     merged["ocr_api_base_url"] = str(merged.get("ocr_api_base_url", "") or "")
     merged["ocr_api_model"] = str(merged.get("ocr_api_model", "") or "")
     ocr_env_value = merged.get("ocr_api_key_env_name")
     if "ocr_api_key_env_name" not in data or not str(ocr_env_value or "").strip():
-        ocr_env_value = data.get("ocr_api_key_env", "DEEPSEEK_API_KEY")
-    merged["ocr_api_key_env_name"] = str(ocr_env_value or "DEEPSEEK_API_KEY")
+        fallback_env = "GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY"
+        ocr_env_value = data.get("ocr_api_key_env", fallback_env)
+    merged["ocr_api_key_env_name"] = str(
+        ocr_env_value or ("GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY")
+    )
     if not merged["vocab_case_entities"]:
         merged["vocab_case_entities"] = list(merged["vocab_entities"])
     if not merged["vocab_service_entities"]:

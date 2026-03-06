@@ -60,6 +60,8 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert isinstance(loaded["allow_xhigh_escalation"], bool)
     assert loaded["perf_timeout_text_seconds"] == 480
     assert loaded["perf_timeout_image_seconds"] == 720
+    assert loaded["ocr_api_provider"] in {"openai", "gemini"}
+    assert loaded["ocr_api_provider_default"] in {"openai", "gemini"}
 
 
 def test_load_gui_settings_migrates_old_last_used_fields(tmp_path: Path, monkeypatch) -> None:
@@ -92,6 +94,18 @@ def test_load_gui_settings_migrates_old_last_used_fields(tmp_path: Path, monkeyp
     assert loaded["ocr_api_key_env_name"] == "LEGACY_ENV_NAME"
     assert loaded["default_effort_policy"] == "fixed_xhigh"
     assert loaded["effort_policy"] == "fixed_xhigh"
+
+
+def test_load_gui_settings_uses_provider_aware_ocr_env_default(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(json.dumps({"ocr_api_provider": "gemini", "ocr_api_key_env_name": ""}), encoding="utf-8")
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["ocr_api_provider"] == "gemini"
+    assert loaded["ocr_api_key_env_name"] == "GEMINI_API_KEY"
 
 
 def test_load_gui_settings_migrates_legacy_single_scope_to_personal(tmp_path: Path, monkeypatch) -> None:

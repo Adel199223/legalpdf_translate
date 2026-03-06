@@ -91,6 +91,14 @@ from legalpdf_translate.metadata_autofill import (
     rank_court_email_suggestions,
 )
 from legalpdf_translate.openai_client import OpenAIResponsesClient
+from legalpdf_translate.ocr_engine import (
+    OcrEngineConfig,
+    default_ocr_api_base_url,
+    default_ocr_api_env_name,
+    default_ocr_api_model,
+    normalize_ocr_api_provider,
+    test_ocr_provider_connection,
+)
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
 from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox
 from legalpdf_translate.review_export import export_review_queue
@@ -121,6 +129,7 @@ from legalpdf_translate.study_glossary import (
     tokenize_page_for_mode,
     update_candidate_stats_from_page,
 )
+from legalpdf_translate.types import OcrApiProvider
 from legalpdf_translate.user_settings import app_data_dir, load_joblog_settings, save_gui_settings, save_joblog_settings
 
 JOBLOG_COLUMNS = [
@@ -1979,10 +1988,13 @@ class QtSettingsDialog(QDialog):
 
         provider_group = QGroupBox("Provider Settings")
         provider_form = QFormLayout(provider_group)
+        self.ocr_provider_combo = NoWheelComboBox()
+        self.ocr_provider_combo.addItems(["openai", "gemini"])
         self.ocr_base_url_edit = QLineEdit()
         self.ocr_model_edit = QLineEdit()
         self.ocr_env_edit = QLineEdit()
         self.provider_summary_label = QLabel("")
+        provider_form.addRow("OCR provider", self.ocr_provider_combo)
         provider_form.addRow("OCR base URL", self.ocr_base_url_edit)
         provider_form.addRow("OCR model", self.ocr_model_edit)
         provider_form.addRow("OCR env var name", self.ocr_env_edit)
@@ -1998,14 +2010,21 @@ class QtSettingsDialog(QDialog):
         self.ocr_save_btn.clicked.connect(self._save_ocr_key)
         self.ocr_clear_btn.clicked.connect(self._clear_ocr_key)
         self.ocr_test_btn.clicked.connect(self._test_ocr_key)
+        self.ocr_provider_combo.currentTextChanged.connect(self._refresh_provider_controls)
+        self.ocr_base_url_edit.textChanged.connect(self._refresh_provider_controls)
+        self.ocr_model_edit.textChanged.connect(self._refresh_provider_controls)
+        self.ocr_env_edit.textChanged.connect(self._refresh_provider_controls)
 
     def _build_tab_ocr_defaults(self) -> None:
         form = QFormLayout(self.tab_ocr)
+        self.ocr_provider_default_combo = NoWheelComboBox()
+        self.ocr_provider_default_combo.addItems(["openai", "gemini"])
         self.ocr_mode_default_combo = NoWheelComboBox()
         self.ocr_mode_default_combo.addItems(["off", "auto", "always"])
         self.ocr_engine_default_combo = NoWheelComboBox()
         self.ocr_engine_default_combo.addItems(["local", "local_then_api", "api"])
         self.min_chars_edit = QLineEdit()
+        form.addRow("Default OCR provider", self.ocr_provider_default_combo)
         form.addRow("Default OCR mode", self.ocr_mode_default_combo)
         form.addRow("Default OCR engine", self.ocr_engine_default_combo)
         form.addRow("Min chars to accept OCR", self.min_chars_edit)
@@ -3721,12 +3740,18 @@ class QtSettingsDialog(QDialog):
         self.default_end_edit.setText("" if default_end in (None, "") else str(default_end))
         self.default_outdir_edit.setText(str(settings.get("default_outdir", "")))
         self.glossary_file_edit.setText(str(settings.get("glossary_file_path", "")))
+        current_provider = str(settings.get("ocr_api_provider", settings.get("ocr_api_provider_default", "openai")) or "openai")
+        self.ocr_provider_combo.setCurrentText(current_provider)
+        self.ocr_provider_default_combo.setCurrentText(
+            str(settings.get("ocr_api_provider_default", current_provider) or current_provider)
+        )
         self.ocr_mode_default_combo.setCurrentText(str(settings.get("ocr_mode_default", "auto")))
         self.ocr_engine_default_combo.setCurrentText(str(settings.get("ocr_engine_default", "local_then_api")))
         self.min_chars_edit.setText(str(settings.get("min_chars_to_accept_ocr", 200)))
         self.ocr_base_url_edit.setText(str(settings.get("ocr_api_base_url", "")))
         self.ocr_model_edit.setText(str(settings.get("ocr_api_model", "")))
-        self.ocr_env_edit.setText(str(settings.get("ocr_api_key_env_name", "DEEPSEEK_API_KEY")))
+        provider = normalize_ocr_api_provider(current_provider)
+        self.ocr_env_edit.setText(str(settings.get("ocr_api_key_env_name", default_ocr_api_env_name(provider))))
         self.retries_edit.setText(str(settings.get("perf_max_transport_retries", 4)))
         self.backoff_cap_edit.setText(str(settings.get("perf_backoff_cap_seconds", 12.0)))
         self.timeout_text_edit.setText(
@@ -3743,6 +3768,49 @@ class QtSettingsDialog(QDialog):
         self.diag_snippets_check.setEnabled(self.diag_admin_mode_check.isChecked())
         self._set_glossaries_from_settings(settings)
         self._set_study_from_settings(settings)
+        self._refresh_provider_controls()
+
+    def _current_ocr_provider(self) -> OcrApiProvider:
+        provider_value = getattr(self, "ocr_provider_combo", None)
+        current_text = provider_value.currentText() if provider_value is not None else "openai"
+        return normalize_ocr_api_provider(current_text)
+
+    def _refresh_provider_controls(self) -> None:
+        provider_value = getattr(self, "ocr_provider_combo", None)
+        current_text = provider_value.currentText() if provider_value is not None else "openai"
+        provider = normalize_ocr_api_provider(current_text)
+        model_default = default_ocr_api_model(provider)
+        env_default = default_ocr_api_env_name(provider)
+        base_default = default_ocr_api_base_url(provider)
+        model_edit = getattr(self, "ocr_model_edit", None)
+        env_edit = getattr(self, "ocr_env_edit", None)
+        base_edit = getattr(self, "ocr_base_url_edit", None)
+        if model_edit is not None:
+            model_edit.setPlaceholderText(model_default)
+        if env_edit is not None:
+            env_edit.setPlaceholderText(env_default)
+        if base_edit is not None:
+            base_edit.setPlaceholderText(base_default or "Provider default")
+        summary = getattr(self, "provider_summary_label", None)
+        if summary is None:
+            return
+        try:
+            openai_stored = bool(get_openai_key())
+            ocr_stored = bool(get_ocr_key())
+        except RuntimeError:
+            openai_stored = False
+            ocr_stored = False
+        resolved_model = model_edit.text().strip() if model_edit is not None else ""
+        resolved_env = env_edit.text().strip() if env_edit is not None else ""
+        resolved_base = base_edit.text().strip() if base_edit is not None else ""
+        resolved_model = resolved_model or model_default
+        resolved_env = resolved_env or env_default
+        resolved_base = resolved_base or (base_default or "provider default")
+        summary.setText(
+            f"OCR provider: {provider.value}; model: {resolved_model}; env: {resolved_env}; "
+            f"base URL: {resolved_base}; OpenAI credentials {'present' if openai_stored else 'missing'}, "
+            f"OCR credentials {'present' if ocr_stored else 'missing'}."
+        )
 
     def _pick_default_outdir(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "Choose default output folder")
@@ -3885,10 +3953,7 @@ class QtSettingsDialog(QDialog):
             self.ocr_key_edit.clear()
             self.ocr_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
             self.ocr_toggle_btn.setText("Show")
-        self.provider_summary_label.setText(
-            "Provider mode: OpenAI credentials "
-            f"{'present' if openai_stored else 'missing'}, OCR credentials {'present' if ocr_stored else 'missing'}."
-        )
+        QtSettingsDialog._refresh_provider_controls(self)
 
     def _save_openai_key(self) -> None:
         key = self.openai_key_edit.text().strip()
@@ -3981,26 +4046,26 @@ class QtSettingsDialog(QDialog):
         if not key:
             QMessageBox.warning(self, "Key Test", "OCR key is not stored.")
             return
-        base_url = self.ocr_base_url_edit.text().strip()
-        model = self.ocr_model_edit.text().strip() or "gpt-4o-mini"
+        provider = self._current_ocr_provider()
+        base_url = self.ocr_base_url_edit.text().strip() or default_ocr_api_base_url(provider)
+        model = self.ocr_model_edit.text().strip() or default_ocr_api_model(provider)
+        env_name = self.ocr_env_edit.text().strip() or default_ocr_api_env_name(provider)
         started = time.perf_counter()
-        if base_url == "":
-            latency_ms = int((time.perf_counter() - started) * 1000)
-            QMessageBox.information(self, "Key Test", f"OCR key is present ({latency_ms} ms).")
-            return
         try:
-            client = OpenAI(api_key=key, base_url=base_url)
-            client.responses.create(
-                model=model,
-                input=[{"role": "user", "content": [{"type": "input_text", "text": "Reply exactly with OK."}]}],
-                max_output_tokens=8,
-                store=False,
+            test_ocr_provider_connection(
+                OcrEngineConfig(
+                    api_provider=provider,
+                    api_base_url=base_url or None,
+                    api_model=model,
+                    api_key_env_name=env_name,
+                ),
+                api_key=key,
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Key Test", f"OCR key test failed: {type(exc).__name__}")
             return
         latency_ms = int((time.perf_counter() - started) * 1000)
-        QMessageBox.information(self, "Key Test", f"OCR test passed ({latency_ms} ms).")
+        QMessageBox.information(self, "Key Test", f"OCR test passed for {provider.value} ({latency_ms} ms).")
 
     def _restore_defaults(self) -> None:
         self.default_lang_combo.setCurrentText("EN")
@@ -4037,13 +4102,19 @@ class QtSettingsDialog(QDialog):
                 "study_glossary_default_coverage_percent": 80,
             }
         )
+        self.ocr_provider_combo.setCurrentText("openai")
+        self.ocr_provider_default_combo.setCurrentText("openai")
         self.ocr_mode_default_combo.setCurrentText("auto")
         self.ocr_engine_default_combo.setCurrentText("local_then_api")
+        self.ocr_base_url_edit.clear()
+        self.ocr_model_edit.clear()
+        self.ocr_env_edit.setText(default_ocr_api_env_name(OcrApiProvider.OPENAI))
         self.retries_edit.setText("4")
         self.backoff_cap_edit.setText("12.0")
         self.timeout_text_edit.setText(str(DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS))
         self.timeout_image_edit.setText(str(DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS))
         self.allow_xhigh_check.setChecked(False)
+        self._refresh_provider_controls()
 
     def _collect_values(self) -> dict[str, object]:
         self._commit_glossary_cell_editor()
@@ -4095,11 +4166,14 @@ class QtSettingsDialog(QDialog):
             "glossary_seed_version": max(2, int(self._glossary_seed_version)),
             "glossary_file_path": self.glossary_file_edit.text().strip(),
             **self._collect_study_settings_values(),
+            "ocr_api_provider": self.ocr_provider_combo.currentText().strip().lower(),
+            "ocr_api_provider_default": self.ocr_provider_default_combo.currentText().strip().lower(),
             "ocr_mode_default": self.ocr_mode_default_combo.currentText().strip().lower(),
             "ocr_engine_default": self.ocr_engine_default_combo.currentText().strip().lower(),
             "ocr_api_base_url": base_url,
             "ocr_api_model": self.ocr_model_edit.text().strip(),
-            "ocr_api_key_env_name": self.ocr_env_edit.text().strip() or "DEEPSEEK_API_KEY",
+            "ocr_api_key_env_name": self.ocr_env_edit.text().strip()
+            or default_ocr_api_env_name(normalize_ocr_api_provider(self.ocr_provider_combo.currentText())),
             "perf_max_transport_retries": _to_int(self.retries_edit.text(), field="Transport retries", min_value=0, max_value=12),
             "perf_backoff_cap_seconds": _to_float(self.backoff_cap_edit.text(), field="Backoff cap", min_value=1.0, max_value=120.0),
             "perf_timeout_text_seconds": _to_int(self.timeout_text_edit.text(), field="Text timeout", min_value=5, max_value=600),

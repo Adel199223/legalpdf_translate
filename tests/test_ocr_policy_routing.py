@@ -3,8 +3,16 @@ from __future__ import annotations
 import pytest
 
 import legalpdf_translate.ocr_engine as ocr_engine
-from legalpdf_translate.ocr_engine import ApiOcrEngine, LocalThenApiEngine, OcrEngineConfig, OcrResult, build_ocr_engine
-from legalpdf_translate.types import OcrEnginePolicy
+from legalpdf_translate.ocr_engine import (
+    ApiOcrEngine,
+    GeminiApiOcrEngine,
+    LocalThenApiEngine,
+    OcrEngineConfig,
+    OcrResult,
+    build_ocr_engine,
+    test_ocr_provider_connection,
+)
+from legalpdf_translate.types import OcrApiProvider, OcrEnginePolicy
 
 
 def test_api_policy_missing_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -115,3 +123,73 @@ def test_api_engine_constructs_openai_with_bounded_retry_and_timeout(monkeypatch
         "max_retries": 0,
     }
     assert engine._timeout_seconds == pytest.approx(240.0)
+
+def test_gemini_api_policy_builds_gemini_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ocr_engine, "get_ocr_key", lambda: None)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    config = OcrEngineConfig(
+        policy=OcrEnginePolicy.API,
+        api_provider=OcrApiProvider.GEMINI,
+        api_model="gemini-3.1-flash-lite-preview",
+        api_key_env_name="GEMINI_API_KEY",
+    )
+    engine = build_ocr_engine(config)
+    assert isinstance(engine, GeminiApiOcrEngine)
+
+
+def test_local_then_api_with_gemini_key_enables_gemini_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ocr_engine, "get_ocr_key", lambda: None)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    config = OcrEngineConfig(
+        policy=OcrEnginePolicy.LOCAL_THEN_API,
+        api_provider=OcrApiProvider.GEMINI,
+        api_model="gemini-3-flash-preview",
+        api_key_env_name="GEMINI_API_KEY",
+    )
+    engine = build_ocr_engine(config)
+    assert isinstance(engine, LocalThenApiEngine)
+    assert isinstance(engine.api_engine, GeminiApiOcrEngine)
+
+
+def test_test_ocr_provider_connection_uses_gemini_ping(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_gemini_post_json(*, api_key: str, model: str, base_url: str | None, payload: dict[str, object]):
+        captured["api_key"] = api_key
+        captured["model"] = model
+        captured["base_url"] = base_url
+        captured["payload"] = payload
+        return {"candidates": [{"content": {"parts": [{"text": "OK"}]}}]}
+
+    monkeypatch.setattr(ocr_engine, "_gemini_post_json", _fake_gemini_post_json)
+
+    test_ocr_provider_connection(
+        OcrEngineConfig(
+            policy=OcrEnginePolicy.API,
+            api_provider=OcrApiProvider.GEMINI,
+            api_model="gemini-3.1-flash-lite-preview",
+            api_key_env_name="GEMINI_API_KEY",
+        ),
+        api_key="gem-key",
+    )
+
+    assert captured["api_key"] == "gem-key"
+    assert captured["model"] == "gemini-3.1-flash-lite-preview"
+
+
+def test_gemini_media_resolution_uses_pdf_medium_and_image_high(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_payloads: list[dict[str, object]] = []
+
+    def _fake_gemini_post_json(*, api_key: str, model: str, base_url: str | None, payload: dict[str, object]):
+        _ = api_key, model, base_url
+        captured_payloads.append(payload)
+        return {"candidates": [{"content": {"parts": [{"text": "OK"}]}}]}
+
+    monkeypatch.setattr(ocr_engine, "_gemini_post_json", _fake_gemini_post_json)
+    engine = GeminiApiOcrEngine(api_key="gem-key", model="gemini-3.1-flash-lite-preview")
+
+    engine.ocr_image(b"pdf-bytes", lang_hint="PT", source_type="pdf")
+    engine.ocr_image(b"img-bytes", lang_hint="PT", source_type="image")
+
+    assert captured_payloads[0]["generationConfig"]["mediaResolution"] == "MEDIUM"
+    assert captured_payloads[1]["generationConfig"]["mediaResolution"] == "HIGH"
