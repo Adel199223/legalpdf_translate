@@ -3341,6 +3341,8 @@ class QtMainWindow(QMainWindow):
             seed = build_seed_from_run(
                 pdf_path=self._last_run_config.pdf_path,
                 lang=self._last_run_config.target_lang.value,
+                output_docx=summary.output_docx,
+                partial_docx=summary.partial_docx,
                 pages_dir=summary.run_dir / "pages",
                 completed_pages=summary.completed_pages,
                 completed_at=datetime.now().isoformat(timespec="seconds"),

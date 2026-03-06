@@ -1210,6 +1210,8 @@ def test_prepare_joblog_seed_prefills_metrics_from_run_summary(tmp_path: Path, m
         run_dir=run_dir,
         completed_pages=1,
         run_summary_path=run_summary_path,
+        output_docx=None,
+        partial_docx=None,
     )
 
     QtMainWindow._prepare_joblog_seed(fake, summary)
@@ -1222,6 +1224,106 @@ def test_prepare_joblog_seed_prefills_metrics_from_run_summary(tmp_path: Path, m
     assert fake._last_joblog_seed.quality_risk_score == 0.37
     assert fake._last_joblog_seed.api_cost == 4.56
     assert fake._last_joblog_seed.court_email == "tribunal@example.pt"
+
+
+def test_count_words_from_docx_uses_visible_output_text(tmp_path: Path) -> None:
+    pages_dir = tmp_path / "pages"
+    pages_dir.mkdir()
+    (pages_dir / "page_0001.txt").write_text("one two three", encoding="utf-8")
+    (pages_dir / "page_0002.txt").write_text("alpha beta", encoding="utf-8")
+    output = tmp_path / "out.docx"
+
+    assemble_docx(pages_dir, output, lang=TargetLang.EN, page_breaks=False)
+
+    assert count_words_from_docx(output) == 5
+
+
+def test_count_words_from_output_artifacts_prefers_final_docx(tmp_path: Path) -> None:
+    final_pages = tmp_path / "final_pages"
+    final_pages.mkdir()
+    (final_pages / "page_0001.txt").write_text("one two three four", encoding="utf-8")
+    final_docx = tmp_path / "final.docx"
+    assemble_docx(final_pages, final_docx, lang=TargetLang.EN, page_breaks=False)
+
+    partial_pages = tmp_path / "partial_pages"
+    partial_pages.mkdir()
+    (partial_pages / "page_0001.txt").write_text("fallback text", encoding="utf-8")
+    partial_docx = tmp_path / "partial.docx"
+    assemble_docx(partial_pages, partial_docx, lang=TargetLang.EN, page_breaks=False)
+
+    pages_dir = tmp_path / "pages"
+    pages_dir.mkdir()
+    (pages_dir / "page_0001.txt").write_text("should not be used", encoding="utf-8")
+
+    assert (
+        count_words_from_output_artifacts(
+            output_docx=final_docx,
+            partial_docx=partial_docx,
+            pages_dir=pages_dir,
+        )
+        == 4
+    )
+
+
+def test_count_words_from_output_artifacts_uses_partial_docx_when_final_missing(tmp_path: Path) -> None:
+    partial_pages = tmp_path / "partial_pages"
+    partial_pages.mkdir()
+    (partial_pages / "page_0001.txt").write_text("alpha beta gamma", encoding="utf-8")
+    partial_docx = tmp_path / "partial.docx"
+    assemble_docx(partial_pages, partial_docx, lang=TargetLang.EN, page_breaks=False)
+
+    pages_dir = tmp_path / "pages"
+    pages_dir.mkdir()
+    (pages_dir / "page_0001.txt").write_text("fallback words ignored", encoding="utf-8")
+
+    assert (
+        count_words_from_output_artifacts(
+            output_docx=tmp_path / "missing.docx",
+            partial_docx=partial_docx,
+            pages_dir=pages_dir,
+        )
+        == 3
+    )
+
+
+def test_count_words_from_output_artifacts_falls_back_to_pages_dir(tmp_path: Path) -> None:
+    pages_dir = tmp_path / "pages"
+    pages_dir.mkdir()
+    (pages_dir / "page_0001.txt").write_text("one two", encoding="utf-8")
+    (pages_dir / "page_0002.txt").write_text("three", encoding="utf-8")
+
+    assert (
+        count_words_from_output_artifacts(
+            output_docx=tmp_path / "missing.docx",
+            partial_docx=tmp_path / "missing_partial.docx",
+            pages_dir=pages_dir,
+        )
+        == 3
+    )
+
+
+def test_build_seed_from_run_uses_docx_word_count_for_expected_total_and_profit(tmp_path: Path) -> None:
+    pages_dir = tmp_path / "pages"
+    pages_dir.mkdir()
+    (pages_dir / "page_0001.txt").write_text("one two three four five", encoding="utf-8")
+    output = tmp_path / "out.docx"
+    assemble_docx(pages_dir, output, lang=TargetLang.EN, page_breaks=False)
+
+    seed = build_seed_from_run(
+        pdf_path=tmp_path / "sample.pdf",
+        lang="EN",
+        output_docx=output,
+        partial_docx=None,
+        pages_dir=tmp_path / "missing_pages",
+        completed_pages=1,
+        completed_at="2026-03-06T17:00:00",
+        default_rate_per_word=0.1,
+        api_cost=0.25,
+    )
+
+    assert seed.word_count == 5
+    assert seed.expected_total == 0.5
+    assert seed.profit == 0.25
 
 
 def test_prepare_joblog_seed_uses_ranked_court_email_suggestion_when_no_exact_email(tmp_path: Path, monkeypatch) -> None:
@@ -1296,6 +1398,8 @@ def test_prepare_joblog_seed_uses_ranked_court_email_suggestion_when_no_exact_em
         run_dir=run_dir,
         completed_pages=1,
         run_summary_path=None,
+        output_docx=None,
+        partial_docx=None,
     )
 
     QtMainWindow._prepare_joblog_seed(fake, summary)

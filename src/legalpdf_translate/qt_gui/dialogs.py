@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
+from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from openai import OpenAI
@@ -192,12 +193,69 @@ class JobLogSeed:
     pdf_path: Path
 
 
+_WORD_XML_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+_DOCX_WORD_SEPARATOR_TAGS = {"tab", "br", "cr"}
+
+
 def count_words_from_pages_dir(pages_dir: Path) -> int:
     total = 0
     for page_file in sorted(pages_dir.glob("page_*.txt")):
         text = page_file.read_text(encoding="utf-8")
         total += len(text.split())
     return total
+
+
+def _extract_visible_text_from_docx(docx_path: Path) -> str:
+    if not docx_path.exists() or not docx_path.is_file():
+        return ""
+    try:
+        with ZipFile(docx_path) as archive:
+            raw_xml = archive.read("word/document.xml")
+    except (OSError, KeyError):
+        return ""
+    try:
+        root = ET.fromstring(raw_xml)
+    except ET.ParseError:
+        return ""
+
+    paragraphs: list[str] = []
+    for paragraph in root.findall(".//w:p", _WORD_XML_NS):
+        parts: list[str] = []
+        for node in paragraph.iter():
+            tag = node.tag.rsplit("}", 1)[-1]
+            if tag == "t":
+                if node.text:
+                    parts.append(node.text)
+            elif tag in _DOCX_WORD_SEPARATOR_TAGS:
+                parts.append(" ")
+        paragraph_text = "".join(parts).strip()
+        if paragraph_text:
+            paragraphs.append(paragraph_text)
+    return "\n".join(paragraphs)
+
+
+def count_words_from_docx(docx_path: Path | None) -> int:
+    if docx_path is None:
+        return 0
+    text = _extract_visible_text_from_docx(docx_path)
+    return len(text.split()) if text else 0
+
+
+def count_words_from_output_artifacts(
+    *,
+    output_docx: Path | None,
+    partial_docx: Path | None,
+    pages_dir: Path | None,
+) -> int:
+    final_count = count_words_from_docx(output_docx)
+    if final_count > 0:
+        return final_count
+    partial_count = count_words_from_docx(partial_docx)
+    if partial_count > 0:
+        return partial_count
+    if pages_dir is None:
+        return 0
+    return count_words_from_pages_dir(pages_dir)
 
 
 def _date_from_completed_at(completed_at: str) -> str:
@@ -214,13 +272,19 @@ def build_seed_from_run(
     *,
     pdf_path: Path,
     lang: str,
-    pages_dir: Path,
+    output_docx: Path | None,
+    partial_docx: Path | None,
+    pages_dir: Path | None,
     completed_pages: int,
     completed_at: str,
     default_rate_per_word: float,
     api_cost: float = 0.0,
 ) -> JobLogSeed:
-    word_count = count_words_from_pages_dir(pages_dir)
+    word_count = count_words_from_output_artifacts(
+        output_docx=output_docx,
+        partial_docx=partial_docx,
+        pages_dir=pages_dir,
+    )
     expected_total = round(float(default_rate_per_word) * float(word_count), 2)
     return JobLogSeed(
         completed_at=completed_at,
