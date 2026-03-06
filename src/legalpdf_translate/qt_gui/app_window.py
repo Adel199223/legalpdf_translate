@@ -7,17 +7,18 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
     QColor,
+    QIcon,
     QLinearGradient,
     QMouseEvent,
     QPainter,
@@ -26,6 +27,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -37,6 +39,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QMenu,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -86,6 +89,7 @@ from legalpdf_translate.qt_gui.worker import (
     RebuildDocxWorker,
     TranslationRunWorker,
 )
+from legalpdf_translate.resources_loader import resource_path
 from legalpdf_translate.run_report import build_run_report_markdown
 from legalpdf_translate.secrets_store import (
     delete_openai_key,
@@ -111,6 +115,14 @@ from legalpdf_translate.workflow import TranslationWorkflow
 
 
 _FRAME_INSETS = (16, 96, 16, 18)  # (left, top, right, bottom)
+_LAYOUT_DESKTOP_EXACT = "desktop_exact"
+_LAYOUT_DESKTOP_COMPACT = "desktop_compact"
+_LAYOUT_STACKED_COMPACT = "stacked_compact"
+_LANG_FLAG_ICON_BY_CODE = {
+    "EN": "resources/icons/dashboard/flag_en.svg",
+    "FR": "resources/icons/dashboard/flag_fr.svg",
+    "AR": "resources/icons/dashboard/flag_ar.svg",
+}
 
 
 def _is_simple_mode() -> bool:
@@ -267,6 +279,24 @@ def _load_advisor_recommendation(report_path: Path) -> dict[str, Any] | None:
     }
 
 
+@dataclass(slots=True)
+class _DashboardSnapshot:
+    progress_percent: int = 0
+    eta_text: str = "--"
+    current_task: str = "Idle"
+    pages_done: int = 0
+    pages_total: int | None = None
+    page_retries: int = 0
+    images_done: int = 0
+    images_total: int | None = None
+    image_retries: int = 0
+    errors_count: int = 0
+    error_retries: int = 0
+    pages_title: str = "Pages"
+    images_title: str = "Images"
+    errors_title: str = "Errors"
+
+
 class _FuturisticCanvas(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -288,63 +318,85 @@ class _FuturisticCanvas(QWidget):
         painter.fillRect(rect, base_gradient)
 
         painter.setPen(Qt.PenStyle.NoPen)
-        left_glow = QRadialGradient(rect.width() * 0.18, rect.height() * 0.32, rect.width() * 0.38)
-        left_glow.setColorAt(0.0, QColor(20, 158, 214, 68))
+        left_glow = QRadialGradient(rect.width() * 0.18, rect.height() * 0.30, rect.width() * 0.34)
+        left_glow.setColorAt(0.0, QColor(38, 190, 232, 42))
+        left_glow.setColorAt(0.32, QColor(26, 162, 214, 22))
         left_glow.setColorAt(1.0, QColor(20, 158, 214, 0))
         painter.setBrush(left_glow)
         painter.drawEllipse(
-            int(rect.width() * -0.12),
-            int(rect.height() * 0.03),
-            int(rect.width() * 0.64),
-            int(rect.width() * 0.64),
+            int(rect.width() * -0.03),
+            int(rect.height() * 0.05),
+            int(rect.width() * 0.44),
+            int(rect.width() * 0.44),
         )
 
-        right_glow = QRadialGradient(rect.width() * 0.84, rect.height() * 0.78, rect.width() * 0.34)
-        right_glow.setColorAt(0.0, QColor(18, 196, 255, 48))
+        right_glow = QRadialGradient(rect.width() * 0.84, rect.height() * 0.86, rect.width() * 0.18)
+        right_glow.setColorAt(0.0, QColor(18, 196, 255, 14))
         right_glow.setColorAt(1.0, QColor(18, 196, 255, 0))
         painter.setBrush(right_glow)
         painter.drawEllipse(
-            int(rect.width() * 0.56),
-            int(rect.height() * 0.52),
-            int(rect.width() * 0.52),
-            int(rect.width() * 0.52),
+            int(rect.width() * 0.70),
+            int(rect.height() * 0.72),
+            int(rect.width() * 0.24),
+            int(rect.width() * 0.24),
         )
 
         top_bar = QLinearGradient(0.0, 0.0, float(rect.width()), 0.0)
-        top_bar.setColorAt(0.0, QColor(20, 154, 204, 46))
-        top_bar.setColorAt(0.5, QColor(36, 220, 255, 116))
-        top_bar.setColorAt(1.0, QColor(20, 154, 204, 46))
-        painter.fillRect(0, 26, rect.width(), 64, top_bar)
+        top_bar.setColorAt(0.0, QColor(20, 154, 204, 0))
+        top_bar.setColorAt(0.5, QColor(36, 220, 255, 12))
+        top_bar.setColorAt(1.0, QColor(20, 154, 204, 0))
+        painter.fillRect(0, 56, rect.width(), 4, top_bar)
 
-        _l, _t, _r, _b = _FRAME_INSETS
-        frame_rect = rect.adjusted(_l, _t, -_r, -_b)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        outer_pen = QPen(QColor(51, 205, 255, 124), 2.0)
-        painter.setPen(outer_pen)
-        painter.drawRoundedRect(frame_rect, 22.0, 22.0)
-        inner_pen = QPen(QColor(126, 235, 255, 58), 1.0)
-        painter.setPen(inner_pen)
-        painter.drawRoundedRect(frame_rect.adjusted(6, 6, -6, -6), 18.0, 18.0)
+        def _draw_circuit_block(x_start: int, x_end: int, y_start: int, y_end: int, *, mirrored: bool = False) -> None:
+            painter.save()
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(90, 218, 255, 12), 1.0))
+            for x in range(x_start, x_end, 52):
+                painter.drawLine(x, y_start, x, y_end)
+            for y in range(y_start, y_end, 50):
+                painter.drawLine(x_start, y, x_end, y)
 
-        accent_pen = QPen(QColor(57, 216, 255, 140), 2.0)
-        painter.setPen(accent_pen)
-        corner_len = 34
-        for left, top in (
-            (frame_rect.left() + 16, frame_rect.top() + 16),
-            (frame_rect.right() - 16, frame_rect.top() + 16),
-            (frame_rect.left() + 16, frame_rect.bottom() - 16),
-            (frame_rect.right() - 16, frame_rect.bottom() - 16),
-        ):
-            dx = corner_len if left < frame_rect.center().x() else -corner_len
-            dy = corner_len if top < frame_rect.center().y() else -corner_len
-            painter.drawLine(left, top, left + dx, top)
-            painter.drawLine(left, top, left, top + dy)
+            painter.setPen(QPen(QColor(97, 228, 255, 24), 1.15))
+            anchor_x = x_start + 54 if not mirrored else x_end - 54
+            mid_y = y_start + ((y_end - y_start) // 3)
+            lower_y = y_start + ((y_end - y_start) * 2 // 3)
+            elbow = 52
+            if mirrored:
+                painter.drawLine(anchor_x, mid_y, anchor_x - elbow, mid_y)
+                painter.drawLine(anchor_x - elbow, mid_y, anchor_x - elbow, mid_y + 28)
+                painter.drawLine(anchor_x - elbow, lower_y, anchor_x - (elbow * 2), lower_y)
+                painter.drawLine(anchor_x - (elbow * 2), lower_y, anchor_x - (elbow * 2), lower_y + 34)
+            else:
+                painter.drawLine(anchor_x, mid_y, anchor_x + elbow, mid_y)
+                painter.drawLine(anchor_x + elbow, mid_y, anchor_x + elbow, mid_y + 28)
+                painter.drawLine(anchor_x, lower_y, anchor_x + (elbow * 2), lower_y)
+                painter.drawLine(anchor_x + (elbow * 2), lower_y, anchor_x + (elbow * 2), lower_y + 34)
+            painter.restore()
 
-        sweep = QLinearGradient(float(frame_rect.left()), float(frame_rect.top()), float(frame_rect.right()), float(frame_rect.top()))
-        sweep.setColorAt(0.0, QColor(57, 216, 255, 0))
-        sweep.setColorAt(0.5, QColor(57, 216, 255, 96))
-        sweep.setColorAt(1.0, QColor(57, 216, 255, 0))
-        painter.fillRect(frame_rect.left() + 24, frame_rect.top() + 18, frame_rect.width() - 48, 2, sweep)
+        window = self.window()
+        sidebar = getattr(window, "sidebar_frame", None)
+        sidebar_line_x = 108
+        if sidebar is not None and sidebar.width() > 0:
+            sidebar_line_x = sidebar.width()
+
+        gutter_top = 136
+        gutter_bottom = max(gutter_top + 160, rect.height() - 96)
+        left_block_start = max(56, sidebar_line_x + 18)
+        left_block_end = max(left_block_start + 48, int(rect.width() * 0.21))
+        _draw_circuit_block(left_block_start, left_block_end, gutter_top, gutter_bottom, mirrored=False)
+        _draw_circuit_block(
+            max(int(rect.width() * 0.84), int(rect.width() - 230)),
+            rect.width() - 58,
+            gutter_top + 34,
+            gutter_bottom - 82,
+            mirrored=True,
+        )
+
+        painter.setPen(QPen(QColor(89, 232, 255, 38), 1.0))
+        painter.drawLine(sidebar_line_x, 68, sidebar_line_x, rect.height() - 36)
+
+        painter.setPen(QPen(QColor(110, 235, 255, 30), 1.4))
+        painter.drawLine(sidebar_line_x + 76, 156, rect.width() - 138, 156)
         painter.end()
         super().paintEvent(event)
 
@@ -357,6 +409,7 @@ class QtMainWindow(QMainWindow):
         self.setWindowTitle("LegalPDF Translate")
         self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.setMinimumSize(720, 540)
+        self.resize(1680, 960)
         self._initial_resize_done = False
         self._simple_mode = _is_simple_mode()
 
@@ -383,6 +436,7 @@ class QtMainWindow(QMainWindow):
         self._glossary_builder_dialog: QtGlossaryBuilderDialog | None = None
         self._calibration_dialog: QtCalibrationAuditDialog | None = None
         self._menu_actions: dict[str, QAction] = {}
+        self._overflow_menu_actions: dict[str, QAction] = {}
         self._joblog_db_path = job_log_db_path()
         self._session_started_at = datetime.now()
         self._metadata_logs_dir = app_data_dir() / "logs"
@@ -398,6 +452,14 @@ class QtMainWindow(QMainWindow):
         self._progress_total_pages = 0
         self._image_pages_seen: set[int] = set()
         self._retry_pages_seen: set[int] = set()
+        self._queue_total_jobs = 0
+        self._queue_status_by_job_id: dict[str, dict[str, Any]] = {}
+        self._run_started_at: float | None = None
+        self._dashboard_snapshot = _DashboardSnapshot()
+        self._dashboard_error_count = 0
+        self._dashboard_error_retry_count = 0
+        self._dashboard_eta_text = "--"
+        self._layout_mode = _LAYOUT_DESKTOP_EXACT
         self._click_debug_enabled = _is_truthy_env(os.getenv("LEGALPDF_QT_CLICK_DEBUG"))
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
@@ -416,87 +478,248 @@ class QtMainWindow(QMainWindow):
     def _build_ui(self) -> None:
         root = _FuturisticCanvas(self)
         self.setCentralWidget(root)
-
-        outer = QVBoxLayout(root)
-        outer.setContentsMargins(*_FRAME_INSETS)
+        outer = QHBoxLayout(root)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
+
+        self.sidebar_frame = QFrame(objectName="SidebarPanel")
+        self.sidebar_frame.setFixedWidth(136)
+        sidebar_layout = QVBoxLayout(self.sidebar_frame)
+        self.sidebar_layout = sidebar_layout
+        sidebar_layout.setContentsMargins(10, 22, 10, 26)
+        sidebar_layout.setSpacing(14)
+
+        self.sidebar_logo_label = QLabel(objectName="SidebarLogoLabel")
+        self.sidebar_logo_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        self.sidebar_logo_label.setPixmap(self._icon("resources/icons/dashboard/logo_l.svg").pixmap(QSize(72, 72)))
+        sidebar_layout.addWidget(self.sidebar_logo_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        sidebar_layout.addSpacing(10)
+
+        self.dashboard_nav_btn = self._make_sidebar_button(
+            "Dashboard",
+            "resources/icons/dashboard/home.svg",
+            self._focus_dashboard,
+            active=True,
+        )
+        self.new_job_nav_btn = self._make_sidebar_button(
+            "New Job",
+            "resources/icons/dashboard/new_job.svg",
+            self._new_run,
+        )
+        self.recent_jobs_nav_btn = self._make_sidebar_button(
+            "Recent Jobs",
+            "resources/icons/dashboard/recent.svg",
+            self._open_joblog_window,
+        )
+        self.settings_nav_btn = self._make_sidebar_button(
+            "Settings",
+            "resources/icons/dashboard/settings.svg",
+            self._open_settings_dialog,
+        )
+        self.profile_nav_btn = self._make_sidebar_button(
+            "Profile",
+            "resources/icons/dashboard/profile.svg",
+            self._show_profile_coming_soon,
+            coming_soon=True,
+        )
+        self._sidebar_nav_buttons = [
+            self.dashboard_nav_btn,
+            self.new_job_nav_btn,
+            self.recent_jobs_nav_btn,
+            self.settings_nav_btn,
+            self.profile_nav_btn,
+        ]
+        sidebar_layout.addWidget(self.dashboard_nav_btn)
+        sidebar_layout.addWidget(self.new_job_nav_btn)
+        sidebar_layout.addWidget(self.recent_jobs_nav_btn)
+        sidebar_layout.addWidget(self.settings_nav_btn)
+        sidebar_layout.addStretch(1)
+        sidebar_layout.addWidget(self.profile_nav_btn)
+        outer.addWidget(self.sidebar_frame)
 
         self._scroll_area = QScrollArea()
         self._scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll_area.setWidgetResizable(True)
         self._scroll_area.viewport().setAutoFillBackground(False)
         self._scroll_area.setStyleSheet("QScrollArea{background:transparent;}")
-        self._scroll_area.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         scroll_content = QWidget()
         scroll_content.setStyleSheet("background:transparent;")
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(18, 14, 18, 6)
+        self.scroll_layout = scroll_layout
+        scroll_layout.setContentsMargins(18, 16, 18, 12)
         scroll_layout.setSpacing(0)
         scroll_layout.addStretch(1)
 
-        self.content_card = QFrame(objectName="GlassCard")
-        self.content_card.setMaximumWidth(1180)
-        self.content_card.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred,
-        )
-        apply_soft_shadow(self.content_card, blur_radius=66, offset_y=16)
-        scroll_layout.addWidget(self.content_card, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.content_card = QWidget()
+        self.content_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.content_card.setStyleSheet("background:transparent;")
+        self.content_card.setFixedWidth(1500)
+        self.content_card.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        content_row = QHBoxLayout()
+        self.content_row_layout = content_row
+        content_row.setContentsMargins(0, 0, 0, 0)
+        content_row.setSpacing(0)
+        content_row.addStretch(1)
+        content_row.addWidget(self.content_card, 0)
+        content_row.addStretch(1)
+        scroll_layout.addLayout(content_row)
         scroll_layout.addStretch(1)
-
         self._scroll_area.setWidget(scroll_content)
         outer.addWidget(self._scroll_area, 1)
 
         card_shell = QVBoxLayout(self.content_card)
-        card_shell.setContentsMargins(18, 16, 18, 16)
-        card_shell.setSpacing(10)
+        self.card_shell_layout = card_shell
+        card_shell.setContentsMargins(0, 0, 0, 0)
+        card_shell.setSpacing(16)
 
-        self.header_strip = QFrame(objectName="HeaderStrip")
-        header = QHBoxLayout(self.header_strip)
-        header.setContentsMargins(18, 12, 18, 12)
-        header.setSpacing(10)
-        self.title_label = QLabel("LegalPDF Translate", objectName="TitleLabel")
-        self.header_status_label = QLabel("Idle", objectName="StatusHeaderLabel")
+        hero_row = QGridLayout()
+        hero_row.setContentsMargins(0, 0, 0, 6)
+        hero_row.setHorizontalSpacing(0)
+        hero_row.setVerticalSpacing(0)
+        hero_row.setColumnStretch(0, 1)
+        hero_row.setColumnStretch(2, 1)
+        self.title_label = QLabel("LegalPDF Translate", objectName="HeroTitleLabel")
+        self.header_status_label = QLabel("Idle", objectName="HeroStatusLabel")
         self.header_status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        header.addWidget(self.title_label, 1)
-        header.addWidget(self.header_status_label, 0)
-        card_shell.addWidget(self.header_strip)
+        self.header_status_label.setMinimumWidth(120)
+        apply_primary_glow(self.title_label, blur_radius=34)
+        hero_row.addWidget(self.title_label, 0, 1, Qt.AlignmentFlag.AlignCenter)
+        hero_row.addWidget(self.header_status_label, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        card_shell.addLayout(hero_row)
 
-        self.main_card = QFrame(objectName="SurfacePanel")
+        self.dashboard_frame = QFrame(objectName="DashboardFrame")
+        apply_soft_shadow(self.dashboard_frame, blur_radius=56, offset_y=14)
+        dashboard_layout = QVBoxLayout(self.dashboard_frame)
+        self.dashboard_layout = dashboard_layout
+        dashboard_layout.setContentsMargins(34, 24, 34, 20)
+        dashboard_layout.setSpacing(20)
+
+        self.main_card = QFrame(objectName="HiddenUtilityPanel")
         main_layout = QVBoxLayout(self.main_card)
-        main_layout.setContentsMargins(16, 14, 16, 14)
-        main_layout.setSpacing(10)
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(10)
-        grid.setColumnStretch(1, 1)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(20)
+
+        body_row = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        body_row.setContentsMargins(0, 0, 0, 0)
+        body_row.setSpacing(26)
+        self.body_layout = body_row
+
+        self.setup_panel = QFrame(objectName="ShellPanel")
+        self.setup_panel.setMinimumWidth(0)
+        self.setup_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        setup_layout = QVBoxLayout(self.setup_panel)
+        self.setup_layout = setup_layout
+        setup_layout.setContentsMargins(28, 22, 28, 22)
+        setup_layout.setSpacing(18)
+        setup_layout.addWidget(QLabel("Job Setup", objectName="PanelHeading"))
+
+        setup_grid = QGridLayout()
+        self.setup_grid = setup_grid
+        setup_grid.setHorizontalSpacing(20)
+        setup_grid.setVerticalSpacing(18)
+        setup_grid.setColumnMinimumWidth(0, 176)
+        setup_grid.setColumnStretch(1, 1)
 
         self.pdf_edit = QLineEdit(placeholderText="Select PDF file...")
-        self.pdf_btn = QPushButton("Browse")
-        self.pages_label = QLabel("Pages: -", objectName="MutedLabel")
-        grid.addWidget(QLabel("PDF"), 0, 0)
-        grid.addWidget(self.pdf_edit, 0, 1)
-        grid.addWidget(self.pdf_btn, 0, 2)
-        grid.addWidget(self.pages_label, 0, 3)
+        self.pdf_edit.setProperty("embeddedField", True)
+        self.pdf_edit.setMinimumWidth(220)
+        self.pdf_btn = QToolButton(objectName="FieldBrowseButton")
+        self.pdf_btn.setIcon(self._icon("resources/icons/dashboard/folder_search.svg"))
+        self.pdf_btn.setIconSize(QSize(18, 18))
+        self.pages_label = QLabel("Pages: -", objectName="FieldSupportLabel")
+        self.pages_label.setMinimumWidth(74)
+        self.pages_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        pdf_support_cluster = QWidget()
+        pdf_support_layout = QHBoxLayout(pdf_support_cluster)
+        pdf_support_layout.setContentsMargins(0, 0, 0, 0)
+        pdf_support_layout.setSpacing(8)
+        self.pdf_pages_icon_label = self._make_icon_label("resources/icons/dashboard/pages.svg", 18)
+        pdf_support_layout.addWidget(self.pdf_pages_icon_label, 0)
+        pdf_support_layout.addWidget(self.pages_label, 0)
+        pdf_divider = QFrame(objectName="InlineDivider")
+        pdf_divider.setFrameShape(QFrame.Shape.VLine)
+        pdf_divider.setFixedHeight(28)
+        pdf_btn_divider = QFrame(objectName="InlineDivider")
+        pdf_btn_divider.setFrameShape(QFrame.Shape.VLine)
+        pdf_btn_divider.setFixedHeight(28)
+        pdf_field = QFrame(objectName="FieldChrome")
+        pdf_field_layout = QHBoxLayout(pdf_field)
+        pdf_field_layout.setContentsMargins(14, 8, 12, 8)
+        pdf_field_layout.setSpacing(12)
+        pdf_field_layout.addWidget(self._make_icon_label("resources/icons/dashboard/pdf_search.svg", 20))
+        pdf_field_layout.addWidget(self.pdf_edit, 1)
+        pdf_field_layout.addWidget(pdf_divider, 0)
+        pdf_field_layout.addWidget(pdf_support_cluster, 0)
+        pdf_field_layout.addWidget(pdf_btn_divider, 0)
+        pdf_field_layout.addWidget(self.pdf_btn, 0)
+        setup_grid.addWidget(QLabel("Source PDF", objectName="FieldLabel"), 0, 0)
+        setup_grid.addWidget(pdf_field, 0, 1)
 
-        self.lang_combo = QComboBox(); self.lang_combo.addItems(["EN", "FR", "AR"])
+        self.lang_combo = QComboBox()
+        self.lang_combo.addItems(["EN", "FR", "AR"])
+        self.lang_combo.setProperty("embeddedField", True)
+        self.lang_combo.setProperty("langField", True)
+        self.lang_combo.setMinimumWidth(64)
+        self.lang_combo.setMaximumWidth(72)
+        self.flag_label = QLabel(objectName="FlagLabel")
+        self.flag_label.setFixedSize(30, 20)
+        self.flag_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.flag_label.setPixmap(self._icon("resources/icons/dashboard/flag_en.svg").pixmap(QSize(28, 18)))
+        lang_divider = QFrame(objectName="InlineDivider")
+        lang_divider.setFrameShape(QFrame.Shape.VLine)
+        lang_divider.setFixedHeight(28)
+        self.lang_caret_btn = QToolButton(objectName="LangCaretButton")
+        self.lang_caret_btn.setIcon(self._icon("resources/icons/dashboard/caret_down.svg"))
+        self.lang_caret_btn.setIconSize(QSize(12, 12))
+        self.lang_caret_btn.setAutoRaise(False)
+        lang_field = QFrame(objectName="FieldChrome")
+        lang_field_layout = QHBoxLayout(lang_field)
+        lang_field_layout.setContentsMargins(14, 8, 12, 8)
+        lang_field_layout.setSpacing(12)
+        lang_field_layout.addWidget(self._make_icon_label("resources/icons/dashboard/globe.svg", 20))
+        lang_field_layout.addWidget(self.lang_combo, 0)
+        lang_field_layout.addWidget(self.flag_label, 0)
+        lang_field_layout.addStretch(1)
+        lang_field_layout.addWidget(lang_divider, 0)
+        lang_field_layout.addWidget(self.lang_caret_btn, 0)
+        setup_grid.addWidget(QLabel("Target Language", objectName="FieldLabel"), 1, 0)
+        setup_grid.addWidget(lang_field, 1, 1)
+
         self.outdir_edit = QLineEdit(placeholderText="Select output folder...")
-        self.outdir_btn = QPushButton("Browse")
-        grid.addWidget(QLabel("Language"), 1, 0)
-        grid.addWidget(self.lang_combo, 1, 1)
-        grid.addWidget(QLabel("Output Folder"), 2, 0)
-        grid.addWidget(self.outdir_edit, 2, 1)
-        grid.addWidget(self.outdir_btn, 2, 2)
+        self.outdir_edit.setProperty("embeddedField", True)
+        self.outdir_edit.setMinimumWidth(240)
+        self.outdir_btn = QToolButton(objectName="FieldBrowseButton")
+        self.outdir_btn.setIcon(self._icon("resources/icons/dashboard/folder_search.svg"))
+        self.outdir_btn.setIconSize(QSize(18, 18))
+        out_divider = QFrame(objectName="InlineDivider")
+        out_divider.setFrameShape(QFrame.Shape.VLine)
+        out_divider.setFixedHeight(28)
+        out_field = QFrame(objectName="FieldChrome")
+        out_field_layout = QHBoxLayout(out_field)
+        out_field_layout.setContentsMargins(14, 8, 12, 8)
+        out_field_layout.setSpacing(12)
+        out_field_layout.addWidget(self._make_icon_label("resources/icons/dashboard/folder_search.svg", 20))
+        out_field_layout.addWidget(self.outdir_edit, 1)
+        out_field_layout.addWidget(out_divider, 0)
+        out_field_layout.addWidget(self.outdir_btn, 0)
+        setup_grid.addWidget(QLabel("Output Folder", objectName="FieldLabel"), 2, 0)
+        setup_grid.addWidget(out_field, 2, 1)
+        setup_layout.addLayout(setup_grid)
 
-        self.show_adv = QCheckBox("Show Advanced")
-        grid.addWidget(self.show_adv, 3, 0, 1, 2)
-        main_layout.addLayout(grid)
+        self.show_adv = QToolButton(objectName="SectionToggleButton")
+        self.show_adv.setText("Advanced Settings")
+        self.show_adv.setCheckable(True)
+        self.show_adv.setChecked(False)
+        self.show_adv.setArrowType(Qt.ArrowType.RightArrow)
+        self.show_adv.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.show_adv.setMinimumHeight(64)
+        setup_layout.addWidget(self.show_adv)
 
-        self.adv_frame = QFrame(objectName="SurfacePanel")
+        self.adv_frame = QFrame(objectName="ShellPanel")
         adv = QFormLayout(self.adv_frame)
-        adv.setContentsMargins(10, 10, 10, 10)
+        adv.setContentsMargins(14, 14, 14, 14)
         adv.setHorizontalSpacing(12)
         adv.setVerticalSpacing(10)
         self.effort_policy_combo = QComboBox(); self.effort_policy_combo.addItems(["adaptive", "fixed_high", "fixed_xhigh"])
@@ -512,12 +735,16 @@ class QtMainWindow(QMainWindow):
         self.breaks_check = QCheckBox("Insert page breaks")
         self.keep_check = QCheckBox("Keep intermediates")
         self.context_file_edit = QLineEdit(placeholderText="Optional context file...")
-        self.context_btn = QPushButton("Browse")
+        self.context_btn = QToolButton(objectName="FieldBrowseButton")
+        self.context_btn.setIcon(self._icon("resources/icons/dashboard/folder_search.svg"))
+        self.context_btn.setIconSize(QSize(18, 18))
         cf = QWidget(); cfl = QHBoxLayout(cf); cfl.setContentsMargins(0, 0, 0, 0); cfl.setSpacing(8); cfl.addWidget(self.context_file_edit); cfl.addWidget(self.context_btn)
         self.context_text = QPlainTextEdit(); self.context_text.setFixedHeight(90); self.context_text.setPlaceholderText("Optional context text...")
         self.analyze_btn = QPushButton("Analyze")
         self.queue_manifest_edit = QLineEdit(placeholderText="Optional queue manifest (.json/.jsonl)...")
-        self.queue_manifest_btn = QPushButton("Browse")
+        self.queue_manifest_btn = QToolButton(objectName="FieldBrowseButton")
+        self.queue_manifest_btn.setIcon(self._icon("resources/icons/dashboard/folder_search.svg"))
+        self.queue_manifest_btn.setIconSize(QSize(18, 18))
         queue_manifest_row = QWidget()
         queue_manifest_layout = QHBoxLayout(queue_manifest_row)
         queue_manifest_layout.setContentsMargins(0, 0, 0, 0)
@@ -545,14 +772,14 @@ class QtMainWindow(QMainWindow):
         adv.addRow("", self.queue_rerun_failed_only_check)
         adv.addRow("", self.run_queue_btn)
         adv.addRow("Queue status", self.queue_status_label)
-        main_layout.addWidget(self.adv_frame)
+        setup_layout.addWidget(self.adv_frame)
 
-        self.advisor_frame = QFrame(objectName="SurfacePanel")
+        self.advisor_frame = QFrame(objectName="ShellPanel")
         advisor_layout = QHBoxLayout(self.advisor_frame)
-        advisor_layout.setContentsMargins(10, 8, 10, 8)
+        advisor_layout.setContentsMargins(12, 10, 12, 10)
         advisor_layout.setSpacing(10)
-        advisor_title = QLabel("Advisor", objectName="MutedLabel")
-        self.advisor_label = QLabel("", objectName="PathLabel")
+        advisor_title = QLabel("Advisor", objectName="FieldSupportLabel")
+        self.advisor_label = QLabel("", objectName="FieldValueLabel")
         self.advisor_apply_btn = QPushButton("Apply")
         self.advisor_ignore_btn = QPushButton("Ignore")
         advisor_layout.addWidget(advisor_title)
@@ -560,12 +787,135 @@ class QtMainWindow(QMainWindow):
         advisor_layout.addWidget(self.advisor_apply_btn)
         advisor_layout.addWidget(self.advisor_ignore_btn)
         self.advisor_frame.setVisible(False)
-        main_layout.addWidget(self.advisor_frame)
-        card_shell.addWidget(self.main_card)
+        setup_layout.addWidget(self.advisor_frame)
+        setup_layout.addStretch(1)
+        body_row.addWidget(self.setup_panel, 7)
 
-        self.details_card = QFrame(objectName="SurfacePanel")
+        self.progress_panel = QFrame(objectName="ShellPanel")
+        self.progress_panel.setMinimumWidth(0)
+        self.progress_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        progress_layout = QVBoxLayout(self.progress_panel)
+        self.progress_layout = progress_layout
+        progress_layout.setContentsMargins(28, 22, 28, 22)
+        progress_layout.setSpacing(16)
+
+        self.progress_panel_title = QLabel("Conversion Output", objectName="PanelHeading")
+        progress_layout.addWidget(self.progress_panel_title)
+
+        summary_row = QHBoxLayout()
+        summary_row.setContentsMargins(0, 0, 0, 0)
+        summary_row.setSpacing(18)
+        self.progress_summary_label = QLabel("0%", objectName="ProgressSummaryLabel")
+        self.progress_eta_label = QLabel("Est. remaining: --", objectName="ProgressSummaryLabel")
+        summary_row.addWidget(self.progress_summary_label, 0)
+        summary_row.addStretch(1)
+        summary_row.addWidget(self.progress_eta_label, 0)
+        progress_layout.addLayout(summary_row)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        progress_layout.addWidget(self.progress)
+
+        task_row = QHBoxLayout()
+        task_row.setContentsMargins(0, 0, 0, 0)
+        task_row.setSpacing(8)
+        task_row.addWidget(QLabel("Current Task:", objectName="CurrentTaskLabel"), 0)
+        self.status_label = QLabel("Idle", objectName="CurrentTaskLabel")
+        self.status_label.setWordWrap(True)
+        task_row.addWidget(self.status_label, 1)
+        progress_layout.addLayout(task_row)
+
+        metric_frame = QFrame(objectName="MetricGridFrame")
+        metric_grid = QGridLayout(metric_frame)
+        self.metric_grid_layout = metric_grid
+        metric_grid.setContentsMargins(14, 14, 14, 14)
+        metric_grid.setHorizontalSpacing(14)
+        metric_grid.setVerticalSpacing(12)
+
+        def _metric_left(icon_rel: str, title: str, attr_name: str) -> QWidget:
+            widget = QFrame(objectName="MetricCell")
+            layout = QHBoxLayout(widget)
+            layout.setContentsMargins(8, 8, 8, 8)
+            layout.setSpacing(10)
+            layout.addWidget(self._make_icon_label(icon_rel, 18))
+            label = QLabel(title, objectName="MetricTitle")
+            setattr(self, attr_name, label)
+            layout.addWidget(label, 1)
+            return widget
+
+        def _metric_value(label: str, object_name: str) -> QLabel:
+            value = QLabel(label, objectName=object_name)
+            value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            return value
+
+        self.metric_retry_header_label = QLabel("Retries", objectName="MetricTitle")
+        self.metric_retry_header_label.setAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignTop)
+
+        self.metric_pages_value_label = _metric_value("0 / --", "MetricValue")
+        self.metric_pages_retry_value_label = QLabel("0", objectName="MetricRetryValue")
+        self.metric_images_value_label = _metric_value("0 / --", "MetricValue")
+        self.metric_images_retry_value_label = QLabel("0", objectName="MetricRetryValue")
+        self.metric_errors_value_label = _metric_value("0", "MetricValue")
+        self.metric_errors_retry_value_label = QLabel("0", objectName="MetricRetryValue")
+
+        metric_grid.addWidget(_metric_left("resources/icons/dashboard/pages.svg", "Pages", "metric_pages_title_label"), 0, 0)
+        metric_grid.addWidget(self.metric_pages_value_label, 0, 1)
+        metric_grid.addWidget(self.metric_retry_header_label, 0, 2, Qt.AlignmentFlag.AlignCenter)
+        metric_grid.addWidget(_metric_left("resources/icons/dashboard/images.svg", "Images", "metric_images_title_label"), 1, 0)
+        metric_grid.addWidget(self.metric_images_value_label, 1, 1)
+        metric_grid.addWidget(_metric_left("resources/icons/dashboard/warning.svg", "Errors", "metric_errors_title_label"), 2, 0)
+        metric_grid.addWidget(self.metric_errors_value_label, 2, 1)
+        metric_grid.setColumnStretch(0, 3)
+        metric_grid.setColumnStretch(1, 2)
+        metric_grid.setColumnStretch(2, 1)
+        metric_grid.setColumnMinimumWidth(2, 88)
+        progress_layout.addWidget(metric_frame)
+
+        self.output_format_label = QLabel("Output Format: DOCX", objectName="OutputFormatLabel")
+        progress_layout.addWidget(self.output_format_label)
+        progress_layout.addStretch(1)
+        body_row.addWidget(self.progress_panel, 6)
+        main_layout.addLayout(body_row)
+
+        self.footer_card = QFrame(objectName="ActionRail")
+        footer = QGridLayout(self.footer_card)
+        footer.setContentsMargins(22, 18, 22, 18)
+        footer.setHorizontalSpacing(18)
+        footer.setVerticalSpacing(12)
+        self.footer_layout = footer
+
+        self.translate_btn = QPushButton("Start Translate", objectName="PrimaryButton")
+        self.cancel_btn = QPushButton("Cancel", objectName="DangerButton")
+        self.more_btn = QToolButton(objectName="OverflowMenuButton")
+        self.more_btn.setText("...")
+        for widget in (self.translate_btn, self.cancel_btn, self.more_btn):
+            widget.setMinimumHeight(72)
+            widget.setMaximumHeight(72)
+        self.cancel_btn.setFixedWidth(186)
+        self.more_btn.setFixedWidth(92)
+        self.more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.more_menu = QMenu(self.more_btn)
+        self.more_btn.setMenu(self.more_menu)
+        self._configure_footer_layout(compact=False)
+        apply_primary_glow(self.translate_btn, blur_radius=24)
+        apply_primary_glow(self.footer_card, blur_radius=22)
+        main_layout.addWidget(self.footer_card)
+        dashboard_layout.addWidget(self.main_card)
+        card_shell.addWidget(self.dashboard_frame)
+
+        footer_meta_row = QHBoxLayout()
+        footer_meta_row.setContentsMargins(8, 4, 0, 0)
+        footer_meta_row.setSpacing(0)
+        self.footer_meta_label = QLabel("Project v3.0 | LegalPDF", objectName="FooterMetaLabel")
+        footer_meta_row.addWidget(self.footer_meta_label, 0, Qt.AlignmentFlag.AlignLeft)
+        footer_meta_row.addStretch(1)
+        card_shell.addLayout(footer_meta_row)
+
+        self.details_card = QFrame(objectName="ShellPanel")
         details_layout = QVBoxLayout(self.details_card)
-        details_layout.setContentsMargins(10, 8, 10, 10)
+        details_layout.setContentsMargins(12, 10, 12, 10)
         self.details_btn = QToolButton(objectName="DisclosureButton")
         self.details_btn.setCheckable(True)
         self.details_btn.setChecked(False)
@@ -577,22 +927,23 @@ class QtMainWindow(QMainWindow):
         self.log_text.setMaximumBlockCount(5000)
         details_layout.addWidget(self.details_btn)
         details_layout.addWidget(self.log_text)
+        self.details_card.setVisible(False)
         card_shell.addWidget(self.details_card)
 
-        self.footer_card = QFrame(objectName="SurfacePanel")
-        self.footer_card.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-        footer = QVBoxLayout(self.footer_card)
-        footer.setContentsMargins(14, 10, 14, 10)
-        footer.setSpacing(10)
-        fp = QHBoxLayout(); fp.addWidget(QLabel("Final DOCX")); self.final_docx_edit = QLineEdit(readOnly=True); fp.addWidget(self.final_docx_edit, 1); footer.addLayout(fp)
-        pr = QHBoxLayout(); self.progress = QProgressBar(); self.progress.setRange(0, 100); self.progress.setValue(0); self.page_label = QLabel("Page: -/-", objectName="MutedLabel"); pr.addWidget(self.progress, 1); pr.addWidget(self.page_label); footer.addLayout(pr)
-        self.status_label = QLabel("Idle", objectName="PathLabel")
+        self.utility_panel = QFrame(objectName="HiddenUtilityPanel")
+        utility_layout = QVBoxLayout(self.utility_panel)
+        utility_layout.setContentsMargins(0, 0, 0, 0)
+        utility_layout.setSpacing(4)
+        final_row = QHBoxLayout()
+        final_row.setContentsMargins(0, 0, 0, 0)
+        final_row.addWidget(QLabel("Final DOCX"))
+        self.final_docx_edit = QLineEdit(readOnly=True)
+        final_row.addWidget(self.final_docx_edit, 1)
+        utility_layout.addLayout(final_row)
+        self.page_label = QLabel("Page: -/-", objectName="MutedLabel")
         self.live_counters_label = QLabel("Done 0/0 | Images 0 | Retries 0", objectName="MutedLabel")
-        footer.addWidget(self.status_label)
-        footer.addWidget(self.live_counters_label)
-
-        self.translate_btn = QPushButton("Translate", objectName="PrimaryButton")
-        self.cancel_btn = QPushButton("Cancel", objectName="DangerButton")
+        utility_layout.addWidget(self.page_label)
+        utility_layout.addWidget(self.live_counters_label)
         self.new_btn = QPushButton("New Run")
         self.partial_btn = QPushButton("Export partial DOCX")
         self.rebuild_btn = QPushButton("Rebuild DOCX")
@@ -601,24 +952,26 @@ class QtMainWindow(QMainWindow):
         self.review_queue_btn = QPushButton("Review Queue")
         self.save_joblog_btn = QPushButton("Save to Job Log")
         self.open_joblog_btn = QPushButton("Job Log")
+        hidden_buttons = QHBoxLayout()
+        hidden_buttons.setContentsMargins(0, 0, 0, 0)
+        hidden_buttons.setSpacing(6)
+        for btn in (
+            self.new_btn,
+            self.partial_btn,
+            self.rebuild_btn,
+            self.open_btn,
+            self.report_btn,
+            self.review_queue_btn,
+            self.save_joblog_btn,
+            self.open_joblog_btn,
+        ):
+            btn.setVisible(False)
+            hidden_buttons.addWidget(btn)
+        utility_layout.addLayout(hidden_buttons)
+        self.utility_panel.setVisible(False)
+        card_shell.addWidget(self.utility_panel)
 
-        btn_grid = QGridLayout()
-        btn_grid.setSpacing(8)
-        row0 = [self.translate_btn, self.cancel_btn, self.new_btn,
-                self.partial_btn, self.rebuild_btn]
-        row1 = [self.open_btn, self.report_btn, self.review_queue_btn, self.save_joblog_btn,
-                self.open_joblog_btn]
-        for col, btn in enumerate(row0):
-            btn.setToolTip(btn.text())
-            btn_grid.addWidget(btn, 0, col)
-        for col, btn in enumerate(row1):
-            btn.setToolTip(btn.text())
-            btn_grid.addWidget(btn, 1, col)
-        btn_grid.setColumnStretch(len(row0), 1)
-        footer.addLayout(btn_grid)
-        card_shell.addWidget(self.footer_card)
-
-        apply_primary_glow(self.translate_btn, blur_radius=28)
+        self._install_overflow_menu()
 
         self.pdf_btn.clicked.connect(self._pick_pdf)
         self.outdir_btn.clicked.connect(self._pick_outdir)
@@ -629,6 +982,7 @@ class QtMainWindow(QMainWindow):
         self.analyze_btn.clicked.connect(self._start_analyze)
         self.run_queue_btn.clicked.connect(self._start_queue)
         self.queue_manifest_btn.clicked.connect(self._pick_queue_manifest)
+        self.lang_caret_btn.clicked.connect(self.lang_combo.showPopup)
         self.advisor_apply_btn.clicked.connect(self._apply_advisor_recommendation)
         self.advisor_ignore_btn.clicked.connect(self._ignore_advisor_recommendation)
         self.cancel_btn.clicked.connect(self._cancel)
@@ -662,7 +1016,306 @@ class QtMainWindow(QMainWindow):
 
         self._set_adv_visible(False)
         self._set_details_visible(False)
+        self._refresh_dashboard_counters()
+        self._apply_responsive_layout()
         self._refresh_canvas()
+
+    def _icon(self, rel_path: str) -> QIcon:
+        return QIcon(str(resource_path(rel_path)))
+
+    def _make_icon_label(self, rel_path: str, size: int) -> QLabel:
+        label = QLabel()
+        label.setPixmap(self._icon(rel_path).pixmap(QSize(size, size)))
+        label.setFixedSize(size + 2, size + 2)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return label
+
+    def _make_sidebar_button(
+        self,
+        text: str,
+        icon_rel_path: str,
+        callback,
+        *,
+        active: bool = False,
+        coming_soon: bool = False,
+    ) -> QToolButton:
+        button = QToolButton(objectName="SidebarNavButton")
+        button.setText(text)
+        button.setIcon(self._icon(icon_rel_path))
+        button.setIconSize(QSize(26, 26))
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        button.setAutoRaise(False)
+        button.setCheckable(False)
+        button.setFixedWidth(112)
+        button.setMinimumHeight(98)
+        button.setProperty("navRole", "active" if active else "idle")
+        if coming_soon:
+            button.setProperty("comingSoon", "true")
+        button.clicked.connect(callback)
+        return button
+
+    def _configure_footer_layout(self, *, compact: bool) -> None:
+        footer = self.footer_layout
+        while footer.count():
+            footer.takeAt(0)
+        footer.setHorizontalSpacing(12 if compact else 18)
+        footer.setVerticalSpacing(12)
+        for index in range(3):
+            footer.setColumnStretch(index, 0)
+            footer.setColumnMinimumWidth(index, 0)
+        for index in range(2):
+            footer.setRowStretch(index, 0)
+            footer.setRowMinimumHeight(index, 0)
+
+        if compact:
+            footer.setColumnStretch(0, 1)
+            footer.addWidget(self.translate_btn, 0, 0, 1, 3)
+            footer.addWidget(self.cancel_btn, 1, 1)
+            footer.addWidget(self.more_btn, 1, 2)
+        else:
+            footer.setColumnStretch(0, 1)
+            footer.addWidget(self.translate_btn, 0, 0)
+            footer.addWidget(self.cancel_btn, 0, 1)
+            footer.addWidget(self.more_btn, 0, 2)
+
+        self._footer_compact = compact
+
+    def _layout_mode_for_budget(self, content_budget: int) -> str:
+        if content_budget >= 1500:
+            return _LAYOUT_DESKTOP_EXACT
+        if content_budget >= 1180:
+            return _LAYOUT_DESKTOP_COMPACT
+        return _LAYOUT_STACKED_COMPACT
+
+    def _apply_responsive_layout(self, *, viewport_width: int | None = None) -> None:
+        viewport = self._scroll_area.viewport()
+        width = viewport_width if viewport_width is not None else (viewport.width() if viewport is not None else self.width())
+        probe_budget = max(360, width - 36)
+        mode = self._layout_mode_for_budget(probe_budget)
+        self._layout_mode = mode
+
+        if mode == _LAYOUT_DESKTOP_EXACT:
+            sidebar_width = 136
+            nav_width = 112
+            nav_height = 98
+            icon_size = 26
+            logo_size = 74
+            scroll_margins = (18, 16, 18, 12)
+            sidebar_margins = (10, 22, 10, 24)
+            sidebar_spacing = 14
+            dashboard_margins = (36, 26, 36, 22)
+            dashboard_spacing = 22
+            setup_panel_margins = (30, 24, 30, 24)
+            progress_panel_margins = (28, 24, 28, 24)
+            field_label_width = 176
+            field_min_width = (260, 280)
+            body_spacing = 24
+            title_status_min_width = 120
+            progress_stretch = (10, 9)
+            progress_panel_min_width = 580
+        elif mode == _LAYOUT_DESKTOP_COMPACT:
+            sidebar_width = 118
+            nav_width = 100
+            nav_height = 92
+            icon_size = 24
+            logo_size = 66
+            scroll_margins = (14, 14, 14, 12)
+            sidebar_margins = (8, 18, 8, 20)
+            sidebar_spacing = 12
+            dashboard_margins = (28, 20, 28, 18)
+            dashboard_spacing = 18
+            setup_panel_margins = (24, 18, 24, 18)
+            progress_panel_margins = (22, 18, 22, 18)
+            field_label_width = 154
+            field_min_width = (220, 230)
+            body_spacing = 22
+            title_status_min_width = 104
+            progress_stretch = (9, 8)
+            progress_panel_min_width = 500
+        else:
+            sidebar_width = 74
+            nav_width = 58
+            nav_height = 70
+            icon_size = 18
+            logo_size = 46
+            scroll_margins = (10, 12, 10, 12)
+            sidebar_margins = (5, 14, 5, 16)
+            sidebar_spacing = 8
+            dashboard_margins = (22, 18, 22, 18)
+            dashboard_spacing = 18
+            setup_panel_margins = (18, 16, 18, 16)
+            progress_panel_margins = (18, 16, 18, 16)
+            field_label_width = 120
+            field_min_width = (150, 170)
+            body_spacing = 18
+            title_status_min_width = 84
+            progress_stretch = (0, 0)
+            progress_panel_min_width = 0
+
+        self.sidebar_frame.setFixedWidth(sidebar_width)
+        self.sidebar_layout.setContentsMargins(*sidebar_margins)
+        self.sidebar_layout.setSpacing(sidebar_spacing)
+        self.sidebar_logo_label.setPixmap(
+            self._icon("resources/icons/dashboard/logo_l.svg").pixmap(QSize(logo_size, logo_size))
+        )
+        for button in self._sidebar_nav_buttons:
+            button.setFixedWidth(nav_width)
+            button.setMinimumHeight(nav_height)
+            button.setMaximumHeight(nav_height)
+            button.setIconSize(QSize(icon_size, icon_size))
+
+        self.scroll_layout.setContentsMargins(*scroll_margins)
+        self.dashboard_layout.setContentsMargins(*dashboard_margins)
+        self.dashboard_layout.setSpacing(dashboard_spacing)
+        self.setup_layout.setContentsMargins(*setup_panel_margins)
+        self.progress_layout.setContentsMargins(*progress_panel_margins)
+        self.setup_grid.setColumnMinimumWidth(0, field_label_width)
+        self.pdf_edit.setMinimumWidth(field_min_width[0])
+        self.outdir_edit.setMinimumWidth(field_min_width[1])
+        self.header_status_label.setMinimumWidth(title_status_min_width)
+        self.progress_panel.setMinimumWidth(progress_panel_min_width)
+        self.progress_panel_title.setVisible(mode != _LAYOUT_STACKED_COMPACT or self.width() > 900)
+
+        self.body_layout.setSpacing(body_spacing)
+        if mode == _LAYOUT_STACKED_COMPACT:
+            self.body_layout.setDirection(QBoxLayout.Direction.TopToBottom)
+            self.body_layout.setStretch(0, 0)
+            self.body_layout.setStretch(1, 0)
+        else:
+            self.body_layout.setDirection(QBoxLayout.Direction.LeftToRight)
+            self.body_layout.setStretch(0, progress_stretch[0])
+            self.body_layout.setStretch(1, progress_stretch[1])
+
+        self._configure_footer_layout(compact=mode == _LAYOUT_STACKED_COMPACT)
+        self.centralWidget().update()
+
+    def _focus_dashboard(self) -> None:
+        self._set_dashboard_nav_active(self.dashboard_nav_btn)
+
+    def _show_profile_coming_soon(self) -> None:
+        QMessageBox.information(self, "Profile", "Coming soon.")
+
+    def _set_dashboard_nav_active(self, active_button: QToolButton) -> None:
+        buttons = getattr(self, "_sidebar_nav_buttons", [])
+        for button in buttons:
+            button.setProperty("navRole", "active" if button is active_button else "idle")
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def _install_overflow_menu(self) -> None:
+        menu = self.more_menu
+        actions = {
+            "open_output_folder": menu.addAction(self._icon("resources/icons/dashboard/open_folder.svg"), "Open Output Folder"),
+            "export_partial": menu.addAction(self._icon("resources/icons/dashboard/export.svg"), "Export Partial DOCX"),
+            "rebuild_docx": menu.addAction(self._icon("resources/icons/dashboard/rebuild.svg"), "Rebuild DOCX"),
+            "run_report": menu.addAction(self._icon("resources/icons/dashboard/report.svg"), "Generate Run Report"),
+            "job_log": menu.addAction(self._icon("resources/icons/dashboard/joblog.svg"), "View Job Log"),
+        }
+        actions["open_output_folder"].triggered.connect(self._open_output_folder)
+        actions["export_partial"].triggered.connect(self._export_partial)
+        actions["rebuild_docx"].triggered.connect(self._start_rebuild_docx)
+        actions["run_report"].triggered.connect(self._open_run_report)
+        actions["job_log"].triggered.connect(self._open_joblog_window)
+        self._overflow_menu_actions = actions
+
+    @staticmethod
+    def _format_eta_seconds(seconds: float | None) -> str:
+        if seconds is None or seconds <= 0:
+            return "--"
+        rounded = int(round(seconds))
+        if rounded < 60:
+            return f"~{rounded}s"
+        if rounded < 3600:
+            minutes = max(1, int(round(rounded / 60.0)))
+            return f"~{minutes}m"
+        hours = rounded // 3600
+        minutes = int(round((rounded % 3600) / 60.0))
+        return f"~{hours}h {minutes}m" if minutes else f"~{hours}h"
+
+    def _selected_pdf_page_total(self) -> int | None:
+        pages_text = self.pages_label.text().strip()
+        if not pages_text.startswith("Pages:"):
+            return None
+        return _coerce_int_or_none(pages_text.split(":", 1)[1].strip())
+
+    def _apply_dashboard_snapshot(self) -> None:
+        snapshot = self._dashboard_snapshot
+        self.progress_summary_label.setText(f"{max(0, min(100, int(snapshot.progress_percent)))}%")
+        self.progress_eta_label.setText(f"Est. remaining: {snapshot.eta_text}")
+        self.status_label.setText(snapshot.current_task or "Idle")
+
+        pages_total = snapshot.pages_total if snapshot.pages_total is not None else self._selected_pdf_page_total()
+        images_total = snapshot.images_total if snapshot.images_total is not None else 0
+        self.metric_pages_title_label.setText(snapshot.pages_title)
+        self.metric_images_title_label.setText(snapshot.images_title)
+        self.metric_errors_title_label.setText(snapshot.errors_title)
+        self.metric_pages_value_label.setText(
+            f"{max(0, int(snapshot.pages_done))} / {pages_total}" if pages_total is not None else f"{max(0, int(snapshot.pages_done))} / --"
+        )
+        self.metric_pages_retry_value_label.setText(str(max(0, int(snapshot.page_retries))))
+        self.metric_images_value_label.setText(f"{max(0, int(snapshot.images_done))} / {max(0, int(images_total))}")
+        self.metric_images_retry_value_label.setText(str(max(0, int(snapshot.image_retries))))
+        self.metric_errors_value_label.setText(str(max(0, int(snapshot.errors_count))))
+        self.metric_errors_retry_value_label.setText(str(max(0, int(snapshot.error_retries))))
+
+    def _refresh_dashboard_counters(self) -> None:
+        if self._running and self._progress_total_pages > 0 and self._progress_done_pages > 0 and self._run_started_at is not None:
+            elapsed = max(0.0, time.perf_counter() - self._run_started_at)
+            remaining_pages = max(0, self._progress_total_pages - self._progress_done_pages)
+            per_page = elapsed / float(max(1, self._progress_done_pages))
+            self._dashboard_eta_text = self._format_eta_seconds(per_page * float(remaining_pages))
+
+        progress_attr = getattr(self.progress, "value", None)
+        if callable(progress_attr):
+            progress_value = int(progress_attr())
+        elif isinstance(progress_attr, (int, float)):
+            progress_value = int(progress_attr)
+        else:
+            progress_value = 0
+        self._dashboard_snapshot.progress_percent = progress_value
+        self._dashboard_snapshot.eta_text = self._dashboard_eta_text
+        self._dashboard_snapshot.current_task = self.status_label.text().strip() or "Idle"
+        if self._queue_total_jobs > 0:
+            self._dashboard_snapshot.pages_done = max(0, int(self._dashboard_snapshot.pages_done))
+            self._dashboard_snapshot.pages_total = self._queue_total_jobs
+            self._dashboard_snapshot.images_total = self._queue_total_jobs
+            self._dashboard_snapshot.errors_count = self._dashboard_error_count
+            self._dashboard_snapshot.error_retries = self._dashboard_error_retry_count
+            self._dashboard_snapshot.pages_title = "Jobs"
+            self._dashboard_snapshot.images_title = "Skipped"
+            self._dashboard_snapshot.errors_title = "Failed"
+        else:
+            total_pages = self._progress_total_pages if self._progress_total_pages > 0 else self._selected_pdf_page_total()
+            done_pages = max(0, int(self._progress_done_pages))
+            retries = len(self._retry_pages_seen)
+            images_seen = len(self._image_pages_seen)
+            self._dashboard_snapshot.pages_done = done_pages
+            self._dashboard_snapshot.pages_total = total_pages
+            self._dashboard_snapshot.page_retries = retries
+            self._dashboard_snapshot.images_done = images_seen
+            self._dashboard_snapshot.images_total = images_seen if images_seen > 0 else 0
+            self._dashboard_snapshot.image_retries = retries if images_seen else 0
+            self._dashboard_snapshot.errors_count = self._dashboard_error_count
+            self._dashboard_snapshot.error_retries = self._dashboard_error_retry_count
+            self._dashboard_snapshot.pages_title = "Pages"
+            self._dashboard_snapshot.images_title = "Images"
+            self._dashboard_snapshot.errors_title = "Errors"
+        self._apply_dashboard_snapshot()
+
+    def _refresh_lang_badge(self) -> None:
+        lang = str(self.lang_combo.currentText() or "EN").strip().upper()
+        self.flag_label.clear()
+        self.flag_label.setText("")
+        icon_rel = _LANG_FLAG_ICON_BY_CODE.get(lang)
+        if not icon_rel:
+            self.flag_label.setVisible(False)
+            return
+        icon_path = resource_path(icon_rel)
+        if not icon_path.exists():
+            self.flag_label.setVisible(False)
+            return
+        self.flag_label.setVisible(True)
+        self.flag_label.setPixmap(self._icon(icon_rel).pixmap(QSize(28, 18)))
 
     def _restore_settings(self) -> None:
         defaults = self._defaults
@@ -702,6 +1355,7 @@ class QtMainWindow(QMainWindow):
         self.keep_check.setChecked(bool(defaults.get("keep_intermediates", defaults.get("default_keep_intermediates", True))))
         self.queue_manifest_edit.setText(str(defaults.get("queue_manifest_path", "") or ""))
         self.queue_rerun_failed_only_check.setChecked(bool(defaults.get("queue_rerun_failed_only", False)))
+        self._refresh_lang_badge()
 
     def _save_settings(self) -> None:
         timer = getattr(self, "_settings_save_timer", None)
@@ -766,6 +1420,12 @@ class QtMainWindow(QMainWindow):
         tools_menu = menu_bar.addMenu("Tools")
         tools_settings = tools_menu.addAction("Settings...")
         tools_settings.triggered.connect(self._open_settings_dialog)
+        tools_review_queue = tools_menu.addAction("Review Queue...")
+        tools_review_queue.triggered.connect(self._open_review_queue_dialog)
+        tools_save_joblog = tools_menu.addAction("Save to Job Log...")
+        tools_save_joblog.triggered.connect(self._open_save_to_joblog_dialog)
+        tools_joblog = tools_menu.addAction("View Job Log")
+        tools_joblog.triggered.connect(self._open_joblog_window)
         if not self._simple_mode:
             tools_menu.addSeparator()
             tools_glossary_builder = tools_menu.addAction("Glossary Builder...")
@@ -799,6 +1459,9 @@ class QtMainWindow(QMainWindow):
             "open_output_folder": file_open,
             "export_partial": file_export,
             "settings": tools_settings,
+            "review_queue": tools_review_queue,
+            "save_joblog": tools_save_joblog,
+            "job_log": tools_joblog,
             "test_api_keys": tools_test,
             "about": help_about,
             "open_logs": help_logs,
@@ -1071,12 +1734,15 @@ class QtMainWindow(QMainWindow):
         dialog.activateWindow()
 
     def _set_details_visible(self, visible: bool) -> None:
+        self.details_card.setVisible(visible)
         self.log_text.setVisible(visible)
         self.details_btn.setArrowType(Qt.ArrowType.DownArrow if visible else Qt.ArrowType.RightArrow)
         self.details_btn.setText("Hide details" if visible else "Show details")
         self._refresh_canvas()
 
     def _set_adv_visible(self, visible: bool) -> None:
+        self.show_adv.setArrowType(Qt.ArrowType.DownArrow if visible else Qt.ArrowType.RightArrow)
+        self.show_adv.setChecked(visible)
         self.adv_frame.setVisible(visible)
         self._refresh_canvas()
 
@@ -1161,6 +1827,9 @@ class QtMainWindow(QMainWindow):
 
     def _on_form_changed(self) -> None:
         self._schedule_save_settings()
+        refresh_lang_badge = getattr(self, "_refresh_lang_badge", None)
+        if callable(refresh_lang_badge):
+            refresh_lang_badge()
         self._refresh_page_count()
         self._update_controls()
 
@@ -1179,15 +1848,18 @@ class QtMainWindow(QMainWindow):
         self._last_page_path = pdf_text
         if not pdf_text:
             self.pages_label.setText("Pages: -")
+            self._refresh_dashboard_counters()
             return
         pdf_path = Path(pdf_text).expanduser().resolve()
         if not pdf_path.exists() or not pdf_path.is_file():
             self.pages_label.setText("Pages: -")
+            self._refresh_dashboard_counters()
             return
         try:
             self.pages_label.setText(f"Pages: {get_page_count(pdf_path)}")
         except Exception:
             self.pages_label.setText("Pages: ?")
+        self._refresh_dashboard_counters()
     def _pick_pdf(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select PDF", "", "PDF Files (*.pdf);;All Files (*.*)")
         if path:
@@ -1318,6 +1990,9 @@ class QtMainWindow(QMainWindow):
         self._progress_total_pages = 0
         self._image_pages_seen.clear()
         self._retry_pages_seen.clear()
+        self._queue_total_jobs = 0
+        self._queue_status_by_job_id = {}
+        self._dashboard_snapshot = _DashboardSnapshot()
         self._update_live_counters()
 
     def _update_live_counters(self) -> None:
@@ -1326,6 +2001,7 @@ class QtMainWindow(QMainWindow):
             f"{self._progress_done_pages}/{self._progress_total_pages} | "
             f"Images {len(self._image_pages_seen)} | Retries {len(self._retry_pages_seen)}"
         )
+        self._refresh_dashboard_counters()
 
     def _warn_fixed_xhigh_for_enfr(self) -> str:
         dialog = QMessageBox(self)
@@ -1525,13 +2201,26 @@ class QtMainWindow(QMainWindow):
         self.review_queue_btn.setEnabled(can_review_queue)
         self.save_joblog_btn.setEnabled((not self._busy) and (self._last_joblog_seed is not None))
         self.open_joblog_btn.setEnabled(not self._busy)
+        more_btn = getattr(self, "more_btn", None)
+        if more_btn is not None:
+            more_btn.setEnabled(not self._busy)
 
         self._set_menu_enabled("open_output_folder", can_open)
         self._set_menu_enabled("export_partial", (not self._busy) and self._can_export_partial)
+        self._set_menu_enabled("review_queue", can_review_queue)
+        self._set_menu_enabled("save_joblog", (not self._busy) and (self._last_joblog_seed is not None))
+        self._set_menu_enabled("job_log", not self._busy)
         if not self._simple_mode:
             self._set_menu_enabled("glossary_builder", not self._busy)
             self._set_menu_enabled("calibration_audit", not self._busy)
         self._set_menu_enabled("settings", not self._busy)
+        overflow_actions = getattr(self, "_overflow_menu_actions", {})
+        if overflow_actions:
+            overflow_actions["open_output_folder"].setEnabled(can_open)
+            overflow_actions["export_partial"].setEnabled((not self._busy) and self._can_export_partial)
+            overflow_actions["rebuild_docx"].setEnabled((not self._busy) and self._has_rebuildable_pages())
+            overflow_actions["run_report"].setEnabled(can_report)
+            overflow_actions["job_log"].setEnabled(not self._busy)
         refresh_advisor = getattr(self, "_refresh_advisor_banner", None)
         if callable(refresh_advisor):
             refresh_advisor()
@@ -1607,6 +2296,10 @@ class QtMainWindow(QMainWindow):
         self.status_label.setText("Starting...")
         self.header_status_label.setText("Starting...")
         self.queue_status_label.setText("Queue: idle")
+        self._dashboard_error_count = 0
+        self._dashboard_error_retry_count = 0
+        self._dashboard_eta_text = "--"
+        self._run_started_at = time.perf_counter()
         self._reset_live_counters()
         if advisor_applied is not None:
             self._append_log(f"OCR advisor choice for this run: applied={advisor_applied}")
@@ -1693,7 +2386,18 @@ class QtMainWindow(QMainWindow):
         self.status_label.setText("Queue starting...")
         self.header_status_label.setText("Queue starting...")
         self.queue_status_label.setText("Queue: pending")
+        self._dashboard_error_count = 0
+        self._dashboard_error_retry_count = 0
+        self._dashboard_eta_text = "--"
         self._reset_live_counters()
+        self._queue_total_jobs = len(manifest_jobs)
+        self._queue_status_by_job_id = {}
+        self._run_started_at = time.perf_counter()
+        self._dashboard_snapshot.pages_title = "Jobs"
+        self._dashboard_snapshot.images_title = "Skipped"
+        self._dashboard_snapshot.errors_title = "Failed"
+        self._dashboard_snapshot.pages_total = len(manifest_jobs)
+        self._apply_dashboard_snapshot()
 
         max_retries = int(self._defaults.get("perf_max_transport_retries", 4) or 4)
         backoff_cap = float(self._defaults.get("perf_backoff_cap_seconds", 12.0) or 12.0)
@@ -1729,19 +2433,39 @@ class QtMainWindow(QMainWindow):
         self._queue_status_rows.append(row)
         status = str(row.get("status", "") or "").strip().lower()
         job_id = str(row.get("job_id", "") or "").strip() or "unknown"
+        self._queue_status_by_job_id[job_id] = row
         self.queue_status_label.setText(f"Queue: {job_id} -> {status or 'pending'}")
         if status == "running":
             self.status_label.setText(f"Queue running: {job_id}")
             self.header_status_label.setText("Queue running")
         elif status in {"done", "failed", "skipped"}:
             self._append_log(f"Queue status: {job_id} -> {status}")
+        if status == "failed":
+            self._dashboard_error_count = max(1, self._dashboard_error_count)
+        if self._queue_total_jobs > 0:
+            counts = {"done": 0, "failed": 0, "skipped": 0}
+            for item in self._queue_status_by_job_id.values():
+                item_status = str(item.get("status", "") or "").strip().lower()
+                if item_status in counts:
+                    counts[item_status] += 1
+            completed_jobs = counts["done"] + counts["failed"] + counts["skipped"]
+            self.progress.setValue(int(round((completed_jobs / float(self._queue_total_jobs)) * 100.0)))
+            self._dashboard_snapshot.pages_done = completed_jobs
+            self._dashboard_snapshot.pages_total = self._queue_total_jobs
+            self._dashboard_snapshot.images_done = counts["skipped"]
+            self._dashboard_snapshot.images_total = self._queue_total_jobs
+            self._dashboard_snapshot.errors_count = counts["failed"]
+        self._refresh_dashboard_counters()
 
     def _on_queue_finished(self, summary_obj: object) -> None:
         self._set_busy(False, translation=False)
+        self._run_started_at = None
         if not isinstance(summary_obj, QueueRunSummary):
             self.status_label.setText("Queue failed")
             self.header_status_label.setText("Queue failed")
             self.queue_status_label.setText("Queue: failed")
+            self._dashboard_error_count = max(1, self._dashboard_error_count)
+            self._refresh_dashboard_counters()
             QMessageBox.critical(self, "Queue failed", "Queue worker returned an invalid summary.")
             self._update_controls()
             return
@@ -1769,6 +2493,7 @@ class QtMainWindow(QMainWindow):
             self.queue_status_label.setText(
                 f"Queue: done={summary.done_jobs} failed={summary.failed_jobs} skipped={summary.skipped_jobs}"
             )
+            self._dashboard_error_count = 0
             QMessageBox.information(self, "Queue complete", queue_result_text)
         else:
             self.status_label.setText("Queue completed with failures")
@@ -1776,14 +2501,25 @@ class QtMainWindow(QMainWindow):
             self.queue_status_label.setText(
                 f"Queue: done={summary.done_jobs} failed={summary.failed_jobs} skipped={summary.skipped_jobs}"
             )
+            self._dashboard_error_count = max(1, summary.failed_jobs)
             QMessageBox.warning(self, "Queue completed with failures", queue_result_text)
+        self.progress.setValue(100)
+        self._dashboard_snapshot.pages_done = summary.total_jobs
+        self._dashboard_snapshot.pages_total = summary.total_jobs
+        self._dashboard_snapshot.images_done = summary.skipped_jobs
+        self._dashboard_snapshot.images_total = summary.total_jobs
+        self._dashboard_snapshot.errors_count = summary.failed_jobs
+        self._refresh_dashboard_counters()
         self._update_controls()
 
     def _on_queue_error(self, message: str) -> None:
         self._set_busy(False, translation=False)
+        self._run_started_at = None
         self.status_label.setText("Queue failed")
         self.header_status_label.setText("Queue failed")
         self.queue_status_label.setText("Queue: failed")
+        self._dashboard_error_count = max(1, self._dashboard_error_count)
+        self._refresh_dashboard_counters()
         self._append_log(f"Queue failed: {message}")
         QMessageBox.critical(self, "Queue failed", message)
 
@@ -1812,6 +2548,10 @@ class QtMainWindow(QMainWindow):
         self.queue_status_label.setText("Queue: idle")
         self.progress.setValue(0)
         self.page_label.setText("Page: -/-")
+        self._dashboard_error_count = 0
+        self._dashboard_error_retry_count = 0
+        self._dashboard_eta_text = "--"
+        self._run_started_at = time.perf_counter()
         self._reset_live_counters()
 
         thread = QThread(self)
@@ -1850,18 +2590,23 @@ class QtMainWindow(QMainWindow):
         self._update_live_counters()
         self.status_label.setText(status)
         self.header_status_label.setText(status)
+        self._dashboard_snapshot.current_task = status
+        self._refresh_dashboard_counters()
 
     def _on_finished(self, summary_obj: object) -> None:
         summary = summary_obj if isinstance(summary_obj, RunSummary) else None
         if self._worker is not None and hasattr(self._worker, "workflow"):
             self._last_workflow = getattr(self._worker, "workflow")
         self._set_busy(False, translation=False)
+        self._run_started_at = None
         self.queue_status_label.setText("Queue: idle")
         if summary is None:
             self.status_label.setText("Run finished with invalid summary")
             self.header_status_label.setText("Error")
             self._last_joblog_seed = None
             self._last_review_queue = []
+            self._dashboard_error_count = max(1, self._dashboard_error_count)
+            self._refresh_dashboard_counters()
             return
         self._last_summary = summary
         self._last_run_dir = summary.run_dir
@@ -1882,6 +2627,7 @@ class QtMainWindow(QMainWindow):
             self._prepare_joblog_seed(summary)
             self._show_saved_docx_dialog("Translation complete")
             self._open_save_to_joblog_dialog()
+            self._dashboard_error_count = 0
         else:
             self._last_output_docx = None
             self._last_joblog_seed = None
@@ -1899,6 +2645,7 @@ class QtMainWindow(QMainWindow):
                     f"Partial pages: {summary.completed_pages}"
                 )
             QMessageBox.warning(self, "Translation stopped", details)
+            self._dashboard_error_count = 1
         self._progress_done_pages = max(self._progress_done_pages, int(summary.completed_pages))
         self._progress_total_pages = max(self._progress_total_pages, self._progress_done_pages)
         self._update_live_counters()
@@ -1906,16 +2653,20 @@ class QtMainWindow(QMainWindow):
         self._update_controls()
     def _on_error(self, message: str) -> None:
         self._set_busy(False, translation=False)
+        self._run_started_at = None
         self._last_joblog_seed = None
         self._last_review_queue = []
         self.queue_status_label.setText("Queue: idle")
         self.status_label.setText("Error")
         self.header_status_label.setText("Error")
+        self._dashboard_error_count = max(1, self._dashboard_error_count)
+        self._refresh_dashboard_counters()
         self._append_log(f"Runtime error: {message}")
         QMessageBox.critical(self, "Runtime error", message)
 
     def _on_analyze_finished(self, summary_obj: object) -> None:
         self._set_busy(False, translation=False)
+        self._run_started_at = None
         if not isinstance(summary_obj, AnalyzeSummary):
             self.status_label.setText("Analyze failed")
             self.header_status_label.setText("Analyze failed")
@@ -1943,6 +2694,9 @@ class QtMainWindow(QMainWindow):
             self._append_log(f"Advisor recommendation ready: {advisor_message}")
         self._progress_done_pages = 0
         self._progress_total_pages = int(summary.selected_pages_count)
+        self._dashboard_snapshot.pages_done = 0
+        self._dashboard_snapshot.pages_total = int(summary.selected_pages_count)
+        self._dashboard_snapshot.current_task = "Analyze complete"
         self._update_live_counters()
         QMessageBox.information(
             self,
@@ -1957,11 +2711,14 @@ class QtMainWindow(QMainWindow):
 
     def _on_analyze_error(self, message: str) -> None:
         self._set_busy(False, translation=False)
+        self._run_started_at = None
         self._set_advisor_recommendation(None)
         self._last_review_queue = []
         self.queue_status_label.setText("Queue: idle")
         self.status_label.setText("Analyze failed")
         self.header_status_label.setText("Analyze failed")
+        self._dashboard_error_count = max(1, self._dashboard_error_count)
+        self._refresh_dashboard_counters()
         self._append_log(f"Analyze failed: {message}")
         QMessageBox.critical(self, "Analyze failed", message)
 
@@ -2005,6 +2762,8 @@ class QtMainWindow(QMainWindow):
         self._last_joblog_seed = None
         self._last_review_queue = []
         self._queue_status_rows = []
+        self._queue_total_jobs = 0
+        self._queue_status_by_job_id = {}
         self._advisor_recommendation = None
         self._advisor_recommendation_applied = None
         self._advisor_override_ocr_mode = None
@@ -2013,6 +2772,10 @@ class QtMainWindow(QMainWindow):
         self._worker = None
         self._worker_thread = None
         self._can_export_partial = False
+        self._dashboard_error_count = 0
+        self._dashboard_error_retry_count = 0
+        self._dashboard_eta_text = "--"
+        self._run_started_at = None
         self.progress.setValue(0)
         self.page_label.setText("Page: -/-")
         self.status_label.setText("Idle")
@@ -2028,6 +2791,9 @@ class QtMainWindow(QMainWindow):
         refresh_advisor = getattr(self, "_refresh_advisor_banner", None)
         if callable(refresh_advisor):
             refresh_advisor()
+        focus_dashboard = getattr(self, "_focus_dashboard", None)
+        if callable(focus_dashboard):
+            focus_dashboard()
         self._save_settings()
         self._update_controls()
 
@@ -2069,6 +2835,10 @@ class QtMainWindow(QMainWindow):
         self._set_busy(True, translation=False)
         self.status_label.setText("Rebuilding DOCX...")
         self.header_status_label.setText("Rebuilding DOCX...")
+        self._dashboard_error_count = 0
+        self._dashboard_error_retry_count = 0
+        self._dashboard_eta_text = "--"
+        self._run_started_at = time.perf_counter()
 
         thread = QThread(self)
         worker = RebuildDocxWorker(config=config)
@@ -2087,6 +2857,7 @@ class QtMainWindow(QMainWindow):
 
     def _on_rebuild_finished(self, output_obj: object) -> None:
         self._set_busy(False, translation=False)
+        self._run_started_at = None
         if not isinstance(output_obj, Path):
             self.status_label.setText("Rebuild failed")
             self.header_status_label.setText("Rebuild failed")
@@ -2099,15 +2870,20 @@ class QtMainWindow(QMainWindow):
         self.final_docx_edit.setText(str(output))
         self.status_label.setText("Completed")
         self.header_status_label.setText("Completed")
+        self._dashboard_error_count = 0
+        self._refresh_dashboard_counters()
         self._append_log(f"Saved DOCX: {output}")
         self._show_saved_docx_dialog("Rebuild complete")
         self._update_controls()
 
     def _on_rebuild_error(self, message: str) -> None:
         self._set_busy(False, translation=False)
+        self._run_started_at = None
         self._last_review_queue = []
         self.status_label.setText("Rebuild failed")
         self.header_status_label.setText("Rebuild failed")
+        self._dashboard_error_count = max(1, self._dashboard_error_count)
+        self._refresh_dashboard_counters()
         self._append_log(f"Rebuild failed: {message}")
         QMessageBox.critical(self, "Rebuild failed", message)
 
@@ -2406,13 +3182,15 @@ class QtMainWindow(QMainWindow):
                 self._append_log(f"[click-debug] widgetAt={target.__class__.__name__} objectName={object_name}")
         super().mousePressEvent(event)
 
-    def _update_card_max_width(self) -> None:
+    def _update_card_max_width(self, *, viewport_width: int | None = None) -> None:
         vp = self._scroll_area.viewport()
-        if vp is not None:
-            scroll_layout = self._scroll_area.widget().layout()
-            lr = scroll_layout.contentsMargins()
-            available = vp.width() - lr.left() - lr.right()
-            self.content_card.setMaximumWidth(max(600, min(1180, available)))
+        resolved_viewport_width = viewport_width if viewport_width is not None else (vp.width() if vp is not None else self.width())
+        self._apply_responsive_layout(viewport_width=resolved_viewport_width)
+        scroll_layout = self._scroll_area.widget().layout()
+        lr = scroll_layout.contentsMargins()
+        available = max(360, resolved_viewport_width - lr.left() - lr.right())
+        target_width = max(360, min(1760, available))
+        self.content_card.setFixedWidth(target_width)
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
@@ -2432,8 +3210,8 @@ class QtMainWindow(QMainWindow):
             screen = QGuiApplication.primaryScreen()
         if screen is not None:
             avail = screen.availableGeometry()
-            w = int(avail.width() * 0.92)
-            h = int(avail.height() * 0.92)
+            w = int(avail.width() * 0.94)
+            h = int(avail.height() * 0.93)
             self.resize(w, h)
             self.move(
                 avail.x() + (avail.width() - w) // 2,

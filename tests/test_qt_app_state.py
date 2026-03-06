@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+
+if os.name != "nt" and "DISPLAY" not in os.environ:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication, QBoxLayout
 
 from legalpdf_translate.qt_gui.app_window import QtMainWindow
 from legalpdf_translate.qt_gui.dialogs import JobLogSeed, QtSaveToJobLogDialog
@@ -26,9 +33,23 @@ class _FakeEdit:
 class _FakeCombo:
     def __init__(self, value: str) -> None:
         self._value = value
+        self.items: list[str] = []
+        self.blocked = False
 
     def currentText(self) -> str:
         return self._value
+
+    def setCurrentText(self, value: str) -> None:
+        self._value = value
+
+    def clear(self) -> None:
+        self.items = []
+
+    def addItems(self, values: list[str]) -> None:
+        self.items.extend(values)
+
+    def blockSignals(self, blocked: bool) -> None:
+        self.blocked = blocked
 
 
 class _FakeSpin:
@@ -89,6 +110,228 @@ class _FakeTimer:
 
     def start(self) -> None:
         self.started = True
+
+
+def test_stage_two_shell_smoke() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        assert window.dashboard_frame.objectName() == "DashboardFrame"
+        assert window.title_label.text() == "LegalPDF Translate"
+        assert window.header_status_label.text() == "Idle"
+        assert window.dashboard_nav_btn.text() == "Dashboard"
+        assert window.translate_btn.text() == "Start Translate"
+        assert window.show_adv.text() == "Advanced Settings"
+        assert window.progress_panel_title.text() == "Conversion Output"
+        assert window.more_btn.menu() is window.more_menu
+        assert window.more_btn.text() == "..."
+        assert window.footer_meta_label.text() == "Project v3.0 | LegalPDF"
+        assert window.translate_btn.minimumHeight() == window.cancel_btn.minimumHeight() == window.more_btn.minimumHeight()
+        assert window.cancel_btn.width() == 186
+        assert window.more_btn.width() == 92
+        assert "review_queue" in window._menu_actions
+        assert "save_joblog" in window._menu_actions
+        assert "job_log" in window._menu_actions
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_eta_formatting() -> None:
+    assert QtMainWindow._format_eta_seconds(None) == "--"
+    assert QtMainWindow._format_eta_seconds(12.0) == "~12s"
+    assert QtMainWindow._format_eta_seconds(125.0) == "~2m"
+
+
+def test_queue_status_maps_into_dashboard_panel() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window._queue_total_jobs = 4
+        window._on_queue_status({"job_id": "job-1", "status": "failed"})
+        assert window.metric_pages_title_label.text() == "Jobs"
+        assert window.metric_images_title_label.text() == "Skipped"
+        assert window.metric_errors_title_label.text() == "Failed"
+        assert window.metric_pages_value_label.text() == "1 / 4"
+        assert window.metric_errors_value_label.text() == "1"
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_dashboard_card_can_expand_wider_than_stage_two_cap() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window.show()
+        app.processEvents()
+        window._update_card_max_width(viewport_width=1664)
+        app.processEvents()
+        assert window.sidebar_frame.width() >= 136
+        assert window.content_card.width() > 1400
+        assert window.body_layout.direction() == QBoxLayout.Direction.LeftToRight
+        window.resize(1800, 1000)
+        app.processEvents()
+        window._update_card_max_width(viewport_width=1664)
+        app.processEvents()
+        assert window.setup_panel.width() > window.progress_panel.width()
+        assert window.setup_panel.width() < int(window.progress_panel.width() * 1.35)
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_dashboard_reflows_for_compact_width() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window.show()
+        app.processEvents()
+        window._update_card_max_width(viewport_width=920)
+        app.processEvents()
+        assert window._layout_mode == "stacked_compact"
+        assert window.sidebar_frame.width() <= 74
+        assert window.body_layout.direction() == QBoxLayout.Direction.TopToBottom
+        assert window.footer_layout.itemAtPosition(0, 0).widget() is window.translate_btn
+        assert window.footer_layout.itemAtPosition(1, 1).widget() is window.cancel_btn
+        assert window.footer_layout.itemAtPosition(1, 2).widget() is window.more_btn
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_dashboard_keeps_two_column_layout_for_medium_width() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window.show()
+        app.processEvents()
+        window._update_card_max_width(viewport_width=1360)
+        app.processEvents()
+        assert window._layout_mode == "desktop_compact"
+        assert window.sidebar_frame.width() >= 118
+        assert window.body_layout.direction() == QBoxLayout.Direction.LeftToRight
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_desktop_sidebar_buttons_have_room_for_full_labels() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window.show()
+        app.processEvents()
+        window._update_card_max_width(viewport_width=1664)
+        app.processEvents()
+
+        assert window.dashboard_nav_btn.width() >= 112
+        assert window.recent_jobs_nav_btn.width() >= 112
+        dashboard_text_width = window.dashboard_nav_btn.fontMetrics().horizontalAdvance("Dashboard")
+        recent_text_width = window.recent_jobs_nav_btn.fontMetrics().horizontalAdvance("Recent Jobs")
+        assert dashboard_text_width < window.dashboard_nav_btn.width() - 14
+        assert recent_text_width < window.recent_jobs_nav_btn.width() - 14
+        assert window.progress_panel_title.text() == "Conversion Output"
+        assert not window.more_menu.isVisible()
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_target_language_field_shows_single_code_and_flag() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window.lang_combo.setCurrentText("FR")
+        window._refresh_lang_badge()
+        app.processEvents()
+        assert window.lang_combo.currentText() == "FR"
+        assert window.flag_label.text() == ""
+        pixmap = window.flag_label.pixmap()
+        assert pixmap is not None and not pixmap.isNull()
+        assert window.lang_caret_btn.icon().isNull() is False
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_source_pdf_pages_cluster_stays_readable() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        assert window.pages_label.text() == "Pages: -"
+        assert window.pages_label.minimumWidth() >= 74
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_metric_grid_keeps_retries_heading_without_row_level_cells() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        assert window.metric_retry_header_label.text() == "Retries"
+        assert window.metric_grid_layout.itemAtPosition(1, 2) is None
+        assert window.metric_grid_layout.itemAtPosition(2, 2) is None
+        assert window.metric_pages_title_label.text() == "Pages"
+        assert window.metric_errors_title_label.text() == "Errors"
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
 
 
 def test_translate_gating_requires_output_folder(tmp_path: Path) -> None:
