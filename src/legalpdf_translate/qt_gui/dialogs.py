@@ -44,7 +44,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from legalpdf_translate.config import OPENAI_MODEL
+from legalpdf_translate.config import (
+    DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
+    DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+    OPENAI_MODEL,
+)
 from legalpdf_translate.glossary import (
     GlossaryEntry,
     build_consistency_glossary_markdown,
@@ -78,6 +82,7 @@ from legalpdf_translate.metadata_autofill import (
 )
 from legalpdf_translate.openai_client import OpenAIResponsesClient
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
+from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox
 from legalpdf_translate.review_export import export_review_queue
 from legalpdf_translate.secrets_store import (
     delete_openai_key,
@@ -1718,9 +1723,9 @@ class QtSettingsDialog(QDialog):
 
     def _build_tab_ocr_defaults(self) -> None:
         form = QFormLayout(self.tab_ocr)
-        self.ocr_mode_default_combo = QComboBox()
+        self.ocr_mode_default_combo = NoWheelComboBox()
         self.ocr_mode_default_combo.addItems(["off", "auto", "always"])
-        self.ocr_engine_default_combo = QComboBox()
+        self.ocr_engine_default_combo = NoWheelComboBox()
         self.ocr_engine_default_combo.addItems(["local", "local_then_api", "api"])
         self.min_chars_edit = QLineEdit()
         form.addRow("Default OCR mode", self.ocr_mode_default_combo)
@@ -1741,12 +1746,12 @@ class QtSettingsDialog(QDialog):
         grid = QGridLayout()
         row = 0
 
-        self.default_lang_combo = QComboBox(); self.default_lang_combo.addItems(["EN", "FR", "AR"])
-        self.default_effort_combo = QComboBox(); self.default_effort_combo.addItems(["high", "xhigh"])
-        self.default_effort_policy_combo = QComboBox(); self.default_effort_policy_combo.addItems(["adaptive", "fixed_high", "fixed_xhigh"])
-        self.lemma_effort_combo = QComboBox(); self.lemma_effort_combo.addItems(["medium", "high", "xhigh"])
-        self.default_images_combo = QComboBox(); self.default_images_combo.addItems(["off", "auto", "always"])
-        self.default_workers_combo = QComboBox(); self.default_workers_combo.addItems(["1", "2", "3", "4", "5", "6"])
+        self.default_lang_combo = NoWheelComboBox(); self.default_lang_combo.addItems(["EN", "FR", "AR"])
+        self.default_effort_combo = NoWheelComboBox(); self.default_effort_combo.addItems(["high", "xhigh"])
+        self.default_effort_policy_combo = NoWheelComboBox(); self.default_effort_policy_combo.addItems(["adaptive", "fixed_high", "fixed_xhigh"])
+        self.lemma_effort_combo = NoWheelComboBox(); self.lemma_effort_combo.addItems(["medium", "high", "xhigh"])
+        self.default_images_combo = NoWheelComboBox(); self.default_images_combo.addItems(["off", "auto", "always"])
+        self.default_workers_combo = NoWheelComboBox(); self.default_workers_combo.addItems(["1", "2", "3", "4", "5", "6"])
         self.default_start_edit = QLineEdit()
         self.default_end_edit = QLineEdit()
         self.default_outdir_edit = QLineEdit()
@@ -3446,8 +3451,12 @@ class QtSettingsDialog(QDialog):
         self.ocr_env_edit.setText(str(settings.get("ocr_api_key_env_name", "DEEPSEEK_API_KEY")))
         self.retries_edit.setText(str(settings.get("perf_max_transport_retries", 4)))
         self.backoff_cap_edit.setText(str(settings.get("perf_backoff_cap_seconds", 12.0)))
-        self.timeout_text_edit.setText(str(settings.get("perf_timeout_text_seconds", 90)))
-        self.timeout_image_edit.setText(str(settings.get("perf_timeout_image_seconds", 120)))
+        self.timeout_text_edit.setText(
+            str(settings.get("perf_timeout_text_seconds", DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS))
+        )
+        self.timeout_image_edit.setText(
+            str(settings.get("perf_timeout_image_seconds", DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS))
+        )
         self.allow_xhigh_check.setChecked(bool(settings.get("allow_xhigh_escalation", False)))
         self.diag_cost_summary_check.setChecked(bool(settings.get("diagnostics_show_cost_summary", True)))
         self.diag_verbose_meta_check.setChecked(bool(settings.get("diagnostics_verbose_metadata_logs", False)))
@@ -3754,8 +3763,8 @@ class QtSettingsDialog(QDialog):
         self.ocr_engine_default_combo.setCurrentText("local_then_api")
         self.retries_edit.setText("4")
         self.backoff_cap_edit.setText("12.0")
-        self.timeout_text_edit.setText("90")
-        self.timeout_image_edit.setText("120")
+        self.timeout_text_edit.setText(str(DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS))
+        self.timeout_image_edit.setText(str(DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS))
         self.allow_xhigh_check.setChecked(False)
 
     def _collect_values(self) -> dict[str, object]:

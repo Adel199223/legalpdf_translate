@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from shutil import which
 from typing import Any
 
 from openai import OpenAI
@@ -71,7 +73,8 @@ from legalpdf_translate.output_paths import (
     build_output_paths,
     require_writable_output_dir_text,
 )
-from legalpdf_translate.pdf_text_order import get_page_count
+from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
+from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
 from legalpdf_translate.queue_runner import QueueRunSummary, parse_queue_manifest
 from legalpdf_translate.qt_gui.dialogs import (
     JobLogSeed,
@@ -101,6 +104,9 @@ from legalpdf_translate.secrets_store import (
 from legalpdf_translate.types import (
     AnalyzeSummary,
     EffortPolicy,
+    ImageMode,
+    OcrEnginePolicy,
+    OcrMode,
     RunConfig,
     RunSummary,
     TargetLang,
@@ -124,6 +130,12 @@ _LANG_FLAG_ICON_BY_CODE = {
     "FR": "resources/icons/dashboard/flag_fr.svg",
     "AR": "resources/icons/dashboard/flag_ar.svg",
 }
+_PROCESSING_PAGE_LOG_RE = re.compile(r"Processing PDF page (?P<page>\d+)")
+_REQUEST_BUDGET_LOG_RE = re.compile(
+    r"page=(?P<page>\d+)\s+request_type=(?P<request_type>text_only|image_backed)\s+"
+    r"request_timeout_budget_seconds=(?P<budget>[0-9]+(?:\.[0-9]+)?)"
+)
+_PAGE_TERMINAL_LOG_RE = re.compile(r"page=(?P<page>\d+)\s+image_used=.*\sstatus=(?P<status>done|failed|skipped)")
 
 
 def _is_simple_mode() -> bool:
@@ -238,6 +250,50 @@ def _load_review_queue_entries(summary_path: Path) -> list[dict[str, object]]:
     if not isinstance(payload, dict):
         return []
     return normalize_review_queue_entries(payload.get("review_queue", []))
+
+
+def _load_run_failure_context(summary_path: Path) -> dict[str, object]:
+    defaults: dict[str, object] = {
+        "suspected_cause": "",
+        "halt_reason": "",
+        "page_number": None,
+        "error": "",
+        "exception_class": "",
+        "retry_reason": "",
+        "request_type": "",
+        "request_timeout_budget_seconds": 0.0,
+        "request_elapsed_before_failure_seconds": 0.0,
+        "cancel_requested_before_failure": False,
+    }
+    if not summary_path.exists() or not summary_path.is_file():
+        return defaults
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return defaults
+    if not isinstance(payload, dict):
+        return defaults
+
+    failure_obj = payload.get("failure_context")
+    failure = failure_obj if isinstance(failure_obj, dict) else {}
+    return {
+        "suspected_cause": str(payload.get("suspected_cause", "") or ""),
+        "halt_reason": str(payload.get("halt_reason", "") or ""),
+        "page_number": _coerce_int_or_none(failure.get("page_number")),
+        "error": str(failure.get("error", "") or ""),
+        "exception_class": str(failure.get("exception_class", "") or ""),
+        "retry_reason": str(failure.get("retry_reason", "") or ""),
+        "request_type": str(failure.get("request_type", "") or ""),
+        "request_timeout_budget_seconds": _coerce_float_or_none(
+            failure.get("request_timeout_budget_seconds")
+        )
+        or 0.0,
+        "request_elapsed_before_failure_seconds": _coerce_float_or_none(
+            failure.get("request_elapsed_before_failure_seconds")
+        )
+        or 0.0,
+        "cancel_requested_before_failure": bool(failure.get("cancel_requested_before_failure", False)),
+    }
 
 
 def _normalized_mode_or_none(value: object) -> str | None:
@@ -447,6 +503,7 @@ class QtMainWindow(QMainWindow):
         )
         self._busy = False
         self._running = False
+        self._cancel_pending = False
         self._can_export_partial = False
         self._last_page_path: str | None = None
         self._progress_done_pages = 0
@@ -456,16 +513,27 @@ class QtMainWindow(QMainWindow):
         self._queue_total_jobs = 0
         self._queue_status_by_job_id: dict[str, dict[str, Any]] = {}
         self._run_started_at: float | None = None
+        self._active_request_page: int | None = None
+        self._active_request_type: str | None = None
+        self._active_request_budget_seconds: float | None = None
+        self._active_request_started_at: float | None = None
+        self._cancel_wait_started_at: float | None = None
         self._dashboard_snapshot = _DashboardSnapshot()
         self._dashboard_error_count = 0
         self._dashboard_error_retry_count = 0
         self._dashboard_eta_text = "--"
+        self._ocr_dependency_warning_seen: set[tuple[str, int, str, str]] = set()
+        self._transient_safe_profile_active = False
+        self._transient_safe_profile_backup: dict[str, object] | None = None
         self._layout_mode = _LAYOUT_DESKTOP_EXACT
         self._click_debug_enabled = _is_truthy_env(os.getenv("LEGALPDF_QT_CLICK_DEBUG"))
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
         self._settings_save_timer.setInterval(250)
         self._settings_save_timer.timeout.connect(self._save_settings)
+        self._cancel_wait_timer = QTimer(self)
+        self._cancel_wait_timer.setInterval(500)
+        self._cancel_wait_timer.timeout.connect(self._refresh_cancel_wait_status)
 
         self._build_ui()
         self._install_menu()
@@ -658,7 +726,7 @@ class QtMainWindow(QMainWindow):
         setup_grid.addWidget(QLabel("Source PDF", objectName="FieldLabel"), 0, 0)
         setup_grid.addWidget(pdf_field, 0, 1)
 
-        self.lang_combo = QComboBox()
+        self.lang_combo = NoWheelComboBox()
         self.lang_combo.addItems(["EN", "FR", "AR"])
         self.lang_combo.setProperty("embeddedField", True)
         self.lang_combo.setProperty("langField", True)
@@ -723,15 +791,15 @@ class QtMainWindow(QMainWindow):
         adv.setContentsMargins(14, 14, 14, 14)
         adv.setHorizontalSpacing(12)
         adv.setVerticalSpacing(10)
-        self.effort_policy_combo = QComboBox(); self.effort_policy_combo.addItems(["adaptive", "fixed_high", "fixed_xhigh"])
-        self.effort_combo = QComboBox(); self.effort_combo.addItems(["high", "xhigh"])
-        self.images_combo = QComboBox(); self.images_combo.addItems(["off", "auto", "always"])
-        self.ocr_mode_combo = QComboBox(); self.ocr_mode_combo.addItems(["off", "auto", "always"])
-        self.ocr_engine_combo = QComboBox(); self.ocr_engine_combo.addItems(["local", "local_then_api", "api"])
+        self.effort_policy_combo = NoWheelComboBox(); self.effort_policy_combo.addItems(["adaptive", "fixed_high", "fixed_xhigh"])
+        self.effort_combo = NoWheelComboBox(); self.effort_combo.addItems(["high", "xhigh"])
+        self.images_combo = NoWheelComboBox(); self.images_combo.addItems(["off", "auto", "always"])
+        self.ocr_mode_combo = NoWheelComboBox(); self.ocr_mode_combo.addItems(["off", "auto", "always"])
+        self.ocr_engine_combo = NoWheelComboBox(); self.ocr_engine_combo.addItems(["local", "local_then_api", "api"])
         self.start_edit = QLineEdit("1")
         self.end_edit = QLineEdit("")
         self.max_edit = QLineEdit("")
-        self.workers_spin = QSpinBox(); self.workers_spin.setRange(1, 6)
+        self.workers_spin = NoWheelSpinBox(); self.workers_spin.setRange(1, 6)
         self.resume_check = QCheckBox("Resume")
         self.breaks_check = QCheckBox("Insert page breaks")
         self.keep_check = QCheckBox("Keep intermediates")
@@ -1318,6 +1386,68 @@ class QtMainWindow(QMainWindow):
         self.flag_label.setVisible(True)
         self.flag_label.setPixmap(self._icon(icon_rel).pixmap(QSize(28, 18)))
 
+    def _capture_safe_profile_backup(self) -> dict[str, object]:
+        return {
+            "effort_policy": self.effort_policy_combo.currentText().strip().lower(),
+            "image_mode": self.images_combo.currentText().strip().lower(),
+            "ocr_mode": self.ocr_mode_combo.currentText().strip().lower(),
+            "ocr_engine": self.ocr_engine_combo.currentText().strip().lower(),
+            "workers": max(1, min(6, int(self.workers_spin.value()))),
+            "resume": self.resume_check.isChecked(),
+            "keep_intermediates": self.keep_check.isChecked(),
+        }
+
+    def _apply_safe_profile_to_controls(self, values: dict[str, object]) -> None:
+        widgets = (
+            self.effort_policy_combo,
+            self.images_combo,
+            self.ocr_mode_combo,
+            self.ocr_engine_combo,
+            self.workers_spin,
+            self.resume_check,
+            self.keep_check,
+        )
+        for widget in widgets:
+            widget.blockSignals(True)
+        try:
+            self.effort_policy_combo.setCurrentText(str(values.get("effort_policy", "fixed_high")))
+            self.images_combo.setCurrentText(str(values.get("image_mode", "off")))
+            self.ocr_mode_combo.setCurrentText(str(values.get("ocr_mode", "always")))
+            self.ocr_engine_combo.setCurrentText(str(values.get("ocr_engine", "api")))
+            self.workers_spin.setValue(max(1, min(6, int(values.get("workers", 1)))))
+            self.resume_check.setChecked(bool(values.get("resume", False)))
+            self.keep_check.setChecked(bool(values.get("keep_intermediates", True)))
+        finally:
+            for widget in widgets:
+                widget.blockSignals(False)
+        self._update_controls()
+
+    def _apply_transient_ocr_heavy_safe_profile(self) -> None:
+        if self._transient_safe_profile_backup is None:
+            self._transient_safe_profile_backup = self._capture_safe_profile_backup()
+        self._transient_safe_profile_active = True
+        self._apply_safe_profile_to_controls(
+            {
+                "effort_policy": "fixed_high",
+                "image_mode": "off",
+                "ocr_mode": "always",
+                "ocr_engine": "api",
+                "workers": 1,
+                "resume": False,
+                "keep_intermediates": True,
+            }
+        )
+        self._append_log("Applied OCR-heavy safe profile for this run only. Saved defaults were not changed.")
+
+    def _restore_transient_safe_profile_if_needed(self) -> None:
+        if not self._transient_safe_profile_active or self._transient_safe_profile_backup is None:
+            return
+        backup = dict(self._transient_safe_profile_backup)
+        self._transient_safe_profile_active = False
+        self._transient_safe_profile_backup = None
+        self._apply_safe_profile_to_controls(backup)
+        self._append_log("Restored your previous run settings after the OCR-heavy safe-profile run.")
+
     def _restore_settings(self) -> None:
         defaults = self._defaults
         outdir = str(defaults.get("last_outdir", defaults.get("default_outdir", "")) or "").strip()
@@ -1398,6 +1528,9 @@ class QtMainWindow(QMainWindow):
             "queue_manifest_path": self.queue_manifest_edit.text().strip(),
             "queue_rerun_failed_only": self.queue_rerun_failed_only_check.isChecked(),
         }
+        if self._transient_safe_profile_active and self._transient_safe_profile_backup is not None:
+            for key, value in self._transient_safe_profile_backup.items():
+                values[key] = value
         try:
             save_gui_settings(values)
             self._defaults.update(values)
@@ -1978,6 +2111,18 @@ class QtMainWindow(QMainWindow):
         stamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.appendPlainText(f"[{stamp}] {message}")
         self.log_text.verticalScrollBar().setValue(self.log_text.verticalScrollBar().maximum())
+        processing_match = _PROCESSING_PAGE_LOG_RE.search(message)
+        if processing_match:
+            self._active_request_page = int(processing_match.group("page"))
+        budget_match = _REQUEST_BUDGET_LOG_RE.search(message)
+        if budget_match:
+            self._active_request_page = int(budget_match.group("page"))
+            self._active_request_type = str(budget_match.group("request_type"))
+            self._active_request_budget_seconds = float(budget_match.group("budget"))
+            self._active_request_started_at = time.perf_counter()
+        terminal_match = _PAGE_TERMINAL_LOG_RE.search(message)
+        if terminal_match:
+            self._clear_active_request_tracking()
         if bool(self._defaults.get("diagnostics_verbose_metadata_logs", False)):
             try:
                 self._metadata_log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1986,6 +2131,47 @@ class QtMainWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _clear_active_request_tracking(self) -> None:
+        self._active_request_page = None
+        self._active_request_type = None
+        self._active_request_budget_seconds = None
+        self._active_request_started_at = None
+
+    def _clear_cancel_wait_state(self) -> None:
+        self._cancel_wait_started_at = None
+        if self._cancel_wait_timer.isActive():
+            self._cancel_wait_timer.stop()
+
+    def _refresh_cancel_wait_status(self) -> None:
+        if not self._cancel_pending:
+            self._clear_cancel_wait_state()
+            return
+        now = time.perf_counter()
+        cancel_wait_started = self._cancel_wait_started_at or now
+        waited_seconds = max(0.0, now - cancel_wait_started)
+        page_text = str(self._active_request_page) if self._active_request_page is not None else "?"
+        if self._active_request_budget_seconds is not None and self._active_request_started_at is not None:
+            remaining_seconds = max(
+                0.0,
+                float(self._active_request_budget_seconds) - max(0.0, now - self._active_request_started_at),
+            )
+            remaining_text = self._format_eta_seconds(remaining_seconds)
+        else:
+            remaining_text = "--"
+        status = (
+            f"Cancelling... page {page_text} | "
+            f"waited {self._format_eta_seconds(waited_seconds)} | "
+            f"remaining <= {remaining_text}"
+        )
+        self.status_label.setText(status)
+        self.header_status_label.setText("Cancelling...")
+        self._dashboard_snapshot.current_task = status
+        if self._queue_total_jobs > 0:
+            self.queue_status_label.setText(f"Queue: cancelling page {page_text} | remaining <= {remaining_text}")
+        else:
+            self.queue_status_label.setText(f"Cancel wait: page {page_text} | remaining <= {remaining_text}")
+        self._refresh_dashboard_counters()
+
     def _reset_live_counters(self) -> None:
         self._progress_done_pages = 0
         self._progress_total_pages = 0
@@ -1993,6 +2179,8 @@ class QtMainWindow(QMainWindow):
         self._retry_pages_seen.clear()
         self._queue_total_jobs = 0
         self._queue_status_by_job_id = {}
+        self._clear_active_request_tracking()
+        self._clear_cancel_wait_state()
         self._dashboard_snapshot = _DashboardSnapshot()
         self._update_live_counters()
 
@@ -2008,9 +2196,9 @@ class QtMainWindow(QMainWindow):
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Warning)
         dialog.setWindowTitle("Cost/Time warning")
-        dialog.setText("xhigh can multiply cost and time; recommended: adaptive or high.")
+        dialog.setText("xhigh can multiply cost and time; recommended: fixed high.")
         proceed_btn = dialog.addButton("Proceed", QMessageBox.ButtonRole.AcceptRole)
-        switch_btn = dialog.addButton("Switch to adaptive", QMessageBox.ButtonRole.ActionRole)
+        switch_btn = dialog.addButton("Switch to fixed high", QMessageBox.ButtonRole.ActionRole)
         cancel_btn = dialog.addButton(QMessageBox.StandardButton.Cancel)
         dialog.exec()
         clicked = dialog.clickedButton()
@@ -2178,7 +2366,7 @@ class QtMainWindow(QMainWindow):
         run_queue_btn = getattr(self, "run_queue_btn", None)
         if run_queue_btn is not None:
             run_queue_btn.setEnabled(can_start_queue)
-        self.cancel_btn.setEnabled(self._running)
+        self.cancel_btn.setEnabled(self._running and not self._cancel_pending)
         self.new_btn.setEnabled(not self._busy)
         self.partial_btn.setEnabled((not self._busy) and self._can_export_partial and self._last_workflow is not None)
         self.rebuild_btn.setEnabled((not self._busy) and self._has_rebuildable_pages())
@@ -2229,6 +2417,11 @@ class QtMainWindow(QMainWindow):
     def _set_busy(self, busy: bool, *, translation: bool) -> None:
         self._busy = busy
         self._running = busy and translation
+        if not busy:
+            self._cancel_pending = False
+            self._clear_cancel_wait_state()
+            self._clear_active_request_tracking()
+            self._restore_transient_safe_profile_if_needed()
         advisor_apply_btn = getattr(self, "advisor_apply_btn", None)
         advisor_ignore_btn = getattr(self, "advisor_ignore_btn", None)
         queue_manifest_edit = getattr(self, "queue_manifest_edit", None)
@@ -2262,7 +2455,7 @@ class QtMainWindow(QMainWindow):
         ):
             decision = self._warn_fixed_xhigh_for_enfr()
             if decision == "switch":
-                self.effort_policy_combo.setCurrentText("adaptive")
+                self.effort_policy_combo.setCurrentText("fixed_high")
                 try:
                     config = self._build_config()
                 except Exception as exc:  # noqa: BLE001
@@ -2270,6 +2463,10 @@ class QtMainWindow(QMainWindow):
                     return
             elif decision != "proceed":
                 return
+
+        config = self._warn_ocr_api_only_if_needed(config)
+        if config is None:
+            return
 
         advisor_applied = (
             config.advisor_recommendation_applied
@@ -2364,6 +2561,9 @@ class QtMainWindow(QMainWindow):
             advisor_recommendation_applied=None,
             advisor_recommendation=None,
         )
+        base_config = self._warn_ocr_api_only_if_needed(base_config)
+        if base_config is None:
+            return
         rerun_failed_only = self.queue_rerun_failed_only_check.isChecked()
         self._save_settings()
         self._consume_advisor_choice()
@@ -2640,11 +2840,66 @@ class QtMainWindow(QMainWindow):
             if summary.error == "docx_write_failed" and summary.attempted_output_docx is not None:
                 self._append_log(f"DOCX save failed at: {summary.attempted_output_docx}")
             details = f"Run stopped at page {summary.failed_page}. Partial pages: {summary.completed_pages}"
+            failure_context: dict[str, object] = {}
+            if summary.run_summary_path is not None:
+                failure_context = _load_run_failure_context(summary.run_summary_path.expanduser().resolve())
+            suspected_cause = str(failure_context.get("suspected_cause", "") or "")
+            halt_reason = str(failure_context.get("halt_reason", "") or "")
+            request_type = str(failure_context.get("request_type", "") or "")
+            request_timeout_budget_seconds = float(
+                failure_context.get("request_timeout_budget_seconds", 0.0) or 0.0
+            )
+            request_elapsed_before_failure_seconds = float(
+                failure_context.get("request_elapsed_before_failure_seconds", 0.0) or 0.0
+            )
+            cancel_requested_before_failure = bool(
+                failure_context.get("cancel_requested_before_failure", False)
+            )
+            exception_class = str(failure_context.get("exception_class", "") or "")
+            if request_type:
+                self._append_log(
+                    "Failure context: "
+                    f"request_type={request_type} "
+                    f"deadline={request_timeout_budget_seconds:.1f}s "
+                    f"elapsed={request_elapsed_before_failure_seconds:.3f}s "
+                    f"cancel_requested={'yes' if cancel_requested_before_failure else 'no'}"
+                )
+            if suspected_cause or halt_reason or exception_class:
+                self._append_log(
+                    "Failure classification: "
+                    f"suspected_cause={suspected_cause or 'unknown'} "
+                    f"halt_reason={halt_reason or 'unknown'} "
+                    f"exception_class={exception_class or 'unknown'}"
+                )
             if summary.error == "docx_write_failed" and summary.attempted_output_docx is not None:
                 details = (
                     f"DOCX save failed at:\n{summary.attempted_output_docx}\n\n"
                     f"Partial pages: {summary.completed_pages}"
                 )
+            else:
+                detail_lines = [details]
+                if suspected_cause:
+                    detail_lines.append(f"Suspected cause: {suspected_cause}")
+                if halt_reason:
+                    detail_lines.append(f"Halt reason: {halt_reason}")
+                if request_type:
+                    detail_lines.append(f"Request type: {request_type}")
+                if request_timeout_budget_seconds > 0.0:
+                    detail_lines.append(f"Request deadline: {request_timeout_budget_seconds:.0f}s")
+                if request_elapsed_before_failure_seconds > 0.0:
+                    detail_lines.append(
+                        f"Elapsed before failure: {request_elapsed_before_failure_seconds:.1f}s"
+                    )
+                if exception_class:
+                    detail_lines.append(f"Failure class: {exception_class}")
+                if request_type:
+                    detail_lines.append(
+                        "Cancel requested before failure: "
+                        f"{'yes' if cancel_requested_before_failure else 'no'}"
+                    )
+                if summary.run_summary_path is not None:
+                    detail_lines.append(f"Run report:\n{summary.run_summary_path}")
+                details = "\n".join(detail_lines)
             QMessageBox.warning(self, "Translation stopped", details)
             self._dashboard_error_count = 1
         self._progress_done_pages = max(self._progress_done_pages, int(summary.completed_pages))
@@ -2730,9 +2985,158 @@ class QtMainWindow(QMainWindow):
         if callable(cancel_cb):
             cancel_cb()
 
+    def _begin_cancel_wait(self) -> None:
+        if not self._running:
+            return
+        self._cancel_pending = True
+        self._cancel_wait_started_at = time.perf_counter()
+        self._append_log("Cancellation requested. Waiting for the current request to finish or time out.")
+        self._refresh_cancel_wait_status()
+        self._cancel_wait_timer.start()
+        self._refresh_dashboard_counters()
+        self._update_controls()
+        self.request_cancel.emit()
+
+    def _resolve_busy_close_choice(self) -> str:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Run in progress")
+        box.setText("A task is still running.")
+        box.setInformativeText(
+            "Choose how to close the app.\n\n"
+            "Keep running: leave the task active.\n"
+            "Cancel and wait: request cancellation and wait for the current request to finish or time out.\n"
+            "Force close: terminate the app immediately and abandon the in-flight request."
+        )
+        keep_btn = box.addButton("Keep running", QMessageBox.ButtonRole.RejectRole)
+        cancel_wait_btn = box.addButton("Cancel and wait", QMessageBox.ButtonRole.ActionRole)
+        force_btn = box.addButton("Force close", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(cancel_wait_btn)  # type: ignore[arg-type]
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is cancel_wait_btn:
+            return "cancel_wait"
+        if clicked is force_btn:
+            return "force_close"
+        return "keep_running"
+
+    def _force_exit_app(self) -> None:
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+        os._exit(0)
+
+    def _ocr_heavy_safe_profile_lines(self) -> list[str]:
+        return [
+            "OCR mode = always",
+            "OCR engine = api",
+            "Image mode = off",
+            "Workers = 1",
+            "Effort policy = fixed_high",
+            "Resume = off",
+            "Keep intermediates = on",
+        ]
+
+    def _ocr_heavy_risk_notes(self, config: RunConfig) -> list[str]:
+        notes: list[str] = []
+        if config.ocr_engine != OcrEnginePolicy.API:
+            notes.append(f"OCR engine is '{config.ocr_engine.value}', not 'api'.")
+        if config.image_mode != ImageMode.OFF:
+            notes.append(f"Image mode is '{config.image_mode.value}'; OCR-success text pages should usually stay text-only.")
+        if config.effort_policy == EffortPolicy.FIXED_XHIGH:
+            notes.append("Effort policy is 'fixed_xhigh', which increases latency and cost on OCR-heavy documents.")
+        if config.workers > 1:
+            notes.append(f"Parallel workers is {config.workers}; unstable OCR-heavy runs should use 1.")
+        if config.resume:
+            notes.append("Resume is on; use off while triaging unstable OCR-heavy runs.")
+        if not config.keep_intermediates:
+            notes.append("Keep intermediates is off; use on so partial artifacts survive a stop.")
+        return notes
+
+    def _show_ocr_heavy_runtime_warning(self, config: RunConfig) -> str:
+        risk_notes = self._ocr_heavy_risk_notes(config)
+        safer_profile = "\n".join(f"- {line}" for line in self._ocr_heavy_safe_profile_lines())
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("OCR-heavy runtime warning")
+        box.setText("Local OCR is unavailable and this document appears OCR-heavy.")
+        informative_lines = [
+            "This run will rely on API OCR only.",
+        ]
+        if risk_notes:
+            informative_lines.append("Current settings that increase timeout/stall risk:")
+            informative_lines.extend(f"- {note}" for note in risk_notes)
+        informative_lines.append("")
+        informative_lines.append("Safer profile for this document:")
+        informative_lines.extend(safer_profile.splitlines())
+        box.setInformativeText("\n".join(informative_lines))
+        apply_btn = box.addButton("Apply safe OCR profile", QMessageBox.ButtonRole.ActionRole)
+        continue_btn = box.addButton("Continue anyway", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(apply_btn)  # type: ignore[arg-type]
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is apply_btn:
+            return "apply_safe"
+        if clicked is continue_btn:
+            return "continue"
+        return "cancel"
+
+    def _warn_ocr_api_only_if_needed(self, config: RunConfig) -> RunConfig | None:
+        if config.ocr_mode == OcrMode.OFF:
+            return config
+        if which("tesseract"):
+            return config
+        page_index = max(0, int(config.start_page) - 1)
+        try:
+            ordered = extract_ordered_page_text(config.pdf_path, page_index)
+        except Exception:
+            return config
+        extracted_text = (ordered.text or "").strip()
+        likely_ocr_heavy = ordered.extraction_failed or len(extracted_text) < 24
+        if not likely_ocr_heavy:
+            return config
+
+        warning_key = (
+            str(config.pdf_path),
+            int(config.start_page),
+            config.ocr_mode.value,
+            config.ocr_engine.value,
+            config.image_mode.value,
+            config.effort_policy.value,
+            int(config.workers),
+            bool(config.resume),
+            bool(config.keep_intermediates),
+        )
+        if warning_key in self._ocr_dependency_warning_seen:
+            return config
+
+        decision = self._show_ocr_heavy_runtime_warning(config)
+        if decision == "apply_safe":
+            self._apply_transient_ocr_heavy_safe_profile()
+            try:
+                config = self._build_config()
+            except Exception as exc:  # noqa: BLE001
+                QMessageBox.critical(self, "Invalid configuration", str(exc))
+                return None
+            self._append_log("OCR warning: applied the OCR-heavy safe profile for this run only.")
+            self._ocr_dependency_warning_seen.add(warning_key)
+            return config
+        if decision == "continue":
+            risk_notes = self._ocr_heavy_risk_notes(config)
+            risk_suffix = f" Risks: {'; '.join(risk_notes)}" if risk_notes else ""
+            self._append_log(
+                "OCR warning: local OCR unavailable; this OCR-heavy run will rely on API OCR only."
+                f"{risk_suffix}"
+            )
+            self._ocr_dependency_warning_seen.add(warning_key)
+            return config
+        self._append_log("OCR warning: user canceled run start.")
+        return None
+
     def _cancel(self) -> None:
         if self._running:
-            self.request_cancel.emit()
+            self._begin_cancel_wait()
 
     def _cleanup_worker(self) -> None:
         if self._worker is not None:
@@ -3226,7 +3630,21 @@ class QtMainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._busy:
-            QMessageBox.warning(self, "Run in progress", "Cancel the active run before closing the app.")
+            choice = self._resolve_busy_close_choice()
+            if choice == "cancel_wait":
+                self._begin_cancel_wait()
+                event.ignore()
+                return
+            if choice == "force_close":
+                if self._settings_save_timer.isActive():
+                    self._settings_save_timer.stop()
+                if self._settings_dialog is not None and self._settings_dialog.isVisible():
+                    self._settings_dialog.close()
+                self._save_settings()
+                self._append_log("Force close requested while a task was still running.")
+                event.accept()
+                self._force_exit_app()
+                return
             event.ignore()
             return
         if self._settings_save_timer.isActive():

@@ -7,6 +7,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .config import (
+    DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
+    DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+)
 from .glossary import (
     default_ar_entries,
     entries_from_legacy_rules,
@@ -20,7 +24,7 @@ from .study_glossary import normalize_study_entries, serialize_study_entries, su
 
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
-SETTINGS_SCHEMA_VERSION = 2
+SETTINGS_SCHEMA_VERSION = 4
 DEFAULT_VOCAB_CASE_ENTITIES = [
     "Ministério Público",
     "Tribunal Judicial",
@@ -120,8 +124,8 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "ocr_engine_default": "local_then_api",
     "perf_max_transport_retries": 4,
     "perf_backoff_cap_seconds": 12.0,
-    "perf_timeout_text_seconds": 90,
-    "perf_timeout_image_seconds": 120,
+    "perf_timeout_text_seconds": DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+    "perf_timeout_image_seconds": DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
     "adaptive_effort_enabled": False,
     "adaptive_effort_xhigh_only_when_image_or_validator_fail": True,
     "allow_xhigh_escalation": False,
@@ -602,8 +606,37 @@ def load_gui_settings() -> dict[str, Any]:
     )
     merged["perf_max_transport_retries"] = max(0, _coerce_int(merged.get("perf_max_transport_retries"), 4))
     merged["perf_backoff_cap_seconds"] = max(1.0, _coerce_float(merged.get("perf_backoff_cap_seconds"), 12.0))
-    merged["perf_timeout_text_seconds"] = max(5, _coerce_int(merged.get("perf_timeout_text_seconds"), 90))
-    merged["perf_timeout_image_seconds"] = max(5, _coerce_int(merged.get("perf_timeout_image_seconds"), 120))
+    settings_schema_version_raw = _coerce_int(
+        data.get("settings_schema_version"),
+        0,
+    )
+    legacy_text_timeout = _coerce_int(
+        data.get("perf_timeout_text_seconds"),
+        DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+    )
+    legacy_image_timeout = _coerce_int(
+        data.get("perf_timeout_image_seconds"),
+        DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
+    )
+    if settings_schema_version_raw < 3:
+        if "perf_timeout_text_seconds" not in data or legacy_text_timeout == 90:
+            merged["perf_timeout_text_seconds"] = DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS
+        if "perf_timeout_image_seconds" not in data or legacy_image_timeout == 120:
+            merged["perf_timeout_image_seconds"] = DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS
+    merged["perf_timeout_text_seconds"] = max(
+        5,
+        _coerce_int(
+            merged.get("perf_timeout_text_seconds"),
+            DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+        ),
+    )
+    merged["perf_timeout_image_seconds"] = max(
+        5,
+        _coerce_int(
+            merged.get("perf_timeout_image_seconds"),
+            DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
+        ),
+    )
     merged["adaptive_effort_enabled"] = _coerce_bool(merged.get("adaptive_effort_enabled"), False)
     merged["adaptive_effort_xhigh_only_when_image_or_validator_fail"] = _coerce_bool(
         merged.get("adaptive_effort_xhigh_only_when_image_or_validator_fail"),

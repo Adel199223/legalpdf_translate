@@ -28,13 +28,19 @@ def classify_suspected_cause(inputs: SummarySignalInputs) -> tuple[str, list[str
     if retries_ratio >= 0.20:
         evidence.append(f'retries_ratio={retries_ratio:.3f}>=0.200')
         return 'compliance_retries', evidence
-    if inputs.rate_limit_hits > 0 or inputs.transport_retries_total >= transport_threshold:
+    if inputs.rate_limit_hits > 0:
         evidence.append(
             'rate_limit_hits='
             f'{inputs.rate_limit_hits}, transport_retries_total={inputs.transport_retries_total}, '
             f'threshold={transport_threshold}'
         )
         return 'rate_limiting', evidence
+    if inputs.transport_retries_total >= transport_threshold:
+        evidence.append(
+            'transport_retries_total='
+            f'{inputs.transport_retries_total}>=threshold={transport_threshold} with rate_limit_hits=0'
+        )
+        return 'transport_instability', evidence
     evidence.append('no primary threshold fired')
     return 'mixed_or_unknown', evidence
 

@@ -8,9 +8,13 @@ import pytest
 
 import legalpdf_translate.workflow as workflow_module
 from legalpdf_translate.ocr_engine import OcrResult
-from legalpdf_translate.openai_client import ApiCallResult
+from legalpdf_translate.openai_client import ApiCallError, ApiCallResult
 from legalpdf_translate.types import ImageMode, OcrEnginePolicy, OcrMode, ReasoningEffort, RunConfig, TargetLang
-from legalpdf_translate.workflow import TranslationWorkflow, classify_extracted_text_quality
+from legalpdf_translate.workflow import (
+    TranslationWorkflow,
+    _derive_cancel_halt_reason,
+    classify_extracted_text_quality,
+)
 
 
 class _FakeClient:
@@ -20,6 +24,33 @@ class _FakeClient:
             raw_output="```\nTranslated output\n```",
             usage={"input_tokens": 10, "output_tokens": 4, "reasoning_tokens": 1, "total_tokens": 15},
             response_id="resp-test",
+        )
+
+
+class _CapturingClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def create_page_response(self, **kwargs) -> ApiCallResult:  # noqa: ANN003
+        self.calls.append(dict(kwargs))
+        return ApiCallResult(
+            raw_output="```\nTranslated output\n```",
+            usage={"input_tokens": 10, "output_tokens": 4, "reasoning_tokens": 1, "total_tokens": 15},
+            response_id="resp-test",
+        )
+
+
+class _FailingClient:
+    def create_page_response(self, **kwargs) -> ApiCallResult:  # noqa: ANN003
+        _ = kwargs
+        raise ApiCallError(
+            message="timeout",
+            status_code=None,
+            exception_class="APITimeoutError",
+            transport_retries_count=2,
+            last_backoff_seconds=0.0,
+            total_backoff_seconds=1.5,
+            rate_limit_hit=False,
         )
 
 
@@ -326,3 +357,259 @@ def test_required_route_builds_policy_engine_once_for_multiple_pages(
     summary_payload = json.loads((summary.run_dir / "run_summary.json").read_text(encoding="utf-8"))
     assert summary_payload["pipeline"]["ocr_required_pages"] == 2
     assert summary_payload["pipeline"]["ocr_preflight_checked"] is True
+
+
+def test_ocr_success_uses_text_route_without_auto_attaching_image(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", lambda _pdf, _idx: _ordered_text_result(""))
+
+    class _FakeEngine:
+        def ocr_image(self, image_bytes: bytes, lang_hint: str | None = None) -> OcrResult:
+            _ = image_bytes, lang_hint
+            return OcrResult(text="Recovered OCR text", engine="api", failed_reason=None, chars=18)
+
+    monkeypatch.setattr(workflow_module, "build_ocr_engine", lambda _cfg: _FakeEngine())
+    monkeypatch.setattr(
+        workflow_module,
+        "ocr_pdf_page_text",
+        lambda *_args, **_kwargs: OcrResult(
+            text="Recovered OCR text with enough usable content to skip image attachment.",
+            engine="api",
+            failed_reason=None,
+            chars=68,
+            quality_score=0.91,
+        ),
+    )
+
+    def _render_should_not_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("render_page_image_data_url should not be called when OCR text is sufficient")
+
+    monkeypatch.setattr(workflow_module, "render_page_image_data_url", _render_should_not_run)
+
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.AUTO,
+        max_pages=1,
+        workers=1,
+        resume=False,
+        page_breaks=True,
+        keep_intermediates=True,
+        ocr_mode=OcrMode.AUTO,
+        ocr_engine=OcrEnginePolicy.API,
+        diagnostics_admin_mode=True,
+    )
+
+    summary = TranslationWorkflow(client=_FakeClient()).run(config)
+    assert summary.success is True
+
+    run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
+    page = run_state["pages"]["1"]
+    assert page["source_route"] == "ocr"
+    assert page["ocr_used"] is True
+    assert page["image_used"] is False
+    assert page["image_decision_reason"] == "ocr_success_text_sufficient"
+
+
+def test_text_only_pages_use_text_timeout_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(workflow_module, "load_gui_settings", lambda: {"perf_timeout_text_seconds": 480, "perf_timeout_image_seconds": 720})
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", lambda _pdf, _idx: _ordered_text_result(""))
+    monkeypatch.setattr(
+        workflow_module,
+        "ocr_pdf_page_text",
+        lambda *_args, **_kwargs: OcrResult(
+            text="Recovered OCR text with enough usable content to skip image attachment.",
+            engine="api",
+            failed_reason=None,
+            chars=68,
+            quality_score=0.91,
+        ),
+    )
+    monkeypatch.setattr(workflow_module, "build_ocr_engine", lambda _cfg: object())
+
+    client = _CapturingClient()
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.AUTO,
+        max_pages=1,
+        workers=1,
+        resume=False,
+        page_breaks=True,
+        keep_intermediates=True,
+        ocr_mode=OcrMode.AUTO,
+        ocr_engine=OcrEnginePolicy.API,
+        diagnostics_admin_mode=True,
+    )
+
+    summary = TranslationWorkflow(client=client).run(config)
+    assert summary.success is True
+    assert len(client.calls) == 1
+    assert float(client.calls[0]["timeout_seconds"]) == pytest.approx(480.0, abs=0.1)
+    assert client.calls[0]["image_data_url"] is None
+
+
+def test_image_backed_pages_use_image_timeout_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(workflow_module, "load_gui_settings", lambda: {"perf_timeout_text_seconds": 480, "perf_timeout_image_seconds": 720})
+    monkeypatch.setattr(
+        workflow_module,
+        "extract_ordered_page_text",
+        lambda _pdf, _idx: _ordered_text_result("Direct text route with enough content to avoid OCR."),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "render_page_image_data_url",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            data_url="data:image/jpeg;base64,ZmFrZQ==",
+            image_format="jpg",
+            encoded_bytes=4,
+            width_px=100,
+            height_px=100,
+            compress_steps=0,
+        ),
+    )
+
+    client = _CapturingClient()
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.ALWAYS,
+        max_pages=1,
+        workers=1,
+        resume=False,
+        page_breaks=True,
+        keep_intermediates=True,
+        ocr_mode=OcrMode.OFF,
+        ocr_engine=OcrEnginePolicy.API,
+        diagnostics_admin_mode=True,
+    )
+
+    summary = TranslationWorkflow(client=client).run(config)
+    assert summary.success is True
+    assert len(client.calls) == 1
+    assert float(client.calls[0]["timeout_seconds"]) == pytest.approx(720.0, abs=0.1)
+    assert str(client.calls[0]["image_data_url"]).startswith("data:image/jpeg;base64,")
+
+
+def test_failed_run_summary_includes_failure_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(
+        workflow_module,
+        "load_gui_settings",
+        lambda: {"perf_timeout_text_seconds": 480, "perf_timeout_image_seconds": 720},
+    )
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", lambda _pdf, _idx: _ordered_text_result(""))
+    monkeypatch.setattr(
+        workflow_module,
+        "ocr_pdf_page_text",
+        lambda *_args, **_kwargs: OcrResult(
+            text="Recovered OCR text with enough usable content to skip image attachment.",
+            engine="api",
+            failed_reason=None,
+            chars=68,
+            quality_score=0.91,
+        ),
+    )
+    monkeypatch.setattr(workflow_module, "build_ocr_engine", lambda _cfg: object())
+
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.AUTO,
+        max_pages=1,
+        workers=1,
+        resume=False,
+        page_breaks=True,
+        keep_intermediates=True,
+        ocr_mode=OcrMode.AUTO,
+        ocr_engine=OcrEnginePolicy.API,
+        diagnostics_admin_mode=True,
+    )
+
+    summary = TranslationWorkflow(client=_FailingClient()).run(config)
+    assert summary.success is False
+    payload = json.loads((summary.run_dir / "run_summary.json").read_text(encoding="utf-8"))
+    assert payload["suspected_cause"] != "rate_limiting"
+    assert "runtime_failure" in str(payload["halt_reason"])
+    failure_context = payload["failure_context"]
+    assert failure_context["page_number"] == 1
+    assert failure_context["request_type"] == "text_only"
+    assert failure_context["request_timeout_budget_seconds"] == 480.0
+    assert failure_context["exception_class"] == "APITimeoutError"
+    assert failure_context["cancel_requested_before_failure"] is False
+
+
+def test_cancel_halt_reason_prefers_timeout_after_cancel() -> None:
+    run_state = SimpleNamespace(
+        pages={
+            "1": {
+                "cancel_requested_before_failure": True,
+                "exception_class": "APITimeoutError",
+                "transport_retries_count": 2,
+            }
+        }
+    )
+    assert _derive_cancel_halt_reason(run_state) == "cancelled_after_request_timeout"
+
+
+def test_cancel_halt_reason_prefers_transport_retry_when_no_timeout() -> None:
+    run_state = SimpleNamespace(
+        pages={
+            "1": {
+                "cancel_requested_before_failure": True,
+                "exception_class": "APIConnectionError",
+                "transport_retries_count": 1,
+            }
+        }
+    )
+    assert _derive_cancel_halt_reason(run_state) == "cancelled_during_transport_retry"

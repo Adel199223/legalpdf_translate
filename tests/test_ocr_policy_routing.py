@@ -88,3 +88,30 @@ def test_local_then_api_uses_api_only_when_local_is_unusable() -> None:
     result = routed.ocr_image(b"x", lang_hint="pt_latin_default")
     assert result.engine == "api"
     assert result.chars > 0
+
+
+def test_api_engine_constructs_openai_with_bounded_retry_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeOpenAI:
+        def __init__(self, *, api_key: str, base_url: str | None = None, max_retries: int = 99) -> None:
+            captured["api_key"] = api_key
+            captured["base_url"] = base_url
+            captured["max_retries"] = max_retries
+            self.responses = object()
+
+    monkeypatch.setattr(ocr_engine, "OpenAI", _FakeOpenAI)
+
+    engine = ApiOcrEngine(
+        api_key="test-key",
+        base_url="https://example.invalid/v1",
+        model="gpt-test",
+        timeout_seconds=240.0,
+    )
+
+    assert captured == {
+        "api_key": "test-key",
+        "base_url": "https://example.invalid/v1",
+        "max_retries": 0,
+    }
+    assert engine._timeout_seconds == pytest.approx(240.0)

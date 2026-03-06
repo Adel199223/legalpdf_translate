@@ -14,6 +14,7 @@ from typing import Any
 from openai import OpenAI
 from PIL import Image
 
+from .config import DEFAULT_METADATA_AI_TIMEOUT_SECONDS, DEFAULT_OCR_API_TIMEOUT_SECONDS
 from .ocr_engine import OcrEngineConfig, OcrResult, build_ocr_engine
 from .ocr_helpers import ocr_pdf_page_text
 from .pdf_text_order import extract_ordered_page_text
@@ -79,6 +80,8 @@ class MetadataAutofillConfig:
     ocr_api_base_url: str | None = None
     ocr_api_model: str | None = None
     ocr_api_key_env_name: str = "DEEPSEEK_API_KEY"
+    ocr_api_timeout_seconds: float = float(DEFAULT_OCR_API_TIMEOUT_SECONDS)
+    metadata_ai_timeout_seconds: float = float(DEFAULT_METADATA_AI_TIMEOUT_SECONDS)
     metadata_ai_enabled: bool = True
     metadata_allow_header_ocr_even_if_ocr_off: bool = True
 
@@ -103,6 +106,8 @@ def metadata_config_from_settings(settings: dict[str, object]) -> MetadataAutofi
         ocr_api_base_url=str(settings.get("ocr_api_base_url", "") or "").strip() or None,
         ocr_api_model=str(settings.get("ocr_api_model", "") or "").strip() or None,
         ocr_api_key_env_name=key_env_name,
+        ocr_api_timeout_seconds=float(DEFAULT_OCR_API_TIMEOUT_SECONDS),
+        metadata_ai_timeout_seconds=float(DEFAULT_METADATA_AI_TIMEOUT_SECONDS),
         metadata_ai_enabled=bool(settings.get("metadata_ai_enabled", True)),
         metadata_allow_header_ocr_even_if_ocr_off=True,
     )
@@ -370,7 +375,12 @@ def _resolve_api_client(config: MetadataAutofillConfig) -> OpenAI | None:
         key = from_env or None
     if not key:
         return None
-    return OpenAI(api_key=key, base_url=(config.ocr_api_base_url.strip() if config.ocr_api_base_url else None))
+    return OpenAI(
+        api_key=key,
+        base_url=(config.ocr_api_base_url.strip() if config.ocr_api_base_url else None),
+        max_retries=0,
+        timeout=max(0.1, float(config.metadata_ai_timeout_seconds)),
+    )
 
 
 def _ai_extract_json(
@@ -387,6 +397,7 @@ def _ai_extract_json(
             model=model,
             input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
             store=False,
+            timeout=max(0.1, float(config.metadata_ai_timeout_seconds)),
         )
     except Exception:
         return None
@@ -602,6 +613,7 @@ def _build_ocr_engine_from_config(config: MetadataAutofillConfig):
             api_base_url=config.ocr_api_base_url,
             api_model=config.ocr_api_model,
             api_key_env_name=config.ocr_api_key_env_name,
+            api_timeout_seconds=float(config.ocr_api_timeout_seconds),
         )
     )
 
