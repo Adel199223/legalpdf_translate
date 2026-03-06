@@ -4,168 +4,165 @@
 
 | File | Key Classes / Functions |
 |------|----------------------|
-| `src/legalpdf_translate/qt_gui/app_window.py` | `_FuturisticCanvas` (paintEvent — decorative frame), `QtMainWindow` (_build_ui, resizeEvent, showEvent, _update_card_max_width, `_start`, `_start_analyze`, `_start_queue`, `_refresh_advisor_banner`, `_open_review_queue_dialog`) |
-| `src/legalpdf_translate/qt_gui/styles.py` | `build_stylesheet()` (full QSS), `PALETTE` dict, `apply_soft_shadow()`, `apply_primary_glow()` |
-| `src/legalpdf_translate/qt_gui/dialogs.py` | `QtSettingsDialog` (launched via `QtMainWindow._open_settings_dialog`) |
-| `src/legalpdf_translate/qt_gui/tools_dialogs.py` | `QtGlossaryBuilderDialog`, `QtCalibrationAuditDialog` (launched via main window toolbar buttons) |
+| `src/legalpdf_translate/qt_app.py` | `run()` creates `QApplication`, applies stylesheet, shows `QtMainWindow`; real GUI module entrypoint |
+| `src/legalpdf_translate/qt_main.py` | compatibility shim that delegates to `qt_app.run()` |
+| `src/legalpdf_translate/qt_gui/app_window.py` | `_FuturisticCanvas` (background/frame paint), `QtMainWindow` (`_build_ui`, `_apply_responsive_layout`, `_update_card_max_width`, `_refresh_lang_badge`, `_configure_footer_layout`, `_install_overflow_menu`) |
+| `src/legalpdf_translate/qt_gui/styles.py` | `build_stylesheet()` (dashboard QSS), `PALETTE`, `apply_soft_shadow()`, `apply_primary_glow()` |
+| `src/legalpdf_translate/qt_gui/dialogs.py` | `QtSettingsDialog`, `QtJobLogWindow`, `QtReviewQueueDialog`, `QtSaveToJobLogDialog` |
+| `src/legalpdf_translate/qt_gui/tools_dialogs.py` | `QtGlossaryBuilderDialog`, `QtCalibrationAuditDialog` |
 
-### objectName conventions
+### Runtime launch contract
+- Supported desktop launch: `python -m legalpdf_translate.qt_app`
+- Detached Windows launch: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`
+- `python -m legalpdf_translate.qt_main` remains a compatibility shim, not the canonical command.
 
-| objectName | Widget Type | Styled By |
-|-----------|-------------|-----------|
-| `RootWidget` | `_FuturisticCanvas` (QWidget) | `QWidget#RootWidget` — transparent background, font family |
-| `GlassCard` | QFrame (content_card) | `QFrame#GlassCard` — dark card background, rounded border |
-| `HeaderStrip` | QFrame | `QFrame#HeaderStrip` — gradient header bar |
-| `SurfacePanel` | QFrame (main_card, adv_frame, details_card, footer_card) | `QFrame#SurfacePanel` — darker panel background |
-| `PrimaryButton` | QPushButton (Translate) | `QPushButton#PrimaryButton` — cyan fill, dark text |
-| `DangerButton` | QPushButton (Cancel) | `QPushButton#DangerButton` — red border |
-| `TitleLabel` | QLabel | `QLabel#TitleLabel` — large accent-colored title |
-| `MutedLabel` | QLabel | `QLabel#MutedLabel` — subdued text |
-| `PathLabel` | QLabel | `QLabel#PathLabel` — accent status text |
-| `DisclosureButton` | QToolButton (Show details) | `QToolButton#DisclosureButton` — transparent, accent text |
-| `GlossaryTableCombo` | QComboBox (Match / Source lang / Tier in glossary table) | `QComboBox#GlossaryTableCombo` — compact padding (`2px 4px`), smaller border-radius (`4px`) for in-table fit |
+## B. objectName Conventions
 
-## B. Layout Tree
+| objectName | Widget Type | Purpose |
+|-----------|-------------|---------|
+| `RootWidget` | `_FuturisticCanvas` | painted dashboard scene/background |
+| `SidebarPanel` | QFrame | left navigation rail |
+| `SidebarNavButton` | QToolButton | sidebar nav item (`Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`) |
+| `HeroTitleLabel` | QLabel | centered `LegalPDF Translate` title |
+| `HeroStatusLabel` | QLabel | right-aligned top status text |
+| `DashboardFrame` | QFrame | outer shell around setup/output/action regions |
+| `ShellPanel` | QFrame | interior setup/progress/details/advisor panels |
+| `PanelHeading` | QLabel | `Job Setup`, `Conversion Output` headings |
+| `FieldChrome` | QFrame | embedded dashboard field container |
+| `FieldBrowseButton` | QToolButton | right-edge browse/action affordance inside dashboard fields |
+| `LangCaretButton` | QToolButton | explicit dropdown caret in target-language field |
+| `SectionToggleButton` | QToolButton | `Advanced Settings` collapsible bar |
+| `MetricGridFrame` | QFrame | output metrics grid container |
+| `PrimaryButton` | QPushButton | `Start Translate` CTA |
+| `DangerButton` | QPushButton | `Cancel` CTA |
+| `OverflowMenuButton` | QToolButton | `...` overflow menu trigger |
+| `ActionRail` | QFrame | bottom action rail |
+| `FooterMetaLabel` | QLabel | `Project v3.0 | LegalPDF` |
+
+## C. Layout Tree
 
 ```
 QtMainWindow
-└── _FuturisticCanvas  [centralWidget, objectName="RootWidget"]
-    │   paintEvent draws: gradient background, top bar, decorative frame,
-    │   corner accents, sweep line
-    │
-    └── QVBoxLayout [outer]  margins=_FRAME_INSETS  spacing=0
+└── _FuturisticCanvas [centralWidget, objectName="RootWidget"]
+    └── QHBoxLayout [outer]
+        ├── QFrame#SidebarPanel [sidebar_frame]
+        │   └── QVBoxLayout
+        │       ├── Sidebar logo
+        │       ├── Dashboard nav
+        │       ├── New Job nav
+        │       ├── Recent Jobs nav
+        │       ├── Settings nav
+        │       └── Profile nav
         └── QScrollArea [_scroll_area]
-            │   NoFrame, widgetResizable=True, transparent
-            │   horizontalScrollBarPolicy = AlwaysOff
-            │
-            └── QWidget [scroll_content]  transparent
-                └── QVBoxLayout [scroll_layout]  margins=(18,14,18,6)  spacing=0
-                    ├── stretch(1)
-                    ├── QFrame#GlassCard [content_card]
-                    │   maxWidth=1180, sizePolicy=(Expanding, Preferred)
-                    │   AlignHCenter, soft shadow (blur=66, offset_y=16)
-                    │   │
-                    │   └── QVBoxLayout [card_shell]  margins=(18,16,18,16) spacing=10
-                    │       ├── QFrame#HeaderStrip  [header_strip]
-                    │       │   └── QHBoxLayout: TitleLabel + StatusHeaderLabel
-                    │       │
-                    │       ├── QFrame#SurfacePanel [main_card]
-                    │       │   └── QVBoxLayout → QGridLayout (PDF/lang/outdir rows + tools)
-                    │       │
-                    │       ├── QFrame#SurfacePanel [adv_frame]  (hidden by default)
-                    │       │   └── QFormLayout (effort/images/OCR/pages/workers/context/analyze/queue controls)
-                    │       │       Includes: Analyze button, queue manifest picker,
-                    │       │       rerun-failed-only checkbox, Run Queue button, Queue status label
-                    │       │
-                    │       ├── QFrame#SurfacePanel [advisor_frame]
-                    │       │   └── QHBoxLayout: Advisor label + Apply + Ignore
-                    │       │
-                    │       ├── QFrame#SurfacePanel [details_card]
-                    │       │   └── QVBoxLayout: DisclosureButton + log QPlainTextEdit
-                    │       │
-                    │       └── QFrame#SurfacePanel [footer_card]  LTR forced
-                    │           └── QVBoxLayout: Final DOCX row, progress bar,
-                    │               status labels, QGridLayout [btn_grid]:
-                    │               Row 0: Translate | Cancel | New Run | Export partial DOCX | Rebuild DOCX
-                    │               Row 1: Open output folder | Export Run Report | Review Queue | Save to Job Log | Job Log
-                    │
-                    └── stretch(1)
+            └── QWidget [scroll_content]
+                └── QVBoxLayout [scroll_layout]
+                    └── QHBoxLayout [content_row_layout]
+                        └── QWidget [content_card]
+                            └── QVBoxLayout [card_shell_layout]
+                                ├── QGridLayout [hero row]
+                                │   ├── QLabel#HeroTitleLabel
+                                │   └── QLabel#HeroStatusLabel
+                                ├── QFrame#DashboardFrame
+                                │   └── QVBoxLayout [dashboard_layout]
+                                │       └── QFrame [main_card]
+                                │           └── QVBoxLayout
+                                │               ├── QBoxLayout [body_layout]
+                                │               │   ├── QFrame#ShellPanel [setup_panel]
+                                │               │   │   ├── setup_grid
+                                │               │   │   ├── QToolButton#SectionToggleButton
+                                │               │   │   ├── adv_frame
+                                │               │   │   └── advisor_frame
+                                │               │   └── QFrame#ShellPanel [progress_panel]
+                                │               │       ├── QLabel#PanelHeading ("Conversion Output")
+                                │               │       ├── summary row
+                                │               │       ├── QProgressBar
+                                │               │       ├── current-task row
+                                │               │       ├── QFrame#MetricGridFrame
+                                │               │       └── output format label
+                                │               └── QFrame#ActionRail [footer_card]
+                                │                   ├── Start Translate
+                                │                   ├── Cancel
+                                │                   └── ...
+                                ├── footer meta row
+                                ├── details_card
+                                └── utility_panel (hidden compatibility controls)
 ```
 
-## C. UI Invariants
+## D. UI Invariants
 
-### 1. Painted Frame ↔ Layout Margins (CRITICAL)
+### 1. Launch command invariant
+- **What:** The real GUI entrypoint is `legalpdf_translate.qt_app`.
+- **Why:** `qt_app.py` owns `QApplication`, stylesheet setup, icon setup, and `QtMainWindow.show()`.
+- **Verify:** `python -m legalpdf_translate.qt_app`
+- **Breaks if:** docs or scripts keep pointing to `legalpdf_translate.qt_gui`.
 
-- **What:** The decorative outer frame drawn in `_FuturisticCanvas.paintEvent` and the outer layout margins that position the scroll area MUST use the same inset values.
-- **Where:**
-  - `_FRAME_INSETS = (16, 96, 16, 18)` — module-level constant in `app_window.py`
-  - `paintEvent`: `frame_rect = rect.adjusted(_l, _t, -_r, -_b)` (unpacks `_FRAME_INSETS`)
-  - `_build_ui`: `outer.setContentsMargins(*_FRAME_INSETS)`
-- **How to verify:** Launch app → the content card should sit visually inside the painted rounded frame with uniform padding.
-- **What breaks it:** Changing any value in paintEvent without updating the margins (or vice versa). Using `_FRAME_INSETS` prevents this.
+### 2. Three responsive layout modes
+- **What:** Layout is controlled by explicit size classes, not ad-hoc widget drift.
+- **Where:** `_LAYOUT_DESKTOP_EXACT`, `_LAYOUT_DESKTOP_COMPACT`, `_LAYOUT_STACKED_COMPACT` plus `_layout_mode_for_budget()`.
+- **Breakpoints:**
+  - `desktop_exact`: content budget `>= 1500`
+  - `desktop_compact`: `1180..1499`
+  - `stacked_compact`: `< 1180`
+- **Verify:** wide window = two-column shell; narrow window = stacked shell.
 
-### 2. Card Centering
+### 3. Sidebar geometry comes from `_apply_responsive_layout()`
+- **What:** Sidebar width, nav widths, nav heights, icon sizes, and logo size must stay tied to the active size class.
+- **Where:** `sidebar_width`, `nav_width`, `nav_height`, `icon_size`, `logo_size` values inside `_apply_responsive_layout()`.
+- **Verify:** desktop exact shows readable `Dashboard`/`Recent Jobs`; stacked compact shrinks to icon-heavy chrome without overlap.
 
-- **What:** The content card is horizontally centered and vertically padded within the scroll area.
-- **Where:**
-  - `scroll_layout.addWidget(content_card, 0, Qt.AlignmentFlag.AlignHCenter)` — horizontal centering
-  - `scroll_layout.addStretch(1)` above and below — vertical centering
-  - `content_card.setMaximumWidth(1180)` + `_update_card_max_width()` — responsive width
-- **How to verify:** Resize window → card stays centered. Maximize → card doesn't stretch beyond 1180px.
-- **What breaks it:** Removing AlignHCenter, removing either stretch, or setting a fixed width instead of max.
+### 4. Content-card width is computed, then centered
+- **What:** `content_card` uses a computed fixed width based on viewport space, then is centered with `content_row_layout`.
+- **Where:** `_update_card_max_width()` sets `target_width = max(360, min(1760, available))` and `content_card.setFixedWidth(target_width)`.
+- **Verify:** large windows use most of the available width without horizontal scroll; shell remains centered.
 
-### 3. Responsiveness
+### 5. Paint layer must read live geometry
+- **What:** `_FuturisticCanvas.paintEvent()` must derive sidebar separator placement from the actual sidebar width, not stale constants.
+- **Where:** `sidebar = getattr(window, "sidebar_frame", None)` then `sidebar_line_x = sidebar.width()`.
+- **Verify:** painted sidebar divider stays aligned while resizing across layout modes.
 
-- **What:** Window adapts to any display size without hard-coded dimensions.
-- **Where:**
-  - `setMinimumSize(720, 540)` in `__init__`
-  - `showEvent`: sizes to 92% of available screen area on first show
-  - `_update_card_max_width()` in `resizeEvent`: `max(600, min(1180, viewport - margins))`
-- **How to verify:** Launch on different display sizes → window fits screen, card adapts.
-- **What breaks it:** Adding a hard-coded `resize()` call, or setting a fixed card width.
+### 6. Desktop metrics grid contract
+- **What:** Desktop grid shows `Pages`, `Images`, `Errors`, and a `Retries` heading only.
+- **Where:** `_build_ui()` metric grid; `metric_retry_header_label` remains, row-level retry cells are not added to the layout.
+- **Verify:** no per-row retry counts are visible in the desktop grid, even though retry tracking still exists internally.
 
-### 4. No Horizontal Overflow
+### 7. Target-language badge contract
+- **What:** Show one language code and one matching flag only.
+- **Where:** `_LANG_FLAG_ICON_BY_CODE` and `_refresh_lang_badge()`.
+- **Behavior:** if a flag asset is missing, hide the flag widget instead of duplicating text.
+- **Verify:** switching `EN`, `FR`, `AR` shows one code, one flag, and no repeated fallback text.
 
-- **What:** Users must never be able to scroll horizontally (which would clip button labels).
-- **Where:**
-  - `_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)`
-  - `_update_card_max_width()` caps card width to viewport
-- **How to verify:** Launch app → no horizontal scrollbar at any window size.
-- **What breaks it:** Removing the scroll bar policy, or letting content exceed viewport width.
+### 8. Small-window layout is intentionally different
+- **What:** `stacked_compact` is not a broken desktop shell; it is a deliberate mobile-like adaptation.
+- **Where:** `_apply_responsive_layout()` changes `body_layout` direction to `TopToBottom` and calls `_configure_footer_layout(compact=True)`.
+- **Verify:** setup panel above output panel; `Start Translate` on row 1; `Cancel` and `...` on row 2.
 
-### 5. Footer Button Labels
+## E. How to Change X
 
-- **What:** All 10 footer buttons must show complete labels (no truncation).
-- **Where:** `_build_ui` creates a QGridLayout with 2 rows:
-  - Row 0 (5 buttons): Translate, Cancel, New Run, Export partial DOCX, Rebuild DOCX
-  - Row 1 (5 buttons): Open output folder, Export Run Report, Review Queue, Save to Job Log, Job Log
-  - `btn_grid.setColumnStretch(len(row0), 1)` pushes content left
-  - `btn.setToolTip(btn.text())` on each button
-- **How to verify:** All labels fully readable at default window width.
-- **What breaks it:** Adding buttons without adjusting the row split, or using a single row for many buttons.
+### Change sidebar width or nav rhythm
+- Edit the size-class values in `_apply_responsive_layout()`:
+  - `sidebar_width`
+  - `nav_width`
+  - `nav_height`
+  - `icon_size`
+  - `logo_size`
 
-### 6. Layout Direction (LTR)
+### Change desktop shell balance
+- Edit `progress_stretch` inside `_apply_responsive_layout()`.
+- `body_layout.addWidget(self.setup_panel, 7)` and `body_layout.addWidget(self.progress_panel, 6)` are the base stretch weights.
 
-- **What:** UI chrome always renders left-to-right regardless of target translation language.
-- **Where:**
-  - `self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)` in `__init__`
-  - `self.footer_card.setLayoutDirection(Qt.LayoutDirection.LeftToRight)` in `_build_ui`
-- **How to verify:** Select AR target language → buttons still appear in expected LTR order.
-- **What breaks it:** Removing the direction overrides, or setting a global RTL policy.
+### Change output actions
+- Edit `_install_overflow_menu()` for `...` menu items.
+- Review Queue and Save to Job Log remain top-menu actions in `_install_menu()`.
 
-## D. How to Change X
+### Change field icons or language flags
+- Update assets under `resources/icons/dashboard/`.
+- Update `_LANG_FLAG_ICON_BY_CODE` when adding a new supported UI flag.
 
-### Change decorative frame thickness/margins
+### Change progress-grid presentation
+- Edit the metric-grid section in `_build_ui()` and the data population logic in `_apply_dashboard_snapshot()` / `_refresh_dashboard_counters()`.
+- Keep the heading-only retries presentation unless the visual contract changes intentionally.
 
-Edit the `_FRAME_INSETS` tuple in `app_window.py`. Both paintEvent and outer layout margins read from it, so they stay in sync.
-
-### Change content card max width
-
-Edit the `1180` value in both:
-1. `self.content_card.setMaximumWidth(1180)` in `_build_ui`
-2. `min(1180, available)` in `_update_card_max_width()`
-
-### Change footer buttons
-
-Edit the `row0` and `row1` lists in `_build_ui`. Keep the QGridLayout pattern with `setColumnStretch` on the column after the last button. Remember to add `setToolTip(btn.text())` on any new button.
-
-### Change advisor or queue controls
-
-Edit `_build_ui` in `app_window.py`:
-1. Queue controls live in `adv_frame`.
-2. The advisor banner lives in `advisor_frame`.
-3. Queue behavior wiring lives in `_start_queue()`, `_on_queue_status()`, and `_on_queue_finished()`.
-
-### Improve primary button contrast
-
-1. Edit `QPushButton#PrimaryButton` section in `build_stylesheet()` in `styles.py` (border width, color, background)
-2. Edit `apply_primary_glow()` in `styles.py` (glow color and blur radius)
-
-### Change scroll layout inner margins
-
-Edit `scroll_layout.setContentsMargins(18, 14, 18, 6)` in `_build_ui`. Left/right affect the effective card width floor (subtracted in `_update_card_max_width`). Top/bottom affect card vertical breathing room.
-
-## E. How to Verify
+## F. How to Verify
 
 ### Automated
 
@@ -176,12 +173,16 @@ python -m compileall src tests
 
 ### Manual smoke check
 
-1. `python -m legalpdf_translate.qt_gui` — app launches without error
-2. Resize window to various sizes → content card stays inside painted frame
-3. Maximize → card centered, no horizontal scrollbar
-4. Restore to normal size → card adapts
-5. Check all footer button labels are fully readable
-6. Toggle Show Advanced → card grows, vertical scrollbar appears if needed
-7. Run Analyze on a difficult PDF → advisor banner appears when recommendation data exists
-8. Finish a run with flagged pages → `Review Queue` button enables
-9. Load a queue manifest in Advanced settings → `Run Queue` starts and status text updates
+1. Launch app: `python -m legalpdf_translate.qt_app`
+2. Optional detached launch on Windows: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`
+3. Desktop exact: sidebar labels readable, `Conversion Output` visible, two-column shell intact
+4. Desktop compact: still two-column, no clipped fields or drifting action rail
+5. Stacked compact: setup/output stack cleanly; footer reflows to two rows
+6. Switch language between `EN`, `FR`, `AR` and confirm one code + one flag only
+7. Open `...` and confirm only:
+   - `Open Output Folder`
+   - `Export Partial DOCX`
+   - `Rebuild DOCX`
+   - `Generate Run Report`
+   - `View Job Log`
+8. Open `Tools` and confirm `Review Queue...` and `Save to Job Log...` remain reachable

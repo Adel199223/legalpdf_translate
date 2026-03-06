@@ -11,11 +11,27 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - Key invariant: page-by-page translation flow, no whole-document batch request.
 
 ## Entrypoints
-- GUI: `python -m legalpdf_translate.qt_gui`
+- GUI: `python -m legalpdf_translate.qt_app`
+- GUI compatibility shim: `python -m legalpdf_translate.qt_main`
 - CLI: `legalpdf-translate --pdf <file> --lang EN|FR|AR --outdir <dir>`
   - Cost guardrails (optional): `--budget-cap-usd <float> --cost-profile-id <string> --budget-on-exceed warn|block`
   - Queue mode (optional): `legalpdf-translate --queue-manifest <manifest.jsonl> --rerun-failed-only true --lang EN --outdir <dir>`
 - Build: `powershell -ExecutionPolicy Bypass -File scripts/build_qt.ps1`
+
+## Desktop UI Shell
+- The desktop app now uses a dashboard-style shell instead of the older stacked utility card.
+- Main visible regions:
+  - left sidebar: `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`
+  - hero row: centered `LegalPDF Translate` title and right-aligned status text
+  - left card: `Job Setup`
+  - right card: `Conversion Output`
+  - bottom action rail: `Start Translate`, `Cancel`, `...`
+- `Advanced Settings` stays collapsed by default inside the setup card.
+- Review Queue and Save to Job Log remain available from the `Tools` menu; the `...` menu keeps output/report/job-log actions.
+- The shell uses three responsive layout modes:
+  - `desktop_exact`
+  - `desktop_compact`
+  - `stacked_compact`
 
 ## Core Runtime Modules
 - `src/legalpdf_translate/workflow.py`: translation pipeline orchestration.

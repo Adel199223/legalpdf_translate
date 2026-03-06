@@ -59,8 +59,8 @@
 ## Legacy supplemental deep docs
 - `docs/assistant/API_PROMPTS.md`
 - `docs/assistant/PROMPTS_KNOWLEDGE.md`
-- `docs/assistant/QT_UI_KNOWLEDGE.md`
-- `docs/assistant/QT_UI_PLAYBOOK.md`
+- `docs/assistant/QT_UI_KNOWLEDGE.md` (current Qt dashboard shell, launch path, and responsive invariants)
+- `docs/assistant/QT_UI_PLAYBOOK.md` (Qt dashboard change recipes and verification checklist)
 - `docs/assistant/GLOSSARY_BUILDER_KNOWLEDGE.md`
 - `docs/assistant/WORKFLOW_GIT_AI.md`
 

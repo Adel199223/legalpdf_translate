@@ -21,6 +21,7 @@ Use this file to route quickly to canonical and workflow docs. Do not treat this
 For support/non-technical explanations, start with:
 - `docs/assistant/features/APP_USER_GUIDE.md`
 - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+- Qt dashboard shell/launch behavior routes to `docs/assistant/QT_UI_KNOWLEDGE.md` and `docs/assistant/QT_UI_PLAYBOOK.md`.
 
 Cost-guardrail support routing:
 - CLI budget cap/policy behavior (`warn` vs `block`) is documented in the primary workflow user guide.
@@ -31,6 +32,7 @@ Cost-guardrail support routing:
 
 ## Current-Truth Note
 - Canonical current-truth now includes queue runner support, OCR advisor flows, review queue handling, and job-log metric sync.
+- Canonical current-truth also includes the screenshot-driven Qt dashboard shell and the real GUI module entrypoint: `python -m legalpdf_translate.qt_app`.
 
 ## Workflow Routing
 - Core translation: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
