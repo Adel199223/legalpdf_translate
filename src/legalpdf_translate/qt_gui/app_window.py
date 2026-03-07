@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
 )
 
 from legalpdf_translate import __version__
+from legalpdf_translate.build_identity import RuntimeBuildIdentity
 from legalpdf_translate.checkpoint import (
     load_run_state,
     parse_effort,
@@ -473,9 +474,13 @@ class _FuturisticCanvas(QWidget):
 class QtMainWindow(QMainWindow):
     request_cancel = Signal()
 
-    def __init__(self) -> None:
+    def __init__(self, *, build_identity: RuntimeBuildIdentity | None = None) -> None:
         super().__init__()
-        self.setWindowTitle("LegalPDF Translate")
+        self._build_identity = build_identity
+        if build_identity is None:
+            self.setWindowTitle("LegalPDF Translate")
+        else:
+            self.setWindowTitle(build_identity.window_title("LegalPDF Translate"))
         self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.setMinimumSize(720, 540)
         self.resize(1680, 960)
@@ -1815,6 +1820,7 @@ class QtMainWindow(QMainWindow):
             apply_callback=self.apply_settings_from_dialog,
             collect_debug_paths=self.collect_debug_bundle_metadata_paths,
             current_pdf_path=current_pdf_path,
+            build_identity=self._build_identity,
         )
         dialog.setModal(False)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)

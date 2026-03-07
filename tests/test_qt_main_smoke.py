@@ -66,7 +66,7 @@ class _FakeQApplication:
 class _FakeWindow:
     instances: list["_FakeWindow"] = []
 
-    def __init__(self) -> None:
+    def __init__(self, *_args, **_kwargs) -> None:
         self.shown = False
         self.window_icon: _FakeQIcon | None = None
         _FakeWindow.instances.append(self)

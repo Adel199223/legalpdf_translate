@@ -74,6 +74,7 @@ from legalpdf_translate.gmail_draft import (
     build_honorarios_gmail_request,
     create_gmail_draft_via_gog,
 )
+from legalpdf_translate.build_identity import RuntimeBuildIdentity
 from legalpdf_translate.honorarios_docx import (
     HonorariosDraft,
     build_honorarios_draft,
@@ -2009,6 +2010,7 @@ class QtSettingsDialog(QDialog):
         apply_callback: Callable[[dict[str, object], bool], None],
         collect_debug_paths: Callable[[], list[Path]],
         current_pdf_path: Path | None = None,
+        build_identity: RuntimeBuildIdentity | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
@@ -2019,6 +2021,7 @@ class QtSettingsDialog(QDialog):
         self._apply_callback = apply_callback
         self._collect_debug_paths = collect_debug_paths
         self._study_current_pdf_path: Path | None = current_pdf_path
+        self._build_identity = build_identity
         self._glossaries_by_lang: dict[str, list[GlossaryEntry]] = normalize_glossaries({}, supported_target_langs())
         self._enabled_glossary_tiers_by_lang: dict[str, list[int]] = normalize_enabled_tiers_by_target_lang(
             {},
@@ -3887,6 +3890,12 @@ class QtSettingsDialog(QDialog):
 
     def _build_tab_diagnostics(self) -> None:
         layout = QVBoxLayout(self.tab_diag)
+        build_group = QGroupBox("Build under test")
+        build_layout = QVBoxLayout(build_group)
+        self.build_identity_label = QLabel("")
+        self.build_identity_label.setWordWrap(True)
+        build_layout.addWidget(self.build_identity_label)
+        layout.addWidget(build_group)
         self.diag_cost_summary_check = QCheckBox("Show cost summary")
         self.diag_verbose_meta_check = QCheckBox("Verbose metadata logs")
         self.diag_admin_mode_check = QCheckBox("Admin diagnostics mode")
@@ -3951,6 +3960,7 @@ class QtSettingsDialog(QDialog):
         self._set_glossaries_from_settings(settings)
         self._set_study_from_settings(settings)
         self._refresh_provider_controls()
+        self._refresh_build_identity()
 
     def _current_ocr_provider(self) -> OcrApiProvider:
         provider_value = getattr(self, "ocr_provider_combo", None)
@@ -4001,6 +4011,14 @@ class QtSettingsDialog(QDialog):
             self.gmail_summary_label.setText(
                 f"Configured gog path: {path_summary}\nConfigured Gmail account: {account_summary}"
             )
+
+    def _refresh_build_identity(self) -> None:
+        if not hasattr(self, "build_identity_label"):
+            return
+        if self._build_identity is None:
+            self.build_identity_label.setText("Build identity unavailable.")
+            return
+        self.build_identity_label.setText(self._build_identity.summary_text())
 
     def _pick_gmail_gog_path(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(

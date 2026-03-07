@@ -13,11 +13,13 @@ if os.name != "nt" and "DISPLAY" not in os.environ:
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QBoxLayout
 
+from legalpdf_translate.build_identity import RuntimeBuildIdentity
 from legalpdf_translate.docx_writer import assemble_docx
 from legalpdf_translate.qt_gui.app_window import QtMainWindow
 from legalpdf_translate.qt_gui.dialogs import (
     JobLogSeed,
     QtSaveToJobLogDialog,
+    QtSettingsDialog,
     build_seed_from_run,
     count_words_from_docx,
     count_words_from_output_artifacts,
@@ -686,10 +688,6 @@ def test_settings_dialog_uses_guarded_run_critical_controls(tmp_path: Path) -> N
     if app is None:
         app = QApplication(sys.argv[:1])
 
-    dialog = QtSaveToJobLogDialog
-    del dialog  # silence lint for this scope; real dialog check follows below
-    from legalpdf_translate.qt_gui.dialogs import QtSettingsDialog  # local import to keep test dependency narrow
-
     settings_dialog = QtSettingsDialog(
         parent=None,
         settings={},
@@ -705,6 +703,79 @@ def test_settings_dialog_uses_guarded_run_critical_controls(tmp_path: Path) -> N
         assert isinstance(settings_dialog.default_workers_combo, NoWheelComboBox)
         assert isinstance(settings_dialog.ocr_mode_default_combo, NoWheelComboBox)
         assert isinstance(settings_dialog.ocr_engine_default_combo, NoWheelComboBox)
+    finally:
+        settings_dialog.close()
+        settings_dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_noncanonical_main_window_title_includes_branch_and_sha() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    identity = RuntimeBuildIdentity(
+        worktree_path="C:/repo/noncanonical",
+        branch="feat/ocr-runtime-gemini-integration",
+        head_sha="1fc24ee",
+        labels=("gemini", "gmail"),
+        is_canonical=False,
+        is_lineage_valid=True,
+        canonical_worktree_path="C:/repo/canonical",
+        canonical_branch="feat/ai-docs-bootstrap",
+        approved_base_branch="feat/ai-docs-bootstrap",
+        approved_base_head_floor="4e9d20e",
+        canonical_head_floor="4e9d20e",
+        reasons=("branch mismatch",),
+    )
+    window = QtMainWindow(build_identity=identity)
+    try:
+        assert window.windowTitle() == "LegalPDF Translate [feat/ocr-runtime-gemini-integration@1fc24ee]"
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_settings_dialog_shows_build_identity_summary() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    identity = RuntimeBuildIdentity(
+        worktree_path="C:/repo/noncanonical",
+        branch="feat/ocr-runtime-gemini-integration",
+        head_sha="1fc24ee",
+        labels=("gemini", "gmail"),
+        is_canonical=False,
+        is_lineage_valid=True,
+        canonical_worktree_path="C:/repo/canonical",
+        canonical_branch="feat/ai-docs-bootstrap",
+        approved_base_branch="feat/ai-docs-bootstrap",
+        approved_base_head_floor="4e9d20e",
+        canonical_head_floor="4e9d20e",
+        reasons=("branch mismatch",),
+    )
+    settings_dialog = QtSettingsDialog(
+        parent=None,
+        settings={},
+        apply_callback=lambda *_args, **_kwargs: None,
+        collect_debug_paths=lambda: [],
+        current_pdf_path=None,
+        build_identity=identity,
+    )
+    try:
+        text = settings_dialog.build_identity_label.text()
+        assert "Status: noncanonical" in text
+        assert "Branch: feat/ocr-runtime-gemini-integration" in text
+        assert "HEAD SHA: 1fc24ee" in text
+        assert "Approved base branch: feat/ai-docs-bootstrap" in text
+        assert "Approved base head floor: 4e9d20e" in text
+        assert "Lineage valid: yes" in text
     finally:
         settings_dialog.close()
         settings_dialog.deleteLater()
