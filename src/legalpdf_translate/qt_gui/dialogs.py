@@ -85,6 +85,7 @@ from legalpdf_translate.joblog_db import (
     insert_job_run,
     list_job_runs,
     open_job_log,
+    update_job_run_output_paths,
     update_joblog_visible_columns,
 )
 from legalpdf_translate.metadata_autofill import (
@@ -354,6 +355,13 @@ def _default_documents_dir() -> Path:
     if candidate:
         return Path(candidate).expanduser().resolve()
     return (Path.home() / "Documents").expanduser().resolve()
+
+
+def _default_downloads_dir() -> Path:
+    candidate = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+    if candidate:
+        return Path(candidate).expanduser().resolve()
+    return (Path.home() / "Downloads").expanduser().resolve()
 
 
 def _open_folder_for_path(parent: QWidget, target: Path) -> None:
@@ -793,10 +801,11 @@ class QtSaveToJobLogDialog(QDialog):
         return _default_documents_dir()
 
     def _current_translation_docx_path(self) -> Path | None:
-        if isinstance(self._seed.output_docx, Path):
-            resolved = self._seed.output_docx.expanduser().resolve()
-            if resolved.exists():
-                return resolved
+        for candidate in (self._seed.output_docx, self._seed.partial_docx):
+            if isinstance(candidate, Path):
+                resolved = candidate.expanduser().resolve()
+                if resolved.exists():
+                    return resolved
         return None
 
     def _offer_gmail_draft_for_honorarios(self, honorarios_docx: Path) -> None:
@@ -1055,6 +1064,16 @@ class QtSaveToJobLogDialog(QDialog):
             "estimated_api_cost": estimated_api_cost,
             "quality_risk_score": quality_risk_score,
             "profit": profit,
+            "output_docx_path": (
+                str(self._seed.output_docx.expanduser().resolve())
+                if isinstance(self._seed.output_docx, Path)
+                else None
+            ),
+            "partial_docx_path": (
+                str(self._seed.partial_docx.expanduser().resolve())
+                if isinstance(self._seed.partial_docx, Path)
+                else None
+            ),
         }
 
         with closing(open_job_log(self._db_path)) as conn:
@@ -1153,7 +1172,7 @@ class QtJobLogWindow(QDialog):
         with closing(open_job_log(self._db_path)) as conn:
             rows = list_job_runs(conn, limit=1000)
         for row in rows:
-            row_data = {col: row[col] if col in row.keys() else "" for col in JOBLOG_COLUMNS}
+            row_data = {key: row[key] for key in row.keys()}
             self._rows_data.append(row_data)
             row_idx = self.table.rowCount()
             self.table.insertRow(row_idx)
@@ -1209,15 +1228,18 @@ class QtJobLogWindow(QDialog):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        selected, _ = QFileDialog.getOpenFileName(
-            self,
-            "Selecionar DOCX traduzido",
-            str(honorarios_docx.expanduser().resolve().parent),
-            "Word Document (*.docx)",
-        )
-        if not selected:
-            return
-        translation_docx = Path(selected).expanduser().resolve()
+        translation_docx = self._historical_translation_docx_path(row, honorarios_docx=honorarios_docx)
+        if translation_docx is None:
+            selected, _ = QFileDialog.getOpenFileName(
+                self,
+                "Selecionar DOCX traduzido",
+                str(honorarios_docx.expanduser().resolve().parent),
+                "Word Document (*.docx)",
+            )
+            if not selected:
+                return
+            translation_docx = Path(selected).expanduser().resolve()
+            self._persist_historical_translation_docx(row, translation_docx)
         try:
             request = build_honorarios_gmail_request(
                 gog_path=prereqs.gog_path,
@@ -1251,6 +1273,91 @@ class QtJobLogWindow(QDialog):
         )
         if open_gmail == QMessageBox.StandardButton.Yes:
             QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
+
+    def _historical_translation_docx_path(
+        self,
+        row: dict[str, object],
+        *,
+        honorarios_docx: Path | None = None,
+    ) -> Path | None:
+        for key in ("output_docx_path", "partial_docx_path"):
+            raw = str(row.get(key, "") or "").strip()
+            if raw == "":
+                continue
+            candidate = Path(raw).expanduser().resolve()
+            if candidate.exists():
+                return candidate
+        recovered = self._recover_historical_translation_docx_path(row, honorarios_docx=honorarios_docx)
+        if recovered is not None:
+            self._persist_historical_translation_docx(row, recovered)
+            return recovered
+        return None
+
+    def _recover_historical_translation_docx_path(
+        self,
+        row: dict[str, object],
+        *,
+        honorarios_docx: Path | None = None,
+    ) -> Path | None:
+        run_id = str(row.get("run_id", "") or "").strip()
+        if run_id == "":
+            return None
+
+        ignored_path = honorarios_docx.expanduser().resolve() if honorarios_docx is not None else None
+        search_roots: list[Path] = []
+        if honorarios_docx is not None:
+            search_roots.append(honorarios_docx.expanduser().resolve().parent)
+        search_roots.extend((_default_downloads_dir(), _default_documents_dir()))
+
+        unique_roots: list[Path] = []
+        seen_roots: set[Path] = set()
+        for root in search_roots:
+            resolved_root = root.expanduser().resolve()
+            if resolved_root in seen_roots:
+                continue
+            seen_roots.add(resolved_root)
+            unique_roots.append(resolved_root)
+
+        final_matches: list[Path] = []
+        partial_matches: list[Path] = []
+        final_suffix = f"_{run_id}.docx".lower()
+        partial_suffix = f"_{run_id}_partial.docx".lower()
+
+        for root in unique_roots:
+            if not root.exists() or not root.is_dir():
+                continue
+            for candidate in root.glob("*.docx"):
+                resolved_candidate = candidate.expanduser().resolve()
+                if ignored_path is not None and resolved_candidate == ignored_path:
+                    continue
+                name_lower = resolved_candidate.name.lower()
+                if name_lower.endswith(partial_suffix):
+                    partial_matches.append(resolved_candidate)
+                elif name_lower.endswith(final_suffix):
+                    final_matches.append(resolved_candidate)
+
+        if len(final_matches) == 1:
+            return final_matches[0]
+        if len(final_matches) > 1:
+            return None
+        if len(partial_matches) == 1:
+            return partial_matches[0]
+        return None
+
+    def _persist_historical_translation_docx(self, row: dict[str, object], translation_docx: Path) -> None:
+        row_id = row.get("id")
+        if row_id is None:
+            return
+        resolved = translation_docx.expanduser().resolve()
+        path_key = "partial_docx_path" if resolved.name.lower().endswith("_partial.docx") else "output_docx_path"
+        with closing(open_job_log(self._db_path)) as conn:
+            update_job_run_output_paths(
+                conn,
+                row_id=int(row_id),
+                output_docx_path=str(resolved) if path_key == "output_docx_path" else None,
+                partial_docx_path=str(resolved) if path_key == "partial_docx_path" else None,
+            )
+        row[path_key] = str(resolved)
 
     def _open_honorarios_dialog(self) -> None:
         row = self._selected_row_data()

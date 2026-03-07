@@ -57,6 +57,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 2. After a run finishes, open the Review Queue if pages were flagged for manual checking.
 3. Save the finished run to the Job Log so the case and cost details are stored together.
 4. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
+5. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when `Court Email` is available.
 
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.
@@ -95,3 +96,4 @@ Use this fix:
 2. If you choose `Cancel and wait`, the app now waits only until the current request finishes or hits its deadline. It should no longer look indefinitely stuck.
 3. If a run stops partway through, open the run report and the run folder before trying again.
 4. In Save to Job Log, `Words` now means translated output words from the DOCX, not raw OCR/source page text.
+5. When Gmail draft creation is offered after generating honorários, the app should usually reuse the translated DOCX automatically. Historical Job Log rows only ask you to pick a translation file when the row has no stored path and exact `run_id` recovery is not possible.

@@ -120,6 +120,21 @@ The prefill helps, but you still stay in control of the saved row.
 
 `Expected total` and `Profit` are recalculated from that translated-output word count.
 
+## Honorarios + Gmail Drafts
+If you generate a `Requerimento de Honorários`, the app can also prepare a Gmail draft to the row's `Court Email`.
+
+### Current run
+From `Save to Job Log`, the app already knows the translated DOCX from the current run. In the normal case, it should not ask you to pick that file again before creating the Gmail draft.
+
+### Historical Job Log rows
+From `Job Log`, the app now tries this order for the translated attachment:
+1. stored final translated DOCX path
+2. stored partial translated DOCX path
+3. exact `run_id` recovery from normal output locations
+4. manual `.docx` picker only if the row is legacy, stale, or ambiguous
+
+If the app has to ask you once for a translated DOCX on a legacy row, it saves that path back into the row so the same row should not ask again next time.
+
 ## Queue Runs
 Use queue mode when you want several PDFs to run in order.
 
@@ -158,6 +173,7 @@ Queue mode writes these sidecar files next to the manifest:
 12. For OCR-heavy runs, start with pages `1-2`, then `3-4`, then `5-7`.
 13. If you click `Cancel and wait`, the app now waits only for the active request deadline instead of appearing indefinitely frozen.
 14. If a run stops partially, open `Generate Run Report` and the run folder before retrying. The stop dialog now includes suspected cause, halt reason, and request timing details when available.
+15. If a historical honorários Gmail draft still asks you to pick the translated DOCX, that means the row has no stored artifact path and exact `run_id` recovery did not find one unique valid match. After one successful manual selection, the row should be healed and stop asking again.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.

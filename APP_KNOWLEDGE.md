@@ -109,9 +109,12 @@ Queue manifests create sidecar artifacts beside the manifest file:
 
 ## Persistence Notes
 - The job log SQLite schema now includes additive run-metric/risk columns: `run_id`, `target_lang`, `total_tokens`, `estimated_api_cost`, and `quality_risk_score`.
+- The job log also stores additive translation artifact paths for Gmail/honorarios reuse: `output_docx_path` and `partial_docx_path`.
 - Save-to-Job-Log pre-fills those values from `run_summary.json` when available, while preserving user edit control before save.
 - Job Log `Words` now means translated output words, with precedence: final DOCX, then partial DOCX, then `pages/page_*.txt`, then `0`.
 - `expected_total` and `profit` in the Save-to-Job-Log flow are recalculated from that translated-output word count.
+- Gmail draft attachment reuse for honorarios now prefers known translated output artifacts in this order: final DOCX path, partial DOCX path, exact `run_id` recovery, then a manual `.docx` picker only as the final fallback.
+- If a legacy historical row needs one manual translated-DOCX selection, the app persists that choice back into the row so the picker should not appear again for that same row.
 
 ## Queue Behavior Notes
 - Queue execution is sequential and checkpoint-aware.

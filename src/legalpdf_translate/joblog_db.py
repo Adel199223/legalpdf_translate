@@ -35,6 +35,8 @@ JOB_RUN_COLUMNS = [
     "estimated_api_cost",
     "quality_risk_score",
     "profit",
+    "output_docx_path",
+    "partial_docx_path",
 ]
 
 
@@ -79,6 +81,8 @@ def ensure_joblog_schema(conn: sqlite3.Connection) -> None:
             estimated_api_cost REAL,
             quality_risk_score REAL,
             profit REAL,
+            output_docx_path TEXT,
+            partial_docx_path TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
         """
@@ -169,6 +173,8 @@ def migrate_joblog_v2(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, columns, "total_tokens", "INTEGER")
     _add_column_if_missing(conn, columns, "estimated_api_cost", "REAL")
     _add_column_if_missing(conn, columns, "quality_risk_score", "REAL")
+    _add_column_if_missing(conn, columns, "output_docx_path", "TEXT")
+    _add_column_if_missing(conn, columns, "partial_docx_path", "TEXT")
 
     columns = _table_columns(conn, "job_runs")
     has_entity = "entity" in columns
@@ -262,7 +268,9 @@ def list_job_runs(conn: sqlite3.Connection, *, limit: int = 500) -> list[sqlite3
             api_cost,
             COALESCE(estimated_api_cost, api_cost) AS estimated_api_cost,
             quality_risk_score,
-            profit
+            profit,
+            output_docx_path,
+            partial_docx_path
         FROM job_runs
         ORDER BY completed_at DESC, id DESC
         LIMIT ?
@@ -270,6 +278,31 @@ def list_job_runs(conn: sqlite3.Connection, *, limit: int = 500) -> list[sqlite3
         (int(limit),),
     )
     return list(cursor.fetchall())
+
+
+def update_job_run_output_paths(
+    conn: sqlite3.Connection,
+    *,
+    row_id: int,
+    output_docx_path: str | None = None,
+    partial_docx_path: str | None = None,
+) -> None:
+    assignments: list[str] = []
+    params: list[Any] = []
+    if output_docx_path is not None:
+        assignments.append("output_docx_path = ?")
+        params.append(output_docx_path)
+    if partial_docx_path is not None:
+        assignments.append("partial_docx_path = ?")
+        params.append(partial_docx_path)
+    if not assignments:
+        return
+    params.append(int(row_id))
+    conn.execute(
+        f"UPDATE job_runs SET {', '.join(assignments)} WHERE id = ?",
+        params,
+    )
+    conn.commit()
 
 
 def update_joblog_visible_columns(

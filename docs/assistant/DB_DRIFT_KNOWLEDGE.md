@@ -20,12 +20,15 @@ Job-log v2 adds these columns to `job_runs` without removing older fields:
 - `total_tokens`
 - `estimated_api_cost`
 - `quality_risk_score`
+- `output_docx_path`
+- `partial_docx_path`
 
 The current migration is additive and idempotent. It also backfills:
 - `target_lang` from `lang` when missing.
 - `estimated_api_cost` from `api_cost` when missing.
 
 Save-to-Job-Log can prefill these values from the latest run summary, but the user can still edit them before saving the row.
+Historical Gmail draft + honorarios flows reuse `output_docx_path` first, then `partial_docx_path`, before falling back to exact `run_id` recovery or a one-time manual picker.
 Job-log word-count semantics now use translated output artifacts with this precedence:
 1. final DOCX
 2. partial DOCX

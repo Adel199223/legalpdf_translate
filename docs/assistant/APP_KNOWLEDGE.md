@@ -28,6 +28,7 @@ For support/non-technical explanations, start with:
 - OCR-heavy translation triage routes to `docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md`.
 - Windows-native GUI launch/debug routes to `docs/assistant/QT_UI_KNOWLEDGE.md` and `docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md`.
 - OCR-heavy warning choices, bounded cancel-wait behavior, and translated-output Job Log word counts route to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md` and `APP_KNOWLEDGE.md`.
+- Gmail draft + honorarios attachment reuse routes to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md` and `APP_KNOWLEDGE.md`.
 
 Cost-guardrail support routing:
 - CLI budget cap/policy behavior (`warn` vs `block`) is documented in the primary workflow user guide.
@@ -40,6 +41,7 @@ Cost-guardrail support routing:
 - Canonical current-truth now includes queue runner support, OCR advisor flows, review queue handling, and job-log metric sync.
 - Canonical current-truth also includes the screenshot-driven Qt dashboard shell and the real GUI module entrypoint: `python -m legalpdf_translate.qt_app`.
 - Canonical current-truth also includes bounded OCR-heavy request deadlines, non-persistent `Apply safe OCR profile` warning behavior, no-wheel guards on run-critical selectors, and DOCX-first Job Log word counting.
+- Canonical current-truth also includes Gmail draft attachment reuse for both current-run and historical honorarios exports, with stored-path reuse and exact `run_id` recovery before any manual picker fallback.
 
 ## Workflow Routing
 - Core translation: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`

@@ -740,3 +740,15 @@ Verification commands/results:
   - `docs/assistant/LOCAL_CAPABILITIES.md`
 - Added `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md` so Windows-bound/local-auth integrations route through installation/auth/same-host/live-smoke preflight instead of thread memory.
 - Routed those files through `APP_KNOWLEDGE.md`, `docs/assistant/APP_KNOWLEDGE.md`, `docs/assistant/INDEX.md`, and `docs/assistant/manifest.json`.
+
+# 2026-03-07
+- Historical Gmail draft attachment reuse now prefers stored translation artifact paths before prompting the user.
+- Job Log rows gained additive artifact-path semantics:
+  - `output_docx_path`
+  - `partial_docx_path`
+- Historical honorarios Gmail draft flow now resolves translated attachments in this order:
+  1. stored final DOCX
+  2. stored partial DOCX
+  3. exact `run_id` recovery
+  4. manual picker only as a last resort
+- Legacy rows are self-healing: if one manual translated-DOCX selection is needed, that path is saved back into the row so the same row should not prompt again.
