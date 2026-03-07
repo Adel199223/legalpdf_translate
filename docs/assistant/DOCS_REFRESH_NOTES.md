@@ -16,6 +16,30 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-07 — feat/ocr-runtime-stabilization-20260306 (working tree)
+- Files changed:
+  - agent.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/manifest.json
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/exec_plans/PLANS.md
+  - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
+  - docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md
+  - docs/assistant/exec_plans/active/2026-03-07_worktree_baseline_docs_sync.md
+- Key symbols / entrypoints changed:
+  - docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md::Handoff Checklist
+  - docs/assistant/exec_plans/PLANS.md::Required Plan Template
+  - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md::Handoff Checklist
+  - docs/assistant/manifest.json::worktree_baseline_discipline_workflow
+- User-visible behavior:
+  - Governance docs now require parallel work to start from the latest approved baseline branch/SHA instead of an older convenient worktree base.
+  - Active ExecPlans must now record worktree provenance and, for GUI work, the exact build under test.
+  - Docs routing now includes a dedicated workflow for preventing mixed-up branches/worktrees and ambiguous app windows.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
 ## 2026-03-06 — feat/ocr-runtime-stabilization-20260306 (working tree)
 - Files changed:
   - APP_KNOWLEDGE.md

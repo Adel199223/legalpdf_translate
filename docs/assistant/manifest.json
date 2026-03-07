@@ -172,6 +172,23 @@
       ]
     },
     {
+      "id": "worktree_baseline_discipline_workflow",
+      "doc": "docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md",
+      "scope": "parallel worktree baseline locking and build-under-test provenance",
+      "primary_files": [
+        "agent.md",
+        "docs/assistant/exec_plans/PLANS.md",
+        "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md",
+        "docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart"
+      ]
+    },
+    {
       "id": "staged_execution_workflow",
       "doc": "docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md",
       "scope": "hard gate protocol for risk-triggered complex work",
@@ -304,7 +321,8 @@
     "golden_principles_source_of_truth": "docs/assistant/GOLDEN_PRINCIPLES.md",
     "execplan_policy": "Major/multi-file work requires ExecPlans in docs/assistant/exec_plans/active/.",
     "approval_gates_policy": "AGENTS.md and agent.md enforce ask-before-execute gates for destructive/risky actions.",
-    "worktree_isolation_policy": "Parallel work uses git worktree isolation and branch safety gates.",
+    "worktree_isolation_policy": "Parallel work uses git worktree isolation, approved baseline locks, and branch safety gates.",
+    "worktree_baseline_identity_policy": "Parallel work must record worktree path, branch, base SHA, target integration branch, and build-under-test identity before major execution or GUI handoff.",
     "doc_gardening_policy": "Docs sync updates only touched-scope docs and avoids blanket rewrites.",
     "user_guides_support_usage_policy": "Support/non-technical tasks route to APP_USER_GUIDE and primary workflow user guide first.",
     "user_guides_canonical_deference_policy": "User guides are explanatory and defer to canonical technical docs.",
@@ -328,5 +346,5 @@
     "cloud_scoring_failure_recovery_policy": "Cloud failure semantics use unavailable|failed and recovery order is cloud-fix-rerun before local-heavy fallback.",
     "cloud_local_apply_separation_policy": "Cloud evaluation outputs must not auto-apply runtime config/state; local manual acceptance gate is required before final apply."
   },
-  "last_updated": "2026-03-05"
+  "last_updated": "2026-03-07"
 }

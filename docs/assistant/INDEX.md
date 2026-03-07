@@ -23,6 +23,7 @@
 - `docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md`
 - `docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md`
 - `docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md`
+- `docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md`
 - `docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md`
 - `docs/assistant/workflows/BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md`
 - `docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md`

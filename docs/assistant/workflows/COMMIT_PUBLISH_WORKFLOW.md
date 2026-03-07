@@ -45,6 +45,7 @@ git ls-files --others --exclude-standard
 
 ## Failure Modes and Fallback Steps
 - Wrong branch for major work: create/switch to `feat/<scope-name>`.
+- Wrong worktree base for the current branch: stop before commit/push, compare against the latest approved baseline SHA, and transplant/rebase first.
 - Unintended staged files: `git restore --staged <path>` and restage explicitly.
 - Push safety risk: never force-push `main`; use PR flow.
 
@@ -53,6 +54,9 @@ git ls-files --others --exclude-standard
    - for parallel threads, use `git worktree` isolation first
    - if change is major and branch is `main`, create/switch to `feat/<scope-name>`
    - keep `main` as stable integration branch
+   - lock the latest approved baseline branch and SHA before parallel work starts
+   - verify the current branch still contains that approved baseline before push/PR
+   - if newer approved work is missing from the current branch, stop and fix branch lineage first
 2. Fetch/prune and inspect state.
 3. Triage:
    - what to stage
@@ -68,6 +72,11 @@ git ls-files --others --exclude-standard
 6. Push:
    - push correct branch only
    - never force-push `main`
+   - when the task involves a GUI build, identify the build under test in the handoff:
+     - repo/worktree path
+     - branch
+     - HEAD commit
+     - distinguishing feature set
 7. Repo cleanup:
    - ff-only merge to `main`
    - delete stale branches with explicit keep-list
