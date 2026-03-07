@@ -67,7 +67,7 @@ from .glossary import (
     sort_entries_for_prompt,
     supported_target_langs,
 )
-from .image_io import render_page_image_data_url, should_include_image
+from .image_io import should_include_image
 from .ocr_engine import (
     OCREngine,
     OcrResult,
@@ -75,11 +75,9 @@ from .ocr_engine import (
     local_only_ocr_engine_config_from_run_config,
     ocr_engine_config_from_run_config,
 )
-from .ocr_helpers import ocr_pdf_page_text
 from .openai_client import ApiCallError, OpenAIResponsesClient
 from .output_paths import require_writable_output_dir
 from .page_selection import resolve_page_selection
-from .pdf_text_order import extract_ordered_page_text, get_page_count
 from .prompt_builder import build_language_retry_prompt, build_page_prompt, build_retry_prompt
 from .run_report import RunEventCollector
 from .resources_loader import load_system_instructions
@@ -114,6 +112,13 @@ from .workflow_components.summary import (
 )
 from .workflow_components.quality_risk import (
     build_quality_risk_summary,
+)
+from .source_document import (
+    extract_ordered_source_text as extract_ordered_page_text,
+    get_source_page_count as get_page_count,
+    is_supported_source_file,
+    ocr_source_page_text as ocr_pdf_page_text,
+    render_source_page_image_data_url as render_page_image_data_url,
 )
 
 MIN_CHARS_REQUIRED = 64
@@ -3105,6 +3110,7 @@ class TranslationWorkflow:
             keep_intermediates=config.keep_intermediates,
             ocr_mode=config.ocr_mode,
             ocr_engine=config.ocr_engine,
+            ocr_api_provider=config.ocr_api_provider,
             ocr_api_base_url=(config.ocr_api_base_url or "").strip() or None,
             ocr_api_model=(config.ocr_api_model or "").strip() or None,
             ocr_api_key_env_name=(config.ocr_api_key_env_name or "").strip() or "DEEPSEEK_API_KEY",
@@ -3134,7 +3140,13 @@ class TranslationWorkflow:
 
     def _validate_config(self, config: RunConfig) -> None:
         if not config.pdf_path.exists():
-            raise FileNotFoundError(f"PDF not found: {config.pdf_path}")
+            raise FileNotFoundError(f"Source file not found: {config.pdf_path}")
+        if not config.pdf_path.is_file():
+            raise ValueError(f"Source path must be a file: {config.pdf_path}")
+        if not is_supported_source_file(config.pdf_path):
+            raise ValueError(
+                "Unsupported source file type. Supported types: PDF, PNG, JPG, JPEG, WEBP, BMP, TIF, TIFF."
+            )
         if config.target_lang not in (TargetLang.EN, TargetLang.FR, TargetLang.AR):
             raise ValueError("Invalid target language.")
         if config.start_page <= 0:

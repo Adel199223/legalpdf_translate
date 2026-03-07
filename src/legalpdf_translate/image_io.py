@@ -140,3 +140,51 @@ def render_page_image_data_url(
         image_format="jpeg",
         compress_steps=compress_steps,
     )
+
+
+def render_image_file_data_url(
+    image_path: Path,
+    save_path: Path | None = None,
+    *,
+    max_data_url_bytes: int = IMAGE_MAX_DATA_URL_BYTES,
+) -> RenderedImage:
+    current = Image.open(image_path)
+    if current.mode != "RGB":
+        current = current.convert("RGB")
+
+    quality = IMAGE_INITIAL_QUALITY
+    image_bytes = _encode_jpeg(current, quality=quality)
+    data_url = _data_url_from_bytes(image_bytes)
+    compress_steps = 0
+    max_bytes_limit = max(256 * 1024, min(max_data_url_bytes, IMAGE_MAX_DATA_URL_BYTES))
+
+    while len(data_url.encode("utf-8")) >= max_bytes_limit:
+        compress_steps += 1
+        if quality > IMAGE_MIN_QUALITY:
+            quality = max(IMAGE_MIN_QUALITY, quality - 10)
+        else:
+            new_width = max(640, int(current.width * IMAGE_SCALE_FACTOR))
+            new_height = max(640, int(current.height * IMAGE_SCALE_FACTOR))
+            if new_width == current.width and new_height == current.height:
+                break
+            current = current.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        image_bytes = _encode_jpeg(current, quality=quality)
+        data_url = _data_url_from_bytes(image_bytes)
+
+    encoded_bytes = len(data_url.encode("utf-8"))
+    if encoded_bytes >= max_bytes_limit:
+        raise RuntimeError("Unable to compress image below configured data URL limit.")
+
+    if save_path is not None:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        save_path.write_bytes(image_bytes)
+
+    return RenderedImage(
+        data_url=data_url,
+        image_bytes=image_bytes,
+        encoded_bytes=encoded_bytes,
+        width_px=current.width,
+        height_px=current.height,
+        image_format="jpeg",
+        compress_steps=compress_steps,
+    )

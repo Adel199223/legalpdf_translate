@@ -44,6 +44,11 @@ class OcrEnginePolicy(str, Enum):
     API = "api"
 
 
+class OcrApiProvider(str, Enum):
+    OPENAI = "openai"
+    GEMINI = "gemini"
+
+
 class BudgetExceedPolicy(str, Enum):
     WARN = "warn"
     BLOCK = "block"
@@ -77,6 +82,7 @@ class RunConfig:
     keep_intermediates: bool = True
     ocr_mode: OcrMode = OcrMode.AUTO
     ocr_engine: OcrEnginePolicy = OcrEnginePolicy.LOCAL_THEN_API
+    ocr_api_provider: OcrApiProvider = OcrApiProvider.OPENAI
     ocr_api_base_url: str | None = None
     ocr_api_model: str | None = None
     ocr_api_key_env_name: str = "DEEPSEEK_API_KEY"

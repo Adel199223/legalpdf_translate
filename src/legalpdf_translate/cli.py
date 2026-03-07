@@ -17,6 +17,7 @@ from .checkpoint import (
     parse_ocr_mode,
 )
 from .output_paths import require_writable_output_dir_text
+from .ocr_engine import default_ocr_api_env_name, normalize_ocr_api_provider
 from .queue_runner import queue_result_from_run_summary, run_queue_manifest
 from .review_export import export_review_queue
 from .secrets_store import (
@@ -49,7 +50,7 @@ def _parse_lang(value: str) -> TargetLang:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="legalpdf-translate")
-    parser.add_argument("--pdf", help="Path to input PDF file.")
+    parser.add_argument("--pdf", help="Path to input PDF or image file.")
     parser.add_argument("--lang", type=_parse_lang, help="Target language: EN|FR|AR.")
     parser.add_argument("--outdir", help="Output folder path.")
     parser.add_argument("--effort", default="high", choices=["high", "xhigh"], help="Reasoning effort.")
@@ -135,7 +136,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--ocr-api-base-url", default="", help="Optional OCR API base URL.")
     parser.add_argument("--ocr-api-model", default="", help="Optional OCR API model.")
-    parser.add_argument("--ocr-api-key-env", default="DEEPSEEK_API_KEY", help="Environment variable for OCR API key.")
+    parser.add_argument("--ocr-api-key-env", default="", help="Environment variable for OCR API key.")
     parser.add_argument("--set-openai-key", action="store_true", help="Store OpenAI API key securely.")
     parser.add_argument("--clear-openai-key", action="store_true", help="Delete stored OpenAI API key.")
     parser.add_argument("--set-ocr-key", action="store_true", help="Store OCR API key securely.")
@@ -236,6 +237,7 @@ def _build_run_config_from_args(
     if budget_cap_usd is not None and float(budget_cap_usd) < 0.0:
         raise ValueError("--budget-cap-usd must be >= 0 when provided.")
     cost_profile_id = (args.cost_profile_id or "").strip() or "default_local"
+    ocr_provider = normalize_ocr_api_provider(settings.get("ocr_api_provider", settings.get("ocr_api_provider_default", "openai")))
     return RunConfig(
         pdf_path=Path(pdf_arg).resolve(),
         output_dir=outdir_abs,
@@ -252,9 +254,10 @@ def _build_run_config_from_args(
         strip_bidi_controls=not bool(args.preserve_bidi_controls),
         ocr_mode=parse_ocr_mode(args.ocr_mode),
         ocr_engine=parse_ocr_engine_policy(args.ocr_engine),
+        ocr_api_provider=ocr_provider,
         ocr_api_base_url=args.ocr_api_base_url.strip() or None,
         ocr_api_model=args.ocr_api_model.strip() or None,
-        ocr_api_key_env_name=args.ocr_api_key_env.strip() or "DEEPSEEK_API_KEY",
+        ocr_api_key_env_name=args.ocr_api_key_env.strip() or default_ocr_api_env_name(ocr_provider),
         context_file=Path(args.context_file).resolve() if args.context_file.strip() != "" else None,
         context_text=None,
         glossary_file=Path(glossary_effective).expanduser().resolve() if glossary_effective else None,
