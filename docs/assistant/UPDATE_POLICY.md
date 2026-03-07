@@ -12,6 +12,9 @@ It is policy guidance (not a running history). Use Git history + `DOCS_REFRESH_N
 After significant implementation changes, ask exactly:
 - "Would you like me to run Assistant Docs Sync for this change now?"
 
+Only ask it when relevant touched-scope docs still remain unsynced.
+If the relevant docs sync already ran during the same task/pass, do not ask again.
+
 If approved:
 1. Update only touched-scope docs.
 2. Keep canonical-first order (`APP_KNOWLEDGE.md` -> bridge/workflows/user guides).

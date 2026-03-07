@@ -16,6 +16,8 @@ Use this file to route quickly to canonical and workflow docs. Do not treat this
 - Runbook: `agent.md`
 - Golden rules: `docs/assistant/GOLDEN_PRINCIPLES.md`
 - Source registry: `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md`
+- Local host/runtime profile: `docs/assistant/LOCAL_ENV_PROFILE.local.md`
+- Local capability inventory: `docs/assistant/LOCAL_CAPABILITIES.md`
 
 ## User Support Routing
 For support/non-technical explanations, start with:
@@ -54,6 +56,7 @@ Cost-guardrail support routing:
 - CI/repo operations: `docs/assistant/workflows/CI_REPO_WORKFLOW.md`
 - Commit/publish: `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
 - Docs maintenance: `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+- Host-bound integration preflight: `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
 
 ## Legacy Supplemental Deep Docs
 These are supplemental and non-canonical for app-level status:

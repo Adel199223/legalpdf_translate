@@ -14,7 +14,10 @@
     "APP_KNOWLEDGE.md",
     "docs/assistant/GOLDEN_PRINCIPLES.md",
     "docs/assistant/LOCALIZATION_GLOSSARY.md",
-    "docs/assistant/PERFORMANCE_BASELINES.md"
+    "docs/assistant/PERFORMANCE_BASELINES.md",
+    "docs/assistant/ISSUE_MEMORY.md",
+    "docs/assistant/LOCAL_ENV_PROFILE.local.md",
+    "docs/assistant/LOCAL_CAPABILITIES.md"
   ],
   "bridges": [
     {
@@ -291,11 +294,30 @@
         "APP_KNOWLEDGE.md",
         "docs/assistant/APP_KNOWLEDGE.md",
         "docs/assistant/INDEX.md",
-        "docs/assistant/manifest.json"
+        "docs/assistant/manifest.json",
+        "docs/assistant/ISSUE_MEMORY.md",
+        "docs/assistant/ISSUE_MEMORY.json"
       ],
       "targeted_tests": [
         "dart run test/tooling/validate_agent_docs_test.dart",
         "dart run test/tooling/validate_workspace_hygiene_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart",
+        "dart run tooling/validate_workspace_hygiene.dart"
+      ]
+    },
+    {
+      "id": "host_integration_preflight_workflow",
+      "doc": "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md",
+      "scope": "same-host installation/auth/live-smoke preflight for local integrations",
+      "primary_files": [
+        "docs/assistant/LOCAL_ENV_PROFILE.local.md",
+        "docs/assistant/LOCAL_CAPABILITIES.md",
+        "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
         "dart run tooling/validate_agent_docs.dart",
@@ -316,7 +338,7 @@
     "localization_glossary_source_of_truth": "docs/assistant/LOCALIZATION_GLOSSARY.md",
     "workspace_performance_source_of_truth": "docs/assistant/PERFORMANCE_BASELINES.md",
     "environment_outside_workspace_default_policy": "Keep heavyweight environments/artifacts outside workspace root when feasible.",
-    "post_change_docs_sync_prompt_policy": "After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now?",
+    "post_change_docs_sync_prompt_policy": "After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced, and do not ask again after the same-pass sync already happened.",
     "inspiration_reference_discovery_policy": "Named parity/inspiration requests must run REFERENCE_DISCOVERY_WORKFLOW before implementation decisions.",
     "golden_principles_source_of_truth": "docs/assistant/GOLDEN_PRINCIPLES.md",
     "execplan_policy": "Major/multi-file work requires ExecPlans in docs/assistant/exec_plans/active/.",
@@ -328,8 +350,9 @@
     "user_guides_canonical_deference_policy": "User guides are explanatory and defer to canonical technical docs.",
     "user_guides_update_sync_policy": "Major feature changes update relevant user-guide sections with matching technical docs.",
     "template_path_routing_regression_protection": "INDEX.md and validators enforce template-path routing and read policy protections.",
+    "issue_memory_policy": "ISSUE_MEMORY.md and ISSUE_MEMORY.json capture repeated project issues for docs sync and generalized bootstrap maintenance decisions.",
     "canonical_precedence_policy": "Source code is final truth; APP_KNOWLEDGE.md is canonical; bridge/user guides defer to canonical.",
-    "docs_sync_prompt_policy": "After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now?",
+    "docs_sync_prompt_policy": "After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced, and do not ask again after the same-pass sync already happened.",
     "stage_gate_policy": "For risk-triggered complex work stop at each stage and require exact continuation token format NEXT_STAGE_X.",
     "reference_discovery_policy": "Parity/inspiration requests against named products/sites/apps require REFERENCE_DISCOVERY_WORKFLOW first.",
     "openai_docs_citation_freshness_policy": "OpenAI/external unstable claims must use official primary sources with explicit verification date in EXTERNAL_SOURCE_REGISTRY.md.",

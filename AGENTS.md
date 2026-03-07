@@ -46,7 +46,9 @@ Ask before executing any of the following:
   - `NEXT_STAGE_X`
 
 ## Docs Sync Policy
-After significant implementation changes, always ask exactly:
+After significant implementation changes, ask exactly:
 "Would you like me to run Assistant Docs Sync for this change now?"
 
+Ask it only when relevant touched-scope docs still remain unsynced.
+If the relevant docs sync already ran during the same task/pass, do not ask again.
 If approved, update only relevant docs for touched scope (no blanket rewrites).

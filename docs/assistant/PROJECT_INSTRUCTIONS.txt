@@ -33,5 +33,7 @@ Routing rules
 Keeping the knowledge pack current
 - After significant implementation changes, ask exactly:
   "Would you like me to run Assistant Docs Sync for this change now?"
+- Ask it only when relevant touched-scope docs still remain unsynced.
+- If the relevant docs sync already ran during the same task/pass, do not ask again.
 - If approved, update only touched-scope docs.
 - If external facts influenced decisions, update `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md` with links and verification dates.

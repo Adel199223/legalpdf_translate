@@ -19,6 +19,10 @@ const List<String> _requiredFiles = <String>[
   'docs/assistant/INDEX.md',
   'docs/assistant/manifest.json',
   'docs/assistant/DB_DRIFT_KNOWLEDGE.md',
+  'docs/assistant/ISSUE_MEMORY.md',
+  'docs/assistant/ISSUE_MEMORY.json',
+  'docs/assistant/LOCAL_ENV_PROFILE.local.md',
+  'docs/assistant/LOCAL_CAPABILITIES.md',
   'docs/assistant/GOLDEN_PRINCIPLES.md',
   'docs/assistant/EXTERNAL_SOURCE_REGISTRY.md',
   'docs/assistant/exec_plans/PLANS.md',
@@ -43,6 +47,19 @@ const List<String> _requiredFiles = <String>[
   'docs/assistant/workflows/CI_REPO_WORKFLOW.md',
   'docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md',
   'docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md',
+  'docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md',
+  'docs/assistant/runtime/CANONICAL_BUILD.json',
+  'docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md',
+  'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json',
+  'docs/assistant/templates/BOOTSTRAP_CORE_CONTRACT.md',
+  'docs/assistant/templates/BOOTSTRAP_ISSUE_MEMORY_SYSTEM.md',
+  'docs/assistant/templates/BOOTSTRAP_MODULES_AND_TRIGGERS.md',
+  'docs/assistant/templates/BOOTSTRAP_LOCAL_ENV_OVERLAY.md',
+  'docs/assistant/templates/BOOTSTRAP_CAPABILITY_DISCOVERY.md',
+  'docs/assistant/templates/BOOTSTRAP_WORKTREE_BUILD_IDENTITY.md',
+  'docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md',
+  'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md',
+  'tooling/launch_qt_build.py',
   'tooling/validate_agent_docs.dart',
   'test/tooling/validate_agent_docs_test.dart',
   'tooling/validate_workspace_hygiene.dart',
@@ -124,6 +141,33 @@ const List<String> _requiredContractKeys = <String>[
   'user_guides_canonical_deference_policy',
   'user_guides_update_sync_policy',
   'template_path_routing_regression_protection',
+  'issue_memory_policy',
+];
+
+const List<String> _requiredIssueMemoryTopLevelKeys = <String>[
+  'version',
+  'last_updated',
+  'issues',
+];
+
+const List<String> _requiredIssueMemoryIssueKeys = <String>[
+  'id',
+  'title',
+  'first_seen_timestamp',
+  'last_seen_timestamp',
+  'repeat_count',
+  'status',
+  'trigger_source',
+  'symptoms',
+  'likely_root_cause',
+  'attempted_fix_history',
+  'accepted_fix',
+  'regressed_after_accepted_fix',
+  'affected_workflows',
+  'affected_docs',
+  'bootstrap_relevance',
+  'docs_sync_relevance',
+  'evidence_refs',
 ];
 
 const Map<String, List<String>> _requiredContractKeysByModule =
@@ -153,6 +197,113 @@ const Map<String, List<String>> _requiredContractKeysByModule =
 
 const String _docsSyncPrompt =
     'Would you like me to run Assistant Docs Sync for this change now?';
+const String _docsSyncPromptCondition =
+    'relevant touched-scope docs still remain unsynced';
+const String _docsSyncPromptNoRepeat =
+    'already ran during the same task/pass';
+
+const Map<String, List<String>> _requiredBootstrapMarkers =
+    <String, List<String>>{
+      'docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md': <String>[
+        'bootstrap execution order',
+        'bootstrap_template_map.json',
+        'bootstrap_core_contract.md',
+        'bootstrap_issue_memory_system.md',
+        'bootstrap_modules_and_triggers.md',
+        'read-on-demand',
+      ],
+      'docs/assistant/templates/BOOTSTRAP_CORE_CONTRACT.md': <String>[
+        'docs/assistant/issue_memory.md',
+        'docs/assistant/issue_memory.json',
+        'commit and push shorthand defaults',
+        'full pending-tree triage',
+        'push+pr+merge+cleanup',
+        'openai / codex freshness rule',
+        'relevant touched-scope docs still remain unsynced',
+        'must not ask the prompt again',
+      ],
+      'docs/assistant/templates/BOOTSTRAP_ISSUE_MEMORY_SYSTEM.md': <String>[
+        'required generated files',
+        'docs/assistant/issue_memory.md',
+        'docs/assistant/issue_memory.json',
+        'operational triggers take priority',
+        'wording triggers are secondary signals',
+        'assistant docs sync',
+        'update codex bootstrap',
+        'repeat_count >= 2',
+        'do not preseed fake incidents',
+      ],
+      'docs/assistant/templates/BOOTSTRAP_MODULES_AND_TRIGGERS.md': <String>[
+        'issue memory system',
+        'always on',
+        'worktree / build identity',
+        'auto-conditional',
+        'runnable app',
+        'local desktop workflow',
+        'merge-immediately-after-acceptance discipline',
+        'trigger matrix',
+        'stage-gate rules',
+        'reference discovery rules',
+        'browser automation rules',
+      ],
+      'docs/assistant/templates/BOOTSTRAP_LOCAL_ENV_OVERLAY.md': <String>[
+        'windows 11 home 64-bit',
+        'windows + wsl',
+        'local_env_profile.local.md',
+        'same-host rule',
+      ],
+      'docs/assistant/templates/BOOTSTRAP_CAPABILITY_DISCOVERY.md': <String>[
+        'agents.md',
+        'local_capabilities.md',
+        'openai-docs',
+        'dynamic discovery',
+      ],
+      'docs/assistant/templates/BOOTSTRAP_WORKTREE_BUILD_IDENTITY.md': <String>[
+        'auto-activation rule',
+        'runnable app',
+        'gui',
+        'merge-immediately-after-acceptance',
+        'latest approved baseline rule',
+        'build under test identity packet',
+        'canonical runnable build rule',
+        'worktree path',
+      ],
+      'docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md': <String>[
+        'tool installation exists on the target host',
+        'same-host validation rule',
+        'gmail draft feature backed by a local authenticated cli is just one example',
+        'live smoke check',
+      ],
+      'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md': <String>[
+        'update codex bootstrap',
+        'ucbs',
+        'audit codex bootstrap',
+        'check codex bootstrap',
+        'sync codex bootstrap docs',
+        'update bootstrap is **not canonical**',
+        'must not edit `docs/assistant/templates/*`',
+        'allowed change surface',
+        'docs/assistant/issue_memory.md',
+        'docs/assistant/issue_memory.json',
+        'repeat_count >= 2',
+        'bootstrap relevance is:',
+        'dart run tooling/validate_agent_docs.dart',
+        'docs sync prompt rule',
+        'relevant touched-scope docs still remain unsynced',
+        'already ran during the same task/pass',
+      ],
+    };
+
+const List<String> _requiredBootstrapModuleIds = <String>[
+  'core_contract',
+  'issue_memory_system',
+  'modules_and_triggers',
+  'local_env_overlay',
+  'capability_discovery',
+  'worktree_build_identity',
+  'host_integration_preflight',
+  'bootstrap_update_policy',
+];
 
 List<ValidationIssue> validateAgentDocs({
   required String rootPath,
@@ -199,15 +350,173 @@ List<ValidationIssue> validateAgentDocs({
     _validateCommands(manifest, issues);
     _validateCoreContracts(manifest, issues);
     _validateRunbookPolicies(issues, readText);
+    _validateQtLaunchIdentityDiscipline(issues, readText);
+    _validateApprovedBasePromotionDiscipline(issues, readText, rootPath);
+    _validateCommitPushShorthandDiscipline(issues, readText);
     _validateUserGuides(manifest, issues, readText, exists);
     _validateDocsMaintenance(issues, readText);
+    _validateIssueMemory(issues, readText, exists, rootPath);
+    _validateProjectLocalOperationalLayer(manifest, issues, readText, exists);
     _validateTemplatePolicy(manifest, issues, readText);
+    _validateBootstrapTemplateIntegrity(issues, readText, exists);
     _validateExternalSourceRegistry(issues, readText, exists);
   } else {
     _validateLocalizationScope(manifest, issues, readText, exists);
   }
 
   return issues;
+}
+
+void _validateQtLaunchIdentityDiscipline(
+  List<ValidationIssue> issues,
+  String Function(String relPath) readText,
+) {
+  const List<String> requiredDocs = <String>[
+    'agent.md',
+    'docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md',
+    'docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md',
+    'docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md',
+    'docs/assistant/exec_plans/PLANS.md',
+  ];
+
+  for (final String relPath in requiredDocs) {
+    final String text = readText(relPath).toLowerCase();
+    if (!text.contains('launch_qt_build.py') ||
+        !text.contains('head sha') ||
+        !text.contains('build under test') ||
+        !text.contains('canonical')) {
+      issues.add(ValidationIssue(
+        'AD037',
+        '$relPath must require tooling/launch_qt_build.py, canonical build handling, and build-under-test packets with HEAD SHA in GUI handoffs.',
+      ));
+    }
+  }
+}
+
+void _validateCommitPushShorthandDiscipline(
+  List<ValidationIssue> issues,
+  String Function(String relPath) readText,
+) {
+  const Map<String, List<String>> requiredMarkers = <String, List<String>>{
+    'agent.md': <String>[
+      'when the user says `commit`',
+      'full pending source control tree',
+      'logical grouped commits',
+      'immediately suggest push',
+      'when the user says `push`',
+      'push the correct branch',
+      'create or update the pr',
+      'merge if clean',
+      'delete the merged source branch',
+      'prune refs',
+      'if the user narrows scope explicitly',
+    ],
+    'docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md': <String>[
+      'bare `commit` means full pending-tree triage',
+      'bare `push` means push+pr+merge+cleanup',
+      'logical grouped commits',
+      'do not mix unrelated scopes',
+      'after commit, recommend push immediately',
+      'wait for required checks or ci',
+      'merge when:',
+      'cleanup after merge',
+      'if the user narrows scope explicitly',
+    ],
+    'docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md': <String>[
+      'ambiguous `commit` or `push` shorthand',
+      'validator rules',
+    ],
+    'docs/assistant/exec_plans/PLANS.md': <String>[
+      'assume `commit` means full pending-tree triage plus logical grouped commits',
+      'assume `push` means push+pr+merge+cleanup',
+      'record any intentional override',
+    ],
+  };
+
+  for (final MapEntry<String, List<String>> entry in requiredMarkers.entries) {
+    final String relPath = entry.key;
+    final String text = readText(relPath).toLowerCase();
+    final List<String> missing = entry.value
+        .where((String marker) => !text.contains(marker))
+        .toList();
+    if (missing.isNotEmpty) {
+      issues.add(ValidationIssue(
+        'AD038',
+        '$relPath must define hardened commit/push shorthand semantics. Missing: ${missing.join(', ')}',
+      ));
+    }
+  }
+}
+
+void _validateApprovedBasePromotionDiscipline(
+  List<ValidationIssue> issues,
+  String Function(String relPath) readText,
+  String rootPath,
+) {
+  final File configFile = File(
+    _resolvePath(rootPath, 'docs/assistant/runtime/CANONICAL_BUILD.json'),
+  );
+  Map<String, dynamic>? config;
+  try {
+    config = jsonDecode(configFile.readAsStringSync()) as Map<String, dynamic>;
+  } catch (_) {
+    issues.add(ValidationIssue(
+      'AD039',
+      'docs/assistant/runtime/CANONICAL_BUILD.json must be valid JSON.',
+    ));
+  }
+
+  if (config != null) {
+    final List<String> missingKeys = <String>[
+      'canonical_worktree_path',
+      'canonical_branch',
+      'approved_base_branch',
+      'approved_base_head_floor',
+      'canonical_head_floor',
+    ].where((String key) => !config!.containsKey(key)).toList();
+    if (missingKeys.isNotEmpty) {
+      issues.add(ValidationIssue(
+        'AD039',
+        'docs/assistant/runtime/CANONICAL_BUILD.json is missing required keys: ${missingKeys.join(', ')}',
+      ));
+    }
+  }
+
+  const Map<String, List<String>> requiredMarkers = <String, List<String>>{
+    'agent.md': <String>[
+      'approved base branch',
+      'merge it into the approved base immediately',
+      'workflow violation',
+    ],
+    'docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md':
+        <String>[
+          'approved base branch/floor',
+          'contains the approved-base floor',
+          'merge it into the approved base',
+        ],
+    'docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md': <String>[
+      'approved-base floor',
+      'promote that branch into the approved base immediately',
+      'next unrelated feature branch',
+    ],
+    'docs/assistant/exec_plans/PLANS.md': <String>[
+      'merge it into the approved base as the default next step',
+      'approved-base floor',
+    ],
+  };
+
+  for (final MapEntry<String, List<String>> entry in requiredMarkers.entries) {
+    final String text = readText(entry.key).toLowerCase();
+    final List<String> missing = entry.value
+        .where((String marker) => !text.contains(marker))
+        .toList();
+    if (missing.isNotEmpty) {
+      issues.add(ValidationIssue(
+        'AD039',
+        '${entry.key} must enforce approved-base promotion and lineage rules. Missing: ${missing.join(', ')}',
+      ));
+    }
+  }
 }
 
 void _validateLocalizationScope(
@@ -803,6 +1112,8 @@ void _validateRunbookPolicies(
       }
     }
     if (!text.contains(_docsSyncPrompt) ||
+        !text.toLowerCase().contains(_docsSyncPromptCondition) ||
+        !text.toLowerCase().contains(_docsSyncPromptNoRepeat) ||
         !text.contains('REFERENCE_DISCOVERY_WORKFLOW.md')) {
       missingSections.add('$docName -> docs-sync/reference policy text');
     }
@@ -920,6 +1231,280 @@ void _validateDocsMaintenance(
       'Docs maintenance workflow lacks user-guide sync guidance.',
     ));
   }
+  if (!text.contains('issue_memory.md') ||
+      !text.contains('issue_memory.json') ||
+      !text.contains('consult') ||
+      !text.contains('bootstrap')) {
+    issues.add(ValidationIssue(
+      'AD041',
+      'Docs maintenance workflow must require issue-memory updates/consultation and bootstrap escalation rules.',
+    ));
+  }
+  if (!text.contains(_docsSyncPromptCondition) ||
+      !text.contains(_docsSyncPromptNoRepeat)) {
+    issues.add(ValidationIssue(
+      'AD041',
+      'Docs maintenance workflow must state that the docs-sync prompt is only asked when relevant docs remain unsynced and not repeated after same-pass sync.',
+    ));
+  }
+}
+
+void _validateIssueMemory(
+  List<ValidationIssue> issues,
+  String Function(String relPath) readText,
+  bool Function(String relPath) exists,
+  String rootPath,
+) {
+  const String mdPath = 'docs/assistant/ISSUE_MEMORY.md';
+  const String jsonPath = 'docs/assistant/ISSUE_MEMORY.json';
+  if (!exists(mdPath) || !exists(jsonPath)) {
+    issues.add(ValidationIssue(
+      'AD042',
+      'Issue memory files must exist at $mdPath and $jsonPath.',
+    ));
+    return;
+  }
+
+  final String mdText = readText(mdPath).toLowerCase();
+  for (final String marker in <String>[
+    'assistant docs sync',
+    'update codex bootstrap',
+    'ucbs',
+    'operational trigger',
+    'wording trigger',
+    'repeat count',
+    'accepted fix',
+    'bootstrap relevance',
+    'docs-sync relevance',
+  ]) {
+    if (!mdText.contains(marker)) {
+      issues.add(ValidationIssue(
+        'AD042',
+        '$mdPath is missing required issue-memory marker: $marker',
+      ));
+    }
+  }
+
+  Map<String, dynamic> issueMemory;
+  try {
+    final dynamic decoded = jsonDecode(readText(jsonPath));
+    if (decoded is! Map<String, dynamic>) {
+      issues.add(ValidationIssue(
+        'AD042',
+        '$jsonPath must decode to a JSON object.',
+      ));
+      return;
+    }
+    issueMemory = decoded;
+  } catch (error) {
+    issues.add(ValidationIssue(
+      'AD042',
+      '$jsonPath JSON parse failed: $error',
+    ));
+    return;
+  }
+
+  final List<String> missingTopLevel = _requiredIssueMemoryTopLevelKeys
+      .where((String key) => !issueMemory.containsKey(key))
+      .toList();
+  if (missingTopLevel.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD042',
+      '$jsonPath is missing required top-level keys: ${missingTopLevel.join(', ')}',
+    ));
+  }
+
+  final String lastUpdated = (issueMemory['last_updated'] ?? '').toString();
+  final RegExp isoPattern = RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$');
+  if (!isoPattern.hasMatch(lastUpdated)) {
+    issues.add(ValidationIssue(
+      'AD042',
+      '$jsonPath last_updated must be an ISO-8601 UTC timestamp.',
+    ));
+  }
+
+  final dynamic rawIssues = issueMemory['issues'];
+  if (rawIssues is! List || rawIssues.isEmpty) {
+    issues.add(ValidationIssue(
+      'AD042',
+      '$jsonPath must include a non-empty issues list.',
+    ));
+    return;
+  }
+
+  bool seededIssueFound = false;
+  for (final dynamic item in rawIssues) {
+    if (item is! Map<String, dynamic>) {
+      issues.add(ValidationIssue(
+        'AD042',
+        '$jsonPath issues entries must be JSON objects.',
+      ));
+      continue;
+    }
+    final List<String> missingIssueKeys = _requiredIssueMemoryIssueKeys
+        .where((String key) => !item.containsKey(key))
+        .toList();
+    if (missingIssueKeys.isNotEmpty) {
+      issues.add(ValidationIssue(
+        'AD042',
+        '$jsonPath issue ${(item['id'] ?? '<missing id>')} is missing keys: ${missingIssueKeys.join(', ')}',
+      ));
+    }
+
+    final String id = (item['id'] ?? '').toString();
+    if (id == 'workflow-wrong-build-under-test') {
+      seededIssueFound = true;
+    }
+
+    final String status = (item['status'] ?? '').toString();
+    if (!<String>{'open', 'mitigated', 'resolved', 'regressed'}
+        .contains(status)) {
+      issues.add(ValidationIssue(
+        'AD042',
+        '$jsonPath issue $id has invalid status: $status',
+      ));
+    }
+
+    final String triggerSource = (item['trigger_source'] ?? '').toString();
+    if (!<String>{'operational', 'wording', 'both'}.contains(triggerSource)) {
+      issues.add(ValidationIssue(
+        'AD042',
+        '$jsonPath issue $id has invalid trigger_source: $triggerSource',
+      ));
+    }
+
+    final String bootstrapRelevance =
+        (item['bootstrap_relevance'] ?? '').toString();
+    if (!<String>{'none', 'possible', 'required'}
+        .contains(bootstrapRelevance)) {
+      issues.add(ValidationIssue(
+        'AD042',
+        '$jsonPath issue $id has invalid bootstrap_relevance: $bootstrapRelevance',
+      ));
+    }
+  }
+
+  if (!seededIssueFound) {
+    issues.add(ValidationIssue(
+      'AD042',
+      '$jsonPath must seed workflow-wrong-build-under-test as the initial repeated issue entry.',
+    ));
+  }
+}
+
+void _validateProjectLocalOperationalLayer(
+  Map<String, dynamic> manifest,
+  List<ValidationIssue> issues,
+  String Function(String relPath) readText,
+  bool Function(String relPath) exists,
+) {
+  const String envPath = 'docs/assistant/LOCAL_ENV_PROFILE.local.md';
+  const String capabilitiesPath = 'docs/assistant/LOCAL_CAPABILITIES.md';
+  const String workflowPath =
+      'docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md';
+
+  for (final String path in <String>[envPath, capabilitiesPath, workflowPath]) {
+    if (!exists(path)) {
+      issues.add(ValidationIssue(
+        'AD043',
+        'Project-local operational doc is missing at $path.',
+      ));
+      return;
+    }
+  }
+
+  final String indexText = readText('docs/assistant/INDEX.md');
+  final List<String> missingIndexRouting = <String>[
+    envPath,
+    capabilitiesPath,
+    workflowPath,
+  ].where((String path) => !indexText.contains(path)).toList();
+  if (missingIndexRouting.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD043',
+      'Project-local operational docs are not discoverable from docs index: ${missingIndexRouting.join(', ')}',
+    ));
+  }
+
+  final List<String> manifestPaths = <String>[];
+  if (manifest['canonical'] is List<dynamic>) {
+    manifestPaths.addAll((manifest['canonical'] as List<dynamic>)
+        .map((dynamic entry) => entry.toString()));
+  }
+  if (manifest['workflows'] is List<dynamic>) {
+    for (final dynamic entry in manifest['workflows'] as List<dynamic>) {
+      if (entry is Map<String, dynamic>) {
+        manifestPaths.add((entry['doc'] ?? '').toString());
+      }
+    }
+  }
+  final List<String> missingManifestRouting = <String>[
+    envPath,
+    capabilitiesPath,
+    workflowPath,
+  ].where((String path) => !manifestPaths.contains(path)).toList();
+  if (missingManifestRouting.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD043',
+      'Project-local operational docs are missing from manifest routing: ${missingManifestRouting.join(', ')}',
+    ));
+  }
+
+  final String envText = readText(envPath).toLowerCase();
+  for (final String marker in <String>[
+    'windows 11 home 64-bit',
+    'windows + wsl',
+    'ryzen 9 7940hs',
+    '32 gb ram',
+    'rtx 4070 laptop gpu',
+    'radeon 780m',
+    'prefer windows',
+    'prefer wsl',
+    'same-host',
+    'no secrets',
+  ]) {
+    if (!envText.contains(marker)) {
+      issues.add(ValidationIssue(
+        'AD043',
+        '$envPath is missing required host/routing marker: $marker',
+      ));
+    }
+  }
+
+  final String capabilitiesText = readText(capabilitiesPath).toLowerCase();
+  for (final String marker in <String>[
+    'local capabilities',
+    'gog',
+    'tooling/launch_qt_build.py',
+    'windows',
+    'wsl',
+  ]) {
+    if (!capabilitiesText.contains(marker)) {
+      issues.add(ValidationIssue(
+        'AD043',
+        '$capabilitiesPath is missing required capability marker: $marker',
+      ));
+    }
+  }
+
+  final String workflowText = readText(workflowPath).toLowerCase();
+  for (final String marker in <String>[
+    '1. installation exists',
+    '2. auth/account exists',
+    '3. host matches app runtime',
+    '4. live smoke check passes',
+    'same-host validation rule',
+    'gog',
+    'unavailable',
+    'failed',
+  ]) {
+    if (!workflowText.contains(marker)) {
+      issues.add(ValidationIssue(
+        'AD043',
+        '$workflowPath is missing required host-integration marker: $marker',
+      ));
+    }
+  }
 }
 
 void _validateExternalSourceRegistry(
@@ -1009,6 +1594,104 @@ void _validateTemplatePolicy(
     issues.add(ValidationIssue(
       'AD024',
       'Template-path routing regression protections are missing.',
+    ));
+  }
+}
+
+void _validateBootstrapTemplateIntegrity(
+  List<ValidationIssue> issues,
+  String Function(String relPath) readText,
+  bool Function(String relPath) exists,
+) {
+  const String mapPath = 'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json';
+  if (!exists(mapPath)) {
+    issues.add(ValidationIssue(
+      'AD039',
+      'Bootstrap template map is missing at $mapPath.',
+    ));
+    return;
+  }
+
+  Map<String, dynamic> templateMap;
+  try {
+    final dynamic decoded = jsonDecode(readText(mapPath));
+    if (decoded is! Map<String, dynamic>) {
+      issues.add(ValidationIssue(
+        'AD039',
+        'Bootstrap template map must decode to a JSON object.',
+      ));
+      return;
+    }
+    templateMap = decoded;
+  } catch (error) {
+    issues.add(ValidationIssue(
+      'AD039',
+      'Bootstrap template map JSON parse failed: $error',
+    ));
+    return;
+  }
+
+  if ((templateMap['entrypoint'] ?? '').toString() !=
+      'docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md') {
+    issues.add(ValidationIssue(
+      'AD039',
+      'Bootstrap template map must point entrypoint to docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md.',
+    ));
+  }
+
+  final dynamic rawModules = templateMap['modules'];
+  if (rawModules is! List<dynamic>) {
+    issues.add(ValidationIssue(
+      'AD039',
+      'Bootstrap template map must include a modules list.',
+    ));
+    return;
+  }
+
+  final Set<String> moduleIds = <String>{};
+  final List<String> invalidModuleRefs = <String>[];
+  for (final dynamic module in rawModules) {
+    if (module is! Map<String, dynamic>) {
+      invalidModuleRefs.add('module entry is not object');
+      continue;
+    }
+    final String id = (module['id'] ?? '').toString();
+    final String path = (module['path'] ?? '').toString();
+    final dynamic topics = module['topics'];
+    moduleIds.add(id);
+    if (id.isEmpty || path.isEmpty || !exists(path)) {
+      invalidModuleRefs.add('$id -> $path');
+    }
+    if (topics is! List || topics.isEmpty) {
+      invalidModuleRefs.add('$id missing non-empty topics');
+    }
+  }
+
+  final List<String> missingModuleIds = _requiredBootstrapModuleIds
+      .where((String id) => !moduleIds.contains(id))
+      .toList();
+  if (invalidModuleRefs.isNotEmpty || missingModuleIds.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD039',
+      'Bootstrap template map is incomplete. Invalid refs: ${invalidModuleRefs.join(', ')}. Missing modules: ${missingModuleIds.join(', ')}',
+    ));
+  }
+
+  final List<String> missingMarkers = <String>[];
+  for (final MapEntry<String, List<String>> entry
+      in _requiredBootstrapMarkers.entries) {
+    final String relPath = entry.key;
+    final String text = readText(relPath).toLowerCase();
+    for (final String marker in entry.value) {
+      if (!text.contains(marker)) {
+        missingMarkers.add('$relPath -> $marker');
+      }
+    }
+  }
+  if (missingMarkers.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD040',
+      'Bootstrap template docs are missing required module markers: ${missingMarkers.join(' | ')}',
     ));
   }
 }

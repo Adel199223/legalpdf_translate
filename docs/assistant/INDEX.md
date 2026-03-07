@@ -9,6 +9,11 @@
 - `AGENTS.md`: compatibility shim.
 - `docs/assistant/GOLDEN_PRINCIPLES.md`: enforceable rule source-of-truth.
 - `docs/assistant/exec_plans/PLANS.md`: ExecPlan format and lifecycle.
+- `docs/assistant/runtime/CANONICAL_BUILD.json`: canonical runnable build policy for Qt launch handoffs.
+- `docs/assistant/ISSUE_MEMORY.md`: reusable per-project registry for repeated workflow/product issues.
+- `docs/assistant/ISSUE_MEMORY.json`: machine-readable issue memory used by docs sync and bootstrap maintenance.
+- `docs/assistant/LOCAL_ENV_PROFILE.local.md`: tracked local host/runtime profile for this repo.
+- `docs/assistant/LOCAL_CAPABILITIES.md`: current machine/tool/skill capability inventory for this repo.
 
 ## Use when you need user-facing explanations
 - `docs/assistant/features/APP_USER_GUIDE.md`: beginner support guide covering OCR advisor, review queue, job log save, and queue runs.
@@ -31,6 +36,7 @@
 - `docs/assistant/workflows/CI_REPO_WORKFLOW.md`
 - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
 - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+- `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
 - `docs/assistant/workflows/FEATURE_WORKFLOW.md` (compat shim)
 - `docs/assistant/workflows/DATA_WORKFLOW.md` (compat shim)
 
@@ -52,6 +58,7 @@
 - `tooling/automation_preflight.dart`
 - `tooling/cloud_eval_preflight.dart`
 - `tooling/qt_render_review.py` (deterministic wide/medium/narrow Qt renders for reference-locked UI review)
+- `tooling/launch_qt_build.py` (canonical multi-worktree Qt launch helper that emits a build identity packet)
 - `tooling/ocr_translation_probe.py` (small-slice OCR-heavy translation probe and safe-run packet)
 - `test/tooling/validate_agent_docs_test.dart`
 - `test/tooling/validate_workspace_hygiene_test.dart`

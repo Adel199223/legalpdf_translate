@@ -31,16 +31,23 @@ Ask before executing any of the following:
 - Keep `main` stable.
 - Major work must start on `feat/<scope-name>`.
 - Parallel feature work must branch/worktree from the latest approved baseline, not an older convenient branch.
+- The approved base branch and floor commit are defined in `docs/assistant/runtime/CANONICAL_BUILD.json`; do not start a new feature branch unless it contains that approved-base floor.
 - Before major parallel work starts, lock and record:
   - branch name
   - base branch
   - base SHA
   - worktree path
+- If multiple worktrees or visible app windows can exist, use `tooling/launch_qt_build.py` instead of an ad hoc Qt launch command.
+- The canonical runnable build is defined by `docs/assistant/runtime/CANONICAL_BUILD.json`; default GUI handoffs must target that canonical build.
 - GUI handoffs must identify the exact build under test:
   - repo/worktree path
   - branch
-  - HEAD commit
+  - HEAD SHA
+  - canonical vs noncanonical status
   - distinguishing feature set
+- Treat "the app is open" as incomplete unless it is tied to the emitted build identity packet from `tooling/launch_qt_build.py`.
+- Once a feature is accepted in testing, merge it into the approved base immediately before starting the next unrelated feature branch.
+- Treat "accepted feature still living only on a side branch" as a workflow violation until it is promoted into the approved base.
 - Apply worktree guidance in CI/repo, commit/publish, and docs-maintenance workflows.
 
 ## Support Routing
@@ -54,6 +61,25 @@ Use the support response shape:
 ## Commit/Publish Routing
 Never handle commit requests blindly.
 Always follow `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`.
+
+## Commit/Push Shorthand Defaults
+- When the user says `commit` without narrowing scope:
+  - inspect the full pending Source Control tree first
+  - triage modified, staged, untracked, and temp artifacts
+  - decide what belongs in git vs what should be removed or ignored
+  - split the result into logical grouped commits, not convenience commits
+  - do not leave unrelated pending changes unreviewed
+  - immediately suggest push after the commit sequence is complete
+- When the user says `push` without narrowing scope:
+  - treat it as approval for the standard branch lifecycle in this repo:
+    - push the correct branch
+    - create or update the PR
+    - wait for green required checks
+    - merge if clean
+    - delete the merged source branch when appropriate
+    - prune refs and remove stale local branch state when safe
+  - stop before merge only if blocked by red checks, merge conflicts, or a higher-priority approval gate
+- If the user narrows scope explicitly, such as `commit only these files` or `push branch only`, follow that narrower instruction instead of the default lifecycle.
 
 ## Inspiration/Parity Routing
 If a user asks for behavior "like X", "same as X", "closest to X", or explicit parity with a named product/site/app, run `docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md` before implementation decisions.
@@ -75,7 +101,9 @@ For risk-triggered complex work:
 3. Require exact continuation token format: `NEXT_STAGE_X`.
 
 ## Docs Sync Policy
-After significant implementation changes, always ask exactly:
+After significant implementation changes, ask exactly:
 "Would you like me to run Assistant Docs Sync for this change now?"
 
+Ask it only when relevant touched-scope docs still remain unsynced.
+If the relevant docs sync already ran during the same task/pass, do not ask again.
 If approved, update only the relevant docs for touched scope.

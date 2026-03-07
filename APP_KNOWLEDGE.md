@@ -144,6 +144,9 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Workflow runbooks: `docs/assistant/workflows/`
 - User guides: `docs/assistant/features/`
 - External-source registry: `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md`
+- Local host/runtime profile: `docs/assistant/LOCAL_ENV_PROFILE.local.md`
+- Local capability inventory: `docs/assistant/LOCAL_CAPABILITIES.md`
+- Host-bound integration preflight: `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
 
 ## Module Status (Bootstrap v2)
 All optional modules are enabled and enforced:

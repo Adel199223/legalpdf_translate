@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "last_updated": "2026-03-07T10:33:19Z",
+  "issues": [
+    {
+      "id": "workflow-wrong-build-under-test",
+      "title": "Wrong app/build under test because of mixed branches/worktrees and noncanonical launch",
+      "first_seen_timestamp": "2026-03-06T00:00:00Z",
+      "last_seen_timestamp": "2026-03-07T10:33:19Z",
+      "repeat_count": 4,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "The wrong LegalPDF Translate window was opened for testing.",
+        "Accepted functionality appeared to be missing because it existed only on a side branch or the wrong worktree was launched.",
+        "Repeated user-visible confusion occurred during Gemini, Gmail, and UI follow-up testing."
+      ],
+      "likely_root_cause": "Feature work progressed on side branches after acceptance, the approved base was not promoted immediately, and multiple runnable worktrees existed without strong enough canonical-build enforcement.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-07T00:00:00Z",
+          "summary": "Added worktree baseline discipline governance/docs.",
+          "outcome": "insufficient"
+        },
+        {
+          "timestamp": "2026-03-07T00:00:00Z",
+          "summary": "Added Qt build identity helper and noncanonical build markers.",
+          "outcome": "partial_only"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-07T10:33:19Z",
+        "summary": "Canonical build enforcement plus approved-base promotion discipline, launcher identity packet gating, and noncanonical launch override rules.",
+        "expected_result": "Only the canonical approved-base build is the default test target, and wrong-build launches fail closed unless explicitly overridden."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md",
+        "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "docs/assistant/runtime/CANONICAL_BUILD.json",
+        "docs/assistant/DOCS_REFRESH_NOTES.md",
+        "docs/assistant/INDEX.md"
+      ],
+      "bootstrap_relevance": "required",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "worktree/build identity governance",
+          "approved-base promotion rules",
+          "canonical launch/default test target guidance"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/active/2026-03-07_worktree_baseline_docs_sync.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/active/2026-03-07_qt_build_identity_hardening.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/active/2026-03-07_accepted_feature_promotion_canonical_enforcement.md"
+        },
+        {
+          "type": "branch",
+          "ref": "feat/ai-docs-bootstrap"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_integration"
+        }
+      ]
+    }
+  ]
+}

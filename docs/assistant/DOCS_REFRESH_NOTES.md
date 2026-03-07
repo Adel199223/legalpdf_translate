@@ -16,6 +16,103 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-07 — feat/ai-docs-bootstrap (working tree)
+- Files changed:
+  - agent.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/exec_plans/PLANS.md
+  - docs/assistant/runtime/CANONICAL_BUILD.json
+  - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
+  - docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md
+  - docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md
+  - docs/assistant/exec_plans/active/2026-03-07_accepted_feature_promotion_canonical_enforcement.md
+  - src/legalpdf_translate/build_identity.py
+  - tooling/launch_qt_build.py
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+  - tests/test_launch_qt_build.py
+  - tests/test_qt_app_state.py
+- Key symbols / entrypoints changed:
+  - docs/assistant/runtime/CANONICAL_BUILD.json::approved_base_branch
+  - docs/assistant/runtime/CANONICAL_BUILD.json::approved_base_head_floor
+  - src/legalpdf_translate.build_identity.RuntimeBuildIdentity::summary_text
+  - tooling/launch_qt_build.py::_build_identity_packet
+  - tooling/launch_qt_build.py::main
+  - tooling/validate_agent_docs.dart::_validateApprovedBasePromotionDiscipline
+- User-visible behavior:
+  - The canonical build policy now records the approved base branch/floor explicitly instead of relying only on canonical-worktree memory.
+  - Noncanonical side-branch launches are now blocked entirely if the branch does not contain the approved-base floor, even when an override is requested.
+  - Governance docs now make merge-immediately-after-acceptance the default lifecycle instead of leaving accepted features stranded on side branches.
+- Tests:
+  - `./.venv311/Scripts/python.exe -m pytest -q tests/test_launch_qt_build.py tests/test_qt_main_smoke.py tests/test_qt_app_state.py` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
+## 2026-03-07 — feat/ai-docs-bootstrap (working tree)
+- Files changed:
+  - agent.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/exec_plans/PLANS.md
+  - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
+  - docs/assistant/exec_plans/active/2026-03-07_commit_push_semantics_hardening.md
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+- Key symbols / entrypoints changed:
+  - tooling/validate_agent_docs.dart::_validateCommitPushShorthandDiscipline
+- User-visible behavior:
+  - Governance docs now lock shorthand git semantics so bare `commit` means full pending-tree triage with logical grouped commits, and bare `push` means Push+PR+Merge+Cleanup by default.
+  - Commit flows now explicitly require an immediate push suggestion after commit unless the user narrowed scope.
+  - Docs maintenance and ExecPlan rules now treat ambiguous commit/push shorthand as a durable workflow concern that must be enforced by validators.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+
+## 2026-03-07 — feat/ai-docs-bootstrap (working tree)
+- Files changed:
+  - agent.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/exec_plans/PLANS.md
+  - docs/assistant/runtime/CANONICAL_BUILD.json
+  - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md
+  - docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md
+  - docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md
+  - docs/assistant/exec_plans/active/2026-03-07_qt_build_identity_hardening.md
+  - src/legalpdf_translate/build_identity.py
+  - src/legalpdf_translate/qt_app.py
+  - src/legalpdf_translate/qt_gui/app_window.py
+  - src/legalpdf_translate/qt_gui/dialogs.py
+  - tooling/launch_qt_build.py
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+  - tests/test_launch_qt_build.py
+  - tests/test_qt_app_state.py
+  - tests/test_qt_main_smoke.py
+- Key symbols / entrypoints changed:
+  - src/legalpdf_translate/build_identity.py::detect_runtime_build_identity
+  - src/legalpdf_translate.build_identity.RuntimeBuildIdentity::window_title
+  - src/legalpdf_translate.qt_gui.dialogs.QtSettingsDialog::_refresh_build_identity
+  - tooling/launch_qt_build.py::build_identity_packet
+  - tooling/launch_qt_build.py::main
+  - tooling/validate_agent_docs.dart::_validateQtLaunchIdentityDiscipline
+- User-visible behavior:
+  - Existing baseline-discipline docs are now reinforced with a canonical runnable-build policy in `docs/assistant/runtime/CANONICAL_BUILD.json` and a canonical Qt launch helper for ambiguous multi-worktree GUI situations.
+  - GUI handoffs must now include worktree path, branch, HEAD SHA, canonical vs noncanonical status, and distinguishing feature labels from the helper-emitted build identity packet.
+  - Noncanonical builds now identify themselves in the app via the window title suffix and the Settings diagnostics “Build under test” summary.
+  - The durable fix for wrong-window launches is canonical-build enforcement plus helper-emitted build identity, not ad hoc launch narration.
+- Tests:
+  - `./.venv311/Scripts/python.exe -m compileall src tests tooling` -> PASS
+  - `./.venv311/Scripts/python.exe -m pytest -q tests/test_launch_qt_build.py` -> PASS
+  - `./.venv311/Scripts/python.exe -m pytest -q tests/test_qt_main_smoke.py tests/test_qt_app_state.py` -> PASS
+  - `./.venv311/Scripts/python.exe -m pytest -q` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
 ## 2026-03-07 — feat/ocr-runtime-stabilization-20260306 (working tree)
 - Files changed:
   - agent.md
@@ -631,3 +728,15 @@ Verification commands/results:
 - python -m compileall src tests -> OK
 - git diff --name-only -> pending
 - git status --short -> pending
+# 2026-03-07
+- Hardened docs-sync prompt semantics across project governance and bootstrap templates.
+- The exact prompt remains unchanged, but it is now conditional: ask it only when relevant touched-scope docs still remain unsynced.
+- If the relevant docs sync already ran during the same task/pass, the prompt should not be asked again.
+
+# 2026-03-07
+- Instantiated the bootstrap local operational layer into this project.
+- Added tracked project-local runtime/capability docs:
+  - `docs/assistant/LOCAL_ENV_PROFILE.local.md`
+  - `docs/assistant/LOCAL_CAPABILITIES.md`
+- Added `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md` so Windows-bound/local-auth integrations route through installation/auth/same-host/live-smoke preflight instead of thread memory.
+- Routed those files through `APP_KNOWLEDGE.md`, `docs/assistant/APP_KNOWLEDGE.md`, `docs/assistant/INDEX.md`, and `docs/assistant/manifest.json`.

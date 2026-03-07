@@ -41,6 +41,7 @@ String _fixtureRoot() {
     'APP_KNOWLEDGE.md',
     '.vscode/settings.json',
     'docs/assistant',
+    'tooling/launch_qt_build.py',
     'tooling/validate_agent_docs.dart',
     'tooling/validate_workspace_hygiene.dart',
     'tooling/automation_preflight.dart',
@@ -246,6 +247,19 @@ void main() {
     _expect(_hasRule(issues, 'AD020'), 'Expected AD020');
   }, failures);
 
+  _runCase('fails when AGENTS omits docs-sync conditional wording', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'AGENTS.md',
+      'Ask it only when relevant touched-scope docs still remain unsynced.',
+      'Ask it whenever the change is significant.',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD020'), 'Expected AD020');
+  }, failures);
+
   _runCase('fails when GOLDEN_PRINCIPLES missing', () {
     final String root = _fixtureRoot();
     _removePath(root, 'docs/assistant/GOLDEN_PRINCIPLES.md');
@@ -278,6 +292,57 @@ void main() {
     final List<validator.ValidationIssue> issues =
         validator.validateAgentDocs(rootPath: root);
     _expect(_hasRule(issues, 'AD020'), 'Expected AD020');
+  }, failures);
+
+  _runCase('fails when qt launch identity discipline is removed', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md',
+      'tooling/launch_qt_build.py',
+      'tooling/removed_qt_helper.py',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD037'), 'Expected AD037');
+  }, failures);
+
+  _runCase('fails when commit/push shorthand discipline is removed', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md',
+      'bare `push` means Push+PR+Merge+Cleanup',
+      'bare `push` means raw push only',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD038'), 'Expected AD038');
+  }, failures);
+
+  _runCase('fails when canonical build config misses approved base keys', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> config =
+        _readJson(root, 'docs/assistant/runtime/CANONICAL_BUILD.json');
+    config.remove('approved_base_branch');
+    config.remove('approved_base_head_floor');
+    _writeJson(root, 'docs/assistant/runtime/CANONICAL_BUILD.json', config);
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD039'), 'Expected AD039');
+  }, failures);
+
+  _runCase('fails when approved-base promotion wording is removed', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'agent.md',
+      'merge it into the approved base immediately',
+      'merge it later',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD039'), 'Expected AD039');
   }, failures);
 
   _runCase('fails when workflow misses Expected Outputs', () {
@@ -495,6 +560,161 @@ void main() {
     _expect(_hasRule(issues, 'AD036'), 'Expected AD036');
   }, failures);
 
+  _runCase('fails when bootstrap template map is missing', () {
+    final String root = _fixtureRoot();
+    _removePath(root, 'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json');
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD039'), 'Expected AD039');
+  }, failures);
+
+  _runCase('fails when bootstrap template map has invalid module path', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> templateMap =
+        _readJson(root, 'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json');
+    final List<dynamic> modules = templateMap['modules'] as List<dynamic>;
+    final Map<String, dynamic> localEnv = modules
+        .whereType<Map<String, dynamic>>()
+        .firstWhere((Map<String, dynamic> item) => item['id'] == 'local_env_overlay');
+    localEnv['path'] = 'docs/assistant/templates/MISSING_LOCAL_ENV_OVERLAY.md';
+    _writeJson(root, 'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json', templateMap);
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD039'), 'Expected AD039');
+  }, failures);
+
+  _runCase('fails when bootstrap issue memory module is missing from template map', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> templateMap =
+        _readJson(root, 'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json');
+    final List<dynamic> modules = templateMap['modules'] as List<dynamic>;
+    modules.removeWhere((dynamic item) =>
+        item is Map<String, dynamic> && item['id'] == 'issue_memory_system');
+    _writeJson(root, 'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json', templateMap);
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD039'), 'Expected AD039');
+  }, failures);
+
+  _runCase('fails when bootstrap template markers drift', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md',
+      '## Same-Host Validation Rule',
+      '## Same Runtime Validation Guidance',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD040'), 'Expected AD040');
+  }, failures);
+
+  _runCase('fails when bootstrap update policy file is missing', () {
+    final String root = _fixtureRoot();
+    _removePath(root, 'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md');
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD001') || _hasRule(issues, 'AD039'),
+        'Expected AD001 or AD039');
+  }, failures);
+
+  _runCase('fails when bootstrap update trigger semantics drift', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md',
+      'update codex bootstrap',
+      'update harness',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD040'), 'Expected AD040');
+  }, failures);
+
+  _runCase('fails when bootstrap update shorthand alias drifts', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md',
+      'UCBS',
+      'UCB',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD040'), 'Expected AD040');
+  }, failures);
+
+  _runCase('fails when issue memory json is missing', () {
+    final String root = _fixtureRoot();
+    _removePath(root, 'docs/assistant/ISSUE_MEMORY.json');
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD001') || _hasRule(issues, 'AD042'),
+        'Expected AD001 or AD042');
+  }, failures);
+
+  _runCase('fails when issue memory seeded issue is removed', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> issueMemory =
+        _readJson(root, 'docs/assistant/ISSUE_MEMORY.json');
+    final List<dynamic> issuesList = issueMemory['issues'] as List<dynamic>;
+    issuesList.removeWhere((dynamic item) =>
+        item is Map<String, dynamic> &&
+        item['id'] == 'workflow-wrong-build-under-test');
+    _writeJson(root, 'docs/assistant/ISSUE_MEMORY.json', issueMemory);
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD042'), 'Expected AD042');
+  }, failures);
+
+  _runCase('fails when docs maintenance omits issue memory', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md',
+      'ISSUE_MEMORY.md',
+      'ISSUE_REGISTRY.md',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD041'), 'Expected AD041');
+  }, failures);
+
+  _runCase('fails when local env profile is missing', () {
+    final String root = _fixtureRoot();
+    _removePath(root, 'docs/assistant/LOCAL_ENV_PROFILE.local.md');
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD001') || _hasRule(issues, 'AD043'),
+        'Expected AD001 or AD043');
+  }, failures);
+
+  _runCase('fails when host integration workflow is not routed from index', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/INDEX.md',
+      'docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md',
+      'docs/assistant/workflows/MISSING_HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD043'), 'Expected AD043');
+  }, failures);
+
+  _runCase('fails when host integration workflow preflight sequence drifts', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md',
+      '1. Installation exists',
+      '1. install things later',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD043'), 'Expected AD043');
+  }, failures);
+
   if (failures.isNotEmpty) {
     stderr.writeln('Agent docs validator tests failed: ${failures.length} case(s).');
     for (final String failure in failures) {
@@ -503,5 +723,5 @@ void main() {
     exit(1);
   }
 
-  stdout.writeln('All agent docs validator tests passed (29 cases).');
+  stdout.writeln('All agent docs validator tests passed (41 cases).');
 }

@@ -94,4 +94,4 @@ python3 -m pytest -q tests/test_ocr_advisor_backend.py tests/test_review_export.
 1. List touched files and rationale.
 2. Include targeted test commands and outcomes.
 3. Confirm no unrelated runtime behavior changed.
-4. Ask docs sync prompt if change is significant.
+4. Ask the docs sync prompt only if the change is significant and relevant touched-scope docs still remain unsynced.
