@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import time
 from contextlib import closing
 from dataclasses import dataclass
@@ -14,7 +17,7 @@ from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from openai import OpenAI
-from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QObject, QStandardPaths, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -64,6 +67,12 @@ from legalpdf_translate.glossary import (
     supported_target_langs,
     valid_glossary_tiers,
     valid_source_langs,
+)
+from legalpdf_translate.honorarios_docx import (
+    HonorariosDraft,
+    build_honorarios_draft,
+    default_honorarios_filename,
+    generate_honorarios_docx,
 )
 from legalpdf_translate.joblog_db import (
     insert_job_run,
@@ -191,6 +200,8 @@ class JobLogSeed:
     quality_risk_score: float | None
     profit: float
     pdf_path: Path
+    output_docx: Path | None = None
+    partial_docx: Path | None = None
 
 
 _WORD_XML_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
@@ -311,7 +322,133 @@ def build_seed_from_run(
         quality_risk_score=None,
         profit=round(expected_total - float(api_cost), 2),
         pdf_path=pdf_path,
+        output_docx=output_docx,
+        partial_docx=partial_docx,
     )
+
+
+def _default_documents_dir() -> Path:
+    candidate = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+    if candidate:
+        return Path(candidate).expanduser().resolve()
+    return (Path.home() / "Documents").expanduser().resolve()
+
+
+def _open_folder_for_path(parent: QWidget, target: Path) -> None:
+    folder = target.expanduser().resolve().parent
+    try:
+        if os.name == "nt":
+            subprocess.Popen(["explorer", f"/select,{target.expanduser().resolve()}"])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(folder)])
+        else:
+            subprocess.Popen(["xdg-open", str(folder)])
+    except Exception as exc:  # noqa: BLE001
+        QMessageBox.critical(parent, "Open folder failed", str(exc))
+
+
+class QtHonorariosExportDialog(QDialog):
+    """Generate a deterministic Requerimento de Honorarios DOCX."""
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        draft: HonorariosDraft,
+        default_directory: Path,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Gerar Requerimento de Honorários")
+        self.resize(760, 300)
+        self._default_directory = default_directory.expanduser().resolve()
+        self._initial_draft = draft
+        self.saved_path: Path | None = None
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        form = QFormLayout()
+        self.case_number_edit = QLineEdit(self._initial_draft.case_number)
+        self.word_count_edit = QLineEdit(str(self._initial_draft.word_count))
+        self.case_entity_edit = QLineEdit(self._initial_draft.case_entity)
+        self.case_city_edit = QLineEdit(self._initial_draft.case_city)
+        self.date_preview_label = QLabel(f"Beja, {self._initial_draft.date_pt}")
+        form.addRow("Número de processo", self.case_number_edit)
+        form.addRow("Número de palavras", self.word_count_edit)
+        form.addRow("Case Entity", self.case_entity_edit)
+        form.addRow("Case City", self.case_city_edit)
+        form.addRow("Data", self.date_preview_label)
+        root.addLayout(form)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self.cancel_btn = QPushButton("Cancel")
+        self.generate_btn = QPushButton("Gerar DOCX")
+        actions.addWidget(self.cancel_btn)
+        actions.addWidget(self.generate_btn)
+        root.addLayout(actions)
+
+        self.cancel_btn.clicked.connect(self.reject)
+        self.generate_btn.clicked.connect(self._generate)
+
+    def _build_draft(self) -> HonorariosDraft:
+        case_number = self.case_number_edit.text().strip()
+        case_entity = self.case_entity_edit.text().strip()
+        case_city = self.case_city_edit.text().strip()
+        if not case_number:
+            raise ValueError("Número de processo é obrigatório.")
+        if not case_entity:
+            raise ValueError("Case Entity is required.")
+        if not case_city:
+            raise ValueError("Case City is required.")
+        try:
+            word_count = int(self.word_count_edit.text().strip())
+        except ValueError as exc:
+            raise ValueError("Número de palavras must be an integer.") from exc
+        if word_count <= 0:
+            raise ValueError("Número de palavras must be greater than zero.")
+        return build_honorarios_draft(
+            case_number=case_number,
+            word_count=word_count,
+            case_entity=case_entity,
+            case_city=case_city,
+        )
+
+    def _generate(self) -> None:
+        try:
+            draft = self._build_draft()
+        except ValueError as exc:
+            QMessageBox.critical(self, "Requerimento de Honorários", str(exc))
+            return
+
+        default_path = self._default_directory / default_honorarios_filename(draft.case_number)
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar Requerimento de Honorários",
+            str(default_path),
+            "Word Document (*.docx)",
+        )
+        if not selected:
+            return
+        try:
+            saved = generate_honorarios_docx(draft, Path(selected))
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Requerimento de Honorários", f"Failed to generate DOCX:\n{exc}")
+            return
+        self.saved_path = saved
+        open_now = QMessageBox.question(
+            self,
+            "Requerimento de Honorários",
+            "Open containing folder now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if open_now == QMessageBox.StandardButton.Yes:
+            _open_folder_for_path(self, saved)
+        self.accept()
 
 
 class QtSaveToJobLogDialog(QDialog):
@@ -502,6 +639,8 @@ class QtSaveToJobLogDialog(QDialog):
         root.addWidget(finance_group)
 
         actions = QHBoxLayout()
+        self.honorarios_btn = QPushButton("Gerar Requerimento de Honorários...")
+        actions.addWidget(self.honorarios_btn)
         actions.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
         self.save_btn = QPushButton("Save")
@@ -511,6 +650,7 @@ class QtSaveToJobLogDialog(QDialog):
 
         self.cancel_btn.clicked.connect(self.reject)
         self.save_btn.clicked.connect(self._save)
+        self.honorarios_btn.clicked.connect(self._open_honorarios_dialog)
         self.job_type_combo.currentTextChanged.connect(self._refresh_photo_controls)
         self.photo_translation_check.toggled.connect(self._refresh_photo_controls)
         self.case_entity_combo.currentTextChanged.connect(self._on_case_fields_changed)
@@ -609,6 +749,33 @@ class QtSaveToJobLogDialog(QDialog):
         enabled = self.photo_translation_check.isChecked()
         self.autofill_photo_btn.setEnabled(enabled)
         self.photo_hint.setText("Usually Interpretation.")
+
+    def _build_honorarios_draft(self) -> HonorariosDraft:
+        case_number = self.case_number_edit.text().strip()
+        case_entity = self.case_entity_combo.currentText().strip()
+        case_city = self.case_city_combo.currentText().strip()
+        return build_honorarios_draft(
+            case_number=case_number,
+            word_count=int(self._seed.word_count),
+            case_entity=case_entity,
+            case_city=case_city,
+        )
+
+    def _honorarios_default_directory(self) -> Path:
+        for candidate in (self._seed.output_docx, self._seed.partial_docx):
+            if isinstance(candidate, Path):
+                resolved = candidate.expanduser().resolve()
+                if resolved.exists():
+                    return resolved.parent
+        return _default_documents_dir()
+
+    def _open_honorarios_dialog(self) -> None:
+        dialog = QtHonorariosExportDialog(
+            parent=self,
+            draft=self._build_honorarios_draft(),
+            default_directory=self._honorarios_default_directory(),
+        )
+        dialog.exec()
 
     def _apply_header_suggestion(self, suggestion: MetadataSuggestion) -> None:
         if suggestion.case_entity:
@@ -852,13 +1019,17 @@ class QtJobLogWindow(QDialog):
         self._visible_columns = update_joblog_visible_columns(self._settings["joblog_visible_columns"])
         if not self._visible_columns:
             self._visible_columns = ["translation_date", "case_number", "job_type"]
+        self._rows_data: list[dict[str, object]] = []
 
         root = QVBoxLayout(self)
         controls = QHBoxLayout()
         self.refresh_btn = QPushButton("Refresh")
         self.columns_btn = QPushButton("Columns...")
+        self.honorarios_btn = QPushButton("Gerar Requerimento de Honorários...")
+        self.honorarios_btn.setEnabled(False)
         controls.addWidget(self.refresh_btn)
         controls.addWidget(self.columns_btn)
+        controls.addWidget(self.honorarios_btn)
         controls.addStretch(1)
         root.addLayout(controls)
 
@@ -873,6 +1044,8 @@ class QtJobLogWindow(QDialog):
 
         self.refresh_btn.clicked.connect(self.refresh_rows)
         self.columns_btn.clicked.connect(self._open_columns_dialog)
+        self.honorarios_btn.clicked.connect(self._open_honorarios_dialog)
+        self.table.itemSelectionChanged.connect(self._refresh_action_state)
         self._apply_visible_columns()
         self.refresh_rows()
 
@@ -883,15 +1056,56 @@ class QtJobLogWindow(QDialog):
 
     def refresh_rows(self) -> None:
         self.table.setRowCount(0)
+        self._rows_data = []
         with closing(open_job_log(self._db_path)) as conn:
             rows = list_job_runs(conn, limit=1000)
         for row in rows:
+            row_data = {col: row[col] if col in row.keys() else "" for col in JOBLOG_COLUMNS}
+            self._rows_data.append(row_data)
             row_idx = self.table.rowCount()
             self.table.insertRow(row_idx)
             for col_idx, col in enumerate(JOBLOG_COLUMNS):
                 raw = row[col] if col in row.keys() else ""
                 text = "" if raw is None else str(raw)
                 self.table.setItem(row_idx, col_idx, QTableWidgetItem(text))
+        self._refresh_action_state()
+
+    def _refresh_action_state(self) -> None:
+        self.honorarios_btn.setEnabled(self._selected_row_data() is not None)
+
+    def _selected_row_data(self) -> dict[str, object] | None:
+        row = self.table.currentRow()
+        if row < 0:
+            selection_model = self.table.selectionModel()
+            if selection_model is not None:
+                selected_rows = selection_model.selectedRows()
+                if selected_rows:
+                    row = int(selected_rows[0].row())
+        if row < 0 or row >= len(self._rows_data):
+            return None
+        return self._rows_data[row]
+
+    def _open_honorarios_dialog(self) -> None:
+        row = self._selected_row_data()
+        if row is None:
+            QMessageBox.information(self, "Requerimento de Honorários", "Select one Job Log row first.")
+            return
+        try:
+            word_count = int(str(row.get("word_count", "") or "0").strip())
+        except ValueError:
+            word_count = 0
+        draft = build_honorarios_draft(
+            case_number=str(row.get("case_number", "") or "").strip(),
+            word_count=word_count,
+            case_entity=str(row.get("case_entity", "") or "").strip(),
+            case_city=str(row.get("case_city", "") or "").strip(),
+        )
+        dialog = QtHonorariosExportDialog(
+            parent=self,
+            draft=draft,
+            default_directory=_default_documents_dir(),
+        )
+        dialog.exec()
 
     def _open_columns_dialog(self) -> None:
         dialog = QDialog(self)
