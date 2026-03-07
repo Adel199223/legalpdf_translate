@@ -57,6 +57,8 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert loaded["ocr_engine_default"] == "local_then_api"
     assert loaded["ocr_mode"] == "auto"
     assert loaded["ocr_engine"] == "local_then_api"
+    assert loaded["gmail_gog_path"] == ""
+    assert loaded["gmail_account_email"] == ""
     assert isinstance(loaded["allow_xhigh_escalation"], bool)
     assert loaded["perf_timeout_text_seconds"] == 480
     assert loaded["perf_timeout_image_seconds"] == 720

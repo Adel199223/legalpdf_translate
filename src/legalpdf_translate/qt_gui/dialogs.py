@@ -17,8 +17,8 @@ from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from openai import OpenAI
-from PySide6.QtCore import QObject, QStandardPaths, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import QObject, QStandardPaths, QThread, QTimer, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -67,6 +67,12 @@ from legalpdf_translate.glossary import (
     supported_target_langs,
     valid_glossary_tiers,
     valid_source_langs,
+)
+from legalpdf_translate.gmail_draft import (
+    GMAIL_DRAFTS_URL,
+    assess_gmail_draft_prereqs,
+    build_honorarios_gmail_request,
+    create_gmail_draft_via_gog,
 )
 from legalpdf_translate.honorarios_docx import (
     HonorariosDraft,
@@ -130,7 +136,13 @@ from legalpdf_translate.study_glossary import (
     update_candidate_stats_from_page,
 )
 from legalpdf_translate.types import OcrApiProvider
-from legalpdf_translate.user_settings import app_data_dir, load_joblog_settings, save_gui_settings, save_joblog_settings
+from legalpdf_translate.user_settings import (
+    app_data_dir,
+    load_gui_settings,
+    load_joblog_settings,
+    save_gui_settings,
+    save_joblog_settings,
+)
 
 JOBLOG_COLUMNS = [
     "translation_date",
@@ -480,6 +492,7 @@ class QtSaveToJobLogDialog(QDialog):
         self._on_saved = on_saved
         self._saved = False
         self._settings = load_joblog_settings()
+        self._gui_settings = load_gui_settings()
         self._metadata_config: MetadataAutofillConfig = metadata_config_from_settings(self._settings)
         self._case_entity_user_set = False
         self._case_city_user_set = False
@@ -778,13 +791,82 @@ class QtSaveToJobLogDialog(QDialog):
                     return resolved.parent
         return _default_documents_dir()
 
+    def _current_translation_docx_path(self) -> Path | None:
+        if isinstance(self._seed.output_docx, Path):
+            resolved = self._seed.output_docx.expanduser().resolve()
+            if resolved.exists():
+                return resolved
+        return None
+
+    def _offer_gmail_draft_for_honorarios(self, honorarios_docx: Path) -> None:
+        court_email = self.court_email_combo.currentText().strip()
+        if not court_email:
+            return
+        prereqs = assess_gmail_draft_prereqs(
+            configured_gog_path=str(self._gui_settings.get("gmail_gog_path", "") or ""),
+            configured_account_email=str(self._gui_settings.get("gmail_account_email", "") or ""),
+        )
+        if not prereqs.ready or prereqs.gog_path is None or prereqs.account_email is None:
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Gmail draft",
+            f"Criar rascunho no Gmail para {court_email}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        translation_docx = self._current_translation_docx_path()
+        if translation_docx is None:
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Translated DOCX is unavailable for this run. The Gmail draft was not created.",
+            )
+            return
+        try:
+            request = build_honorarios_gmail_request(
+                gog_path=prereqs.gog_path,
+                account_email=prereqs.account_email,
+                to_email=court_email,
+                case_number=self.case_number_edit.text().strip(),
+                translation_docx=translation_docx,
+                honorarios_docx=honorarios_docx,
+            )
+        except ValueError as exc:
+            QMessageBox.critical(self, "Gmail draft", str(exc))
+            return
+        result = create_gmail_draft_via_gog(request)
+        if not result.ok:
+            details = result.stderr or result.stdout or result.message
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Failed to create Gmail draft.\n\n"
+                f"{details}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        open_gmail = QMessageBox.question(
+            self,
+            "Gmail draft",
+            "Gmail draft created successfully. Abrir Gmail?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if open_gmail == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
+
     def _open_honorarios_dialog(self) -> None:
         dialog = QtHonorariosExportDialog(
             parent=self,
             draft=self._build_honorarios_draft(),
             default_directory=self._honorarios_default_directory(),
         )
-        dialog.exec()
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_path is not None:
+            self._offer_gmail_draft_for_honorarios(dialog.saved_path)
 
     def _apply_header_suggestion(self, suggestion: MetadataSuggestion) -> None:
         if suggestion.case_entity:
@@ -1025,6 +1107,7 @@ class QtJobLogWindow(QDialog):
 
         self._db_path = db_path
         self._settings = load_joblog_settings()
+        self._gui_settings = load_gui_settings()
         self._visible_columns = update_joblog_visible_columns(self._settings["joblog_visible_columns"])
         if not self._visible_columns:
             self._visible_columns = ["translation_date", "case_number", "job_type"]
@@ -1094,6 +1177,80 @@ class QtJobLogWindow(QDialog):
             return None
         return self._rows_data[row]
 
+    def _offer_gmail_draft_for_honorarios(self, row: dict[str, object], honorarios_docx: Path) -> None:
+        court_email = str(row.get("court_email", "") or "").strip()
+        if not court_email:
+            QMessageBox.information(
+                self,
+                "Gmail draft",
+                "Court Email is missing for this Job Log entry. The Gmail draft was not created.",
+            )
+            return
+        prereqs = assess_gmail_draft_prereqs(
+            configured_gog_path=str(self._gui_settings.get("gmail_gog_path", "") or ""),
+            configured_account_email=str(self._gui_settings.get("gmail_account_email", "") or ""),
+        )
+        if not prereqs.ready or prereqs.gog_path is None or prereqs.account_email is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                f"{prereqs.message}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Gmail draft",
+            f"Criar rascunho no Gmail para {court_email}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Selecionar DOCX traduzido",
+            str(honorarios_docx.expanduser().resolve().parent),
+            "Word Document (*.docx)",
+        )
+        if not selected:
+            return
+        translation_docx = Path(selected).expanduser().resolve()
+        try:
+            request = build_honorarios_gmail_request(
+                gog_path=prereqs.gog_path,
+                account_email=prereqs.account_email,
+                to_email=court_email,
+                case_number=str(row.get("case_number", "") or "").strip(),
+                translation_docx=translation_docx,
+                honorarios_docx=honorarios_docx,
+            )
+        except ValueError as exc:
+            QMessageBox.critical(self, "Gmail draft", str(exc))
+            return
+        result = create_gmail_draft_via_gog(request)
+        if not result.ok:
+            details = result.stderr or result.stdout or result.message
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Failed to create Gmail draft.\n\n"
+                f"{details}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        open_gmail = QMessageBox.question(
+            self,
+            "Gmail draft",
+            "Gmail draft created successfully. Abrir Gmail?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if open_gmail == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
+
     def _open_honorarios_dialog(self) -> None:
         row = self._selected_row_data()
         if row is None:
@@ -1114,7 +1271,8 @@ class QtJobLogWindow(QDialog):
             draft=draft,
             default_directory=_default_documents_dir(),
         )
-        dialog.exec()
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_path is not None:
+            self._offer_gmail_draft_for_honorarios(row, dialog.saved_path)
 
     def _open_columns_dialog(self) -> None:
         dialog = QDialog(self)
@@ -2000,6 +2158,24 @@ class QtSettingsDialog(QDialog):
         provider_form.addRow("OCR env var name", self.ocr_env_edit)
         provider_form.addRow("Summary", self.provider_summary_label)
         layout.addWidget(provider_group)
+
+        gmail_group = QGroupBox("Gmail Drafts (Windows)")
+        gmail_layout = QGridLayout(gmail_group)
+        gmail_layout.addWidget(QLabel("gog path"), 0, 0)
+        self.gmail_gog_path_edit = QLineEdit()
+        gmail_layout.addWidget(self.gmail_gog_path_edit, 0, 1)
+        self.gmail_gog_browse_btn = QPushButton("Browse")
+        gmail_layout.addWidget(self.gmail_gog_browse_btn, 0, 2)
+        gmail_layout.addWidget(QLabel("Gmail account"), 1, 0)
+        self.gmail_account_edit = QLineEdit()
+        gmail_layout.addWidget(self.gmail_account_edit, 1, 1, 1, 2)
+        self.gmail_test_btn = QPushButton("Test Gmail draft prerequisites")
+        gmail_layout.addWidget(self.gmail_test_btn, 2, 0, 1, 3)
+        self.gmail_summary_label = QLabel("")
+        self.gmail_summary_label.setWordWrap(True)
+        gmail_layout.addWidget(self.gmail_summary_label, 3, 0, 1, 3)
+        gmail_layout.setColumnStretch(1, 1)
+        layout.addWidget(gmail_group)
         layout.addStretch(1)
 
         self.openai_toggle_btn.clicked.connect(self._toggle_openai_key)
@@ -2014,6 +2190,10 @@ class QtSettingsDialog(QDialog):
         self.ocr_base_url_edit.textChanged.connect(self._refresh_provider_controls)
         self.ocr_model_edit.textChanged.connect(self._refresh_provider_controls)
         self.ocr_env_edit.textChanged.connect(self._refresh_provider_controls)
+        self.gmail_gog_browse_btn.clicked.connect(self._pick_gmail_gog_path)
+        self.gmail_test_btn.clicked.connect(self._test_gmail_draft_prereqs)
+        self.gmail_gog_path_edit.textChanged.connect(lambda _text: self._refresh_key_status())
+        self.gmail_account_edit.textChanged.connect(lambda _text: self._refresh_key_status())
 
     def _build_tab_ocr_defaults(self) -> None:
         form = QFormLayout(self.tab_ocr)
@@ -3752,6 +3932,8 @@ class QtSettingsDialog(QDialog):
         self.ocr_model_edit.setText(str(settings.get("ocr_api_model", "")))
         provider = normalize_ocr_api_provider(current_provider)
         self.ocr_env_edit.setText(str(settings.get("ocr_api_key_env_name", default_ocr_api_env_name(provider))))
+        self.gmail_gog_path_edit.setText(str(settings.get("gmail_gog_path", "")))
+        self.gmail_account_edit.setText(str(settings.get("gmail_account_email", "")))
         self.retries_edit.setText(str(settings.get("perf_max_transport_retries", 4)))
         self.backoff_cap_edit.setText(str(settings.get("perf_backoff_cap_seconds", 12.0)))
         self.timeout_text_edit.setText(
@@ -3811,6 +3993,48 @@ class QtSettingsDialog(QDialog):
             f"base URL: {resolved_base}; OpenAI credentials {'present' if openai_stored else 'missing'}, "
             f"OCR credentials {'present' if ocr_stored else 'missing'}."
         )
+        configured_path = self.gmail_gog_path_edit.text().strip() if hasattr(self, "gmail_gog_path_edit") else ""
+        configured_account = self.gmail_account_edit.text().strip() if hasattr(self, "gmail_account_edit") else ""
+        if hasattr(self, "gmail_summary_label"):
+            path_summary = configured_path or "auto-detect"
+            account_summary = configured_account or "auto-detect"
+            self.gmail_summary_label.setText(
+                f"Configured gog path: {path_summary}\nConfigured Gmail account: {account_summary}"
+            )
+
+    def _pick_gmail_gog_path(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select gog.exe",
+            "",
+            "Executable Files (*.exe);;All Files (*.*)",
+        )
+        if selected:
+            self.gmail_gog_path_edit.setText(selected)
+            self._refresh_key_status()
+
+    def _test_gmail_draft_prereqs(self) -> None:
+        status = assess_gmail_draft_prereqs(
+            configured_gog_path=self.gmail_gog_path_edit.text().strip(),
+            configured_account_email=self.gmail_account_edit.text().strip(),
+        )
+        self._refresh_key_status()
+        if status.ready:
+            path_text = str(status.gog_path) if status.gog_path is not None else "auto-detect"
+            QMessageBox.information(
+                self,
+                "Gmail draft",
+                (
+                    f"{status.message}\n\n"
+                    f"gog path: {path_text}\n"
+                    f"Gmail account: {status.account_email}"
+                ),
+            )
+            return
+        details = status.message
+        if status.accounts:
+            details += "\n\nAuthenticated Gmail accounts:\n- " + "\n- ".join(status.accounts)
+        QMessageBox.warning(self, "Gmail draft", details)
 
     def _pick_default_outdir(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "Choose default output folder")
@@ -4109,6 +4333,8 @@ class QtSettingsDialog(QDialog):
         self.ocr_base_url_edit.clear()
         self.ocr_model_edit.clear()
         self.ocr_env_edit.setText(default_ocr_api_env_name(OcrApiProvider.OPENAI))
+        self.gmail_gog_path_edit.clear()
+        self.gmail_account_edit.clear()
         self.retries_edit.setText("4")
         self.backoff_cap_edit.setText("12.0")
         self.timeout_text_edit.setText(str(DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS))
@@ -4174,6 +4400,8 @@ class QtSettingsDialog(QDialog):
             "ocr_api_model": self.ocr_model_edit.text().strip(),
             "ocr_api_key_env_name": self.ocr_env_edit.text().strip()
             or default_ocr_api_env_name(normalize_ocr_api_provider(self.ocr_provider_combo.currentText())),
+            "gmail_gog_path": self.gmail_gog_path_edit.text().strip(),
+            "gmail_account_email": self.gmail_account_edit.text().strip(),
             "perf_max_transport_retries": _to_int(self.retries_edit.text(), field="Transport retries", min_value=0, max_value=12),
             "perf_backoff_cap_seconds": _to_float(self.backoff_cap_edit.text(), field="Backoff cap", min_value=1.0, max_value=120.0),
             "perf_timeout_text_seconds": _to_int(self.timeout_text_edit.text(), field="Text timeout", min_value=5, max_value=600),

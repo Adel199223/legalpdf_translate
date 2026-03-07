@@ -137,6 +137,8 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "diagnostics_include_sanitized_snippets": False,
     "min_chars_to_accept_ocr": 200,
     "openai_reasoning_effort_lemma": "high",
+    "gmail_gog_path": "",
+    "gmail_account_email": "",
 }
 ALLOWED_GUI_KEYS = {
     "settings_schema_version",
@@ -204,6 +206,8 @@ ALLOWED_GUI_KEYS = {
     "ocr_api_base_url",
     "ocr_api_model",
     "ocr_api_key_env_name",
+    "gmail_gog_path",
+    "gmail_account_email",
 }
 ALLOWED_JOBLOG_KEYS = {
     "vocab_case_entities",
@@ -495,6 +499,8 @@ def load_gui_settings() -> dict[str, Any]:
     merged["ocr_api_key_env_name"] = str(
         ocr_env_value or ("GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY")
     )
+    merged["gmail_gog_path"] = str(merged.get("gmail_gog_path", "") or "")
+    merged["gmail_account_email"] = str(merged.get("gmail_account_email", "") or "")
     merged["settings_schema_version"] = _coerce_int(
         merged.get("settings_schema_version"),
         SETTINGS_SCHEMA_VERSION,
