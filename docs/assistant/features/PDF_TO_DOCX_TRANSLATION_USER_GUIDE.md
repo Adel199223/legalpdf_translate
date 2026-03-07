@@ -30,6 +30,30 @@ This user guide is not canonical architecture truth. Defer to `APP_KNOWLEDGE.md`
 5. Click `Start Translate`.
 6. Open output DOCX when run completes.
 
+## If Warnings Appear Before The Run Starts
+Two warnings matter for OCR-heavy work.
+
+### 1. xhigh cost/time warning
+If the warning says `xhigh` can multiply cost and time, choose:
+1. `Switch to fixed high`
+
+Use `Proceed` only if you intentionally want the slower, more expensive `xhigh` setting.
+
+### 2. OCR-heavy runtime warning
+If the warning says local OCR is unavailable and the document appears OCR-heavy, choose:
+1. `Apply safe OCR profile`
+
+That applies this safer profile for the current run only:
+- `OCR mode = always`
+- `OCR engine = api`
+- `Image mode = off`
+- `Workers = 1`
+- `Effort policy = fixed_high`
+- `Resume = off`
+- `Keep intermediates = on`
+
+It does not silently overwrite your saved defaults.
+
 ## Main Screen Layout
 - Left sidebar: navigation for `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, and `Profile`.
 - `Job Setup`: source PDF, target language, output folder, and `Advanced Settings`.
@@ -83,9 +107,18 @@ After a successful run, the app can prefill the Job Log dialog using the latest 
    - total tokens
    - estimated API cost
    - quality risk score
+   - translated output word count
 4. Edit any field you want before saving.
 
 The prefill helps, but you still stay in control of the saved row.
+
+`Words` now means translated output words. The app uses this precedence:
+1. final DOCX
+2. partial DOCX
+3. `pages/page_*.txt`
+4. `0`
+
+`Expected total` and `Profit` are recalculated from that translated-output word count.
 
 ## Queue Runs
 Use queue mode when you want several PDFs to run in order.
@@ -122,6 +155,9 @@ Queue mode writes these sidecar files next to the manifest:
 9. If a queue was interrupted, rerun it with the same manifest; completed jobs should be skipped automatically.
 10. If the Review Queue is empty, that means no pages crossed the app's current risk threshold.
 11. OCR can improve difficult scans, but it still depends on source quality and cannot fully repair a badly scanned page.
+12. For OCR-heavy runs, start with pages `1-2`, then `3-4`, then `5-7`.
+13. If you click `Cancel and wait`, the app now waits only for the active request deadline instead of appearing indefinitely frozen.
+14. If a run stops partially, open `Generate Run Report` and the run folder before retrying. The stop dialog now includes suspected cause, halt reason, and request timing details when available.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.

@@ -605,6 +605,17 @@ void _validateWorkflowDocs(
     ));
   }
 
+  final String indexText = readText('docs/assistant/INDEX.md');
+  final List<String> missingDiscoverability = workflowDocs
+      .where((String path) => exists(path) && !indexText.contains(path))
+      .toList();
+  if (missingDiscoverability.isNotEmpty) {
+    issues.add(ValidationIssue(
+      'AD036',
+      'Workflow docs are not discoverable from docs index: ${missingDiscoverability.join(', ')}',
+    ));
+  }
+
   final Map<String, dynamic> contracts =
       manifest['contracts'] is Map<String, dynamic>
           ? manifest['contracts'] as Map<String, dynamic>

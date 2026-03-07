@@ -14,13 +14,17 @@ Implementing or modifying the core PDF-to-DOCX translation product flow.
 - Changes to OCR advisor behavior or OCR/image recommendation logic.
 - Changes to quality-risk scoring, review queue construction, or review export behavior.
 - Changes to queue orchestration when it affects translation/report behavior.
+- OCR-heavy runtime triage only after the dedicated triage workflow has isolated whether the failure is OCR, transport, or UI-close related.
 
 ## What Not To Do
 - Don't use this workflow when the task is primarily DB/schema lifecycle work.
 - Instead use `docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md`.
+- Don't use this workflow when the task is primarily OCR-heavy runtime troubleshooting on a real failing document.
+- Instead use `docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md`.
 
 ## Primary Files
 - `src/legalpdf_translate/workflow.py`
+- `src/legalpdf_translate/openai_client.py`
 - `src/legalpdf_translate/cost_guardrails.py`
 - `src/legalpdf_translate/workflow_components/contracts.py`
 - `src/legalpdf_translate/workflow_components/evaluation.py`
@@ -68,6 +72,23 @@ python3 -m pytest -q tests/test_ocr_advisor_backend.py tests/test_review_export.
 - Regression in page-level routing: revert to last known-good route decision block and rerun targeted tests.
 - Prompt-format drift: validate prompt builder tests and restore expected delimiters.
 - Output validation breakage: run validator test subset and inspect failing gate details.
+- OCR-heavy transport stall: check the authoritative request budgets first. The app now owns total budgets and disables SDK implicit retries, so a text-only OCR-success page should fail or complete within the text-page deadline instead of drifting into an hour-long wait.
+- Suspected rate-limit report with `rate_limit_hits=0`: treat it as transport instability until proven otherwise. Current failure classification distinguishes `transport_instability` from true rate limiting.
+
+## Runtime Contracts Added By OCR Stabilization
+- Request deadlines are authoritative and owned by the app, not the SDK:
+  - text-only translation page: `480s`
+  - image-backed translation page: `720s`
+  - OCR API request: `240s`
+  - metadata/header AI request: `120s`
+- SDK implicit retries are disabled; app-level retries consume the remaining page/request budget.
+- `run_summary.json` now carries `failure_context` for bounded runtime failures:
+  - `request_type`
+  - `request_timeout_budget_seconds`
+  - `request_elapsed_before_failure_seconds`
+  - `cancel_requested_before_failure`
+  - `exception_class`
+- OCR-success pages remain text-first. Image attachment should stay off unless a concrete layout/quality signal justifies it.
 
 ## Handoff Checklist
 1. List touched files and rationale.

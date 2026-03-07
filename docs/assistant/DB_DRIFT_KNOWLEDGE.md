@@ -26,6 +26,13 @@ The current migration is additive and idempotent. It also backfills:
 - `estimated_api_cost` from `api_cost` when missing.
 
 Save-to-Job-Log can prefill these values from the latest run summary, but the user can still edit them before saving the row.
+Job-log word-count semantics now use translated output artifacts with this precedence:
+1. final DOCX
+2. partial DOCX
+3. `pages/page_*.txt`
+4. `0`
+
+`expected_total` and `profit` in the Save-to-Job-Log flow are recalculated from that translated-output word count source.
 
 ## Safe Process
 1. Inspect current schema version and expected migration chain.

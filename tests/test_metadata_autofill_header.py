@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import legalpdf_translate.metadata_autofill as metadata_autofill
 from legalpdf_translate.metadata_autofill import (
     MetadataAutofillConfig,
     choose_court_email_suggestion,
@@ -139,3 +140,40 @@ def test_choose_court_email_suggestion_prefers_exact_email_when_present() -> Non
         vocab_court_emails=["beja.judicial@tribunais.org.pt"],
     )
     assert selected == "header.found@example.org"
+
+
+def test_resolve_api_client_uses_bounded_retry_and_timeout(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeOpenAI:
+        def __init__(
+            self,
+            *,
+            api_key: str,
+            base_url: str | None = None,
+            max_retries: int = 99,
+            timeout: float | None = None,
+        ) -> None:
+            captured["api_key"] = api_key
+            captured["base_url"] = base_url
+            captured["max_retries"] = max_retries
+            captured["timeout"] = timeout
+
+    monkeypatch.setattr(metadata_autofill, "OpenAI", _FakeOpenAI)
+    monkeypatch.setattr(metadata_autofill, "get_ocr_key", lambda: "stored-key")
+
+    client = metadata_autofill._resolve_api_client(
+        MetadataAutofillConfig(
+            metadata_ai_enabled=True,
+            ocr_api_base_url="https://example.invalid/v1",
+            metadata_ai_timeout_seconds=120.0,
+        )
+    )
+
+    assert client is not None
+    assert captured == {
+        "api_key": "stored-key",
+        "base_url": "https://example.invalid/v1",
+        "max_retries": 0,
+        "timeout": 120.0,
+    }

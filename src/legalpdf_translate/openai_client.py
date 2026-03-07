@@ -64,7 +64,7 @@ class OpenAIResponsesClient:
             resolved_api_key = env_key or None
         if not resolved_api_key:
             raise ValueError("OpenAI API key is not configured.")
-        self._client = OpenAI(api_key=resolved_api_key)
+        self._client = OpenAI(api_key=resolved_api_key, max_retries=0)
         self._max_transport_retries = max(0, int(max_transport_retries))
         self._base_backoff_seconds = base_backoff_seconds
         self._backoff_cap_seconds = max(1.0, backoff_cap_seconds)
@@ -98,18 +98,49 @@ class OpenAIResponsesClient:
         last_backoff_seconds = 0.0
         total_backoff_seconds = 0.0
         rate_limit_hit = False
+        overall_timeout_seconds = (
+            float(timeout_seconds)
+            if timeout_seconds is not None
+            else float(self._request_timeout_seconds)
+        )
+        overall_timeout_seconds = max(0.1, overall_timeout_seconds)
+        started_at = time.perf_counter()
+
+        def _remaining_budget_seconds() -> float:
+            return max(0.0, overall_timeout_seconds - (time.perf_counter() - started_at))
+
         # max_transport_retries is "retries after the first call"; always attempt at least once.
         for attempt in range(self._max_transport_retries + 1):
+            remaining_budget = _remaining_budget_seconds()
+            if remaining_budget <= 0.0:
+                raise _budget_exhausted_error(
+                    transport_retries_count=transport_retries_count,
+                    last_backoff_seconds=last_backoff_seconds,
+                    total_backoff_seconds=total_backoff_seconds,
+                    rate_limit_hit=rate_limit_hit,
+                    budget_seconds=overall_timeout_seconds,
+                )
             try:
                 if self._pre_call_jitter_seconds > 0:
-                    time.sleep(random.uniform(0.0, self._pre_call_jitter_seconds))
+                    jitter_seconds = min(random.uniform(0.0, self._pre_call_jitter_seconds), remaining_budget)
+                    if jitter_seconds > 0.0:
+                        time.sleep(jitter_seconds)
+                    remaining_budget = _remaining_budget_seconds()
+                    if remaining_budget <= 0.0:
+                        raise _budget_exhausted_error(
+                            transport_retries_count=transport_retries_count,
+                            last_backoff_seconds=last_backoff_seconds,
+                            total_backoff_seconds=total_backoff_seconds,
+                            rate_limit_hit=rate_limit_hit,
+                            budget_seconds=overall_timeout_seconds,
+                        )
                 response = self._client.responses.create(
                     model=OPENAI_MODEL,
                     instructions=instructions,
                     input=user_input,
                     reasoning={"effort": effort},
                     store=OPENAI_STORE,
-                    timeout=max(5.0, timeout_seconds) if timeout_seconds is not None else self._request_timeout_seconds,
+                    timeout=max(0.1, remaining_budget),
                 )
                 return ApiCallResult(
                     raw_output=_extract_output_text(response),
@@ -142,17 +173,50 @@ class OpenAIResponsesClient:
                     backoff_cap_seconds=self._backoff_cap_seconds,
                     base_backoff_seconds=self._base_backoff_seconds,
                 )
+                remaining_budget = _remaining_budget_seconds()
+                bounded_sleep = min(sleep_seconds, remaining_budget)
+                if bounded_sleep <= 0.0:
+                    raise _budget_exhausted_error(
+                        transport_retries_count=transport_retries_count,
+                        last_backoff_seconds=last_backoff_seconds,
+                        total_backoff_seconds=total_backoff_seconds,
+                        rate_limit_hit=rate_limit_hit,
+                        budget_seconds=overall_timeout_seconds,
+                    ) from exc
                 if self._logger:
                     self._logger(
-                        f"Transient API error ({type(exc).__name__}), retrying in {sleep_seconds:.2f}s."
+                        f"Transient API error ({type(exc).__name__}), retrying in {bounded_sleep:.2f}s "
+                        f"within remaining budget {remaining_budget:.2f}s."
                     )
                 transport_retries_count += 1
-                last_backoff_seconds = sleep_seconds
-                total_backoff_seconds += sleep_seconds
-                time.sleep(sleep_seconds)
+                last_backoff_seconds = bounded_sleep
+                total_backoff_seconds += bounded_sleep
+                time.sleep(bounded_sleep)
         if last_error is not None:
             raise last_error
         raise RuntimeError("Unreachable transport retry state.")
+
+
+def _budget_exhausted_error(
+    *,
+    transport_retries_count: int,
+    last_backoff_seconds: float,
+    total_backoff_seconds: float,
+    rate_limit_hit: bool,
+    budget_seconds: float,
+) -> ApiCallError:
+    return ApiCallError(
+        message=(
+            "APITimeoutError: request budget exhausted before a successful response "
+            f"(budget_seconds={budget_seconds:.3f})"
+        ),
+        status_code=None,
+        exception_class="APITimeoutError",
+        transport_retries_count=transport_retries_count,
+        last_backoff_seconds=last_backoff_seconds,
+        total_backoff_seconds=total_backoff_seconds,
+        rate_limit_hit=rate_limit_hit,
+    )
 
 
 def _is_retryable(exc: Exception) -> bool:

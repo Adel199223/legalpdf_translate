@@ -44,6 +44,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 - Budget decision: What the app does when estimated cost is above cap (`warn` continues, `block` stops early).
 - Review Queue: A short list of pages the app thinks deserve a human check.
 - OCR Advisor: A recommendation shown after Analyze that suggests safer OCR or image settings.
+- Safe OCR profile: A temporary one-click set of safer run settings for a scanned or OCR-heavy document.
 - Queue Manifest: A small file that tells the app to run several PDFs one after another.
 - Job Log: The place where you save finished work details like run ID, tokens, and estimated API cost.
 - Tools menu: the top menu where you can open settings, the Review Queue, or the Job Log.
@@ -51,9 +52,23 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 
 ## Common Tasks
 1. Analyze first when a PDF looks messy or scanned, then decide whether to apply the OCR Advisor suggestion for the next run.
+2. If a warning says `xhigh` can multiply cost and time, choose `Switch to fixed high` unless you intentionally want the slower, more expensive option.
+3. If an OCR-heavy warning appears for a scanned document, choose `Apply safe OCR profile` to fix the current run without changing your saved defaults.
 2. After a run finishes, open the Review Queue if pages were flagged for manual checking.
 3. Save the finished run to the Job Log so the case and cost details are stored together.
 4. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
+
+## Warning Dialogs
+- `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.
+- `Apply safe OCR profile`: Use this when the app warns that the document appears OCR-heavy and local OCR is unavailable. It changes only the current run to:
+  - OCR mode `always`
+  - OCR engine `api`
+  - Image mode `off`
+  - Workers `1`
+  - Effort policy `fixed_high`
+  - Resume `off`
+  - Keep intermediates `on`
+- These warning actions are temporary for the current run only. They do not silently overwrite your saved defaults.
 
 ## If The App Does Not Open
 Use the real GUI module entrypoint:
@@ -74,3 +89,9 @@ Use this fix:
 1. Run: `powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate`
 2. Activate: `. .\.venv311\Scripts\Activate.ps1`
 3. Retry your command.
+
+## OCR-Heavy Safety Notes
+1. For scanned court documents, start with pages `1-2`, then `3-4`, then `5-7` instead of running the whole document immediately.
+2. If you choose `Cancel and wait`, the app now waits only until the current request finishes or hits its deadline. It should no longer look indefinitely stuck.
+3. If a run stops partway through, open the run report and the run folder before trying again.
+4. In Save to Job Log, `Words` now means translated output words from the DOCX, not raw OCR/source page text.

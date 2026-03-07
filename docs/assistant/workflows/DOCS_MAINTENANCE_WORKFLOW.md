@@ -12,6 +12,7 @@ Maintaining assistant docs contracts with minimal drift and scoped updates.
 - User approves docs sync.
 - Governance/workflow/manifest contracts change.
 - User-guide support content needs synchronization with feature changes.
+- A major debugging session exposed reusable workflow lessons that should not remain trapped only in active ExecPlans.
 
 ## What Not To Do
 - Don't use this workflow when the change is a small isolated update that does not require broad docs sync.
@@ -45,6 +46,8 @@ dart run tooling/validate_workspace_hygiene.dart
 - Canonical/bridge drift: update canonical first, then bridge summaries.
 - Manifest path/contract drift: patch manifest and rerun validators.
 - User guide drift after major feature changes: update only relevant sections in app/primary guides.
+- Repeated debugging pattern still lives only in an ExecPlan: harvest the reusable rule into a durable workflow/playbook doc before closing the thread.
+- Wrong-base worktree or ambiguous build-under-test incident repeats: add or update a durable workflow/governance doc and route it through `INDEX.md` and `manifest.json` instead of leaving the lesson only in thread history.
 
 ## Handoff Checklist
 1. Ask exact prompt after significant implementation changes:
@@ -55,3 +58,5 @@ dart run tooling/validate_workspace_hygiene.dart
 5. Keep template read policy and routing protections intact.
 6. For parallel docs threads, use worktree isolation.
 7. If external behavior facts were used, update verification dates in `EXTERNAL_SOURCE_REGISTRY.md`.
+8. If a debugging thread produced reusable runbooks, move the durable guidance into workflow/playbook docs instead of leaving it only in `exec_plans/active/`.
+9. If the failure involved wrong-base worktrees or ambiguous app windows, sync the durable fix into governance docs and record the workflow lesson in `DOCS_REFRESH_NOTES.md`.

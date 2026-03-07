@@ -13,6 +13,7 @@ from typing import Any, Literal, Protocol
 
 from openai import OpenAI
 
+from .config import DEFAULT_OCR_API_TIMEOUT_SECONDS
 from .secrets_store import get_ocr_key
 from .types import OcrEnginePolicy, RunConfig, TargetLang
 
@@ -53,6 +54,7 @@ class OcrEngineConfig:
     api_base_url: str | None = None
     api_model: str | None = None
     api_key_env_name: str = "DEEPSEEK_API_KEY"
+    api_timeout_seconds: float = float(DEFAULT_OCR_API_TIMEOUT_SECONDS)
 
 
 def ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngineConfig:
@@ -61,6 +63,7 @@ def ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngineConfig:
         api_base_url=config.ocr_api_base_url,
         api_model=config.ocr_api_model,
         api_key_env_name=config.ocr_api_key_env_name,
+        api_timeout_seconds=float(DEFAULT_OCR_API_TIMEOUT_SECONDS),
     )
 
 
@@ -70,6 +73,7 @@ def local_only_ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngine
         api_base_url=config.ocr_api_base_url,
         api_model=config.ocr_api_model,
         api_key_env_name=config.ocr_api_key_env_name,
+        api_timeout_seconds=float(DEFAULT_OCR_API_TIMEOUT_SECONDS),
     )
 
 
@@ -355,13 +359,19 @@ class ApiOcrEngine:
         api_key: str,
         model: str,
         base_url: str | None = None,
+        timeout_seconds: float = float(DEFAULT_OCR_API_TIMEOUT_SECONDS),
     ) -> None:
         if not api_key.strip():
             raise ValueError("OCR API key is required for API OCR engine.")
         if not model.strip():
             raise ValueError("OCR API model is required for API OCR engine.")
-        self._client = OpenAI(api_key=api_key, base_url=(base_url.strip() if base_url else None))
+        self._client = OpenAI(
+            api_key=api_key,
+            base_url=(base_url.strip() if base_url else None),
+            max_retries=0,
+        )
         self._model = model.strip()
+        self._timeout_seconds = max(0.1, float(timeout_seconds))
 
     def ocr_image(self, image_bytes: bytes, lang_hint: str | None = None) -> OcrResult:
         prompt = "Extract all visible text. Preserve line breaks. No commentary. Return plain text only."
@@ -382,6 +392,7 @@ class ApiOcrEngine:
                     }
                 ],
                 store=False,
+                timeout=self._timeout_seconds,
             )
             text = _extract_output_text(response)
         except Exception as exc:  # noqa: BLE001
@@ -459,7 +470,12 @@ def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
         if not api_key:
             raise ValueError("OCR API key is not configured.")
         model = (config.api_model or "").strip() or "gpt-4o-mini"
-        return ApiOcrEngine(api_key=api_key, model=model, base_url=config.api_base_url)
+        return ApiOcrEngine(
+            api_key=api_key,
+            model=model,
+            base_url=config.api_base_url,
+            timeout_seconds=float(config.api_timeout_seconds or DEFAULT_OCR_API_TIMEOUT_SECONDS),
+        )
 
     # local_then_api
     local_engine = LocalTesseractEngine(strict_unavailable=False)
@@ -467,5 +483,10 @@ def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
     api_engine: ApiOcrEngine | None = None
     if api_key:
         model = (config.api_model or "").strip() or "gpt-4o-mini"
-        api_engine = ApiOcrEngine(api_key=api_key, model=model, base_url=config.api_base_url)
+        api_engine = ApiOcrEngine(
+            api_key=api_key,
+            model=model,
+            base_url=config.api_base_url,
+            timeout_seconds=float(config.api_timeout_seconds or DEFAULT_OCR_API_TIMEOUT_SECONDS),
+        )
     return LocalThenApiEngine(local_engine=local_engine, api_engine=api_engine)

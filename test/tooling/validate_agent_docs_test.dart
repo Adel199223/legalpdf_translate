@@ -482,6 +482,19 @@ void main() {
     _expect(_hasRule(issues, 'AD012'), 'Expected AD012');
   }, failures);
 
+  _runCase('fails when workflow doc is not discoverable from index', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/INDEX.md',
+      'docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md',
+      'docs/assistant/workflows/MISSING_REFERENCE_LOCKED_QT_UI_WORKFLOW.md',
+    );
+    final List<validator.ValidationIssue> issues =
+        validator.validateAgentDocs(rootPath: root);
+    _expect(_hasRule(issues, 'AD036'), 'Expected AD036');
+  }, failures);
+
   if (failures.isNotEmpty) {
     stderr.writeln('Agent docs validator tests failed: ${failures.length} case(s).');
     for (final String failure in failures) {

@@ -30,6 +30,17 @@ Ask before executing any of the following:
 - Use `git worktree` for parallel streams.
 - Keep `main` stable.
 - Major work must start on `feat/<scope-name>`.
+- Parallel feature work must branch/worktree from the latest approved baseline, not an older convenient branch.
+- Before major parallel work starts, lock and record:
+  - branch name
+  - base branch
+  - base SHA
+  - worktree path
+- GUI handoffs must identify the exact build under test:
+  - repo/worktree path
+  - branch
+  - HEAD commit
+  - distinguishing feature set
 - Apply worktree guidance in CI/repo, commit/publish, and docs-maintenance workflows.
 
 ## Support Routing

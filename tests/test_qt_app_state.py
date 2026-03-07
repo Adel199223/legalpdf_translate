@@ -10,10 +10,28 @@ from types import SimpleNamespace
 if os.name != "nt" and "DISPLAY" not in os.environ:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QBoxLayout
 
+from legalpdf_translate.docx_writer import assemble_docx
 from legalpdf_translate.qt_gui.app_window import QtMainWindow
-from legalpdf_translate.qt_gui.dialogs import JobLogSeed, QtSaveToJobLogDialog
+from legalpdf_translate.qt_gui.dialogs import (
+    JobLogSeed,
+    QtSaveToJobLogDialog,
+    build_seed_from_run,
+    count_words_from_docx,
+    count_words_from_output_artifacts,
+)
+from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
+from legalpdf_translate.types import TargetLang
+from legalpdf_translate.types import (
+    EffortPolicy,
+    ImageMode,
+    OcrEnginePolicy,
+    OcrMode,
+    RunConfig,
+    RunSummary,
+)
 
 
 class _FakeEdit:
@@ -55,17 +73,39 @@ class _FakeCombo:
 class _FakeSpin:
     def __init__(self, value: int) -> None:
         self._value = value
+        self.blocked = False
 
     def value(self) -> int:
         return self._value
+
+    def setValue(self, value: int) -> None:
+        self._value = value
+
+    def blockSignals(self, blocked: bool) -> None:
+        self.blocked = blocked
 
 
 class _FakeCheck:
     def __init__(self, checked: bool) -> None:
         self._checked = checked
+        self.blocked = False
 
     def isChecked(self) -> bool:
         return self._checked
+
+    def setChecked(self, checked: bool) -> None:
+        self._checked = checked
+
+    def blockSignals(self, blocked: bool) -> None:
+        self.blocked = blocked
+
+
+class _FakeEvent:
+    def __init__(self) -> None:
+        self.ignored = False
+
+    def ignore(self) -> None:
+        self.ignored = True
 
 
 class _FakeButton:
@@ -334,6 +374,538 @@ def test_metric_grid_keeps_retries_heading_without_row_level_cells() -> None:
             app.quit()
 
 
+def test_busy_close_cancel_wait_shows_cancelling_state() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window._busy = True
+        window._running = True
+        window._queue_total_jobs = 1
+        window._resolve_busy_close_choice = lambda: "cancel_wait"  # type: ignore[method-assign]
+        event = QCloseEvent()
+        window.closeEvent(event)
+        assert event.isAccepted() is False
+        assert window._cancel_pending is True
+        assert "Cancelling... page ?" in window.status_label.text()
+        assert "remaining <=" in window.status_label.text()
+        assert window.header_status_label.text() == "Cancelling..."
+        assert window.queue_status_label.text().startswith("Queue: cancelling page ?")
+        assert window.cancel_btn.isEnabled() is False
+        assert window._cancel_wait_timer.isActive() is True
+    finally:
+        window._busy = False
+        window._running = False
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_cancel_wait_status_shows_page_elapsed_and_remaining(monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    clock = {"now": 130.0}
+
+    def _perf_counter() -> float:
+        return clock["now"]
+
+    monkeypatch.setattr("legalpdf_translate.qt_gui.app_window.time.perf_counter", _perf_counter)
+
+    window = QtMainWindow()
+    try:
+        window._busy = True
+        window._running = True
+        window._active_request_page = 3
+        window._active_request_budget_seconds = 120.0
+        window._active_request_started_at = 100.0
+        window._begin_cancel_wait()
+
+        clock["now"] = 150.0
+        window._refresh_cancel_wait_status()
+
+        assert "page 3" in window.status_label.text()
+        assert "waited ~20s" in window.status_label.text()
+        assert "remaining <= ~1m" in window.status_label.text()
+        assert "page 3" in window.queue_status_label.text()
+    finally:
+        window._busy = False
+        window._running = False
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_ocr_heavy_risk_notes_cover_known_risky_settings(tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        config = RunConfig(
+            pdf_path=tmp_path / "sample.pdf",
+            output_dir=tmp_path,
+            target_lang=TargetLang.AR,
+            image_mode=ImageMode.AUTO,
+            ocr_mode=OcrMode.ALWAYS,
+            ocr_engine=OcrEnginePolicy.LOCAL_THEN_API,
+            effort_policy=EffortPolicy.FIXED_XHIGH,
+            workers=3,
+            resume=True,
+            keep_intermediates=False,
+        )
+        notes = window._ocr_heavy_risk_notes(config)
+        assert any("not 'api'" in note for note in notes)
+        assert any("Image mode is 'auto'" in note for note in notes)
+        assert any("fixed_xhigh" in note for note in notes)
+        assert any("workers is 3" in note.lower() for note in notes)
+        assert any("Resume is on" in note for note in notes)
+        assert any("Keep intermediates is off" in note for note in notes)
+        assert "OCR engine = api" in "\n".join(window._ocr_heavy_safe_profile_lines())
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_apply_transient_ocr_heavy_safe_profile_changes_current_form_only() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window.effort_policy_combo.setCurrentText("adaptive")
+        window.images_combo.setCurrentText("auto")
+        window.ocr_mode_combo.setCurrentText("auto")
+        window.ocr_engine_combo.setCurrentText("local_then_api")
+        window.workers_spin.setValue(3)
+        window.resume_check.setChecked(True)
+        window.keep_check.setChecked(False)
+
+        window._apply_transient_ocr_heavy_safe_profile()
+
+        assert window._transient_safe_profile_active is True
+        assert window.effort_policy_combo.currentText() == "fixed_high"
+        assert window.images_combo.currentText() == "off"
+        assert window.ocr_mode_combo.currentText() == "always"
+        assert window.ocr_engine_combo.currentText() == "api"
+        assert window.workers_spin.value() == 1
+        assert window.resume_check.isChecked() is False
+        assert window.keep_check.isChecked() is True
+
+        window._restore_transient_safe_profile_if_needed()
+
+        assert window._transient_safe_profile_active is False
+        assert window.effort_policy_combo.currentText() == "adaptive"
+        assert window.images_combo.currentText() == "auto"
+        assert window.ocr_mode_combo.currentText() == "auto"
+        assert window.ocr_engine_combo.currentText() == "local_then_api"
+        assert window.workers_spin.value() == 3
+        assert window.resume_check.isChecked() is True
+        assert window.keep_check.isChecked() is False
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_save_settings_uses_backup_when_transient_safe_profile_is_active(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.app_window.save_gui_settings",
+        lambda values: captured.update(values),
+    )
+
+    fake = SimpleNamespace(
+        _defaults={},
+        _transient_safe_profile_active=True,
+        _transient_safe_profile_backup={
+            "effort_policy": "adaptive",
+            "image_mode": "auto",
+            "ocr_mode": "auto",
+            "ocr_engine": "local_then_api",
+            "workers": 3,
+            "resume": True,
+            "keep_intermediates": False,
+        },
+        outdir_edit=_FakeEdit("C:/tmp/out"),
+        lang_combo=_FakeCombo("FR"),
+        effort_combo=_FakeCombo("high"),
+        effort_policy_combo=_FakeCombo("fixed_high"),
+        images_combo=_FakeCombo("off"),
+        ocr_mode_combo=_FakeCombo("always"),
+        ocr_engine_combo=_FakeCombo("api"),
+        start_edit=_FakeEdit("3"),
+        end_edit=_FakeEdit("8"),
+        max_edit=_FakeEdit(""),
+        workers_spin=_FakeSpin(1),
+        resume_check=_FakeCheck(False),
+        breaks_check=_FakeCheck(False),
+        keep_check=_FakeCheck(True),
+        queue_manifest_edit=_FakeEdit("C:/tmp/queue.json"),
+        queue_rerun_failed_only_check=_FakeCheck(False),
+    )
+
+    QtMainWindow._save_settings(fake)
+
+    assert captured["effort_policy"] == "adaptive"
+    assert captured["image_mode"] == "auto"
+    assert captured["ocr_mode"] == "auto"
+    assert captured["ocr_engine"] == "local_then_api"
+    assert captured["workers"] == 3
+    assert captured["resume"] is True
+    assert captured["keep_intermediates"] is False
+
+
+def test_warn_ocr_api_only_apply_safe_profile_keeps_run_transient(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    pdf_path = tmp_path / "sample.pdf"
+    pdf_path.write_text("placeholder", encoding="utf-8")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    window = QtMainWindow()
+    try:
+        window.pdf_edit.setText(str(pdf_path))
+        window.outdir_edit.setText(str(out_dir))
+        window.ocr_mode_combo.setCurrentText("auto")
+        window.ocr_engine_combo.setCurrentText("local_then_api")
+        window.images_combo.setCurrentText("auto")
+        window.effort_policy_combo.setCurrentText("fixed_xhigh")
+        window.workers_spin.setValue(3)
+        window.resume_check.setChecked(True)
+        window.keep_check.setChecked(False)
+
+        monkeypatch.setattr("legalpdf_translate.qt_gui.app_window.which", lambda _name: None)
+        monkeypatch.setattr(
+            "legalpdf_translate.qt_gui.app_window.extract_ordered_page_text",
+            lambda *_args, **_kwargs: SimpleNamespace(text="", extraction_failed=True),
+        )
+        monkeypatch.setattr(window, "_show_ocr_heavy_runtime_warning", lambda _config: "apply_safe")
+
+        config = window._build_config()
+        adjusted = window._warn_ocr_api_only_if_needed(config)
+
+        assert adjusted is not None
+        assert adjusted.effort_policy == EffortPolicy.FIXED_HIGH
+        assert adjusted.image_mode == ImageMode.OFF
+        assert adjusted.ocr_mode == OcrMode.ALWAYS
+        assert adjusted.ocr_engine == OcrEnginePolicy.API
+        assert adjusted.workers == 1
+        assert adjusted.resume is False
+        assert adjusted.keep_intermediates is True
+        assert window._transient_safe_profile_active is True
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_no_wheel_combo_ignores_closed_popup_wheel() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    combo = NoWheelComboBox()
+    try:
+        combo.addItems(["a", "b"])
+        event = _FakeEvent()
+        combo.wheelEvent(event)
+        assert event.ignored is True
+        assert combo._should_ignore_wheel() is True
+    finally:
+        combo.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_no_wheel_combo_allows_open_popup_scroll_intentionally(monkeypatch) -> None:
+    combo = NoWheelComboBox()
+    try:
+        monkeypatch.setattr(combo, "view", lambda: SimpleNamespace(isVisible=lambda: True))
+        assert combo._should_ignore_wheel() is False
+    finally:
+        combo.deleteLater()
+
+
+def test_no_wheel_spin_ignores_wheel() -> None:
+    spin = NoWheelSpinBox()
+    try:
+        event = _FakeEvent()
+        spin.wheelEvent(event)
+        assert event.ignored is True
+        assert spin._should_ignore_wheel() is True
+    finally:
+        spin.deleteLater()
+
+
+def test_main_window_uses_guarded_run_critical_controls() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        assert isinstance(window.lang_combo, NoWheelComboBox)
+        assert isinstance(window.effort_policy_combo, NoWheelComboBox)
+        assert isinstance(window.effort_combo, NoWheelComboBox)
+        assert isinstance(window.images_combo, NoWheelComboBox)
+        assert isinstance(window.ocr_mode_combo, NoWheelComboBox)
+        assert isinstance(window.ocr_engine_combo, NoWheelComboBox)
+        assert isinstance(window.workers_spin, NoWheelSpinBox)
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_settings_dialog_uses_guarded_run_critical_controls(tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    dialog = QtSaveToJobLogDialog
+    del dialog  # silence lint for this scope; real dialog check follows below
+    from legalpdf_translate.qt_gui.dialogs import QtSettingsDialog  # local import to keep test dependency narrow
+
+    settings_dialog = QtSettingsDialog(
+        parent=None,
+        settings={},
+        apply_callback=lambda *_args, **_kwargs: None,
+        collect_debug_paths=lambda: [],
+        current_pdf_path=None,
+    )
+    try:
+        assert isinstance(settings_dialog.default_lang_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.default_effort_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.default_effort_policy_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.default_images_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.default_workers_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.ocr_mode_default_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.ocr_engine_default_combo, NoWheelComboBox)
+    finally:
+        settings_dialog.close()
+        settings_dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_joblog_combo_boxes_remain_plain_editable_inputs(tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    pdf_path = tmp_path / "sample.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    seed = JobLogSeed(
+        completed_at=datetime.now().isoformat(timespec="seconds"),
+        translation_date="2026-03-06",
+        job_type="Translation",
+        case_number="",
+        court_email="",
+        case_entity="",
+        case_city="",
+        service_entity="",
+        service_city="",
+        service_date="2026-03-06",
+        lang="EN",
+        pages=1,
+        word_count=1,
+        rate_per_word=0.08,
+        expected_total=0.08,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="run-1",
+        target_lang="EN",
+        total_tokens=None,
+        estimated_api_cost=None,
+        quality_risk_score=None,
+        profit=0.08,
+        pdf_path=pdf_path,
+    )
+    joblog_dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
+    try:
+        assert isinstance(joblog_dialog.court_email_combo, NoWheelComboBox) is False
+    finally:
+        joblog_dialog.close()
+        joblog_dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_on_finished_failure_dialog_includes_failure_context(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    summary_path = run_dir / "run_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "suspected_cause": "transport_instability",
+                "halt_reason": "cancelled_after_request_timeout",
+                "failure_context": {
+                    "page_number": 1,
+                    "error": "runtime_failure",
+                    "exception_class": "APITimeoutError",
+                    "request_type": "text_only",
+                    "request_timeout_budget_seconds": 480.0,
+                    "request_elapsed_before_failure_seconds": 479.8,
+                    "cancel_requested_before_failure": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, str] = {}
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.app_window.QMessageBox.warning",
+        lambda _self, title, text: captured.update({"title": title, "text": text}),
+    )
+
+    window = QtMainWindow()
+    try:
+        summary = RunSummary(
+            success=False,
+            exit_code=1,
+            output_docx=None,
+            partial_docx=None,
+            run_dir=run_dir,
+            completed_pages=0,
+            failed_page=1,
+            error="runtime_failure",
+            run_summary_path=summary_path,
+        )
+        window._on_finished(summary)
+        assert captured["title"] == "Translation stopped"
+        assert "Suspected cause: transport_instability" in captured["text"]
+        assert "Halt reason: cancelled_after_request_timeout" in captured["text"]
+        assert "Request type: text_only" in captured["text"]
+        assert "Request deadline: 480s" in captured["text"]
+        assert "Elapsed before failure: 479.8s" in captured["text"]
+        assert "Failure class: APITimeoutError" in captured["text"]
+        assert "Cancel requested before failure: yes" in captured["text"]
+        log_text = window.log_text.toPlainText()
+        assert "Failure context: request_type=text_only deadline=480.0s elapsed=479.800s cancel_requested=yes" in log_text
+        assert "Failure classification: suspected_cause=transport_instability halt_reason=cancelled_after_request_timeout exception_class=APITimeoutError" in log_text
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_fixed_xhigh_warning_switch_sets_fixed_high(monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window.effort_policy_combo.setCurrentText("fixed_xhigh")
+        monkeypatch.setattr(window, "_warn_fixed_xhigh_for_enfr", lambda: "switch")
+        config_calls = {"count": 0}
+
+        def _build_config() -> RunConfig:
+            config_calls["count"] += 1
+            return RunConfig(
+                pdf_path=Path("sample.pdf"),
+                output_dir=Path("."),
+                target_lang=TargetLang.EN,
+                effort="high",
+                effort_policy=(
+                    EffortPolicy.FIXED_XHIGH
+                    if config_calls["count"] == 1
+                    else EffortPolicy.FIXED_HIGH
+                ),
+                image_mode=ImageMode.OFF,
+                ocr_mode=OcrMode.AUTO,
+                ocr_engine=OcrEnginePolicy.LOCAL_THEN_API,
+                start_page=1,
+                end_page=None,
+                max_pages=None,
+                workers=1,
+                resume=True,
+                keep_intermediates=True,
+                page_breaks=True,
+                context_text=None,
+                allow_xhigh_escalation=False,
+                diagnostics_admin_mode=True,
+                diagnostics_include_sanitized_snippets=False,
+                advisor_recommendation_applied=None,
+                advisor_recommendation=None,
+                budget_cap_usd=None,
+                cost_profile_id="default_local",
+            )
+
+        monkeypatch.setattr(window, "_build_config", _build_config)
+        monkeypatch.setattr(window, "_warn_ocr_api_only_if_needed", lambda config: None)
+        monkeypatch.setattr(window, "_save_settings", lambda: None)
+        window._start()
+        assert window.effort_policy_combo.currentText() == "fixed_high"
+        assert config_calls["count"] == 2
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_busy_close_force_close_accepts_and_uses_force_exit(monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        calls = {"saved": False, "forced": False}
+        window._busy = True
+        window._running = True
+        window._resolve_busy_close_choice = lambda: "force_close"  # type: ignore[method-assign]
+        monkeypatch.setattr(window, "_save_settings", lambda: calls.__setitem__("saved", True))
+        monkeypatch.setattr(window, "_force_exit_app", lambda: calls.__setitem__("forced", True))
+        event = QCloseEvent()
+        window.closeEvent(event)
+        assert event.isAccepted() is True
+        assert calls == {"saved": True, "forced": True}
+    finally:
+        window._busy = False
+        window._running = False
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
 def test_translate_gating_requires_output_folder(tmp_path: Path) -> None:
     pdf_path = tmp_path / "sample.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
@@ -418,6 +990,8 @@ def test_save_settings_uses_existing_gui_keys(monkeypatch) -> None:
 
     fake = SimpleNamespace(
         _defaults={},
+        _transient_safe_profile_active=False,
+        _transient_safe_profile_backup=None,
         outdir_edit=_FakeEdit("C:/tmp/out"),
         lang_combo=_FakeCombo("FR"),
         effort_combo=_FakeCombo("high"),
@@ -511,6 +1085,7 @@ def test_report_button_enabled_during_and_after_run() -> None:
         _can_start=lambda: True,
         _busy=True,
         _running=True,
+        _cancel_pending=False,
         _can_export_partial=False,
         _last_workflow=None,
         _has_rebuildable_pages=lambda: False,
@@ -635,6 +1210,8 @@ def test_prepare_joblog_seed_prefills_metrics_from_run_summary(tmp_path: Path, m
         run_dir=run_dir,
         completed_pages=1,
         run_summary_path=run_summary_path,
+        output_docx=None,
+        partial_docx=None,
     )
 
     QtMainWindow._prepare_joblog_seed(fake, summary)
@@ -647,6 +1224,106 @@ def test_prepare_joblog_seed_prefills_metrics_from_run_summary(tmp_path: Path, m
     assert fake._last_joblog_seed.quality_risk_score == 0.37
     assert fake._last_joblog_seed.api_cost == 4.56
     assert fake._last_joblog_seed.court_email == "tribunal@example.pt"
+
+
+def test_count_words_from_docx_uses_visible_output_text(tmp_path: Path) -> None:
+    pages_dir = tmp_path / "pages"
+    pages_dir.mkdir()
+    (pages_dir / "page_0001.txt").write_text("one two three", encoding="utf-8")
+    (pages_dir / "page_0002.txt").write_text("alpha beta", encoding="utf-8")
+    output = tmp_path / "out.docx"
+
+    assemble_docx(pages_dir, output, lang=TargetLang.EN, page_breaks=False)
+
+    assert count_words_from_docx(output) == 5
+
+
+def test_count_words_from_output_artifacts_prefers_final_docx(tmp_path: Path) -> None:
+    final_pages = tmp_path / "final_pages"
+    final_pages.mkdir()
+    (final_pages / "page_0001.txt").write_text("one two three four", encoding="utf-8")
+    final_docx = tmp_path / "final.docx"
+    assemble_docx(final_pages, final_docx, lang=TargetLang.EN, page_breaks=False)
+
+    partial_pages = tmp_path / "partial_pages"
+    partial_pages.mkdir()
+    (partial_pages / "page_0001.txt").write_text("fallback text", encoding="utf-8")
+    partial_docx = tmp_path / "partial.docx"
+    assemble_docx(partial_pages, partial_docx, lang=TargetLang.EN, page_breaks=False)
+
+    pages_dir = tmp_path / "pages"
+    pages_dir.mkdir()
+    (pages_dir / "page_0001.txt").write_text("should not be used", encoding="utf-8")
+
+    assert (
+        count_words_from_output_artifacts(
+            output_docx=final_docx,
+            partial_docx=partial_docx,
+            pages_dir=pages_dir,
+        )
+        == 4
+    )
+
+
+def test_count_words_from_output_artifacts_uses_partial_docx_when_final_missing(tmp_path: Path) -> None:
+    partial_pages = tmp_path / "partial_pages"
+    partial_pages.mkdir()
+    (partial_pages / "page_0001.txt").write_text("alpha beta gamma", encoding="utf-8")
+    partial_docx = tmp_path / "partial.docx"
+    assemble_docx(partial_pages, partial_docx, lang=TargetLang.EN, page_breaks=False)
+
+    pages_dir = tmp_path / "pages"
+    pages_dir.mkdir()
+    (pages_dir / "page_0001.txt").write_text("fallback words ignored", encoding="utf-8")
+
+    assert (
+        count_words_from_output_artifacts(
+            output_docx=tmp_path / "missing.docx",
+            partial_docx=partial_docx,
+            pages_dir=pages_dir,
+        )
+        == 3
+    )
+
+
+def test_count_words_from_output_artifacts_falls_back_to_pages_dir(tmp_path: Path) -> None:
+    pages_dir = tmp_path / "pages"
+    pages_dir.mkdir()
+    (pages_dir / "page_0001.txt").write_text("one two", encoding="utf-8")
+    (pages_dir / "page_0002.txt").write_text("three", encoding="utf-8")
+
+    assert (
+        count_words_from_output_artifacts(
+            output_docx=tmp_path / "missing.docx",
+            partial_docx=tmp_path / "missing_partial.docx",
+            pages_dir=pages_dir,
+        )
+        == 3
+    )
+
+
+def test_build_seed_from_run_uses_docx_word_count_for_expected_total_and_profit(tmp_path: Path) -> None:
+    pages_dir = tmp_path / "pages"
+    pages_dir.mkdir()
+    (pages_dir / "page_0001.txt").write_text("one two three four five", encoding="utf-8")
+    output = tmp_path / "out.docx"
+    assemble_docx(pages_dir, output, lang=TargetLang.EN, page_breaks=False)
+
+    seed = build_seed_from_run(
+        pdf_path=tmp_path / "sample.pdf",
+        lang="EN",
+        output_docx=output,
+        partial_docx=None,
+        pages_dir=tmp_path / "missing_pages",
+        completed_pages=1,
+        completed_at="2026-03-06T17:00:00",
+        default_rate_per_word=0.1,
+        api_cost=0.25,
+    )
+
+    assert seed.word_count == 5
+    assert seed.expected_total == 0.5
+    assert seed.profit == 0.25
 
 
 def test_prepare_joblog_seed_uses_ranked_court_email_suggestion_when_no_exact_email(tmp_path: Path, monkeypatch) -> None:
@@ -721,6 +1398,8 @@ def test_prepare_joblog_seed_uses_ranked_court_email_suggestion_when_no_exact_em
         run_dir=run_dir,
         completed_pages=1,
         run_summary_path=None,
+        output_docx=None,
+        partial_docx=None,
     )
 
     QtMainWindow._prepare_joblog_seed(fake, summary)
