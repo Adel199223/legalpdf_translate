@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -15,7 +16,9 @@ class OutputEvaluation:
     outside_text: bool = False
     block_count: int = 0
     ar_autofix_applied_count: int = 0
-    ar_token_details: dict[str, int] | None = None
+    ar_token_details: dict[str, Any] | None = None
+    ar_violation_kind: str | None = None
+    ar_violation_samples: list[str] | None = None
 
 
 @dataclass(slots=True)
