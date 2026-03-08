@@ -35,6 +35,7 @@ from legalpdf_translate.qt_gui.dialogs import (
     GmailBatchReviewResult,
     JobLogSeed,
     JobLogSavedResult,
+    QtArabicDocxReviewDialog,
     QtGmailAttachmentPreviewDialog,
     QtGmailBatchReviewDialog,
     QtSaveToJobLogDialog,
@@ -57,6 +58,7 @@ from legalpdf_translate.types import (
     RunConfig,
     RunSummary,
 )
+from legalpdf_translate.word_automation import WordAutomationResult
 
 
 class _FakeEdit:
@@ -2444,6 +2446,507 @@ def test_gmail_batch_run_success_schedules_next_item_after_joblog_save(tmp_path:
     assert callable(callback)
     callback()
     assert calls["next_started"] is True
+
+
+def test_arabic_gmail_batch_run_reviews_before_joblog_save(tmp_path: Path) -> None:
+    session = _build_gmail_batch_session(tmp_path, count=2)
+    output_docx = tmp_path / "translated-ar.docx"
+    output_docx.write_bytes(b"docx")
+    run_dir = tmp_path / "run-ar"
+    run_dir.mkdir()
+    calls: dict[str, object] = {"set_busy": []}
+    fake = SimpleNamespace(
+        _worker=SimpleNamespace(workflow="workflow-ar"),
+        _gmail_batch_session=session,
+        _gmail_batch_in_progress=True,
+        _gmail_batch_current_index=0,
+        _last_run_config=SimpleNamespace(target_lang=TargetLang.AR),
+        _set_busy=lambda busy, translation=False: calls["set_busy"].append((busy, translation)),
+        _run_started_at=4.0,
+        queue_status_label=_FakeLabel(),
+        status_label=_FakeLabel(),
+        header_status_label=_FakeLabel(),
+        _dashboard_snapshot=SimpleNamespace(current_task=""),
+        _last_joblog_seed=None,
+        _last_review_queue=[],
+        _last_summary=None,
+        _last_run_dir=None,
+        _last_run_report_path=None,
+        _last_output_docx=None,
+        final_docx_edit=_FakeEdit(""),
+        _dashboard_error_count=0,
+        _progress_done_pages=0,
+        _progress_total_pages=0,
+        _can_export_partial=False,
+        _append_log=lambda message: calls.setdefault("logs", []).append(message),
+        _prepare_joblog_seed=lambda summary: setattr(fake, "_last_joblog_seed", object()),
+        _open_arabic_docx_review_dialog=lambda **kwargs: calls.__setitem__("review_kwargs", kwargs) or True,
+        _open_save_to_joblog_dialog=lambda **kwargs: calls.__setitem__("joblog_kwargs", kwargs) or JobLogSavedResult(
+            row_id=8,
+            translated_docx_path=output_docx,
+            word_count=222,
+            case_number="123/26.0",
+            case_entity="Tribunal",
+            case_city="Beja",
+            court_email="court@example.com",
+            run_id="run-ar",
+        ),
+        _record_gmail_batch_saved_result=lambda result, *, run_dir: calls.__setitem__(
+            "saved_result",
+            (result, run_dir),
+        )
+        or True,
+        _run_after_worker_cleanup=lambda callback: calls.__setitem__("after_cleanup", callback),
+        _start_next_gmail_batch_translation=lambda: calls.__setitem__("next_started", True),
+        _update_live_counters=lambda: None,
+        _update_controls=lambda: None,
+        _has_active_gmail_batch=None,
+        _current_gmail_batch_attachment=None,
+    )
+    fake._has_active_gmail_batch = QtMainWindow._has_active_gmail_batch.__get__(fake, QtMainWindow)
+    fake._current_gmail_batch_attachment = QtMainWindow._current_gmail_batch_attachment.__get__(fake, QtMainWindow)
+
+    QtMainWindow._on_finished(
+        fake,
+        RunSummary(
+            success=True,
+            exit_code=0,
+            output_docx=output_docx,
+            partial_docx=None,
+            run_dir=run_dir,
+            completed_pages=3,
+            failed_page=None,
+            run_summary_path=None,
+        ),
+    )
+
+    assert calls["review_kwargs"] == {
+        "output_docx": output_docx.resolve(),
+        "is_gmail_batch": True,
+        "attachment_label": "attachment-1.pdf",
+    }
+    assert calls["joblog_kwargs"] == {"allow_honorarios_export": False}
+    callback = calls["after_cleanup"]
+    assert callable(callback)
+    callback()
+    assert calls["next_started"] is True
+
+
+def test_arabic_gmail_batch_run_stops_when_review_is_cancelled(tmp_path: Path) -> None:
+    session = _build_gmail_batch_session(tmp_path, count=2)
+    output_docx = tmp_path / "translated-ar.docx"
+    output_docx.write_bytes(b"docx")
+    run_dir = tmp_path / "run-ar"
+    run_dir.mkdir()
+    calls: dict[str, object] = {}
+    fake = SimpleNamespace(
+        _worker=SimpleNamespace(workflow="workflow-ar"),
+        _gmail_batch_session=session,
+        _gmail_batch_in_progress=True,
+        _gmail_batch_current_index=0,
+        _last_run_config=SimpleNamespace(target_lang=TargetLang.AR),
+        _set_busy=lambda busy, translation=False: calls.setdefault("set_busy", []).append((busy, translation)),
+        _run_started_at=4.0,
+        queue_status_label=_FakeLabel(),
+        status_label=_FakeLabel(),
+        header_status_label=_FakeLabel(),
+        _dashboard_snapshot=SimpleNamespace(current_task=""),
+        _last_joblog_seed=None,
+        _last_review_queue=[],
+        _last_summary=None,
+        _last_run_dir=None,
+        _last_run_report_path=None,
+        _last_output_docx=None,
+        final_docx_edit=_FakeEdit(""),
+        _dashboard_error_count=0,
+        _progress_done_pages=0,
+        _progress_total_pages=0,
+        _can_export_partial=False,
+        _append_log=lambda message: calls.setdefault("logs", []).append(message),
+        _prepare_joblog_seed=lambda summary: setattr(fake, "_last_joblog_seed", object()),
+        _open_arabic_docx_review_dialog=lambda **kwargs: calls.__setitem__("review_kwargs", kwargs) or False,
+        _open_save_to_joblog_dialog=lambda **kwargs: calls.__setitem__("joblog_kwargs", kwargs) or None,
+        _record_gmail_batch_saved_result=lambda result, *, run_dir: True,
+        _run_after_worker_cleanup=lambda callback: calls.__setitem__("after_cleanup", callback),
+        _start_next_gmail_batch_translation=lambda: calls.__setitem__("next_started", True),
+        _stop_gmail_batch=lambda **kwargs: calls.__setitem__("stop_kwargs", kwargs),
+        _update_live_counters=lambda: None,
+        _update_controls=lambda: None,
+        _has_active_gmail_batch=None,
+        _current_gmail_batch_attachment=None,
+    )
+    fake._has_active_gmail_batch = QtMainWindow._has_active_gmail_batch.__get__(fake, QtMainWindow)
+    fake._current_gmail_batch_attachment = QtMainWindow._current_gmail_batch_attachment.__get__(fake, QtMainWindow)
+
+    QtMainWindow._on_finished(
+        fake,
+        RunSummary(
+            success=True,
+            exit_code=0,
+            output_docx=output_docx,
+            partial_docx=None,
+            run_dir=run_dir,
+            completed_pages=3,
+            failed_page=None,
+            run_summary_path=None,
+        ),
+    )
+
+    assert calls["review_kwargs"]["attachment_label"] == "attachment-1.pdf"
+    assert "joblog_kwargs" not in calls
+    assert "Arabic DOCX review" in calls["stop_kwargs"]["information_message"]
+    assert "after_cleanup" not in calls
+
+
+def test_arabic_normal_run_opens_review_before_joblog(tmp_path: Path) -> None:
+    output_docx = tmp_path / "translated-ar.docx"
+    output_docx.write_bytes(b"docx")
+    run_dir = tmp_path / "run-ar"
+    run_dir.mkdir()
+    calls: dict[str, object] = {}
+    fake = SimpleNamespace(
+        _worker=SimpleNamespace(workflow="workflow-ar"),
+        _gmail_batch_session=None,
+        _gmail_batch_in_progress=False,
+        _gmail_batch_current_index=None,
+        _last_run_config=SimpleNamespace(target_lang=TargetLang.AR),
+        _set_busy=lambda busy, translation=False: calls.setdefault("set_busy", []).append((busy, translation)),
+        _run_started_at=4.0,
+        queue_status_label=_FakeLabel(),
+        status_label=_FakeLabel(),
+        header_status_label=_FakeLabel(),
+        _dashboard_snapshot=SimpleNamespace(current_task=""),
+        _last_joblog_seed=None,
+        _last_review_queue=[],
+        _last_summary=None,
+        _last_run_dir=None,
+        _last_run_report_path=None,
+        _last_output_docx=None,
+        final_docx_edit=_FakeEdit(""),
+        _dashboard_error_count=0,
+        _progress_done_pages=0,
+        _progress_total_pages=0,
+        _can_export_partial=False,
+        _append_log=lambda message: calls.setdefault("logs", []).append(message),
+        _prepare_joblog_seed=lambda summary: setattr(fake, "_last_joblog_seed", object()),
+        _open_arabic_docx_review_dialog=lambda **kwargs: calls.__setitem__("review_kwargs", kwargs) or True,
+        _show_saved_docx_dialog=lambda title: calls.__setitem__("show_saved_title", title),
+        _open_save_to_joblog_dialog=lambda **kwargs: calls.__setitem__("joblog_kwargs", kwargs) or None,
+        _update_live_counters=lambda: None,
+        _update_controls=lambda: None,
+        _has_active_gmail_batch=lambda: False,
+    )
+
+    QtMainWindow._on_finished(
+        fake,
+        RunSummary(
+            success=True,
+            exit_code=0,
+            output_docx=output_docx,
+            partial_docx=None,
+            run_dir=run_dir,
+            completed_pages=3,
+            failed_page=None,
+            run_summary_path=None,
+        ),
+    )
+
+    assert calls["review_kwargs"] == {
+        "output_docx": output_docx.resolve(),
+        "is_gmail_batch": False,
+    }
+    assert calls["joblog_kwargs"] == {}
+    assert "show_saved_title" not in calls
+
+
+def test_arabic_normal_run_does_not_open_joblog_when_review_is_cancelled(tmp_path: Path) -> None:
+    output_docx = tmp_path / "translated-ar.docx"
+    output_docx.write_bytes(b"docx")
+    run_dir = tmp_path / "run-ar"
+    run_dir.mkdir()
+    calls: dict[str, object] = {}
+    fake = SimpleNamespace(
+        _worker=SimpleNamespace(workflow="workflow-ar"),
+        _gmail_batch_session=None,
+        _gmail_batch_in_progress=False,
+        _gmail_batch_current_index=None,
+        _last_run_config=SimpleNamespace(target_lang=TargetLang.AR),
+        _set_busy=lambda busy, translation=False: calls.setdefault("set_busy", []).append((busy, translation)),
+        _run_started_at=4.0,
+        queue_status_label=_FakeLabel(),
+        status_label=_FakeLabel(),
+        header_status_label=_FakeLabel(),
+        _dashboard_snapshot=SimpleNamespace(current_task=""),
+        _last_joblog_seed=None,
+        _last_review_queue=[],
+        _last_summary=None,
+        _last_run_dir=None,
+        _last_run_report_path=None,
+        _last_output_docx=None,
+        final_docx_edit=_FakeEdit(""),
+        _dashboard_error_count=0,
+        _progress_done_pages=0,
+        _progress_total_pages=0,
+        _can_export_partial=False,
+        _append_log=lambda message: calls.setdefault("logs", []).append(message),
+        _prepare_joblog_seed=lambda summary: setattr(fake, "_last_joblog_seed", object()),
+        _open_arabic_docx_review_dialog=lambda **kwargs: calls.__setitem__("review_kwargs", kwargs) or False,
+        _show_saved_docx_dialog=lambda title: calls.__setitem__("show_saved_title", title),
+        _open_save_to_joblog_dialog=lambda **kwargs: calls.__setitem__("joblog_kwargs", kwargs) or None,
+        _update_live_counters=lambda: None,
+        _update_controls=lambda: None,
+        _has_active_gmail_batch=lambda: False,
+    )
+
+    QtMainWindow._on_finished(
+        fake,
+        RunSummary(
+            success=True,
+            exit_code=0,
+            output_docx=output_docx,
+            partial_docx=None,
+            run_dir=run_dir,
+            completed_pages=3,
+            failed_page=None,
+            run_summary_path=None,
+        ),
+    )
+
+    assert calls["review_kwargs"]["is_gmail_batch"] is False
+    assert "joblog_kwargs" not in calls
+    assert "show_saved_title" not in calls
+    assert "Arabic DOCX review was closed" in calls["logs"][-1]
+
+
+def test_non_arabic_normal_run_still_uses_saved_docx_prompt(tmp_path: Path) -> None:
+    output_docx = tmp_path / "translated-en.docx"
+    output_docx.write_bytes(b"docx")
+    run_dir = tmp_path / "run-en"
+    run_dir.mkdir()
+    calls: dict[str, object] = {}
+    fake = SimpleNamespace(
+        _worker=SimpleNamespace(workflow="workflow-en"),
+        _gmail_batch_session=None,
+        _gmail_batch_in_progress=False,
+        _gmail_batch_current_index=None,
+        _last_run_config=SimpleNamespace(target_lang=TargetLang.EN),
+        _set_busy=lambda busy, translation=False: calls.setdefault("set_busy", []).append((busy, translation)),
+        _run_started_at=4.0,
+        queue_status_label=_FakeLabel(),
+        status_label=_FakeLabel(),
+        header_status_label=_FakeLabel(),
+        _dashboard_snapshot=SimpleNamespace(current_task=""),
+        _last_joblog_seed=None,
+        _last_review_queue=[],
+        _last_summary=None,
+        _last_run_dir=None,
+        _last_run_report_path=None,
+        _last_output_docx=None,
+        final_docx_edit=_FakeEdit(""),
+        _dashboard_error_count=0,
+        _progress_done_pages=0,
+        _progress_total_pages=0,
+        _can_export_partial=False,
+        _append_log=lambda message: calls.setdefault("logs", []).append(message),
+        _prepare_joblog_seed=lambda summary: setattr(fake, "_last_joblog_seed", object()),
+        _open_arabic_docx_review_dialog=lambda **kwargs: calls.__setitem__("review_kwargs", kwargs) or True,
+        _show_saved_docx_dialog=lambda title: calls.__setitem__("show_saved_title", title),
+        _open_save_to_joblog_dialog=lambda **kwargs: calls.__setitem__("joblog_kwargs", kwargs) or None,
+        _update_live_counters=lambda: None,
+        _update_controls=lambda: None,
+        _has_active_gmail_batch=lambda: False,
+    )
+
+    QtMainWindow._on_finished(
+        fake,
+        RunSummary(
+            success=True,
+            exit_code=0,
+            output_docx=output_docx,
+            partial_docx=None,
+            run_dir=run_dir,
+            completed_pages=3,
+            failed_page=None,
+            run_summary_path=None,
+        ),
+    )
+
+    assert calls["show_saved_title"] == "Translation complete"
+    assert calls["joblog_kwargs"] == {}
+    assert "review_kwargs" not in calls
+
+
+def test_arabic_docx_review_dialog_detects_save_and_accepts(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    docx_path = tmp_path / "arabic.docx"
+    docx_path.write_bytes(b"first")
+    fingerprints = iter([(1, 5), (2, 6), (2, 6)])
+    monotonic_values = iter([0.0, 0.2])
+    monkeypatch.setattr(
+        dialogs_module,
+        "open_docx_in_word",
+        lambda _path: WordAutomationResult(ok=True, action="open", message="opened"),
+    )
+    monkeypatch.setattr(
+        QtArabicDocxReviewDialog,
+        "_read_fingerprint",
+        lambda self: next(fingerprints),
+    )
+    monkeypatch.setattr(dialogs_module.time, "monotonic", lambda: next(monotonic_values))
+
+    dialog = QtArabicDocxReviewDialog(
+        parent=None,
+        docx_path=docx_path,
+        is_gmail_batch=False,
+        poll_interval_ms=20,
+        quiet_period_ms=60,
+        auto_open=False,
+    )
+    try:
+        dialog._poll_for_save()
+        dialog._poll_for_save()
+        assert dialog.result() == QDialog.DialogCode.Accepted
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_arabic_docx_review_dialog_align_save_accepts(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    docx_path = tmp_path / "arabic.docx"
+    docx_path.write_bytes(b"docx")
+    monkeypatch.setattr(
+        dialogs_module,
+        "open_docx_in_word",
+        lambda _path: WordAutomationResult(ok=True, action="open", message="opened"),
+    )
+    monkeypatch.setattr(
+        dialogs_module,
+        "align_right_and_save_docx_in_word",
+        lambda _path: WordAutomationResult(
+            ok=True,
+            action="align_right_and_save",
+            message="aligned",
+        ),
+    )
+
+    dialog = QtArabicDocxReviewDialog(
+        parent=None,
+        docx_path=docx_path,
+        is_gmail_batch=False,
+        auto_open=False,
+    )
+    try:
+        dialog._align_right_and_save()
+        assert dialog.result() == QDialog.DialogCode.Accepted
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_arabic_docx_review_dialog_keeps_manual_fallback_when_open_fails(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    docx_path = tmp_path / "arabic.docx"
+    docx_path.write_bytes(b"docx")
+    monkeypatch.setattr(
+        dialogs_module,
+        "open_docx_in_word",
+        lambda _path: WordAutomationResult(ok=False, action="open", message="boom"),
+    )
+    warnings: dict[str, str] = {}
+    monkeypatch.setattr(
+        dialogs_module.QMessageBox,
+        "warning",
+        lambda _self, _title, text: warnings.__setitem__("text", text),
+    )
+
+    dialog = QtArabicDocxReviewDialog(
+        parent=None,
+        docx_path=docx_path,
+        is_gmail_batch=False,
+        auto_open=False,
+    )
+    try:
+        dialog._open_in_word(initial=False)
+        assert dialog.continue_now_btn.isEnabled() is True
+        assert dialog.continue_without_changes_btn.isEnabled() is True
+        assert warnings["text"].startswith("boom")
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_save_to_joblog_dialog_open_translation_docx_uses_resolved_path(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    output_docx = tmp_path / "translated.docx"
+    output_docx.write_bytes(b"docx")
+    seed = JobLogSeed(
+        completed_at="2026-03-08T20:00:00",
+        translation_date="2026-03-08",
+        job_type="Translation",
+        case_number="21/25.0FBPTM",
+        court_email="court@example.com",
+        case_entity="Tribunal",
+        case_city="Beja",
+        service_entity="Tribunal",
+        service_city="Beja",
+        service_date="2026-03-08",
+        lang="AR",
+        pages=1,
+        word_count=100,
+        rate_per_word=0.1,
+        expected_total=10.0,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="run-1",
+        target_lang="AR",
+        total_tokens=1000,
+        estimated_api_cost=1.0,
+        quality_risk_score=0.1,
+        profit=9.0,
+        pdf_path=tmp_path / "source.pdf",
+        output_docx=output_docx,
+        partial_docx=None,
+    )
+    opened: dict[str, Path] = {}
+    monkeypatch.setattr(
+        dialogs_module,
+        "_open_path_in_system",
+        lambda _parent, target: opened.__setitem__("path", target),
+    )
+
+    dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
+    try:
+        assert dialog.open_translation_btn.isEnabled() is True
+        dialog._open_translation_docx()
+        assert opened["path"] == output_docx.resolve()
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
 
 
 def test_record_gmail_batch_saved_result_stages_translated_docx_copy(tmp_path: Path) -> None:

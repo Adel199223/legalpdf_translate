@@ -160,6 +160,11 @@ from legalpdf_translate.user_settings import (
     save_gui_settings,
     save_joblog_settings,
 )
+from legalpdf_translate.word_automation import (
+    WordAutomationResult,
+    align_right_and_save_docx_in_word,
+    open_docx_in_word,
+)
 
 JOBLOG_COLUMNS = [
     "translation_date",
@@ -427,6 +432,22 @@ def _open_folder_for_path(parent: QWidget, target: Path) -> None:
         QMessageBox.critical(parent, "Open folder failed", str(exc))
 
 
+def _open_path_in_system(parent: QWidget, target: Path) -> None:
+    resolved = target.expanduser().resolve()
+    if not resolved.exists():
+        QMessageBox.critical(parent, "Open file failed", f"Path not found:\n{resolved}")
+        return
+    try:
+        if os.name == "nt":
+            os.startfile(str(resolved))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(resolved)])
+        else:
+            subprocess.Popen(["xdg-open", str(resolved)])
+    except Exception as exc:  # noqa: BLE001
+        QMessageBox.critical(parent, "Open file failed", str(exc))
+
+
 class QtHonorariosExportDialog(QDialog):
     """Generate a deterministic Requerimento de Honorarios DOCX."""
 
@@ -541,6 +562,186 @@ class QtHonorariosExportDialog(QDialog):
         if open_now == QMessageBox.StandardButton.Yes:
             _open_folder_for_path(self, saved)
         self.accept()
+
+
+class QtArabicDocxReviewDialog(QDialog):
+    """Arabic-only Word handoff gate before the app continues."""
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        docx_path: Path,
+        is_gmail_batch: bool,
+        attachment_label: str | None = None,
+        poll_interval_ms: int = 500,
+        quiet_period_ms: int = 1500,
+        auto_open: bool = True,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Arabic DOCX review")
+        self.resize(760, 260)
+        self._docx_path = docx_path.expanduser().resolve()
+        self._is_gmail_batch = bool(is_gmail_batch)
+        self._attachment_label = (attachment_label or "").strip()
+        self._poll_interval_ms = max(100, int(poll_interval_ms))
+        self._quiet_period_ms = max(self._poll_interval_ms, int(quiet_period_ms))
+        self._auto_open = bool(auto_open)
+        self._baseline_fingerprint = self._read_fingerprint()
+        self._last_seen_fingerprint = self._baseline_fingerprint
+        self._save_change_detected = False
+        self._last_change_monotonic: float | None = None
+        self._opened_once = False
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(self._poll_interval_ms)
+        self._poll_timer.timeout.connect(self._poll_for_save)
+        self._build_ui()
+        QTimer.singleShot(0, self._start_review)
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        if self._is_gmail_batch and self._attachment_label:
+            header = (
+                "Arabic Gmail batch item ready. Review the DOCX in Word, then save it to continue "
+                "this batch item automatically."
+            )
+        else:
+            header = (
+                "Arabic translation complete. Review the DOCX in Word, then save it to continue "
+                "to Save to Job Log."
+            )
+        if self._attachment_label:
+            header += f"\n\nAttachment: {self._attachment_label}"
+
+        self.info_label = QLabel(header)
+        self.info_label.setWordWrap(True)
+        root.addWidget(self.info_label)
+
+        self.path_label = QLabel(str(self._docx_path))
+        self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.path_label.setWordWrap(True)
+        root.addWidget(self.path_label)
+
+        self.status_label = QLabel(
+            "The DOCX will open in Word. Save after editing and the app will continue automatically."
+        )
+        self.status_label.setWordWrap(True)
+        root.addWidget(self.status_label)
+
+        actions = QHBoxLayout()
+        self.align_right_btn = QPushButton("Align Right + Save")
+        self.open_word_btn = QPushButton("Open in Word")
+        self.continue_without_changes_btn = QPushButton("Continue without changes")
+        self.continue_now_btn = QPushButton("Continue now")
+        self.cancel_btn = QPushButton("Cancel")
+        actions.addWidget(self.align_right_btn)
+        actions.addWidget(self.open_word_btn)
+        actions.addStretch(1)
+        actions.addWidget(self.continue_without_changes_btn)
+        actions.addWidget(self.continue_now_btn)
+        actions.addWidget(self.cancel_btn)
+        root.addLayout(actions)
+
+        self.align_right_btn.clicked.connect(self._align_right_and_save)
+        self.open_word_btn.clicked.connect(lambda: self._open_in_word(initial=False))
+        self.continue_without_changes_btn.clicked.connect(self.accept)
+        self.continue_now_btn.clicked.connect(self.accept)
+        self.cancel_btn.clicked.connect(self.reject)
+
+    def done(self, result: int) -> None:
+        self._poll_timer.stop()
+        super().done(result)
+
+    def _set_status(self, message: str) -> None:
+        self.status_label.setText(message)
+
+    def _read_fingerprint(self) -> tuple[int, int] | None:
+        try:
+            stat = self._docx_path.stat()
+        except OSError:
+            return None
+        return (int(stat.st_mtime_ns), int(stat.st_size))
+
+    def _apply_open_result(self, result: WordAutomationResult, *, initial: bool) -> None:
+        if result.ok:
+            if initial:
+                self._set_status(
+                    "DOCX opened in Word. Save after editing and the app will continue automatically."
+                )
+            else:
+                self._set_status("DOCX reopened in Word. Save after editing to continue automatically.")
+            return
+        fallback_message = result.message.strip() or "Word automation failed."
+        if os.name == "nt":
+            try:
+                os.startfile(str(self._docx_path))  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                self._set_status(
+                    f"{fallback_message}\n\nUse 'Continue now' after saving manually if detection misses."
+                )
+                if not initial:
+                    QMessageBox.warning(self, "Arabic review", fallback_message)
+                return
+            self._set_status(
+                "Word automation failed, but the DOCX was opened with the default Windows handler. "
+                "Save after editing and the app will continue automatically."
+            )
+            if not initial:
+                QMessageBox.warning(
+                    self,
+                    "Arabic review",
+                    f"{fallback_message}\n\nOpened with the default Windows handler instead.",
+                )
+            return
+        self._set_status(
+            f"{fallback_message}\n\nUse 'Continue now' after saving manually if detection misses."
+        )
+        if not initial:
+            QMessageBox.warning(self, "Arabic review", fallback_message)
+
+    def _start_review(self) -> None:
+        if self._auto_open and not self._opened_once:
+            self._opened_once = True
+            self._open_in_word(initial=True)
+        self._poll_timer.start()
+
+    def _open_in_word(self, *, initial: bool) -> None:
+        self._apply_open_result(open_docx_in_word(self._docx_path), initial=initial)
+
+    def _align_right_and_save(self) -> None:
+        result = align_right_and_save_docx_in_word(self._docx_path)
+        if result.ok:
+            self._set_status("DOCX aligned right and saved in Word. Continuing now.")
+            self.accept()
+            return
+        self._set_status(
+            f"{result.message}\n\nYou can keep editing manually in Word and save, or use Continue now."
+        )
+        QMessageBox.warning(self, "Arabic review", result.message)
+
+    def _poll_for_save(self) -> None:
+        current = self._read_fingerprint()
+        if current is None:
+            return
+        if self._baseline_fingerprint is None:
+            self._baseline_fingerprint = current
+            self._last_seen_fingerprint = current
+            return
+        if current != self._last_seen_fingerprint:
+            self._last_seen_fingerprint = current
+            if current != self._baseline_fingerprint or self._save_change_detected:
+                self._save_change_detected = True
+                self._last_change_monotonic = time.monotonic()
+                self._set_status("Save detected. Waiting for Word to finish writing...")
+                return
+        if self._save_change_detected and self._last_change_monotonic is not None:
+            elapsed_ms = (time.monotonic() - self._last_change_monotonic) * 1000.0
+            if elapsed_ms >= float(self._quiet_period_ms):
+                self._set_status("Save complete. Continuing now.")
+                self.accept()
 
 
 class QtSaveToJobLogDialog(QDialog):
@@ -739,6 +940,9 @@ class QtSaveToJobLogDialog(QDialog):
         root.addWidget(finance_group)
 
         actions = QHBoxLayout()
+        self.open_translation_btn = QPushButton("Open translated DOCX")
+        self.open_translation_btn.setEnabled(self._resolved_seed_docx_path() is not None)
+        actions.addWidget(self.open_translation_btn)
         self.honorarios_btn = QPushButton("Gerar Requerimento de Honorários...")
         self.honorarios_btn.setEnabled(self._allow_honorarios_export)
         actions.addWidget(self.honorarios_btn)
@@ -749,6 +953,7 @@ class QtSaveToJobLogDialog(QDialog):
         actions.addWidget(self.save_btn)
         root.addLayout(actions)
 
+        self.open_translation_btn.clicked.connect(self._open_translation_docx)
         self.cancel_btn.clicked.connect(self.reject)
         self.save_btn.clicked.connect(self._save)
         self.honorarios_btn.clicked.connect(self._open_honorarios_dialog)
@@ -1077,6 +1282,17 @@ class QtSaveToJobLogDialog(QDialog):
             if isinstance(candidate, Path):
                 return candidate.expanduser().resolve()
         return None
+
+    def _open_translation_docx(self) -> None:
+        resolved = self._resolved_seed_docx_path()
+        if resolved is None:
+            QMessageBox.critical(
+                self,
+                "Open translated DOCX",
+                "No translated DOCX is available for this run.",
+            )
+            return
+        _open_path_in_system(self, resolved)
 
     def _save(self) -> None:
         try:

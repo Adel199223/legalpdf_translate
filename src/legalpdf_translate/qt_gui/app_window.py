@@ -111,6 +111,7 @@ from legalpdf_translate.source_document import (
 from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
 from legalpdf_translate.queue_runner import QueueRunSummary, parse_queue_manifest
 from legalpdf_translate.qt_gui.dialogs import (
+    QtArabicDocxReviewDialog,
     GmailBatchReviewPreviewCacheTransfer,
     GmailBatchReviewResult,
     JobLogSeed,
@@ -3821,8 +3822,8 @@ class QtMainWindow(QMainWindow):
     def _on_finished(self, summary_obj: object) -> None:
         summary = summary_obj if isinstance(summary_obj, RunSummary) else None
         gmail_batch_active = self._has_active_gmail_batch()
-        gmail_batch_attachment = self._current_gmail_batch_attachment()
-        gmail_batch_index = self._gmail_batch_current_index
+        gmail_batch_attachment = self._current_gmail_batch_attachment() if gmail_batch_active else None
+        gmail_batch_index = self._gmail_batch_current_index if gmail_batch_active else None
         gmail_batch_total = (
             len(self._gmail_batch_session.downloaded_attachments)
             if self._gmail_batch_session is not None
@@ -3856,6 +3857,11 @@ class QtMainWindow(QMainWindow):
         self._last_review_queue = _load_review_queue_entries(summary_path.expanduser().resolve())
         if summary.success and summary.output_docx is not None:
             output = summary.output_docx.expanduser().resolve()
+            last_run_config = getattr(self, "_last_run_config", None)
+            requires_arabic_review = (
+                last_run_config is not None
+                and getattr(last_run_config, "target_lang", None) == TargetLang.AR
+            )
             self._last_output_docx = output
             self.final_docx_edit.setText(str(output))
             self.status_label.setText("Completed")
@@ -3876,11 +3882,38 @@ class QtMainWindow(QMainWindow):
                     )
                 else:
                     item_number = gmail_batch_index + 1
+                    self._set_busy(True, translation=False)
+                    if requires_arabic_review:
+                        arabic_review_status = (
+                            f"Arabic DOCX review {item_number}/{gmail_batch_total}: "
+                            f"{gmail_batch_attachment.candidate.filename}"
+                        )
+                        self.status_label.setText(arabic_review_status)
+                        self.header_status_label.setText("Arabic DOCX review")
+                        self._dashboard_snapshot.current_task = arabic_review_status
+                        reviewed = self._open_arabic_docx_review_dialog(
+                            output_docx=output,
+                            is_gmail_batch=True,
+                            attachment_label=gmail_batch_attachment.candidate.filename,
+                        )
+                        if not reviewed:
+                            self._stop_gmail_batch(
+                                status_text="Gmail batch stopped",
+                                header_status_text="Gmail batch stopped",
+                                log_message=(
+                                    "Gmail batch stopped because Arabic DOCX review was cancelled for "
+                                    f"{gmail_batch_attachment.candidate.filename}."
+                                ),
+                                information_message=(
+                                    "The Gmail batch was stopped because the Arabic DOCX review "
+                                    "was cancelled or closed before continuation."
+                                ),
+                            )
+                            return
                     review_status = (
                         f"Gmail batch review {item_number}/{gmail_batch_total}: "
                         f"{gmail_batch_attachment.candidate.filename}"
                     )
-                    self._set_busy(True, translation=False)
                     self.status_label.setText(review_status)
                     self.header_status_label.setText("Gmail batch review")
                     self._dashboard_snapshot.current_task = review_status
@@ -3940,8 +3973,20 @@ class QtMainWindow(QMainWindow):
                         else:
                             self._run_after_worker_cleanup(self._start_next_gmail_batch_translation)
             else:
-                self._show_saved_docx_dialog("Translation complete")
-                self._open_save_to_joblog_dialog()
+                if requires_arabic_review:
+                    reviewed = self._open_arabic_docx_review_dialog(
+                        output_docx=output,
+                        is_gmail_batch=False,
+                    )
+                    if reviewed:
+                        self._open_save_to_joblog_dialog()
+                    else:
+                        self._append_log(
+                            "Arabic DOCX review was closed before Save to Job Log opened."
+                        )
+                else:
+                    self._show_saved_docx_dialog("Translation complete")
+                    self._open_save_to_joblog_dialog()
             self._dashboard_error_count = 0
         else:
             self._last_output_docx = None
@@ -4513,6 +4558,24 @@ class QtMainWindow(QMainWindow):
         )
         if open_now == QMessageBox.StandardButton.Yes:
             self._open_output_file()
+
+    def _open_arabic_docx_review_dialog(
+        self,
+        *,
+        output_docx: Path,
+        is_gmail_batch: bool,
+        attachment_label: str | None = None,
+    ) -> bool:
+        dialog = QtArabicDocxReviewDialog(
+            parent=self,
+            docx_path=output_docx,
+            is_gmail_batch=is_gmail_batch,
+            attachment_label=attachment_label,
+        )
+        try:
+            return dialog.exec() == QDialog.DialogCode.Accepted
+        finally:
+            dialog.deleteLater()
 
     def _prepare_joblog_seed(self, summary: RunSummary) -> None:
         if self._last_run_config is None:
