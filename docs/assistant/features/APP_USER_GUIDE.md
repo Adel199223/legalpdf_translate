@@ -54,10 +54,38 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 1. Analyze first when a PDF looks messy or scanned, then decide whether to apply the OCR Advisor suggestion for the next run.
 2. If a warning says `xhigh` can multiply cost and time, choose `Switch to fixed high` unless you intentionally want the slower, more expensive option.
 3. If an OCR-heavy warning appears for a scanned document, choose `Apply safe OCR profile` to fix the current run without changing your saved defaults.
-2. After a run finishes, open the Review Queue if pages were flagged for manual checking.
-3. Save the finished run to the Job Log so the case and cost details are stored together.
-4. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
-5. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when `Court Email` is available.
+4. After a run finishes, open the Review Queue if pages were flagged for manual checking.
+5. Save the finished run to the Job Log so the case and cost details are stored together.
+6. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
+7. Use Gmail intake when you want to start from one open Gmail message instead of choosing files manually.
+8. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when `Court Email` is available.
+
+## Gmail Intake Batch Replies
+1. In `Settings > Keys & Providers > Gmail Drafts (Windows)`, turn on the Gmail intake bridge and keep the app running on Windows.
+2. Load `extensions/gmail_intake/` as an unpacked extension in Edge or Chrome.
+3. Copy the bridge token and port from the app into the extension options page.
+4. Open Gmail in that same Windows browser and expand exactly one message.
+5. Click the extension toolbar button. If Gmail cannot identify one exact message, the batch does not start.
+6. In the app, review the supported attachments from that email, choose which ones to translate, and correct the target language there if needed.
+7. Use `Preview selected attachment` when you need to inspect a file before preparing it.
+8. In preview, scroll the PDF and click `Use this page as start` if the first page is only a cover sheet or otherwise should not be translated.
+9. When you click `Prepare selected attachments`, already previewed files are reused when possible instead of being downloaded again.
+10. The app translates the selected files one by one and stops at `Save to Job Log` after every successful file.
+11. Save each file before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
+12. If one file resolves to a different case or court, stop and split the work into separate batches.
+13. After the last file, you can generate one honorários DOCX and one Gmail reply draft in the original thread.
+14. The app creates a draft only. It does not send the email automatically.
+
+## If Gmail Intake Stops Early
+1. If the page says the app is not listening, confirm the bridge is enabled and the Windows app is still running.
+2. If the app window says `Gmail intake bridge unavailable`, another process may already be using the bridge port.
+3. If Gmail shows `accepted` but the app stays idle, check that the listener on `127.0.0.1:<port>` belongs to the LegalPDF app and not to `pytest` or another stray process.
+4. If the page says the token is invalid, copy the token from Settings into the extension options again.
+5. If the page says the message is ambiguous, collapse extra Gmail messages and leave only one expanded.
+6. If the app shows no supported attachments, that email likely contains only inline or unsupported files.
+7. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
+8. If you skip or fail honorários generation at the end of the batch, the app does not create the Gmail reply draft in this version.
+9. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
 
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.
@@ -97,3 +125,6 @@ Use this fix:
 3. If a run stops partway through, open the run report and the run folder before trying again.
 4. In Save to Job Log, `Words` now means translated output words from the DOCX, not raw OCR/source page text.
 5. When Gmail draft creation is offered after generating honorários, the app should usually reuse the translated DOCX automatically. Historical Job Log rows only ask you to pick a translation file when the row has no stored path and exact `run_id` recovery is not possible.
+6. Gmail intake live testing must happen on the same Windows host as the signed-in browser and Windows `gog`. A WSL-only smoke is not enough for the final check.
+7. In Gmail batches, if you accidentally choose the translated DOCX filename while saving honorários, the app now auto-renames the honorários file instead of overwriting the translation.
+8. If a Gmail batch reply draft still fails after translation finished, look for `gmail_batch_session.json` under your output folder’s `_gmail_batch_sessions` directory before retrying blindly.

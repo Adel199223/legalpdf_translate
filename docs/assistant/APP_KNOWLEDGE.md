@@ -30,6 +30,12 @@ For support/non-technical explanations, start with:
 - OCR-heavy warning choices, bounded cancel-wait behavior, and translated-output Job Log word counts route to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md` and `APP_KNOWLEDGE.md`.
 - Gmail draft + honorarios attachment reuse routes to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md` and `APP_KNOWLEDGE.md`.
 - Listener ownership, test isolation, and multi-surface handoff/run/finalization diagnostics route to `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`.
+- Gmail intake extension setup, exact-message batch review, per-attachment start-page selection, in-app preview, sequential Save-to-Job-Log checkpoints, and one threaded reply-draft batch semantics route to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md` and `APP_KNOWLEDGE.md`.
+- Gmail intake troubleshooting now routes by failure surface:
+  - extension/banner or app-bridge startup issue: `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
+  - translation/run issue: `run_report.md`, `run_summary.json`, and `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
+  - Gmail batch finalization/draft issue: app-owned `gmail_batch_session.json` plus `APP_KNOWLEDGE.md`
+- Same-host Gmail intake/browser/`gog` validation routes to `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`, `docs/assistant/LOCAL_ENV_PROFILE.local.md`, and `docs/assistant/LOCAL_CAPABILITIES.md`.
 
 Cost-guardrail support routing:
 - CLI budget cap/policy behavior (`warn` vs `block`) is documented in the primary workflow user guide.
@@ -43,6 +49,8 @@ Cost-guardrail support routing:
 - Canonical current-truth also includes the screenshot-driven Qt dashboard shell and the real GUI module entrypoint: `python -m legalpdf_translate.qt_app`.
 - Canonical current-truth also includes bounded OCR-heavy request deadlines, non-persistent `Apply safe OCR profile` warning behavior, no-wheel guards on run-critical selectors, and DOCX-first Job Log word counting.
 - Canonical current-truth also includes Gmail draft attachment reuse for both current-run and historical honorarios exports, with stored-path reuse and exact `run_id` recovery before any manual picker fallback.
+- Canonical current-truth also includes the Windows-only Gmail intake bridge, exact-message Gmail fetch/review, sequential Save-to-Job-Log gating, one honorarios DOCX for the confirmed batch, and one threaded Gmail reply draft with no auto-send.
+- Canonical current-truth also includes durable Gmail batch session diagnostics (`gmail_batch_session.json`), run-level `gmail_batch_context` in `run_summary.json` / `run_report.md`, per-attachment Gmail review start-page selection, lazy in-app PDF preview, preview-cache reuse during Prepare, visible Gmail bridge-unavailable UI state, stale-output/stale-checkpoint fail-closed behavior, honorarios auto-rename on save collision, duplicate/contaminated attachment blocking before Gmail draft creation, and additive `selected_start_page` reporting.
 
 ## Workflow Routing
 - Core translation: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`

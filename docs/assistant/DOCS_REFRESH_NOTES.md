@@ -47,6 +47,62 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
   - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
   - `dart run test/tooling/validate_workspace_hygiene_test.dart` -> PASS
 
+## 2026-03-07 — feat/gmail-intake-batch-reply (working tree)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/ISSUE_MEMORY.md
+  - docs/assistant/ISSUE_MEMORY.json
+  - docs/assistant/LOCAL_CAPABILITIES.md
+  - docs/assistant/LOCAL_ENV_PROFILE.local.md
+  - docs/assistant/exec_plans/completed/2026-03-07_gmail_intake_reply_batch_workflow.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md
+  - extensions/gmail_intake/README.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::Gmail Intake Batch Workflow
+  - docs/assistant/APP_KNOWLEDGE.md::Current-Truth Note
+  - docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md::Same-Host Validation Rule
+  - docs/assistant/ISSUE_MEMORY.md::workflow-windows-gog-host-auth-preflight
+- User-visible behavior:
+  - Assistant docs now describe the shipped Windows-only Gmail intake flow from exact-message handoff through supported-attachment review, sequential Save-to-Job-Log confirmation, one honorarios DOCX, and one threaded reply draft.
+  - User-facing docs now explain the fail-closed cases for Gmail intake, including bridge/token problems, ambiguous Gmail DOM state, no supported attachments, Save-to-Job-Log cancellation, metadata mismatch, and skipped/failed honorarios finalization.
+  - Same-host Gmail preflight docs were tightened because of the new `workflow-windows-gog-host-auth-preflight` issue-memory entry, so WSL keyring-prompt blocks are now documented as `unavailable` host/auth failures instead of passed Windows smoke.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+  - `dart run test/tooling/validate_workspace_hygiene_test.dart` -> PASS
+
+## 2026-03-08 — feat/gmail-intake-batch-reply (e204376)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md
+  - docs/assistant/exec_plans/completed/2026-03-08_gmail_attachment_review_preview_start_page.md
+  - docs/assistant/exec_plans/completed/2026-03-08_gmail_attachment_preview_lazy_scroll.md
+  - docs/assistant/exec_plans/completed/2026-03-08_gmail_preview_smoothness_prepare_handoff.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::Gmail Intake Batch Workflow
+  - APP_KNOWLEDGE.md::gmail_batch_context
+  - docs/assistant/features/APP_USER_GUIDE.md::Gmail Intake Batch Replies
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md::Gmail Intake Batch Replies
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md::gmail_batch_context
+- User-visible behavior:
+  - Gmail attachment review now supports per-attachment start-page selection with an in-app preview before preparation begins.
+  - PDF preview now uses a lazy continuous-scroll viewer with `Use this page as start`, while image attachments remain fixed to page `1`.
+  - `Prepare selected attachments` now reuses previously previewed files when possible instead of redownloading them.
+  - Gmail run/report context now documents the selected start page for each translated attachment.
+- Tests:
+  - `"/mnt/c/Users/FA507/.codex/legalpdf_translate/.venv311/Scripts/python.exe" -m compileall src tests` -> PASS
+  - `"/mnt/c/Users/FA507/.codex/legalpdf_translate/.venv311/Scripts/python.exe" -m pytest -q tests/test_qt_app_state.py tests/test_gmail_batch.py tests/test_qt_render_review.py tests/test_run_report.py tests/test_checkpoint_resume.py tests/test_translation_diagnostics.py tests/test_translation_report.py` -> `177 passed`
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
 ## 2026-03-07 — feat/ai-docs-bootstrap (working tree)
 - Files changed:
   - agent.md
@@ -783,3 +839,23 @@ Verification commands/results:
   3. exact `run_id` recovery
   4. manual picker only as a last resort
 - Legacy rows are self-healing: if one manual translated-DOCX selection is needed, that path is saved back into the row so the same row should not prompt again.
+
+# 2026-03-08
+- Ran a narrow Assistant Docs Sync for the Gmail-intake worktree after repeated same-day Gmail intake, Arabic, run-report, and draft-finalization debugging loops.
+- Added one durable observability layer: app-owned `gmail_batch_session.json` under the effective output directory, and linked it from Gmail-intake `run_summary.json` / `run_report.md` via additive `gmail_batch_context`.
+- Synced durable troubleshooting guidance for:
+  - extension self-healing and visible banner errors instead of silent no-ops
+  - visible `Gmail intake bridge unavailable` state on localhost bind conflicts
+  - Gmail batch target-language selection in the review dialog
+  - stale output-folder recovery and stale-checkpoint fail-closed behavior
+  - honorários auto-rename on save collisions
+  - duplicate/contaminated Gmail draft attachment blocking
+  - Arabic failure fields `validator_defect_reason`, `ar_violation_kind`, and sample snippets
+- Tightened the documented Gmail support packet order so future triage starts from:
+  1. Gmail banner text/screenshot
+  2. app window title + visible bridge status
+  3. `run_report.md` / `run_summary.json`
+  4. `gmail_batch_session.json`
+- Updated `ISSUE_MEMORY.md` / `ISSUE_MEMORY.json` because of two new repeated issue-memory entries:
+  - pytest/live Gmail bridge cross-contamination through real `%APPDATA%` and port `8765`
+  - fragmented Gmail-intake diagnostics across extension/app/run/finalization surfaces

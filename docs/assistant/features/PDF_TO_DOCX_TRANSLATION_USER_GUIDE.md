@@ -135,6 +135,39 @@ From `Job Log`, the app now tries this order for the translated attachment:
 
 If the app has to ask you once for a translated DOCX on a legacy row, it saves that path back into the row so the same row should not ask again next time.
 
+## Gmail Intake Batch Replies
+Use this when the source files already arrived in Gmail and you want one reply draft back in the same thread.
+
+### Setup
+1. In `Settings > Keys & Providers > Gmail Drafts (Windows)`, enable the Gmail intake bridge.
+2. Copy the bridge token and port into the unpacked `extensions/gmail_intake/` extension options page.
+3. Keep LegalPDF Translate running on the same Windows host as Gmail and Windows `gog`.
+
+### Run the batch
+1. Open Gmail in Edge or Chromium.
+2. Expand exactly one message in the target thread.
+3. Click the extension toolbar action.
+4. Review the supported attachments from that exact message, select one or more files, and set the Gmail batch target language in that dialog before preparation starts.
+5. Open the attachment preview when you need to inspect a file before translating it.
+6. For PDFs, scroll through the preview and click `Use this page as start` if the first page should be skipped; image attachments stay fixed to page `1`.
+7. `Prepare selected attachments` stages the files for the batch, and already previewed files are reused when possible instead of being downloaded again.
+8. The app then translates those files one by one.
+9. After each successful translation, the app opens `Save to Job Log` and requires a confirmed save before continuing.
+10. When all selected files are confirmed, the app can generate one honorários DOCX using the combined translated word count for the batch.
+11. If that honorários step succeeds, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários DOCX.
+
+### Batch rules
+- Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
+- The app fetches only the exact intake message, not the whole thread.
+- The review list hides inline/signature/media junk and shows only supported source attachments from that exact message.
+- PDF preview uses a lazy continuous-scroll viewer so large documents can be inspected before translation without rendering every page up front.
+- If the current output folder is stale or missing, Gmail batch startup recovers automatically by preferring the current valid folder, then a valid default output folder, then `Downloads`.
+- Every confirmed item in the batch must end with the same `case_number`, `case_entity`, `case_city`, and `court_email`.
+- If any confirmed item differs, stop and split the email into separate reply batches.
+- The final Gmail result is always a draft only. The app does not auto-send.
+- If you accidentally choose an existing translated DOCX filename while saving honorários, the app auto-renames the honorários file instead of overwriting the translation.
+- Gmail draft creation blocks duplicate attachment paths and translated artifacts that are actually honorários content.
+
 ## Queue Runs
 Use queue mode when you want several PDFs to run in order.
 
@@ -174,6 +207,17 @@ Queue mode writes these sidecar files next to the manifest:
 13. If you click `Cancel and wait`, the app now waits only for the active request deadline instead of appearing indefinitely frozen.
 14. If a run stops partially, open `Generate Run Report` and the run folder before retrying. The stop dialog now includes suspected cause, halt reason, and request timing details when available.
 15. If a historical honorários Gmail draft still asks you to pick the translated DOCX, that means the row has no stored artifact path and exact `run_id` recovery did not find one unique valid match. After one successful manual selection, the row should be healed and stop asking again.
+16. If Gmail intake says the app is not listening, confirm the bridge is enabled in Settings and the app is still running on Windows with the same port shown in the extension.
+17. If the app shows `Gmail intake bridge unavailable`, treat that as a port/process conflict first. The listener on `127.0.0.1:<port>` must belong to `python.exe -m legalpdf_translate.qt_app`, not `pytest`.
+18. If Gmail intake says the token is invalid, re-copy the token from Settings into the extension options page.
+19. If Gmail intake cannot identify the open Gmail message, collapse extra messages and leave exactly one expanded message visible.
+20. If the Gmail review dialog shows no files, the email likely had no supported attachments or Gmail exposed only inline/signature/media parts.
+21. If you cancel `Save to Job Log` during a Gmail batch, the remaining attachments stop by design.
+22. If the Gmail batch warns that case/court metadata differ, split that email into separate batches instead of forcing one reply.
+23. If you skip or fail honorários generation at the end of a Gmail batch, the app does not create the Gmail reply draft in V1.
+24. A WSL-only `gog` smoke is not enough for final Gmail intake validation. The signed-in browser, Windows app, and Windows `gog` must be checked on the same host.
+25. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets.
+26. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.
