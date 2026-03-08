@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>LegalPDF Gmail Intake Options</title>
+    <style>
+      body {
+        margin: 0;
+        font: 14px/1.4 Arial, sans-serif;
+        color: #101828;
+        background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+      }
+
+      main {
+        max-width: 520px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      .card {
+        padding: 24px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: 0 18px 42px rgba(15, 23, 42, 0.12);
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 24px;
+      }
+
+      p {
+        margin: 0 0 18px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 14px;
+        font-weight: 600;
+      }
+
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 6px;
+        padding: 10px 12px;
+        border: 1px solid #d0d5dd;
+        border-radius: 10px;
+        font: inherit;
+      }
+
+      button {
+        padding: 10px 14px;
+        border: 0;
+        border-radius: 10px;
+        font: inherit;
+        font-weight: 700;
+        color: white;
+        background: #1d4ed8;
+        cursor: pointer;
+      }
+
+      #status {
+        min-height: 20px;
+        margin-top: 14px;
+        color: #065f46;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="card">
+        <h1>Gmail Intake Bridge</h1>
+        <p>Copy the token and port from LegalPDF Translate under Settings &gt; Keys &amp; Providers &gt; Gmail Drafts (Windows).</p>
+        <label>
+          Bridge token
+          <input id="bridgeToken" type="text" autocomplete="off" spellcheck="false">
+        </label>
+        <label>
+          Bridge port
+          <input id="bridgePort" type="number" min="1" max="65535" step="1">
+        </label>
+        <button id="saveButton" type="button">Save</button>
+        <div id="status" aria-live="polite"></div>
+      </section>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

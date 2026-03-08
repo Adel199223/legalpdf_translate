@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "LegalPDF Gmail Intake",
+  "version": "0.1.0",
+  "description": "Send exact Gmail message identity to LegalPDF Translate over localhost.",
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Send Gmail message to LegalPDF Translate"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
