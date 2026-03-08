@@ -10,9 +10,17 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from typing import Any, Sequence
+from xml.etree import ElementTree as ET
+from zipfile import ZipFile
 
 GMAIL_DRAFTS_URL = "https://mail.google.com/mail/u/0/#drafts"
 WINDOWS_GOG_WINGET_GLOB = "steipete.gogcli*/gog.exe"
+_DOCX_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+_HONORARIOS_SIGNATURE_MARKERS = (
+    "Venho por este meio requerer o pagamento dos honorários",
+    "O documento traduzido contém",
+    "O Pagamento deverá ser efetuado para o seguinte IBAN",
+)
 HONORARIOS_GMAIL_BODY = """Bom dia,
 
 Segue em anexo as traduções conforme solicitadas, bem como o requerimento de honorários. 
@@ -32,6 +40,7 @@ class GmailDraftRequest:
     subject: str
     body: str
     attachments: tuple[Path, ...]
+    reply_to_message_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -83,6 +92,7 @@ def build_honorarios_gmail_request(
         missing.append(f"Honorários DOCX not found: {resolved_honorarios}")
     if missing:
         raise ValueError("\n".join(missing))
+    _require_distinct_attachment_paths((resolved_translation, resolved_honorarios))
     return GmailDraftRequest(
         gog_path=gog_path.expanduser().resolve(),
         account_email=sender_account,
@@ -91,6 +101,85 @@ def build_honorarios_gmail_request(
         body=HONORARIOS_GMAIL_BODY,
         attachments=(resolved_translation, resolved_honorarios),
     )
+
+
+def build_gmail_batch_reply_request(
+    *,
+    gog_path: Path,
+    account_email: str,
+    to_email: str,
+    subject: str,
+    reply_to_message_id: str,
+    translated_docxs: Sequence[Path],
+    honorarios_docx: Path,
+) -> GmailDraftRequest:
+    sender_account = account_email.strip()
+    recipient = to_email.strip()
+    original_subject = subject.strip()
+    reply_message_id = reply_to_message_id.strip()
+    if not sender_account:
+        raise ValueError("A Gmail account is required to create the draft.")
+    if not recipient:
+        raise ValueError("Court Email is required to create the Gmail draft.")
+    if not original_subject:
+        raise ValueError("The original Gmail subject is required to create the reply draft.")
+    if not reply_message_id:
+        raise ValueError("The original Gmail message ID is required to create the reply draft.")
+    resolved_translations = tuple(path.expanduser().resolve() for path in translated_docxs)
+    if not resolved_translations:
+        raise ValueError("At least one translated DOCX is required to create the reply draft.")
+    missing: list[str] = []
+    for translation in resolved_translations:
+        if not translation.exists():
+            missing.append(f"Translated DOCX not found: {translation}")
+    resolved_honorarios = honorarios_docx.expanduser().resolve()
+    if not resolved_honorarios.exists():
+        missing.append(f"Honorários DOCX not found: {resolved_honorarios}")
+    if missing:
+        raise ValueError("\n".join(missing))
+    _require_distinct_attachment_paths(resolved_translations + (resolved_honorarios,))
+    return GmailDraftRequest(
+        gog_path=gog_path.expanduser().resolve(),
+        account_email=sender_account,
+        to_email=recipient,
+        subject=original_subject,
+        body=HONORARIOS_GMAIL_BODY,
+        attachments=resolved_translations + (resolved_honorarios,),
+        reply_to_message_id=reply_message_id,
+    )
+
+
+def validate_translated_docx_artifacts_for_gmail_draft(
+    *,
+    translated_docxs: Sequence[Path],
+    honorarios_docx: Path,
+) -> tuple[Path, ...]:
+    resolved_translations = tuple(path.expanduser().resolve() for path in translated_docxs)
+    resolved_honorarios = honorarios_docx.expanduser().resolve()
+    missing: list[str] = []
+    for translation in resolved_translations:
+        if not translation.exists():
+            missing.append(f"Translated DOCX not found: {translation}")
+    if not resolved_honorarios.exists():
+        missing.append(f"Honorários DOCX not found: {resolved_honorarios}")
+    if missing:
+        raise ValueError("\n".join(missing))
+    _require_distinct_attachment_paths(resolved_translations + (resolved_honorarios,))
+    honorarios_bytes = resolved_honorarios.read_bytes()
+    for translation in resolved_translations:
+        if _docx_contains_honorarios_signature(translation):
+            raise ValueError(
+                "Translated DOCX is contaminated with honorários content and cannot be attached:\n"
+                f"{translation}\n\n"
+                "Rerun the translation to create a clean translated DOCX before creating the Gmail draft."
+            )
+        if translation.read_bytes() == honorarios_bytes:
+            raise ValueError(
+                "Translated DOCX matches the selected honorários DOCX and cannot be attached:\n"
+                f"{translation}\n\n"
+                "Rerun the translation to create a clean translated DOCX before creating the Gmail draft."
+            )
+    return resolved_translations
 
 
 def assess_gmail_draft_prereqs(
@@ -217,6 +306,8 @@ def create_gmail_draft_via_gog(request: GmailDraftRequest) -> GmailDraftResult:
             "--body-file",
             str(body_path),
         ]
+        if request.reply_to_message_id:
+            cmd.extend(["--reply-to-message-id", request.reply_to_message_id])
         for attachment in request.attachments:
             cmd.extend(["--attach", str(attachment)])
         completed = _run_capture(cmd)
@@ -284,6 +375,51 @@ def _extract_gmail_accounts(payload: dict[str, Any]) -> list[str]:
         if any(str(service).strip().lower() == "gmail" for service in services):
             accounts.append(email)
     return accounts
+
+
+def _require_distinct_attachment_paths(paths: Sequence[Path]) -> None:
+    duplicates: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in paths:
+        if candidate in seen and candidate not in duplicates:
+            duplicates.append(candidate)
+            continue
+        seen.add(candidate)
+    if duplicates:
+        raise ValueError(
+            "Duplicate Gmail draft attachment paths are not allowed:\n"
+            + "\n".join(str(path) for path in duplicates)
+        )
+
+
+def _docx_contains_honorarios_signature(path: Path) -> bool:
+    text = _read_docx_visible_text(path).casefold()
+    matches = [marker for marker in _HONORARIOS_SIGNATURE_MARKERS if marker.casefold() in text]
+    return (
+        _HONORARIOS_SIGNATURE_MARKERS[0].casefold() in text
+        or len(matches) >= 2
+    )
+
+
+def _read_docx_visible_text(path: Path) -> str:
+    resolved = path.expanduser().resolve()
+    try:
+        with ZipFile(resolved, "r") as archive:
+            raw_xml = archive.read("word/document.xml")
+    except FileNotFoundError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"Failed to inspect DOCX text for Gmail draft attachment: {resolved}") from exc
+    try:
+        root = ET.fromstring(raw_xml)
+    except ET.ParseError as exc:
+        raise ValueError(f"Failed to parse DOCX text for Gmail draft attachment: {resolved}") from exc
+    parts = [
+        node.text.strip()
+        for node in root.findall(".//w:t", _DOCX_NS)
+        if isinstance(node.text, str) and node.text.strip()
+    ]
+    return " ".join(parts)
 
 
 def _is_windows() -> bool:

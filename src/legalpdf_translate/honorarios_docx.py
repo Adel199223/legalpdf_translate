@@ -12,6 +12,8 @@ from docx.enum.section import WD_SECTION_START
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Mm, Pt
 
+from .docx_writer import resolve_noncolliding_output_path
+
 FIXED_NAME = "Adel Belghali"
 FIXED_ADDRESS = "Rua Luís de Camões nº 6, 7960-011 Marmelar, Pedrógão, Vidigueira"
 FIXED_IBAN = "PT50003506490000832760029"
@@ -82,7 +84,7 @@ def build_honorarios_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, 
     return [
         (f"Número de processo: {draft.case_number}", "left"),
         ("", "left"),
-        ("Exmo. Sr procurador da república\ndo " + draft.case_entity + "\nde " + draft.case_city, "address"),
+        ("Exmo. Sr(a). Procurador(a) da república do " + draft.case_entity, "address"),
         ("", "left"),
         (f"Nome: {FIXED_NAME}", "left"),
         (f"Morada: {FIXED_ADDRESS}", "left"),
@@ -100,7 +102,7 @@ def build_honorarios_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, 
         ("", "left"),
         ("Espera deferimento,", "center"),
         ("", "left"),
-        (f"Beja, {draft.date_pt}", "center"),
+        (f"{draft.case_city}, {draft.date_pt}", "center"),
         ("", "left"),
         (FIXED_NAME, "center"),
     ]
@@ -124,8 +126,13 @@ def _configure_page(document: Document) -> None:
 
 
 def generate_honorarios_docx(draft: HonorariosDraft, output_path: Path) -> Path:
-    output = output_path.expanduser().resolve()
-    output.parent.mkdir(parents=True, exist_ok=True)
+    requested_output = output_path.expanduser().resolve()
+    requested_output.parent.mkdir(parents=True, exist_ok=True)
+    if requested_output.exists():
+        fallback_output = requested_output.parent / default_honorarios_filename(draft.case_number)
+        output = resolve_noncolliding_output_path(fallback_output)
+    else:
+        output = requested_output
 
     document = Document()
     _configure_page(document)

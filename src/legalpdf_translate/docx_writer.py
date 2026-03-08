@@ -5,8 +5,10 @@ from __future__ import annotations
 import os
 import re
 import unicodedata
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import ZipFile, ZipInfo
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
@@ -30,6 +32,17 @@ _BIDI_CONTROL_CODEPOINTS = str.maketrans(
     "",
     "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\ufeff",
 )
+_DOCX_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+_VISIBLE_WORD_RE = re.compile(r"\S+")
+
+
+@dataclass(frozen=True)
+class _DocxVisibleContentSummary:
+    paragraph_count: int
+    visible_paragraph_count: int
+    text_node_count: int
+    text_char_count: int
+    word_count: int
 
 
 def sanitize_bidi_controls(text: str) -> str:
@@ -196,6 +209,69 @@ def _verify_docx_readable(path: Path) -> None:
         raise RuntimeError(f"DOCX validation failed for {path}: {exc}") from exc
 
 
+def _read_docx_visible_content_summary(path: Path) -> _DocxVisibleContentSummary:
+    try:
+        with ZipFile(path, "r") as archive:
+            document_xml = archive.read("word/document.xml")
+    except KeyError as exc:
+        raise RuntimeError(f"DOCX is missing word/document.xml: {path}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Failed reading DOCX body XML from {path}: {exc}") from exc
+
+    try:
+        root = ET.fromstring(document_xml)
+    except ET.ParseError as exc:
+        raise RuntimeError(f"DOCX body XML is malformed in {path}: {exc}") from exc
+
+    paragraphs = root.findall(".//w:body/w:p", _DOCX_NS)
+    paragraph_count = len(paragraphs)
+    visible_paragraph_count = 0
+    text_node_count = 0
+    text_char_count = 0
+    word_count = 0
+
+    for paragraph in paragraphs:
+        text_nodes = [node.text or "" for node in paragraph.findall(".//w:t", _DOCX_NS)]
+        text_node_count += len(text_nodes)
+        paragraph_text = "".join(text_nodes)
+        if not paragraph_text.strip():
+            continue
+        visible_paragraph_count += 1
+        text_char_count += len(paragraph_text.strip())
+        word_count += len(_VISIBLE_WORD_RE.findall(paragraph_text))
+
+    return _DocxVisibleContentSummary(
+        paragraph_count=paragraph_count,
+        visible_paragraph_count=visible_paragraph_count,
+        text_node_count=text_node_count,
+        text_char_count=text_char_count,
+        word_count=word_count,
+    )
+
+
+def _verify_docx_visible_content(
+    path: Path,
+    *,
+    stage: str,
+    expected_visible_paragraphs: int,
+    baseline: _DocxVisibleContentSummary | None = None,
+) -> _DocxVisibleContentSummary:
+    summary = _read_docx_visible_content_summary(path)
+    if expected_visible_paragraphs > 0 and summary.visible_paragraph_count == 0:
+        raise RuntimeError(
+            f"DOCX content verification failed after {stage}: {path} has no visible paragraphs"
+        )
+    if expected_visible_paragraphs > 0 and summary.text_char_count == 0:
+        raise RuntimeError(
+            f"DOCX content verification failed after {stage}: {path} has no visible text"
+        )
+    if baseline is not None and baseline.visible_paragraph_count > 0 and summary.visible_paragraph_count == 0:
+        raise RuntimeError(
+            f"DOCX content verification failed after {stage}: {path} lost all visible paragraphs"
+        )
+    return summary
+
+
 def _fsync_file(path: Path) -> None:
     try:
         with path.open("r+b") as handle:
@@ -270,6 +346,19 @@ _EMPTY_COMPAT_RE = re.compile(
 )
 
 
+def _clone_zipinfo_for_rewrite(info: ZipInfo) -> ZipInfo:
+    clone = ZipInfo(filename=info.filename, date_time=info.date_time)
+    clone.compress_type = info.compress_type
+    clone.comment = info.comment
+    clone.extra = info.extra
+    clone.create_system = info.create_system
+    clone.create_version = info.create_version
+    clone.extract_version = info.extract_version
+    clone.internal_attr = info.internal_attr
+    clone.external_attr = info.external_attr
+    return clone
+
+
 def _remove_compatibility_mode(docx_path: Path) -> None:
     """Remove compatibilityMode from word/settings.xml to avoid Word upgrade prompt.
 
@@ -292,10 +381,11 @@ def _remove_compatibility_mode(docx_path: Path) -> None:
     try:
         with ZipFile(docx_path, "r") as zin, ZipFile(tmp_path, "w") as zout:
             for item in zin.infolist():
+                item_copy = _clone_zipinfo_for_rewrite(item)
                 if item.filename == "word/settings.xml":
-                    zout.writestr(item, modified.encode("utf-8"))
+                    zout.writestr(item_copy, modified.encode("utf-8"))
                 else:
-                    zout.writestr(item, zin.read(item.filename))
+                    zout.writestr(item_copy, zin.read(item.filename))
         os.replace(tmp_path, docx_path)
     finally:
         if tmp_path.exists():
@@ -316,6 +406,8 @@ def assemble_docx(
     page_files = sorted(pages_dir.glob("page_*.txt"))
     if up_to_page is not None:
         page_files = [path for path in page_files if int(path.stem.split("_")[1]) <= up_to_page]
+    if not page_files:
+        raise RuntimeError(f"No page text files available for DOCX assembly: {pages_dir}")
 
     document = Document()
     if document.paragraphs and document.paragraphs[0].text == "":
@@ -372,5 +464,16 @@ def assemble_docx(
         stats["run_count"] = _run_count
         stats["page_count"] = len(page_files)
     result_path = save_document_atomic(document, output_path, verify_readable=verify_readable)
+    saved_summary = _verify_docx_visible_content(
+        result_path,
+        stage="save",
+        expected_visible_paragraphs=_paragraph_count,
+    )
     _remove_compatibility_mode(result_path)
+    _verify_docx_visible_content(
+        result_path,
+        stage="compatibility rewrite",
+        expected_visible_paragraphs=_paragraph_count,
+        baseline=saved_summary,
+    )
     return result_path

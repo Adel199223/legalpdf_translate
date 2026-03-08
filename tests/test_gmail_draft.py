@@ -4,15 +4,25 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from docx import Document
 
 from legalpdf_translate.gmail_draft import (
     HONORARIOS_GMAIL_BODY,
     GmailPrereqStatus,
+    build_gmail_batch_reply_request,
     build_honorarios_gmail_request,
     build_honorarios_gmail_subject,
     create_gmail_draft_via_gog,
     assess_gmail_draft_prereqs,
+    validate_translated_docx_artifacts_for_gmail_draft,
 )
+
+
+def _write_docx(path: Path, *paragraphs: str) -> None:
+    document = Document()
+    for paragraph in paragraphs:
+        document.add_paragraph(paragraph)
+    document.save(path)
 
 
 def test_build_honorarios_gmail_subject_uses_case_number() -> None:
@@ -58,6 +68,139 @@ def test_build_honorarios_gmail_request_requires_existing_attachments(tmp_path: 
             translation_docx=translated,
             honorarios_docx=missing,
         )
+
+
+def test_build_honorarios_gmail_request_rejects_duplicate_attachment_paths(tmp_path: Path) -> None:
+    translated = tmp_path / "translated.docx"
+    translated.write_bytes(b"a")
+
+    with pytest.raises(ValueError, match="Duplicate Gmail draft attachment paths"):
+        build_honorarios_gmail_request(
+            gog_path=tmp_path / "gog.exe",
+            account_email="adel.belghali@gmail.com",
+            to_email="beja.judicial@tribunais.org.pt",
+            case_number="109/26.0PBBJA",
+            translation_docx=translated,
+            honorarios_docx=translated,
+        )
+
+
+def test_build_gmail_batch_reply_request_reuses_subject_reply_id_and_all_attachments(tmp_path: Path) -> None:
+    translated_one = tmp_path / "translated-1.docx"
+    translated_two = tmp_path / "translated-2.docx"
+    honorarios = tmp_path / "honorarios.docx"
+    translated_one.write_bytes(b"a")
+    translated_two.write_bytes(b"b")
+    honorarios.write_bytes(b"c")
+
+    request = build_gmail_batch_reply_request(
+        gog_path=tmp_path / "gog.exe",
+        account_email="adel.belghali@gmail.com",
+        to_email="beja.judicial@tribunais.org.pt",
+        subject="Original Gmail subject",
+        reply_to_message_id="msg-123",
+        translated_docxs=(translated_one, translated_two),
+        honorarios_docx=honorarios,
+    )
+
+    assert request.subject == "Original Gmail subject"
+    assert request.reply_to_message_id == "msg-123"
+    assert request.body == HONORARIOS_GMAIL_BODY
+    assert request.attachments == (
+        translated_one.resolve(),
+        translated_two.resolve(),
+        honorarios.resolve(),
+    )
+
+
+def test_build_gmail_batch_reply_request_requires_reply_id_and_translations(tmp_path: Path) -> None:
+    honorarios = tmp_path / "honorarios.docx"
+    honorarios.write_bytes(b"c")
+
+    with pytest.raises(ValueError, match="original Gmail message ID"):
+        build_gmail_batch_reply_request(
+            gog_path=tmp_path / "gog.exe",
+            account_email="adel.belghali@gmail.com",
+            to_email="beja.judicial@tribunais.org.pt",
+            subject="Original Gmail subject",
+            reply_to_message_id="",
+            translated_docxs=(tmp_path / "translated-1.docx",),
+            honorarios_docx=honorarios,
+        )
+
+    with pytest.raises(ValueError, match="At least one translated DOCX"):
+        build_gmail_batch_reply_request(
+            gog_path=tmp_path / "gog.exe",
+            account_email="adel.belghali@gmail.com",
+            to_email="beja.judicial@tribunais.org.pt",
+            subject="Original Gmail subject",
+            reply_to_message_id="msg-123",
+            translated_docxs=(),
+            honorarios_docx=honorarios,
+        )
+
+
+def test_build_gmail_batch_reply_request_rejects_duplicate_attachment_paths(tmp_path: Path) -> None:
+    translated_one = tmp_path / "translated-1.docx"
+    translated_two = tmp_path / "translated-2.docx"
+    translated_one.write_bytes(b"a")
+    translated_two.write_bytes(b"b")
+
+    with pytest.raises(ValueError, match="Duplicate Gmail draft attachment paths"):
+        build_gmail_batch_reply_request(
+            gog_path=tmp_path / "gog.exe",
+            account_email="adel.belghali@gmail.com",
+            to_email="beja.judicial@tribunais.org.pt",
+            subject="Original Gmail subject",
+            reply_to_message_id="msg-123",
+            translated_docxs=(translated_one, translated_two, translated_one),
+            honorarios_docx=translated_two,
+        )
+
+
+def test_validate_translated_docx_artifacts_rejects_honorarios_like_translation(tmp_path: Path) -> None:
+    translated = tmp_path / "translated.docx"
+    honorarios = tmp_path / "honorarios.docx"
+    _write_docx(
+        translated,
+        "Venho por este meio requerer o pagamento dos honorários devidos.",
+        "O documento traduzido contém 264 palavras.",
+        "O Pagamento deverá ser efetuado para o seguinte IBAN: PT50003506490000832760029",
+    )
+    _write_docx(honorarios, "Requerimento de honorários")
+
+    with pytest.raises(ValueError, match="contaminated with honorários content"):
+        validate_translated_docx_artifacts_for_gmail_draft(
+            translated_docxs=(translated,),
+            honorarios_docx=honorarios,
+        )
+
+
+def test_validate_translated_docx_artifacts_rejects_honorarios_identical_bytes(tmp_path: Path) -> None:
+    translated = tmp_path / "translated.docx"
+    honorarios = tmp_path / "honorarios.docx"
+    _write_docx(translated, "Documento traduzido em árabe.")
+    honorarios.write_bytes(translated.read_bytes())
+
+    with pytest.raises(ValueError, match="matches the selected honorários DOCX"):
+        validate_translated_docx_artifacts_for_gmail_draft(
+            translated_docxs=(translated,),
+            honorarios_docx=honorarios,
+        )
+
+
+def test_validate_translated_docx_artifacts_accepts_distinct_clean_files(tmp_path: Path) -> None:
+    translated = tmp_path / "translated.docx"
+    honorarios = tmp_path / "honorarios.docx"
+    _write_docx(translated, "هذه ترجمة عربية سليمة.")
+    _write_docx(honorarios, "Requerimento de honorários distinto.")
+
+    validated = validate_translated_docx_artifacts_for_gmail_draft(
+        translated_docxs=(translated,),
+        honorarios_docx=honorarios,
+    )
+
+    assert validated == (translated.resolve(),)
 
 
 def test_assess_gmail_prereqs_autodetects_single_account(monkeypatch, tmp_path: Path) -> None:
@@ -150,3 +293,36 @@ def test_create_gmail_draft_via_gog_builds_expected_command(monkeypatch, tmp_pat
     assert "--subject" in cmd
     assert cmd.count("--attach") == 2
     assert captured["body"] == HONORARIOS_GMAIL_BODY
+
+
+def test_create_gmail_draft_via_gog_includes_reply_to_message_id(monkeypatch, tmp_path: Path) -> None:
+    gog_path = tmp_path / "gog.exe"
+    translated = tmp_path / "translated.docx"
+    honorarios = tmp_path / "honorarios.docx"
+    translated.write_bytes(b"a")
+    honorarios.write_bytes(b"b")
+
+    captured: dict[str, object] = {}
+
+    def _fake_run_capture(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, '{"draftId":"123"}', "")
+
+    monkeypatch.setattr("legalpdf_translate.gmail_draft._run_capture", _fake_run_capture)
+
+    request = build_gmail_batch_reply_request(
+        gog_path=gog_path,
+        account_email="adel.belghali@gmail.com",
+        to_email="beja.judicial@tribunais.org.pt",
+        subject="Original Gmail subject",
+        reply_to_message_id="msg-123",
+        translated_docxs=(translated,),
+        honorarios_docx=honorarios,
+    )
+    result = create_gmail_draft_via_gog(request)
+
+    assert result.ok is True
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    assert "--reply-to-message-id" in cmd
+    assert cmd[cmd.index("--reply-to-message-id") + 1] == "msg-123"

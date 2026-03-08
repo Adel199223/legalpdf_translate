@@ -1,4 +1,6 @@
 from legalpdf_translate.arabic_pre_tokenize import (
+    LRI,
+    PDI,
     extract_locked_tokens,
     is_portuguese_month_date_token,
     pretokenize_arabic_source,
@@ -37,3 +39,15 @@ def test_non_sensitive_colon_line_is_not_over_tokenized() -> None:
 def test_is_portuguese_month_date_token() -> None:
     assert is_portuguese_month_date_token("10 de fevereiro de 2026") is True
     assert is_portuguese_month_date_token("PT50003506490000832760029") is False
+
+
+def test_bracket_adjacent_identifier_is_wrapped_without_triple_brackets() -> None:
+    text = "21/25.0FBPTM [36231063]"
+    tokenized = pretokenize_arabic_source(text)
+    assert "[[[" not in tokenized
+    assert tokenized == f"[[21/25.0FBPTM]] [{LRI}[[36231063]]{PDI}]"
+    assert extract_locked_tokens(tokenized) == ["21/25.0FBPTM", "36231063"]
+
+
+def test_extract_locked_tokens_ignores_malformed_nested_triple_brackets() -> None:
+    assert extract_locked_tokens("[[[36231063]]]") == []

@@ -24,7 +24,7 @@ from .study_glossary import normalize_study_entries, serialize_study_entries, su
 
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
-SETTINGS_SCHEMA_VERSION = 4
+SETTINGS_SCHEMA_VERSION = 5
 DEFAULT_VOCAB_CASE_ENTITIES = [
     "Ministério Público",
     "Tribunal Judicial",
@@ -139,6 +139,9 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "openai_reasoning_effort_lemma": "high",
     "gmail_gog_path": "",
     "gmail_account_email": "",
+    "gmail_intake_bridge_enabled": False,
+    "gmail_intake_bridge_token": "",
+    "gmail_intake_port": 8765,
 }
 ALLOWED_GUI_KEYS = {
     "settings_schema_version",
@@ -208,6 +211,9 @@ ALLOWED_GUI_KEYS = {
     "ocr_api_key_env_name",
     "gmail_gog_path",
     "gmail_account_email",
+    "gmail_intake_bridge_enabled",
+    "gmail_intake_bridge_token",
+    "gmail_intake_port",
 }
 ALLOWED_JOBLOG_KEYS = {
     "vocab_case_entities",
@@ -501,6 +507,15 @@ def load_gui_settings() -> dict[str, Any]:
     )
     merged["gmail_gog_path"] = str(merged.get("gmail_gog_path", "") or "")
     merged["gmail_account_email"] = str(merged.get("gmail_account_email", "") or "")
+    merged["gmail_intake_bridge_enabled"] = _coerce_bool(
+        merged.get("gmail_intake_bridge_enabled"),
+        False,
+    )
+    merged["gmail_intake_bridge_token"] = str(merged.get("gmail_intake_bridge_token", "") or "").strip()
+    merged["gmail_intake_port"] = max(
+        1,
+        min(65535, _coerce_int(merged.get("gmail_intake_port"), 8765)),
+    )
     merged["settings_schema_version"] = _coerce_int(
         merged.get("settings_schema_version"),
         SETTINGS_SCHEMA_VERSION,

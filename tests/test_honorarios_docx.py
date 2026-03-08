@@ -4,6 +4,7 @@ import os
 import sys
 from datetime import date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 if os.name != "nt" and "DISPLAY" not in os.environ:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -35,6 +36,13 @@ from legalpdf_translate.qt_gui.dialogs import (
 )
 
 
+def _write_docx_with_paragraphs(path: Path, *paragraphs: str) -> None:
+    document = Document()
+    for paragraph in paragraphs:
+        document.add_paragraph(paragraph)
+    document.save(path)
+
+
 def test_format_portuguese_date_uses_full_month_name() -> None:
     assert format_portuguese_date(date(2026, 3, 6)) == "06 de março de 2026"
 
@@ -52,7 +60,7 @@ def test_build_honorarios_paragraph_texts_uses_locked_template() -> None:
     assert paragraphs == [
         ("Número de processo: 109/26.0PBBJA", "left"),
         ("", "left"),
-        ("Exmo. Sr procurador da república\ndo Juízo Local Criminal de Beja\nde Beja", "address"),
+        ("Exmo. Sr(a). Procurador(a) da república do Juízo Local Criminal de Beja", "address"),
         ("", "left"),
         (f"Nome: {FIXED_NAME}", "left"),
         (f"Morada: {FIXED_ADDRESS}", "left"),
@@ -91,7 +99,8 @@ def test_generate_honorarios_docx_has_expected_text_and_alignment(tmp_path: Path
     doc = Document(output)
     paragraphs = doc.paragraphs
     assert paragraphs[0].text == "Número de processo: 109/26.0PBBJA"
-    assert paragraphs[2].text == "Exmo. Sr procurador da república\ndo Juízo Local Criminal de Beja\nde Beja"
+    assert paragraphs[2].text == "Exmo. Sr(a). Procurador(a) da república do Juízo Local Criminal de Beja"
+    assert "\n" not in paragraphs[2].text
     assert paragraphs[12].text == "Melhores cumprimentos,"
     assert paragraphs[14].text == "Espera deferimento,"
     assert paragraphs[16].text == "Beja, 06 de março de 2026"
@@ -100,6 +109,48 @@ def test_generate_honorarios_docx_has_expected_text_and_alignment(tmp_path: Path
     assert paragraphs[16].alignment == WD_ALIGN_PARAGRAPH.CENTER
     assert paragraphs[18].alignment == WD_ALIGN_PARAGRAPH.CENTER
     assert paragraphs[0].runs[0].font.name == "Arial"
+
+
+def test_generate_honorarios_docx_avoids_overwriting_existing_translation(tmp_path: Path) -> None:
+    draft = HonorariosDraft(
+        case_number="21/25.0FBPTM",
+        word_count=264,
+        case_entity="Tribunal Judicial da Comarca de Beja",
+        case_city="Beja",
+        date_pt="08 de março de 2026",
+    )
+    translated = tmp_path / "21-25_AR_20260308_064339.docx"
+    translated.write_bytes(b"translated-bytes")
+    expected_name = Path(default_honorarios_filename(draft.case_number)).stem
+
+    saved = generate_honorarios_docx(draft, translated)
+
+    assert translated.read_bytes() == b"translated-bytes"
+    assert saved != translated.resolve()
+    assert saved.stem.startswith(expected_name)
+    assert saved.exists()
+    doc = Document(saved)
+    assert any("264 palavras" in paragraph.text for paragraph in doc.paragraphs)
+
+
+def test_build_honorarios_paragraph_texts_keeps_case_city_only_in_closing_date() -> None:
+    draft = build_honorarios_draft(
+        case_number="21/25.0FBPTM",
+        word_count=306,
+        case_entity="Tribunal Judicial da Comarca de Beja",
+        case_city="Moura",
+        today=date(2026, 3, 7),
+    )
+
+    paragraphs = build_honorarios_paragraph_texts(draft)
+
+    assert paragraphs[2] == (
+        "Exmo. Sr(a). Procurador(a) da república do Tribunal Judicial da Comarca de Beja",
+        "address",
+    )
+    assert "\n" not in paragraphs[2][0]
+    assert "de Moura" not in paragraphs[2][0]
+    assert paragraphs[16] == ("Moura, 07 de março de 2026", "center")
 
 
 def test_default_honorarios_filename_sanitizes_case_number() -> None:
@@ -128,6 +179,57 @@ def test_honorarios_dialog_validates_required_fields(tmp_path: Path) -> None:
         dialog.case_city_edit.setText("Beja")
         with pytest.raises(ValueError, match="greater than zero"):
             dialog._build_draft()
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_reports_auto_renamed_save_path(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    translated = tmp_path / "21-25_AR_20260308_064339.docx"
+    translated.write_bytes(b"translated-bytes")
+    requested = str(translated)
+    infos: list[str] = []
+    expected_name = Path(default_honorarios_filename("21/25.0FBPTM")).stem
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (requested, "Word Document (*.docx)"),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.information",
+        lambda *args, **kwargs: infos.append(args[2] if len(args) > 2 else kwargs.get("text", "")),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.question",
+        lambda *args, **kwargs: 65536,
+    )
+
+    dialog = QtHonorariosExportDialog(
+        parent=None,
+        draft=HonorariosDraft(
+            case_number="21/25.0FBPTM",
+            word_count=264,
+            case_entity="Tribunal Judicial da Comarca de Beja",
+            case_city="Beja",
+            date_pt="08 de março de 2026",
+        ),
+        default_directory=tmp_path,
+    )
+    try:
+        dialog._generate()
+        assert dialog.saved_path is not None
+        assert dialog.saved_path != translated.resolve()
+        assert dialog.saved_path.stem.startswith(expected_name)
+        assert infos
+        assert str(dialog.saved_path) in infos[0]
+        assert translated.read_bytes() == b"translated-bytes"
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -351,6 +453,10 @@ def test_save_to_joblog_dialog_offers_gmail_draft_for_current_run_export(
             },
         )(),
     )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.validate_translated_docx_artifacts_for_gmail_draft",
+        lambda **kwargs: tuple(kwargs["translated_docxs"]),
+    )
 
     def _fake_build_request(**kwargs):
         captured["request_kwargs"] = kwargs
@@ -458,6 +564,10 @@ def test_save_to_joblog_dialog_uses_partial_docx_for_gmail_when_final_output_mis
                 "accounts": ("adel.belghali@gmail.com",),
             },
         )(),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.validate_translated_docx_artifacts_for_gmail_draft",
+        lambda **kwargs: tuple(kwargs["translated_docxs"]),
     )
     def _fake_build_request(**kwargs):
         captured["request_kwargs"] = kwargs
@@ -646,6 +756,10 @@ def test_joblog_window_honorarios_export_offers_gmail_draft_for_selected_row(
         )(),
     )
     monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.validate_translated_docx_artifacts_for_gmail_draft",
+        lambda **kwargs: tuple(kwargs["translated_docxs"]),
+    )
+    monkeypatch.setattr(
         "legalpdf_translate.qt_gui.dialogs.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("picker should not open when output_docx_path is stored")),
     )
@@ -760,6 +874,10 @@ def test_joblog_window_honorarios_export_falls_back_to_stored_partial_docx(
                 "accounts": ("adel.belghali@gmail.com",),
             },
         )(),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.validate_translated_docx_artifacts_for_gmail_draft",
+        lambda **kwargs: tuple(kwargs["translated_docxs"]),
     )
     monkeypatch.setattr(
         "legalpdf_translate.qt_gui.dialogs.QFileDialog.getOpenFileName",
@@ -940,6 +1058,10 @@ def test_joblog_window_honorarios_export_stops_when_translation_docx_picker_canc
         )(),
     )
     monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.validate_translated_docx_artifacts_for_gmail_draft",
+        lambda **kwargs: tuple(kwargs["translated_docxs"]),
+    )
+    monkeypatch.setattr(
         "legalpdf_translate.qt_gui.dialogs.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: ("", ""),
     )
@@ -1026,6 +1148,10 @@ def test_joblog_window_honorarios_export_persists_selected_translation_docx_for_
                 "accounts": ("adel.belghali@gmail.com",),
             },
         )(),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.validate_translated_docx_artifacts_for_gmail_draft",
+        lambda **kwargs: tuple(kwargs["translated_docxs"]),
     )
     monkeypatch.setattr(
         "legalpdf_translate.qt_gui.dialogs.QFileDialog.getOpenFileName",
@@ -1153,6 +1279,10 @@ def test_joblog_window_honorarios_export_recovers_exact_run_id_translation_docx(
         )(),
     )
     monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.validate_translated_docx_artifacts_for_gmail_draft",
+        lambda **kwargs: tuple(kwargs["translated_docxs"]),
+    )
+    monkeypatch.setattr(
         "legalpdf_translate.qt_gui.dialogs.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("picker should not open when exact run_id recovery succeeds")),
     )
@@ -1277,6 +1407,10 @@ def test_joblog_window_honorarios_export_recovers_exact_run_id_partial_docx(
                 "accounts": ("adel.belghali@gmail.com",),
             },
         )(),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.validate_translated_docx_artifacts_for_gmail_draft",
+        lambda **kwargs: tuple(kwargs["translated_docxs"]),
     )
     monkeypatch.setattr(
         "legalpdf_translate.qt_gui.dialogs.QFileDialog.getOpenFileName",
@@ -1409,6 +1543,10 @@ def test_joblog_window_honorarios_export_falls_back_to_picker_when_run_id_matche
         )(),
     )
     monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.validate_translated_docx_artifacts_for_gmail_draft",
+        lambda **kwargs: tuple(kwargs["translated_docxs"]),
+    )
+    monkeypatch.setattr(
         "legalpdf_translate.qt_gui.dialogs.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(picked), "Word Document (*.docx)"),
     )
@@ -1533,3 +1671,110 @@ def test_joblog_window_honorarios_export_warns_when_gmail_not_ready(tmp_path: Pa
             app.quit()
 
     assert "No Gmail account is authenticated in gog." in captured["warning"]
+
+
+def test_save_to_joblog_gmail_draft_blocks_contaminated_translation_docx(tmp_path: Path, monkeypatch) -> None:
+    translated = tmp_path / "translated.docx"
+    honorarios = tmp_path / "honorarios.docx"
+    _write_docx_with_paragraphs(
+        translated,
+        "Venho por este meio requerer o pagamento dos honorários devidos.",
+        "O documento traduzido contém 264 palavras.",
+        "O Pagamento deverá ser efetuado para o seguinte IBAN: PT50003506490000832760029",
+    )
+    _write_docx_with_paragraphs(honorarios, "Requerimento de honorários distinto.")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.assess_gmail_draft_prereqs",
+        lambda **kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path(r"C:\gog.exe"),
+            account_email="adel.belghali@gmail.com",
+            accounts=("adel.belghali@gmail.com",),
+        ),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.question",
+        lambda *args, **kwargs: 16384,
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.critical",
+        lambda *args, **kwargs: captured.setdefault(
+            "critical",
+            args[2] if len(args) > 2 else kwargs.get("text"),
+        ),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.build_honorarios_gmail_request",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("draft request should not be built for contaminated translation artifacts")),
+    )
+
+    fake = SimpleNamespace(
+        _gui_settings={"gmail_gog_path": "", "gmail_account_email": ""},
+        court_email_combo=SimpleNamespace(currentText=lambda: "beja.judicial@tribunais.org.pt"),
+        case_number_edit=SimpleNamespace(text=lambda: "21/25.0FBPTM"),
+        _current_translation_docx_path=lambda: translated.resolve(),
+    )
+
+    QtSaveToJobLogDialog._offer_gmail_draft_for_honorarios(fake, honorarios.resolve())
+
+    assert "contaminated with honorários content" in captured["critical"]
+    assert str(translated.resolve()) in captured["critical"]
+
+
+def test_joblog_gmail_draft_blocks_contaminated_historical_translation_docx(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    translated = tmp_path / "translated.docx"
+    honorarios = tmp_path / "honorarios.docx"
+    _write_docx_with_paragraphs(
+        translated,
+        "Venho por este meio requerer o pagamento dos honorários devidos.",
+        "O documento traduzido contém 264 palavras.",
+    )
+    _write_docx_with_paragraphs(honorarios, "Requerimento de honorários distinto.")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.assess_gmail_draft_prereqs",
+        lambda **kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path(r"C:\gog.exe"),
+            account_email="adel.belghali@gmail.com",
+            accounts=("adel.belghali@gmail.com",),
+        ),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.question",
+        lambda *args, **kwargs: 16384,
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.critical",
+        lambda *args, **kwargs: captured.setdefault(
+            "critical",
+            args[2] if len(args) > 2 else kwargs.get("text"),
+        ),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.build_honorarios_gmail_request",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("draft request should not be built for contaminated historical artifacts")),
+    )
+
+    fake = SimpleNamespace(
+        _gui_settings={"gmail_gog_path": "", "gmail_account_email": ""},
+        _historical_translation_docx_path=lambda row, honorarios_docx=None: translated.resolve(),
+        _persist_historical_translation_docx=lambda row, path: None,
+    )
+    row = {
+        "court_email": "beja.judicial@tribunais.org.pt",
+        "case_number": "21/25.0FBPTM",
+    }
+
+    QtJobLogWindow._offer_gmail_draft_for_honorarios(fake, row, honorarios.resolve())
+
+    assert "contaminated with honorários content" in captured["critical"]
+    assert str(translated.resolve()) in captured["critical"]

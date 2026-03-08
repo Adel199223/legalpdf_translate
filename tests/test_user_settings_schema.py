@@ -59,11 +59,38 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert loaded["ocr_engine"] == "local_then_api"
     assert loaded["gmail_gog_path"] == ""
     assert loaded["gmail_account_email"] == ""
+    assert loaded["gmail_intake_bridge_enabled"] is False
+    assert loaded["gmail_intake_bridge_token"] == ""
+    assert loaded["gmail_intake_port"] == 8765
     assert isinstance(loaded["allow_xhigh_escalation"], bool)
     assert loaded["perf_timeout_text_seconds"] == 480
     assert loaded["perf_timeout_image_seconds"] == 720
     assert loaded["ocr_api_provider"] in {"openai", "gemini"}
     assert loaded["ocr_api_provider_default"] in {"openai", "gemini"}
+
+
+def test_load_gui_settings_coerces_gmail_intake_bridge_fields(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 5,
+                "gmail_intake_bridge_enabled": True,
+                "gmail_intake_bridge_token": "  shared-token  ",
+                "gmail_intake_port": "70000",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["settings_schema_version"] == 5
+    assert loaded["gmail_intake_bridge_enabled"] is True
+    assert loaded["gmail_intake_bridge_token"] == "shared-token"
+    assert loaded["gmail_intake_port"] == 65535
 
 
 def test_load_gui_settings_migrates_old_last_used_fields(tmp_path: Path, monkeypatch) -> None:

@@ -136,6 +136,17 @@ def _should_try_wsl_git(stderr_text: str, repo: Path) -> bool:
     return False
 
 
+def _resolve_wsl_executable() -> str | None:
+    found = shutil.which("wsl.exe")
+    if found:
+        return found
+    system_root = str(os.environ.get("SystemRoot", r"C:\Windows") or r"C:\Windows").strip() or r"C:\Windows"
+    fallback = Path(system_root) / "System32" / "wsl.exe"
+    if fallback.exists():
+        return str(fallback)
+    return None
+
+
 def _run_git_proc(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     native = subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -148,10 +159,11 @@ def _run_git_proc(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     if not _should_try_wsl_git(native.stderr or native.stdout, repo):
         return native
     wsl_repo = _to_wsl_path(repo)
-    if not wsl_repo or not shutil.which("wsl.exe"):
+    wsl_exe = _resolve_wsl_executable()
+    if not wsl_repo or not wsl_exe:
         return native
     return subprocess.run(
-        ["wsl.exe", "--exec", "git", "-C", wsl_repo, *args],
+        [wsl_exe, "--exec", "git", "-C", wsl_repo, *args],
         text=True,
         capture_output=True,
         check=False,
