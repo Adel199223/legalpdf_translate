@@ -197,3 +197,80 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_intake`
   - Template: `docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md`
   - File: `C:\Users\FA507\Downloads\run_report.md`
+
+### product-arabic-docx-word-right-alignment
+- Title: Arabic DOCX right alignment in Word could not be solved durably with OOXML-only writer changes
+- First seen timestamp: `2026-03-08T00:00:00Z`
+- Last seen timestamp: `2026-03-08T20:45:00Z`
+- Repeat count: `4`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - Arabic DOCX output still opened left-aligned in Word even though the text itself remained RTL
+  - some attempted fixes worsened mixed Arabic/Portuguese line ordering or misplaced Latin fragments
+  - source-side XML/test changes could appear correct while the real Word-rendered document still required manual right alignment
+- Likely root cause:
+  - mixed RTL/LTR Word layout is not reliably controlled by the current OOXML writer path alone, so writer-only fixes were not durable enough for shipped user-visible behavior
+- Attempted fix history:
+  - `2026-03-08T00:00:00Z` — switched RTL paragraph handling toward left-justified bidi semantics; outcome: insufficient because mixed Arabic/Portuguese ordering got worse
+  - `2026-03-08T00:00:00Z` — kept `jc=right` while removing paragraph bidi/rtl; outcome: insufficient because mixed ordering improved but Word still did not visually align the page to the right
+  - `2026-03-08T00:00:00Z` — tried a bidi-only paragraph shape with build/delivery verification; outcome: insufficient because it was not durable enough as a shipped fix in the real host/build path
+- Accepted fix:
+  - `2026-03-08T20:45:00Z` — added an Arabic-only Word review gate with `Align Right + Save`, automatic save detection, and manual fallback actions before Save to Job Log / Gmail continuation
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/LOCAL_CAPABILITIES.md`
+  - `docs/assistant/LOCAL_ENV_PROFILE.local.md`
+  - `docs/assistant/DOCS_REFRESH_NOTES.md`
+- Bootstrap relevance: `possible`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - Arabic Word review gate behavior
+    - Windows Word + PowerShell same-host requirement
+    - durable memory of failed OOXML-only fixes without presenting them as current behavior
+- Evidence refs:
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-08_arabic_docx_review_gate.md`
+  - File: `src/legalpdf_translate/word_automation.py`
+  - File: `src/legalpdf_translate/qt_gui/dialogs.py`
+  - File: `tests/test_word_automation.py`
+  - File: `tests/test_qt_app_state.py`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+
+### workflow-gmail-post-save-finalization-regression
+- Title: Gmail batch post-save continuation changes regressed behavior when special-casing the last saved item
+- First seen timestamp: `2026-03-08T00:00:00Z`
+- Last seen timestamp: `2026-03-08T20:45:00Z`
+- Repeat count: `1`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - a same-day change to make `Save` continue Gmail finalization made the flow worse and had to be rolled back
+  - Gmail batch post-save behavior became harder to reason about because final-item behavior diverged from the conservative continuation path
+- Likely root cause:
+  - Gmail batch post-save continuation is stateful and fragile, so special-casing the last item without full host validation can regress user-visible flow quickly
+- Attempted fix history:
+  - `2026-03-08T00:00:00Z` — added a last-item post-save finalization helper and related tests; outcome: insufficient because the behavior regressed and the change was rolled back
+- Accepted fix:
+  - `2026-03-08T20:45:00Z` — reverted to the previous conservative `_start_next_gmail_batch_translation()` post-save path and raised the change bar to full-file green plus manual host validation before touching Gmail post-save continuation again
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
+  - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `docs/assistant/ISSUE_MEMORY.md`
+  - `docs/assistant/DOCS_REFRESH_NOTES.md`
+- Bootstrap relevance: `possible`
+- Docs-sync relevance:
+  - Priority: `medium`
+  - Targets:
+    - Gmail batch post-save continuation caution
+    - require stronger validation before changing final-item save behavior again
+- Evidence refs:
+  - File: `src/legalpdf_translate/qt_gui/app_window.py`
+  - File: `tests/test_qt_app_state.py`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`

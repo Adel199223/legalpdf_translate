@@ -23,6 +23,7 @@ Keep it factual and current. Do not list aspirational tooling that is not actual
 - OpenAI docs MCP/doc tooling is available for OpenAI-specific freshness checks
 - Browser automation tooling is available for web/UI validation when appropriate
 - Qt build identity enforcement exists through `tooling/launch_qt_build.py`
+- PowerShell COM automation is available for host-bound Word actions when Microsoft Word is installed on Windows
 - Local test isolation via pytest/temp-dir patterns and listener-ownership debugging are expected and available for host-bound workflow triage
 - Docs/validator tooling exists through:
   - `tooling/validate_agent_docs.dart`
@@ -30,11 +31,13 @@ Keep it factual and current. Do not list aspirational tooling that is not actual
 
 ## Relevant Local External Tools
 - Windows `gog` CLI for Gmail draft creation and related Google-account operations
+- Windows Microsoft Word for DOCX review and the Arabic `Align Right + Save` runtime assist
 - Windows Python `.venv311` for canonical local execution
 - WSL/Linux shell tooling for pure code/docs/test work
 
 ## Constraints
 - Windows-local auth and desktop integrations must be validated on Windows, not only in WSL.
+- The Arabic DOCX review gate depends on Windows Word plus PowerShell COM automation; WSL-only DOCX checks are insufficient for that path.
 - PATH assumptions are not enough for Windows-local tools; prefer explicit executable resolution when the app depends on them.
 - Multi-worktree GUI testing must use canonical build identity rules instead of ad hoc launches.
 - Host-bound tests should avoid live `%APPDATA%`/roaming settings and default user-facing ports unless the test explicitly opts into real machine state.

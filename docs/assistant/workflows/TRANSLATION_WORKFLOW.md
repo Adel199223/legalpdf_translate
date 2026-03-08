@@ -83,6 +83,8 @@ python3 -m pytest -q tests/test_gmail_batch.py tests/test_translation_report.py 
 - Output validation breakage: run validator test subset and inspect failing gate details.
 - Gmail-intake translation failure: inspect `run_report.md` / `run_summary.json` first. For Arabic, check additive `validator_defect_reason`, `ar_violation_kind`, and sampled snippets before changing prompts or validators.
 - Gmail batch finalization/draft failure: inspect the durable `gmail_batch_session.json` under `<effective_outdir>/_gmail_batch_sessions/<session_id>/` before debugging Gmail transport or attachments ad hoc.
+- Arabic DOCX visual-alignment complaint: treat the Word review gate as the current supported runtime behavior first. Verify the Windows Word/manual-or-assisted review path before attempting more OOXML-writer changes.
+- Arabic review-gate automation failure: validate on the same Windows host with installed Word and PowerShell COM. WSL-only checks are insufficient for this feature.
 - Repeated Gmail intake “accepted but idle” reports: verify the listener on `127.0.0.1:<gmail_intake_port>` belongs to `python.exe -m legalpdf_translate.qt_app`, not to `pytest`.
 - OCR-heavy transport stall: check the authoritative request budgets first. The app now owns total budgets and disables SDK implicit retries, so a text-only OCR-success page should fail or complete within the text-page deadline instead of drifting into an hour-long wait.
 - Suspected rate-limit report with `rate_limit_hits=0`: treat it as transport instability until proven otherwise. Current failure classification distinguishes `transport_instability` from true rate limiting.

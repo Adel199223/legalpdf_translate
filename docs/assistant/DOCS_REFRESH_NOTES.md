@@ -859,3 +859,17 @@ Verification commands/results:
 - Updated `ISSUE_MEMORY.md` / `ISSUE_MEMORY.json` because of two new repeated issue-memory entries:
   - pytest/live Gmail bridge cross-contamination through real `%APPDATA%` and port `8765`
   - fragmented Gmail-intake diagnostics across extension/app/run/finalization surfaces
+
+# 2026-03-08
+- Ran a scoped Assistant Docs Sync for the shipped Arabic DOCX review-gate feature and its durable issue-memory follow-up.
+- Synced current-truth and user-facing docs for:
+  - the Arabic Word review gate before `Save to Job Log` in both normal runs and Arabic Gmail batch items
+  - `Align Right + Save`, save-detection auto-resume, and manual `Continue now` / `Continue without changes` fallback behavior
+  - the `Open translated DOCX` action inside `Save to Job Log`
+  - Windows Word + PowerShell COM plus same-host Windows validation as the runtime contract for this feature
+- Updated `ISSUE_MEMORY.md` / `ISSUE_MEMORY.json` because of two new issue classes:
+  - repeated Arabic DOCX right-alignment back-and-forth where multiple OOXML-only fixes failed or regressed mixed Arabic/LTR rendering before the Word review gate became the accepted mitigation
+  - a reverted Gmail post-save finalization experiment that made the flow worse and established a higher validation bar for future changes in that area
+- Superseding note:
+  - the older historical Arabic writer-only refresh notes from `2026-02-13` should not be treated as the current supported mitigation for user-facing Arabic right alignment in Word
+  - the current supported mitigation is the Arabic Word review gate plus manual-or-assisted save before continuation

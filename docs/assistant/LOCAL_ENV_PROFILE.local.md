@@ -17,6 +17,7 @@ It is intentionally tracked here because this repo is a personal harness and the
 ### Prefer Windows When
 - launching the Qt app for visible end-user testing
 - validating Gmail draft creation through Windows `gog`
+- validating the Arabic DOCX Word review gate or `Align Right + Save`
 - using browser/account-linked tooling that must share auth state with the desktop app
 - debugging desktop-window behavior, focus, or visible UI issues
 
@@ -31,9 +32,12 @@ If the feature depends on local auth state, browser state, or desktop runtime st
 Examples in this repo:
 - Gmail draft creation through Windows `gog`
 - visible Qt app testing
+- Arabic DOCX review through Windows Word / PowerShell COM automation
 - browser/account-linked local tooling
 
 Before browser/app or bridge triage on Windows, verify any required localhost listener is owned by the expected process. Unexpected listener ownership is a preflight `unavailable` condition, not a product failure.
+
+For the Arabic DOCX review gate, WSL-only validation is insufficient because Word automation, visible Word editing, and save-detection behavior are Windows-host runtime facts.
 
 ## Performance and Tolerance Guidance
 - This machine can tolerate local Qt/UI testing, OCR validation, and moderate local automation work.

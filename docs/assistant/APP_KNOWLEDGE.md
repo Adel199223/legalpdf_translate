@@ -29,6 +29,7 @@ For support/non-technical explanations, start with:
 - Windows-native GUI launch/debug routes to `docs/assistant/QT_UI_KNOWLEDGE.md` and `docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md`.
 - OCR-heavy warning choices, bounded cancel-wait behavior, and translated-output Job Log word counts route to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md` and `APP_KNOWLEDGE.md`.
 - Gmail draft + honorarios attachment reuse routes to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md` and `APP_KNOWLEDGE.md`.
+- Arabic DOCX Word review, `Align Right + Save`, save-detection fallback behavior, and `Open translated DOCX` route to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`, `docs/assistant/features/APP_USER_GUIDE.md`, `APP_KNOWLEDGE.md`, and the local host docs.
 - Listener ownership, test isolation, and multi-surface handoff/run/finalization diagnostics route to `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`.
 - Gmail intake extension setup, exact-message batch review, per-attachment start-page selection, in-app preview, sequential Save-to-Job-Log checkpoints, and one threaded reply-draft batch semantics route to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md` and `APP_KNOWLEDGE.md`.
 - Gmail intake troubleshooting now routes by failure surface:
@@ -51,6 +52,7 @@ Cost-guardrail support routing:
 - Canonical current-truth also includes Gmail draft attachment reuse for both current-run and historical honorarios exports, with stored-path reuse and exact `run_id` recovery before any manual picker fallback.
 - Canonical current-truth also includes the Windows-only Gmail intake bridge, exact-message Gmail fetch/review, sequential Save-to-Job-Log gating, one honorarios DOCX for the confirmed batch, and one threaded Gmail reply draft with no auto-send.
 - Canonical current-truth also includes durable Gmail batch session diagnostics (`gmail_batch_session.json`), run-level `gmail_batch_context` in `run_summary.json` / `run_report.md`, per-attachment Gmail review start-page selection, lazy in-app PDF preview, preview-cache reuse during Prepare, visible Gmail bridge-unavailable UI state, stale-output/stale-checkpoint fail-closed behavior, honorarios auto-rename on save collision, duplicate/contaminated attachment blocking before Gmail draft creation, and additive `selected_start_page` reporting.
+- Canonical current-truth also includes the Arabic-only Word review gate before `Save to Job Log`, Windows Word + PowerShell COM automation for `Align Right + Save`, save-detection auto-resume plus manual fallback actions, and `Open translated DOCX` inside `Save to Job Log`. The current supported mitigation is manual-or-assisted Word review, not a pure OOXML auto-right-alignment fix.
 
 ## Workflow Routing
 - Core translation: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`

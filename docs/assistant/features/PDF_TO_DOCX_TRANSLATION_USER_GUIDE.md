@@ -109,8 +109,11 @@ After a successful run, the app can prefill the Job Log dialog using the latest 
    - quality risk score
    - translated output word count
 4. Edit any field you want before saving.
+5. Use `Open translated DOCX` if you want to reopen the current run's final or partial DOCX from inside the dialog.
 
 The prefill helps, but you still stay in control of the saved row.
+
+For Arabic target runs, the app inserts an Arabic review step before `Save to Job Log` opens. That dialog tries to open the DOCX in Word automatically, offers `Align Right + Save`, and watches for a real save so the app can continue automatically. If Word automation or reopening fails, the supported fallback is manual: open or keep editing the DOCX in Word, save it, then use `Continue now` if detection misses, or `Continue without changes` if you want to skip the edit.
 
 `Words` now means translated output words. The app uses this precedence:
 1. final DOCX
@@ -152,9 +155,10 @@ Use this when the source files already arrived in Gmail and you want one reply d
 6. For PDFs, scroll through the preview and click `Use this page as start` if the first page should be skipped; image attachments stay fixed to page `1`.
 7. `Prepare selected attachments` stages the files for the batch, and already previewed files are reused when possible instead of being downloaded again.
 8. The app then translates those files one by one.
-9. After each successful translation, the app opens `Save to Job Log` and requires a confirmed save before continuing.
-10. When all selected files are confirmed, the app can generate one honorários DOCX using the combined translated word count for the batch.
-11. If that honorários step succeeds, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários DOCX.
+9. After each successful translation, Arabic items first pause in the Word review gate. The dialog auto-opens the DOCX in Word, offers `Align Right + Save`, and auto-continues after a detected save; if automation fails, you can save manually and use `Continue now` or `Continue without changes`.
+10. The app then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
+11. When all selected files are confirmed, the app can generate one honorários DOCX using the combined translated word count for the batch.
+12. If that honorários step succeeds, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários DOCX.
 
 ### Batch rules
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
@@ -162,6 +166,7 @@ Use this when the source files already arrived in Gmail and you want one reply d
 - The review list hides inline/signature/media junk and shows only supported source attachments from that exact message.
 - PDF preview uses a lazy continuous-scroll viewer so large documents can be inspected before translation without rendering every page up front.
 - If the current output folder is stale or missing, Gmail batch startup recovers automatically by preferring the current valid folder, then a valid default output folder, then `Downloads`.
+- For Arabic Gmail items, the DOCX saved after the Word review gate is the reviewed artifact used downstream for that batch item.
 - Every confirmed item in the batch must end with the same `case_number`, `case_entity`, `case_city`, and `court_email`.
 - If any confirmed item differs, stop and split the email into separate reply batches.
 - The final Gmail result is always a draft only. The app does not auto-send.
@@ -218,6 +223,7 @@ Queue mode writes these sidecar files next to the manifest:
 24. A WSL-only `gog` smoke is not enough for final Gmail intake validation. The signed-in browser, Windows app, and Windows `gog` must be checked on the same host.
 25. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets.
 26. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
+27. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.

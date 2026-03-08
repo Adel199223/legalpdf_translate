@@ -128,6 +128,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - This is the main cross-run/debug bridge between browser handoff, per-item translation runs, and Gmail draft finalization.
   - The browser extension does not write its own report file.
 - Save-to-Job-Log pre-fills those values from `run_summary.json` when available, while preserving user edit control before save.
+- Save-to-Job-Log now also exposes `Open translated DOCX`, which reopens the resolved final or partial DOCX for the current run without leaving the dialog.
 - Job Log `Words` now means translated output words, with precedence: final DOCX, then partial DOCX, then `pages/page_*.txt`, then `0`.
 - `expected_total` and `profit` in the Save-to-Job-Log flow are recalculated from that translated-output word count.
 - Gmail draft attachment reuse for honorarios now prefers known translated output artifacts in this order: final DOCX path, partial DOCX path, exact `run_id` recovery, then a manual `.docx` picker only as the final fallback.
@@ -157,7 +158,9 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Previewed attachments are cached temporarily and reused during `Prepare selected attachments` when still valid so the batch does not redownload the same file unnecessarily.
 - If the current output folder is stale or missing, Gmail batch startup recovers automatically in this order: current valid output folder, valid `default_outdir`, then `Downloads`.
 - Completed checkpoints with missing page artifacts are treated as stale and are not reused as resumable state.
+- Arabic runs now insert a Word review gate before Save-to-Job-Log opens. The dialog auto-opens the DOCX in Word, offers `Align Right + Save`, auto-continues after a detected save, and still allows manual save plus `Continue now` / `Continue without changes` when automation or reopen fails.
 - Selected attachments are translated one at a time. After each successful translation, the app opens Save to Job Log and requires a confirmed save before continuing.
+- For Arabic Gmail batch items, the DOCX saved after that review gate is the reviewed artifact later used by the downstream batch item flow.
 - A Gmail batch remains valid only while every confirmed item resolves to the same `case_number`, `case_entity`, `case_city`, and `court_email`. Any mismatch stops the batch and tells the user to split it into separate replies.
 - After all selected attachments are translated and confirmed, the user may generate one honorarios DOCX for the batch and one Gmail reply draft in the original thread. The app attaches all translated DOCXs plus that single honorarios DOCX and never auto-sends.
 - If the user picks an existing translated filename when saving honorários, the app auto-renames the honorários file instead of overwriting the translation.
@@ -169,6 +172,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - attached launch: `python -m legalpdf_translate.qt_app`
   - detached Windows launch: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`
 - `python -m legalpdf_translate.qt_gui` remains a valid GUI compatibility entrypoint, but `qt_app` is the canonical docs command.
+- Arabic DOCX review/automation is a Windows-host feature that depends on installed Microsoft Word plus PowerShell COM automation; WSL-only validation is not enough for this path.
 - Screenshot-driven Qt UI work should use the fixed render contract in `docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md` rather than approximate visual review.
 - OCR-heavy documents should start with a small slice and safe settings:
   - `ocr_mode=always`

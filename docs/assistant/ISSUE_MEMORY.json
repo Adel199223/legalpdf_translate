@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-03-08T09:27:00Z",
+  "last_updated": "2026-03-08T20:45:00Z",
   "issues": [
     {
       "id": "workflow-wrong-build-under-test",
@@ -198,6 +198,148 @@
         {
           "type": "file",
           "ref": "C:\\Users\\FA507\\Downloads\\run_report.md"
+        }
+      ]
+    },
+    {
+      "id": "product-arabic-docx-word-right-alignment",
+      "title": "Arabic DOCX right alignment in Word could not be solved durably with OOXML-only writer changes",
+      "first_seen_timestamp": "2026-03-08T00:00:00Z",
+      "last_seen_timestamp": "2026-03-08T20:45:00Z",
+      "repeat_count": 4,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Arabic DOCX output still opened left-aligned in Word even though the text itself remained RTL.",
+        "Some attempted fixes worsened mixed Arabic/Portuguese line ordering or misplaced Latin fragments.",
+        "Source-side XML/test changes could appear correct while the real Word-rendered document still required manual right alignment."
+      ],
+      "likely_root_cause": "Mixed RTL/LTR Word layout is not reliably controlled by the current OOXML writer path alone, so writer-only fixes were not durable enough for shipped user-visible behavior.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-08T00:00:00Z",
+          "summary": "Switched RTL paragraph handling toward left-justified bidi semantics.",
+          "outcome": "insufficient"
+        },
+        {
+          "timestamp": "2026-03-08T00:00:00Z",
+          "summary": "Kept jc=right while removing paragraph bidi/rtl.",
+          "outcome": "insufficient"
+        },
+        {
+          "timestamp": "2026-03-08T00:00:00Z",
+          "summary": "Tried a bidi-only paragraph shape with build/delivery verification.",
+          "outcome": "insufficient"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-08T20:45:00Z",
+        "summary": "Added an Arabic-only Word review gate with Align Right + Save, automatic save detection, and manual fallback actions before Save to Job Log / Gmail continuation.",
+        "expected_result": "Arabic output can be reviewed and aligned on the real Windows Word surface before the app continues, without claiming a durable OOXML-only right-alignment fix."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/TRANSLATION_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/LOCAL_CAPABILITIES.md",
+        "docs/assistant/LOCAL_ENV_PROFILE.local.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "Arabic Word review gate behavior",
+          "Windows Word + PowerShell same-host requirement",
+          "durable memory of failed OOXML-only fixes without presenting them as current behavior"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-08_arabic_docx_review_gate.md"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/word_automation.py"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/qt_gui/dialogs.py"
+        },
+        {
+          "type": "file",
+          "ref": "tests/test_word_automation.py"
+        },
+        {
+          "type": "file",
+          "ref": "tests/test_qt_app_state.py"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        }
+      ]
+    },
+    {
+      "id": "workflow-gmail-post-save-finalization-regression",
+      "title": "Gmail batch post-save continuation changes regressed behavior when special-casing the last saved item",
+      "first_seen_timestamp": "2026-03-08T00:00:00Z",
+      "last_seen_timestamp": "2026-03-08T20:45:00Z",
+      "repeat_count": 1,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "A same-day change to make Save continue Gmail finalization made the flow worse and had to be rolled back.",
+        "Gmail batch post-save behavior became harder to reason about because final-item behavior diverged from the conservative continuation path."
+      ],
+      "likely_root_cause": "Gmail batch post-save continuation is stateful and fragile, so special-casing the last item without full host validation can regress user-visible flow quickly.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-08T00:00:00Z",
+          "summary": "Added a last-item post-save finalization helper and related tests.",
+          "outcome": "insufficient"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-08T20:45:00Z",
+        "summary": "Reverted to the previous conservative _start_next_gmail_batch_translation() post-save path and raised the change bar to full-file green plus manual host validation before touching Gmail post-save continuation again.",
+        "expected_result": "Future Gmail post-save changes should not ship without both broad automated coverage and a real host check of the user-visible batch flow."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/TRANSLATION_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "docs/assistant/ISSUE_MEMORY.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "medium",
+        "targets": [
+          "Gmail batch post-save continuation caution",
+          "require stronger validation before changing final-item save behavior again"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/qt_gui/app_window.py"
+        },
+        {
+          "type": "file",
+          "ref": "tests/test_qt_app_state.py"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
         }
       ]
     }

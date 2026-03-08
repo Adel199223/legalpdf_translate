@@ -55,10 +55,11 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 2. If a warning says `xhigh` can multiply cost and time, choose `Switch to fixed high` unless you intentionally want the slower, more expensive option.
 3. If an OCR-heavy warning appears for a scanned document, choose `Apply safe OCR profile` to fix the current run without changing your saved defaults.
 4. After a run finishes, open the Review Queue if pages were flagged for manual checking.
-5. Save the finished run to the Job Log so the case and cost details are stored together.
-6. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
-7. Use Gmail intake when you want to start from one open Gmail message instead of choosing files manually.
-8. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when `Court Email` is available.
+5. For Arabic runs, review the DOCX in Word when the app pauses for that step, then save it so the app can continue automatically.
+6. Save the finished run to the Job Log so the case and cost details are stored together.
+7. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
+8. Use Gmail intake when you want to start from one open Gmail message instead of choosing files manually.
+9. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when `Court Email` is available.
 
 ## Gmail Intake Batch Replies
 1. In `Settings > Keys & Providers > Gmail Drafts (Windows)`, turn on the Gmail intake bridge and keep the app running on Windows.
@@ -70,11 +71,12 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 7. Use `Preview selected attachment` when you need to inspect a file before preparing it.
 8. In preview, scroll the PDF and click `Use this page as start` if the first page is only a cover sheet or otherwise should not be translated.
 9. When you click `Prepare selected attachments`, already previewed files are reused when possible instead of being downloaded again.
-10. The app translates the selected files one by one and stops at `Save to Job Log` after every successful file.
-11. Save each file before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
-12. If one file resolves to a different case or court, stop and split the work into separate batches.
-13. After the last file, you can generate one honorários DOCX and one Gmail reply draft in the original thread.
-14. The app creates a draft only. It does not send the email automatically.
+10. The app translates the selected files one by one.
+11. Arabic files pause in a Word review step before `Save to Job Log`. Save the DOCX there and the app continues automatically; if save detection misses, use `Continue now` after saving.
+12. Save each file before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
+13. If one file resolves to a different case or court, stop and split the work into separate batches.
+14. After the last file, you can generate one honorários DOCX and one Gmail reply draft in the original thread.
+15. The app creates a draft only. It does not send the email automatically.
 
 ## If Gmail Intake Stops Early
 1. If the page says the app is not listening, confirm the bridge is enabled and the Windows app is still running.
