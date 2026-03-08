@@ -87,6 +87,17 @@
       ]
     },
     {
+      "id": "harness_isolation_diagnostics",
+      "path": "docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md",
+      "required": false,
+      "topics": [
+        "test isolation from live state",
+        "listener ownership checks",
+        "durable session diagnostics",
+        "support packet ordering"
+      ]
+    },
+    {
       "id": "bootstrap_update_policy",
       "path": "docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md",
       "required": false,

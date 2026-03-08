@@ -37,6 +37,7 @@
 - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
 - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
 - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
+- `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
 - `docs/assistant/workflows/FEATURE_WORKFLOW.md` (compat shim)
 - `docs/assistant/workflows/DATA_WORKFLOW.md` (compat shim)
 

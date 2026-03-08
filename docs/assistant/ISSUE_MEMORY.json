@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-03-07T10:33:19Z",
+  "last_updated": "2026-03-08T09:27:00Z",
   "issues": [
     {
       "id": "workflow-wrong-build-under-test",
@@ -77,6 +77,127 @@
         {
           "type": "worktree",
           "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_integration"
+        }
+      ]
+    },
+    {
+      "id": "harness-live-state-contamination",
+      "title": "Tests or harness cleanup reused live user state or user-facing ports and contaminated real runtime checks",
+      "first_seen_timestamp": "2026-03-08T00:00:00Z",
+      "last_seen_timestamp": "2026-03-08T09:27:00Z",
+      "repeat_count": 2,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "The expected localhost listener belonged to pytest or another non-user runtime instead of the visible app.",
+        "Tests reused live roaming/profile settings or bridge configuration.",
+        "The browser showed a successful handoff while the visible app stayed idle."
+      ],
+      "likely_root_cause": "Tests and ad hoc debugging reused live %APPDATA%, live settings, or default user-facing ports instead of isolated temp state.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-08T00:00:00Z",
+          "summary": "Isolated pytest APPDATA and stopped bridge tests from using the live Gmail port.",
+          "outcome": "partial_only"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-08T09:27:00Z",
+        "summary": "Project guidance now requires temp env/filesystem isolation, non-live or ephemeral test ports, explicit teardown, and visible listener-conflict status.",
+        "expected_result": "Tests no longer hijack live machine state, and listener/runtime conflicts are triaged as harness issues before product debugging starts."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md",
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "docs/assistant/LOCAL_ENV_PROFILE.local.md",
+        "docs/assistant/LOCAL_CAPABILITIES.md",
+        "docs/assistant/ISSUE_MEMORY.md"
+      ],
+      "bootstrap_relevance": "required",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "test isolation defaults",
+          "listener ownership guidance",
+          "visible runtime conflict handling"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_gmail_intake"
+        },
+        {
+          "type": "template",
+          "ref": "docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md"
+        },
+        {
+          "type": "template",
+          "ref": "docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md"
+        }
+      ]
+    },
+    {
+      "id": "workflow-fragmented-multi-surface-diagnostics",
+      "title": "Fragmented diagnostics across handoff, per-run execution, and finalization slowed root-cause analysis",
+      "first_seen_timestamp": "2026-03-08T00:00:00Z",
+      "last_seen_timestamp": "2026-03-08T09:27:00Z",
+      "repeat_count": 2,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Browser banners, app bridge state, run reports, and finalization/draft failures had to be correlated manually.",
+        "Repeated debugging required back-and-forth between transient UI evidence and durable run artifacts.",
+        "Support packets were inconsistent across handoff, execution, and finalization failures."
+      ],
+      "likely_root_cause": "Project docs did not yet encode one support-packet order or one durable app-owned session-artifact pattern for multi-surface workflows.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-08T00:00:00Z",
+          "summary": "Feature-specific Gmail diagnostics were added.",
+          "outcome": "partial_only"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-08T09:27:00Z",
+        "summary": "Project guidance now routes multi-surface debugging through per-run artifacts first, additive workflow context when needed, one app-owned session artifact, and a fixed support-packet order.",
+        "expected_result": "Future host-bound workflows can be debugged from one predictable packet instead of reconstructing the incident from thread memory."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/ISSUE_MEMORY.md"
+      ],
+      "bootstrap_relevance": "required",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "session-artifact layering guidance",
+          "support-packet order",
+          "multi-surface troubleshooting workflow routing"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_gmail_intake"
+        },
+        {
+          "type": "template",
+          "ref": "docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md"
+        },
+        {
+          "type": "file",
+          "ref": "C:\\Users\\FA507\\Downloads\\run_report.md"
         }
       ]
     }

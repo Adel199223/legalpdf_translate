@@ -16,6 +16,37 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-08 — feat/ai-docs-bootstrap (working tree)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/manifest.json
+  - docs/assistant/ISSUE_MEMORY.md
+  - docs/assistant/ISSUE_MEMORY.json
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/LOCAL_ENV_PROFILE.local.md
+  - docs/assistant/LOCAL_CAPABILITIES.md
+  - docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md
+  - docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+- Key symbols / entrypoints changed:
+  - docs/assistant/manifest.json::harness_isolation_and_diagnostics_workflow
+  - docs/assistant/manifest.json::test_live_state_isolation_policy
+  - docs/assistant/manifest.json::multi_surface_diagnostics_packet_policy
+  - tooling/validate_agent_docs.dart::_validateHarnessIsolationAndDiagnostics
+- User-visible behavior:
+  - Project docs now route host-bound listener isolation and multi-surface diagnostics through a dedicated workflow instead of leaving the rules implicit in thread history.
+  - Host-integration preflight now documents listener ownership as part of readiness instead of treating any listener on the expected port as healthy.
+  - Issue memory now captures repeated test/live-state contamination and fragmented diagnostics as durable project lessons that can inform future docs sync and UCBS work.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+  - `dart run test/tooling/validate_workspace_hygiene_test.dart` -> PASS
+
 ## 2026-03-07 — feat/ai-docs-bootstrap (working tree)
 - Files changed:
   - agent.md

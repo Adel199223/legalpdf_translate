@@ -6,6 +6,7 @@ Use this workflow when a feature depends on a host-bound integration such as a l
 ## Expected Outputs
 - A verified installation/auth/host preflight result before implementation proceeds
 - A clear `unavailable` vs `failed` classification when the integration is not ready
+- A verified localhost listener ownership result when the integration depends on a local bridge/listener
 - A minimal live smoke check result from the same host/runtime as the app
 
 ## When To Use
@@ -27,6 +28,7 @@ Instead use:
 - Do not build the feature first and check environment/auth later.
 - Do not assume WSL success proves the Windows app can use the same integration.
 - Do not treat installation-only as sufficient readiness.
+- Do not treat any process already listening on the expected port as proof the real integration is healthy.
 
 ## Primary Files
 - `docs/assistant/LOCAL_ENV_PROFILE.local.md`
@@ -58,7 +60,9 @@ dart run tooling/validate_workspace_hygiene.dart
    - verify the required auth, account, or local credential state is present
 3. Host matches app runtime
    - verify the app and the integration run in the same host/runtime environment when required
-4. Live smoke check passes
+4. Localhost listener ownership is correct
+   - when a localhost listener is part of the integration, verify the port is free or owned by the expected process
+5. Live smoke check passes
    - run a minimal real operation before building the full feature
 
 ## Same-Host Validation Rule
@@ -71,6 +75,7 @@ For this repo, Gmail draft creation through `gog` is the clearest example: the d
   - install missing
   - auth/account missing
   - wrong host/runtime
+  - localhost bind conflict or unexpected listener ownership
 - `failed`
   - preflight passed, but the feature behavior itself failed
 
@@ -82,6 +87,7 @@ Fallback order:
 ## Handoff Checklist
 1. State which host is authoritative for the integration.
 2. State whether the app and integration are on the same host/runtime.
-3. Record the smoke-check command/result.
-4. Classify failures as `unavailable` or `failed`.
-5. Route future work back through this workflow if the same host-bound integration appears again.
+3. Record the listener ownership result when a localhost bridge/listener is part of the integration.
+4. Record the smoke-check command/result.
+5. Classify failures as `unavailable` or `failed`.
+6. Route future work back through this workflow if the same host-bound integration appears again.

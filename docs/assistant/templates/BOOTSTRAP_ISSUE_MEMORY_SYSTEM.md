@@ -46,7 +46,9 @@ Operational triggers take priority:
 - accepted feature stranded on a side branch
 - repeated docs/governance correction for the same failure class
 - repeated host/auth/tool preflight failure
+- repeated test/live-state contamination involving real settings, ports, auth, or caches
 - repeated branch-lineage or launch-identity mistake
+- repeated fragmented diagnostics across workflow surfaces
 - repeated UI mismatch/back-and-forth loop
 - same workaround required more than once
 - same fix fails and the issue returns

@@ -96,6 +96,8 @@ Typical files:
 - `cancel_requested_before_failure`
 - `exception_class`
 
+For larger host-bound workflows, keep these per-run artifacts primary. If a feature later adds a broader handoff/finalization session layer, route it through `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md` and keep any additive `workflow_context` or session artifact secondary to the run report/summary.
+
 `analyze_report.json` now also supports additive OCR advisor keys:
 - `recommended_ocr_mode`
 - `recommended_image_mode`
@@ -139,6 +141,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - The GUI can show an OCR-heavy warning with an optional per-run `Apply safe OCR profile` action. It updates the current form only and does not overwrite saved defaults.
 - Run-critical selectors ignore accidental mouse-wheel changes when their combo popup is closed.
 - OCR-heavy runtime triage routes to `docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md`.
+- Host-bound workflows that add localhost listeners, browser/app bridges, or separate handoff/run/finalization failure surfaces should also route through `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`.
 
 ## Governance and Routing Docs
 - Assistant docs index: `docs/assistant/INDEX.md`
@@ -150,6 +153,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Local host/runtime profile: `docs/assistant/LOCAL_ENV_PROFILE.local.md`
 - Local capability inventory: `docs/assistant/LOCAL_CAPABILITIES.md`
 - Host-bound integration preflight: `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
+- Harness isolation and diagnostics: `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
 
 ## Module Status (Bootstrap v2)
 All optional modules are enabled and enforced:

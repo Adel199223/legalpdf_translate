@@ -33,6 +33,8 @@ Examples in this repo:
 - visible Qt app testing
 - browser/account-linked local tooling
 
+Before browser/app or bridge triage on Windows, verify any required localhost listener is owned by the expected process. Unexpected listener ownership is a preflight `unavailable` condition, not a product failure.
+
 ## Performance and Tolerance Guidance
 - This machine can tolerate local Qt/UI testing, OCR validation, and moderate local automation work.
 - GPU-backed or visually heavy checks are reasonable locally when the stack supports them.

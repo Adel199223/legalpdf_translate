@@ -28,6 +28,7 @@ The goal is to keep the universal core small while still letting new repos activ
 | Capability Discovery | Conditional | When skills, MCPs, or local tools may materially change the project harness |
 | Worktree / Build Identity | Auto-Conditional | Automatically when the project has a runnable app, GUI, local desktop workflow, or explicit multi-worktree risk |
 | Host Integration Preflight | Conditional | When an integration depends on local installs, auth state, or same-host runtime guarantees |
+| Harness Isolation + Diagnostics | Conditional | When host-bound workflows span browser/app/local bridge/per-run/finalization, or when tests could collide with live machine state |
 | Bootstrap Update Policy | Conditional | When the user explicitly wants to maintain the global Codex bootstrap harness |
 
 ## Canonical Bootstrap Maintenance Triggers
@@ -103,6 +104,14 @@ When browser automation is activated:
 - lock canonical workspace provenance before asset loading or browser actions
 - separate host/tooling `unavailable` failures from application `failed` outcomes
 - prefer machine checks first and human perceptual checks second
+
+## Harness Isolation + Diagnostics Rules
+When this module is activated:
+- isolate tests from live user state, live ports, and authenticated machine state by default
+- prefer temporary filesystem/env state and non-live or ephemeral test ports
+- require explicit teardown for listeners, windows, and background workers
+- make localhost bind conflicts visible in the runtime UI/status surface
+- define one durable app-owned session artifact for multi-stage workflows and document the support-packet order
 
 ## Cloud Evaluation Rules
 When cloud evaluation is activated:

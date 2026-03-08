@@ -48,6 +48,7 @@ const List<String> _requiredFiles = <String>[
   'docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md',
   'docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md',
   'docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md',
+  'docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md',
   'docs/assistant/runtime/CANONICAL_BUILD.json',
   'docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md',
   'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json',
@@ -58,6 +59,7 @@ const List<String> _requiredFiles = <String>[
   'docs/assistant/templates/BOOTSTRAP_CAPABILITY_DISCOVERY.md',
   'docs/assistant/templates/BOOTSTRAP_WORKTREE_BUILD_IDENTITY.md',
   'docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md',
+  'docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md',
   'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md',
   'tooling/launch_qt_build.py',
   'tooling/validate_agent_docs.dart',
@@ -79,6 +81,7 @@ const List<String> _requiredWorkflowIds = <String>[
   'ci_repo_ops',
   'commit_publish_ops',
   'docs_maintenance_workflow',
+  'harness_isolation_and_diagnostics_workflow',
 ];
 
 const List<String> _requiredModuleFlags = <String>[
@@ -96,10 +99,10 @@ const Map<String, List<String>> _requiredWorkflowIdsByModule =
     <String, List<String>>{
       'staged_execution': <String>['staged_execution_workflow'],
       'browser_automation_environment_provenance': <String>[
-        'browser_automation_env_provenance'
+        'browser_automation_env_provenance',
       ],
       'cloud_machine_evaluation_local_acceptance': <String>[
-        'cloud_machine_evaluation'
+        'cloud_machine_evaluation',
       ],
       'openai_docs_citation': <String>['openai_docs_citation'],
     };
@@ -142,6 +145,8 @@ const List<String> _requiredContractKeys = <String>[
   'user_guides_update_sync_policy',
   'template_path_routing_regression_protection',
   'issue_memory_policy',
+  'test_live_state_isolation_policy',
+  'multi_surface_diagnostics_packet_policy',
 ];
 
 const List<String> _requiredIssueMemoryTopLevelKeys = <String>[
@@ -174,9 +179,7 @@ const Map<String, List<String>> _requiredContractKeysByModule =
     <String, List<String>>{
       'staged_execution': <String>['stage_gate_policy'],
       'reference_discovery': <String>['reference_discovery_policy'],
-      'openai_docs_citation': <String>[
-        'openai_docs_citation_freshness_policy'
-      ],
+      'openai_docs_citation': <String>['openai_docs_citation_freshness_policy'],
       'browser_automation_environment_provenance': <String>[
         'browser_automation_reliability_policy',
         'workspace_provenance_lock_policy',
@@ -199,100 +202,117 @@ const String _docsSyncPrompt =
     'Would you like me to run Assistant Docs Sync for this change now?';
 const String _docsSyncPromptCondition =
     'relevant touched-scope docs still remain unsynced';
-const String _docsSyncPromptNoRepeat =
-    'already ran during the same task/pass';
+const String _docsSyncPromptNoRepeat = 'already ran during the same task/pass';
 
-const Map<String, List<String>> _requiredBootstrapMarkers =
-    <String, List<String>>{
-      'docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md': <String>[
-        'bootstrap execution order',
-        'bootstrap_template_map.json',
-        'bootstrap_core_contract.md',
-        'bootstrap_issue_memory_system.md',
-        'bootstrap_modules_and_triggers.md',
-        'read-on-demand',
+const Map<String, List<String>>
+_requiredBootstrapMarkers = <String, List<String>>{
+  'docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md': <String>[
+    'bootstrap execution order',
+    'bootstrap_template_map.json',
+    'bootstrap_core_contract.md',
+    'bootstrap_issue_memory_system.md',
+    'bootstrap_modules_and_triggers.md',
+    'bootstrap_harness_isolation_and_diagnostics.md',
+    'host-bound workflows span more than one failure surface',
+    'read-on-demand',
+  ],
+  'docs/assistant/templates/BOOTSTRAP_CORE_CONTRACT.md': <String>[
+    'docs/assistant/issue_memory.md',
+    'docs/assistant/issue_memory.json',
+    'commit and push shorthand defaults',
+    'full pending-tree triage',
+    'push+pr+merge+cleanup',
+    'openai / codex freshness rule',
+    'relevant touched-scope docs still remain unsynced',
+    'must not ask the prompt again',
+  ],
+  'docs/assistant/templates/BOOTSTRAP_ISSUE_MEMORY_SYSTEM.md': <String>[
+    'required generated files',
+    'docs/assistant/issue_memory.md',
+    'docs/assistant/issue_memory.json',
+    'operational triggers take priority',
+    'repeated test/live-state contamination',
+    'repeated fragmented diagnostics across workflow surfaces',
+    'wording triggers are secondary signals',
+    'assistant docs sync',
+    'update codex bootstrap',
+    'repeat_count >= 2',
+    'do not preseed fake incidents',
+  ],
+  'docs/assistant/templates/BOOTSTRAP_MODULES_AND_TRIGGERS.md': <String>[
+    'issue memory system',
+    'always on',
+    'worktree / build identity',
+    'auto-conditional',
+    'runnable app',
+    'local desktop workflow',
+    'harness isolation + diagnostics',
+    'tests could collide with live machine state',
+    'merge-immediately-after-acceptance discipline',
+    'trigger matrix',
+    'stage-gate rules',
+    'reference discovery rules',
+    'browser automation rules',
+    'harness isolation + diagnostics rules',
+  ],
+  'docs/assistant/templates/BOOTSTRAP_LOCAL_ENV_OVERLAY.md': <String>[
+    'windows 11 home 64-bit',
+    'windows + wsl',
+    'local_env_profile.local.md',
+    'same-host rule',
+  ],
+  'docs/assistant/templates/BOOTSTRAP_CAPABILITY_DISCOVERY.md': <String>[
+    'agents.md',
+    'local_capabilities.md',
+    'openai-docs',
+    'dynamic discovery',
+  ],
+  'docs/assistant/templates/BOOTSTRAP_WORKTREE_BUILD_IDENTITY.md': <String>[
+    'auto-activation rule',
+    'runnable app',
+    'gui',
+    'merge-immediately-after-acceptance',
+    'latest approved baseline rule',
+    'build under test identity packet',
+    'canonical runnable build rule',
+    'worktree path',
+  ],
+  'docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md': <String>[
+    'tool installation exists on the target host',
+    'port is owned by the expected process',
+    'same-host validation rule',
+    'gmail draft feature backed by a local authenticated cli is just one example',
+    'live smoke check',
+  ],
+  'docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md':
+      <String>[
+        'tests must not read or write live user settings paths',
+        'non-live or ephemeral ports',
+        'listener ownership and runtime conflict rules',
+        'visible runtime status when listener startup fails',
+        'one durable app-owned session artifact',
+        'do not create a separate browser or extension report file by default',
+        'support packet order',
       ],
-      'docs/assistant/templates/BOOTSTRAP_CORE_CONTRACT.md': <String>[
-        'docs/assistant/issue_memory.md',
-        'docs/assistant/issue_memory.json',
-        'commit and push shorthand defaults',
-        'full pending-tree triage',
-        'push+pr+merge+cleanup',
-        'openai / codex freshness rule',
-        'relevant touched-scope docs still remain unsynced',
-        'must not ask the prompt again',
-      ],
-      'docs/assistant/templates/BOOTSTRAP_ISSUE_MEMORY_SYSTEM.md': <String>[
-        'required generated files',
-        'docs/assistant/issue_memory.md',
-        'docs/assistant/issue_memory.json',
-        'operational triggers take priority',
-        'wording triggers are secondary signals',
-        'assistant docs sync',
-        'update codex bootstrap',
-        'repeat_count >= 2',
-        'do not preseed fake incidents',
-      ],
-      'docs/assistant/templates/BOOTSTRAP_MODULES_AND_TRIGGERS.md': <String>[
-        'issue memory system',
-        'always on',
-        'worktree / build identity',
-        'auto-conditional',
-        'runnable app',
-        'local desktop workflow',
-        'merge-immediately-after-acceptance discipline',
-        'trigger matrix',
-        'stage-gate rules',
-        'reference discovery rules',
-        'browser automation rules',
-      ],
-      'docs/assistant/templates/BOOTSTRAP_LOCAL_ENV_OVERLAY.md': <String>[
-        'windows 11 home 64-bit',
-        'windows + wsl',
-        'local_env_profile.local.md',
-        'same-host rule',
-      ],
-      'docs/assistant/templates/BOOTSTRAP_CAPABILITY_DISCOVERY.md': <String>[
-        'agents.md',
-        'local_capabilities.md',
-        'openai-docs',
-        'dynamic discovery',
-      ],
-      'docs/assistant/templates/BOOTSTRAP_WORKTREE_BUILD_IDENTITY.md': <String>[
-        'auto-activation rule',
-        'runnable app',
-        'gui',
-        'merge-immediately-after-acceptance',
-        'latest approved baseline rule',
-        'build under test identity packet',
-        'canonical runnable build rule',
-        'worktree path',
-      ],
-      'docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md': <String>[
-        'tool installation exists on the target host',
-        'same-host validation rule',
-        'gmail draft feature backed by a local authenticated cli is just one example',
-        'live smoke check',
-      ],
-      'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md': <String>[
-        'update codex bootstrap',
-        'ucbs',
-        'audit codex bootstrap',
-        'check codex bootstrap',
-        'sync codex bootstrap docs',
-        'update bootstrap is **not canonical**',
-        'must not edit `docs/assistant/templates/*`',
-        'allowed change surface',
-        'docs/assistant/issue_memory.md',
-        'docs/assistant/issue_memory.json',
-        'repeat_count >= 2',
-        'bootstrap relevance is:',
-        'dart run tooling/validate_agent_docs.dart',
-        'docs sync prompt rule',
-        'relevant touched-scope docs still remain unsynced',
-        'already ran during the same task/pass',
-      ],
-    };
+  'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md': <String>[
+    'update codex bootstrap',
+    'ucbs',
+    'audit codex bootstrap',
+    'check codex bootstrap',
+    'sync codex bootstrap docs',
+    'update bootstrap is **not canonical**',
+    'must not edit `docs/assistant/templates/*`',
+    'allowed change surface',
+    'docs/assistant/issue_memory.md',
+    'docs/assistant/issue_memory.json',
+    'repeat_count >= 2',
+    'bootstrap relevance is:',
+    'dart run tooling/validate_agent_docs.dart',
+    'docs sync prompt rule',
+    'relevant touched-scope docs still remain unsynced',
+    'already ran during the same task/pass',
+  ],
+};
 
 const List<String> _requiredBootstrapModuleIds = <String>[
   'core_contract',
@@ -302,6 +322,7 @@ const List<String> _requiredBootstrapModuleIds = <String>[
   'capability_discovery',
   'worktree_build_identity',
   'host_integration_preflight',
+  'harness_isolation_diagnostics',
   'bootstrap_update_policy',
 ];
 
@@ -326,17 +347,24 @@ List<ValidationIssue> validateAgentDocs({
   }
 
   if (!localizationScope) {
-    final List<String> missing =
-        _requiredFiles.where((String path) => !exists(path)).toList();
+    final List<String> missing = _requiredFiles
+        .where((String path) => !exists(path))
+        .toList();
     if (missing.isNotEmpty) {
-      issues.add(ValidationIssue(
-        'AD001',
-        'Required files are missing: ${missing.join(', ')}',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD001',
+          'Required files are missing: ${missing.join(', ')}',
+        ),
+      );
     }
   }
 
-  final Map<String, dynamic>? manifest = _loadManifest(rootPath, issues, exists);
+  final Map<String, dynamic>? manifest = _loadManifest(
+    rootPath,
+    issues,
+    exists,
+  );
   if (manifest == null) {
     return issues;
   }
@@ -357,6 +385,12 @@ List<ValidationIssue> validateAgentDocs({
     _validateDocsMaintenance(issues, readText);
     _validateIssueMemory(issues, readText, exists, rootPath);
     _validateProjectLocalOperationalLayer(manifest, issues, readText, exists);
+    _validateHarnessIsolationAndDiagnostics(
+      manifest,
+      issues,
+      readText,
+      exists,
+    );
     _validateTemplatePolicy(manifest, issues, readText);
     _validateBootstrapTemplateIntegrity(issues, readText, exists);
     _validateExternalSourceRegistry(issues, readText, exists);
@@ -385,10 +419,12 @@ void _validateQtLaunchIdentityDiscipline(
         !text.contains('head sha') ||
         !text.contains('build under test') ||
         !text.contains('canonical')) {
-      issues.add(ValidationIssue(
-        'AD037',
-        '$relPath must require tooling/launch_qt_build.py, canonical build handling, and build-under-test packets with HEAD SHA in GUI handoffs.',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD037',
+          '$relPath must require tooling/launch_qt_build.py, canonical build handling, and build-under-test packets with HEAD SHA in GUI handoffs.',
+        ),
+      );
     }
   }
 }
@@ -440,10 +476,12 @@ void _validateCommitPushShorthandDiscipline(
         .where((String marker) => !text.contains(marker))
         .toList();
     if (missing.isNotEmpty) {
-      issues.add(ValidationIssue(
-        'AD038',
-        '$relPath must define hardened commit/push shorthand semantics. Missing: ${missing.join(', ')}',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD038',
+          '$relPath must define hardened commit/push shorthand semantics. Missing: ${missing.join(', ')}',
+        ),
+      );
     }
   }
 }
@@ -460,10 +498,12 @@ void _validateApprovedBasePromotionDiscipline(
   try {
     config = jsonDecode(configFile.readAsStringSync()) as Map<String, dynamic>;
   } catch (_) {
-    issues.add(ValidationIssue(
-      'AD039',
-      'docs/assistant/runtime/CANONICAL_BUILD.json must be valid JSON.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD039',
+        'docs/assistant/runtime/CANONICAL_BUILD.json must be valid JSON.',
+      ),
+    );
   }
 
   if (config != null) {
@@ -475,10 +515,12 @@ void _validateApprovedBasePromotionDiscipline(
       'canonical_head_floor',
     ].where((String key) => !config!.containsKey(key)).toList();
     if (missingKeys.isNotEmpty) {
-      issues.add(ValidationIssue(
-        'AD039',
-        'docs/assistant/runtime/CANONICAL_BUILD.json is missing required keys: ${missingKeys.join(', ')}',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD039',
+          'docs/assistant/runtime/CANONICAL_BUILD.json is missing required keys: ${missingKeys.join(', ')}',
+        ),
+      );
     }
   }
 
@@ -511,10 +553,12 @@ void _validateApprovedBasePromotionDiscipline(
         .where((String marker) => !text.contains(marker))
         .toList();
     if (missing.isNotEmpty) {
-      issues.add(ValidationIssue(
-        'AD039',
-        '${entry.key} must enforce approved-base promotion and lineage rules. Missing: ${missing.join(', ')}',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD039',
+          '${entry.key} must enforce approved-base promotion and lineage rules. Missing: ${missing.join(', ')}',
+        ),
+      );
     }
   }
 }
@@ -527,40 +571,50 @@ void _validateLocalizationScope(
 ) {
   final Set<String> workflowIds = _extractWorkflowIds(manifest);
   if (!workflowIds.contains('localization_workflow')) {
-    issues.add(ValidationIssue(
-      'AD004',
-      'Required workflow id missing: localization_workflow.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD004',
+        'Required workflow id missing: localization_workflow.',
+      ),
+    );
   }
 
   if (!exists('docs/assistant/LOCALIZATION_GLOSSARY.md') ||
       !exists('docs/assistant/workflows/LOCALIZATION_WORKFLOW.md')) {
-    issues.add(ValidationIssue(
-      'AD012',
-      'Localization glossary/workflow files are missing.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD012',
+        'Localization glossary/workflow files are missing.',
+      ),
+    );
   }
 
   final Map<String, dynamic> contracts =
       (manifest['contracts'] is Map<String, dynamic>)
-          ? manifest['contracts'] as Map<String, dynamic>
-          : <String, dynamic>{};
+      ? manifest['contracts'] as Map<String, dynamic>
+      : <String, dynamic>{};
 
   if (!contracts.containsKey('localization_glossary_source_of_truth')) {
-    issues.add(ValidationIssue(
-      'AD012',
-      'Manifest is missing localization glossary routing contract.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD012',
+        'Manifest is missing localization glossary routing contract.',
+      ),
+    );
   }
 
-  final String text = readText('docs/assistant/workflows/LOCALIZATION_WORKFLOW.md');
+  final String text = readText(
+    'docs/assistant/workflows/LOCALIZATION_WORKFLOW.md',
+  );
   if (!text.contains('## Expected Outputs') ||
       !text.contains("Don't use this workflow when") ||
       !text.contains('Instead use')) {
-    issues.add(ValidationIssue(
-      'AD005',
-      'Localization workflow is missing required routing/heading contracts.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD005',
+        'Localization workflow is missing required routing/heading contracts.',
+      ),
+    );
   }
 }
 
@@ -569,13 +623,18 @@ Map<String, dynamic>? _loadManifest(
   List<ValidationIssue> issues,
   bool Function(String relPath) exists,
 ) {
-  final String manifestPath = _resolvePath(rootPath, 'docs/assistant/manifest.json');
+  final String manifestPath = _resolvePath(
+    rootPath,
+    'docs/assistant/manifest.json',
+  );
   final File manifestFile = File(manifestPath);
   if (!manifestFile.existsSync()) {
-    issues.add(ValidationIssue(
-      'AD002',
-      'Manifest file is missing at docs/assistant/manifest.json.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD002',
+        'Manifest file is missing at docs/assistant/manifest.json.',
+      ),
+    );
     return null;
   }
 
@@ -583,7 +642,9 @@ Map<String, dynamic>? _loadManifest(
   try {
     final dynamic decoded = jsonDecode(manifestFile.readAsStringSync());
     if (decoded is! Map<String, dynamic>) {
-      issues.add(ValidationIssue('AD002', 'Manifest must decode to a JSON object.'));
+      issues.add(
+        ValidationIssue('AD002', 'Manifest must decode to a JSON object.'),
+      );
       return null;
     }
     manifest = decoded;
@@ -607,19 +668,21 @@ Map<String, dynamic>? _loadManifest(
       .where((String key) => !manifest.containsKey(key))
       .toList();
   if (missingKeys.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD002',
-      'Manifest missing required keys: ${missingKeys.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD002',
+        'Manifest missing required keys: ${missingKeys.join(', ')}',
+      ),
+    );
   }
 
-  final bool validDate = RegExp(r'^\d{4}-\d{2}-\d{2}$')
-      .hasMatch((manifest['last_updated'] ?? '').toString());
+  final bool validDate = RegExp(
+    r'^\d{4}-\d{2}-\d{2}$',
+  ).hasMatch((manifest['last_updated'] ?? '').toString());
   if (!validDate) {
-    issues.add(ValidationIssue(
-      'AD002',
-      'Manifest last_updated must be YYYY-MM-DD.',
-    ));
+    issues.add(
+      ValidationIssue('AD002', 'Manifest last_updated must be YYYY-MM-DD.'),
+    );
   }
 
   if (!exists('docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md')) {
@@ -628,25 +691,28 @@ Map<String, dynamic>? _loadManifest(
 
   if (!exists('docs/assistant/GOLDEN_PRINCIPLES.md') ||
       !exists('docs/assistant/exec_plans/PLANS.md')) {
-    issues.add(ValidationIssue(
-      'AD019',
-      'Missing GOLDEN_PRINCIPLES.md or exec_plans/PLANS.md scaffolding.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD019',
+        'Missing GOLDEN_PRINCIPLES.md or exec_plans/PLANS.md scaffolding.',
+      ),
+    );
   }
 
   if (!exists('docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md')) {
-    issues.add(ValidationIssue(
-      'AD015',
-      'REFERENCE_DISCOVERY_WORKFLOW.md is missing.',
-    ));
+    issues.add(
+      ValidationIssue('AD015', 'REFERENCE_DISCOVERY_WORKFLOW.md is missing.'),
+    );
   }
 
   if (!exists('tooling/validate_workspace_hygiene.dart') ||
       !exists('test/tooling/validate_workspace_hygiene_test.dart')) {
-    issues.add(ValidationIssue(
-      'AD014',
-      'Workspace hygiene validator/tooling files are missing.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD014',
+        'Workspace hygiene validator/tooling files are missing.',
+      ),
+    );
   }
 
   return manifest;
@@ -673,10 +739,12 @@ void _validateModuleFlags(
 ) {
   final dynamic raw = manifest['module_flags'];
   if (raw is! Map<String, dynamic>) {
-    issues.add(ValidationIssue(
-      'AD029',
-      'Manifest module_flags must exist as a JSON object.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD029',
+        'Manifest module_flags must exist as a JSON object.',
+      ),
+    );
     return;
   }
 
@@ -684,20 +752,24 @@ void _validateModuleFlags(
       .where((String key) => !raw.containsKey(key))
       .toList();
   if (missing.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD029',
-      'Manifest module_flags missing required keys: ${missing.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD029',
+        'Manifest module_flags missing required keys: ${missing.join(', ')}',
+      ),
+    );
   }
 
   final List<String> nonBool = _requiredModuleFlags
       .where((String key) => raw.containsKey(key) && raw[key] is! bool)
       .toList();
   if (nonBool.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD029',
-      'Manifest module_flags must be boolean for keys: ${nonBool.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD029',
+        'Manifest module_flags must be boolean for keys: ${nonBool.join(', ')}',
+      ),
+    );
   }
 }
 
@@ -722,15 +794,19 @@ void _validateManifestPaths(
       ? manifest['user_guides'] as List<dynamic>
       : <dynamic>[];
   if (manifest['user_guides'] == null) {
-    issues.add(ValidationIssue('AD021', 'Manifest is missing user_guides key.'));
+    issues.add(
+      ValidationIssue('AD021', 'Manifest is missing user_guides key.'),
+    );
   }
   for (final dynamic entry in userGuides) {
     final String path = entry.toString();
     if (path.isEmpty || !exists(path)) {
-      issues.add(ValidationIssue(
-        'AD022',
-        'Manifest user guide path does not exist: $path',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD022',
+          'Manifest user guide path does not exist: $path',
+        ),
+      );
     }
   }
 
@@ -768,7 +844,7 @@ void _validateManifestPaths(
       'scope',
       'primary_files',
       'targeted_tests',
-      'validation_commands'
+      'validation_commands',
     ]) {
       final dynamic value = item[field];
       if ((field == 'scope' && (value == null || value.toString().isEmpty)) ||
@@ -779,10 +855,12 @@ void _validateManifestPaths(
   }
 
   if (invalidRefs.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD003',
-      'Manifest paths/schema references are missing or invalid: ${invalidRefs.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD003',
+        'Manifest paths/schema references are missing or invalid: ${invalidRefs.join(', ')}',
+      ),
+    );
   }
 }
 
@@ -795,16 +873,20 @@ void _validateWorkflowIds(
       .where((String id) => !workflowIds.contains(id))
       .toList();
   if (missingIds.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD004',
-      'Manifest missing required workflow IDs: ${missingIds.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD004',
+        'Manifest missing required workflow IDs: ${missingIds.join(', ')}',
+      ),
+    );
   }
   if (!workflowIds.contains('reference_discovery')) {
-    issues.add(ValidationIssue(
-      'AD016',
-      'Manifest missing reference_discovery workflow id.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD016',
+        'Manifest missing reference_discovery workflow id.',
+      ),
+    );
   }
 
   final Map<String, bool> moduleFlags = _extractModuleFlags(manifest);
@@ -821,10 +903,12 @@ void _validateWorkflowIds(
     }
   }
   if (missingModuleWorkflowIds.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD030',
-      'Manifest missing module-conditioned workflow IDs: ${missingModuleWorkflowIds.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD030',
+        'Manifest missing module-conditioned workflow IDs: ${missingModuleWorkflowIds.join(', ')}',
+      ),
+    );
   }
 }
 
@@ -872,8 +956,7 @@ void _validateWorkflowDocs(
     }
     final String lower = text.toLowerCase();
     final bool hasPowerShell = lower.contains('```powershell');
-    final bool hasPosix =
-        lower.contains('```bash') || lower.contains('```sh');
+    final bool hasPosix = lower.contains('```bash') || lower.contains('```sh');
     if (!hasPowerShell || !hasPosix) {
       missingCrossPlatformCommands.add(docPath);
     }
@@ -884,34 +967,44 @@ void _validateWorkflowDocs(
   }
 
   if (missingHeadings.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD005',
-      'Workflow docs missing required headings: ${missingHeadings.join(' | ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD005',
+        'Workflow docs missing required headings: ${missingHeadings.join(' | ')}',
+      ),
+    );
   }
   if (missingExpected.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD006',
-      'Workflow docs missing Expected Outputs: ${missingExpected.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD006',
+        'Workflow docs missing Expected Outputs: ${missingExpected.join(', ')}',
+      ),
+    );
   }
   if (missingNegativeRouting.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD007',
-      'Workflow docs missing explicit negative-routing text: ${missingNegativeRouting.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD007',
+        'Workflow docs missing explicit negative-routing text: ${missingNegativeRouting.join(', ')}',
+      ),
+    );
   }
   if (missingCrossPlatformCommands.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD031',
-      'Workflow docs missing cross-platform command blocks (PowerShell + POSIX): ${missingCrossPlatformCommands.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD031',
+        'Workflow docs missing cross-platform command blocks (PowerShell + POSIX): ${missingCrossPlatformCommands.join(', ')}',
+      ),
+    );
   }
   if (missingStageTokenText.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD032',
-      'Staged execution workflow is missing NEXT_STAGE_X token guidance: ${missingStageTokenText.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD032',
+        'Staged execution workflow is missing NEXT_STAGE_X token guidance: ${missingStageTokenText.join(', ')}',
+      ),
+    );
   }
 
   final String indexText = readText('docs/assistant/INDEX.md');
@@ -919,33 +1012,39 @@ void _validateWorkflowDocs(
       .where((String path) => exists(path) && !indexText.contains(path))
       .toList();
   if (missingDiscoverability.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD036',
-      'Workflow docs are not discoverable from docs index: ${missingDiscoverability.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD036',
+        'Workflow docs are not discoverable from docs index: ${missingDiscoverability.join(', ')}',
+      ),
+    );
   }
 
   final Map<String, dynamic> contracts =
       manifest['contracts'] is Map<String, dynamic>
-          ? manifest['contracts'] as Map<String, dynamic>
-          : <String, dynamic>{};
+      ? manifest['contracts'] as Map<String, dynamic>
+      : <String, dynamic>{};
 
   if (!exists('docs/assistant/workflows/PERFORMANCE_WORKFLOW.md') ||
       !exists('docs/assistant/PERFORMANCE_BASELINES.md') ||
       !contracts.containsKey('workspace_performance_source_of_truth')) {
-    issues.add(ValidationIssue(
-      'AD013',
-      'Workspace performance workflow/baseline or routing contracts are missing.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD013',
+        'Workspace performance workflow/baseline or routing contracts are missing.',
+      ),
+    );
   }
 
   if (!exists('docs/assistant/LOCALIZATION_GLOSSARY.md') ||
       !exists('docs/assistant/workflows/LOCALIZATION_WORKFLOW.md') ||
       !contracts.containsKey('localization_glossary_source_of_truth')) {
-    issues.add(ValidationIssue(
-      'AD012',
-      'Localization glossary/workflow routing contracts are missing.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD012',
+        'Localization glossary/workflow routing contracts are missing.',
+      ),
+    );
   }
 }
 
@@ -954,26 +1053,33 @@ void _validateCanonicalBridgePolicies(
   String Function(String relPath) readText,
 ) {
   final String canonical = readText('APP_KNOWLEDGE.md').toLowerCase();
-  final String bridge = readText('docs/assistant/APP_KNOWLEDGE.md').toLowerCase();
+  final String bridge = readText(
+    'docs/assistant/APP_KNOWLEDGE.md',
+  ).toLowerCase();
 
-  final bool canonicalPhrase =
-      canonical.contains('canonical for app-level architecture and status');
+  final bool canonicalPhrase = canonical.contains(
+    'canonical for app-level architecture and status',
+  );
   final bool bridgePhrase =
       bridge.contains('intentionally shorter') && bridge.contains('defer');
   final bool sourceTruthPhrase = bridge.contains('source code is final truth');
 
   if (!canonicalPhrase || !bridgePhrase || !sourceTruthPhrase) {
-    issues.add(ValidationIssue(
-      'AD008',
-      'Canonical/bridge contract phrases are missing.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD008',
+        'Canonical/bridge contract phrases are missing.',
+      ),
+    );
   }
 
   if (bridge.contains('canonical for app-level architecture and status')) {
-    issues.add(ValidationIssue(
-      'AD011',
-      'Bridge doc conflicts with canonical policy by claiming canonical authority.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD011',
+        'Bridge doc conflicts with canonical policy by claiming canonical authority.',
+      ),
+    );
   }
 }
 
@@ -984,8 +1090,11 @@ void _validateCommands(
   final List<String> allCommands = <String>[];
 
   if (manifest['global_commands'] is List<dynamic>) {
-    allCommands.addAll((manifest['global_commands'] as List<dynamic>)
-        .map((dynamic cmd) => cmd.toString()));
+    allCommands.addAll(
+      (manifest['global_commands'] as List<dynamic>).map(
+        (dynamic cmd) => cmd.toString(),
+      ),
+    );
   }
 
   if (manifest['workflows'] is List<dynamic>) {
@@ -993,10 +1102,16 @@ void _validateCommands(
       if (entry is! Map<String, dynamic>) {
         continue;
       }
-      for (final String field in <String>['validation_commands', 'targeted_tests']) {
+      for (final String field in <String>[
+        'validation_commands',
+        'targeted_tests',
+      ]) {
         if (entry[field] is List<dynamic>) {
-          allCommands.addAll((entry[field] as List<dynamic>)
-              .map((dynamic cmd) => cmd.toString()));
+          allCommands.addAll(
+            (entry[field] as List<dynamic>).map(
+              (dynamic cmd) => cmd.toString(),
+            ),
+          );
         }
       }
     }
@@ -1011,10 +1126,12 @@ void _validateCommands(
       .where((String command) => bashOnlyPattern.hasMatch(command))
       .toList();
   if (flagged.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD009',
-      'Manifest contains bash-only or non-PowerShell-safe commands: ${flagged.join(' | ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD009',
+        'Manifest contains bash-only or non-PowerShell-safe commands: ${flagged.join(' | ')}',
+      ),
+    );
   }
 }
 
@@ -1024,8 +1141,8 @@ void _validateCoreContracts(
 ) {
   final Map<String, dynamic> contracts =
       manifest['contracts'] is Map<String, dynamic>
-          ? manifest['contracts'] as Map<String, dynamic>
-          : <String, dynamic>{};
+      ? manifest['contracts'] as Map<String, dynamic>
+      : <String, dynamic>{};
 
   final List<String> missing = _requiredContractKeys
       .where((String key) => !contracts.containsKey(key))
@@ -1039,18 +1156,22 @@ void _validateCoreContracts(
     }
   }
   if (missing.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD018',
-      'Manifest is missing required contract keys: ${missing.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD018',
+        'Manifest is missing required contract keys: ${missing.join(', ')}',
+      ),
+    );
   }
 
   if (!contracts.containsKey('post_change_docs_sync_prompt_policy') ||
       !contracts.containsKey('inspiration_reference_discovery_policy')) {
-    issues.add(ValidationIssue(
-      'AD017',
-      'Manifest is missing docs-sync or inspiration discovery contracts.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD017',
+        'Manifest is missing docs-sync or inspiration discovery contracts.',
+      ),
+    );
   }
 
   final List<String> requiredUserGuideContracts = <String>[
@@ -1062,10 +1183,12 @@ void _validateCoreContracts(
       .where((String key) => !contracts.containsKey(key))
       .toList();
   if (missingUserGuideContracts.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD027',
-      'Manifest missing user-guide contract keys: ${missingUserGuideContracts.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD027',
+        'Manifest missing user-guide contract keys: ${missingUserGuideContracts.join(', ')}',
+      ),
+    );
   }
 
   final Map<String, bool> moduleFlags = _extractModuleFlags(manifest);
@@ -1082,10 +1205,12 @@ void _validateCoreContracts(
     }
   }
   if (missingModuleContracts.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD033',
-      'Manifest missing module-conditioned contract keys: ${missingModuleContracts.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD033',
+        'Manifest missing module-conditioned contract keys: ${missingModuleContracts.join(', ')}',
+      ),
+    );
   }
 }
 
@@ -1120,33 +1245,42 @@ void _validateRunbookPolicies(
 
     if (!text.contains('APP_USER_GUIDE.md') ||
         !text.contains('PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md')) {
-      issues.add(ValidationIssue(
-        'AD026',
-        '$docName omits support routing to user guides.',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD026',
+          '$docName omits support routing to user guides.',
+        ),
+      );
     }
   }
 
   if (missingSections.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD020',
-      'AGENTS/runbook governance sections or policies missing: ${missingSections.join(' | ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD020',
+        'AGENTS/runbook governance sections or policies missing: ${missingSections.join(' | ')}',
+      ),
+    );
   }
 
-  final String ciText =
-      readText('docs/assistant/workflows/CI_REPO_WORKFLOW.md').toLowerCase();
-  final String commitText =
-      readText('docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md').toLowerCase();
-  final String docsText =
-      readText('docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md').toLowerCase();
+  final String ciText = readText(
+    'docs/assistant/workflows/CI_REPO_WORKFLOW.md',
+  ).toLowerCase();
+  final String commitText = readText(
+    'docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md',
+  ).toLowerCase();
+  final String docsText = readText(
+    'docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md',
+  ).toLowerCase();
   if (!ciText.contains('worktree') ||
       !commitText.contains('worktree') ||
       !docsText.contains('worktree')) {
-    issues.add(ValidationIssue(
-      'AD020',
-      'Required workflows are missing worktree isolation guidance.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD020',
+        'Required workflows are missing worktree isolation guidance.',
+      ),
+    );
   }
 }
 
@@ -1157,11 +1291,15 @@ void _validateUserGuides(
   bool Function(String relPath) exists,
 ) {
   if (manifest['user_guides'] == null) {
-    issues.add(ValidationIssue('AD021', 'Manifest user_guides key is missing.'));
+    issues.add(
+      ValidationIssue('AD021', 'Manifest user_guides key is missing.'),
+    );
     return;
   }
   if (manifest['user_guides'] is! List<dynamic>) {
-    issues.add(ValidationIssue('AD021', 'Manifest user_guides must be a list.'));
+    issues.add(
+      ValidationIssue('AD021', 'Manifest user_guides must be a list.'),
+    );
     return;
   }
 
@@ -1179,10 +1317,12 @@ void _validateUserGuides(
     }
   }
   if (missingRequiredPaths.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD021',
-      'Manifest user_guides missing required paths: ${missingRequiredPaths.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD021',
+        'Manifest user_guides missing required paths: ${missingRequiredPaths.join(', ')}',
+      ),
+    );
   }
 
   final List<String> headingMisses = <String>[];
@@ -1199,10 +1339,12 @@ void _validateUserGuides(
     }
   }
   if (headingMisses.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD025',
-      'User guides are missing required headings: ${headingMisses.join(' | ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD025',
+        'User guides are missing required headings: ${headingMisses.join(' | ')}',
+      ),
+    );
   }
 
   final String indexText = readText('docs/assistant/INDEX.md');
@@ -1211,10 +1353,12 @@ void _validateUserGuides(
       .where((String path) => !indexText.contains(path))
       .toList();
   if (missingDiscoverability.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD023',
-      'User guides are not discoverable from docs index: ${missingDiscoverability.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD023',
+        'User guides are not discoverable from docs index: ${missingDiscoverability.join(', ')}',
+      ),
+    );
   }
 }
 
@@ -1222,30 +1366,46 @@ void _validateDocsMaintenance(
   List<ValidationIssue> issues,
   String Function(String relPath) readText,
 ) {
-  final String text =
-      readText('docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md')
-          .toLowerCase();
+  final String text = readText(
+    'docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md',
+  ).toLowerCase();
   if (!text.contains('user-guide') || !text.contains('sync')) {
-    issues.add(ValidationIssue(
-      'AD028',
-      'Docs maintenance workflow lacks user-guide sync guidance.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD028',
+        'Docs maintenance workflow lacks user-guide sync guidance.',
+      ),
+    );
   }
   if (!text.contains('issue_memory.md') ||
       !text.contains('issue_memory.json') ||
       !text.contains('consult') ||
       !text.contains('bootstrap')) {
-    issues.add(ValidationIssue(
-      'AD041',
-      'Docs maintenance workflow must require issue-memory updates/consultation and bootstrap escalation rules.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD041',
+        'Docs maintenance workflow must require issue-memory updates/consultation and bootstrap escalation rules.',
+      ),
+    );
   }
   if (!text.contains(_docsSyncPromptCondition) ||
       !text.contains(_docsSyncPromptNoRepeat)) {
-    issues.add(ValidationIssue(
-      'AD041',
-      'Docs maintenance workflow must state that the docs-sync prompt is only asked when relevant docs remain unsynced and not repeated after same-pass sync.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD041',
+        'Docs maintenance workflow must state that the docs-sync prompt is only asked when relevant docs remain unsynced and not repeated after same-pass sync.',
+      ),
+    );
+  }
+  if (!text.contains('live-state contamination') ||
+      !text.contains('fragmented diagnostics') ||
+      !text.contains('harness_isolation_and_diagnostics_workflow.md')) {
+    issues.add(
+      ValidationIssue(
+        'AD041',
+        'Docs maintenance workflow must escalate repeated live-state contamination and fragmented diagnostics into the harness isolation workflow.',
+      ),
+    );
   }
 }
 
@@ -1258,10 +1418,12 @@ void _validateIssueMemory(
   const String mdPath = 'docs/assistant/ISSUE_MEMORY.md';
   const String jsonPath = 'docs/assistant/ISSUE_MEMORY.json';
   if (!exists(mdPath) || !exists(jsonPath)) {
-    issues.add(ValidationIssue(
-      'AD042',
-      'Issue memory files must exist at $mdPath and $jsonPath.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD042',
+        'Issue memory files must exist at $mdPath and $jsonPath.',
+      ),
+    );
     return;
   }
 
@@ -1278,10 +1440,12 @@ void _validateIssueMemory(
     'docs-sync relevance',
   ]) {
     if (!mdText.contains(marker)) {
-      issues.add(ValidationIssue(
-        'AD042',
-        '$mdPath is missing required issue-memory marker: $marker',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD042',
+          '$mdPath is missing required issue-memory marker: $marker',
+        ),
+      );
     }
   }
 
@@ -1289,18 +1453,14 @@ void _validateIssueMemory(
   try {
     final dynamic decoded = jsonDecode(readText(jsonPath));
     if (decoded is! Map<String, dynamic>) {
-      issues.add(ValidationIssue(
-        'AD042',
-        '$jsonPath must decode to a JSON object.',
-      ));
+      issues.add(
+        ValidationIssue('AD042', '$jsonPath must decode to a JSON object.'),
+      );
       return;
     }
     issueMemory = decoded;
   } catch (error) {
-    issues.add(ValidationIssue(
-      'AD042',
-      '$jsonPath JSON parse failed: $error',
-    ));
+    issues.add(ValidationIssue('AD042', '$jsonPath JSON parse failed: $error'));
     return;
   }
 
@@ -1308,87 +1468,130 @@ void _validateIssueMemory(
       .where((String key) => !issueMemory.containsKey(key))
       .toList();
   if (missingTopLevel.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD042',
-      '$jsonPath is missing required top-level keys: ${missingTopLevel.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD042',
+        '$jsonPath is missing required top-level keys: ${missingTopLevel.join(', ')}',
+      ),
+    );
   }
 
   final String lastUpdated = (issueMemory['last_updated'] ?? '').toString();
   final RegExp isoPattern = RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$');
   if (!isoPattern.hasMatch(lastUpdated)) {
-    issues.add(ValidationIssue(
-      'AD042',
-      '$jsonPath last_updated must be an ISO-8601 UTC timestamp.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD042',
+        '$jsonPath last_updated must be an ISO-8601 UTC timestamp.',
+      ),
+    );
   }
 
   final dynamic rawIssues = issueMemory['issues'];
   if (rawIssues is! List || rawIssues.isEmpty) {
-    issues.add(ValidationIssue(
-      'AD042',
-      '$jsonPath must include a non-empty issues list.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD042',
+        '$jsonPath must include a non-empty issues list.',
+      ),
+    );
     return;
   }
 
   bool seededIssueFound = false;
+  final Set<String> issueIds = <String>{};
   for (final dynamic item in rawIssues) {
     if (item is! Map<String, dynamic>) {
-      issues.add(ValidationIssue(
-        'AD042',
-        '$jsonPath issues entries must be JSON objects.',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD042',
+          '$jsonPath issues entries must be JSON objects.',
+        ),
+      );
       continue;
     }
     final List<String> missingIssueKeys = _requiredIssueMemoryIssueKeys
         .where((String key) => !item.containsKey(key))
         .toList();
     if (missingIssueKeys.isNotEmpty) {
-      issues.add(ValidationIssue(
-        'AD042',
-        '$jsonPath issue ${(item['id'] ?? '<missing id>')} is missing keys: ${missingIssueKeys.join(', ')}',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD042',
+          '$jsonPath issue ${(item['id'] ?? '<missing id>')} is missing keys: ${missingIssueKeys.join(', ')}',
+        ),
+      );
     }
 
     final String id = (item['id'] ?? '').toString();
+    if (id.isNotEmpty) {
+      issueIds.add(id);
+    }
     if (id == 'workflow-wrong-build-under-test') {
       seededIssueFound = true;
     }
 
     final String status = (item['status'] ?? '').toString();
-    if (!<String>{'open', 'mitigated', 'resolved', 'regressed'}
-        .contains(status)) {
-      issues.add(ValidationIssue(
-        'AD042',
-        '$jsonPath issue $id has invalid status: $status',
-      ));
+    if (!<String>{
+      'open',
+      'mitigated',
+      'resolved',
+      'regressed',
+    }.contains(status)) {
+      issues.add(
+        ValidationIssue(
+          'AD042',
+          '$jsonPath issue $id has invalid status: $status',
+        ),
+      );
     }
 
     final String triggerSource = (item['trigger_source'] ?? '').toString();
     if (!<String>{'operational', 'wording', 'both'}.contains(triggerSource)) {
-      issues.add(ValidationIssue(
-        'AD042',
-        '$jsonPath issue $id has invalid trigger_source: $triggerSource',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD042',
+          '$jsonPath issue $id has invalid trigger_source: $triggerSource',
+        ),
+      );
     }
 
-    final String bootstrapRelevance =
-        (item['bootstrap_relevance'] ?? '').toString();
-    if (!<String>{'none', 'possible', 'required'}
-        .contains(bootstrapRelevance)) {
-      issues.add(ValidationIssue(
-        'AD042',
-        '$jsonPath issue $id has invalid bootstrap_relevance: $bootstrapRelevance',
-      ));
+    final String bootstrapRelevance = (item['bootstrap_relevance'] ?? '')
+        .toString();
+    if (!<String>{
+      'none',
+      'possible',
+      'required',
+    }.contains(bootstrapRelevance)) {
+      issues.add(
+        ValidationIssue(
+          'AD042',
+          '$jsonPath issue $id has invalid bootstrap_relevance: $bootstrapRelevance',
+        ),
+      );
     }
   }
 
   if (!seededIssueFound) {
-    issues.add(ValidationIssue(
-      'AD042',
-      '$jsonPath must seed workflow-wrong-build-under-test as the initial repeated issue entry.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD042',
+        '$jsonPath must seed workflow-wrong-build-under-test as the initial repeated issue entry.',
+      ),
+    );
+  }
+
+  for (final String requiredId in <String>[
+    'harness-live-state-contamination',
+    'workflow-fragmented-multi-surface-diagnostics',
+  ]) {
+    if (!issueIds.contains(requiredId)) {
+      issues.add(
+        ValidationIssue(
+          'AD042',
+          '$jsonPath must include required durable issue entry: $requiredId',
+        ),
+      );
+    }
   }
 }
 
@@ -1405,10 +1608,12 @@ void _validateProjectLocalOperationalLayer(
 
   for (final String path in <String>[envPath, capabilitiesPath, workflowPath]) {
     if (!exists(path)) {
-      issues.add(ValidationIssue(
-        'AD043',
-        'Project-local operational doc is missing at $path.',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD043',
+          'Project-local operational doc is missing at $path.',
+        ),
+      );
       return;
     }
   }
@@ -1420,16 +1625,21 @@ void _validateProjectLocalOperationalLayer(
     workflowPath,
   ].where((String path) => !indexText.contains(path)).toList();
   if (missingIndexRouting.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD043',
-      'Project-local operational docs are not discoverable from docs index: ${missingIndexRouting.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD043',
+        'Project-local operational docs are not discoverable from docs index: ${missingIndexRouting.join(', ')}',
+      ),
+    );
   }
 
   final List<String> manifestPaths = <String>[];
   if (manifest['canonical'] is List<dynamic>) {
-    manifestPaths.addAll((manifest['canonical'] as List<dynamic>)
-        .map((dynamic entry) => entry.toString()));
+    manifestPaths.addAll(
+      (manifest['canonical'] as List<dynamic>).map(
+        (dynamic entry) => entry.toString(),
+      ),
+    );
   }
   if (manifest['workflows'] is List<dynamic>) {
     for (final dynamic entry in manifest['workflows'] as List<dynamic>) {
@@ -1444,10 +1654,12 @@ void _validateProjectLocalOperationalLayer(
     workflowPath,
   ].where((String path) => !manifestPaths.contains(path)).toList();
   if (missingManifestRouting.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD043',
-      'Project-local operational docs are missing from manifest routing: ${missingManifestRouting.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD043',
+        'Project-local operational docs are missing from manifest routing: ${missingManifestRouting.join(', ')}',
+      ),
+    );
   }
 
   final String envText = readText(envPath).toLowerCase();
@@ -1461,13 +1673,16 @@ void _validateProjectLocalOperationalLayer(
     'prefer windows',
     'prefer wsl',
     'same-host',
+    'listener ownership',
     'no secrets',
   ]) {
     if (!envText.contains(marker)) {
-      issues.add(ValidationIssue(
-        'AD043',
-        '$envPath is missing required host/routing marker: $marker',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD043',
+          '$envPath is missing required host/routing marker: $marker',
+        ),
+      );
     }
   }
 
@@ -1478,12 +1693,16 @@ void _validateProjectLocalOperationalLayer(
     'tooling/launch_qt_build.py',
     'windows',
     'wsl',
+    'test isolation',
+    'listener-ownership',
   ]) {
     if (!capabilitiesText.contains(marker)) {
-      issues.add(ValidationIssue(
-        'AD043',
-        '$capabilitiesPath is missing required capability marker: $marker',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD043',
+          '$capabilitiesPath is missing required capability marker: $marker',
+        ),
+      );
     }
   }
 
@@ -1492,17 +1711,121 @@ void _validateProjectLocalOperationalLayer(
     '1. installation exists',
     '2. auth/account exists',
     '3. host matches app runtime',
-    '4. live smoke check passes',
+    '4. localhost listener ownership is correct',
+    '5. live smoke check passes',
     'same-host validation rule',
+    'owned by the expected process',
     'gog',
     'unavailable',
     'failed',
   ]) {
     if (!workflowText.contains(marker)) {
-      issues.add(ValidationIssue(
-        'AD043',
-        '$workflowPath is missing required host-integration marker: $marker',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD043',
+          '$workflowPath is missing required host-integration marker: $marker',
+        ),
+      );
+    }
+  }
+}
+
+void _validateHarnessIsolationAndDiagnostics(
+  Map<String, dynamic> manifest,
+  List<ValidationIssue> issues,
+  String Function(String relPath) readText,
+  bool Function(String relPath) exists,
+) {
+  const String workflowPath =
+      'docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md';
+
+  if (!exists(workflowPath)) {
+    issues.add(
+      ValidationIssue(
+        'AD044',
+        'Harness isolation workflow is missing at $workflowPath.',
+      ),
+    );
+    return;
+  }
+
+  final String indexText = readText('docs/assistant/INDEX.md');
+  if (!indexText.contains(workflowPath)) {
+    issues.add(
+      ValidationIssue(
+        'AD044',
+        'Harness isolation workflow must be discoverable from docs index.',
+      ),
+    );
+  }
+
+  bool manifestRouted = false;
+  if (manifest['workflows'] is List<dynamic>) {
+    for (final dynamic entry in manifest['workflows'] as List<dynamic>) {
+      if (entry is Map<String, dynamic> &&
+          entry['id'] == 'harness_isolation_and_diagnostics_workflow' &&
+          entry['doc'] == workflowPath) {
+        manifestRouted = true;
+      }
+    }
+  }
+  if (!manifestRouted) {
+    issues.add(
+      ValidationIssue(
+        'AD044',
+        'Manifest must route harness_isolation_and_diagnostics_workflow to $workflowPath.',
+      ),
+    );
+  }
+
+  final String workflowText = readText(workflowPath).toLowerCase();
+  for (final String marker in <String>[
+    'temporary filesystem and environment state',
+    'authenticated machine state',
+    'non-live or ephemeral ports',
+    'listener ownership and runtime conflict rules',
+    'visible runtime status',
+    'workflow_context',
+    'one durable app-owned session artifact',
+    'support packet order',
+    'do not create separate browser or extension report files',
+  ]) {
+    if (!workflowText.contains(marker)) {
+      issues.add(
+        ValidationIssue(
+          'AD044',
+          '$workflowPath is missing required harness marker: $marker',
+        ),
+      );
+    }
+  }
+
+  final Map<String, List<String>> routingDocs = <String, List<String>>{
+    'APP_KNOWLEDGE.md': <String>[
+      workflowPath.toLowerCase(),
+      'localhost listeners',
+      'browser/app bridges',
+      'handoff/run/finalization',
+    ],
+    'docs/assistant/APP_KNOWLEDGE.md': <String>[
+      workflowPath.toLowerCase(),
+      'listener ownership',
+      'test isolation',
+      'handoff/run/finalization',
+    ],
+  };
+  for (final MapEntry<String, List<String>> entry in routingDocs.entries) {
+    final String text = readText(entry.key).toLowerCase();
+    final List<String> missing = entry.value
+        .where((String marker) => !text.contains(marker))
+        .toList();
+    if (missing.isNotEmpty) {
+      issues.add(
+        ValidationIssue(
+          'AD044',
+          '${entry.key} must route harness isolation and diagnostics guidance. Missing: ${missing.join(', ')}',
+        ),
+      );
     }
   }
 }
@@ -1514,10 +1837,9 @@ void _validateExternalSourceRegistry(
 ) {
   const String path = 'docs/assistant/EXTERNAL_SOURCE_REGISTRY.md';
   if (!exists(path)) {
-    issues.add(ValidationIssue(
-      'AD034',
-      'External source registry is missing at $path.',
-    ));
+    issues.add(
+      ValidationIssue('AD034', 'External source registry is missing at $path.'),
+    );
     return;
   }
 
@@ -1527,13 +1849,15 @@ void _validateExternalSourceRegistry(
     'source_url',
     'contract_or_workflow',
     'fact_summary',
-    'verification_date'
+    'verification_date',
   ]) {
     if (!lower.contains(key)) {
-      issues.add(ValidationIssue(
-        'AD034',
-        'External source registry missing required field marker: $key',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD034',
+          'External source registry missing required field marker: $key',
+        ),
+      );
     }
   }
 
@@ -1543,10 +1867,12 @@ void _validateExternalSourceRegistry(
   );
   final Iterable<RegExpMatch> rows = rowPattern.allMatches(text);
   if (rows.isEmpty) {
-    issues.add(ValidationIssue(
-      'AD034',
-      'External source registry has no valid source rows.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD034',
+        'External source registry has no valid source rows.',
+      ),
+    );
     return;
   }
 
@@ -1568,10 +1894,12 @@ void _validateExternalSourceRegistry(
     }
   }
   if (badHosts.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD035',
-      'External source registry includes non-official domains: ${badHosts.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD035',
+        'External source registry includes non-official domains: ${badHosts.join(', ')}',
+      ),
+    );
   }
 }
 
@@ -1583,18 +1911,22 @@ void _validateTemplatePolicy(
   final String indexText = readText('docs/assistant/INDEX.md').toLowerCase();
   final Map<String, dynamic> contracts =
       manifest['contracts'] is Map<String, dynamic>
-          ? manifest['contracts'] as Map<String, dynamic>
-          : <String, dynamic>{};
+      ? manifest['contracts'] as Map<String, dynamic>
+      : <String, dynamic>{};
 
-  final bool indexPolicy = indexText.contains('docs/assistant/templates/*') &&
+  final bool indexPolicy =
+      indexText.contains('docs/assistant/templates/*') &&
       indexText.contains('read-on-demand');
-  final bool contractPolicy = contracts.containsKey('template_read_policy') &&
+  final bool contractPolicy =
+      contracts.containsKey('template_read_policy') &&
       contracts.containsKey('template_path_routing_regression_protection');
   if (!indexPolicy || !contractPolicy) {
-    issues.add(ValidationIssue(
-      'AD024',
-      'Template-path routing regression protections are missing.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD024',
+        'Template-path routing regression protections are missing.',
+      ),
+    );
   }
 }
 
@@ -1605,10 +1937,12 @@ void _validateBootstrapTemplateIntegrity(
 ) {
   const String mapPath = 'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json';
   if (!exists(mapPath)) {
-    issues.add(ValidationIssue(
-      'AD039',
-      'Bootstrap template map is missing at $mapPath.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD039',
+        'Bootstrap template map is missing at $mapPath.',
+      ),
+    );
     return;
   }
 
@@ -1616,35 +1950,43 @@ void _validateBootstrapTemplateIntegrity(
   try {
     final dynamic decoded = jsonDecode(readText(mapPath));
     if (decoded is! Map<String, dynamic>) {
-      issues.add(ValidationIssue(
-        'AD039',
-        'Bootstrap template map must decode to a JSON object.',
-      ));
+      issues.add(
+        ValidationIssue(
+          'AD039',
+          'Bootstrap template map must decode to a JSON object.',
+        ),
+      );
       return;
     }
     templateMap = decoded;
   } catch (error) {
-    issues.add(ValidationIssue(
-      'AD039',
-      'Bootstrap template map JSON parse failed: $error',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD039',
+        'Bootstrap template map JSON parse failed: $error',
+      ),
+    );
     return;
   }
 
   if ((templateMap['entrypoint'] ?? '').toString() !=
       'docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md') {
-    issues.add(ValidationIssue(
-      'AD039',
-      'Bootstrap template map must point entrypoint to docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD039',
+        'Bootstrap template map must point entrypoint to docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md.',
+      ),
+    );
   }
 
   final dynamic rawModules = templateMap['modules'];
   if (rawModules is! List<dynamic>) {
-    issues.add(ValidationIssue(
-      'AD039',
-      'Bootstrap template map must include a modules list.',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD039',
+        'Bootstrap template map must include a modules list.',
+      ),
+    );
     return;
   }
 
@@ -1671,10 +2013,12 @@ void _validateBootstrapTemplateIntegrity(
       .where((String id) => !moduleIds.contains(id))
       .toList();
   if (invalidModuleRefs.isNotEmpty || missingModuleIds.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD039',
-      'Bootstrap template map is incomplete. Invalid refs: ${invalidModuleRefs.join(', ')}. Missing modules: ${missingModuleIds.join(', ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD039',
+        'Bootstrap template map is incomplete. Invalid refs: ${invalidModuleRefs.join(', ')}. Missing modules: ${missingModuleIds.join(', ')}',
+      ),
+    );
   }
 
   final List<String> missingMarkers = <String>[];
@@ -1689,10 +2033,12 @@ void _validateBootstrapTemplateIntegrity(
     }
   }
   if (missingMarkers.isNotEmpty) {
-    issues.add(ValidationIssue(
-      'AD040',
-      'Bootstrap template docs are missing required module markers: ${missingMarkers.join(' | ')}',
-    ));
+    issues.add(
+      ValidationIssue(
+        'AD040',
+        'Bootstrap template docs are missing required module markers: ${missingMarkers.join(' | ')}',
+      ),
+    );
   }
 }
 
@@ -1727,15 +2073,19 @@ int _runCli(List<String> args) {
   );
 
   if (issues.isEmpty) {
-    stdout.writeln(localizationScope
-        ? 'PASS (localization scope): agent docs validation succeeded.'
-        : 'PASS: agent docs validation succeeded.');
+    stdout.writeln(
+      localizationScope
+          ? 'PASS (localization scope): agent docs validation succeeded.'
+          : 'PASS: agent docs validation succeeded.',
+    );
     return 0;
   }
 
-  stdout.writeln(localizationScope
-      ? 'FAIL (localization scope): ${issues.length} issue(s).'
-      : 'FAIL: ${issues.length} issue(s).');
+  stdout.writeln(
+    localizationScope
+        ? 'FAIL (localization scope): ${issues.length} issue(s).'
+        : 'FAIL: ${issues.length} issue(s).',
+  );
   for (final ValidationIssue issue in issues) {
     stdout.writeln(issue.toString());
   }

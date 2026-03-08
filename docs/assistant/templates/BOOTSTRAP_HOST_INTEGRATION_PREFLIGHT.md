@@ -17,7 +17,8 @@ Before building the integration, verify in this order:
 1. tool installation exists on the target host
 2. auth/account state is available
 3. the app and the integration run in the same host/runtime environment when required
-4. a live smoke check succeeds before feature implementation proceeds
+4. if a localhost listener is required, verify the port is owned by the expected process and not by a stale or unrelated test/runtime process
+5. a live smoke check succeeds before feature implementation proceeds
 
 ## Same-Host Validation Rule
 If the app will run on Windows, and the integration depends on Windows-local auth or desktop state, validate it on Windows.
@@ -27,7 +28,14 @@ Do not assume that a tool working on one host means it works in the host where t
 
 ## Failure Classification
 - `unavailable`: install/auth/host preflight failed
+- `unavailable`: localhost bind conflict or unexpected listener ownership blocked the real integration host
 - `failed`: the integration ran, but the feature behavior itself failed
+
+## Listener Ownership Rule
+If a localhost listener is required:
+- verify the port is owned by the expected process before declaring the integration healthy
+- classify bind conflicts or unexpected listeners as `unavailable`
+- make listener-startup conflicts visible instead of leaving them as silent logs
 
 ## Example Pattern
 A Gmail draft feature backed by a local authenticated CLI is just one example.

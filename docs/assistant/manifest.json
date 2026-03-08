@@ -323,6 +323,25 @@
         "dart run tooling/validate_agent_docs.dart",
         "dart run tooling/validate_workspace_hygiene.dart"
       ]
+    },
+    {
+      "id": "harness_isolation_and_diagnostics_workflow",
+      "doc": "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
+      "scope": "test isolation, listener ownership, and multi-surface diagnostics guidance for host-bound workflows",
+      "primary_files": [
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
+        "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md",
+        "docs/assistant/LOCAL_ENV_PROFILE.local.md",
+        "docs/assistant/LOCAL_CAPABILITIES.md"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart",
+        "dart run tooling/validate_workspace_hygiene.dart"
+      ]
     }
   ],
   "global_commands": [
@@ -351,6 +370,8 @@
     "user_guides_update_sync_policy": "Major feature changes update relevant user-guide sections with matching technical docs.",
     "template_path_routing_regression_protection": "INDEX.md and validators enforce template-path routing and read policy protections.",
     "issue_memory_policy": "ISSUE_MEMORY.md and ISSUE_MEMORY.json capture repeated project issues for docs sync and generalized bootstrap maintenance decisions.",
+    "test_live_state_isolation_policy": "Tests must default to temporary filesystem/environment state, explicit opt-in live machine state, and non-live or ephemeral ports for host-bound features.",
+    "multi_surface_diagnostics_packet_policy": "For multi-surface workflows keep per-run artifacts primary, add workflow_context when a run belongs to a larger session, and use one durable app-owned session artifact instead of separate browser-only report files.",
     "canonical_precedence_policy": "Source code is final truth; APP_KNOWLEDGE.md is canonical; bridge/user guides defer to canonical.",
     "docs_sync_prompt_policy": "After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced, and do not ask again after the same-pass sync already happened.",
     "stage_gate_policy": "For risk-triggered complex work stop at each stage and require exact continuation token format NEXT_STAGE_X.",
@@ -369,5 +390,5 @@
     "cloud_scoring_failure_recovery_policy": "Cloud failure semantics use unavailable|failed and recovery order is cloud-fix-rerun before local-heavy fallback.",
     "cloud_local_apply_separation_policy": "Cloud evaluation outputs must not auto-apply runtime config/state; local manual acceptance gate is required before final apply."
   },
-  "last_updated": "2026-03-07"
+  "last_updated": "2026-03-08"
 }

@@ -126,3 +126,74 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - Branch: `feat/ai-docs-bootstrap`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_integration`
+
+### harness-live-state-contamination
+- Title: Tests or harness cleanup reused live user state or user-facing ports and contaminated real runtime checks
+- First seen timestamp: `2026-03-08T00:00:00Z`
+- Last seen timestamp: `2026-03-08T09:27:00Z`
+- Repeat count: `2`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - the expected localhost listener belonged to `pytest` or another non-user runtime instead of the visible app
+  - tests reused live roaming/profile settings or bridge configuration
+  - the browser showed a successful handoff while the visible app stayed idle
+- Likely root cause:
+  - tests and ad hoc debugging reused live `%APPDATA%`, live settings, or default user-facing ports instead of isolated temp state
+- Attempted fix history:
+  - `2026-03-08T00:00:00Z` — isolated pytest APPDATA and stopped bridge tests from using the live Gmail port; outcome: partial_only
+- Accepted fix:
+  - `2026-03-08T09:27:00Z` — project guidance now requires temp env/filesystem isolation, non-live or ephemeral test ports, explicit teardown, and visible listener-conflict status
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
+  - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+  - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `docs/assistant/LOCAL_ENV_PROFILE.local.md`
+  - `docs/assistant/LOCAL_CAPABILITIES.md`
+- Bootstrap relevance: `required`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - test isolation defaults
+    - listener ownership guidance
+    - visible runtime conflict handling
+- Evidence refs:
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_intake`
+  - Template: `docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md`
+  - Template: `docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md`
+
+### workflow-fragmented-multi-surface-diagnostics
+- Title: Fragmented diagnostics across handoff, per-run execution, and finalization slowed root-cause analysis
+- First seen timestamp: `2026-03-08T00:00:00Z`
+- Last seen timestamp: `2026-03-08T09:27:00Z`
+- Repeat count: `2`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - browser banners, app bridge state, run reports, and finalization/draft failures had to be correlated manually
+  - repeated debugging required back-and-forth between transient UI evidence and durable run artifacts
+  - support packets were inconsistent across handoff, execution, and finalization failures
+- Likely root cause:
+  - project docs did not yet encode one support-packet order or one durable app-owned session-artifact pattern for multi-surface workflows
+- Attempted fix history:
+  - `2026-03-08T00:00:00Z` — feature-specific Gmail diagnostics were added; outcome: partial_only
+- Accepted fix:
+  - `2026-03-08T09:27:00Z` — project guidance now routes multi-surface debugging through per-run artifacts first, additive workflow context when needed, one app-owned session artifact, and a fixed support-packet order
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+  - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+- Bootstrap relevance: `required`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - session-artifact layering guidance
+    - support-packet order
+    - multi-surface troubleshooting workflow routing
+- Evidence refs:
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_intake`
+  - Template: `docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md`
+  - File: `C:\Users\FA507\Downloads\run_report.md`

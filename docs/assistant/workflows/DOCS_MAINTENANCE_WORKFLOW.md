@@ -54,6 +54,8 @@ dart run tooling/validate_workspace_hygiene.dart
 - Ambiguous `commit` or `push` shorthand caused repeated git-hygiene mistakes: harden the commit/publish workflow docs and validator rules so the shorthand has fixed semantics instead of thread-local interpretation.
 - Strong repeated issue signal appears during normal work: update `ISSUE_MEMORY.md` and `ISSUE_MEMORY.json` instead of leaving the pattern only in thread history or refresh notes.
 - A reusable issue may affect bootstrap maintenance: mark its bootstrap relevance in issue memory and let `update codex bootstrap` / `UCBS` decide whether it generalizes.
+- Repeated live-state contamination across tests and real runtime checks: promote the durable rule into `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md` instead of leaving it as one-off cleanup.
+- Repeated fragmented diagnostics across handoff/run/finalization surfaces: promote the support-packet and session-artifact guidance into `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md` instead of scattering it across refresh notes.
 
 ## Handoff Checklist
 1. Ask exact prompt after significant implementation changes only when relevant touched-scope docs still remain unsynced:
@@ -70,3 +72,4 @@ dart run tooling/validate_workspace_hygiene.dart
 11. If the failure involved ambiguous `commit` or `push` shorthand, sync the durable default semantics into governance docs and validator rules instead of relying on thread memory.
 12. If strong issue-memory signals appeared, update `ISSUE_MEMORY.md` and `ISSUE_MEMORY.json` during normal work and consult them during docs sync before widening touched-scope docs.
 13. When docs sync scope overlaps a repeated issue, record whether the sync changed docs because of that issue-memory entry.
+14. If the repeated issue involved live-state contamination or fragmented multi-surface diagnostics, update `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md` and route it through `INDEX.md` and `manifest.json`.
