@@ -78,7 +78,12 @@ from .ocr_engine import (
 from .openai_client import ApiCallError, OpenAIResponsesClient
 from .output_paths import require_writable_output_dir
 from .page_selection import resolve_page_selection
-from .prompt_builder import build_language_retry_prompt, build_page_prompt, build_retry_prompt
+from .prompt_builder import (
+    build_ar_token_retry_prompt,
+    build_language_retry_prompt,
+    build_page_prompt,
+    build_retry_prompt,
+)
 from .run_report import RunEventCollector
 from .resources_loader import load_system_instructions
 from .types import (
@@ -1494,6 +1499,10 @@ class TranslationWorkflow:
             "compliance_defect_outside_text": False,
             "parser_failed": False,
             "validator_failed": False,
+            "validator_defect_reason": "",
+            "ar_violation_kind": "",
+            "ar_violation_samples": [],
+            "ar_token_details": {},
             "retry_reason": "",
             "request_type": "",
             "request_timeout_budget_seconds": 0.0,
@@ -1778,12 +1787,19 @@ class TranslationWorkflow:
                         for key, value in evaluation.ar_token_details.items()
                         if isinstance(value, int)
                     }
+                    detail_payload = {
+                        "ar_violation_samples": list(evaluation.ar_violation_samples or []),
+                    }
+                    for key, value in evaluation.ar_token_details.items():
+                        if isinstance(value, list) and value:
+                            detail_payload[key] = value
                     self._record_event(
                         event_type="ar_locked_token_extra_tokens",
                         stage="translate",
                         page_index=page_number,
                         decisions={"attempt": int(attempt)},
                         counters=detail_counters,
+                        details=detail_payload,
                     )
             if evaluation.validator_failed and evaluation.ar_token_details is not None:
                 detail_counters = {
@@ -1791,14 +1807,47 @@ class TranslationWorkflow:
                     for key, value in evaluation.ar_token_details.items()
                     if isinstance(value, int)
                 }
+                detail_payload: dict[str, object] = {
+                    "validator_defect_reason": evaluation.defect_reason or "",
+                    "ar_violation_kind": str(evaluation.ar_violation_kind or ""),
+                    "ar_violation_samples": list(evaluation.ar_violation_samples or []),
+                }
+                for key, value in evaluation.ar_token_details.items():
+                    if not isinstance(value, int) and value not in ({}, [], "", None):
+                        detail_payload[key] = value
+                event_type = "ar_validation_failure"
+                if evaluation.ar_violation_kind == "expected_token_mismatch":
+                    event_type = "ar_locked_token_violation"
+                elif evaluation.ar_violation_kind == "latin_or_digits_outside_wrapped_tokens":
+                    event_type = "ar_outside_token_leakage"
+                elif evaluation.ar_violation_kind == "unwrapped_token_marker":
+                    event_type = "ar_unwrapped_token_marker"
                 self._record_event(
-                    event_type="ar_locked_token_violation",
+                    event_type=event_type,
                     stage="translate",
                     page_index=page_number,
                     decisions={"attempt": int(attempt)},
                     counters=detail_counters,
                     error=evaluation.defect_reason or "Expected locked token mismatch.",
+                    details=detail_payload,
                 )
+
+        def _apply_evaluation_metadata(evaluation: OutputEvaluation) -> None:
+            page_metadata["parser_failed"] = bool(page_metadata["parser_failed"]) or bool(evaluation.parser_failed)
+            page_metadata["validator_failed"] = bool(page_metadata["validator_failed"]) or bool(evaluation.validator_failed)
+            page_metadata["compliance_defect_outside_text"] = bool(
+                page_metadata["compliance_defect_outside_text"]
+            ) or bool(evaluation.outside_text)
+            if evaluation.defect_reason:
+                page_metadata["validator_defect_reason"] = str(evaluation.defect_reason)
+            if config.target_lang != TargetLang.AR:
+                return
+            if evaluation.ar_violation_kind:
+                page_metadata["ar_violation_kind"] = str(evaluation.ar_violation_kind)
+            if evaluation.ar_violation_samples:
+                page_metadata["ar_violation_samples"] = [str(item) for item in evaluation.ar_violation_samples[:3]]
+            if isinstance(evaluation.ar_token_details, dict) and evaluation.ar_token_details:
+                page_metadata["ar_token_details"] = dict(evaluation.ar_token_details)
 
         def _finalize_page_metadata() -> None:
             page_metadata["api_calls_count"] = int(api_calls_count)
@@ -1913,9 +1962,7 @@ class TranslationWorkflow:
             expected_ar_tokens=expected_ar_tokens,
         )
         _record_ar_eval_diagnostics(initial_eval, attempt=1)
-        page_metadata["parser_failed"] = bool(initial_eval.parser_failed)
-        page_metadata["validator_failed"] = bool(initial_eval.validator_failed)
-        page_metadata["compliance_defect_outside_text"] = bool(initial_eval.outside_text)
+        _apply_evaluation_metadata(initial_eval)
         if initial_eval.ok and initial_eval.normalized_text is not None:
             if self._diagnostics_admin_mode:
                 from .translation_diagnostics import run_all_quality_checks, emit_validation_summary_event
@@ -1943,7 +1990,17 @@ class TranslationWorkflow:
             fallback_reason=initial_eval.defect_reason,
         )
         page_metadata["retry_reason"] = retry_reason
-        if retry_reason == "pt_language_leak" and config.target_lang in (TargetLang.EN, TargetLang.FR):
+        if retry_reason == "ar_token_violation" and config.target_lang == TargetLang.AR:
+            retry_prompt = build_ar_token_retry_prompt(
+                initial.raw_output,
+                expected_ar_tokens or [],
+                violation_kind=initial_eval.ar_violation_kind,
+            )
+            if initial_eval.ar_violation_kind == "latin_or_digits_outside_wrapped_tokens":
+                page_metadata["retry_prompt_type"] = "ar_wrap_correction"
+            else:
+                page_metadata["retry_prompt_type"] = "ar_token_correction"
+        elif retry_reason == "pt_language_leak":
             retry_prompt = build_language_retry_prompt(config.target_lang, initial.raw_output)
             page_metadata["retry_prompt_type"] = "language_correction"
         else:
@@ -2107,11 +2164,7 @@ class TranslationWorkflow:
             expected_ar_tokens=expected_ar_tokens,
         )
         _record_ar_eval_diagnostics(retry_eval, attempt=2)
-        page_metadata["parser_failed"] = bool(page_metadata["parser_failed"]) or bool(retry_eval.parser_failed)
-        page_metadata["validator_failed"] = bool(page_metadata["validator_failed"]) or bool(retry_eval.validator_failed)
-        page_metadata["compliance_defect_outside_text"] = bool(page_metadata["compliance_defect_outside_text"]) or bool(
-            retry_eval.outside_text
-        )
+        _apply_evaluation_metadata(retry_eval)
         if retry_eval.ok and retry_eval.normalized_text is not None:
             if self._diagnostics_admin_mode:
                 from .translation_diagnostics import run_all_quality_checks, emit_validation_summary_event
@@ -2134,6 +2187,8 @@ class TranslationWorkflow:
             )
 
         defect_reason = retry_eval.defect_reason or initial_eval.defect_reason or "compliance_failure"
+        if defect_reason:
+            page_metadata["validator_defect_reason"] = str(defect_reason)
         page_metadata["retry_reason"] = self._retry_reason_from_evaluation(
             retry_eval,
             lang=config.target_lang,
@@ -2453,6 +2508,13 @@ class TranslationWorkflow:
                 "error": str(failed_page.get("error", "") or ""),
                 "exception_class": str(failed_page.get("exception_class", "") or ""),
                 "retry_reason": str(failed_page.get("retry_reason", "") or ""),
+                "validator_defect_reason": str(failed_page.get("validator_defect_reason", "") or ""),
+                "ar_violation_kind": str(failed_page.get("ar_violation_kind", "") or ""),
+                "ar_violation_samples": [
+                    str(item)
+                    for item in failed_page.get("ar_violation_samples", [])
+                    if str(item or "").strip() != ""
+                ],
                 "request_type": str(failed_page.get("request_type", "") or ""),
                 "request_timeout_budget_seconds": float(
                     failed_page.get("request_timeout_budget_seconds", 0.0) or 0.0
@@ -2536,6 +2598,28 @@ class TranslationWorkflow:
             "review_queue_count": quality_risk_payload.get("review_queue_count", 0),
             "review_queue": quality_risk_payload.get("review_queue", []),
         }
+        if isinstance(config.gmail_batch_context, dict) and config.gmail_batch_context:
+            payload["gmail_batch_context"] = {
+                "source": str(config.gmail_batch_context.get("source", "") or ""),
+                "session_id": str(config.gmail_batch_context.get("session_id", "") or ""),
+                "message_id": str(config.gmail_batch_context.get("message_id", "") or ""),
+                "thread_id": str(config.gmail_batch_context.get("thread_id", "") or ""),
+                "selected_attachment_filename": str(
+                    config.gmail_batch_context.get("selected_attachment_filename", "") or ""
+                ),
+                "selected_attachment_count": int(
+                    config.gmail_batch_context.get("selected_attachment_count", 0) or 0
+                ),
+                "selected_target_lang": str(
+                    config.gmail_batch_context.get("selected_target_lang", "") or ""
+                ),
+                "selected_start_page": int(
+                    config.gmail_batch_context.get("selected_start_page", 0) or 0
+                ),
+                "gmail_batch_session_report_path": str(
+                    config.gmail_batch_context.get("gmail_batch_session_report_path", "") or ""
+                ),
+            }
         if self._diagnostics_admin_mode:
             api_calls_total = sum(int(page.get("api_calls_count", 0) or 0) for _, page in page_rows)
             backoff_wait_seconds_total = sum(
@@ -2945,6 +3029,21 @@ class TranslationWorkflow:
             return "fragmented_blocks"
         return "not_needed" if not would_attach_image else "heuristic_triggered"
 
+    def _missing_checkpoint_page_outputs(self, state: RunState, *, run_dir: Path) -> list[int]:
+        pages_dir = run_dir / "pages"
+        missing_pages: list[int] = []
+        for page_key, page_state in state.pages.items():
+            if str(page_state.get("status", "")).strip().lower() != PageStatus.DONE.value:
+                continue
+            try:
+                page_number = int(str(page_key))
+            except ValueError:
+                continue
+            page_path = pages_dir / f"page_{page_number:04d}.txt"
+            if not page_path.exists():
+                missing_pages.append(page_number)
+        return sorted(missing_pages)
+
     def _resolve_paths_for_run(self, config: RunConfig) -> tuple[RunPaths, RunState | None]:
         paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
         existing = load_run_state(paths.run_state_path)
@@ -2984,6 +3083,26 @@ class TranslationWorkflow:
             lang=config.target_lang,
             run_started_at=run_started_at,
         )
+        missing_page_outputs = self._missing_checkpoint_page_outputs(existing, run_dir=resolved_paths.run_dir)
+        if missing_page_outputs:
+            self._log(
+                "Checkpoint references completed pages whose saved page files are missing; "
+                "starting a new run state."
+            )
+            self._record_event(
+                event_type="checkpoint_resume_missing_page_outputs",
+                stage="checkpoint",
+                warning=(
+                    "Checkpoint references completed pages whose saved page files are missing; "
+                    "starting a new run state."
+                ),
+                details={
+                    "missing_pages": missing_page_outputs,
+                    "run_dir": str(resolved_paths.run_dir),
+                },
+            )
+            clear_run_dirs(paths)
+            return paths, None
         self._record_event(
             event_type="checkpoint_detected",
             stage="checkpoint",

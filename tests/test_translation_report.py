@@ -667,3 +667,30 @@ def test_report_sanity_summary_in_payload(tmp_path: Path) -> None:
     assert isinstance(summary["sanity_warnings"], list)
     assert summary["total_pages"] == 2  # from detected_page_count
     assert summary["processed_pages"] == 2
+
+
+def test_translation_report_renders_gmail_batch_context_section(tmp_path: Path) -> None:
+    pages = {"1": _make_page(1)}
+    events = [_run_config_event()]
+    run_dir = _seed_run(tmp_path, pages=pages, events=events)
+
+    summary_path = run_dir / "run_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["gmail_batch_context"] = {
+        "source": "gmail_intake",
+        "session_id": "gmail_batch_abc123",
+        "message_id": "msg-100",
+        "thread_id": "thread-200",
+        "selected_attachment_filename": "21-25.pdf",
+        "selected_attachment_count": 1,
+        "selected_target_lang": "AR",
+        "gmail_batch_session_report_path": r"C:\Users\FA507\Downloads\gmail_batch_session.json",
+    }
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    md = build_run_report_markdown(run_dir=run_dir, admin_mode=True, include_sanitized_snippets=False)
+
+    assert "## Gmail Intake / Batch Context" in md
+    assert "msg-100" in md
+    assert "thread-200" in md
+    assert "selected attachment: `21-25.pdf`".lower() in md.lower()

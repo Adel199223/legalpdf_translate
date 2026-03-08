@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import json
 import os
+import secrets
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -17,8 +20,8 @@ from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from openai import OpenAI
-from PySide6.QtCore import QObject, QStandardPaths, QThread, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtCore import QEvent, QObject, QStandardPaths, QThread, QTimer, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -73,6 +76,12 @@ from legalpdf_translate.gmail_draft import (
     assess_gmail_draft_prereqs,
     build_honorarios_gmail_request,
     create_gmail_draft_via_gog,
+    validate_translated_docx_artifacts_for_gmail_draft,
+)
+from legalpdf_translate.gmail_batch import (
+    FetchedGmailMessage,
+    GmailAttachmentCandidate,
+    GmailAttachmentSelection,
 )
 from legalpdf_translate.build_identity import RuntimeBuildIdentity
 from legalpdf_translate.honorarios_docx import (
@@ -108,7 +117,13 @@ from legalpdf_translate.ocr_engine import (
     test_ocr_provider_connection,
 )
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
-from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox
+from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
+from legalpdf_translate.qt_gui.worker import (
+    GmailAttachmentPreviewBootstrapResult,
+    GmailAttachmentPreviewBootstrapWorker,
+    GmailAttachmentPreviewPageResult,
+    GmailAttachmentPreviewPageWorker,
+)
 from legalpdf_translate.review_export import export_review_queue
 from legalpdf_translate.secrets_store import (
     delete_openai_key,
@@ -225,6 +240,41 @@ class JobLogSeed:
     pdf_path: Path
     output_docx: Path | None = None
     partial_docx: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class JobLogSavedResult:
+    row_id: int
+    translated_docx_path: Path
+    word_count: int
+    case_number: str
+    case_entity: str
+    case_city: str
+    court_email: str
+    run_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class GmailBatchReviewResult:
+    selections: tuple[GmailAttachmentSelection, ...]
+    target_lang: str
+
+    @property
+    def attachments(self) -> tuple[GmailAttachmentCandidate, ...]:
+        return tuple(selection.candidate for selection in self.selections)
+
+
+@dataclass(slots=True)
+class GmailBatchReviewPreviewCacheTransfer:
+    cached_paths: dict[str, Path]
+    cached_page_counts: dict[str, int]
+    temp_dir: tempfile.TemporaryDirectory[str] | None = field(default=None, repr=False)
+
+    def cleanup(self) -> None:
+        temp_dir = self.temp_dir
+        self.temp_dir = None
+        if temp_dir is not None:
+            temp_dir.cleanup()
 
 
 _WORD_XML_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
@@ -393,6 +443,8 @@ class QtHonorariosExportDialog(QDialog):
         self._default_directory = default_directory.expanduser().resolve()
         self._initial_draft = draft
         self.saved_path: Path | None = None
+        self.requested_path: Path | None = None
+        self.auto_renamed: bool = False
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -463,12 +515,22 @@ class QtHonorariosExportDialog(QDialog):
         )
         if not selected:
             return
+        requested_path = Path(selected).expanduser().resolve()
+        self.requested_path = requested_path
         try:
-            saved = generate_honorarios_docx(draft, Path(selected))
+            saved = generate_honorarios_docx(draft, requested_path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Requerimento de Honorários", f"Failed to generate DOCX:\n{exc}")
             return
         self.saved_path = saved
+        self.auto_renamed = saved != requested_path
+        if saved != requested_path:
+            QMessageBox.information(
+                self,
+                "Requerimento de Honorários",
+                "The selected file already existed. The honorários DOCX was saved as:\n"
+                f"{saved}",
+            )
         open_now = QMessageBox.question(
             self,
             "Requerimento de Honorários",
@@ -491,6 +553,7 @@ class QtSaveToJobLogDialog(QDialog):
         db_path: Path,
         seed: JobLogSeed,
         on_saved: Callable[[], None] | None = None,
+        allow_honorarios_export: bool = True,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Save to Job Log")
@@ -499,7 +562,9 @@ class QtSaveToJobLogDialog(QDialog):
         self._db_path = db_path
         self._seed = seed
         self._on_saved = on_saved
+        self._allow_honorarios_export = bool(allow_honorarios_export)
         self._saved = False
+        self._saved_result: JobLogSavedResult | None = None
         self._settings = load_joblog_settings()
         self._gui_settings = load_gui_settings()
         self._metadata_config: MetadataAutofillConfig = metadata_config_from_settings(self._settings)
@@ -513,6 +578,10 @@ class QtSaveToJobLogDialog(QDialog):
     @property
     def saved(self) -> bool:
         return self._saved
+
+    @property
+    def saved_result(self) -> JobLogSavedResult | None:
+        return self._saved_result
 
     def _fill_combo(self, combo: QComboBox, values: list[str]) -> None:
         current = combo.currentText().strip()
@@ -671,6 +740,7 @@ class QtSaveToJobLogDialog(QDialog):
 
         actions = QHBoxLayout()
         self.honorarios_btn = QPushButton("Gerar Requerimento de Honorários...")
+        self.honorarios_btn.setEnabled(self._allow_honorarios_export)
         actions.addWidget(self.honorarios_btn)
         actions.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
@@ -836,6 +906,10 @@ class QtSaveToJobLogDialog(QDialog):
             )
             return
         try:
+            validate_translated_docx_artifacts_for_gmail_draft(
+                translated_docxs=(translation_docx,),
+                honorarios_docx=honorarios_docx,
+            )
             request = build_honorarios_gmail_request(
                 gog_path=prereqs.gog_path,
                 account_email=prereqs.account_email,
@@ -870,6 +944,8 @@ class QtSaveToJobLogDialog(QDialog):
             QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
 
     def _open_honorarios_dialog(self) -> None:
+        if not self._allow_honorarios_export:
+            return
         dialog = QtHonorariosExportDialog(
             parent=self,
             draft=self._build_honorarios_draft(),
@@ -996,6 +1072,12 @@ class QtSaveToJobLogDialog(QDialog):
         except ValueError as exc:
             raise ValueError(f"{label} must be numeric.") from exc
 
+    def _resolved_seed_docx_path(self) -> Path | None:
+        for candidate in (self._seed.output_docx, self._seed.partial_docx):
+            if isinstance(candidate, Path):
+                return candidate.expanduser().resolve()
+        return None
+
     def _save(self) -> None:
         try:
             rate = self._parse_float(self.rate_edit.text(), "Rate/word")
@@ -1077,7 +1159,7 @@ class QtSaveToJobLogDialog(QDialog):
         }
 
         with closing(open_job_log(self._db_path)) as conn:
-            insert_job_run(conn, payload)
+            row_id = insert_job_run(conn, payload)
 
         self._ensure_in_vocab("vocab_job_types", payload["job_type"])
         if case_entity:
@@ -1111,6 +1193,18 @@ class QtSaveToJobLogDialog(QDialog):
                 "ocr_api_key_env_name": self._settings["ocr_api_key_env_name"],
             }
         )
+        translated_docx_path = self._resolved_seed_docx_path()
+        if translated_docx_path is not None:
+            self._saved_result = JobLogSavedResult(
+                row_id=int(row_id),
+                translated_docx_path=translated_docx_path,
+                word_count=int(self._seed.word_count),
+                case_number=str(payload["case_number"] or ""),
+                case_entity=case_entity,
+                case_city=case_city,
+                court_email=str(payload["court_email"] or ""),
+                run_id=str(payload["run_id"] or ""),
+            )
         self._saved = True
         if self._on_saved is not None:
             self._on_saved()
@@ -1241,6 +1335,10 @@ class QtJobLogWindow(QDialog):
             translation_docx = Path(selected).expanduser().resolve()
             self._persist_historical_translation_docx(row, translation_docx)
         try:
+            validate_translated_docx_artifacts_for_gmail_draft(
+                translated_docxs=(translation_docx,),
+                honorarios_docx=honorarios_docx,
+            )
             request = build_honorarios_gmail_request(
                 gog_path=prereqs.gog_path,
                 account_email=prereqs.account_email,
@@ -1681,12 +1779,952 @@ class QtReviewQueueDialog(QDialog):
         QMessageBox.information(self, "Review Queue", f"Page file:\n{page_file}")
 
 
+_ATTACHMENT_IMAGE_SUFFIXES = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".bmp",
+    ".tif",
+    ".tiff",
+}
+
+
+def _is_image_attachment(candidate: GmailAttachmentCandidate) -> bool:
+    suffix = Path(candidate.filename).suffix.strip().lower()
+    return candidate.mime_type.strip().lower().startswith("image/") or suffix in _ATTACHMENT_IMAGE_SUFFIXES
+
+
+class _GmailPreviewPageCard(QFrame):
+    """Single page card used by the scrolling Gmail preview dialog."""
+
+    _FALLBACK_PAGE_RATIO = 1.41421356237
+
+    def __init__(
+        self,
+        *,
+        page_number: int,
+        page_size: tuple[float, float] | None,
+        select_page_callback: Callable[[int], None],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.page_number = page_number
+        self._original_pixmap: QPixmap | None = None
+        self._page_size = self._normalize_page_size(page_size)
+        self._target_width = 320
+        self.setObjectName("ShellPanel")
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(10)
+
+        header = QHBoxLayout()
+        header.setSpacing(8)
+        self.title_label = QLabel(f"Page {page_number}")
+        self.use_page_btn = QPushButton("Use this page as start")
+        header.addWidget(self.title_label)
+        header.addStretch(1)
+        header.addWidget(self.use_page_btn)
+        root.addLayout(header)
+
+        self.state_label = QLabel("")
+        self.state_label.setWordWrap(True)
+        self.state_label.setMinimumHeight(max(28, self.fontMetrics().lineSpacing() * 2))
+        root.addWidget(self.state_label)
+
+        self.preview_label = QLabel("")
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self.preview_label.setWordWrap(True)
+        root.addWidget(self.preview_label)
+
+        self.use_page_btn.clicked.connect(lambda: select_page_callback(self.page_number))
+        self.set_idle_placeholder()
+
+    @staticmethod
+    def _normalize_page_size(page_size: tuple[float, float] | None) -> tuple[float, float] | None:
+        if not isinstance(page_size, tuple) or len(page_size) != 2:
+            return None
+        width, height = page_size
+        try:
+            resolved_width = max(1.0, float(width))
+            resolved_height = max(1.0, float(height))
+        except (TypeError, ValueError):
+            return None
+        return resolved_width, resolved_height
+
+    def _reserved_ratio(self) -> float:
+        if self._page_size is None:
+            return self._FALLBACK_PAGE_RATIO
+        width, height = self._page_size
+        return max(0.75, min(2.5, height / max(1.0, width)))
+
+    def _reserved_height_for_width(self, target_width: int) -> int:
+        width = max(320, int(target_width))
+        return max(240, int(round(width * self._reserved_ratio())))
+
+    def _apply_reserved_height(self, target_width: int) -> None:
+        self._target_width = max(320, int(target_width))
+        self.preview_label.setFixedHeight(self._reserved_height_for_width(self._target_width))
+
+    def _set_state_text(self, message: str) -> None:
+        self.state_label.setText(message if message else " ")
+
+    def set_idle_placeholder(self) -> None:
+        self._original_pixmap = None
+        self._set_state_text("Preview will load when visible.")
+        self.preview_label.setPixmap(QPixmap())
+        self.preview_label.setText("")
+        self._apply_reserved_height(self._target_width)
+
+    def set_loading(self) -> None:
+        self._set_state_text("Loading preview...")
+        if self._original_pixmap is None:
+            self.preview_label.setPixmap(QPixmap())
+            self.preview_label.setText("")
+        self._apply_reserved_height(self._target_width)
+
+    def set_error(self, message: str) -> None:
+        self._original_pixmap = None
+        self._set_state_text(message)
+        self.preview_label.setPixmap(QPixmap())
+        self.preview_label.setText("")
+        self._apply_reserved_height(self._target_width)
+
+    def set_pixmap(self, pixmap: QPixmap, target_width: int) -> None:
+        self._original_pixmap = pixmap
+        self._set_state_text("")
+        self.preview_label.setText("")
+        self.update_scaled_pixmap(target_width)
+
+    def clear_cached_pixmap(self) -> None:
+        self._original_pixmap = None
+        self._set_state_text("Preview will reload when visible.")
+        self.preview_label.setPixmap(QPixmap())
+        self.preview_label.setText("")
+        self._apply_reserved_height(self._target_width)
+
+    def update_scaled_pixmap(self, target_width: int) -> None:
+        self._apply_reserved_height(target_width)
+        if self._original_pixmap is None:
+            return
+        width = self._target_width
+        pixmap = self._original_pixmap
+        if pixmap.width() != width:
+            display = pixmap.scaledToWidth(width, Qt.TransformationMode.SmoothTransformation)
+        else:
+            display = pixmap
+        self.preview_label.setPixmap(display)
+        self.preview_label.setFixedHeight(display.height())
+
+
+class QtGmailAttachmentPreviewDialog(QDialog):
+    """Preview a Gmail attachment before batch preparation."""
+
+    _PAGE_PREFETCH_BUFFER = 1
+    _PAGE_RENDER_CONCURRENCY = 1
+    _PAGE_CACHE_LIMIT = 16
+    _PAGE_REFRESH_DEBOUNCE_MS = 75
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        attachment: GmailAttachmentCandidate,
+        gog_path: Path,
+        account_email: str,
+        preview_dir: Path,
+        initial_start_page: int,
+        cached_path: Path | None = None,
+        known_page_count: int | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Attachment Preview")
+        self.resize(980, 760)
+        self._attachment = attachment
+        self._gog_path = gog_path.expanduser().resolve()
+        self._account_email = account_email.strip()
+        self._preview_dir = preview_dir.expanduser().resolve()
+        self._local_path = cached_path.expanduser().resolve() if isinstance(cached_path, Path) else None
+        self._page_count = int(known_page_count) if isinstance(known_page_count, int) and known_page_count > 0 else None
+        self._is_image = _is_image_attachment(self._attachment)
+        self._current_page = 1 if self._is_image else max(1, int(initial_start_page))
+        self._closing = False
+        self._bootstrap_loading = False
+        self._bootstrap_complete = False
+        self._bootstrap_thread: QThread | None = None
+        self._bootstrap_worker: GmailAttachmentPreviewBootstrapWorker | None = None
+        self._page_threads: dict[int, QThread] = {}
+        self._page_workers: dict[int, GmailAttachmentPreviewPageWorker] = {}
+        self._page_cards: dict[int, _GmailPreviewPageCard] = {}
+        self._page_sizes: tuple[tuple[float, float], ...] = ()
+        self._page_cache: OrderedDict[int, QPixmap] = OrderedDict()
+        self._page_errors: dict[int, str] = {}
+        self._queued_pages: list[int] = []
+        self._queued_page_set: set[int] = set()
+        self._inflight_pages: set[int] = set()
+        self._visible_refresh_timer = QTimer(self)
+        self._visible_refresh_timer.setSingleShot(True)
+        self._visible_refresh_timer.setInterval(self._PAGE_REFRESH_DEBOUNCE_MS)
+        self._visible_refresh_timer.timeout.connect(self._refresh_visible_pages)
+        self._image_pixmap: QPixmap | None = None
+        self.selected_start_page: int | None = None
+        self.resolved_local_path: Path | None = self._local_path
+        self.resolved_page_count: int | None = self._page_count
+        self._build_ui()
+        QTimer.singleShot(0, self._start_bootstrap)
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        self.header_label = QLabel(f"Attachment: {self._attachment.filename}")
+        self.header_label.setWordWrap(True)
+        root.addWidget(self.header_label)
+
+        self.status_label = QLabel("Loading preview...")
+        self.status_label.setWordWrap(True)
+        root.addWidget(self.status_label)
+
+        self.jump_widget = QWidget(self)
+        jump_layout = QHBoxLayout(self.jump_widget)
+        jump_layout.setContentsMargins(0, 0, 0, 0)
+        jump_layout.setSpacing(8)
+        self.jump_label = QLabel("Go to page")
+        self.jump_spin = NoWheelSpinBox()
+        self.jump_spin.setMinimum(1)
+        self.jump_spin.setMaximum(max(1, self._page_count) if isinstance(self._page_count, int) else 1)
+        self.jump_spin.setValue(self._current_page)
+        self.jump_btn = QPushButton("Go")
+        jump_layout.addWidget(self.jump_label)
+        jump_layout.addWidget(self.jump_spin)
+        jump_layout.addWidget(self.jump_btn)
+        jump_layout.addStretch(1)
+        root.addWidget(self.jump_widget)
+
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.preview_content = QWidget(self.scroll_area)
+        self.preview_layout = QVBoxLayout(self.preview_content)
+        self.preview_layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_layout.setSpacing(12)
+        self.preview_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.preview_label = QLabel("Loading preview...")
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self.preview_label.setWordWrap(True)
+        self.preview_layout.addWidget(self.preview_label)
+        self.scroll_area.setWidget(self.preview_content)
+        root.addWidget(self.scroll_area, 1)
+
+        actions = QHBoxLayout()
+        self.use_page_btn = QPushButton("Use current page as start")
+        self.close_btn = QPushButton("Close")
+        actions.addStretch(1)
+        actions.addWidget(self.use_page_btn)
+        actions.addWidget(self.close_btn)
+        root.addLayout(actions)
+
+        self.jump_btn.clicked.connect(self._jump_to_page)
+        self.use_page_btn.clicked.connect(self._use_current_page)
+        self.close_btn.clicked.connect(self.reject)
+        self.scroll_area.verticalScrollBar().valueChanged.connect(lambda _value: self._schedule_visible_page_refresh())
+        self.scroll_area.viewport().installEventFilter(self)
+        self._refresh_controls()
+
+    def done(self, result: int) -> None:
+        self._closing = True
+        self._visible_refresh_timer.stop()
+        bootstrap_thread = self._bootstrap_thread
+        if bootstrap_thread is not None and bootstrap_thread.isRunning():
+            bootstrap_thread.quit()
+            bootstrap_thread.wait(1000)
+        for thread in list(self._page_threads.values()):
+            if thread.isRunning():
+                thread.quit()
+                thread.wait(1000)
+        self._bootstrap_thread = None
+        self._bootstrap_worker = None
+        self._page_threads.clear()
+        self._page_workers.clear()
+        super().done(result)
+
+    def eventFilter(self, watched: QObject, event: object) -> bool:
+        if watched is self.scroll_area.viewport() and isinstance(event, QEvent):
+            if event.type() in {QEvent.Type.Resize, QEvent.Type.Show}:
+                self._refresh_scaled_preview()
+                self._schedule_visible_page_refresh()
+        return super().eventFilter(watched, event)
+
+    def _refresh_controls(self) -> None:
+        jump_enabled = (
+            not self._is_image
+            and self._bootstrap_complete
+            and isinstance(self.resolved_page_count, int)
+            and self.resolved_page_count > 0
+        )
+        self.jump_widget.setVisible(not self._is_image)
+        self.jump_spin.setEnabled(jump_enabled)
+        self.jump_btn.setEnabled(jump_enabled)
+        self.use_page_btn.setVisible(self._is_image)
+        self.use_page_btn.setEnabled(self._is_image and self._bootstrap_complete and self._image_pixmap is not None)
+
+    def _set_preview_message(self, message: str) -> None:
+        self._clear_preview_layout()
+        self.preview_label = QLabel(message)
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self.preview_label.setWordWrap(True)
+        self.preview_layout.addWidget(self.preview_label)
+
+    def _clear_preview_layout(self) -> None:
+        while self.preview_layout.count() > 0:
+            item = self.preview_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self._page_cards = {}
+
+    def _start_bootstrap(self) -> None:
+        if self._closing or self._bootstrap_loading or self._bootstrap_complete:
+            return
+        self._bootstrap_loading = True
+        self.status_label.setText("Loading preview...")
+        self._set_preview_message("Loading preview...")
+        self._refresh_controls()
+
+        thread = QThread(self)
+        worker = GmailAttachmentPreviewBootstrapWorker(
+            gog_path=self._gog_path,
+            account_email=self._account_email,
+            attachment=self._attachment,
+            preview_dir=self._preview_dir,
+            local_path=self._local_path,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_bootstrap_loaded)
+        worker.error.connect(self._on_bootstrap_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(self._cleanup_bootstrap_worker)
+        self._bootstrap_thread = thread
+        self._bootstrap_worker = worker
+        thread.start()
+
+    def _cleanup_bootstrap_worker(self) -> None:
+        worker = self._bootstrap_worker
+        thread = self._bootstrap_thread
+        self._bootstrap_worker = None
+        self._bootstrap_thread = None
+        if worker is not None:
+            worker.deleteLater()
+        if thread is not None:
+            thread.deleteLater()
+
+    def _on_bootstrap_loaded(self, result_obj: object) -> None:
+        self._bootstrap_loading = False
+        if not isinstance(result_obj, GmailAttachmentPreviewBootstrapResult):
+            self._on_bootstrap_error("Attachment preview returned an invalid result.")
+            return
+        result = result_obj
+        self._local_path = result.local_path
+        self.resolved_local_path = result.local_path
+        self._page_count = max(1, int(result.page_count))
+        self._page_sizes = tuple(result.page_sizes) if len(result.page_sizes) == self._page_count else ()
+        self.resolved_page_count = self._page_count
+        self._current_page = min(max(1, self._current_page), self._page_count)
+        self._bootstrap_complete = True
+        self.jump_spin.setMaximum(self._page_count)
+        self.jump_spin.blockSignals(True)
+        self.jump_spin.setValue(self._current_page)
+        self.jump_spin.blockSignals(False)
+
+        if self._is_image:
+            self.status_label.setText("Single-image attachment preview.")
+            self._set_preview_message("Loading preview...")
+            self._queue_page_render(1)
+            self._start_next_page_workers()
+        else:
+            self.status_label.setText(
+                f"Scroll to inspect {self._page_count} page(s). Click 'Use this page as start' on the page you need."
+            )
+            self._build_pdf_page_cards()
+            QTimer.singleShot(0, self._scroll_to_initial_page)
+        self._refresh_controls()
+
+    def _on_bootstrap_error(self, message: str) -> None:
+        self._bootstrap_loading = False
+        self.status_label.setText("Preview unavailable.")
+        self._set_preview_message(message)
+        self._refresh_controls()
+        QMessageBox.warning(self, "Attachment Preview", message)
+
+    def _build_pdf_page_cards(self) -> None:
+        self._clear_preview_layout()
+        target_width = self._target_page_width()
+        for page_number in range(1, max(1, self._page_count) + 1):
+            card = _GmailPreviewPageCard(
+                page_number=page_number,
+                page_size=self._page_sizes[page_number - 1] if page_number - 1 < len(self._page_sizes) else None,
+                select_page_callback=self._select_pdf_page,
+                parent=self.preview_content,
+            )
+            if page_number in self._page_cache:
+                card.set_pixmap(self._page_cache[page_number], target_width)
+            elif page_number in self._page_errors:
+                card.set_error(self._page_errors[page_number])
+            else:
+                card.set_idle_placeholder()
+            card.update_scaled_pixmap(target_width)
+            self.preview_layout.addWidget(card)
+            self._page_cards[page_number] = card
+        self.preview_layout.addStretch(1)
+
+    def _scroll_to_initial_page(self) -> None:
+        self._scroll_to_page(self._current_page)
+
+    def _target_page_width(self) -> int:
+        return max(320, self.scroll_area.viewport().width() - 64)
+
+    def _refresh_scaled_preview(self) -> None:
+        target_width = self._target_page_width()
+        for card in self._page_cards.values():
+            card.update_scaled_pixmap(target_width)
+        if self._is_image and self._image_pixmap is not None:
+            pixmap = self._image_pixmap
+            if pixmap.width() != target_width:
+                display = pixmap.scaledToWidth(target_width, Qt.TransformationMode.SmoothTransformation)
+            else:
+                display = pixmap
+            self.preview_label.setPixmap(display)
+            self.preview_label.setFixedHeight(display.height())
+
+    def _scroll_to_page(self, page_number: int) -> None:
+        if self._is_image:
+            return
+        page = min(max(1, int(page_number)), max(1, self._page_count or 1))
+        self._current_page = page
+        self.jump_spin.blockSignals(True)
+        self.jump_spin.setValue(page)
+        self.jump_spin.blockSignals(False)
+        card = self._page_cards.get(page)
+        if card is None:
+            return
+        self.scroll_area.verticalScrollBar().setValue(max(0, card.y() - 8))
+        self._schedule_visible_page_refresh()
+
+    def _jump_to_page(self) -> None:
+        if self._is_image or not self._bootstrap_complete:
+            return
+        self._scroll_to_page(int(self.jump_spin.value()))
+
+    def _select_pdf_page(self, page_number: int) -> None:
+        self.selected_start_page = max(1, int(page_number))
+        self.accept()
+
+    def _use_current_page(self) -> None:
+        self.selected_start_page = 1 if self._is_image else max(1, self._current_page)
+        self.accept()
+
+    def _schedule_visible_page_refresh(self) -> None:
+        if self._closing or self._is_image or not self._bootstrap_complete:
+            return
+        self._visible_refresh_timer.start()
+
+    def _refresh_visible_pages(self) -> None:
+        if self._closing or self._is_image or not self._bootstrap_complete:
+            return
+        desired_pages = self._desired_pages_for_render()
+        for page_number in desired_pages:
+            self._queue_page_render(page_number)
+        self._start_next_page_workers()
+        self._trim_page_cache(protected_pages=set(desired_pages))
+
+    def _desired_pages_for_render(self) -> list[int]:
+        if self._page_count is None or self._page_count <= 0:
+            return []
+        scrollbar = self.scroll_area.verticalScrollBar()
+        visible_top = scrollbar.value()
+        visible_bottom = visible_top + self.scroll_area.viewport().height()
+        visible_pages: list[int] = []
+        for page_number, card in self._page_cards.items():
+            top = card.y()
+            bottom = top + card.height()
+            if bottom >= visible_top and top <= visible_bottom:
+                visible_pages.append(page_number)
+        if not visible_pages:
+            visible_pages = [min(max(1, self._current_page), self._page_count)]
+        first_page = max(1, min(visible_pages) - self._PAGE_PREFETCH_BUFFER)
+        last_page = min(self._page_count, max(visible_pages) + self._PAGE_PREFETCH_BUFFER)
+        return list(range(first_page, last_page + 1))
+
+    def _queue_page_render(self, page_number: int) -> None:
+        if self._closing or self._local_path is None or self._page_count is None:
+            return
+        page = min(max(1, int(page_number)), self._page_count)
+        if page in self._page_cache:
+            self._page_cache.move_to_end(page)
+            return
+        if page in self._inflight_pages or page in self._queued_page_set or page in self._page_errors:
+            return
+        card = self._page_cards.get(page)
+        if card is not None:
+            card.set_loading()
+        self._queued_pages.append(page)
+        self._queued_page_set.add(page)
+
+    def _start_next_page_workers(self) -> None:
+        if self._closing or self._local_path is None or self._page_count is None:
+            return
+        while self._queued_pages and len(self._inflight_pages) < self._PAGE_RENDER_CONCURRENCY:
+            page = self._queued_pages.pop(0)
+            self._queued_page_set.discard(page)
+            self._start_page_worker(page)
+
+    def _start_page_worker(self, page_number: int) -> None:
+        if self._local_path is None or self._page_count is None:
+            return
+        thread = QThread(self)
+        worker = GmailAttachmentPreviewPageWorker(
+            attachment=self._attachment,
+            local_path=self._local_path,
+            page_count=self._page_count,
+            requested_page=page_number,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_page_loaded)
+        worker.error.connect(self._on_page_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(lambda _page, _message: thread.quit())
+        thread.finished.connect(lambda page=page_number: self._cleanup_page_worker(page))
+        self._page_threads[page_number] = thread
+        self._page_workers[page_number] = worker
+        self._inflight_pages.add(page_number)
+        thread.start()
+
+    def _cleanup_page_worker(self, page_number: int) -> None:
+        worker = self._page_workers.pop(page_number, None)
+        thread = self._page_threads.pop(page_number, None)
+        if worker is not None:
+            worker.deleteLater()
+        if thread is not None:
+            thread.deleteLater()
+
+    def _on_page_loaded(self, result_obj: object) -> None:
+        if not isinstance(result_obj, GmailAttachmentPreviewPageResult):
+            self._on_bootstrap_error("Attachment preview returned an invalid page result.")
+            return
+        result = result_obj
+        page_number = int(result.page_number)
+        self._inflight_pages.discard(page_number)
+        if self._closing:
+            return
+
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(result.image_bytes):
+            self._on_page_error(page_number, "Attachment preview image could not be decoded.")
+            return
+
+        if self._is_image:
+            self._image_pixmap = pixmap
+            self._set_preview_message("")
+            self.preview_label.setText("")
+            self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+            self.preview_label.setWordWrap(True)
+            self._refresh_scaled_preview()
+            self.status_label.setText("Single-image attachment preview.")
+        else:
+            self._page_errors.pop(page_number, None)
+            self._page_cache[page_number] = pixmap
+            self._page_cache.move_to_end(page_number)
+            card = self._page_cards.get(page_number)
+            if card is not None:
+                card.set_pixmap(pixmap, self._target_page_width())
+        self._refresh_controls()
+        self._start_next_page_workers()
+        self._schedule_visible_page_refresh()
+
+    def _on_page_error(self, page_number: int, message: str) -> None:
+        self._inflight_pages.discard(int(page_number))
+        if self._closing:
+            return
+        if self._is_image:
+            self.status_label.setText("Preview unavailable.")
+            self._set_preview_message(message)
+            self._refresh_controls()
+            QMessageBox.warning(self, "Attachment Preview", message)
+            return
+        self._page_errors[int(page_number)] = message
+        card = self._page_cards.get(int(page_number))
+        if card is not None:
+            card.set_error(message)
+        self.status_label.setText("Some preview pages failed to render.")
+        self._refresh_controls()
+        self._start_next_page_workers()
+
+    def _trim_page_cache(self, *, protected_pages: set[int]) -> None:
+        while len(self._page_cache) > self._PAGE_CACHE_LIMIT:
+            order_index = {page: index for index, page in enumerate(self._page_cache.keys())}
+            desired_pages = sorted(protected_pages)
+            anchor_page = desired_pages[len(desired_pages) // 2] if desired_pages else self._current_page
+            eviction_candidates = [
+                candidate_page
+                for candidate_page in self._page_cache.keys()
+                if candidate_page not in protected_pages
+            ]
+            if not eviction_candidates:
+                eviction_candidates = list(self._page_cache.keys())
+            victim_page = max(
+                eviction_candidates,
+                key=lambda candidate_page: (
+                    abs(candidate_page - anchor_page),
+                    -order_index[candidate_page],
+                ),
+            )
+            self._page_cache.pop(victim_page, None)
+            card = self._page_cards.get(victim_page)
+            if card is not None and victim_page not in self._inflight_pages:
+                card.clear_cached_pixmap()
+
+
+class QtGmailBatchReviewDialog(QDialog):
+    """Review supported Gmail attachments for the exact fetched message."""
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        message: FetchedGmailMessage,
+        gog_path: Path,
+        account_email: str,
+        target_lang: str,
+        default_start_page: int,
+        output_dir_text: str,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Gmail Attachment Review")
+        self.resize(980, 620)
+        self._message = message
+        self._gog_path = gog_path.expanduser().resolve()
+        self._account_email = account_email.strip()
+        self._target_lang = target_lang.strip().upper() or "-"
+        self._default_start_page = max(1, int(default_start_page))
+        self._output_dir_text = output_dir_text.strip()
+        self._page_counts: list[int | None] = [
+            1 if _is_image_attachment(attachment) else None
+            for attachment in self._message.attachments
+        ]
+        self._start_pages: list[int] = [
+            1 if _is_image_attachment(attachment) else self._default_start_page
+            for attachment in self._message.attachments
+        ]
+        self._preview_cache: dict[str, Path] = {}
+        self._preview_tempdir: tempfile.TemporaryDirectory[str] | None = None
+        self.selected_attachments: tuple[GmailAttachmentCandidate, ...] = ()
+        self.review_result: GmailBatchReviewResult | None = None
+        self._build_ui()
+        self._populate_table()
+        self._refresh_actions()
+        self._refresh_detail_panel()
+
+    def done(self, result: int) -> None:
+        if result != QDialog.DialogCode.Accepted:
+            self._cleanup_preview_cache()
+        super().done(result)
+
+    def _cleanup_preview_cache(self) -> None:
+        preview_tempdir = self._preview_tempdir
+        self._preview_tempdir = None
+        self._preview_cache = {}
+        if preview_tempdir is not None:
+            preview_tempdir.cleanup()
+
+    def _ensure_preview_dir(self) -> Path:
+        if self._preview_tempdir is None:
+            self._preview_tempdir = tempfile.TemporaryDirectory(prefix="legalpdf_gmail_preview_")
+        return Path(self._preview_tempdir.name).expanduser().resolve()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        self.summary_label = QLabel("")
+        self.summary_label.setWordWrap(True)
+        root.addWidget(self.summary_label)
+
+        context_row = QHBoxLayout()
+        context_row.setSpacing(8)
+        self.target_lang_label = QLabel("Target language")
+        self.target_lang_combo = NoWheelComboBox()
+        supported_langs = [str(lang).strip().upper() for lang in supported_target_langs()]
+        self.target_lang_combo.addItems(supported_langs)
+        if self._target_lang in supported_langs:
+            self.target_lang_combo.setCurrentText(self._target_lang)
+        self.output_dir_label = QLabel("")
+        self.output_dir_label.setWordWrap(True)
+        context_row.addWidget(self.target_lang_label)
+        context_row.addWidget(self.target_lang_combo, 0)
+        context_row.addSpacing(12)
+        context_row.addWidget(self.output_dir_label, 1)
+        root.addLayout(context_row)
+
+        self.table = QTableWidget(0, 4, self)
+        self.table.setHorizontalHeaderLabels(["Filename", "Type", "Size", "Start page"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.MultiSelection)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        root.addWidget(self.table, 1)
+
+        detail_row = QHBoxLayout()
+        detail_row.setSpacing(8)
+        self.detail_attachment_label = QLabel("Selected attachment: -")
+        self.detail_attachment_label.setWordWrap(True)
+        self.pages_value_label = QLabel("Pages: -")
+        self.start_page_label = QLabel("Start translating from page")
+        self.start_page_spin = NoWheelSpinBox()
+        self.start_page_spin.setMinimum(1)
+        self.start_page_spin.setMaximum(9999)
+        self.preview_btn = QPushButton("Preview selected attachment")
+        detail_row.addWidget(self.detail_attachment_label, 1)
+        detail_row.addWidget(self.pages_value_label)
+        detail_row.addWidget(self.start_page_label)
+        detail_row.addWidget(self.start_page_spin)
+        detail_row.addWidget(self.preview_btn)
+        root.addLayout(detail_row)
+
+        actions = QHBoxLayout()
+        self.cancel_btn = QPushButton("Cancel")
+        self.prepare_btn = QPushButton("Prepare selected attachments")
+        actions.addStretch(1)
+        actions.addWidget(self.cancel_btn)
+        actions.addWidget(self.prepare_btn)
+        root.addLayout(actions)
+
+        self.table.itemSelectionChanged.connect(self._refresh_actions)
+        self.table.currentCellChanged.connect(lambda *_args: self._refresh_detail_panel())
+        self.table.itemDoubleClicked.connect(lambda _item: self._open_preview_for_current_row())
+        self.start_page_spin.valueChanged.connect(self._update_current_row_start_page)
+        self.preview_btn.clicked.connect(self._open_preview_for_current_row)
+        self.cancel_btn.clicked.connect(self.reject)
+        self.prepare_btn.clicked.connect(self._accept_selection)
+
+    def _populate_table(self) -> None:
+        sender_summary = self._message.from_header or "(unknown sender)"
+        subject = self._message.subject or "(no subject)"
+        attachment_count = len(self._message.attachments)
+        self.summary_label.setText(
+            "Subject: "
+            f"{subject}\n"
+            f"Sender: {sender_summary}\n"
+            f"Gmail account: {self._message.account_email}\n"
+            f"Supported attachments in this exact message: {attachment_count}"
+        )
+        output_summary = self._output_dir_text or "(not set yet)"
+        self.output_dir_label.setText(f"Output folder: {output_summary}")
+        self.table.setRowCount(0)
+        for attachment in self._message.attachments:
+            row_idx = self.table.rowCount()
+            self.table.insertRow(row_idx)
+            self.table.setItem(row_idx, 0, QTableWidgetItem(attachment.filename))
+            self.table.setItem(row_idx, 1, QTableWidgetItem(attachment.mime_type))
+            self.table.setItem(row_idx, 2, QTableWidgetItem(_format_bytes(attachment.size_bytes)))
+            self.table.setItem(row_idx, 3, QTableWidgetItem(str(self._start_pages[row_idx])))
+
+    def _selected_rows(self) -> list[int]:
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            return []
+        return sorted(index.row() for index in selection_model.selectedRows())
+
+    def _current_row(self) -> int | None:
+        row = self.table.currentRow()
+        if 0 <= row < len(self._message.attachments):
+            return row
+        selected_rows = self._selected_rows()
+        if selected_rows:
+            return selected_rows[0]
+        return None
+
+    def _page_count_text_for_row(self, row: int) -> str:
+        page_count = self._page_counts[row]
+        if isinstance(page_count, int) and page_count > 0:
+            return f"Pages: {page_count}"
+        return "Pages: preview to inspect"
+
+    def _set_row_start_page(self, row: int, value: int) -> None:
+        attachment = self._message.attachments[row]
+        if _is_image_attachment(attachment):
+            next_value = 1
+        else:
+            page_count = self._page_counts[row]
+            next_value = max(1, int(value))
+            if isinstance(page_count, int) and page_count > 0:
+                next_value = min(next_value, page_count)
+        self._start_pages[row] = next_value
+        item = self.table.item(row, 3)
+        if item is None:
+            item = QTableWidgetItem(str(next_value))
+            self.table.setItem(row, 3, item)
+        else:
+            item.setText(str(next_value))
+
+    def _set_row_page_count(self, row: int, page_count: int) -> None:
+        resolved_page_count = max(1, int(page_count))
+        self._page_counts[row] = resolved_page_count
+        if self._start_pages[row] > resolved_page_count:
+            self._set_row_start_page(row, resolved_page_count)
+
+    def _selected_selections(self) -> tuple[GmailAttachmentSelection, ...]:
+        rows = self._selected_rows()
+        selected: list[GmailAttachmentSelection] = []
+        for row in rows:
+            if row < 0 or row >= len(self._message.attachments):
+                continue
+            selected.append(
+                GmailAttachmentSelection(
+                    candidate=self._message.attachments[row],
+                    start_page=int(self._start_pages[row]),
+                )
+            )
+        return tuple(selected)
+
+    def _refresh_actions(self) -> None:
+        has_rows = len(self._message.attachments) > 0
+        selected_rows = self._selected_rows()
+        self.prepare_btn.setEnabled(has_rows and len(selected_rows) > 0)
+        if not has_rows:
+            self.prepare_btn.setText("No supported attachments found")
+        else:
+            self.prepare_btn.setText("Prepare selected attachments")
+        self._refresh_detail_panel()
+
+    def _refresh_detail_panel(self) -> None:
+        row = self._current_row()
+        if row is None:
+            self.detail_attachment_label.setText("Selected attachment: -")
+            self.pages_value_label.setText("Pages: -")
+            self.start_page_spin.blockSignals(True)
+            self.start_page_spin.setValue(1)
+            self.start_page_spin.blockSignals(False)
+            self.start_page_spin.setEnabled(False)
+            self.preview_btn.setEnabled(False)
+            return
+
+        attachment = self._message.attachments[row]
+        self.detail_attachment_label.setText(f"Selected attachment: {attachment.filename}")
+        self.pages_value_label.setText(self._page_count_text_for_row(row))
+        self.start_page_spin.blockSignals(True)
+        self.start_page_spin.setMaximum(
+            max(1, self._page_counts[row]) if isinstance(self._page_counts[row], int) else 9999
+        )
+        self.start_page_spin.setValue(int(self._start_pages[row]))
+        self.start_page_spin.blockSignals(False)
+        editable = not _is_image_attachment(attachment)
+        self.start_page_spin.setEnabled(editable)
+        self.preview_btn.setEnabled(True)
+
+    def _update_current_row_start_page(self, value: int) -> None:
+        row = self._current_row()
+        if row is None:
+            return
+        self._set_row_start_page(row, int(value))
+        self._refresh_detail_panel()
+
+    def _open_preview_for_current_row(self) -> None:
+        row = self._current_row()
+        if row is None:
+            QMessageBox.information(
+                self,
+                "Gmail Attachment Review",
+                "Select one attachment row first.",
+            )
+            return
+        attachment = self._message.attachments[row]
+        preview = QtGmailAttachmentPreviewDialog(
+            parent=self,
+            attachment=attachment,
+            gog_path=self._gog_path,
+            account_email=self._account_email,
+            preview_dir=self._ensure_preview_dir(),
+            initial_start_page=int(self._start_pages[row]),
+            cached_path=self._preview_cache.get(attachment.attachment_id),
+            known_page_count=self._page_counts[row],
+        )
+        if preview.exec() == QDialog.DialogCode.Accepted and preview.selected_start_page is not None:
+            self._set_row_start_page(row, int(preview.selected_start_page))
+        if isinstance(preview.resolved_local_path, Path):
+            self._preview_cache[attachment.attachment_id] = preview.resolved_local_path
+        if isinstance(preview.resolved_page_count, int) and preview.resolved_page_count > 0:
+            self._set_row_page_count(row, int(preview.resolved_page_count))
+        preview.deleteLater()
+        self._refresh_detail_panel()
+
+    def take_preview_cache_transfer(self) -> GmailBatchReviewPreviewCacheTransfer | None:
+        preview_tempdir = self._preview_tempdir
+        cached_paths: dict[str, Path] = {}
+        cached_page_counts: dict[str, int] = {}
+        for row, attachment in enumerate(self._message.attachments):
+            cached_path = self._preview_cache.get(attachment.attachment_id)
+            if not isinstance(cached_path, Path):
+                continue
+            cached_paths[attachment.attachment_id] = cached_path
+            page_count = self._page_counts[row]
+            if isinstance(page_count, int) and page_count > 0:
+                cached_page_counts[attachment.attachment_id] = int(page_count)
+        self._preview_tempdir = None
+        self._preview_cache = {}
+        if not cached_paths:
+            if preview_tempdir is not None:
+                preview_tempdir.cleanup()
+            return None
+        return GmailBatchReviewPreviewCacheTransfer(
+            cached_paths=cached_paths,
+            cached_page_counts=cached_page_counts,
+            temp_dir=preview_tempdir,
+        )
+
+    def _accept_selection(self) -> None:
+        selected = self._selected_selections()
+        if not selected:
+            QMessageBox.information(
+                self,
+                "Gmail Attachment Review",
+                "Select at least one supported attachment first.",
+            )
+            return
+        self.selected_attachments = tuple(selection.candidate for selection in selected)
+        self.review_result = GmailBatchReviewResult(
+            selections=selected,
+            target_lang=self.target_lang_combo.currentText().strip().upper() or self._target_lang,
+        )
+        self.accept()
+
+
 def _validate_url_or_blank(value: str) -> bool:
     cleaned = value.strip()
     if cleaned == "":
         return True
     parsed = urlparse(cleaned)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _format_bytes(value: int) -> str:
+    size = max(0, int(value))
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024.0:.1f} KB"
+    return f"{size / (1024.0 * 1024.0):.1f} MB"
 
 
 def _to_int(value: str, *, field: str, min_value: int, max_value: int) -> int:
@@ -2279,11 +3317,21 @@ class QtSettingsDialog(QDialog):
         gmail_layout.addWidget(QLabel("Gmail account"), 1, 0)
         self.gmail_account_edit = QLineEdit()
         gmail_layout.addWidget(self.gmail_account_edit, 1, 1, 1, 2)
+        self.gmail_intake_enabled_check = QCheckBox("Enable localhost Gmail intake bridge")
+        gmail_layout.addWidget(self.gmail_intake_enabled_check, 2, 0, 1, 3)
+        gmail_layout.addWidget(QLabel("Bridge token"), 3, 0)
+        self.gmail_intake_token_edit = QLineEdit()
+        self.gmail_intake_token_edit.setPlaceholderText("Auto-generated on Apply/Save when enabled")
+        gmail_layout.addWidget(self.gmail_intake_token_edit, 3, 1, 1, 2)
+        gmail_layout.addWidget(QLabel("Bridge port"), 4, 0)
+        self.gmail_intake_port_spin = NoWheelSpinBox()
+        self.gmail_intake_port_spin.setRange(1, 65535)
+        gmail_layout.addWidget(self.gmail_intake_port_spin, 4, 1)
         self.gmail_test_btn = QPushButton("Test Gmail draft prerequisites")
-        gmail_layout.addWidget(self.gmail_test_btn, 2, 0, 1, 3)
+        gmail_layout.addWidget(self.gmail_test_btn, 5, 0, 1, 3)
         self.gmail_summary_label = QLabel("")
         self.gmail_summary_label.setWordWrap(True)
-        gmail_layout.addWidget(self.gmail_summary_label, 3, 0, 1, 3)
+        gmail_layout.addWidget(self.gmail_summary_label, 6, 0, 1, 3)
         gmail_layout.setColumnStretch(1, 1)
         layout.addWidget(gmail_group)
         layout.addStretch(1)
@@ -2304,6 +3352,9 @@ class QtSettingsDialog(QDialog):
         self.gmail_test_btn.clicked.connect(self._test_gmail_draft_prereqs)
         self.gmail_gog_path_edit.textChanged.connect(lambda _text: self._refresh_key_status())
         self.gmail_account_edit.textChanged.connect(lambda _text: self._refresh_key_status())
+        self.gmail_intake_enabled_check.stateChanged.connect(lambda _state: self._refresh_gmail_bridge_summary())
+        self.gmail_intake_token_edit.textChanged.connect(lambda _text: self._refresh_gmail_bridge_summary())
+        self.gmail_intake_port_spin.valueChanged.connect(lambda _value: self._refresh_gmail_bridge_summary())
 
     def _build_tab_ocr_defaults(self) -> None:
         form = QFormLayout(self.tab_ocr)
@@ -4050,6 +5101,9 @@ class QtSettingsDialog(QDialog):
         self.ocr_env_edit.setText(str(settings.get("ocr_api_key_env_name", default_ocr_api_env_name(provider))))
         self.gmail_gog_path_edit.setText(str(settings.get("gmail_gog_path", "")))
         self.gmail_account_edit.setText(str(settings.get("gmail_account_email", "")))
+        self.gmail_intake_enabled_check.setChecked(bool(settings.get("gmail_intake_bridge_enabled", False)))
+        self.gmail_intake_token_edit.setText(str(settings.get("gmail_intake_bridge_token", "")))
+        self.gmail_intake_port_spin.setValue(int(settings.get("gmail_intake_port", 8765)))
         self.retries_edit.setText(str(settings.get("perf_max_transport_retries", 4)))
         self.backoff_cap_edit.setText(str(settings.get("perf_backoff_cap_seconds", 12.0)))
         self.timeout_text_edit.setText(
@@ -4110,14 +5164,37 @@ class QtSettingsDialog(QDialog):
             f"base URL: {resolved_base}; OpenAI credentials {'present' if openai_stored else 'missing'}, "
             f"OCR credentials {'present' if ocr_stored else 'missing'}."
         )
+        QtSettingsDialog._refresh_gmail_bridge_summary(self)
+
+    def _refresh_gmail_bridge_summary(self) -> None:
+        summary = getattr(self, "gmail_summary_label", None)
+        if summary is None:
+            return
+
         configured_path = self.gmail_gog_path_edit.text().strip() if hasattr(self, "gmail_gog_path_edit") else ""
         configured_account = self.gmail_account_edit.text().strip() if hasattr(self, "gmail_account_edit") else ""
-        if hasattr(self, "gmail_summary_label"):
-            path_summary = configured_path or "auto-detect"
-            account_summary = configured_account or "auto-detect"
-            self.gmail_summary_label.setText(
-                f"Configured gog path: {path_summary}\nConfigured Gmail account: {account_summary}"
-            )
+        bridge_enabled = (
+            bool(self.gmail_intake_enabled_check.isChecked())
+            if hasattr(self, "gmail_intake_enabled_check")
+            else False
+        )
+        bridge_token = (
+            self.gmail_intake_token_edit.text().strip()
+            if hasattr(self, "gmail_intake_token_edit")
+            else ""
+        )
+        bridge_port = (
+            int(self.gmail_intake_port_spin.value())
+            if hasattr(self, "gmail_intake_port_spin")
+            else 8765
+        )
+        summary.setText(
+            f"Configured gog path: {configured_path or 'auto-detect'}\n"
+            f"Configured Gmail account: {configured_account or 'auto-detect'}\n"
+            f"Localhost bridge: {'enabled' if bridge_enabled else 'disabled'}\n"
+            f"Bridge endpoint: http://127.0.0.1:{bridge_port}/gmail-intake\n"
+            f"Bridge token: {'present' if bridge_token else 'missing'}"
+        )
 
     def _refresh_build_identity(self) -> None:
         if not hasattr(self, "build_identity_label"):
@@ -4460,6 +5537,9 @@ class QtSettingsDialog(QDialog):
         self.ocr_env_edit.setText(default_ocr_api_env_name(OcrApiProvider.OPENAI))
         self.gmail_gog_path_edit.clear()
         self.gmail_account_edit.clear()
+        self.gmail_intake_enabled_check.setChecked(False)
+        self.gmail_intake_token_edit.clear()
+        self.gmail_intake_port_spin.setValue(8765)
         self.retries_edit.setText("4")
         self.backoff_cap_edit.setText("12.0")
         self.timeout_text_edit.setText(str(DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS))
@@ -4492,6 +5572,11 @@ class QtSettingsDialog(QDialog):
             self._enabled_glossary_tiers_by_lang,
             supported_target_langs(),
         )
+        bridge_enabled = bool(self.gmail_intake_enabled_check.isChecked())
+        bridge_token = self.gmail_intake_token_edit.text().strip()
+        if bridge_enabled and bridge_token == "":
+            bridge_token = secrets.token_urlsafe(24)
+            self.gmail_intake_token_edit.setText(bridge_token)
 
         return {
             "ui_theme": self.ui_theme_combo.currentText().strip(),
@@ -4527,6 +5612,9 @@ class QtSettingsDialog(QDialog):
             or default_ocr_api_env_name(normalize_ocr_api_provider(self.ocr_provider_combo.currentText())),
             "gmail_gog_path": self.gmail_gog_path_edit.text().strip(),
             "gmail_account_email": self.gmail_account_edit.text().strip(),
+            "gmail_intake_bridge_enabled": bridge_enabled,
+            "gmail_intake_bridge_token": bridge_token,
+            "gmail_intake_port": int(self.gmail_intake_port_spin.value()),
             "perf_max_transport_retries": _to_int(self.retries_edit.text(), field="Transport retries", min_value=0, max_value=12),
             "perf_backoff_cap_seconds": _to_float(self.backoff_cap_edit.text(), field="Backoff cap", min_value=1.0, max_value=120.0),
             "perf_timeout_text_seconds": _to_int(self.timeout_text_edit.text(), field="Text timeout", min_value=5, max_value=600),

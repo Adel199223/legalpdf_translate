@@ -12,14 +12,15 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from shutil import which
-from typing import Any
+from typing import Any, Callable
 
 from openai import OpenAI
-from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QSize, QStandardPaths, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
     QColor,
+    QDesktopServices,
     QIcon,
     QLinearGradient,
     QMouseEvent,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
     QBoxLayout,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -64,7 +66,25 @@ from legalpdf_translate.checkpoint import (
     parse_ocr_mode,
 )
 from legalpdf_translate.config import OPENAI_MODEL
+from legalpdf_translate.gmail_draft import (
+    GMAIL_DRAFTS_URL,
+    assess_gmail_draft_prereqs,
+    build_gmail_batch_reply_request,
+    create_gmail_draft_via_gog,
+    validate_translated_docx_artifacts_for_gmail_draft,
+)
+from legalpdf_translate.gmail_batch import (
+    DownloadedGmailAttachment,
+    GmailAttachmentCandidate,
+    GmailBatchConfirmedItem,
+    GmailBatchSession,
+    GmailMessageLoadResult,
+    stage_gmail_batch_translated_docx,
+    write_gmail_batch_session_report,
+)
+from legalpdf_translate.gmail_intake import InboundMailContext, LocalGmailIntakeBridge
 from legalpdf_translate.joblog_db import job_log_db_path
+from legalpdf_translate.honorarios_docx import build_honorarios_draft
 from legalpdf_translate.metadata_autofill import (
     choose_court_email_suggestion,
     extract_pdf_header_metadata_priority_pages,
@@ -79,6 +99,7 @@ from legalpdf_translate.ocr_engine import (
 )
 from legalpdf_translate.output_paths import (
     build_output_paths,
+    require_writable_output_dir,
     require_writable_output_dir_text,
 )
 from legalpdf_translate.source_document import (
@@ -90,7 +111,12 @@ from legalpdf_translate.source_document import (
 from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
 from legalpdf_translate.queue_runner import QueueRunSummary, parse_queue_manifest
 from legalpdf_translate.qt_gui.dialogs import (
+    GmailBatchReviewPreviewCacheTransfer,
+    GmailBatchReviewResult,
     JobLogSeed,
+    JobLogSavedResult,
+    QtGmailBatchReviewDialog,
+    QtHonorariosExportDialog,
     QtJobLogWindow,
     QtReviewQueueDialog,
     QtSaveToJobLogDialog,
@@ -102,6 +128,8 @@ from legalpdf_translate.qt_gui.tools_dialogs import QtCalibrationAuditDialog, Qt
 from legalpdf_translate.qt_gui.styles import apply_primary_glow, apply_soft_shadow
 from legalpdf_translate.qt_gui.worker import (
     AnalyzeWorker,
+    GmailBatchPrepareWorker,
+    GmailMessageLoadWorker,
     QueueRunWorker,
     RebuildDocxWorker,
     TranslationRunWorker,
@@ -273,6 +301,9 @@ def _load_run_failure_context(summary_path: Path) -> dict[str, object]:
         "error": "",
         "exception_class": "",
         "retry_reason": "",
+        "validator_defect_reason": "",
+        "ar_violation_kind": "",
+        "ar_violation_samples": [],
         "request_type": "",
         "request_timeout_budget_seconds": 0.0,
         "request_elapsed_before_failure_seconds": 0.0,
@@ -296,6 +327,15 @@ def _load_run_failure_context(summary_path: Path) -> dict[str, object]:
         "error": str(failure.get("error", "") or ""),
         "exception_class": str(failure.get("exception_class", "") or ""),
         "retry_reason": str(failure.get("retry_reason", "") or ""),
+        "validator_defect_reason": str(failure.get("validator_defect_reason", "") or ""),
+        "ar_violation_kind": str(failure.get("ar_violation_kind", "") or ""),
+        "ar_violation_samples": [
+            str(item)
+            for item in failure.get("ar_violation_samples", [])
+            if str(item or "").strip() != ""
+        ]
+        if isinstance(failure.get("ar_violation_samples"), list)
+        else [],
         "request_type": str(failure.get("request_type", "") or ""),
         "request_timeout_budget_seconds": _coerce_float_or_none(
             failure.get("request_timeout_budget_seconds")
@@ -473,6 +513,7 @@ class _FuturisticCanvas(QWidget):
 
 class QtMainWindow(QMainWindow):
     request_cancel = Signal()
+    gmail_intake_received = Signal(object)
 
     def __init__(self, *, build_identity: RuntimeBuildIdentity | None = None) -> None:
         super().__init__()
@@ -490,12 +531,15 @@ class QtMainWindow(QMainWindow):
         self._defaults = load_gui_settings()
         self._worker_thread: QThread | None = None
         self._worker: object | None = None
+        self._after_worker_cleanup: Callable[[], None] | None = None
         self._last_workflow: TranslationWorkflow | None = None
         self._last_summary: RunSummary | None = None
         self._last_output_docx: Path | None = None
         self._last_run_config: RunConfig | None = None
         self._last_run_dir: Path | None = None
         self._last_joblog_seed: JobLogSeed | None = None
+        self._last_gmail_intake_context: InboundMailContext | None = None
+        self._last_gmail_message_load_result: GmailMessageLoadResult | None = None
         self._last_review_queue: list[dict[str, object]] = []
         self._last_run_report_path: Path | None = None
         self._last_queue_summary_path: Path | None = None
@@ -506,6 +550,7 @@ class QtMainWindow(QMainWindow):
         self._advisor_override_image_mode: str | None = None
         self._joblog_window: QtJobLogWindow | None = None
         self._review_queue_dialog: QtReviewQueueDialog | None = None
+        self._gmail_batch_review_dialog: QtGmailBatchReviewDialog | None = None
         self._settings_dialog: QtSettingsDialog | None = None
         self._glossary_builder_dialog: QtGlossaryBuilderDialog | None = None
         self._calibration_dialog: QtCalibrationAuditDialog | None = None
@@ -542,6 +587,11 @@ class QtMainWindow(QMainWindow):
         self._ocr_dependency_warning_seen: set[tuple[str, int, str, str]] = set()
         self._transient_safe_profile_active = False
         self._transient_safe_profile_backup: dict[str, object] | None = None
+        self._gmail_batch_session: GmailBatchSession | None = None
+        self._gmail_batch_preview_cache_transfer: GmailBatchReviewPreviewCacheTransfer | None = None
+        self._gmail_batch_in_progress = False
+        self._gmail_batch_current_index: int | None = None
+        self._gmail_intake_bridge: LocalGmailIntakeBridge | None = None
         self._layout_mode = _LAYOUT_DESKTOP_EXACT
         self._click_debug_enabled = _is_truthy_env(os.getenv("LEGALPDF_QT_CLICK_DEBUG"))
         self._settings_save_timer = QTimer(self)
@@ -551,6 +601,7 @@ class QtMainWindow(QMainWindow):
         self._cancel_wait_timer = QTimer(self)
         self._cancel_wait_timer.setInterval(500)
         self._cancel_wait_timer.timeout.connect(self._refresh_cancel_wait_status)
+        self.gmail_intake_received.connect(self._on_gmail_intake_received)
 
         self._build_ui()
         self._install_menu()
@@ -558,6 +609,7 @@ class QtMainWindow(QMainWindow):
         self._set_adv_visible(False)
         self._set_details_visible(False)
         self._refresh_page_count()
+        self._sync_gmail_intake_bridge()
         self._update_controls()
         self._refresh_canvas()
 
@@ -1467,7 +1519,11 @@ class QtMainWindow(QMainWindow):
 
     def _restore_settings(self) -> None:
         defaults = self._defaults
-        outdir = str(defaults.get("last_outdir", defaults.get("default_outdir", "")) or "").strip()
+        outdir = self._existing_output_dir_text(str(defaults.get("last_outdir", "") or "").strip())
+        if not outdir:
+            outdir = self._existing_output_dir_text(
+                str(defaults.get("default_outdir", "") or "").strip()
+            )
         self.outdir_edit.setText(outdir)
 
         lang = str(defaults.get("last_lang", defaults.get("default_lang", "EN")) or "EN").strip().upper()
@@ -1773,6 +1829,978 @@ class QtMainWindow(QMainWindow):
                 paths.append(run_paths.run_state_path)
         return paths
 
+    def _gmail_intake_settings(self) -> tuple[bool, int, str]:
+        enabled = bool(self._defaults.get("gmail_intake_bridge_enabled", False))
+        token = str(self._defaults.get("gmail_intake_bridge_token", "") or "").strip()
+        try:
+            port = int(self._defaults.get("gmail_intake_port", 8765))
+        except (TypeError, ValueError):
+            port = 8765
+        port = max(1, min(65535, port))
+        return enabled, port, token
+
+    @staticmethod
+    def _existing_output_dir_text(outdir_text: str) -> str:
+        cleaned = str(outdir_text or "").strip()
+        if cleaned == "":
+            return ""
+        try:
+            candidate = Path(cleaned).expanduser().resolve()
+        except OSError:
+            return ""
+        if not candidate.exists() or not candidate.is_dir():
+            return ""
+        return str(candidate)
+
+    @staticmethod
+    def _writable_output_dir_text(outdir_text: str) -> str:
+        cleaned = str(outdir_text or "").strip()
+        if cleaned == "":
+            return ""
+        try:
+            return str(require_writable_output_dir(Path(cleaned)))
+        except ValueError:
+            return ""
+
+    @staticmethod
+    def _default_downloads_dir() -> Path:
+        candidate = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+        if candidate:
+            return Path(candidate).expanduser().resolve()
+        return (Path.home() / "Downloads").expanduser().resolve()
+
+    def _resolve_effective_gmail_output_dir_text(self) -> str | None:
+        current_text = self.outdir_edit.text().strip()
+        current_dir = self._writable_output_dir_text(current_text)
+        if current_dir:
+            if current_dir != current_text:
+                self.outdir_edit.setText(current_dir)
+            return current_dir
+
+        default_text = str(self._defaults.get("default_outdir", "") or "").strip()
+        default_dir = self._writable_output_dir_text(default_text)
+        if default_dir:
+            if self.outdir_edit.text().strip() != default_dir:
+                self.outdir_edit.setText(default_dir)
+            return default_dir
+
+        downloads_dir = self._default_downloads_dir()
+        try:
+            downloads_dir.mkdir(parents=True, exist_ok=True)
+            downloads_text = str(require_writable_output_dir(downloads_dir))
+        except ValueError as exc:
+            self.status_label.setText("Gmail output folder unavailable")
+            self.header_status_label.setText("Gmail output folder unavailable")
+            self._dashboard_snapshot.current_task = "Gmail output folder unavailable"
+            QMessageBox.warning(
+                self,
+                "Gmail intake",
+                "Unable to prepare an output folder for Gmail intake.\n\n"
+                f"{exc}",
+            )
+            return None
+
+        previous_text = current_text or default_text
+        if self.outdir_edit.text().strip() != downloads_text:
+            self.outdir_edit.setText(downloads_text)
+        self.status_label.setText("Gmail output folder set to Downloads")
+        self.header_status_label.setText("Gmail output folder set")
+        self._dashboard_snapshot.current_task = "Gmail output folder set to Downloads"
+        if previous_text:
+            self._append_log(
+                "Gmail batch output folder fallback applied: "
+                f"{previous_text} is unavailable; using Downloads {downloads_text}."
+            )
+        else:
+            self._append_log(
+                "Gmail batch output folder fallback applied: "
+                f"no valid output folder was set; using Downloads {downloads_text}."
+            )
+        return downloads_text
+
+    def _clear_gmail_batch_session(self) -> None:
+        preview_cache_transfer = self._gmail_batch_preview_cache_transfer
+        self._gmail_batch_preview_cache_transfer = None
+        if preview_cache_transfer is not None:
+            preview_cache_transfer.cleanup()
+        session = self._gmail_batch_session
+        self._gmail_batch_session = None
+        self._gmail_batch_in_progress = False
+        self._gmail_batch_current_index = None
+        if session is None:
+            return
+        session.cleanup()
+
+    def _current_gmail_output_dir_text(self) -> str:
+        current = self._existing_output_dir_text(self.outdir_edit.text().strip())
+        if current:
+            return current
+        return self._existing_output_dir_text(str(self._defaults.get("default_outdir", "") or "").strip())
+
+    def _has_active_gmail_batch(self) -> bool:
+        return self._gmail_batch_session is not None and self._gmail_batch_in_progress
+
+    def _current_gmail_batch_attachment(self) -> DownloadedGmailAttachment | None:
+        session = self._gmail_batch_session
+        index = self._gmail_batch_current_index
+        if session is None or index is None:
+            return None
+        if index < 0 or index >= len(session.downloaded_attachments):
+            return None
+        return session.downloaded_attachments[index]
+
+    def _persist_gmail_batch_session_report(
+        self,
+        session: GmailBatchSession | None = None,
+        *,
+        status: str | None = None,
+        halt_reason: str | None = None,
+    ) -> Path | None:
+        active_session = session if isinstance(session, GmailBatchSession) else self._gmail_batch_session
+        if active_session is None:
+            return None
+        if status is not None:
+            active_session.status = status
+        if halt_reason is not None:
+            active_session.halt_reason = halt_reason
+        try:
+            return write_gmail_batch_session_report(active_session)
+        except OSError as exc:
+            self._append_log(f"Gmail batch diagnostics write failed: {exc}")
+            return None
+
+    def _resolve_translation_config(
+        self,
+        *,
+        pdf_override: str | None = None,
+        outdir_override: str | None = None,
+        lang_override: str | None = None,
+        start_page_override: int | None = None,
+    ) -> RunConfig | None:
+        def _call_build_config() -> RunConfig:
+            return self._build_config(
+                pdf_override=pdf_override,
+                outdir_override=outdir_override,
+                lang_override=lang_override,
+                start_page_override=start_page_override,
+            )
+
+        try:
+            config = _call_build_config()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Invalid configuration", str(exc))
+            return None
+
+        if (
+            config.target_lang in (TargetLang.EN, TargetLang.FR)
+            and config.effort_policy == EffortPolicy.FIXED_XHIGH
+        ):
+            decision = self._warn_fixed_xhigh_for_enfr()
+            if decision == "switch":
+                self.effort_policy_combo.setCurrentText("fixed_high")
+                try:
+                    config = _call_build_config()
+                except Exception as exc:  # noqa: BLE001
+                    QMessageBox.critical(self, "Invalid configuration", str(exc))
+                    return None
+            elif decision != "proceed":
+                return None
+
+        return self._warn_ocr_api_only_if_needed(config, rebuild_config=_call_build_config)
+
+    def _start_translation_run(
+        self,
+        *,
+        config: RunConfig,
+        clear_gmail_batch_session: bool,
+        consume_advisor_choice: bool,
+        status_text: str,
+        header_status_text: str,
+        dashboard_task: str,
+    ) -> None:
+        advisor_applied = (
+            config.advisor_recommendation_applied
+            if isinstance(config.advisor_recommendation_applied, bool)
+            else None
+        )
+        self._save_settings()
+        if consume_advisor_choice:
+            self._consume_advisor_choice()
+        if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
+            self._review_queue_dialog.close()
+            self._review_queue_dialog = None
+        if clear_gmail_batch_session:
+            self._clear_gmail_batch_session()
+            self._last_gmail_message_load_result = None
+        self._last_summary = None
+        self._last_run_report_path = None
+        self._last_queue_summary_path = None
+        self._last_run_dir = build_output_paths(config.output_dir, config.pdf_path, config.target_lang).run_dir
+        self._last_output_docx = None
+        self._last_run_config = config
+        self._last_joblog_seed = None
+        self._last_review_queue = []
+        self._last_workflow = None
+        self._can_export_partial = False
+        self.final_docx_edit.clear()
+        self.progress.setValue(0)
+        self.page_label.setText("Page: -/-")
+        self.status_label.setText(status_text)
+        self.header_status_label.setText(header_status_text)
+        self.queue_status_label.setText("Queue: idle")
+        self._dashboard_snapshot.current_task = dashboard_task
+        self._dashboard_error_count = 0
+        self._dashboard_error_retry_count = 0
+        self._dashboard_eta_text = "--"
+        self._run_started_at = time.perf_counter()
+        self._reset_live_counters()
+        if advisor_applied is not None:
+            self._append_log(f"OCR advisor choice for this run: applied={advisor_applied}")
+
+        max_retries = int(self._defaults.get("perf_max_transport_retries", 4) or 4)
+        backoff_cap = float(self._defaults.get("perf_backoff_cap_seconds", 12.0) or 12.0)
+
+        thread = QThread(self)
+        worker = TranslationRunWorker(
+            config=config,
+            max_transport_retries=max_retries,
+            backoff_cap_seconds=backoff_cap,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.log.connect(self._append_log)
+        worker.progress.connect(self._on_progress)
+        worker.finished.connect(self._on_finished)
+        worker.error.connect(self._on_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(self._cleanup_worker)
+        self.request_cancel.connect(worker.cancel, Qt.ConnectionType.QueuedConnection)
+
+        self._worker_thread = thread
+        self._worker = worker
+        self._set_busy(True, translation=True)
+        thread.start()
+
+    def _run_after_worker_cleanup(self, callback: Callable[[], None]) -> None:
+        if self._worker is None and self._worker_thread is None:
+            callback()
+            return
+        self._after_worker_cleanup = callback
+
+    def _stop_gmail_batch(
+        self,
+        *,
+        status_text: str,
+        header_status_text: str,
+        log_message: str | None = None,
+        warning_message: str | None = None,
+        information_message: str | None = None,
+    ) -> None:
+        persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
+        if callable(persist_report):
+            persist_report(status="stopped", halt_reason=status_text)
+        self._gmail_batch_in_progress = False
+        self._gmail_batch_current_index = None
+        self._set_busy(False, translation=False)
+        self._run_started_at = None
+        self.status_label.setText(status_text)
+        self.header_status_label.setText(header_status_text)
+        self._dashboard_snapshot.current_task = status_text
+        if log_message:
+            self._append_log(log_message)
+        self._consume_advisor_choice()
+        self._update_controls()
+        if warning_message:
+            QMessageBox.warning(self, "Gmail batch", warning_message)
+        elif information_message:
+            QMessageBox.information(self, "Gmail batch", information_message)
+
+    def _complete_gmail_batch_stage_three(self) -> None:
+        session = self._gmail_batch_session
+        total = len(session.downloaded_attachments) if session is not None else 0
+        persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
+        if callable(persist_report):
+            persist_report(session=session, status="ready_for_finalization", halt_reason="")
+        self._gmail_batch_in_progress = False
+        self._gmail_batch_current_index = None
+        self._set_busy(False, translation=False)
+        self._run_started_at = None
+        self.status_label.setText("Gmail batch ready for finalization")
+        self.header_status_label.setText("Gmail batch ready")
+        self._dashboard_snapshot.current_task = "Gmail batch ready for finalization"
+        self._append_log(
+            "Gmail batch Stage 3 complete: "
+            f"{total} attachment(s) translated and saved to Job Log."
+        )
+        self._consume_advisor_choice()
+        self._update_controls()
+        finalize_batch = getattr(self, "_finalize_completed_gmail_batch", None)
+        if callable(finalize_batch):
+            finalize_batch()
+
+    def _gmail_batch_honorarios_default_directory(self) -> Path:
+        session = self._gmail_batch_session
+        if session is not None:
+            for item in session.confirmed_items:
+                candidate = item.translated_docx_path.expanduser().resolve()
+                if candidate.exists():
+                    return candidate.parent
+        if self._last_output_docx is not None:
+            candidate = self._last_output_docx.expanduser().resolve()
+            if candidate.exists():
+                return candidate.parent
+        outdir_text = self._current_gmail_output_dir_text()
+        if outdir_text:
+            return Path(outdir_text).expanduser().resolve()
+        return (Path.home() / "Documents").expanduser().resolve()
+
+    def _build_gmail_batch_honorarios_draft(self):
+        session = self._gmail_batch_session
+        if session is None or not session.confirmed_items:
+            raise ValueError("No confirmed Gmail batch items are available for honorários generation.")
+        first_item = session.confirmed_items[0]
+        combined_word_count = sum(int(item.translated_word_count) for item in session.confirmed_items)
+        return build_honorarios_draft(
+            case_number=first_item.case_number,
+            word_count=combined_word_count,
+            case_entity=first_item.case_entity,
+            case_city=first_item.case_city,
+        )
+
+    def _set_gmail_batch_finalization_state(
+        self,
+        *,
+        status_text: str,
+        header_status_text: str,
+        log_message: str | None = None,
+    ) -> None:
+        self.status_label.setText(status_text)
+        self.header_status_label.setText(header_status_text)
+        self._dashboard_snapshot.current_task = status_text
+        if log_message:
+            self._append_log(log_message)
+        self._update_controls()
+
+    def _offer_gmail_batch_reply_draft(self, honorarios_docx: Path) -> bool:
+        session = self._gmail_batch_session
+        persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
+        if session is None or not session.confirmed_items:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                "No confirmed Gmail batch is available to create the reply draft.",
+            )
+            return False
+        prereqs = assess_gmail_draft_prereqs(
+            configured_gog_path=str(self._defaults.get("gmail_gog_path", "") or ""),
+            configured_account_email=str(self._defaults.get("gmail_account_email", "") or ""),
+        )
+        if not prereqs.ready or prereqs.gog_path is None or prereqs.account_email is None:
+            if session is not None:
+                session.draft_preflight_result = "failed"
+                session.draft_created = False
+                session.draft_failure_reason = prereqs.message
+                if callable(persist_report):
+                    persist_report(
+                        session=session,
+                        status="draft_unavailable",
+                        halt_reason="gmail_draft_prereqs_unavailable",
+                    )
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                f"{prereqs.message}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            self._set_gmail_batch_finalization_state(
+                status_text="Gmail draft unavailable",
+                header_status_text="Gmail draft unavailable",
+                log_message="Gmail batch finalization stopped because Gmail draft prerequisites are unavailable.",
+            )
+            return False
+        first_item = session.confirmed_items[0]
+        try:
+            translated_docxs = validate_translated_docx_artifacts_for_gmail_draft(
+                translated_docxs=tuple(item.translated_docx_path for item in session.confirmed_items),
+                honorarios_docx=honorarios_docx,
+            )
+            session.draft_preflight_result = "passed"
+            session.draft_failure_reason = ""
+            session.final_attachment_basenames = tuple(
+                path.name for path in (*translated_docxs, honorarios_docx)
+            )
+            if callable(persist_report):
+                persist_report(session=session, status="draft_preflight_passed", halt_reason="")
+            request = build_gmail_batch_reply_request(
+                gog_path=prereqs.gog_path,
+                account_email=prereqs.account_email,
+                to_email=first_item.court_email,
+                subject=session.message.subject,
+                reply_to_message_id=session.intake_context.message_id or session.message.message_id,
+                translated_docxs=translated_docxs,
+                honorarios_docx=honorarios_docx,
+            )
+        except ValueError as exc:
+            session.draft_preflight_result = "failed"
+            session.draft_created = False
+            session.draft_failure_reason = str(exc)
+            QMessageBox.critical(self, "Gmail draft", str(exc))
+            if callable(persist_report):
+                persist_report(
+                    session=session,
+                    status="draft_failed",
+                    halt_reason="gmail_draft_preflight_failed",
+                )
+            self._set_gmail_batch_finalization_state(
+                status_text="Gmail draft failed",
+                header_status_text="Gmail draft failed",
+                log_message=f"Gmail batch finalization failed before draft creation: {exc}",
+            )
+            return False
+        result = create_gmail_draft_via_gog(request)
+        if not result.ok:
+            details = result.stderr or result.stdout or result.message
+            session.draft_created = False
+            session.draft_failure_reason = details
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Failed to create Gmail draft.\n\n"
+                f"{details}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            if callable(persist_report):
+                persist_report(
+                    session=session,
+                    status="draft_failed",
+                    halt_reason="gmail_draft_create_failed",
+                )
+            self._set_gmail_batch_finalization_state(
+                status_text="Gmail draft failed",
+                header_status_text="Gmail draft failed",
+                log_message=f"Gmail batch reply draft creation failed: {details}",
+            )
+            return False
+        count = len(session.confirmed_items)
+        session.draft_created = True
+        session.draft_failure_reason = ""
+        if callable(persist_report):
+            persist_report(session=session, status="draft_ready", halt_reason="")
+        self._set_gmail_batch_finalization_state(
+            status_text="Gmail reply draft ready",
+            header_status_text="Gmail draft ready",
+            log_message=(
+                "Gmail batch Stage 4 complete: "
+                f"reply draft created for {count} translated DOCX file(s) "
+                f"and honorários {honorarios_docx.expanduser().resolve()}."
+            ),
+        )
+        open_gmail = QMessageBox.question(
+            self,
+            "Gmail draft",
+            "Gmail draft created successfully. Abrir Gmail?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if open_gmail == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
+        self._clear_gmail_batch_session()
+        return True
+
+    def _finalize_completed_gmail_batch(self) -> None:
+        session = self._gmail_batch_session
+        persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
+        if session is None:
+            return
+        if not session.confirmed_items or len(session.confirmed_items) != len(session.downloaded_attachments):
+            return
+        generate_honorarios = QMessageBox.question(
+            self,
+            "Gmail batch",
+            "Generate one honorários DOCX for this Gmail batch now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        session.honorarios_requested = generate_honorarios == QMessageBox.StandardButton.Yes
+        if generate_honorarios != QMessageBox.StandardButton.Yes:
+            if callable(persist_report):
+                persist_report(
+                    session=session,
+                    status="finalization_skipped",
+                    halt_reason="honorarios_generation_skipped",
+                )
+            self._set_gmail_batch_finalization_state(
+                status_text="Gmail batch finalization skipped",
+                header_status_text="Gmail batch skipped",
+                log_message="Gmail batch finalization skipped before honorários generation.",
+            )
+            return
+        try:
+            draft = self._build_gmail_batch_honorarios_draft()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Gmail batch", str(exc))
+            self._set_gmail_batch_finalization_state(
+                status_text="Gmail batch finalization failed",
+                header_status_text="Gmail batch failed",
+                log_message=f"Gmail batch finalization failed: {exc}",
+            )
+            return
+        dialog = QtHonorariosExportDialog(
+            parent=self,
+            draft=draft,
+            default_directory=self._gmail_batch_honorarios_default_directory(),
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.saved_path is None:
+            if callable(persist_report):
+                persist_report(
+                    session=session,
+                    status="finalization_skipped",
+                    halt_reason="honorarios_generation_cancelled",
+                )
+            self._set_gmail_batch_finalization_state(
+                status_text="Gmail batch finalization skipped",
+                header_status_text="Gmail batch skipped",
+                log_message="Gmail batch finalization stopped because honorários generation was cancelled.",
+            )
+            dialog.deleteLater()
+            return
+        honorarios_docx = dialog.saved_path.expanduser().resolve()
+        session.requested_honorarios_path = dialog.requested_path
+        session.actual_honorarios_path = honorarios_docx
+        session.honorarios_auto_renamed = bool(dialog.auto_renamed)
+        if callable(persist_report):
+            persist_report(session=session, status="honorarios_ready", halt_reason="")
+        dialog.deleteLater()
+        self._offer_gmail_batch_reply_draft(honorarios_docx)
+
+    def _record_gmail_batch_saved_result(self, saved_result: JobLogSavedResult, *, run_dir: Path) -> bool:
+        session = self._gmail_batch_session
+        attachment = self._current_gmail_batch_attachment()
+        if session is None or attachment is None:
+            return False
+        persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
+        original_translated_docx = saved_result.translated_docx_path.expanduser().resolve()
+        # Gmail drafts attach the staged copy so later honorários export cannot overwrite it.
+        staged_translated_docx = stage_gmail_batch_translated_docx(
+            session=session,
+            translated_docx_path=original_translated_docx,
+        )
+        confirmed_item = GmailBatchConfirmedItem(
+            downloaded_attachment=attachment,
+            translated_docx_path=staged_translated_docx,
+            run_dir=run_dir.expanduser().resolve(),
+            translated_word_count=int(saved_result.word_count),
+            joblog_row_id=int(saved_result.row_id),
+            run_id=saved_result.run_id.strip(),
+            case_number=saved_result.case_number.strip(),
+            case_entity=saved_result.case_entity.strip(),
+            case_city=saved_result.case_city.strip(),
+            court_email=saved_result.court_email.strip(),
+        )
+        session.confirmed_items.append(confirmed_item)
+        if callable(persist_report):
+            persist_report(session=session, status="joblog_saved", halt_reason="")
+        if session.consistency_signature is None:
+            session.consistency_signature = confirmed_item.consistency_signature
+            return True
+        return confirmed_item.consistency_signature == session.consistency_signature
+
+    def _start_next_gmail_batch_translation(self) -> None:
+        session = self._gmail_batch_session
+        if session is None:
+            return
+        persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
+        next_index = len(session.confirmed_items)
+        total = len(session.downloaded_attachments)
+        if next_index >= total:
+            self._complete_gmail_batch_stage_three()
+            return
+        attachment = session.downloaded_attachments[next_index]
+        outdir_text = self._resolve_effective_gmail_output_dir_text()
+        if outdir_text is None:
+            self._stop_gmail_batch(
+                status_text="Gmail batch stopped",
+                header_status_text="Gmail batch stopped",
+                log_message="Gmail batch stopped because no usable output folder is available.",
+            )
+            return
+        config = self._resolve_translation_config(
+            pdf_override=str(attachment.saved_path),
+            outdir_override=outdir_text,
+            start_page_override=int(attachment.start_page),
+        )
+        if config is None:
+            self._stop_gmail_batch(
+                status_text="Gmail batch stopped",
+                header_status_text="Gmail batch stopped",
+                log_message=(
+                    "Gmail batch stopped before the next attachment could start: "
+                    f"{attachment.candidate.filename}"
+                ),
+            )
+            return
+        item_number = next_index + 1
+        self._gmail_batch_in_progress = True
+        self._gmail_batch_current_index = next_index
+        config.gmail_batch_context = {
+            "source": "gmail_intake",
+            "session_id": session.session_id,
+            "message_id": session.intake_context.message_id,
+            "thread_id": session.intake_context.thread_id,
+            "selected_attachment_filename": attachment.candidate.filename,
+            "selected_attachment_count": len(session.downloaded_attachments),
+            "selected_target_lang": session.selected_target_lang or config.target_lang.value,
+            "selected_start_page": int(attachment.start_page),
+            "gmail_batch_session_report_path": (
+                str(session.session_report_path.expanduser().resolve())
+                if isinstance(session.session_report_path, Path)
+                else ""
+            ),
+        }
+        self._append_log(
+            "Gmail batch starting item "
+            f"{item_number}/{total}: {attachment.candidate.filename}"
+        )
+        if callable(persist_report):
+            persist_report(session=session, status="translating", halt_reason="")
+        self._start_translation_run(
+            config=config,
+            clear_gmail_batch_session=False,
+            consume_advisor_choice=False,
+            status_text=f"Gmail batch {item_number}/{total}: {attachment.candidate.filename}",
+            header_status_text=f"Gmail batch {item_number}/{total}",
+            dashboard_task=f"Gmail batch {item_number}/{total}: {attachment.candidate.filename}",
+        )
+
+    def _start_gmail_message_load(self, context: InboundMailContext) -> None:
+        if self._busy:
+            return
+        self._clear_gmail_batch_session()
+        self._last_gmail_message_load_result = None
+        self.status_label.setText("Loading Gmail message...")
+        self.header_status_label.setText("Loading Gmail message...")
+        self._dashboard_snapshot.current_task = "Loading Gmail message..."
+        thread = QThread(self)
+        worker = GmailMessageLoadWorker(
+            context=context,
+            configured_gog_path=str(self._defaults.get("gmail_gog_path", "") or ""),
+            configured_account_email=str(self._defaults.get("gmail_account_email", "") or ""),
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.log.connect(self._append_log)
+        worker.finished.connect(self._on_gmail_message_load_finished)
+        worker.error.connect(self._on_gmail_message_load_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(self._cleanup_worker)
+        self._worker_thread = thread
+        self._worker = worker
+        self._run_started_at = time.perf_counter()
+        self._set_busy(True, translation=False)
+        thread.start()
+
+    def _open_gmail_batch_review_dialog(
+        self,
+        load_result: GmailMessageLoadResult,
+        *,
+        output_dir_text: str,
+    ) -> GmailBatchReviewResult | None:
+        message = load_result.message
+        if message is None or load_result.gog_path is None or load_result.account_email is None:
+            return None
+        preview_cache_transfer = self._gmail_batch_preview_cache_transfer
+        self._gmail_batch_preview_cache_transfer = None
+        if preview_cache_transfer is not None:
+            preview_cache_transfer.cleanup()
+        start_text = self.start_edit.text().strip() or str(self._defaults.get("default_start_page", 1) or 1)
+        try:
+            default_start_page = max(1, int(start_text))
+        except ValueError:
+            default_start_page = 1
+        dialog = QtGmailBatchReviewDialog(
+            parent=self,
+            message=message,
+            gog_path=load_result.gog_path,
+            account_email=load_result.account_email,
+            target_lang=self.lang_combo.currentText().strip().upper(),
+            default_start_page=default_start_page,
+            output_dir_text=output_dir_text,
+        )
+        self._gmail_batch_review_dialog = dialog
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return None
+            self._gmail_batch_preview_cache_transfer = dialog.take_preview_cache_transfer()
+            return dialog.review_result
+        finally:
+            self._gmail_batch_review_dialog = None
+            dialog.deleteLater()
+
+    def _start_gmail_batch_prepare(
+        self,
+        load_result: GmailMessageLoadResult,
+        review_result: GmailBatchReviewResult,
+        *,
+        output_dir_text: str,
+    ) -> None:
+        if (
+            load_result.message is None
+            or load_result.gog_path is None
+            or load_result.account_email is None
+        ):
+            QMessageBox.warning(
+                self,
+                "Gmail intake",
+                "The Gmail batch session could not be prepared because the fetch result is incomplete.",
+            )
+            return
+        self.status_label.setText("Preparing Gmail attachments...")
+        self.header_status_label.setText("Preparing Gmail attachments...")
+        self._dashboard_snapshot.current_task = "Preparing Gmail attachments..."
+        preview_cache_transfer = self._gmail_batch_preview_cache_transfer
+        thread = QThread(self)
+        worker = GmailBatchPrepareWorker(
+            context=load_result.intake_context,
+            message=load_result.message,
+            gog_path=load_result.gog_path,
+            account_email=load_result.account_email,
+            selected_attachments=review_result.selections,
+            selected_target_lang=review_result.target_lang.strip().upper(),
+            effective_output_dir=Path(output_dir_text).expanduser().resolve(),
+            cached_preview_paths=(
+                dict(preview_cache_transfer.cached_paths)
+                if preview_cache_transfer is not None
+                else None
+            ),
+            cached_preview_page_counts=(
+                dict(preview_cache_transfer.cached_page_counts)
+                if preview_cache_transfer is not None
+                else None
+            ),
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.log.connect(self._append_log)
+        worker.finished.connect(self._on_gmail_batch_prepare_finished)
+        worker.error.connect(self._on_gmail_batch_prepare_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(self._cleanup_worker)
+        self._worker_thread = thread
+        self._worker = worker
+        self._run_started_at = time.perf_counter()
+        self._set_busy(True, translation=False)
+        thread.start()
+
+    def _handle_gmail_intake_from_bridge(self, context: InboundMailContext) -> None:
+        self.gmail_intake_received.emit(context)
+
+    def _stop_gmail_intake_bridge(self) -> None:
+        bridge = self._gmail_intake_bridge
+        self._gmail_intake_bridge = None
+        if bridge is None:
+            return
+        bridge.stop()
+
+    def _sync_gmail_intake_bridge(self) -> None:
+        enabled, port, token = self._gmail_intake_settings()
+        current = self._gmail_intake_bridge
+        current_matches = (
+            current is not None
+            and current.host == "127.0.0.1"
+            and current.port == port
+            and current.token == token
+            and current.is_running
+        )
+        if enabled and token != "" and current_matches:
+            return
+
+        if current is not None:
+            current_port = current.port
+            self._stop_gmail_intake_bridge()
+            self._append_log(f"Gmail intake bridge stopped on 127.0.0.1:{current_port}.")
+
+        if not enabled:
+            return
+        if token == "":
+            self._append_log("Gmail intake bridge is enabled but token is blank; bridge not started.")
+            return
+
+        bridge = LocalGmailIntakeBridge(
+            port=port,
+            token=token,
+            on_context=self._handle_gmail_intake_from_bridge,
+        )
+        try:
+            bridge.start()
+        except Exception as exc:  # noqa: BLE001
+            status_text = "Gmail intake bridge unavailable"
+            details_text = (
+                "Gmail intake bridge could not start on "
+                f"127.0.0.1:{port}.\n\n"
+                "Another process may already be using this port.\n\n"
+                f"Details: {exc}"
+            )
+            self.status_label.setText(status_text)
+            self.header_status_label.setText(status_text)
+            self._dashboard_snapshot.current_task = status_text
+            self._append_log(f"Gmail intake bridge failed to start on 127.0.0.1:{port}: {exc}")
+            QMessageBox.warning(self, status_text, details_text)
+            return
+        self._gmail_intake_bridge = bridge
+        self._append_log(f"Gmail intake bridge listening on {bridge.url}.")
+
+    def _on_gmail_intake_received(self, context_obj: object) -> None:
+        if not isinstance(context_obj, InboundMailContext):
+            return
+        self._last_gmail_intake_context = context_obj
+        subject = context_obj.subject or "(no subject)"
+        summary = f"Gmail intake accepted: {subject}"
+        self.status_label.setText(summary)
+        self.header_status_label.setText("Gmail intake accepted")
+        self._dashboard_snapshot.current_task = summary
+        account_suffix = (
+            f" account_email={context_obj.account_email}" if context_obj.account_email else ""
+        )
+        self._append_log(
+            "Gmail intake accepted: "
+            f"thread_id={context_obj.thread_id} "
+            f"message_id={context_obj.message_id} "
+            f"subject={subject}{account_suffix}"
+        )
+        if self._busy:
+            blocked_summary = "Gmail intake blocked by current task"
+            self.status_label.setText(blocked_summary)
+            self.header_status_label.setText("Gmail intake blocked")
+            self._dashboard_snapshot.current_task = blocked_summary
+            self._append_log(
+                "Gmail intake fetch skipped because another task is already running."
+            )
+            QMessageBox.information(
+                self,
+                "Gmail intake",
+                (
+                    "Gmail intake was received, but another task is already running.\n\n"
+                    "Finish or cancel the current translation, then click the Gmail extension again."
+                ),
+            )
+            return
+        self._start_gmail_message_load(context_obj)
+
+    def _on_gmail_message_load_finished(self, result_obj: object) -> None:
+        self._set_busy(False, translation=False)
+        self._run_started_at = None
+        if not isinstance(result_obj, GmailMessageLoadResult):
+            self.status_label.setText("Gmail intake failed")
+            self.header_status_label.setText("Gmail intake failed")
+            QMessageBox.warning(self, "Gmail intake", "Gmail fetch returned an invalid result.")
+            return
+        result = result_obj
+        self._last_gmail_message_load_result = result
+        if not result.ok:
+            status_text = (
+                "Gmail intake unavailable"
+                if result.classification == "unavailable"
+                else "Gmail intake failed"
+            )
+            self.status_label.setText(status_text)
+            self.header_status_label.setText(status_text)
+            self._dashboard_snapshot.current_task = status_text
+            if result.classification == "unavailable":
+                QMessageBox.information(self, "Gmail intake", result.status_message)
+            else:
+                QMessageBox.warning(self, "Gmail intake", result.status_message)
+            return
+        message = result.message
+        if message is None:
+            self.status_label.setText("Gmail intake failed")
+            self.header_status_label.setText("Gmail intake failed")
+            QMessageBox.warning(self, "Gmail intake", "The fetched Gmail message is unavailable.")
+            return
+        output_dir_text = self._resolve_effective_gmail_output_dir_text()
+        if output_dir_text is None:
+            return
+        self.status_label.setText("Gmail message ready for review")
+        self.header_status_label.setText("Gmail message ready")
+        self._dashboard_snapshot.current_task = "Gmail message ready for review"
+        review_result = self._open_gmail_batch_review_dialog(
+            result,
+            output_dir_text=output_dir_text,
+        )
+        if not review_result:
+            if message.attachments:
+                self._append_log("Gmail attachment review canceled before download.")
+                self.status_label.setText("Gmail review canceled")
+                self.header_status_label.setText("Gmail review canceled")
+            else:
+                self._append_log(
+                    "Gmail intake message has no supported attachments in the exact message."
+                )
+                self.status_label.setText("No supported Gmail attachments found")
+                self.header_status_label.setText("No Gmail attachments")
+            return
+        selected_target_lang = review_result.target_lang.strip().upper()
+        if selected_target_lang:
+            self.lang_combo.setCurrentText(selected_target_lang)
+            self._refresh_lang_badge()
+            self._append_log(
+                "Gmail batch review confirmed: "
+                f"{len(review_result.selections)} attachment(s), target_lang={selected_target_lang}"
+            )
+        self._run_after_worker_cleanup(
+            lambda: self._start_gmail_batch_prepare(
+                result,
+                review_result,
+                output_dir_text=output_dir_text,
+            )
+        )
+
+    def _on_gmail_message_load_error(self, message: str) -> None:
+        self._set_busy(False, translation=False)
+        self._run_started_at = None
+        self.status_label.setText("Gmail intake failed")
+        self.header_status_label.setText("Gmail intake failed")
+        self._dashboard_snapshot.current_task = "Gmail intake failed"
+        self._append_log(f"Gmail intake runtime error: {message}")
+        QMessageBox.critical(self, "Gmail intake", message)
+
+    def _on_gmail_batch_prepare_finished(self, session_obj: object) -> None:
+        self._set_busy(False, translation=False)
+        self._run_started_at = None
+        if not isinstance(session_obj, GmailBatchSession):
+            self.status_label.setText("Gmail prepare failed")
+            self.header_status_label.setText("Gmail prepare failed")
+            QMessageBox.warning(self, "Gmail intake", "Attachment preparation returned an invalid session.")
+            return
+        self._clear_gmail_batch_session()
+        self._gmail_batch_session = session_obj
+        count = len(session_obj.downloaded_attachments)
+        persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
+        if callable(persist_report):
+            persist_report(session=session_obj, status="queued", halt_reason="")
+        self._append_log(
+            "Gmail batch prepared: "
+            f"{count} attachment(s) in {session_obj.download_dir}"
+        )
+        self.status_label.setText(f"Gmail batch queued: {count} attachment(s)")
+        self.header_status_label.setText("Gmail batch queued")
+        self._dashboard_snapshot.current_task = f"Gmail batch queued: {count} attachment(s)"
+        self._run_after_worker_cleanup(self._start_next_gmail_batch_translation)
+
+    def _on_gmail_batch_prepare_error(self, message: str) -> None:
+        self._set_busy(False, translation=False)
+        self._run_started_at = None
+        self._clear_gmail_batch_session()
+        self.status_label.setText("Gmail prepare failed")
+        self.header_status_label.setText("Gmail prepare failed")
+        self._dashboard_snapshot.current_task = "Gmail prepare failed"
+        self._append_log(f"Gmail batch prepare failed: {message}")
+        QMessageBox.warning(self, "Gmail intake", message)
+
     def apply_settings_from_dialog(self, values: dict[str, object], persist: bool) -> None:
         self._defaults.update(values)
         if persist:
@@ -1799,6 +2827,7 @@ class QtMainWindow(QMainWindow):
             self.outdir_edit.setText(default_outdir)
         self.ocr_mode_combo.setCurrentText(str(self._defaults.get("ocr_mode_default", "auto")))
         self.ocr_engine_combo.setCurrentText(str(self._defaults.get("ocr_engine_default", "local_then_api")))
+        self._sync_gmail_intake_bridge()
         self._update_controls()
 
     def _open_settings_dialog(self) -> None:
@@ -2245,6 +3274,7 @@ class QtMainWindow(QMainWindow):
         pdf_override: str | None = None,
         outdir_override: str | None = None,
         lang_override: str | None = None,
+        start_page_override: int | None = None,
     ) -> RunConfig:
         pdf_text = pdf_override.strip() if isinstance(pdf_override, str) else self.pdf_edit.text().strip()
         outdir_text = (
@@ -2272,11 +3302,16 @@ class QtMainWindow(QMainWindow):
             except ValueError as exc:
                 raise ValueError(f"{field} must be an integer.") from exc
 
-        start_text = self.start_edit.text().strip() or "1"
-        try:
-            start_page = int(start_text)
-        except ValueError as exc:
-            raise ValueError("Start page must be an integer.") from exc
+        if start_page_override is None:
+            start_text = self.start_edit.text().strip() or "1"
+            try:
+                start_page = int(start_text)
+            except ValueError as exc:
+                raise ValueError("Start page must be an integer.") from exc
+        else:
+            start_page = int(start_page_override)
+            if start_page <= 0:
+                raise ValueError("Start page must be >= 1.")
 
         context_file_text = self.context_file_edit.text().strip()
         context_file = Path(context_file_text).expanduser().resolve() if context_file_text else None
@@ -2493,89 +3528,17 @@ class QtMainWindow(QMainWindow):
     def _start(self) -> None:
         if self._busy:
             return
-        try:
-            config = self._build_config()
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Invalid configuration", str(exc))
-            return
-
-        if (
-            config.target_lang in (TargetLang.EN, TargetLang.FR)
-            and config.effort_policy == EffortPolicy.FIXED_XHIGH
-        ):
-            decision = self._warn_fixed_xhigh_for_enfr()
-            if decision == "switch":
-                self.effort_policy_combo.setCurrentText("fixed_high")
-                try:
-                    config = self._build_config()
-                except Exception as exc:  # noqa: BLE001
-                    QMessageBox.critical(self, "Invalid configuration", str(exc))
-                    return
-            elif decision != "proceed":
-                return
-
-        config = self._warn_ocr_api_only_if_needed(config)
+        config = self._resolve_translation_config()
         if config is None:
             return
-
-        advisor_applied = (
-            config.advisor_recommendation_applied
-            if isinstance(config.advisor_recommendation_applied, bool)
-            else None
-        )
-        self._save_settings()
-        self._consume_advisor_choice()
-        if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
-            self._review_queue_dialog.close()
-            self._review_queue_dialog = None
-        self._last_summary = None
-        self._last_run_report_path = None
-        self._last_queue_summary_path = None
-        self._last_run_dir = build_output_paths(config.output_dir, config.pdf_path, config.target_lang).run_dir
-        self._last_output_docx = None
-        self._last_run_config = config
-        self._last_joblog_seed = None
-        self._last_review_queue = []
-        self._last_workflow = None
-        self._can_export_partial = False
-        self.final_docx_edit.clear()
-        self.progress.setValue(0)
-        self.page_label.setText("Page: -/-")
-        self.status_label.setText("Starting...")
-        self.header_status_label.setText("Starting...")
-        self.queue_status_label.setText("Queue: idle")
-        self._dashboard_error_count = 0
-        self._dashboard_error_retry_count = 0
-        self._dashboard_eta_text = "--"
-        self._run_started_at = time.perf_counter()
-        self._reset_live_counters()
-        if advisor_applied is not None:
-            self._append_log(f"OCR advisor choice for this run: applied={advisor_applied}")
-
-        max_retries = int(self._defaults.get("perf_max_transport_retries", 4) or 4)
-        backoff_cap = float(self._defaults.get("perf_backoff_cap_seconds", 12.0) or 12.0)
-
-        thread = QThread(self)
-        worker = TranslationRunWorker(
+        self._start_translation_run(
             config=config,
-            max_transport_retries=max_retries,
-            backoff_cap_seconds=backoff_cap,
+            clear_gmail_batch_session=True,
+            consume_advisor_choice=True,
+            status_text="Starting...",
+            header_status_text="Starting...",
+            dashboard_task="Starting...",
         )
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.log.connect(self._append_log)
-        worker.progress.connect(self._on_progress)
-        worker.finished.connect(self._on_finished)
-        worker.error.connect(self._on_error)
-        worker.finished.connect(thread.quit)
-        worker.error.connect(thread.quit)
-        thread.finished.connect(self._cleanup_worker)
-        self.request_cancel.connect(worker.cancel, Qt.ConnectionType.QueuedConnection)
-
-        self._worker_thread = thread
-        self._worker = worker
-        self._set_busy(True, translation=True)
-        thread.start()
 
     def _start_queue(self) -> None:
         if self._busy:
@@ -2611,7 +3574,14 @@ class QtMainWindow(QMainWindow):
             advisor_recommendation_applied=None,
             advisor_recommendation=None,
         )
-        base_config = self._warn_ocr_api_only_if_needed(base_config)
+        base_config = self._warn_ocr_api_only_if_needed(
+            base_config,
+            rebuild_config=lambda: self._build_config(
+                pdf_override=queue_pdf,
+                outdir_override=queue_outdir,
+                lang_override=queue_lang,
+            ),
+        )
         if base_config is None:
             return
         rerun_failed_only = self.queue_rerun_failed_only_check.isChecked()
@@ -2620,6 +3590,8 @@ class QtMainWindow(QMainWindow):
         if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
             self._review_queue_dialog.close()
             self._review_queue_dialog = None
+        self._clear_gmail_batch_session()
+        self._last_gmail_message_load_result = None
         self._last_summary = None
         self._last_run_report_path = None
         self._last_queue_summary_path = None
@@ -2788,6 +3760,8 @@ class QtMainWindow(QMainWindow):
         if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
             self._review_queue_dialog.close()
             self._review_queue_dialog = None
+        self._clear_gmail_batch_session()
+        self._last_gmail_message_load_result = None
         self._last_summary = None
         self._last_run_report_path = None
         self._last_queue_summary_path = None
@@ -2846,6 +3820,14 @@ class QtMainWindow(QMainWindow):
 
     def _on_finished(self, summary_obj: object) -> None:
         summary = summary_obj if isinstance(summary_obj, RunSummary) else None
+        gmail_batch_active = self._has_active_gmail_batch()
+        gmail_batch_attachment = self._current_gmail_batch_attachment()
+        gmail_batch_index = self._gmail_batch_current_index
+        gmail_batch_total = (
+            len(self._gmail_batch_session.downloaded_attachments)
+            if self._gmail_batch_session is not None
+            else 0
+        )
         if self._worker is not None and hasattr(self._worker, "workflow"):
             self._last_workflow = getattr(self._worker, "workflow")
         self._set_busy(False, translation=False)
@@ -2858,6 +3840,12 @@ class QtMainWindow(QMainWindow):
             self._last_review_queue = []
             self._dashboard_error_count = max(1, self._dashboard_error_count)
             self._refresh_dashboard_counters()
+            if gmail_batch_active:
+                self._stop_gmail_batch(
+                    status_text="Gmail batch stopped",
+                    header_status_text="Gmail batch stopped",
+                    log_message="Gmail batch stopped because the translation worker returned an invalid summary.",
+                )
             return
         self._last_summary = summary
         self._last_run_dir = summary.run_dir
@@ -2876,8 +3864,84 @@ class QtMainWindow(QMainWindow):
             if summary.run_summary_path is not None:
                 self._append_log(f"Run report: {summary.run_summary_path}")
             self._prepare_joblog_seed(summary)
-            self._show_saved_docx_dialog("Translation complete")
-            self._open_save_to_joblog_dialog()
+            if gmail_batch_active:
+                if gmail_batch_attachment is None or gmail_batch_index is None:
+                    self._stop_gmail_batch(
+                        status_text="Gmail batch stopped",
+                        header_status_text="Gmail batch stopped",
+                        log_message="Gmail batch stopped because the current attachment context was lost.",
+                        warning_message=(
+                            "The Gmail batch could not continue because the active attachment context was lost."
+                        ),
+                    )
+                else:
+                    item_number = gmail_batch_index + 1
+                    review_status = (
+                        f"Gmail batch review {item_number}/{gmail_batch_total}: "
+                        f"{gmail_batch_attachment.candidate.filename}"
+                    )
+                    self._set_busy(True, translation=False)
+                    self.status_label.setText(review_status)
+                    self.header_status_label.setText("Gmail batch review")
+                    self._dashboard_snapshot.current_task = review_status
+                    saved_result = self._open_save_to_joblog_dialog(
+                        allow_honorarios_export=False,
+                    )
+                    if saved_result is None:
+                        self._stop_gmail_batch(
+                            status_text="Gmail batch stopped",
+                            header_status_text="Gmail batch stopped",
+                            log_message=(
+                                "Gmail batch stopped because Save to Job Log was cancelled for "
+                                f"{gmail_batch_attachment.candidate.filename}."
+                            ),
+                            information_message=(
+                                "The Gmail batch was stopped because Save to Job Log was cancelled "
+                                "or closed without saving."
+                            ),
+                        )
+                    else:
+                        try:
+                            consistent = self._record_gmail_batch_saved_result(
+                                saved_result,
+                                run_dir=summary.run_dir,
+                            )
+                        except ValueError as exc:
+                            self._stop_gmail_batch(
+                                status_text="Gmail batch stopped",
+                                header_status_text="Gmail batch stopped",
+                                log_message=(
+                                    "Gmail batch stopped because the translated DOCX could not be "
+                                    f"staged for draft attachments: {exc}"
+                                ),
+                                warning_message=str(exc),
+                            )
+                            return
+                        self._append_log(
+                            "Gmail batch saved item "
+                            f"{item_number}/{gmail_batch_total}: "
+                            f"{gmail_batch_attachment.candidate.filename} "
+                            f"-> row {saved_result.row_id}"
+                        )
+                        if not consistent:
+                            self._stop_gmail_batch(
+                                status_text="Gmail batch stopped",
+                                header_status_text="Gmail batch stopped",
+                                log_message=(
+                                    "Gmail batch stopped because confirmed case/court metadata "
+                                    "no longer matches the earlier attachments."
+                                ),
+                                warning_message=(
+                                    "Selected attachments did not resolve to the same confirmed "
+                                    "case/court context. Split this reply into separate batches "
+                                    "before continuing."
+                                ),
+                            )
+                        else:
+                            self._run_after_worker_cleanup(self._start_next_gmail_batch_translation)
+            else:
+                self._show_saved_docx_dialog("Translation complete")
+                self._open_save_to_joblog_dialog()
             self._dashboard_error_count = 0
         else:
             self._last_output_docx = None
@@ -2906,6 +3970,13 @@ class QtMainWindow(QMainWindow):
                 failure_context.get("cancel_requested_before_failure", False)
             )
             exception_class = str(failure_context.get("exception_class", "") or "")
+            validator_defect_reason = str(failure_context.get("validator_defect_reason", "") or "")
+            ar_violation_kind = str(failure_context.get("ar_violation_kind", "") or "")
+            ar_violation_samples = [
+                str(item)
+                for item in failure_context.get("ar_violation_samples", [])
+                if str(item or "").strip() != ""
+            ] if isinstance(failure_context.get("ar_violation_samples"), list) else []
             if request_type:
                 self._append_log(
                     "Failure context: "
@@ -2921,6 +3992,12 @@ class QtMainWindow(QMainWindow):
                     f"halt_reason={halt_reason or 'unknown'} "
                     f"exception_class={exception_class or 'unknown'}"
                 )
+            if validator_defect_reason or ar_violation_kind:
+                self._append_log(
+                    "Validator classification: "
+                    f"reason={validator_defect_reason or 'unknown'} "
+                    f"ar_violation_kind={ar_violation_kind or 'n/a'}"
+                )
             if summary.error == "docx_write_failed" and summary.attempted_output_docx is not None:
                 details = (
                     f"DOCX save failed at:\n{summary.attempted_output_docx}\n\n"
@@ -2932,6 +4009,14 @@ class QtMainWindow(QMainWindow):
                     detail_lines.append(f"Suspected cause: {suspected_cause}")
                 if halt_reason:
                     detail_lines.append(f"Halt reason: {halt_reason}")
+                if validator_defect_reason:
+                    detail_lines.append(f"Validator reason: {validator_defect_reason}")
+                if ar_violation_kind:
+                    detail_lines.append(f"Arabic violation: {ar_violation_kind}")
+                if ar_violation_samples:
+                    detail_lines.append(
+                        "Arabic samples: " + "; ".join(ar_violation_samples[:3])
+                    )
                 if request_type:
                     detail_lines.append(f"Request type: {request_type}")
                 if request_timeout_budget_seconds > 0.0:
@@ -2951,13 +4036,27 @@ class QtMainWindow(QMainWindow):
                     detail_lines.append(f"Run report:\n{summary.run_summary_path}")
                 details = "\n".join(detail_lines)
             QMessageBox.warning(self, "Translation stopped", details)
+            if gmail_batch_active:
+                batch_name = (
+                    gmail_batch_attachment.candidate.filename
+                    if gmail_batch_attachment is not None
+                    else "the current attachment"
+                )
+                self._stop_gmail_batch(
+                    status_text="Gmail batch stopped",
+                    header_status_text="Gmail batch stopped",
+                    log_message=f"Gmail batch stopped after translation failure on {batch_name}.",
+                )
             self._dashboard_error_count = 1
         self._progress_done_pages = max(self._progress_done_pages, int(summary.completed_pages))
         self._progress_total_pages = max(self._progress_total_pages, self._progress_done_pages)
         self._update_live_counters()
         self._can_export_partial = summary.completed_pages > 0
         self._update_controls()
+
     def _on_error(self, message: str) -> None:
+        gmail_batch_active = self._has_active_gmail_batch()
+        gmail_batch_attachment = self._current_gmail_batch_attachment()
         self._set_busy(False, translation=False)
         self._run_started_at = None
         self._last_joblog_seed = None
@@ -2968,6 +4067,17 @@ class QtMainWindow(QMainWindow):
         self._dashboard_error_count = max(1, self._dashboard_error_count)
         self._refresh_dashboard_counters()
         self._append_log(f"Runtime error: {message}")
+        if gmail_batch_active:
+            batch_name = (
+                gmail_batch_attachment.candidate.filename
+                if gmail_batch_attachment is not None
+                else "the current attachment"
+            )
+            self._stop_gmail_batch(
+                status_text="Gmail batch stopped",
+                header_status_text="Gmail batch stopped",
+                log_message=f"Gmail batch stopped after runtime error on {batch_name}.",
+            )
         QMessageBox.critical(self, "Runtime error", message)
 
     def _on_analyze_finished(self, summary_obj: object) -> None:
@@ -3132,7 +4242,12 @@ class QtMainWindow(QMainWindow):
             return "continue"
         return "cancel"
 
-    def _warn_ocr_api_only_if_needed(self, config: RunConfig) -> RunConfig | None:
+    def _warn_ocr_api_only_if_needed(
+        self,
+        config: RunConfig,
+        *,
+        rebuild_config: Callable[[], RunConfig] | None = None,
+    ) -> RunConfig | None:
         if config.ocr_mode == OcrMode.OFF:
             return config
         if which("tesseract"):
@@ -3165,7 +4280,11 @@ class QtMainWindow(QMainWindow):
         if decision == "apply_safe":
             self._apply_transient_ocr_heavy_safe_profile()
             try:
-                config = self._build_config()
+                config = (
+                    rebuild_config()
+                    if callable(rebuild_config)
+                    else self._build_config()
+                )
             except Exception as exc:  # noqa: BLE001
                 QMessageBox.critical(self, "Invalid configuration", str(exc))
                 return None
@@ -3189,6 +4308,8 @@ class QtMainWindow(QMainWindow):
             self._begin_cancel_wait()
 
     def _cleanup_worker(self) -> None:
+        callback = self._after_worker_cleanup
+        self._after_worker_cleanup = None
         if self._worker is not None:
             cancel_cb = getattr(self._worker, "cancel", None)
             if callable(cancel_cb):
@@ -3201,6 +4322,8 @@ class QtMainWindow(QMainWindow):
         if self._worker_thread is not None:
             self._worker_thread.deleteLater()
             self._worker_thread = None
+        if callback is not None:
+            callback()
 
     def _new_run(self) -> None:
         if self._busy:
@@ -3208,6 +4331,13 @@ class QtMainWindow(QMainWindow):
         if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
             self._review_queue_dialog.close()
             self._review_queue_dialog = None
+        gmail_batch_review_dialog = getattr(self, "_gmail_batch_review_dialog", None)
+        if gmail_batch_review_dialog is not None and gmail_batch_review_dialog.isVisible():
+            gmail_batch_review_dialog.close()
+            self._gmail_batch_review_dialog = None
+        clear_gmail_batch_session = getattr(self, "_clear_gmail_batch_session", None)
+        if callable(clear_gmail_batch_session):
+            clear_gmail_batch_session()
         self._last_summary = None
         self._last_run_report_path = None
         self._last_queue_summary_path = None
@@ -3216,6 +4346,7 @@ class QtMainWindow(QMainWindow):
         self._last_run_config = None
         self._last_joblog_seed = None
         self._last_review_queue = []
+        self._last_gmail_message_load_result = None
         self._queue_status_rows = []
         self._queue_total_jobs = 0
         self._queue_status_by_job_id = {}
@@ -3226,6 +4357,7 @@ class QtMainWindow(QMainWindow):
         self._last_workflow = None
         self._worker = None
         self._worker_thread = None
+        self._after_worker_cleanup = None
         self._can_export_partial = False
         self._dashboard_error_count = 0
         self._dashboard_error_retry_count = 0
@@ -3281,6 +4413,8 @@ class QtMainWindow(QMainWindow):
         if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
             self._review_queue_dialog.close()
             self._review_queue_dialog = None
+        self._clear_gmail_batch_session()
+        self._last_gmail_message_load_result = None
         self._last_summary = None
         self._last_queue_summary_path = None
         self._last_run_config = config
@@ -3445,10 +4579,14 @@ class QtMainWindow(QMainWindow):
 
         self._last_joblog_seed = seed
 
-    def _open_save_to_joblog_dialog(self) -> None:
+    def _open_save_to_joblog_dialog(
+        self,
+        *,
+        allow_honorarios_export: bool = True,
+    ) -> JobLogSavedResult | None:
         if self._last_joblog_seed is None:
             QMessageBox.information(self, "Job Log", "No completed run available to save.")
-            return
+            return None
 
         def _refresh_after_save() -> None:
             if self._joblog_window is not None and self._joblog_window.isVisible():
@@ -3459,8 +4597,10 @@ class QtMainWindow(QMainWindow):
             db_path=self._joblog_db_path,
             seed=self._last_joblog_seed,
             on_saved=_refresh_after_save,
+            allow_honorarios_export=allow_honorarios_export,
         )
         dialog.exec()
+        return dialog.saved_result
 
     def _open_joblog_window(self) -> None:
         if self._joblog_window is not None and self._joblog_window.isVisible():
@@ -3694,6 +4834,10 @@ class QtMainWindow(QMainWindow):
                     self._settings_dialog.close()
                 self._save_settings()
                 self._append_log("Force close requested while a task was still running.")
+                if self._gmail_batch_review_dialog is not None and self._gmail_batch_review_dialog.isVisible():
+                    self._gmail_batch_review_dialog.close()
+                self._clear_gmail_batch_session()
+                self._stop_gmail_intake_bridge()
                 event.accept()
                 self._force_exit_app()
                 return
@@ -3703,5 +4847,9 @@ class QtMainWindow(QMainWindow):
             self._settings_save_timer.stop()
         if self._settings_dialog is not None and self._settings_dialog.isVisible():
             self._settings_dialog.close()
+        if self._gmail_batch_review_dialog is not None and self._gmail_batch_review_dialog.isVisible():
+            self._gmail_batch_review_dialog.close()
         self._save_settings()
+        self._clear_gmail_batch_session()
+        self._stop_gmail_intake_bridge()
         super().closeEvent(event)

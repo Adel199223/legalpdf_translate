@@ -18,11 +18,19 @@ if str(SRC_ROOT) not in sys.path:
 if os.name != "nt" and "DISPLAY" not in os.environ:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import QBuffer, QIODevice
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPen
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from legalpdf_translate.gmail_batch import FetchedGmailMessage, GmailAttachmentCandidate
 from legalpdf_translate.qt_gui.app_window import QtMainWindow
+from legalpdf_translate.qt_gui.dialogs import QtGmailAttachmentPreviewDialog, QtGmailBatchReviewDialog
 from legalpdf_translate.qt_gui.styles import build_stylesheet
+from legalpdf_translate.qt_gui.worker import (
+    GmailAttachmentPreviewBootstrapResult,
+    GmailAttachmentPreviewPageResult,
+)
 from legalpdf_translate.resources_loader import resource_path
 
 
@@ -107,6 +115,165 @@ def apply_reference_sample(window: QtMainWindow) -> None:
     window.queue_status_label.setText("Queue: idle")
 
 
+def render_gmail_review_dialog_sample(*, outdir: Path) -> dict[str, object]:
+    outdir.mkdir(parents=True, exist_ok=True)
+    app, owns_app = _ensure_app()
+    dialog = QtGmailBatchReviewDialog(
+        parent=None,
+        message=FetchedGmailMessage(
+            message_id="msg-100",
+            thread_id="thread-200",
+            subject="Remessa de peça processual",
+            from_header='Palmira M Romaneiro <palmira.m.romaneiro@tribunais.org.pt>',
+            account_email="adel.belghali@gmail.com",
+            attachments=(
+                GmailAttachmentCandidate(
+                    attachment_id="att-1",
+                    filename="cef31abb-bd4f-4582-b15e-09bbb40d1834_temp.pdf",
+                    mime_type="application/pdf",
+                    size_bytes=182_784,
+                    source_message_id="msg-100",
+                ),
+                GmailAttachmentCandidate(
+                    attachment_id="att-2",
+                    filename="scene.jpg",
+                    mime_type="image/jpeg",
+                    size_bytes=98_304,
+                    source_message_id="msg-100",
+                ),
+            ),
+        ),
+        gog_path=Path("C:/gog.exe"),
+        account_email="adel.belghali@gmail.com",
+        target_lang="FR",
+        default_start_page=2,
+        output_dir_text="C:/Users/FA507/Downloads",
+    )
+    try:
+        dialog.table.selectRow(0)
+        dialog._set_row_page_count(0, 6)
+        dialog._set_row_start_page(0, 2)
+        dialog._refresh_detail_panel()
+        dialog.show()
+        app.processEvents()
+        image_path = outdir / "gmail_review.png"
+        meta_path = outdir / "gmail_review.json"
+        dialog.grab().save(str(image_path))
+        metadata = {
+            "sample": "gmail_review",
+            "width": int(dialog.width()),
+            "height": int(dialog.height()),
+            "row_count": int(dialog.table.rowCount()),
+            "current_row": int(dialog.table.currentRow()),
+            "target_lang": dialog.target_lang_combo.currentText(),
+            "image_path": str(image_path),
+        }
+        meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        return metadata
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def _sample_preview_image_bytes(page_number: int) -> tuple[bytes, int, int]:
+    width = 900
+    height = 1260
+    image = QImage(width, height, QImage.Format.Format_RGB32)
+    image.fill(QColor("#f7f4ee") if page_number % 2 else QColor("#eef4ff"))
+
+    painter = QPainter(image)
+    painter.setPen(QPen(QColor("#1c2430"), 4))
+    painter.drawRect(30, 30, width - 60, height - 60)
+    painter.setPen(QColor("#2f3c4d"))
+    painter.setFont(QFont("Segoe UI", 28))
+    painter.drawText(80, 120, f"Preview page {page_number}")
+    painter.setFont(QFont("Segoe UI", 16))
+    painter.drawText(80, 190, "Deterministic Qt render sample")
+    painter.drawText(80, 250, "Gmail attachment preview")
+    painter.end()
+
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, "PNG")
+    return bytes(buffer.data()), width, height
+
+
+def render_gmail_preview_dialog_sample(*, outdir: Path) -> dict[str, object]:
+    outdir.mkdir(parents=True, exist_ok=True)
+    app, owns_app = _ensure_app()
+
+    class _SamplePreviewDialog(QtGmailAttachmentPreviewDialog):
+        def _start_bootstrap(self) -> None:
+            return None
+
+        def _start_page_worker(self, page_number: int) -> None:
+            self._inflight_pages.add(page_number)
+            image_bytes, width, height = _sample_preview_image_bytes(page_number)
+            self._on_page_loaded(
+                GmailAttachmentPreviewPageResult(
+                    attachment=self._attachment,
+                    local_path=Path("C:/preview/sample.pdf"),
+                    page_count=max(1, int(self._page_count or 1)),
+                    page_number=page_number,
+                    image_bytes=image_bytes,
+                    image_format="png",
+                    width_px=width,
+                    height_px=height,
+                )
+            )
+
+    dialog = _SamplePreviewDialog(
+        parent=None,
+        attachment=GmailAttachmentCandidate(
+            attachment_id="att-1",
+            filename="21-25.pdf",
+            mime_type="application/pdf",
+            size_bytes=182_784,
+            source_message_id="msg-100",
+        ),
+        gog_path=Path("C:/gog.exe"),
+        account_email="adel.belghali@gmail.com",
+        preview_dir=outdir,
+        initial_start_page=2,
+        cached_path=outdir / "sample_preview.pdf",
+        known_page_count=6,
+    )
+    try:
+        dialog._on_bootstrap_loaded(
+            GmailAttachmentPreviewBootstrapResult(
+                attachment=dialog._attachment,
+                local_path=outdir / "sample_preview.pdf",
+                page_count=6,
+                page_sizes=((900.0, 1260.0),) * 6,
+            )
+        )
+        dialog.show()
+        app.processEvents()
+        dialog._scroll_to_page(2)
+        QTest.qWait(dialog._PAGE_REFRESH_DEBOUNCE_MS + 40)
+        app.processEvents()
+        image_path = outdir / "gmail_preview.png"
+        meta_path = outdir / "gmail_preview.json"
+        dialog.grab().save(str(image_path))
+        metadata = {
+            "sample": "gmail_preview",
+            "width": int(dialog.width()),
+            "height": int(dialog.height()),
+            "page_count": int(dialog.resolved_page_count or 0),
+            "cached_pages": len(dialog._page_cache),
+            "image_path": str(image_path),
+        }
+        meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        return metadata
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
 def render_profiles(
     *,
     outdir: Path,
@@ -180,13 +347,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=["reference_sample"],
         help="Preview state to apply before capture.",
     )
+    parser.add_argument(
+        "--include-gmail-review",
+        action="store_true",
+        help="Also render the Gmail Attachment Review sample dialog into the output directory.",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
-    results = render_profiles(outdir=args.outdir, profiles=args.profiles, preview=args.preview)
+    results: dict[str, object] = {
+        "profiles": render_profiles(outdir=args.outdir, profiles=args.profiles, preview=args.preview),
+    }
+    if args.include_gmail_review:
+        results["gmail_review"] = render_gmail_review_dialog_sample(outdir=args.outdir)
     print(json.dumps(results, ensure_ascii=False, indent=2))
     return 0
 

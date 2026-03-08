@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from legalpdf_translate.output_normalize import LRI, PDI
 from legalpdf_translate.translation_diagnostics import (
     check_bidi_safety,
     check_citation_preservation,
@@ -176,6 +177,20 @@ def test_target_language_ar_not_portuguese() -> None:
     result = check_target_language(output, "AR")
     # For AR, language_ok means detected != PT
     assert result["language_ok"] is True
+
+
+def test_target_language_ar_ignores_portuguese_inside_protected_tokens() -> None:
+    output = f"النص العربي {LRI}[[Tribunal Judicial da Comarca de Beja]]{PDI}"
+    result = check_target_language(output, "AR")
+    assert result["language_ok"] is True
+    assert result["detected_lang"] == "AUTO"
+
+
+def test_target_language_ar_rejects_portuguese_after_token_strip() -> None:
+    output = "ãõç"
+    result = check_target_language(output, "AR")
+    assert result["language_ok"] is False
+    assert result["detected_lang"] == "PT"
 
 
 # ---------------------------------------------------------------------------

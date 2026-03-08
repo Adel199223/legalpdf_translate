@@ -61,3 +61,25 @@ def test_render_profiles_writes_png_and_metadata(tmp_path: Path) -> None:
     assert meta_path.exists()
     assert result["profile"] == "wide"
     assert result["layout_mode"] == "desktop_exact"
+
+
+def test_render_gmail_review_dialog_sample_writes_png_and_metadata(tmp_path: Path) -> None:
+    result = render_tool.render_gmail_review_dialog_sample(outdir=tmp_path)
+    png_path = tmp_path / "gmail_review.png"
+    meta_path = tmp_path / "gmail_review.json"
+    assert png_path.exists()
+    assert png_path.stat().st_size > 0
+    assert meta_path.exists()
+    assert result["sample"] == "gmail_review"
+    assert result["row_count"] == 2
+
+
+def test_render_gmail_preview_dialog_sample_writes_png_and_metadata(tmp_path: Path) -> None:
+    result = render_tool.render_gmail_preview_dialog_sample(outdir=tmp_path)
+    png_path = tmp_path / "gmail_preview.png"
+    meta_path = tmp_path / "gmail_preview.json"
+    assert png_path.exists()
+    assert png_path.stat().st_size > 0
+    assert meta_path.exists()
+    assert result["sample"] == "gmail_preview"
+    assert result["page_count"] == 6

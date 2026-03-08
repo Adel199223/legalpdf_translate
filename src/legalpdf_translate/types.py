@@ -99,6 +99,7 @@ class RunConfig:
     strip_bidi_controls: bool = True
     advisor_recommendation_applied: bool | None = None
     advisor_recommendation: dict[str, Any] | None = None
+    gmail_batch_context: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)

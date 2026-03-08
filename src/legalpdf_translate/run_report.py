@@ -655,6 +655,9 @@ def build_run_report_payload(
             else {}
         ),
     }
+    gmail_batch_context_obj = run_summary.get("gmail_batch_context")
+    if not isinstance(gmail_batch_context_obj, dict):
+        gmail_batch_context_obj = {}
 
     payload: dict[str, Any] = {
         "schema_version": "admin_run_report_v1" if admin_mode else "basic_run_report_v1",
@@ -734,6 +737,28 @@ def build_run_report_payload(
         "budget": budget_obj,
         "quality": quality_obj,
     }
+    if gmail_batch_context_obj:
+        payload["gmail_batch_context"] = {
+            "source": str(gmail_batch_context_obj.get("source", "") or ""),
+            "session_id": str(gmail_batch_context_obj.get("session_id", "") or ""),
+            "message_id": str(gmail_batch_context_obj.get("message_id", "") or ""),
+            "thread_id": str(gmail_batch_context_obj.get("thread_id", "") or ""),
+            "selected_attachment_filename": str(
+                gmail_batch_context_obj.get("selected_attachment_filename", "") or ""
+            ),
+            "selected_attachment_count": int(
+                gmail_batch_context_obj.get("selected_attachment_count", 0) or 0
+            ),
+            "selected_target_lang": str(
+                gmail_batch_context_obj.get("selected_target_lang", "") or ""
+            ),
+            "selected_start_page": int(
+                gmail_batch_context_obj.get("selected_start_page", 0) or 0
+            ),
+            "gmail_batch_session_report_path": str(
+                gmail_batch_context_obj.get("gmail_batch_session_report_path", "") or ""
+            ),
+        }
 
     if admin_mode:
         payload["timeline_events"] = sanitize_value(events)
@@ -1390,6 +1415,7 @@ def build_run_report_markdown(
     pipeline_obj = payload.get("pipeline", {})
     budget_obj = payload.get("budget", {})
     quality_obj = payload.get("quality", {})
+    gmail_batch_context_obj = payload.get("gmail_batch_context", {})
     timeline_obj = payload.get("timeline_events", [])
     if not isinstance(run_obj, dict):
         run_obj = {}
@@ -1407,6 +1433,8 @@ def build_run_report_markdown(
         budget_obj = {}
     if not isinstance(quality_obj, dict):
         quality_obj = {}
+    if not isinstance(gmail_batch_context_obj, dict):
+        gmail_batch_context_obj = {}
     if not isinstance(timeline_obj, list):
         timeline_obj = []
 
@@ -1519,6 +1547,13 @@ def build_run_report_markdown(
     optimization_hint = str(pipeline_obj.get("image_mode_optimization_hint", "") or "").strip()
     if optimization_hint:
         lines.append(f"- Optimization hint: {optimization_hint}")
+    if gmail_batch_context_obj:
+        lines.append(
+            f"- Gmail intake session `{gmail_batch_context_obj.get('session_id', '-')}` "
+            f"attachment `{gmail_batch_context_obj.get('selected_attachment_filename', '-')}` "
+            f"target `{gmail_batch_context_obj.get('selected_target_lang', '-')}` "
+            f"start page `{gmail_batch_context_obj.get('selected_start_page', '-')}`."
+        )
 
     # Sanity warnings — flag empty/inconsistent reports
     _sanity_warnings: list[str] = []
@@ -1594,6 +1629,25 @@ def build_run_report_markdown(
         lines.append("## Sanity Warnings")
         for _w in _sanity_warnings:
             lines.append(f"- {_w}")
+
+    if gmail_batch_context_obj:
+        lines.append("")
+        lines.append("## Gmail Intake / Batch Context")
+        lines.append(f"- Source: `{gmail_batch_context_obj.get('source', '') or 'gmail_intake'}`")
+        lines.append(f"- Session ID: `{gmail_batch_context_obj.get('session_id', '-')}`")
+        lines.append(
+            f"- Message/thread: `{gmail_batch_context_obj.get('message_id', '-')}` / "
+            f"`{gmail_batch_context_obj.get('thread_id', '-')}`"
+        )
+        lines.append(
+            f"- Selected attachment: `{gmail_batch_context_obj.get('selected_attachment_filename', '-')}` "
+            f"of `{gmail_batch_context_obj.get('selected_attachment_count', 0)}` selected attachment(s)."
+        )
+        lines.append(f"- Selected target language: `{gmail_batch_context_obj.get('selected_target_lang', '-')}`")
+        lines.append(f"- Selected start page: `{gmail_batch_context_obj.get('selected_start_page', '-')}`")
+        report_path = str(gmail_batch_context_obj.get("gmail_batch_session_report_path", "") or "")
+        if report_path:
+            lines.append(f"- Gmail batch session report: `{report_path}`")
 
     lines.append("")
     lines.append("## Timeline")

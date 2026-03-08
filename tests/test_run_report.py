@@ -317,6 +317,36 @@ def test_run_report_clarifies_ocr_not_needed_when_provider_missing(tmp_path: Pat
     assert '"ocr_preflight_checked": false' in markdown
 
 
+def test_run_report_renders_gmail_batch_context_section(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    summary_path = run_dir / "run_summary.json"
+    run_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    run_summary["gmail_batch_context"] = {
+        "source": "gmail_intake",
+        "session_id": "gmail_batch_abc123",
+        "message_id": "msg-100",
+        "thread_id": "thread-200",
+        "selected_attachment_filename": "21-25.pdf",
+        "selected_attachment_count": 1,
+        "selected_target_lang": "AR",
+        "selected_start_page": 3,
+        "gmail_batch_session_report_path": r"C:\Users\FA507\Downloads\gmail_batch_session.json",
+    }
+    _write_json(summary_path, run_summary)
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "## Gmail Intake / Batch Context" in markdown
+    assert "gmail_batch_abc123" in markdown
+    assert "21-25.pdf" in markdown
+    assert "Selected start page: `3`" in markdown
+    assert "C:\\Users\\FA507\\Downloads\\gmail_batch_session.json" in markdown
+
+
 def test_run_report_warns_when_ocr_required_but_unavailable(tmp_path: Path) -> None:
     run_dir = tmp_path / "required_unavailable_run"
     pages_dir = run_dir / "pages"
