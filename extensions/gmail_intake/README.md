@@ -23,13 +23,13 @@ Windows-only Gmail intake extension for the batch translation and threaded reply
 
 ## Configure
 1. In LegalPDF Translate, enable the Gmail intake bridge in `Settings > Keys & Providers > Gmail Drafts (Windows)`.
-2. Copy the bridge token and port into the extension options page.
-3. Keep the app running on the same Windows host as Gmail and Windows `gog`.
+2. Keep the app running on the same Windows host as Gmail and Windows `gog`.
+3. If you need diagnostics, open the extension options page and use `Refresh Diagnostics`.
 
 ## Use
 1. Open Gmail in Edge or Chromium on the same Windows host as the app.
 2. Open exactly one expanded message so the extension can identify it exactly.
-3. Click the extension toolbar action.
+3. Click the extension toolbar action. The extension now asks the Edge native host for the live bridge port/token and foregrounds the app before posting to localhost.
 4. If the handoff succeeds, the app fetches that exact message and opens the supported-attachment review dialog.
 5. Select the attachments you want to translate and set the batch target language there if needed.
 6. Save each translated file in `Save to Job Log` before the next file starts.
@@ -41,7 +41,8 @@ The extension does not write its own report file. For durable diagnostics, use t
 ## Failure cases
 - App not listening on `127.0.0.1:<port>`
 - Invalid token
-- No bridge token configured in extension options
+- Gmail bridge disabled or not configured in LegalPDF Translate
+- Edge native host unavailable; the extension may fall back to legacy stored config if one already exists
 - The open Gmail message is not expanded enough to identify exactly
 - More than one visible candidate message is open
 - Content script on an older Gmail tab went stale; the extension now self-heals by reinjecting and should show a visible Gmail-page banner instead of doing nothing

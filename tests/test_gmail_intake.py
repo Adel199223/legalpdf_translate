@@ -178,8 +178,9 @@ def test_gmail_extension_manifest_is_gmail_only_and_localhost_only() -> None:
     manifest = json.loads((extension_dir / "manifest.json").read_text(encoding="utf-8"))
 
     assert manifest["manifest_version"] == 3
-    assert manifest["permissions"] == ["activeTab", "scripting", "storage", "tabs"]
+    assert manifest["permissions"] == ["activeTab", "nativeMessaging", "scripting", "storage", "tabs"]
     assert manifest["host_permissions"] == ["http://127.0.0.1/*"]
+    assert manifest["key"].startswith("MIIBIjAN")
     assert manifest["options_page"] == "options.html"
     assert manifest["background"]["service_worker"] == "background.js"
     assert manifest["content_scripts"] == [
@@ -203,8 +204,33 @@ def test_gmail_extension_scripts_keep_stage_one_contract_markers() -> None:
     assert 'type: "gmail-intake-ping"' in background_js
     assert 'files: ["content.js"]' in background_js
     assert "showFallbackBanner" in background_js
+    assert "chrome.runtime.sendNativeMessage" in background_js
+    assert "com.legalpdf.gmail_focus" in background_js
+    assert 'action: "prepare_gmail_intake"' in background_js
+    assert "chrome.storage.local.get" in background_js
+    assert "includeToken" in background_js
+    assert "requestFocus" in background_js
+    assert "Gmail bridge is not configured in LegalPDF Translate." in background_js
+    assert "Bridge token is missing in extension options." not in background_js
+    assert background_js.index("chrome.runtime.sendNativeMessage") < background_js.index("await postContext")
     assert "[data-message-id][data-legacy-message-id]" in content_js
     assert "data-legacy-thread-id" in content_js
     assert "h2.hP" in content_js
     assert "__legalPdfGmailIntakeLoaded" in content_js
     assert 'message.type === "gmail-intake-ping"' in content_js
+
+
+def test_gmail_extension_options_page_is_diagnostics_first() -> None:
+    extension_dir = Path(__file__).resolve().parents[1] / "extensions" / "gmail_intake"
+    options_js = (extension_dir / "options.js").read_text(encoding="utf-8")
+    options_html = (extension_dir / "options.html").read_text(encoding="utf-8")
+
+    assert 'action: "prepare_gmail_intake"' in options_js
+    assert "requestFocus: false" in options_js
+    assert "includeToken: false" in options_js
+    assert "Auto-configured from LegalPDF Translate" in options_js
+    assert "Native host unavailable" in options_js
+    assert "Refresh Diagnostics" in options_html
+    assert "Raw bridge tokens stay hidden here." in options_html
+    assert "Legacy fallback" in options_html
+    assert "bridgeToken" not in options_html

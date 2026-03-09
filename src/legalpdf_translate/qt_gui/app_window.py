@@ -82,6 +82,12 @@ from legalpdf_translate.gmail_batch import (
     stage_gmail_batch_translated_docx,
     write_gmail_batch_session_report,
 )
+from legalpdf_translate.gmail_focus import (
+    clear_bridge_runtime_metadata,
+    request_window_attention,
+    write_bridge_runtime_metadata,
+)
+from legalpdf_translate.gmail_focus_host import ensure_edge_native_host_registered
 from legalpdf_translate.gmail_intake import InboundMailContext, LocalGmailIntakeBridge
 from legalpdf_translate.joblog_db import job_log_db_path
 from legalpdf_translate.honorarios_docx import build_honorarios_draft
@@ -178,6 +184,102 @@ _REQUEST_BUDGET_LOG_RE = re.compile(
     r"request_timeout_budget_seconds=(?P<budget>[0-9]+(?:\.[0-9]+)?)"
 )
 _PAGE_TERMINAL_LOG_RE = re.compile(r"page=(?P<page>\d+)\s+image_used=.*\sstatus=(?P<status>done|failed|skipped)")
+
+
+def _build_identity_metadata(build_identity: RuntimeBuildIdentity | None) -> dict[str, object] | None:
+    if build_identity is None:
+        return None
+    return {
+        "worktree_path": build_identity.worktree_path,
+        "branch": build_identity.branch,
+        "head_sha": build_identity.head_sha,
+        "labels": list(build_identity.labels),
+        "is_canonical": build_identity.is_canonical,
+        "is_lineage_valid": build_identity.is_lineage_valid,
+        "canonical_worktree_path": build_identity.canonical_worktree_path,
+        "canonical_branch": build_identity.canonical_branch,
+        "approved_base_branch": build_identity.approved_base_branch,
+        "approved_base_head_floor": build_identity.approved_base_head_floor,
+        "canonical_head_floor": build_identity.canonical_head_floor,
+    }
+
+
+def _refresh_gmail_bridge_runtime_metadata(
+    window: object,
+    *,
+    bridge: LocalGmailIntakeBridge | None,
+    build_identity: RuntimeBuildIdentity | None,
+) -> None:
+    if bridge is None or not bridge.is_running:
+        return
+    title_getter = getattr(window, "windowTitle", None)
+    if not callable(title_getter):
+        return
+    try:
+        window_title = str(title_getter() or "").strip()
+    except Exception:  # noqa: BLE001
+        return
+    write_bridge_runtime_metadata(
+        base_dir=app_data_dir(),
+        port=bridge.port,
+        pid=os.getpid(),
+        window_title=window_title,
+        build_identity=_build_identity_metadata(build_identity),
+        running=True,
+    )
+
+
+def _request_gmail_window_attention(
+    window: object,
+    *,
+    reason: str,
+    bridge: LocalGmailIntakeBridge | None,
+    build_identity: RuntimeBuildIdentity | None,
+    append_log: Callable[[str], None] | None,
+) -> None:
+    _refresh_gmail_bridge_runtime_metadata(
+        window,
+        bridge=bridge,
+        build_identity=build_identity,
+    )
+    result = request_window_attention(window)
+    if not callable(append_log):
+        return
+    if result.focused:
+        append_log(f"Gmail window attention requested ({reason}): foreground focus succeeded.")
+        return
+    if result.flashed:
+        append_log(f"Gmail window attention requested ({reason}): flashed taskbar because foreground focus was blocked.")
+        return
+    if result.requested:
+        append_log(f"Gmail window attention requested ({reason}): {result.reason}.")
+        return
+    append_log(f"Gmail window attention skipped ({reason}): {result.reason}.")
+
+
+def _ensure_gmail_native_focus_host_registration(
+    window: object,
+    *,
+    append_log: Callable[[str], None] | None,
+) -> None:
+    result = ensure_edge_native_host_registered(base_dir=app_data_dir())
+    previous_signature = getattr(window, "_gmail_native_host_registration_signature", None)
+    current_signature = (result.ok, result.changed, result.reason, result.manifest_path, result.executable_path)
+    setattr(window, "_gmail_native_host_registration_signature", current_signature)
+    if not callable(append_log):
+        return
+    if result.ok and result.changed:
+        append_log(
+            "Edge Gmail focus helper registered for this user: "
+            f"{result.manifest_path} -> {result.executable_path}"
+        )
+        return
+    if result.ok:
+        if previous_signature is None or previous_signature[0] is False:
+            append_log(f"Edge Gmail focus helper ready: {result.manifest_path}")
+        return
+    if previous_signature != current_signature:
+        append_log(f"Edge Gmail focus helper unavailable: {result.reason}.")
 
 
 def _is_simple_mode() -> bool:
@@ -2517,6 +2619,13 @@ class QtMainWindow(QMainWindow):
         self._gmail_batch_preview_cache_transfer = None
         if preview_cache_transfer is not None:
             preview_cache_transfer.cleanup()
+        _request_gmail_window_attention(
+            self,
+            reason="review_dialog",
+            bridge=getattr(self, "_gmail_intake_bridge", None),
+            build_identity=getattr(self, "_build_identity", None),
+            append_log=getattr(self, "_append_log", None),
+        )
         start_text = self.start_edit.text().strip() or str(self._defaults.get("default_start_page", 1) or 1)
         try:
             default_start_page = max(1, int(start_text))
@@ -2531,6 +2640,9 @@ class QtMainWindow(QMainWindow):
             default_start_page=default_start_page,
             output_dir_text=output_dir_text,
         )
+        if hasattr(dialog, "raise_") and hasattr(dialog, "activateWindow"):
+            QTimer.singleShot(0, dialog.raise_)
+            QTimer.singleShot(0, dialog.activateWindow)
         self._gmail_batch_review_dialog = dialog
         try:
             if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -2606,6 +2718,7 @@ class QtMainWindow(QMainWindow):
         if bridge is None:
             return
         bridge.stop()
+        clear_bridge_runtime_metadata(app_data_dir())
 
     def _sync_gmail_intake_bridge(self) -> None:
         enabled, port, token = self._gmail_intake_settings()
@@ -2618,6 +2731,11 @@ class QtMainWindow(QMainWindow):
             and current.is_running
         )
         if enabled and token != "" and current_matches:
+            _refresh_gmail_bridge_runtime_metadata(
+                self,
+                bridge=current,
+                build_identity=self._build_identity,
+            )
             return
 
         if current is not None:
@@ -2653,6 +2771,15 @@ class QtMainWindow(QMainWindow):
             QMessageBox.warning(self, status_text, details_text)
             return
         self._gmail_intake_bridge = bridge
+        _refresh_gmail_bridge_runtime_metadata(
+            self,
+            bridge=bridge,
+            build_identity=self._build_identity,
+        )
+        _ensure_gmail_native_focus_host_registration(
+            self,
+            append_log=self._append_log,
+        )
         self._append_log(f"Gmail intake bridge listening on {bridge.url}.")
 
     def _on_gmail_intake_received(self, context_obj: object) -> None:
@@ -2673,6 +2800,13 @@ class QtMainWindow(QMainWindow):
             f"message_id={context_obj.message_id} "
             f"subject={subject}{account_suffix}"
         )
+        _request_gmail_window_attention(
+            self,
+            reason="intake_received",
+            bridge=getattr(self, "_gmail_intake_bridge", None),
+            build_identity=getattr(self, "_build_identity", None),
+            append_log=getattr(self, "_append_log", None),
+        )
         if self._busy:
             blocked_summary = "Gmail intake blocked by current task"
             self.status_label.setText(blocked_summary)
@@ -2680,6 +2814,13 @@ class QtMainWindow(QMainWindow):
             self._dashboard_snapshot.current_task = blocked_summary
             self._append_log(
                 "Gmail intake fetch skipped because another task is already running."
+            )
+            _request_gmail_window_attention(
+                self,
+                reason="intake_blocked",
+                bridge=getattr(self, "_gmail_intake_bridge", None),
+                build_identity=getattr(self, "_build_identity", None),
+                append_log=getattr(self, "_append_log", None),
             )
             QMessageBox.information(
                 self,

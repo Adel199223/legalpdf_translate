@@ -28,6 +28,11 @@ import legalpdf_translate.qt_gui.dialogs as dialogs_module
 import legalpdf_translate.user_settings as user_settings
 from legalpdf_translate.build_identity import RuntimeBuildIdentity
 from legalpdf_translate.docx_writer import assemble_docx
+from legalpdf_translate.gmail_focus import (
+    WindowAttentionResult,
+    bridge_runtime_metadata_path,
+    load_bridge_runtime_metadata,
+)
 from legalpdf_translate.gmail_intake import InboundMailContext
 from legalpdf_translate.qt_gui.app_window import QtMainWindow
 from legalpdf_translate.qt_gui.dialogs import (
@@ -1108,7 +1113,19 @@ def test_gmail_intake_bridge_starts_when_enabled(monkeypatch) -> None:
         gmail_intake_bridge_token="stage-one-token",
         gmail_intake_port=9011,
     )
+    registration_calls: list[object] = []
     monkeypatch.setattr(app_window_module, "LocalGmailIntakeBridge", _FakeBridge)
+    monkeypatch.setattr(
+        app_window_module,
+        "ensure_edge_native_host_registered",
+        lambda *, base_dir: registration_calls.append(base_dir) or SimpleNamespace(
+            ok=True,
+            changed=True,
+            manifest_path="C:/Users/FA507/AppData/Roaming/LegalPDFTranslate/native_messaging/com.legalpdf.gmail_focus.edge.json",
+            executable_path="C:/Users/FA507/.codex/legalpdf_translate/dist/legalpdf_translate/LegalPDFGmailFocusHost.exe",
+            reason="registered",
+        ),
+    )
     monkeypatch.setattr(app_window_module, "load_gui_settings", lambda: dict(settings))
     monkeypatch.setattr(app_window_module, "save_gui_settings", lambda _values: None)
 
@@ -1118,7 +1135,9 @@ def test_gmail_intake_bridge_starts_when_enabled(monkeypatch) -> None:
         bridge = _FakeBridge.instances[0]
         assert bridge.started is True
         assert window._gmail_intake_bridge is bridge
+        assert len(registration_calls) == 1
         assert "Gmail intake bridge listening on http://127.0.0.1:9011/gmail-intake." in window.log_text.toPlainText()
+        assert "Edge Gmail focus helper registered for this user:" in window.log_text.toPlainText()
     finally:
         window.close()
         window.deleteLater()
@@ -1269,6 +1288,43 @@ def test_gmail_intake_bridge_stops_on_window_close(monkeypatch) -> None:
         app.quit()
 
 
+def test_gmail_intake_bridge_runtime_metadata_is_written_and_cleared(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    _FakeBridge.instances = []
+    settings = _base_gui_settings(
+        gmail_intake_bridge_enabled=True,
+        gmail_intake_bridge_token="stage-one-token",
+        gmail_intake_port=9017,
+    )
+    monkeypatch.setattr(app_window_module, "LocalGmailIntakeBridge", _FakeBridge)
+    monkeypatch.setattr(app_window_module, "load_gui_settings", lambda: dict(settings))
+    monkeypatch.setattr(app_window_module, "save_gui_settings", lambda _values: None)
+    monkeypatch.setattr(app_window_module, "app_data_dir", lambda: tmp_path)
+
+    window = QtMainWindow()
+    metadata_path = bridge_runtime_metadata_path(tmp_path)
+    try:
+        payload = load_bridge_runtime_metadata(tmp_path)
+        assert metadata_path.exists() is True
+        assert payload is not None
+        assert payload["port"] == 9017
+        assert payload["pid"] > 0
+        assert payload["window_title"].startswith("LegalPDF Translate")
+        assert payload["running"] is True
+        assert isinstance(payload["build_identity"], dict) or payload["build_identity"] is None
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+    assert metadata_path.exists() is False
+
+
 def test_gmail_intake_acceptance_updates_visible_ui_without_starting_translation(monkeypatch) -> None:
     app = QApplication.instance()
     owns_app = app is None
@@ -1277,6 +1333,19 @@ def test_gmail_intake_acceptance_updates_visible_ui_without_starting_translation
 
     monkeypatch.setattr(app_window_module, "load_gui_settings", lambda: _base_gui_settings())
     monkeypatch.setattr(app_window_module, "save_gui_settings", lambda _values: None)
+    attention_calls: list[object] = []
+    monkeypatch.setattr(
+        app_window_module,
+        "request_window_attention",
+        lambda window: attention_calls.append(window)
+        or WindowAttentionResult(
+            requested=True,
+            restored=False,
+            focused=True,
+            flashed=False,
+            reason="foreground_set",
+        ),
+    )
 
     window = QtMainWindow()
     try:
@@ -1299,6 +1368,7 @@ def test_gmail_intake_acceptance_updates_visible_ui_without_starting_translation
         assert "message_id=msg-100" in log_text
         assert "account_email=court@example.com" in log_text
         assert calls == [context]
+        assert attention_calls == [window]
         assert window._busy is False
         assert window._running is False
         assert window._last_summary is None
@@ -1338,13 +1408,26 @@ def test_gmail_intake_acceptance_starts_message_load_when_idle() -> None:
     assert any("thread_id=thread-200" in entry for entry in logs)
 
 
-def test_gmail_intake_acceptance_skips_message_load_while_busy() -> None:
+def test_gmail_intake_acceptance_skips_message_load_while_busy(monkeypatch) -> None:
     calls: list[InboundMailContext] = []
     logs: list[str] = []
     message_box_calls: list[tuple[str, str]] = []
+    attention_calls: list[object] = []
     original_information = app_window_module.QMessageBox.information
     app_window_module.QMessageBox.information = (
         lambda _self, title, text: message_box_calls.append((title, text))
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "request_window_attention",
+        lambda window: attention_calls.append(window)
+        or WindowAttentionResult(
+            requested=True,
+            restored=False,
+            focused=False,
+            flashed=True,
+            reason="foreground_blocked",
+        ),
     )
     fake = SimpleNamespace(
         _busy=True,
@@ -1369,6 +1452,7 @@ def test_gmail_intake_acceptance_skips_message_load_while_busy() -> None:
         assert calls == []
         assert fake.header_status_label.text == "Gmail intake blocked"
         assert fake.status_label.text == "Gmail intake blocked by current task"
+        assert attention_calls == [fake, fake]
         assert any("fetch skipped because another task is already running" in entry for entry in logs)
         assert message_box_calls == [
             (
@@ -2097,6 +2181,7 @@ def test_open_gmail_batch_review_dialog_takes_preview_cache_transfer(monkeypatch
         cached_paths={attachment.attachment_id: Path("C:/tmp/preview.pdf")},
         cached_page_counts={attachment.attachment_id: 5},
     )
+    attention_calls: list[object] = []
 
     class _FakeReviewDialog:
         def __init__(self, **kwargs) -> None:
@@ -2113,6 +2198,18 @@ def test_open_gmail_batch_review_dialog_takes_preview_cache_transfer(monkeypatch
             return None
 
     monkeypatch.setattr(app_window_module, "QtGmailBatchReviewDialog", _FakeReviewDialog)
+    monkeypatch.setattr(
+        app_window_module,
+        "request_window_attention",
+        lambda window: attention_calls.append(window)
+        or WindowAttentionResult(
+            requested=True,
+            restored=False,
+            focused=True,
+            flashed=False,
+            reason="foreground_set",
+        ),
+    )
 
     fake = SimpleNamespace(
         start_edit=_FakeEdit("3"),
@@ -2132,6 +2229,7 @@ def test_open_gmail_batch_review_dialog_takes_preview_cache_transfer(monkeypatch
     assert fake._gmail_batch_preview_cache_transfer is expected_transfer
     assert captured["init_kwargs"]["default_start_page"] == 3
     assert captured["init_kwargs"]["output_dir_text"] == "C:/out"
+    assert attention_calls == [fake]
 
 
 def test_start_gmail_batch_prepare_passes_preview_cache_to_worker(monkeypatch) -> None:
