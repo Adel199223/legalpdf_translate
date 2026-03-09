@@ -13,12 +13,10 @@ import pytest
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
+import legalpdf_translate.user_settings as user_settings
 from legalpdf_translate.honorarios_docx import (
-    FIXED_ADDRESS,
-    FIXED_IBAN,
-    FIXED_NAME,
     HonorariosDraft,
     build_honorarios_draft,
     build_honorarios_paragraph_texts,
@@ -26,11 +24,13 @@ from legalpdf_translate.honorarios_docx import (
     format_portuguese_date,
     generate_honorarios_docx,
 )
+from legalpdf_translate.user_profile import default_primary_profile
 from legalpdf_translate.joblog_db import insert_job_run, open_job_log
 from legalpdf_translate.qt_gui.dialogs import (
     JobLogSeed,
     QtHonorariosExportDialog,
     QtJobLogWindow,
+    QtProfileManagerDialog,
     QtSaveToJobLogDialog,
     _default_documents_dir,
 )
@@ -43,16 +43,31 @@ def _write_docx_with_paragraphs(path: Path, *paragraphs: str) -> None:
     document.save(path)
 
 
+def _profile(**overrides: str):
+    profile = default_primary_profile(email="adel@example.com")
+    for key, value in overrides.items():
+        setattr(profile, key, value)
+    return profile
+
+
+def _patch_settings_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    return settings_file
+
+
 def test_format_portuguese_date_uses_full_month_name() -> None:
     assert format_portuguese_date(date(2026, 3, 6)) == "06 de março de 2026"
 
 
 def test_build_honorarios_paragraph_texts_uses_locked_template() -> None:
+    profile = _profile()
     draft = build_honorarios_draft(
         case_number="109/26.0PBBJA",
         word_count=1666,
         case_entity="Juízo Local Criminal de Beja",
         case_city="Beja",
+        profile=profile,
         today=date(2026, 3, 6),
     )
 
@@ -62,8 +77,8 @@ def test_build_honorarios_paragraph_texts_uses_locked_template() -> None:
         ("", "left"),
         ("Exmo. Sr(a). Procurador(a) da república do Juízo Local Criminal de Beja", "address"),
         ("", "left"),
-        (f"Nome: {FIXED_NAME}", "left"),
-        (f"Morada: {FIXED_ADDRESS}", "left"),
+        (f"Nome: {profile.document_name}", "left"),
+        (f"Morada: {profile.postal_address}", "left"),
         ("", "left"),
         (
             "Venho por este meio requerer o pagamento dos honorários devidos, em virtude de ter sido nomeado "
@@ -72,7 +87,7 @@ def test_build_honorarios_paragraph_texts_uses_locked_template() -> None:
         ),
         ("O documento traduzido contém 1666 palavras.", "left"),
         ("Este serviço inclui a taxa IVA de 23% e não tem retenção de IRS.", "left"),
-        (f"O Pagamento deverá ser efetuado para o seguinte IBAN: {FIXED_IBAN}", "left"),
+        (f"O Pagamento deverá ser efetuado para o seguinte IBAN: {profile.iban}", "left"),
         ("", "left"),
         ("Melhores cumprimentos,", "left"),
         ("", "left"),
@@ -80,17 +95,19 @@ def test_build_honorarios_paragraph_texts_uses_locked_template() -> None:
         ("", "left"),
         ("Beja, 06 de março de 2026", "center"),
         ("", "left"),
-        (FIXED_NAME, "center"),
+        (profile.document_name, "center"),
     ]
 
 
 def test_generate_honorarios_docx_has_expected_text_and_alignment(tmp_path: Path) -> None:
+    profile = _profile()
     draft = HonorariosDraft(
         case_number="109/26.0PBBJA",
         word_count=1666,
         case_entity="Juízo Local Criminal de Beja",
         case_city="Beja",
         date_pt="06 de março de 2026",
+        profile=profile,
     )
     output = tmp_path / "honorarios.docx"
 
@@ -104,7 +121,7 @@ def test_generate_honorarios_docx_has_expected_text_and_alignment(tmp_path: Path
     assert paragraphs[12].text == "Melhores cumprimentos,"
     assert paragraphs[14].text == "Espera deferimento,"
     assert paragraphs[16].text == "Beja, 06 de março de 2026"
-    assert paragraphs[18].text == FIXED_NAME
+    assert paragraphs[18].text == profile.document_name
     assert paragraphs[14].alignment == WD_ALIGN_PARAGRAPH.CENTER
     assert paragraphs[16].alignment == WD_ALIGN_PARAGRAPH.CENTER
     assert paragraphs[18].alignment == WD_ALIGN_PARAGRAPH.CENTER
@@ -112,12 +129,14 @@ def test_generate_honorarios_docx_has_expected_text_and_alignment(tmp_path: Path
 
 
 def test_generate_honorarios_docx_avoids_overwriting_existing_translation(tmp_path: Path) -> None:
+    profile = _profile()
     draft = HonorariosDraft(
         case_number="21/25.0FBPTM",
         word_count=264,
         case_entity="Tribunal Judicial da Comarca de Beja",
         case_city="Beja",
         date_pt="08 de março de 2026",
+        profile=profile,
     )
     translated = tmp_path / "21-25_AR_20260308_064339.docx"
     translated.write_bytes(b"translated-bytes")
@@ -139,6 +158,7 @@ def test_build_honorarios_paragraph_texts_keeps_case_city_only_in_closing_date()
         word_count=306,
         case_entity="Tribunal Judicial da Comarca de Beja",
         case_city="Moura",
+        profile=_profile(),
         today=date(2026, 3, 7),
     )
 
@@ -160,7 +180,8 @@ def test_default_honorarios_filename_sanitizes_case_number() -> None:
     )
 
 
-def test_honorarios_dialog_validates_required_fields(tmp_path: Path) -> None:
+def test_honorarios_dialog_validates_required_fields(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
     app = QApplication.instance()
     owns_app = app is None
     if app is None:
@@ -168,7 +189,7 @@ def test_honorarios_dialog_validates_required_fields(tmp_path: Path) -> None:
 
     dialog = QtHonorariosExportDialog(
         parent=None,
-        draft=HonorariosDraft("", 0, "", "", "06 de março de 2026"),
+        draft=HonorariosDraft("", 0, "", "", "06 de março de 2026", _profile()),
         default_directory=tmp_path,
     )
     try:
@@ -187,6 +208,7 @@ def test_honorarios_dialog_validates_required_fields(tmp_path: Path) -> None:
 
 
 def test_honorarios_dialog_reports_auto_renamed_save_path(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
     app = QApplication.instance()
     owns_app = app is None
     if app is None:
@@ -219,6 +241,7 @@ def test_honorarios_dialog_reports_auto_renamed_save_path(tmp_path: Path, monkey
             case_entity="Tribunal Judicial da Comarca de Beja",
             case_city="Beja",
             date_pt="08 de março de 2026",
+            profile=_profile(),
         ),
         default_directory=tmp_path,
     )
@@ -230,6 +253,165 @@ def test_honorarios_dialog_reports_auto_renamed_save_path(tmp_path: Path, monkey
         assert infos
         assert str(dialog.saved_path) in infos[0]
         assert translated.read_bytes() == b"translated-bytes"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_defaults_to_primary_profile_and_secondary_override_is_one_off(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    primary = _profile(id="primary", email="primary@example.com")
+    secondary = _profile(
+        id="secondary",
+        first_name="Jane",
+        last_name="Doe",
+        document_name_override="Jane Doe",
+        email="jane@example.com",
+        postal_address="Rua B",
+        iban="PT50003506490000832760030",
+        iva_text="6%",
+        irs_text="Isento",
+    )
+    user_settings.save_profile_settings(profiles=[primary, secondary], primary_profile_id=primary.id)
+
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = HonorariosDraft(
+        case_number="109/26.0PBBJA",
+        word_count=1666,
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        date_pt="06 de março de 2026",
+        profile=primary,
+    )
+
+    first_dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    second_dialog = None
+    try:
+        assert first_dialog.profile_combo.currentData() == "primary"
+        first_dialog.profile_combo.setCurrentIndex(first_dialog.profile_combo.findData("secondary"))
+        rebuilt = first_dialog._build_draft()
+        assert rebuilt.profile.id == "secondary"
+        assert rebuilt.profile.document_name == "Jane Doe"
+
+        second_dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+        assert second_dialog.profile_combo.currentData() == "primary"
+    finally:
+        first_dialog.close()
+        first_dialog.deleteLater()
+        if second_dialog is not None:
+            second_dialog.close()
+            second_dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_profile_manager_save_rejects_missing_required_fields(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    saved: dict[str, object] = {}
+    criticals: list[str] = []
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.critical",
+        lambda *args, **kwargs: criticals.append(args[2] if len(args) > 2 else kwargs.get("text", "")),
+    )
+
+    dialog = QtProfileManagerDialog(
+        parent=None,
+        settings=user_settings.load_gui_settings(),
+        save_callback=lambda profiles, primary_id: saved.update(
+            profiles=profiles,
+            primary_profile_id=primary_id,
+        ),
+    )
+    try:
+        dialog._new_profile()
+        dialog.first_name_edit.setText("Jane")
+        dialog.last_name_edit.setText("Doe")
+        dialog.phone_edit.setText("+351912345678")
+        dialog._save()
+        assert "profiles" not in saved
+        assert criticals
+        assert "Postal address" in criticals[0]
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_profile_manager_can_set_primary_and_prevents_last_profile_delete(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    primary = _profile(id="primary")
+    secondary = _profile(
+        id="secondary",
+        first_name="Jane",
+        last_name="Doe",
+        document_name_override="Jane Doe",
+        email="jane@example.com",
+        phone_number="+351911111111",
+        postal_address="Rua B",
+        iban="PT50003506490000832760030",
+        iva_text="6%",
+        irs_text="Isento",
+    )
+    user_settings.save_profile_settings(profiles=[primary, secondary], primary_profile_id=primary.id)
+
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    saved: dict[str, object] = {}
+    infos: list[str] = []
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.information",
+        lambda *args, **kwargs: infos.append(args[2] if len(args) > 2 else kwargs.get("text", "")),
+    )
+
+    dialog = QtProfileManagerDialog(
+        parent=None,
+        settings=user_settings.load_gui_settings(),
+        save_callback=lambda profiles, primary_id: saved.update(
+            profiles=profiles,
+            primary_profile_id=primary_id,
+        ),
+    )
+    try:
+        dialog.profile_list.setCurrentRow(1)
+        dialog._set_primary()
+        dialog._save()
+        assert saved["primary_profile_id"] == "secondary"
+        assert saved["profiles"][1].phone_number == "+351911111111"
+
+        last_dialog = QtProfileManagerDialog(
+            parent=None,
+            settings={"profiles": [user_settings.load_gui_settings()["profiles"][0]], "primary_profile_id": "primary"},
+            save_callback=lambda profiles, primary_id: None,
+        )
+        try:
+            last_dialog._delete_profile()
+            assert infos
+            assert "At least one profile must remain." in infos[-1]
+        finally:
+            last_dialog.close()
+            last_dialog.deleteLater()
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -492,6 +674,7 @@ def test_save_to_joblog_dialog_offers_gmail_draft_for_current_run_export(
     assert captured["request_kwargs"]["case_number"] == "109/26.0PBBJA"
     assert captured["request_kwargs"]["translation_docx"] == translated
     assert captured["request_kwargs"]["honorarios_docx"] == honorarios
+    assert captured["request_kwargs"]["profile"].document_name == "Adel Belghali"
     opened = captured["url"]
     assert isinstance(opened, QUrl)
     assert opened.toString() == "https://mail.google.com/mail/u/0/#drafts"
@@ -804,6 +987,7 @@ def test_joblog_window_honorarios_export_offers_gmail_draft_for_selected_row(
     assert captured["request_kwargs"]["case_number"] == "109/26.0PBBJA"
     assert captured["request_kwargs"]["translation_docx"] == translated
     assert captured["request_kwargs"]["honorarios_docx"] == tmp_path / "historical.docx"
+    assert captured["request_kwargs"]["profile"].document_name == "Adel Belghali"
     opened = captured["url"]
     assert isinstance(opened, QUrl)
     assert opened.toString() == "https://mail.google.com/mail/u/0/#drafts"
@@ -1718,7 +1902,7 @@ def test_save_to_joblog_gmail_draft_blocks_contaminated_translation_docx(tmp_pat
         _current_translation_docx_path=lambda: translated.resolve(),
     )
 
-    QtSaveToJobLogDialog._offer_gmail_draft_for_honorarios(fake, honorarios.resolve())
+    QtSaveToJobLogDialog._offer_gmail_draft_for_honorarios(fake, honorarios.resolve(), default_primary_profile())
 
     assert "contaminated with honorários content" in captured["critical"]
     assert str(translated.resolve()) in captured["critical"]
@@ -1774,7 +1958,7 @@ def test_joblog_gmail_draft_blocks_contaminated_historical_translation_docx(
         "case_number": "21/25.0FBPTM",
     }
 
-    QtJobLogWindow._offer_gmail_draft_for_honorarios(fake, row, honorarios.resolve())
+    QtJobLogWindow._offer_gmail_draft_for_honorarios(fake, row, honorarios.resolve(), default_primary_profile())
 
     assert "contaminated with honorários content" in captured["critical"]
     assert str(translated.resolve()) in captured["critical"]

@@ -13,6 +13,8 @@ from typing import Any, Sequence
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
+from .user_profile import UserProfile
+
 GMAIL_DRAFTS_URL = "https://mail.google.com/mail/u/0/#drafts"
 WINDOWS_GOG_WINGET_GLOB = "steipete.gogcli*/gog.exe"
 _DOCX_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
@@ -21,14 +23,12 @@ _HONORARIOS_SIGNATURE_MARKERS = (
     "O documento traduzido contém",
     "O Pagamento deverá ser efetuado para o seguinte IBAN",
 )
-HONORARIOS_GMAIL_BODY = """Bom dia,
+_HONORARIOS_GMAIL_BODY_PREFIX = """Bom dia,
 
 Segue em anexo as traduções conforme solicitadas, bem como o requerimento de honorários. 
 
 Estou à disposição para quaisquer esclarecimentos adicionais que se façam necessários.
 
-Atenciosamente,
-Adel Belghali
 """
 
 
@@ -65,6 +65,14 @@ def build_honorarios_gmail_subject(case_number: str) -> str:
     return f"Traduções e requerimento de honorários - Processo {case_number.strip()}"
 
 
+def build_honorarios_gmail_body(profile: UserProfile) -> str:
+    signature_lines = ["Atenciosamente,", profile.document_name.strip()]
+    phone_number = profile.phone_number.strip()
+    if phone_number:
+        signature_lines.append(phone_number)
+    return _HONORARIOS_GMAIL_BODY_PREFIX + "\n".join(signature_lines) + "\n"
+
+
 def build_honorarios_gmail_request(
     *,
     gog_path: Path,
@@ -73,6 +81,7 @@ def build_honorarios_gmail_request(
     case_number: str,
     translation_docx: Path,
     honorarios_docx: Path,
+    profile: UserProfile,
 ) -> GmailDraftRequest:
     recipient = to_email.strip()
     process_number = case_number.strip()
@@ -98,7 +107,7 @@ def build_honorarios_gmail_request(
         account_email=sender_account,
         to_email=recipient,
         subject=build_honorarios_gmail_subject(process_number),
-        body=HONORARIOS_GMAIL_BODY,
+        body=build_honorarios_gmail_body(profile),
         attachments=(resolved_translation, resolved_honorarios),
     )
 
@@ -112,6 +121,7 @@ def build_gmail_batch_reply_request(
     reply_to_message_id: str,
     translated_docxs: Sequence[Path],
     honorarios_docx: Path,
+    profile: UserProfile,
 ) -> GmailDraftRequest:
     sender_account = account_email.strip()
     recipient = to_email.strip()
@@ -143,7 +153,7 @@ def build_gmail_batch_reply_request(
         account_email=sender_account,
         to_email=recipient,
         subject=original_subject,
-        body=HONORARIOS_GMAIL_BODY,
+        body=build_honorarios_gmail_body(profile),
         attachments=resolved_translations + (resolved_honorarios,),
         reply_to_message_id=reply_message_id,
     )

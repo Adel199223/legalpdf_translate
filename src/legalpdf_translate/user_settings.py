@@ -21,10 +21,17 @@ from .glossary import (
     supported_target_langs,
 )
 from .study_glossary import normalize_study_entries, serialize_study_entries, supported_learning_langs
+from .user_profile import (
+    default_primary_profile,
+    normalize_profiles,
+    primary_profile,
+    serialize_profiles,
+    UserProfile,
+)
 
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
-SETTINGS_SCHEMA_VERSION = 5
+SETTINGS_SCHEMA_VERSION = 7
 DEFAULT_VOCAB_CASE_ENTITIES = [
     "Ministério Público",
     "Tribunal Judicial",
@@ -90,6 +97,8 @@ DEFAULT_OCR_SETTINGS: dict[str, Any] = {
 }
 DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "settings_schema_version": SETTINGS_SCHEMA_VERSION,
+    "profiles": serialize_profiles([default_primary_profile()]),
+    "primary_profile_id": default_primary_profile().id,
     "ui_theme": "dark_futuristic",
     "ui_scale": 1.0,
     "default_lang": "EN",
@@ -145,6 +154,8 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
 }
 ALLOWED_GUI_KEYS = {
     "settings_schema_version",
+    "profiles",
+    "primary_profile_id",
     "ui_theme",
     "ui_scale",
     "default_lang",
@@ -550,6 +561,28 @@ def load_gui_settings() -> dict[str, Any]:
     )
     merged["gmail_gog_path"] = str(merged.get("gmail_gog_path", "") or "")
     merged["gmail_account_email"] = str(merged.get("gmail_account_email", "") or "")
+    normalized_profiles, primary_profile_id = normalize_profiles(
+        merged.get("profiles"),
+        merged.get("primary_profile_id"),
+        fallback_email=merged["gmail_account_email"],
+    )
+    if "profiles" not in data and merged["gmail_account_email"] and normalized_profiles:
+        first_profile = normalized_profiles[0]
+        if not str(first_profile.email or "").strip():
+            normalized_profiles[0] = type(first_profile)(
+                id=first_profile.id,
+                first_name=first_profile.first_name,
+                last_name=first_profile.last_name,
+                document_name_override=first_profile.document_name_override,
+                email=merged["gmail_account_email"],
+                phone_number=first_profile.phone_number,
+                postal_address=first_profile.postal_address,
+                iban=first_profile.iban,
+                iva_text=first_profile.iva_text,
+                irs_text=first_profile.irs_text,
+            )
+    merged["profiles"] = serialize_profiles(normalized_profiles)
+    merged["primary_profile_id"] = primary_profile_id
     merged["gmail_intake_bridge_enabled"] = _coerce_bool(
         merged.get("gmail_intake_bridge_enabled"),
         False,
@@ -801,6 +834,34 @@ def save_gui_settings(values: dict[str, Any]) -> None:
         if key in values:
             data[key] = values[key]
     save_settings(data)
+
+
+def load_profile_settings() -> tuple[list[UserProfile], str]:
+    data = load_gui_settings()
+    profiles, primary_profile_id = normalize_profiles(
+        data.get("profiles"),
+        data.get("primary_profile_id"),
+        fallback_email=str(data.get("gmail_account_email", "") or ""),
+    )
+    return profiles, primary_profile_id
+
+
+def save_profile_settings(
+    *,
+    profiles: list[UserProfile],
+    primary_profile_id: str,
+) -> None:
+    normalized_profiles, normalized_primary_id = normalize_profiles(
+        serialize_profiles(profiles),
+        primary_profile_id,
+        fallback_email="",
+    )
+    save_gui_settings(
+        {
+            "profiles": serialize_profiles(normalized_profiles),
+            "primary_profile_id": primary_profile(normalized_profiles, normalized_primary_id).id,
+        }
+    )
 
 
 def load_joblog_settings() -> dict[str, Any]:

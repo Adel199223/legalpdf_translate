@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -163,8 +164,19 @@ from legalpdf_translate.user_settings import (
     app_data_dir,
     load_gui_settings,
     load_joblog_settings,
+    load_profile_settings,
+    save_profile_settings,
     save_gui_settings,
     save_joblog_settings,
+)
+from legalpdf_translate.user_profile import (
+    PROFILE_FIELD_LABELS,
+    UserProfile,
+    blank_profile,
+    find_profile,
+    missing_required_profile_fields,
+    normalize_profiles,
+    primary_profile,
 )
 from legalpdf_translate.word_automation import (
     WordAutomationResult,
@@ -737,6 +749,267 @@ def _open_path_in_system(parent: QWidget, target: Path) -> None:
         QMessageBox.critical(parent, "Open file failed", str(exc))
 
 
+def _profile_missing_fields_message(profile: UserProfile) -> str:
+    missing = missing_required_profile_fields(profile)
+    return ", ".join(PROFILE_FIELD_LABELS.get(field_name, field_name) for field_name in missing)
+
+
+def _current_primary_profile() -> UserProfile:
+    profiles, primary_profile_id = load_profile_settings()
+    return primary_profile(profiles, primary_profile_id)
+
+
+class QtProfileManagerDialog(QDialog):
+    """Manage persisted honorarios identity profiles."""
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        settings: Mapping[str, object],
+        save_callback: Callable[[list[UserProfile], str], None],
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Profiles")
+        self.setMinimumSize(860, 480)
+        self._save_callback = save_callback
+        self._profiles, self._primary_profile_id = normalize_profiles(
+            settings.get("profiles"),
+            settings.get("primary_profile_id"),
+            fallback_email=str(settings.get("gmail_account_email", "") or ""),
+        )
+        self._profiles_by_id = {profile.id: profile for profile in self._profiles}
+        self._current_profile_id = self._primary_profile_id
+        self._selection_changing = False
+        self._build_ui()
+        self._refresh_list()
+        self._select_profile(self._primary_profile_id)
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(980, 620),
+        )
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        split = QHBoxLayout()
+        split.setSpacing(12)
+
+        left = QVBoxLayout()
+        left.setSpacing(8)
+        left.addWidget(QLabel("Saved profiles"))
+        self.profile_list = QListWidget()
+        left.addWidget(self.profile_list, 1)
+
+        left_actions = QHBoxLayout()
+        self.new_profile_btn = QPushButton("New Profile")
+        self.set_primary_btn = QPushButton("Set as Primary")
+        self.delete_profile_btn = QPushButton("Delete Profile")
+        left_actions.addWidget(self.new_profile_btn)
+        left_actions.addWidget(self.set_primary_btn)
+        left_actions.addWidget(self.delete_profile_btn)
+        left.addLayout(left_actions)
+
+        split.addLayout(left, 1)
+
+        right = QVBoxLayout()
+        right.setSpacing(8)
+        form = QFormLayout()
+        self.first_name_edit = QLineEdit()
+        self.last_name_edit = QLineEdit()
+        self.document_name_override_edit = QLineEdit()
+        self.document_name_override_edit.setPlaceholderText("Optional override for Nome/signature")
+        self.email_edit = QLineEdit()
+        self.phone_edit = QLineEdit()
+        self.phone_edit.setPlaceholderText("Optional phone for Gmail signature")
+        self.postal_address_edit = QPlainTextEdit()
+        self.postal_address_edit.setFixedHeight(88)
+        self.iban_edit = QLineEdit()
+        self.iva_edit = QLineEdit()
+        self.irs_edit = QLineEdit()
+        form.addRow("First name", self.first_name_edit)
+        form.addRow("Last name", self.last_name_edit)
+        form.addRow("Document name override", self.document_name_override_edit)
+        form.addRow("Email", self.email_edit)
+        form.addRow("Phone", self.phone_edit)
+        form.addRow("Postal address", self.postal_address_edit)
+        form.addRow("IBAN", self.iban_edit)
+        form.addRow("IVA text", self.iva_edit)
+        form.addRow("IRS text", self.irs_edit)
+        right.addLayout(form)
+
+        self.profile_status_label = QLabel("")
+        self.profile_status_label.setWordWrap(True)
+        right.addWidget(self.profile_status_label)
+        right.addStretch(1)
+        split.addLayout(right, 2)
+
+        root.addLayout(split, 1)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self.save_btn = QPushButton("Save")
+        self.close_btn = QPushButton("Close")
+        actions.addWidget(self.save_btn)
+        actions.addWidget(self.close_btn)
+        root.addLayout(actions)
+
+        self.profile_list.currentItemChanged.connect(self._on_current_item_changed)
+        self.new_profile_btn.clicked.connect(self._new_profile)
+        self.set_primary_btn.clicked.connect(self._set_primary)
+        self.delete_profile_btn.clicked.connect(self._delete_profile)
+        self.save_btn.clicked.connect(self._save)
+        self.close_btn.clicked.connect(self.reject)
+
+    def _profile_label(self, profile: UserProfile) -> str:
+        base = profile.document_name or "(Unnamed profile)"
+        if profile.id == self._primary_profile_id:
+            return f"{base} [Primary]"
+        return base
+
+    def _refresh_list(self) -> None:
+        ordered_profiles = list(self._profiles_by_id.values())
+        self.profile_list.clear()
+        for profile in ordered_profiles:
+            item = QListWidgetItem(self._profile_label(profile))
+            item.setData(Qt.ItemDataRole.UserRole, profile.id)
+            self.profile_list.addItem(item)
+        self.set_primary_btn.setEnabled(len(ordered_profiles) > 1)
+        self.delete_profile_btn.setEnabled(len(ordered_profiles) > 1)
+
+    def _current_profile(self) -> UserProfile | None:
+        if not self._current_profile_id:
+            return None
+        return self._profiles_by_id.get(self._current_profile_id)
+
+    def _select_profile(self, profile_id: str) -> None:
+        self._selection_changing = True
+        try:
+            for index in range(self.profile_list.count()):
+                item = self.profile_list.item(index)
+                if str(item.data(Qt.ItemDataRole.UserRole) or "") == profile_id:
+                    self.profile_list.setCurrentRow(index)
+                    break
+        finally:
+            self._selection_changing = False
+        self._load_current_profile()
+
+    def _commit_current_profile(self) -> None:
+        profile = self._current_profile()
+        if profile is None:
+            return
+        updated = UserProfile(
+            id=profile.id,
+            first_name=self.first_name_edit.text().strip(),
+            last_name=self.last_name_edit.text().strip(),
+            document_name_override=self.document_name_override_edit.text().strip(),
+            email=self.email_edit.text().strip(),
+            phone_number=self.phone_edit.text().strip(),
+            postal_address=self.postal_address_edit.toPlainText().strip(),
+            iban=self.iban_edit.text().strip(),
+            iva_text=self.iva_edit.text().strip(),
+            irs_text=self.irs_edit.text().strip(),
+        )
+        self._profiles_by_id[updated.id] = updated
+        self.profile_status_label.setText(
+            f"Resolved document name: {updated.document_name or '(missing first/last name)'}"
+        )
+
+    def _load_current_profile(self) -> None:
+        profile = self._current_profile()
+        if profile is None:
+            return
+        self.first_name_edit.setText(profile.first_name)
+        self.last_name_edit.setText(profile.last_name)
+        self.document_name_override_edit.setText(profile.document_name_override)
+        self.email_edit.setText(profile.email)
+        self.phone_edit.setText(profile.phone_number)
+        self.postal_address_edit.setPlainText(profile.postal_address)
+        self.iban_edit.setText(profile.iban)
+        self.iva_edit.setText(profile.iva_text)
+        self.irs_edit.setText(profile.irs_text)
+        self.profile_status_label.setText(
+            f"Resolved document name: {profile.document_name or '(missing first/last name)'}"
+        )
+
+    def _on_current_item_changed(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
+        if self._selection_changing:
+            return
+        self._commit_current_profile()
+        if current is None:
+            return
+        profile_id = str(current.data(Qt.ItemDataRole.UserRole) or "")
+        if not profile_id:
+            return
+        self._current_profile_id = profile_id
+        self._load_current_profile()
+
+    def _new_profile(self) -> None:
+        self._commit_current_profile()
+        profile = blank_profile()
+        self._profiles_by_id[profile.id] = profile
+        self._refresh_list()
+        self._current_profile_id = profile.id
+        self._select_profile(profile.id)
+
+    def _set_primary(self) -> None:
+        profile = self._current_profile()
+        if profile is None:
+            return
+        self._primary_profile_id = profile.id
+        self._refresh_list()
+        self._select_profile(profile.id)
+
+    def _delete_profile(self) -> None:
+        ordered_profiles = list(self._profiles_by_id.values())
+        if len(ordered_profiles) <= 1:
+            QMessageBox.information(self, "Profiles", "At least one profile must remain.")
+            return
+        profile = self._current_profile()
+        if profile is None:
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Delete Profile",
+            f"Delete profile '{profile.document_name or '(Unnamed profile)'}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        del self._profiles_by_id[profile.id]
+        remaining_profiles = list(self._profiles_by_id.values())
+        if profile.id == self._primary_profile_id:
+            self._primary_profile_id = remaining_profiles[0].id
+        self._current_profile_id = remaining_profiles[0].id
+        self._refresh_list()
+        self._select_profile(self._current_profile_id)
+
+    def _save(self) -> None:
+        self._commit_current_profile()
+        ordered_profiles = list(self._profiles_by_id.values())
+        for profile in ordered_profiles:
+            missing_message = _profile_missing_fields_message(profile)
+            if missing_message:
+                self._current_profile_id = profile.id
+                self._refresh_list()
+                self._select_profile(profile.id)
+                QMessageBox.critical(
+                    self,
+                    "Profiles",
+                    (
+                        f"Profile '{profile.document_name or '(Unnamed profile)'}' is missing required fields:\n"
+                        f"{missing_message}"
+                    ),
+                )
+                return
+        self._save_callback([profile for profile in ordered_profiles], self._primary_profile_id)
+        self.accept()
+
+
 class QtHonorariosExportDialog(QDialog):
     """Generate a deterministic Requerimento de Honorarios DOCX."""
 
@@ -746,16 +1019,26 @@ class QtHonorariosExportDialog(QDialog):
         parent: QWidget | None,
         draft: HonorariosDraft,
         default_directory: Path,
+        profile_save_callback: Callable[[list[UserProfile], str], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Gerar Requerimento de Honorários")
         self.setMinimumSize(520, 240)
         self._default_directory = default_directory.expanduser().resolve()
         self._initial_draft = draft
+        self._profiles, self._primary_profile_id = load_profile_settings()
+        self._profile_save_callback = profile_save_callback or (
+            lambda profiles, primary_profile_id: save_profile_settings(
+                profiles=profiles,
+                primary_profile_id=primary_profile_id,
+            )
+        )
         self.saved_path: Path | None = None
         self.requested_path: Path | None = None
         self.auto_renamed: bool = False
+        self.generated_draft: HonorariosDraft | None = None
         self._build_ui()
+        self._refresh_profile_selector(self._initial_draft.profile.id)
         self._responsive_window = ResponsiveWindowController(
             self,
             role="form",
@@ -768,11 +1051,19 @@ class QtHonorariosExportDialog(QDialog):
         root.setSpacing(8)
 
         form = QFormLayout()
+        profile_row = QHBoxLayout()
+        self.profile_combo = NoWheelComboBox()
+        self.profile_edit_btn = QPushButton("Edit Profiles...")
+        profile_row.addWidget(self.profile_combo, 1)
+        profile_row.addWidget(self.profile_edit_btn)
+        profile_wrap = QWidget()
+        profile_wrap.setLayout(profile_row)
         self.case_number_edit = QLineEdit(self._initial_draft.case_number)
         self.word_count_edit = QLineEdit(str(self._initial_draft.word_count))
         self.case_entity_edit = QLineEdit(self._initial_draft.case_entity)
         self.case_city_edit = QLineEdit(self._initial_draft.case_city)
         self.date_preview_label = QLabel(f"Beja, {self._initial_draft.date_pt}")
+        form.addRow("Profile", profile_wrap)
         form.addRow("Número de processo", self.case_number_edit)
         form.addRow("Número de palavras", self.word_count_edit)
         form.addRow("Case Entity", self.case_entity_edit)
@@ -790,6 +1081,41 @@ class QtHonorariosExportDialog(QDialog):
 
         self.cancel_btn.clicked.connect(self.reject)
         self.generate_btn.clicked.connect(self._generate)
+        self.profile_edit_btn.clicked.connect(self._edit_profiles)
+
+    def _refresh_profile_selector(self, selected_profile_id: str | None = None) -> None:
+        selected = selected_profile_id or self._primary_profile_id
+        self.profile_combo.clear()
+        for profile in self._profiles:
+            label = profile.document_name or "(Unnamed profile)"
+            if profile.id == self._primary_profile_id:
+                label = f"{label} [Primary]"
+            self.profile_combo.addItem(label, profile.id)
+        index = self.profile_combo.findData(selected)
+        if index < 0:
+            index = self.profile_combo.findData(self._primary_profile_id)
+        if index < 0 and self.profile_combo.count() > 0:
+            index = 0
+        if index >= 0:
+            self.profile_combo.setCurrentIndex(index)
+
+    def _selected_profile(self) -> UserProfile | None:
+        selected_profile_id = str(self.profile_combo.currentData() or "").strip()
+        profile = find_profile(self._profiles, selected_profile_id)
+        if profile is not None:
+            return profile
+        return primary_profile(self._profiles, self._primary_profile_id)
+
+    def _edit_profiles(self) -> None:
+        dialog = QtProfileManagerDialog(
+            parent=self,
+            settings=load_gui_settings(),
+            save_callback=self._profile_save_callback,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._profiles, self._primary_profile_id = load_profile_settings()
+        self._refresh_profile_selector(str(self.profile_combo.currentData() or "").strip())
 
     def _build_draft(self) -> HonorariosDraft:
         case_number = self.case_number_edit.text().strip()
@@ -807,11 +1133,20 @@ class QtHonorariosExportDialog(QDialog):
             raise ValueError("Número de palavras must be an integer.") from exc
         if word_count <= 0:
             raise ValueError("Número de palavras must be greater than zero.")
+        selected_profile = self._selected_profile()
+        if selected_profile is None:
+            raise ValueError("At least one profile is required to generate honorários.")
+        missing_message = _profile_missing_fields_message(selected_profile)
+        if missing_message:
+            raise ValueError(
+                f"Selected profile is missing required fields: {missing_message}. Use 'Edit Profiles...' first."
+            )
         return build_honorarios_draft(
             case_number=case_number,
             word_count=word_count,
             case_entity=case_entity,
             case_city=case_city,
+            profile=selected_profile,
         )
 
     def _generate(self) -> None:
@@ -820,6 +1155,7 @@ class QtHonorariosExportDialog(QDialog):
         except ValueError as exc:
             QMessageBox.critical(self, "Requerimento de Honorários", str(exc))
             return
+        self.generated_draft = draft
 
         default_path = self._default_directory / default_honorarios_filename(draft.case_number)
         selected, _ = QFileDialog.getSaveFileName(
@@ -1420,6 +1756,7 @@ class QtSaveToJobLogDialog(QDialog):
             word_count=self._current_word_count_value(),
             case_entity=case_entity,
             case_city=case_city,
+            profile=_current_primary_profile(),
         )
 
     def _honorarios_default_directory(self) -> Path:
@@ -1438,7 +1775,7 @@ class QtSaveToJobLogDialog(QDialog):
                     return resolved
         return None
 
-    def _offer_gmail_draft_for_honorarios(self, honorarios_docx: Path) -> None:
+    def _offer_gmail_draft_for_honorarios(self, honorarios_docx: Path, profile: UserProfile) -> None:
         court_email = self.court_email_combo.currentText().strip()
         if not court_email:
             return
@@ -1477,6 +1814,7 @@ class QtSaveToJobLogDialog(QDialog):
                 case_number=self.case_number_edit.text().strip(),
                 translation_docx=translation_docx,
                 honorarios_docx=honorarios_docx,
+                profile=profile,
             )
         except ValueError as exc:
             QMessageBox.critical(self, "Gmail draft", str(exc))
@@ -1512,7 +1850,9 @@ class QtSaveToJobLogDialog(QDialog):
             default_directory=self._honorarios_default_directory(),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_path is not None:
-            self._offer_gmail_draft_for_honorarios(dialog.saved_path)
+            generated_draft = getattr(dialog, "generated_draft", None)
+            profile = generated_draft.profile if generated_draft is not None else _current_primary_profile()
+            self._offer_gmail_draft_for_honorarios(dialog.saved_path, profile)
 
     def _apply_header_suggestion(self, suggestion: MetadataSuggestion) -> None:
         if suggestion.case_entity:
@@ -2139,7 +2479,12 @@ class QtJobLogWindow(QDialog):
             return None
         return self._rows_data[row]
 
-    def _offer_gmail_draft_for_honorarios(self, row: dict[str, object], honorarios_docx: Path) -> None:
+    def _offer_gmail_draft_for_honorarios(
+        self,
+        row: dict[str, object],
+        honorarios_docx: Path,
+        profile: UserProfile,
+    ) -> None:
         court_email = str(row.get("court_email", "") or "").strip()
         if not court_email:
             QMessageBox.information(
@@ -2194,6 +2539,7 @@ class QtJobLogWindow(QDialog):
                 case_number=str(row.get("case_number", "") or "").strip(),
                 translation_docx=translation_docx,
                 honorarios_docx=honorarios_docx,
+                profile=profile,
             )
         except ValueError as exc:
             QMessageBox.critical(self, "Gmail draft", str(exc))
@@ -2319,6 +2665,7 @@ class QtJobLogWindow(QDialog):
             word_count=word_count,
             case_entity=str(row.get("case_entity", "") or "").strip(),
             case_city=str(row.get("case_city", "") or "").strip(),
+            profile=_current_primary_profile(),
         )
         dialog = QtHonorariosExportDialog(
             parent=self,
@@ -2326,7 +2673,9 @@ class QtJobLogWindow(QDialog):
             default_directory=_default_documents_dir(),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_path is not None:
-            self._offer_gmail_draft_for_honorarios(row, dialog.saved_path)
+            generated_draft = getattr(dialog, "generated_draft", None)
+            profile = generated_draft.profile if generated_draft is not None else _current_primary_profile()
+            self._offer_gmail_draft_for_honorarios(row, dialog.saved_path, profile)
 
     def _open_columns_dialog(self) -> None:
         dialog = QDialog(self)

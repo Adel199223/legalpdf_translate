@@ -7,15 +7,23 @@ import pytest
 from docx import Document
 
 from legalpdf_translate.gmail_draft import (
-    HONORARIOS_GMAIL_BODY,
     GmailPrereqStatus,
     build_gmail_batch_reply_request,
+    build_honorarios_gmail_body,
     build_honorarios_gmail_request,
     build_honorarios_gmail_subject,
     create_gmail_draft_via_gog,
     assess_gmail_draft_prereqs,
     validate_translated_docx_artifacts_for_gmail_draft,
 )
+from legalpdf_translate.user_profile import default_primary_profile
+
+
+def _profile(**overrides: str):
+    profile = default_primary_profile(email="adel@example.com")
+    for key, value in overrides.items():
+        setattr(profile, key, value)
+    return profile
 
 
 def _write_docx(path: Path, *paragraphs: str) -> None:
@@ -32,11 +40,29 @@ def test_build_honorarios_gmail_subject_uses_case_number() -> None:
     )
 
 
+def test_build_honorarios_gmail_body_includes_phone_when_present() -> None:
+    profile = _profile(phone_number="+351912345678")
+
+    body = build_honorarios_gmail_body(profile)
+
+    assert body.endswith(f"Atenciosamente,\n{profile.document_name}\n+351912345678\n")
+
+
+def test_build_honorarios_gmail_body_omits_phone_when_blank() -> None:
+    profile = _profile(phone_number="")
+
+    body = build_honorarios_gmail_body(profile)
+
+    assert body.endswith(f"Atenciosamente,\n{profile.document_name}\n")
+    assert "+351" not in body
+
+
 def test_build_honorarios_gmail_request_uses_exact_body_and_attachments(tmp_path: Path) -> None:
     translated = tmp_path / "translated.docx"
     honorarios = tmp_path / "honorarios.docx"
     translated.write_bytes(b"a")
     honorarios.write_bytes(b"b")
+    profile = _profile(phone_number="+351912345678")
 
     request = build_honorarios_gmail_request(
         gog_path=tmp_path / "gog.exe",
@@ -45,12 +71,13 @@ def test_build_honorarios_gmail_request_uses_exact_body_and_attachments(tmp_path
         case_number="109/26.0PBBJA",
         translation_docx=translated,
         honorarios_docx=honorarios,
+        profile=profile,
     )
 
     assert request.account_email == "adel.belghali@gmail.com"
     assert request.to_email == "beja.judicial@tribunais.org.pt"
     assert request.subject == "Traduções e requerimento de honorários - Processo 109/26.0PBBJA"
-    assert request.body == HONORARIOS_GMAIL_BODY
+    assert request.body == build_honorarios_gmail_body(profile)
     assert request.attachments == (translated.resolve(), honorarios.resolve())
 
 
@@ -67,6 +94,7 @@ def test_build_honorarios_gmail_request_requires_existing_attachments(tmp_path: 
             case_number="109/26.0PBBJA",
             translation_docx=translated,
             honorarios_docx=missing,
+            profile=_profile(),
         )
 
 
@@ -82,6 +110,7 @@ def test_build_honorarios_gmail_request_rejects_duplicate_attachment_paths(tmp_p
             case_number="109/26.0PBBJA",
             translation_docx=translated,
             honorarios_docx=translated,
+            profile=_profile(),
         )
 
 
@@ -92,6 +121,7 @@ def test_build_gmail_batch_reply_request_reuses_subject_reply_id_and_all_attachm
     translated_one.write_bytes(b"a")
     translated_two.write_bytes(b"b")
     honorarios.write_bytes(b"c")
+    profile = _profile(phone_number="+351912345678")
 
     request = build_gmail_batch_reply_request(
         gog_path=tmp_path / "gog.exe",
@@ -101,11 +131,12 @@ def test_build_gmail_batch_reply_request_reuses_subject_reply_id_and_all_attachm
         reply_to_message_id="msg-123",
         translated_docxs=(translated_one, translated_two),
         honorarios_docx=honorarios,
+        profile=profile,
     )
 
     assert request.subject == "Original Gmail subject"
     assert request.reply_to_message_id == "msg-123"
-    assert request.body == HONORARIOS_GMAIL_BODY
+    assert request.body == build_honorarios_gmail_body(profile)
     assert request.attachments == (
         translated_one.resolve(),
         translated_two.resolve(),
@@ -126,6 +157,7 @@ def test_build_gmail_batch_reply_request_requires_reply_id_and_translations(tmp_
             reply_to_message_id="",
             translated_docxs=(tmp_path / "translated-1.docx",),
             honorarios_docx=honorarios,
+            profile=_profile(),
         )
 
     with pytest.raises(ValueError, match="At least one translated DOCX"):
@@ -137,6 +169,7 @@ def test_build_gmail_batch_reply_request_requires_reply_id_and_translations(tmp_
             reply_to_message_id="msg-123",
             translated_docxs=(),
             honorarios_docx=honorarios,
+            profile=_profile(),
         )
 
 
@@ -155,6 +188,7 @@ def test_build_gmail_batch_reply_request_rejects_duplicate_attachment_paths(tmp_
             reply_to_message_id="msg-123",
             translated_docxs=(translated_one, translated_two, translated_one),
             honorarios_docx=translated_two,
+            profile=_profile(),
         )
 
 
@@ -280,6 +314,7 @@ def test_create_gmail_draft_via_gog_builds_expected_command(monkeypatch, tmp_pat
         case_number="109/26.0PBBJA",
         translation_docx=translated,
         honorarios_docx=honorarios,
+        profile=_profile(phone_number="+351912345678"),
     )
     result = create_gmail_draft_via_gog(request)
 
@@ -292,7 +327,7 @@ def test_create_gmail_draft_via_gog_builds_expected_command(monkeypatch, tmp_pat
     assert "--to" in cmd
     assert "--subject" in cmd
     assert cmd.count("--attach") == 2
-    assert captured["body"] == HONORARIOS_GMAIL_BODY
+    assert captured["body"] == build_honorarios_gmail_body(_profile(phone_number="+351912345678"))
 
 
 def test_create_gmail_draft_via_gog_includes_reply_to_message_id(monkeypatch, tmp_path: Path) -> None:
@@ -318,6 +353,7 @@ def test_create_gmail_draft_via_gog_includes_reply_to_message_id(monkeypatch, tm
         reply_to_message_id="msg-123",
         translated_docxs=(translated,),
         honorarios_docx=honorarios,
+        profile=_profile(phone_number="+351912345678"),
     )
     result = create_gmail_draft_via_gog(request)
 
