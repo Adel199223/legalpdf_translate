@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from legalpdf_translate.build_identity import current_branch, load_canonical_build_config, normalize_path_identity
+from legalpdf_translate.build_identity import current_branch, current_head_sha
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -33,47 +33,55 @@ def _init_git_repo(repo: Path, branch: str, *, marker: str = "") -> str:
     ).stdout.strip()
 
 
-def test_launch_qt_build_dry_run_emits_identity_packet() -> None:
-    config = load_canonical_build_config(REPO_ROOT)
-    expected_is_canonical = (
-        normalize_path_identity(REPO_ROOT) == normalize_path_identity(config.canonical_worktree_path)
-        and current_branch(REPO_ROOT) == config.canonical_branch
+def test_launch_qt_build_dry_run_emits_identity_packet(tmp_path: Path) -> None:
+    branch = current_branch(REPO_ROOT)
+    head_sha = current_head_sha(REPO_ROOT)
+    config_path = tmp_path / "CANONICAL_BUILD.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "canonical_worktree_path": str(REPO_ROOT),
+                "canonical_branch": branch,
+                "approved_base_branch": branch,
+                "approved_base_head_floor": head_sha,
+                "canonical_head_floor": head_sha,
+                "allow_noncanonical_by_flag": True,
+            }
+        ),
+        encoding="utf-8",
     )
-    args = [
-        sys.executable,
-        str(SCRIPT),
-        "--worktree",
-        str(REPO_ROOT),
-        "--labels",
-        "base,qt",
-        "--dry-run",
-    ]
-    if not expected_is_canonical:
-        args.insert(-1, "--allow-noncanonical")
+    env = os.environ.copy()
+    env["LEGALPDF_CANONICAL_BUILD_CONFIG"] = str(config_path)
     proc = subprocess.run(
-        args,
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--worktree",
+            str(REPO_ROOT),
+            "--labels",
+            "base,qt",
+            "--dry-run",
+        ],
         text=True,
         capture_output=True,
         check=False,
+        env=env,
     )
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     assert Path(payload["worktree_path"]).resolve() == REPO_ROOT.resolve()
     assert payload["entrypoint_module"] == "legalpdf_translate.qt_app"
-    assert payload["branch"]
-    assert payload["head_sha"]
+    assert payload["branch"] == branch
+    assert payload["head_sha"] == head_sha
     assert payload["labels"] == ["base", "qt"]
     assert payload["dry_run"] is True
-    assert payload["is_canonical"] is expected_is_canonical
+    assert payload["is_canonical"] is True
     assert payload["is_lineage_valid"] is True
-    assert payload["approved_base_branch"]
-    assert payload["approved_base_head_floor"]
+    assert payload["approved_base_branch"] == branch
+    assert payload["approved_base_head_floor"] == head_sha
     assert "launch_command" in payload
-    if expected_is_canonical:
-        assert payload["allow_noncanonical"] is False
-    else:
-        assert payload["allow_noncanonical"] is True
-        assert payload["noncanonical_reasons"]
+    assert payload["allow_noncanonical"] is False
+    assert payload["noncanonical_reasons"] == []
 
 
 def test_launch_qt_build_rejects_invalid_worktree() -> None:
