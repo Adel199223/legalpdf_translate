@@ -239,8 +239,10 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - `audit project harness` inspects vendored-template drift without editing files.
 - `check project harness` runs harness validation without editing files.
 - `update codex bootstrap` and `UCBS` target the reusable template system itself. They are not aliases for project-local harness sync.
+- When vendored template changes alter continuity or cleanup contracts, project-local harness sync must resync the publish/docs-maintenance governance surfaces instead of stopping at routing docs and validators.
 - `docs/assistant/SESSION_RESUME.md` is the roadmap anchor file and the stable first resume stop for `resume master plan`, `where did we leave off`, and equivalent fresh-session resume requests.
-- During active worktree execution, that worktree's `SESSION_RESUME.md`, active roadmap tracker, and active wave ExecPlan are authoritative for live roadmap state. `main` remains the stable merged baseline.
+- Roadmap governance supports both active and dormant states. In active state, `SESSION_RESUME.md` links one active roadmap tracker and one active wave ExecPlan. In dormant roadmap state on `main`, it must explicitly say that no active roadmap is currently open and route normal tasks back to standard ExecPlan flow.
+- During active worktree execution, that worktree's `SESSION_RESUME.md`, active roadmap tracker, and active wave ExecPlan are authoritative for live roadmap state. `main` remains the stable merged baseline and may carry a dormant roadmap anchor between roadmap-scoped threads.
 - Issue memory remains a reusable repeated-issue registry. It is not normal roadmap history and it does not replace the roadmap tracker or `SESSION_RESUME.md`.
 
 ## Module Status (Bootstrap v2)

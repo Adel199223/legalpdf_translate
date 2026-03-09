@@ -125,9 +125,9 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - canonical launch/default test target guidance
     - plain-language local workspace entry guidance
 - Evidence refs:
-  - ExecPlan: `docs/assistant/exec_plans/active/2026-03-07_worktree_baseline_docs_sync.md`
-  - ExecPlan: `docs/assistant/exec_plans/active/2026-03-07_qt_build_identity_hardening.md`
-  - ExecPlan: `docs/assistant/exec_plans/active/2026-03-07_accepted_feature_promotion_canonical_enforcement.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_worktree_baseline_docs_sync.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_qt_build_identity_hardening.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_accepted_feature_promotion_canonical_enforcement.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-09_worktree_workspace_organization.md`
   - Branch: `feat/ai-docs-bootstrap`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
@@ -280,4 +280,48 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 - Evidence refs:
   - File: `src/legalpdf_translate/qt_gui/app_window.py`
   - File: `tests/test_qt_app_state.py`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+
+### workflow-post-merge-continuity-cleanup-drift
+- Title: Post-merge cleanup drift left stale roadmap continuity and scratch artifacts behind
+- First seen timestamp: `2026-03-09T23:30:00Z`
+- Last seen timestamp: `2026-03-09T23:30:00Z`
+- Repeat count: `1`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - `docs/assistant/SESSION_RESUME.md` still pointed to a deleted feature branch after merge
+  - `docs/assistant/exec_plans/active/` still held clearly completed or dead-branch plans
+  - a docs-only continuity repair was needed on `main` after the merge was already complete
+  - deterministic Qt render-review outputs showed up as untracked Source Control noise
+- Likely root cause:
+  - branch cleanup did not require roadmap closeout, resume-anchor updates, and scratch-output cleanup to be decision-complete before merge
+- Attempted fix history:
+  - `2026-03-09T23:30:00Z` — merged the feature thread first and repaired continuity state afterward on `main`; outcome: partial_only because the cleanup succeeded but too much of the logic still lived in thread memory
+- Accepted fix:
+  - `2026-03-09T23:30:00Z` — added dormant-roadmap support for `SESSION_RESUME.md`, archived deterministically stale plans, hardened commit/publish and docs-maintenance workflows, moved Qt render-review scratch output under ignored `tmp/`, and added validator coverage for stale resume branches and legacy scratch-path guidance
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+  - `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
+  - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `docs/assistant/UPDATE_POLICY.md`
+  - `docs/assistant/SESSION_RESUME.md`
+  - `docs/assistant/ISSUE_MEMORY.md`
+  - `docs/assistant/DOCS_REFRESH_NOTES.md`
+- Bootstrap relevance: `possible`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - stale roadmap continuity repair
+    - active/completed ExecPlan lifecycle hygiene
+    - post-merge cleanup guardrails
+    - ignored scratch-output defaults for assistant tooling
+- Evidence refs:
+  - File: `docs/assistant/SESSION_RESUME.md`
+  - File: `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+  - File: `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
+  - File: `tooling/qt_render_review.py`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-09_cleanup_continuity_hardening.md`
+  - Branch: `main`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`

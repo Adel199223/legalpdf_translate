@@ -70,9 +70,11 @@ Always follow `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`.
 
 ## Roadmap Resume Routing
 - If the user says `resume master plan`, `where did we leave off`, or `what is the next roadmap step`, open `docs/assistant/SESSION_RESUME.md` first.
-- After `docs/assistant/SESSION_RESUME.md`, open the linked active roadmap tracker and then the linked active wave ExecPlan.
+- If `docs/assistant/SESSION_RESUME.md` is in active-roadmap state, open the linked active roadmap tracker and then the linked active wave ExecPlan.
+- If `docs/assistant/SESSION_RESUME.md` is in dormant roadmap state, do not invent a roadmap; default to normal ExecPlan flow unless the user explicitly asks for roadmap/master-plan work.
 - `docs/assistant/SESSION_RESUME.md` is the stable roadmap anchor file for fresh sessions.
 - During active work in a separate worktree, that worktree's `SESSION_RESUME.md`, active roadmap tracker, and active wave ExecPlan are authoritative for live roadmap state.
+- `main` may legitimately carry a dormant roadmap state when no tracker/wave is active on that worktree.
 
 ## Commit/Push Shorthand Defaults
 - When the user says `commit` without narrowing scope:
