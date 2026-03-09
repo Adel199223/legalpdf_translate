@@ -18,6 +18,45 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 ## Entries
 ## 2026-03-09 — feat/joblog-inline-editing (working tree)
 - Files changed:
+  - agent.md
+  - AGENTS.md
+  - README.md
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/UPDATE_POLICY.md
+  - docs/assistant/manifest.json
+  - docs/assistant/SESSION_RESUME.md
+  - docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md
+  - docs/assistant/workflows/ROADMAP_WORKFLOW.md
+  - docs/assistant/audits/PROJECT_HARNESS_ALIGNMENT_AUDIT_2026-03-09.md
+  - docs/assistant/exec_plans/active/2026-03-09_project_harness_alignment_roadmap.md
+  - docs/assistant/exec_plans/active/2026-03-09_project_harness_alignment_wave1.md
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+- Key symbols / entrypoints changed:
+  - agent.md::Project Harness Routing
+  - agent.md::Roadmap Resume Routing
+  - docs/assistant/manifest.json::module_flags
+  - docs/assistant/manifest.json::project_harness_sync_workflow
+  - docs/assistant/manifest.json::roadmap_workflow
+  - docs/assistant/manifest.json::roadmap_resume_anchor_policy
+  - docs/assistant/SESSION_RESUME.md::First Resume Stop
+  - docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md::What This Workflow Is For
+  - docs/assistant/workflows/ROADMAP_WORKFLOW.md::What This Workflow Is For
+  - tooling/validate_agent_docs.dart::_validateProjectHarnessAndRoadmapGovernance
+- User-visible behavior:
+  - The repo now has a project-local `implement the template files` / `sync project harness` path that applies vendored templates to this project without editing the template folder itself.
+  - The repo now has a durable roadmap/master-plan continuity layer with `docs/assistant/SESSION_RESUME.md` as the first fresh-session resume stop.
+  - Manifest routing, runbooks, workflows, and validator coverage now agree on the boundary between local harness application and global template maintenance.
+  - The older bootstrap continuity-gap audit remains historical; a new project-harness alignment audit records that the vendored template set now includes roadmap governance and local harness sync.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS (`53 cases`)
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
+## 2026-03-09 — feat/joblog-inline-editing (working tree)
+- Files changed:
   - APP_KNOWLEDGE.md
   - docs/assistant/APP_KNOWLEDGE.md
   - docs/assistant/QT_UI_KNOWLEDGE.md

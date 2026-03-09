@@ -221,6 +221,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 ## Governance and Routing Docs
 - Assistant docs index: `docs/assistant/INDEX.md`
 - Machine routing map: `docs/assistant/manifest.json`
+- Roadmap anchor / fresh-session resume: `docs/assistant/SESSION_RESUME.md`
 - Golden rules: `docs/assistant/GOLDEN_PRINCIPLES.md`
 - Workflow runbooks: `docs/assistant/workflows/`
 - User guides: `docs/assistant/features/`
@@ -229,11 +230,31 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Local capability inventory: `docs/assistant/LOCAL_CAPABILITIES.md`
 - Host-bound integration preflight: `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
 - Harness isolation and diagnostics: `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+- Project-local harness sync: `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`
+- Roadmap governance: `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
+
+## Project Harness and Roadmap Continuity
+- `implement the template files` is a project-local harness apply trigger. It reads vendored templates in `docs/assistant/templates/` as source input and updates only the local harness surfaces for this repo.
+- `sync project harness` is the accepted technical alias for the same local apply behavior.
+- `audit project harness` inspects vendored-template drift without editing files.
+- `check project harness` runs harness validation without editing files.
+- `update codex bootstrap` and `UCBS` target the reusable template system itself. They are not aliases for project-local harness sync.
+- `docs/assistant/SESSION_RESUME.md` is the roadmap anchor file and the stable first resume stop for `resume master plan`, `where did we leave off`, and equivalent fresh-session resume requests.
+- During active worktree execution, that worktree's `SESSION_RESUME.md`, active roadmap tracker, and active wave ExecPlan are authoritative for live roadmap state. `main` remains the stable merged baseline.
+- Issue memory remains a reusable repeated-issue registry. It is not normal roadmap history and it does not replace the roadmap tracker or `SESSION_RESUME.md`.
 
 ## Module Status (Bootstrap v2)
 All optional modules are enabled and enforced:
 - Beginner Layer
 - Localization + Performance
+- Issue Memory System
+- Project Harness Sync
+- Local Environment Overlay
+- Capability Discovery
+- Worktree / Build Identity
+- Roadmap Governance
+- Host Integration Preflight
+- Harness Isolation + Diagnostics
 - Reference Discovery
 - Browser Automation + Environment Provenance
 - Cloud Machine Evaluation + Local Acceptance Gate

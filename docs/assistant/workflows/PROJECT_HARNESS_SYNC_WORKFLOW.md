@@ -1,0 +1,88 @@
+# PROJECT_HARNESS_SYNC_WORKFLOW
+
+## What This Workflow Is For
+Applying the vendored template set in `docs/assistant/templates/` to this repo's local harness without editing the template folder itself.
+
+## Expected Outputs
+- Updated project-local routing docs, manifest contracts, workflows, and validator coverage that match the current vendored template set.
+- Explicit boundary between local harness application and global bootstrap maintenance.
+- Successful harness validation after the local apply pass.
+
+## When To Use
+- The user says `implement the template files`.
+- The user says `sync project harness`.
+- The user says `audit project harness`.
+- The user says `check project harness`.
+- Vendored template files changed and this repo now needs its local harness brought up to that newer source of truth.
+
+Don't use this workflow when:
+- the user wants to maintain or refactor the reusable template system itself
+- the work is normal product implementation or ordinary docs sync with no vendored-template apply request
+
+Instead use:
+- `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md` for touched-scope docs sync after normal implementation
+- `update codex bootstrap` / `UCBS` when the user explicitly wants template-system maintenance
+
+## What Not To Do
+- Do not edit `docs/assistant/templates/*` during project-local harness application.
+- Do not treat vendored templates as cleanup candidates, ignored files, or disposable scaffolding.
+- Do not auto-commit or auto-push at the end of a harness sync pass unless the user separately asks for commit/publish work.
+- Do not overwrite repo-specific adaptations unless they conflict with a bootstrap floor contract from the vendored template set.
+
+## Primary Files
+- `agent.md`
+- `AGENTS.md`
+- `README.md`
+- `docs/assistant/INDEX.md`
+- `docs/assistant/manifest.json`
+- `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`
+- `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
+- `docs/assistant/SESSION_RESUME.md`
+- `tooling/validate_agent_docs.dart`
+- `test/tooling/validate_agent_docs_test.dart`
+
+## Minimal Commands
+PowerShell:
+```powershell
+Get-Content docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json
+dart run tooling/validate_agent_docs.dart
+dart run tooling/validate_workspace_hygiene.dart
+```
+
+POSIX:
+```bash
+sed -n '1,220p' docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json
+dart run tooling/validate_agent_docs.dart
+dart run tooling/validate_workspace_hygiene.dart
+```
+
+## Targeted Tests
+- `dart run test/tooling/validate_agent_docs_test.dart`
+
+## Failure Modes and Fallback Steps
+- The local harness drifts from the vendored template set:
+  - read `docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json` first
+  - load only the vendored template files needed for the requested scope
+  - patch project-local docs, workflows, manifest contracts, and validators in that order
+- The work accidentally starts targeting `docs/assistant/templates/*`:
+  - stop
+  - restate the boundary between local harness apply and global bootstrap maintenance
+  - continue only on project-local files unless the user explicitly authorizes template-folder work
+- Validator coverage still assumes an older template set:
+  - update `tooling/validate_agent_docs.dart` and `test/tooling/validate_agent_docs_test.dart`
+  - do not normalize the vendored template folder to fit the old validator
+- The requested change is inspection only:
+  - switch to `audit project harness` or `check project harness` behavior
+  - report drift without editing files by default
+
+## Handoff Checklist
+1. State whether the pass was `implement`, `sync`, `audit`, or `check`.
+2. Confirm that `docs/assistant/templates/*` was treated as read-only source input.
+3. State the local apply order used:
+   1. `agent.md` and `docs/assistant/manifest.json`
+   2. bridge/routing docs
+   3. workflow docs
+   4. validator and test coverage
+   5. roadmap docs when continuity contracts changed
+4. Confirm the boundary between local harness apply and `update codex bootstrap` / `UCBS`.
+5. Report validator/test results.

@@ -20,6 +20,15 @@ If approved:
 2. Keep canonical-first order (`APP_KNOWLEDGE.md` -> bridge/workflows/user guides).
 3. Re-run docs validators before completion.
 
+## Project harness apply vs bootstrap maintenance
+- `implement the template files` / `sync project harness` is project-local harness application, not a docs-only sync and not global bootstrap maintenance.
+- That flow may read vendored files under `docs/assistant/templates/*`, but it must not edit them.
+- `update codex bootstrap` / `UCBS` is the protected trigger for maintaining the reusable template system itself.
+- Do not collapse these three scopes together:
+  - touched-scope docs sync
+  - project-local harness application
+  - global bootstrap/template maintenance
+
 ## Deferred docs workflow (when docs sync not approved)
 If a task changes `src/` or `tests/` and docs sync is not approved:
 1. Append a short entry to `docs/assistant/DOCS_REFRESH_NOTES.md`.

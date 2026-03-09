@@ -8,6 +8,8 @@ Windows 11 desktop app (Qt/PySide6) and CLI for page-by-page legal PDF translati
 - Agent shim: `AGENTS.md`
 - Assistant docs index: `docs/assistant/INDEX.md`
 - Machine routing map: `docs/assistant/manifest.json`
+- Fresh-session roadmap resume: `docs/assistant/SESSION_RESUME.md`
+- Local harness sync from vendored templates: `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`
 
 ## Requirements
 - Windows 11
@@ -48,7 +50,7 @@ python -m pytest -q
 
 ## Run GUI
 ```powershell
-python -m legalpdf_translate.qt_gui
+python -m legalpdf_translate.qt_app
 ```
 
 ## Run CLI
@@ -68,3 +70,10 @@ python -m compileall src tests
 dart run tooling/validate_agent_docs.dart
 dart run tooling/validate_workspace_hygiene.dart
 ```
+
+## Project Harness Commands
+- `implement the template files` / `sync project harness`: apply the vendored templates in `docs/assistant/templates/` to this repo's local harness without editing the template folder itself.
+- `audit project harness`: inspect vendored-template drift without editing files.
+- `check project harness`: run harness validation only.
+- `resume master plan`: open `docs/assistant/SESSION_RESUME.md` first, then the linked active roadmap tracker and active wave ExecPlan.
+- `update codex bootstrap` / `UCBS`: maintain the reusable template system itself. Do not use this when you only want to sync this repo to its vendored templates.

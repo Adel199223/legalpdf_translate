@@ -24,9 +24,11 @@ The goal is to keep the universal core small while still letting new repos activ
 | Staged Execution | Conditional, mandatory when triggered | When risk is medium/high or at least two stage-gate trigger conditions are present |
 | OpenAI Docs + Citation | Conditional | When OpenAI products/APIs or unstable external facts are in scope |
 | Issue Memory System | Always On | For every project; generate project issue memory, docs-sync routing, and bootstrap filtering by default |
+| Project Harness Sync | Always On | For every bootstrapped repo; generate local apply routing for vendored template files and keep template edits protected |
 | Local Environment Overlay | Conditional | When the bootstrap is being tailored for a known personal machine or dual-host setup |
 | Capability Discovery | Conditional | When skills, MCPs, or local tools may materially change the project harness |
 | Worktree / Build Identity | Auto-Conditional | Automatically when the project has a runnable app, GUI, local desktop workflow, or explicit multi-worktree risk |
+| Roadmap Governance | Conditional, adaptive when triggered | When work is multi-wave, restart-sensitive, cross-surface, worktree-isolated, or the user explicitly asks for a roadmap/master plan |
 | Host Integration Preflight | Conditional | When an integration depends on local installs, auth state, or same-host runtime guarantees |
 | Harness Isolation + Diagnostics | Conditional | When host-bound workflows span browser/app/local bridge/per-run/finalization, or when tests could collide with live machine state |
 | Bootstrap Update Policy | Conditional | When the user explicitly wants to maintain the global Codex bootstrap harness |
@@ -47,6 +49,21 @@ Hard rule:
 - `UCBS` is accepted as shorthand, but `update codex bootstrap` remains the canonical wording in docs and examples.
 - Normal project feature work must not edit `docs/assistant/templates/*` unless one of the canonical bootstrap triggers above was explicitly invoked.
 - When bootstrap maintenance is active, consult project issue memory first and only generalize entries whose bootstrap relevance is `possible` or `required`.
+
+## Canonical Project Harness Apply Triggers
+When the task targets a repo's local harness rather than the reusable bootstrap source, use these triggers:
+
+| Trigger | Meaning |
+|---|---|
+| `implement the template files` | Read vendored template files and apply them to the repo harness without editing the vendored template files |
+| `sync project harness` | Accepted technical alias for the same local apply behavior |
+| `audit project harness` | Inspect/report local harness drift only |
+| `check project harness` | Validate local harness integrity only |
+
+Hard rule:
+- Vendored `docs/assistant/templates/*` files are committed project assets, not cleanup candidates.
+- `implement the template files` must not edit `docs/assistant/templates/*`.
+- `update bootstrap` is ambiguous and must be clarified between global bootstrap maintenance and local harness application.
 
 ## Issue Memory System Rule
 Generated projects should always include issue memory by default.
@@ -78,6 +95,46 @@ Generated projects in that class must include:
 For CLI/library repos without those risks:
 - keep the governance-level wording
 - do not force unnecessary launch tooling
+
+## Roadmap Governance Activation Rule
+Activate `BOOTSTRAP_ROADMAP_GOVERNANCE.md` only when the work needs explicit roadmap behavior.
+
+Use roadmap governance when work is likely to need:
+- multiple waves or PRs
+- fresh-session resume support
+- detours and return-to-sequence handling
+- worktree isolation
+- cross-surface product coordination
+
+If the user explicitly asks for a roadmap or master plan:
+- activate the roadmap governance module even if a lighter flow might have been possible
+
+Do not activate roadmap governance by default for:
+- single-file fixes
+- narrow bug fixes
+- small UI text tweaks
+- one-shot docs cleanup
+
+For bounded major work that still lands as one merge:
+- prefer ExecPlan-only
+- do not force roadmap mode
+
+When this module is activated, generated repos should include:
+- `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
+- `docs/assistant/SESSION_RESUME.md`
+- an active roadmap tracker in `docs/assistant/exec_plans/active/`
+- an active wave ExecPlan in `docs/assistant/exec_plans/active/`
+
+Generated repos should also document:
+- `docs/assistant/SESSION_RESUME.md` as the roadmap anchor file
+- stages as optional research/spec phases and waves as implementation slices
+- the active-worktree authority rule for live roadmap state
+- the update order:
+  1. active wave ExecPlan
+  2. active roadmap tracker
+  3. `docs/assistant/SESSION_RESUME.md`
+- the right to resequence future stages or waves when new discoveries force a better sequence
+- the rule that roadmap mode is not the default for every task
 
 ## Stage-Gate Rules
 Use staged execution when at least two of these are true:

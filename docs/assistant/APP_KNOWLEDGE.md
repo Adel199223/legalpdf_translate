@@ -14,6 +14,9 @@ Use this file to route quickly to canonical and workflow docs. Do not treat this
 - Routing map: `docs/assistant/manifest.json`
 - Human index: `docs/assistant/INDEX.md`
 - Runbook: `agent.md`
+- Fresh-session roadmap resume: `docs/assistant/SESSION_RESUME.md`
+- Local harness sync from vendored templates: `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`
+- Roadmap governance rules: `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
 - Golden rules: `docs/assistant/GOLDEN_PRINCIPLES.md`
 - Source registry: `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md`
 - Local host/runtime profile: `docs/assistant/LOCAL_ENV_PROFILE.local.md`
@@ -60,6 +63,9 @@ Cost-guardrail support routing:
 - Canonical current-truth also includes the Arabic-only Word review gate before `Save to Job Log`, Windows Word + PowerShell COM automation for `Align Right + Save`, save-detection auto-resume plus manual fallback actions, and `Open translated DOCX` inside `Save to Job Log`. The current supported mitigation is manual-or-assisted Word review, not a pure OOXML auto-right-alignment fix.
 - Canonical current-truth also includes historical Job Log row editing through either the icon-triggered full dialog or inline row editing, confirmed row deletion, missing-`pdf_path` historical edit tolerance, and header-auto-fit plus persisted-width horizontal-scroll behavior for dense Job Log tables.
 - Canonical current-truth also includes the shared responsive-window helper in `qt_gui/window_adaptive.py`, screen-bounded main/dialog sizing, deferred/coalesced shell and preview resize handling, and the scrollable Save-to-Job-Log form with lower detail sections collapsed by default.
+- Canonical current-truth also includes project-local harness sync from vendored templates, with `implement the template files` / `sync project harness` reserved for local harness application and `update codex bootstrap` / `UCBS` reserved for template-system maintenance.
+- Canonical current-truth also includes roadmap governance for this repo: `docs/assistant/SESSION_RESUME.md` is the roadmap anchor file, the active roadmap tracker is the sequence source, the active wave ExecPlan is the implementation-detail source, and issue memory is not roadmap history.
+- Canonical current-truth also includes active-worktree authority for live roadmap state during in-progress wave work.
 
 ## Workflow Routing
 - Core translation: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
@@ -76,6 +82,8 @@ Cost-guardrail support routing:
 - CI/repo operations: `docs/assistant/workflows/CI_REPO_WORKFLOW.md`
 - Commit/publish: `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
 - Docs maintenance: `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+- Project harness sync: `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`
+- Roadmap governance: `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
 - Host-bound integration preflight: `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
 - Harness isolation and diagnostics: `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
 

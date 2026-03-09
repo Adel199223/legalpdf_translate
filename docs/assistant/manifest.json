@@ -3,8 +3,16 @@
   "module_flags": {
     "core_contract": true,
     "beginner_layer": true,
+    "issue_memory_system": true,
+    "project_harness_sync": true,
     "localization_performance": true,
+    "local_env_overlay": true,
+    "capability_discovery": true,
+    "worktree_build_identity": true,
+    "roadmap_governance": true,
     "reference_discovery": true,
+    "host_integration_preflight": true,
+    "harness_isolation_diagnostics": true,
     "browser_automation_environment_provenance": true,
     "cloud_machine_evaluation_local_acceptance": true,
     "staged_execution": true,
@@ -17,7 +25,8 @@
     "docs/assistant/PERFORMANCE_BASELINES.md",
     "docs/assistant/ISSUE_MEMORY.md",
     "docs/assistant/LOCAL_ENV_PROFILE.local.md",
-    "docs/assistant/LOCAL_CAPABILITIES.md"
+    "docs/assistant/LOCAL_CAPABILITIES.md",
+    "docs/assistant/SESSION_RESUME.md"
   ],
   "bridges": [
     {
@@ -309,6 +318,42 @@
       ]
     },
     {
+      "id": "project_harness_sync_workflow",
+      "doc": "docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md",
+      "scope": "project-local application of vendored assistant templates without editing the template folder",
+      "primary_files": [
+        "agent.md",
+        "docs/assistant/manifest.json",
+        "docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "tooling/validate_agent_docs.dart"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart",
+        "dart run tooling/validate_workspace_hygiene.dart"
+      ]
+    },
+    {
+      "id": "roadmap_workflow",
+      "doc": "docs/assistant/workflows/ROADMAP_WORKFLOW.md",
+      "scope": "adaptive roadmap governance, resume anchor routing, and active-worktree continuity",
+      "primary_files": [
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/workflows/ROADMAP_WORKFLOW.md",
+        "docs/assistant/exec_plans/active",
+        "docs/assistant/manifest.json"
+      ],
+      "targeted_tests": [
+        "dart run test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart run tooling/validate_agent_docs.dart"
+      ]
+    },
+    {
       "id": "host_integration_preflight_workflow",
       "doc": "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md",
       "scope": "same-host installation/auth/live-smoke preflight for local integrations",
@@ -366,6 +411,11 @@
     "worktree_isolation_policy": "Parallel work uses git worktree isolation, approved baseline locks, and branch safety gates.",
     "worktree_baseline_identity_policy": "Parallel work must record worktree path, branch, base SHA, target integration branch, and build-under-test identity before major execution or GUI handoff.",
     "doc_gardening_policy": "Docs sync updates only touched-scope docs and avoids blanket rewrites.",
+    "project_harness_sync_policy": "implement the template files and sync project harness apply vendored templates to this repo's local harness without editing docs/assistant/templates/*.",
+    "vendored_template_protection_policy": "Vendored docs/assistant/templates/* files are committed project assets, not cleanup candidates, and require explicit template-system intent before any edits.",
+    "roadmap_resume_anchor_policy": "When roadmap governance is active, docs/assistant/SESSION_RESUME.md is the roadmap anchor file and the stable first resume stop for resume master plan and equivalent fresh-session resume intents.",
+    "roadmap_active_worktree_authority_policy": "During active roadmap work, the current worktree's SESSION_RESUME.md, active roadmap tracker, and active wave ExecPlan are authoritative for live roadmap state.",
+    "roadmap_update_order_policy": "After roadmap changes or detours update the active wave ExecPlan first, the active roadmap tracker second, and docs/assistant/SESSION_RESUME.md third.",
     "user_guides_support_usage_policy": "Support/non-technical tasks route to APP_USER_GUIDE and primary workflow user guide first.",
     "user_guides_canonical_deference_policy": "User guides are explanatory and defer to canonical technical docs.",
     "user_guides_update_sync_policy": "Major feature changes update relevant user-guide sections with matching technical docs.",
@@ -391,5 +441,5 @@
     "cloud_scoring_failure_recovery_policy": "Cloud failure semantics use unavailable|failed and recovery order is cloud-fix-rerun before local-heavy fallback.",
     "cloud_local_apply_separation_policy": "Cloud evaluation outputs must not auto-apply runtime config/state; local manual acceptance gate is required before final apply."
   },
-  "last_updated": "2026-03-08"
+  "last_updated": "2026-03-09"
 }

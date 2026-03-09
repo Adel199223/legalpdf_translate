@@ -28,6 +28,13 @@ Ask before executing any of the following:
 - For support or non-technical explanations, route to:
   - `docs/assistant/features/APP_USER_GUIDE.md`
   - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+- If the user says `implement the template files` or `sync project harness`, run:
+  - `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`
+- If the user says `audit project harness` or `check project harness`, use:
+  - `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`
+- If the user says `resume master plan`, `where did we leave off`, or `what is the next roadmap step`, open:
+  - `docs/assistant/SESSION_RESUME.md`
+- `update codex bootstrap` / `UCBS` means template-system maintenance only, not project-local harness sync.
 - If user asks for parity/inspiration against a named product/site/app, run:
   - `docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md`
 - If task involves OpenAI products/APIs or unstable external facts, run:
