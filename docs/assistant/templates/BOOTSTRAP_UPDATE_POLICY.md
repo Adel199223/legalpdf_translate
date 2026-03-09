@@ -94,6 +94,16 @@ Do not promote one-off local/project issues into the global Codex bootstrap unle
   - active-worktree authority during in-flight wave work
   - `SESSION_RESUME.md` as the roadmap anchor file and stable fresh-session entrypoint
   - detour/closeout update order
+  - dormant roadmap state on `main`
+
+## Cleanup and Continuity Promotion Rule
+- Promote cleanup/publish lessons when they generalize across future repos.
+- Valid reusable examples include:
+  - stale post-merge continuity
+  - stale active-plan inventory
+  - scratch artifact Source Control noise
+  - follow-up branch/PR as the default for missed post-merge repair
+- Prefer updating the existing core-contract, roadmap-governance, issue-memory, and prompt/trigger templates instead of inventing a new bootstrap module for this lesson.
 
 ## Required Validation
 Any bootstrap update should finish with:

@@ -57,6 +57,16 @@ Generated repos should route fresh resume intent like this:
   1. the linked active roadmap tracker
   2. the linked active wave ExecPlan
 
+Generated repos must support two valid `SESSION_RESUME.md` states:
+- active roadmap state:
+  - linked active roadmap tracker
+  - linked active wave ExecPlan
+- dormant roadmap state on `main`:
+  - explicit `no active roadmap currently open on this worktree`
+  - explicit return to normal ExecPlan flow unless the user asks for roadmap/master-plan work
+
+Do not remove `SESSION_RESUME.md` just because no roadmap is currently active.
+
 ## Artifact Authority Rule
 Generated repos should document one authority model:
 - `docs/assistant/SESSION_RESUME.md` is the roadmap anchor file and stable first resume stop
@@ -82,11 +92,23 @@ Resume from `docs/assistant/SESSION_RESUME.md` unless the active roadmap tracker
 Generated repos using this module should require roadmap closeouts to report:
 - current roadmap status
 - exact next step
+- whether roadmap state remains active or becomes dormant
+
+Roadmap closeout must be decision-complete:
+1. update active wave ExecPlan
+2. update active roadmap tracker
+3. update `docs/assistant/SESSION_RESUME.md`
+4. then either archive roadmap artifacts or leave a dormant anchor on `main`
 
 If research stages are already complete, closeout wording should allow:
 - `All research stages are complete; implementation continues by wave.`
 
 If the next action is a closeout step instead of a new wave, the closeout should say that explicitly.
+
+Generated repos should treat stale post-merge continuity as a reusable failure class:
+- `SESSION_RESUME.md` pointing to a merged or deleted branch
+- active-plan inventory left stale after merge
+- post-merge repair needing a follow-up branch/PR because closeout was missed before merge
 
 ## Generalization Rule
 This module must stay universal.
@@ -106,6 +128,7 @@ Treat them as valid reusable issue classes that future generated repos may recor
 - `roadmap_trigger_granularity_ambiguity`
 - `active_worktree_resume_authority_confusion`
 - `roadmap_resume_state_fragmentation_across_trackers`
+- `post_merge_continuity_cleanup_drift`
 - `user_support_guide_density_after_multi_wave_growth`
 
 Environment-specific issues like local Flutter lockfile churn or test bootstrap races should stay examples of local workflow issues, not universal roadmap defaults.

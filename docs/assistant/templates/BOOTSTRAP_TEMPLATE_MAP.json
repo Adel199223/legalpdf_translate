@@ -14,6 +14,8 @@
         "execplans",
         "worktree isolation",
         "commit/push shorthand semantics",
+        "cleanup-complete push semantics",
+        "ignored tmp scratch root guidance",
         "OpenAI docs freshness routing"
       ]
     },
@@ -38,7 +40,8 @@
         "issue memory generation",
         "operational and wording triggers",
         "docs sync routing",
-        "bootstrap promotion filtering"
+        "bootstrap promotion filtering",
+        "cleanup continuity issue classes"
       ]
     },
     {
@@ -50,7 +53,8 @@
         "implement the template files trigger",
         "sync project harness alias",
         "local harness apply order",
-        "template-edit protection"
+        "template-edit protection",
+        "continuity and cleanup governance resync"
       ]
     },
     {
@@ -95,7 +99,8 @@
         "roadmap vs execplan-only granularity",
         "fresh-session resume entrypoint",
         "active-worktree authority",
-        "detour and closeout update order"
+        "detour and closeout update order",
+        "dormant roadmap state on main"
       ]
     },
     {
@@ -131,7 +136,8 @@
         "ucbs shorthand alias",
         "audit codex bootstrap trigger",
         "check codex bootstrap trigger",
-        "sync codex bootstrap docs trigger"
+        "sync codex bootstrap docs trigger",
+        "cleanup continuity promotion rule"
       ]
     }
   ]

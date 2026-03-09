@@ -27,3 +27,11 @@ Prioritize:
 - `repeat_count >= 2`
 - high workflow cost
 - regression after a prior accepted fix
+
+## Reusable Issue Classes
+Treat these as valid reusable issue classes that generated repos may record if they actually occur:
+- stale post-merge continuity
+- stale active-plan inventory
+- scratch artifact Source Control noise
+
+The cleanup/continuity family is bootstrap relevance `possible` by default unless a repo proves it is general enough to require global promotion.

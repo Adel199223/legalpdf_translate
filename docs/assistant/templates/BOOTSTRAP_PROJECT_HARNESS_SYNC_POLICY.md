@@ -49,6 +49,12 @@ When `implement the template files` changes the project harness, update in this 
    - `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
    - `docs/assistant/exec_plans/PLANS.md`
    - `docs/assistant/SESSION_RESUME.md`
+6. cleanup/publish and scratch-output guidance if the changed contracts affect continuity or merge cleanup behavior:
+   - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+   - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+   - any local deterministic review/debug tooling docs
+
+When template changes alter continuity or cleanup rules, local harness apply must resync those governance docs instead of leaving the repo half-upgraded.
 
 ## Commit and Ignore Defaults
 - If vendored templates were copied into the repo, later `commit` triage should treat them as intentional tracked scope.
