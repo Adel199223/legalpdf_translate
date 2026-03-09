@@ -66,9 +66,10 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 7. Run analyze-only first and inspect/apply an OCR advisor recommendation before translation.
 8. Inspect or export a Review Queue when high-risk pages are flagged.
 9. Save completed runs to the Job Log with prefilled run metrics.
-10. Execute a queue manifest with checkpoint-aware resume and failed-only rerun behavior.
-11. Start from an open Gmail message in Edge/Chromium, review supported attachments from that exact email, translate them one by one with mandatory Save-to-Job-Log checkpoints, then optionally generate one honorarios DOCX and one threaded Gmail reply draft.
-12. Open multiple workspaces and translate different jobs in parallel without interrupting the current run.
+10. Review historical Job Log rows, edit them inline or through the full dialog, delete mistaken rows with confirmation, and resize the table for dense saved data.
+11. Execute a queue manifest with checkpoint-aware resume and failed-only rerun behavior.
+12. Start from an open Gmail message in Edge/Chromium, review supported attachments from that exact email, translate them one by one with mandatory Save-to-Job-Log checkpoints, then optionally generate one honorarios DOCX and one threaded Gmail reply draft.
+13. Open multiple workspaces and translate different jobs in parallel without interrupting the current run.
 
 ## Output and Run Artifacts
 Run artifacts live under:
@@ -135,8 +136,13 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - The browser extension does not write its own report file.
 - Save-to-Job-Log pre-fills those values from `run_summary.json` when available, while preserving user edit control before save.
 - Save-to-Job-Log now also exposes `Open translated DOCX`, which reopens the resolved final or partial DOCX for the current run without leaving the dialog.
+- The same Job Log payload normalization now backs create-mode save, historical full-dialog edit mode, and inline row editing, so numeric/date validation and `expected_total` / `profit` recalculation stay aligned.
 - Job Log `Words` now means translated output words, with precedence: final DOCX, then partial DOCX, then `pages/page_*.txt`, then `0`.
 - `expected_total` and `profit` in the Save-to-Job-Log flow are recalculated from that translated-output word count.
+- Existing Job Log rows can now be updated in place either through the full `Edit Job Log Entry` dialog or by double-clicking visible cells for row-scoped inline editing.
+- The Job Log window now uses a fixed `Actions` column with icon-based edit/delete controls; row deletion is confirmation-gated and only one row can be inline-edited at a time.
+- Historical Job Log editing no longer requires the original `pdf_path`. Missing source PDFs only disable `Autofill from PDF header`; `Open translated DOCX` still works when stored translated DOCX paths resolve.
+- Job Log columns now auto-fit visible headers by default, remain user-resizable, persist their widths in settings, and overflow through a horizontal scrollbar instead of squeezing the table to the viewport.
 - Gmail draft attachment reuse for honorarios now prefers known translated output artifacts in this order: final DOCX path, partial DOCX path, exact `run_id` recovery, then a manual `.docx` picker only as the final fallback.
 - If a legacy historical row needs one manual translated-DOCX selection, the app persists that choice back into the row so the picker should not appear again for that same row.
 - Gmail intake batch downloads and confirmed per-item results are kept in memory only for the active Gmail batch session. They are cleared on reset, failure paths, app shutdown, or successful finalization.

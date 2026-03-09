@@ -122,6 +122,11 @@ QtMainWindow
 - **Where:** `_update_card_max_width()` sets `target_width = max(360, min(1760, available))` and `content_card.setFixedWidth(target_width)`.
 - **Verify:** large windows use most of the available width without horizontal scroll; shell remains centered.
 
+### 4a. Dense data tables may scroll horizontally on purpose
+- **What:** The no-horizontal-scroll rule applies to the main dashboard shell, not to dense data tables.
+- **Where:** `QtJobLogWindow` in `qt_gui/dialogs.py` intentionally uses interactive header widths, header auto-fit, persisted manual widths, and `ScrollBarAsNeeded`.
+- **Verify:** Job Log headers stay readable by default, columns can be resized manually, and a horizontal scrollbar appears when the table becomes wider than the window.
+
 ### 5. Paint layer must read live geometry
 - **What:** `_FuturisticCanvas.paintEvent()` must derive sidebar separator placement from the actual sidebar width, not stale constants.
 - **Where:** `sidebar = getattr(window, "sidebar_frame", None)` then `sidebar_line_x = sidebar.width()`.
@@ -210,10 +215,11 @@ python -m compileall src tests
    - `Generate Run Report`
    - `View Job Log`
 8. Open `Tools` and confirm `Review Queue...` and `Save to Job Log...` remain reachable
-9. Scroll over the closed run-critical selectors and confirm they do not change by accident
-10. Trigger the EN/FR xhigh warning and confirm `Switch to fixed high` changes the current effort policy
-11. Trigger the OCR-heavy warning and confirm `Apply safe OCR profile` changes the current run only
-12. Open `File > New Window` or press `Ctrl+Shift+N` and confirm a second top-level window appears with the next `Workspace N` title
-13. Start a run in one workspace and confirm another workspace stays usable while it is busy
-14. Configure the same source file, target language, and output folder in two workspaces and confirm the second start is blocked as duplicate run-folder reuse
-15. If Gmail intake is enabled, confirm intake reuses an idle blank workspace first and opens a new workspace when the last active one is busy or already has job context
+9. Open `Tools > View Job Log` and confirm the table uses icon row actions, resizable headers, and horizontal scrolling only when the table is wider than the window
+10. Scroll over the closed run-critical selectors and confirm they do not change by accident
+11. Trigger the EN/FR xhigh warning and confirm `Switch to fixed high` changes the current effort policy
+12. Trigger the OCR-heavy warning and confirm `Apply safe OCR profile` changes the current run only
+13. Open `File > New Window` or press `Ctrl+Shift+N` and confirm a second top-level window appears with the next `Workspace N` title
+14. Start a run in one workspace and confirm another workspace stays usable while it is busy
+15. Configure the same source file, target language, and output folder in two workspaces and confirm the second start is blocked as duplicate run-folder reuse
+16. If Gmail intake is enabled, confirm intake reuses an idle blank workspace first and opens a new workspace when the last active one is busy or already has job context

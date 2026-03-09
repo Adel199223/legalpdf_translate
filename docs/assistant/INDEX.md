@@ -48,6 +48,7 @@
 ## Use when you need audit packets and roadmap outputs
 - `docs/assistant/audits/AUDIT_USAGE_PACKET_2026-03-05.md`
 - `docs/assistant/audits/AUDIT_USAGE_PACKET_2026-03-05.json`
+- `docs/assistant/audits/BOOTSTRAP_APPLICATION_AUDIT_2026-03-09.md`
 - `docs/assistant/audits/SIMILAR_APP_BENCHMARK_2026-03-05.md`
 - `docs/assistant/audits/GAP_OPPORTUNITY_MAP_2026-03-05.md`
 - `docs/assistant/audits/TOP5_UPGRADE_SPECS_2026-03-05.md`

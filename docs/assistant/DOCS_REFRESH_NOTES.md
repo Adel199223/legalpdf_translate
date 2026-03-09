@@ -16,6 +16,54 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-09 — feat/joblog-inline-editing (working tree)
+- Files changed:
+  - docs/assistant/audits/BOOTSTRAP_APPLICATION_AUDIT_2026-03-09.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/exec_plans/completed/2026-03-09_bootstrap_application_audit_and_continuity_gap.md
+- Key symbols / entrypoints changed:
+  - docs/assistant/audits/BOOTSTRAP_APPLICATION_AUDIT_2026-03-09.md::Applied-vs-Missing Matrix
+  - docs/assistant/audits/BOOTSTRAP_APPLICATION_AUDIT_2026-03-09.md::Continuity Verdict
+  - docs/assistant/INDEX.md::Use when you need audit packets and roadmap outputs
+- User-visible behavior:
+  - The repo now has a durable audit showing which committed bootstrap subsystems are actually applied locally versus missing or project-only.
+  - The requested master-plan / session-resume / anchor-file system is now answered explicitly as a bootstrap gap rather than being confused with ExecPlans, issue memory, or older roadmap artifacts.
+  - The audit is discoverable from the human index so a fresh Codex session can find the continuity verdict without replaying thread history.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
+## 2026-03-09 — feat/joblog-inline-editing (working tree)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/QT_UI_PLAYBOOK.md
+  - docs/assistant/QT_UI_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/exec_plans/completed/2026-03-09_corrective_project_local_bootstrap_sync.md
+  - docs/assistant/exec_plans/completed/2026-03-09_joblog_row_inline_editing.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::Primary User Journeys
+  - APP_KNOWLEDGE.md::Persistence Notes
+  - docs/assistant/APP_KNOWLEDGE.md::User Support Routing
+  - docs/assistant/APP_KNOWLEDGE.md::Current-Truth Note
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md::Job Log window
+  - docs/assistant/features/APP_USER_GUIDE.md::Using the Job Log
+  - docs/assistant/QT_UI_PLAYBOOK.md::Rules of Engagement
+  - docs/assistant/QT_UI_KNOWLEDGE.md::UI Invariants
+- User-visible behavior:
+  - Project-local docs now describe the shipped Job Log pen/edit and trash/delete actions, inline row editing, confirmed deletion, and historical-row editing even when the original PDF is missing.
+  - Qt UI guidance now keeps the dashboard shell non-horizontal-scroll while documenting horizontal overflow as intentional for dense tables like Job Log.
+  - The mistaken bootstrap-template detour was rolled back to the committed bootstrap source of truth, and the Job Log plus corrective docs passes are closed as completed ExecPlans.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
 ## 2026-03-09 — main (working tree)
 - Files changed:
   - APP_KNOWLEDGE.md

@@ -155,6 +155,17 @@ For Arabic target runs, the app inserts an Arabic review step before `Save to Jo
 
 `Expected total` and `Profit` are recalculated from that translated-output word count.
 
+## Job Log window
+Use `Tools > View Job Log` when you want to review or correct saved rows later.
+
+1. Use the pen button in `Actions` to open the full `Edit Job Log Entry` form for that row.
+2. Double-click a visible value when you want a quicker inline edit. That row switches to `Save` / `Cancel`, and the rest of the table waits until you finish that edit.
+3. Use the trash button only when you want to remove a saved row completely. The app asks for confirmation first.
+4. Historical rows can still open the full edit dialog even if the original source PDF is no longer available. In that case `Autofill from PDF header` stays disabled, but `Open translated DOCX` still works when the saved translated DOCX path still resolves.
+5. Drag a column divider to resize it. Double-click the divider if you want that column auto-fitted again.
+6. If the Job Log becomes wider than the window, use the horizontal scrollbar instead of squeezing the headers.
+7. The app remembers your manual Job Log column widths.
+
 ## Honorarios + Gmail Drafts
 If you generate a `Requerimento de Honorários`, the app can also prepare a Gmail draft to the row's `Court Email`.
 
@@ -169,6 +180,7 @@ From `Job Log`, the app now tries this order for the translated attachment:
 4. manual `.docx` picker only if the row is legacy, stale, or ambiguous
 
 If the app has to ask you once for a translated DOCX on a legacy row, it saves that path back into the row so the same row should not ask again next time.
+You can use the pen action first if a historical row needs case/court corrections before exporting honorários or creating the Gmail draft.
 
 ## Gmail Intake Batch Replies
 Use this when the source files already arrived in Gmail and you want one reply draft back in the same thread.

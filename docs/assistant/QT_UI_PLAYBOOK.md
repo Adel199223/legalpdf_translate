@@ -8,7 +8,7 @@
 4. **Keep UI changes isolated to `qt_gui/`** unless the change absolutely requires touching other modules (e.g., adding a new `RunConfig` field that the UI exposes).
 5. **Test layout changes visually with deterministic renders first.** Run `tooling/qt_render_review.py` before relying on ad hoc desktop screenshots.
 6. **Preserve LTR direction overrides.** The window and footer card force `LeftToRight` so that RTL target languages don't flip UI chrome. Do not remove these.
-7. **Do not add a horizontal scrollbar.** `ScrollBarAlwaysOff` is intentional — if content clips, fix the content width, don't enable horizontal scroll.
+7. **Do not add a horizontal scrollbar to the main dashboard shell.** `ScrollBarAlwaysOff` is intentional there. Dense data tables such as Job Log are the exception: prefer interactive column sizing plus horizontal overflow over clipped headers.
 8. **Do not let run-critical selectors drift on wheel events.** Translation-critical combo/spin controls are intentionally guarded; keep accidental wheel changes blocked unless the popup is intentionally open.
 
 ## B. Search Recipes
@@ -64,6 +64,7 @@ rg -n "_refresh_lang_badge|_LANG_FLAG_ICON_BY_CODE|FieldChrome|LangCaretButton|F
 - [ ] If touching layout behavior → update `_layout_mode_for_budget()` / `_apply_responsive_layout()` before adding local widget hacks
 - [ ] If touching paint geometry → confirm paint logic still derives from live sidebar/card geometry
 - [ ] If changing card width behavior → update `_update_card_max_width()` and verify the centered `content_row_layout` still works
+- [ ] If touching dense data tables → keep headers readable by default; prefer auto-fit + user resizing + horizontal overflow over forced squeeze
 - [ ] If adding a new widget → set appropriate `objectName` for QSS targeting
 - [ ] If adding a new shell panel → use `objectName="ShellPanel"` for consistent styling
 
