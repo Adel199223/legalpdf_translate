@@ -122,6 +122,7 @@ from legalpdf_translate.ocr_engine import (
 )
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
 from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
+from legalpdf_translate.qt_gui.window_adaptive import CollapsibleSection, ResponsiveWindowController
 from legalpdf_translate.qt_gui.worker import (
     GmailAttachmentPreviewBootstrapResult,
     GmailAttachmentPreviewBootstrapWorker,
@@ -253,6 +254,13 @@ JOBLOG_VOCAB_SETTINGS_MAP = {
     "court_email": "vocab_court_emails",
 }
 JOBLOG_LANG_OPTIONS = ["EN", "FR", "AR"]
+
+
+def _set_fixed_height_if_needed(widget: QWidget, height: int) -> None:
+    resolved = max(0, int(height))
+    if widget.minimumHeight() == resolved and widget.maximumHeight() == resolved:
+        return
+    widget.setFixedHeight(resolved)
 
 
 def _coerce_joblog_path(value: object) -> Path | None:
@@ -741,13 +749,18 @@ class QtHonorariosExportDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Gerar Requerimento de Honorários")
-        self.resize(760, 300)
+        self.setMinimumSize(520, 240)
         self._default_directory = default_directory.expanduser().resolve()
         self._initial_draft = draft
         self.saved_path: Path | None = None
         self.requested_path: Path | None = None
         self.auto_renamed: bool = False
         self._build_ui()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(760, 300),
+        )
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -861,7 +874,7 @@ class QtArabicDocxReviewDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Arabic DOCX review")
-        self.resize(760, 260)
+        self.setMinimumSize(620, 240)
         self._docx_path = docx_path.expanduser().resolve()
         self._is_gmail_batch = bool(is_gmail_batch)
         self._attachment_label = (attachment_label or "").strip()
@@ -877,6 +890,11 @@ class QtArabicDocxReviewDialog(QDialog):
         self._poll_timer.setInterval(self._poll_interval_ms)
         self._poll_timer.timeout.connect(self._poll_for_save)
         self._build_ui()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(760, 260),
+        )
         QTimer.singleShot(0, self._start_review)
 
     def _build_ui(self) -> None:
@@ -1041,7 +1059,7 @@ class QtSaveToJobLogDialog(QDialog):
         super().__init__(parent)
         self._edit_row_id = int(edit_row_id) if edit_row_id is not None else None
         self.setWindowTitle("Edit Job Log Entry" if self._edit_row_id is not None else "Save to Job Log")
-        self.resize(980, 660)
+        self.setMinimumSize(620, 460)
 
         self._db_path = db_path
         self._seed = seed
@@ -1056,6 +1074,11 @@ class QtSaveToJobLogDialog(QDialog):
         self._case_city_user_set = False
 
         self._build_ui()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(980, 660),
+        )
         self._refresh_service_mirror_state()
         self._refresh_photo_controls()
 
@@ -1080,7 +1103,16 @@ class QtSaveToJobLogDialog(QDialog):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        top = QFrame()
+        self.form_scroll_area = QScrollArea(self)
+        self.form_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.form_scroll_area.setWidgetResizable(True)
+        self.form_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_content = QWidget(self.form_scroll_area)
+        scroll_root = QVBoxLayout(scroll_content)
+        scroll_root.setContentsMargins(0, 0, 0, 0)
+        scroll_root.setSpacing(10)
+
+        top = QFrame(scroll_content)
         top_grid = QGridLayout(top)
         top_grid.addWidget(QLabel("Job type"), 0, 0)
         self.job_type_combo = QComboBox()
@@ -1103,9 +1135,9 @@ class QtSaveToJobLogDialog(QDialog):
         top_grid.setColumnStretch(1, 1)
         top_grid.setColumnStretch(3, 1)
         top_grid.setColumnStretch(5, 1)
-        root.addWidget(top)
+        scroll_root.addWidget(top)
 
-        case_group = QGroupBox("CASE (belongs to)")
+        case_group = QGroupBox("CASE (belongs to)", scroll_content)
         case_form = QGridLayout(case_group)
         case_form.addWidget(QLabel("Case entity"), 0, 0)
         self.case_entity_combo = QComboBox()
@@ -1136,9 +1168,9 @@ class QtSaveToJobLogDialog(QDialog):
         case_form.addWidget(self.court_email_combo, 1, 4, 1, 2)
         case_form.setColumnStretch(1, 1)
         case_form.setColumnStretch(4, 1)
-        root.addWidget(case_group)
+        scroll_root.addWidget(case_group)
 
-        service_group = QGroupBox("SERVICE (provided to)")
+        service_group = QGroupBox("SERVICE (provided to)", scroll_content)
         service_grid = QGridLayout(service_group)
         self.service_same_check = QCheckBox("Service same as Case")
         has_seed_service_values = any(
@@ -1181,7 +1213,7 @@ class QtSaveToJobLogDialog(QDialog):
         service_grid.addWidget(self.service_date_edit, 2, 1)
         service_grid.setColumnStretch(1, 1)
         service_grid.setColumnStretch(4, 1)
-        root.addWidget(service_group)
+        scroll_root.addWidget(service_group)
 
         autofill_row = QHBoxLayout()
         self.autofill_header_btn = QPushButton("Autofill from PDF header")
@@ -1194,10 +1226,12 @@ class QtSaveToJobLogDialog(QDialog):
         autofill_row.addWidget(self.photo_translation_check)
         autofill_row.addStretch(1)
         autofill_row.addWidget(self.photo_hint)
-        root.addLayout(autofill_row)
+        scroll_root.addLayout(autofill_row)
 
-        metrics_group = QGroupBox("Run Metrics (auto-filled)")
-        metrics_form = QGridLayout(metrics_group)
+        metrics_panel = QFrame(scroll_content)
+        metrics_panel.setObjectName("ShellPanel")
+        metrics_form = QGridLayout(metrics_panel)
+        metrics_form.setContentsMargins(12, 12, 12, 12)
         metrics_form.addWidget(QLabel("Run ID"), 0, 0)
         self.run_id_edit = QLineEdit(self._seed.run_id)
         metrics_form.addWidget(self.run_id_edit, 0, 1)
@@ -1221,10 +1255,14 @@ class QtSaveToJobLogDialog(QDialog):
         metrics_form.addWidget(self.quality_risk_score_edit, 2, 1)
         metrics_form.setColumnStretch(1, 1)
         metrics_form.setColumnStretch(3, 1)
-        root.addWidget(metrics_group)
+        self.metrics_section = CollapsibleSection("Run Metrics (auto-filled)", expanded=False, parent=scroll_content)
+        self.metrics_section.set_content_widget(metrics_panel)
+        scroll_root.addWidget(self.metrics_section)
 
-        finance_group = QGroupBox("Amounts (EUR)")
-        finance_form = QGridLayout(finance_group)
+        finance_panel = QFrame(scroll_content)
+        finance_panel.setObjectName("ShellPanel")
+        finance_form = QGridLayout(finance_panel)
+        finance_form.setContentsMargins(12, 12, 12, 12)
         finance_form.addWidget(QLabel("Rate/word"), 0, 0)
         self.rate_edit = QLineEdit(f"{self._seed.rate_per_word:.4f}")
         finance_form.addWidget(self.rate_edit, 0, 1)
@@ -1242,9 +1280,18 @@ class QtSaveToJobLogDialog(QDialog):
         finance_form.addWidget(self.profit_edit, 2, 1)
         finance_form.setColumnStretch(1, 1)
         finance_form.setColumnStretch(3, 1)
-        root.addWidget(finance_group)
+        self.finance_section = CollapsibleSection("Amounts (EUR)", expanded=False, parent=scroll_content)
+        self.finance_section.set_content_widget(finance_panel)
+        scroll_root.addWidget(self.finance_section)
+        scroll_root.addStretch(1)
 
-        actions = QHBoxLayout()
+        self.form_scroll_area.setWidget(scroll_content)
+        root.addWidget(self.form_scroll_area, 1)
+
+        self.action_bar = QWidget(self)
+        actions = QHBoxLayout(self.action_bar)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(8)
         self.open_translation_btn = QPushButton("Open translated DOCX")
         self.open_translation_btn.setEnabled(self._current_translation_docx_path() is not None)
         actions.addWidget(self.open_translation_btn)
@@ -1256,7 +1303,7 @@ class QtSaveToJobLogDialog(QDialog):
         self.save_btn = QPushButton("Update" if self._edit_row_id is not None else "Save")
         actions.addWidget(self.cancel_btn)
         actions.addWidget(self.save_btn)
-        root.addLayout(actions)
+        root.addWidget(self.action_bar)
 
         self.open_translation_btn.clicked.connect(self._open_translation_docx)
         self.cancel_btn.clicked.connect(self.reject)
@@ -1678,7 +1725,7 @@ class QtJobLogWindow(QDialog):
     def __init__(self, *, parent: QWidget | None, db_path: Path) -> None:
         super().__init__(parent)
         self.setWindowTitle("Job Log")
-        self.resize(1280, 520)
+        self.setMinimumSize(760, 420)
 
         self._db_path = db_path
         self._settings = load_joblog_settings()
@@ -1736,6 +1783,11 @@ class QtJobLogWindow(QDialog):
         self.table.cellDoubleClicked.connect(self._on_table_cell_double_clicked)
         self._apply_visible_columns()
         self.refresh_rows()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="table",
+            preferred_size=QSize(1280, 520),
+        )
 
     def _joblog_icon(self, rel_path: str) -> QIcon:
         return QIcon(str(resource_path(rel_path)))
@@ -2443,7 +2495,7 @@ class QtReviewQueueDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Review Queue")
-        self.resize(980, 560)
+        self.setMinimumSize(720, 420)
         self._entries = normalize_review_queue_entries(review_queue)
         self._run_dir = run_dir.expanduser().resolve() if isinstance(run_dir, Path) else None
         self._run_summary_path = (
@@ -2452,6 +2504,11 @@ class QtReviewQueueDialog(QDialog):
         self._open_path_callback = open_path_callback
         self._build_ui()
         self._populate_table()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="table",
+            preferred_size=QSize(980, 560),
+        )
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -2663,7 +2720,7 @@ class _GmailPreviewPageCard(QFrame):
 
     def _apply_reserved_height(self, target_width: int) -> None:
         self._target_width = max(320, int(target_width))
-        self.preview_label.setFixedHeight(self._reserved_height_for_width(self._target_width))
+        _set_fixed_height_if_needed(self.preview_label, self._reserved_height_for_width(self._target_width))
 
     def _set_state_text(self, message: str) -> None:
         self.state_label.setText(message if message else " ")
@@ -2713,7 +2770,7 @@ class _GmailPreviewPageCard(QFrame):
         else:
             display = pixmap
         self.preview_label.setPixmap(display)
-        self.preview_label.setFixedHeight(display.height())
+        _set_fixed_height_if_needed(self.preview_label, display.height())
 
 
 class QtGmailAttachmentPreviewDialog(QDialog):
@@ -2738,7 +2795,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Attachment Preview")
-        self.resize(980, 760)
+        self.setMinimumSize(720, 520)
         self._attachment = attachment
         self._gog_path = gog_path.expanduser().resolve()
         self._account_email = account_email.strip()
@@ -2765,11 +2822,21 @@ class QtGmailAttachmentPreviewDialog(QDialog):
         self._visible_refresh_timer.setSingleShot(True)
         self._visible_refresh_timer.setInterval(self._PAGE_REFRESH_DEBOUNCE_MS)
         self._visible_refresh_timer.timeout.connect(self._refresh_visible_pages)
+        self._scaled_preview_timer = QTimer(self)
+        self._scaled_preview_timer.setSingleShot(True)
+        self._scaled_preview_timer.setInterval(60)
+        self._scaled_preview_timer.timeout.connect(self._refresh_scaled_preview)
         self._image_pixmap: QPixmap | None = None
+        self._image_display_width: int | None = None
         self.selected_start_page: int | None = None
         self.resolved_local_path: Path | None = self._local_path
         self.resolved_page_count: int | None = self._page_count
         self._build_ui()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="preview",
+            preferred_size=QSize(980, 760),
+        )
         QTimer.singleShot(0, self._start_bootstrap)
 
     def _build_ui(self) -> None:
@@ -2834,6 +2901,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
     def done(self, result: int) -> None:
         self._closing = True
         self._visible_refresh_timer.stop()
+        self._scaled_preview_timer.stop()
         bootstrap_thread = self._bootstrap_thread
         if bootstrap_thread is not None and bootstrap_thread.isRunning():
             bootstrap_thread.quit()
@@ -2851,7 +2919,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
     def eventFilter(self, watched: QObject, event: object) -> bool:
         if watched is self.scroll_area.viewport() and isinstance(event, QEvent):
             if event.type() in {QEvent.Type.Resize, QEvent.Type.Show}:
-                self._refresh_scaled_preview()
+                self._schedule_scaled_preview_refresh()
                 self._schedule_visible_page_refresh()
         return super().eventFilter(watched, event)
 
@@ -2874,6 +2942,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self.preview_label.setWordWrap(True)
         self.preview_layout.addWidget(self.preview_label)
+        self._image_display_width = None
 
     def _clear_preview_layout(self) -> None:
         while self.preview_layout.count() > 0:
@@ -2992,12 +3061,20 @@ class QtGmailAttachmentPreviewDialog(QDialog):
             card.update_scaled_pixmap(target_width)
         if self._is_image and self._image_pixmap is not None:
             pixmap = self._image_pixmap
+            if self._image_display_width == target_width:
+                return
             if pixmap.width() != target_width:
                 display = pixmap.scaledToWidth(target_width, Qt.TransformationMode.SmoothTransformation)
             else:
                 display = pixmap
             self.preview_label.setPixmap(display)
-            self.preview_label.setFixedHeight(display.height())
+            _set_fixed_height_if_needed(self.preview_label, display.height())
+            self._image_display_width = target_width
+
+    def _schedule_scaled_preview_refresh(self) -> None:
+        if self._closing or not self._bootstrap_complete:
+            return
+        self._scaled_preview_timer.start()
 
     def _scroll_to_page(self, page_number: int) -> None:
         if self._is_image:
@@ -3132,6 +3209,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
             self.preview_label.setText("")
             self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
             self.preview_label.setWordWrap(True)
+            self._image_display_width = None
             self._refresh_scaled_preview()
             self.status_label.setText("Single-image attachment preview.")
         else:
@@ -3204,7 +3282,7 @@ class QtGmailBatchReviewDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Gmail Attachment Review")
-        self.resize(980, 620)
+        self.setMinimumSize(760, 480)
         self._message = message
         self._gog_path = gog_path.expanduser().resolve()
         self._account_email = account_email.strip()
@@ -3227,6 +3305,11 @@ class QtGmailBatchReviewDialog(QDialog):
         self._populate_table()
         self._refresh_actions()
         self._refresh_detail_panel()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="table",
+            preferred_size=QSize(980, 620),
+        )
 
     def done(self, result: int) -> None:
         if result != QDialog.DialogCode.Accepted:
@@ -3559,7 +3642,7 @@ class QtGlossaryEditorDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Glossary Editor")
-        self.resize(860, 560)
+        self.setMinimumSize(680, 440)
 
         self._current_path = initial_path
         self._default_save_path = default_save_path.expanduser().resolve()
@@ -3592,6 +3675,11 @@ class QtGlossaryEditorDialog(QDialog):
         self.save_btn.clicked.connect(self._save)
         self.save_as_btn.clicked.connect(self._save_as)
         self.cancel_btn.clicked.connect(self.reject)
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="table",
+            preferred_size=QSize(860, 560),
+        )
 
     @staticmethod
     def _validated_text(text: str, *, source: str) -> str:
@@ -3956,7 +4044,6 @@ class QtSettingsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.resize(980, 700)
         self.setMinimumSize(780, 560)
 
         self._settings = dict(settings)
@@ -3994,6 +4081,11 @@ class QtSettingsDialog(QDialog):
         self._build_ui()
         self._set_values_from_settings(self._settings)
         self._refresh_key_status()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(980, 700),
+        )
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)

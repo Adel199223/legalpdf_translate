@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QObject, QThread, Qt, Signal
+from PySide6.QtCore import QObject, QSize, QThread, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -62,6 +62,7 @@ from legalpdf_translate.glossary_diagnostics import (
     emit_diagnostics_events,
 )
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
+from legalpdf_translate.qt_gui.window_adaptive import ResponsiveWindowController
 from legalpdf_translate.types import RunConfig, TargetLang
 from legalpdf_translate.user_settings import app_data_dir
 
@@ -449,7 +450,6 @@ class QtGlossaryBuilderDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Glossary Builder")
-        self.resize(980, 720)
         self.setMinimumSize(780, 560)
         self._settings = dict(settings)
         self._current_pdf_path = current_pdf_path
@@ -634,6 +634,11 @@ class QtGlossaryBuilderDialog(QDialog):
         if self._current_pdf_path is not None and self._current_pdf_path.exists():
             self.current_pdf_label.setText(f"Current PDF: {self._current_pdf_path}")
         self._refresh_source_controls()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(980, 720),
+        )
 
     def _refresh_source_controls(self) -> None:
         mode = str(self.source_combo.currentData() or "run_folders")
@@ -1240,7 +1245,7 @@ class QtCalibrationAuditDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Calibration Audit")
-        self.resize(980, 740)
+        self.setMinimumSize(780, 560)
         self._settings = dict(settings)
         self._build_config_callback = build_config_callback
         self._save_settings_callback = save_settings_callback
@@ -1323,6 +1328,11 @@ class QtCalibrationAuditDialog(QDialog):
         self.cancel_btn.clicked.connect(self._cancel_audit)
         self.apply_btn.clicked.connect(self._apply_suggestions)
         self.close_btn.clicked.connect(self.close)
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(980, 740),
+        )
 
     def _set_busy(self, busy: bool) -> None:
         self.run_btn.setEnabled(not busy)

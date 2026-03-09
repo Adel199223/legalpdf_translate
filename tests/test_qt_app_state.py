@@ -10,7 +10,7 @@ from types import SimpleNamespace
 if os.name != "nt" and "DISPLAY" not in os.environ:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QBuffer, QIODevice
+from PySide6.QtCore import QBuffer, QIODevice, QRect
 from PySide6.QtGui import QCloseEvent, QColor, QImage, QPainter, QPen
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QBoxLayout, QComboBox, QDialog, QLineEdit, QToolButton
@@ -25,6 +25,7 @@ from legalpdf_translate.gmail_batch import (
 )
 import legalpdf_translate.qt_gui.app_window as app_window_module
 import legalpdf_translate.qt_gui.dialogs as dialogs_module
+import legalpdf_translate.qt_gui.window_adaptive as window_adaptive_module
 import legalpdf_translate.qt_gui.window_controller as window_controller_module
 import legalpdf_translate.user_settings as user_settings
 from legalpdf_translate.build_identity import RuntimeBuildIdentity
@@ -499,6 +500,67 @@ def test_dashboard_keeps_two_column_layout_for_medium_width() -> None:
     finally:
         window.close()
         window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_main_window_small_screen_is_bounded_and_reserves_status_width(monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        window_adaptive_module,
+        "available_screen_geometry",
+        lambda _widget: QRect(0, 0, 1000, 700),
+    )
+
+    window = QtMainWindow()
+    try:
+        window.show()
+        app.processEvents()
+        assert window.width() <= 940
+        assert window.height() <= 651
+        window._update_card_max_width(viewport_width=920)
+        app.processEvents()
+        assert window.hero_status_spacer.width() == window.header_status_label.minimumWidth()
+        assert window.header_status_label.minimumWidth() >= (
+            window.header_status_label.fontMetrics().horizontalAdvance("Idle")
+        )
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_settings_dialog_small_screen_is_bounded(monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        window_adaptive_module,
+        "available_screen_geometry",
+        lambda _widget: QRect(0, 0, 860, 640),
+    )
+
+    dialog = QtSettingsDialog(
+        parent=None,
+        settings=_base_gui_settings(),
+        apply_callback=lambda _values, _persist: None,
+        collect_debug_paths=lambda: [],
+    )
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.width() <= 705
+        assert dialog.height() <= 563
+    finally:
+        dialog.close()
+        dialog.deleteLater()
         if owns_app:
             app.quit()
 
@@ -1862,6 +1924,16 @@ class _FakeLazyPreviewDialog(QtGmailAttachmentPreviewDialog):
         )
 
 
+class _TrackingScaledPreviewDialog(_FakeLazyPreviewDialog):
+    def __init__(self, *args, **kwargs) -> None:
+        self.scaled_refresh_count = 0
+        super().__init__(*args, **kwargs)
+
+    def _refresh_scaled_preview(self) -> None:
+        self.scaled_refresh_count += 1
+        super()._refresh_scaled_preview()
+
+
 def _wait_for_preview_refresh(dialog: QtGmailAttachmentPreviewDialog) -> None:
     app = QApplication.instance()
     assert app is not None
@@ -2074,6 +2146,57 @@ def test_gmail_attachment_preview_dialog_preserves_reserved_height_after_cache_e
         first_card.clear_cached_pixmap()
         app.processEvents()
         assert first_card.preview_label.height() == rendered_height
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_gmail_attachment_preview_dialog_coalesces_scaled_preview_refresh(tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    attachment = GmailAttachmentCandidate(
+        attachment_id="att-1",
+        filename="court.pdf",
+        mime_type="application/pdf",
+        size_bytes=2048,
+        source_message_id="msg-100",
+    )
+    dialog = _TrackingScaledPreviewDialog(
+        parent=None,
+        attachment=attachment,
+        gog_path=Path("C:/gog.exe"),
+        account_email="court@example.com",
+        preview_dir=tmp_path,
+        initial_start_page=1,
+        cached_path=tmp_path / "preview.pdf",
+        known_page_count=3,
+    )
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog._on_bootstrap_loaded(
+            GmailAttachmentPreviewBootstrapResult(
+                attachment=attachment,
+                local_path=tmp_path / "preview.pdf",
+                page_count=3,
+                page_sizes=((420.0, 620.0),) * 3,
+            )
+        )
+        _wait_for_preview_refresh(dialog)
+        baseline = dialog.scaled_refresh_count
+        dialog._schedule_scaled_preview_refresh()
+        dialog._schedule_scaled_preview_refresh()
+        dialog._schedule_scaled_preview_refresh()
+        app.processEvents()
+        assert dialog.scaled_refresh_count == baseline
+        QTest.qWait(90)
+        app.processEvents()
+        assert dialog.scaled_refresh_count == baseline + 1
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -5496,6 +5619,66 @@ def test_edit_joblog_dialog_disables_header_autofill_without_pdf_path(tmp_path: 
             app.quit()
 
 
+def test_save_to_joblog_dialog_small_screen_uses_scrollable_body_and_collapsed_sections(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        window_adaptive_module,
+        "available_screen_geometry",
+        lambda _widget: QRect(0, 0, 820, 620),
+    )
+
+    seed = JobLogSeed(
+        completed_at="2026-03-05T10:00:00",
+        translation_date="2026-03-05",
+        job_type="Translation",
+        case_number="ABC-1",
+        court_email="court@example.pt",
+        case_entity="Case Entity",
+        case_city="Beja",
+        service_entity="Case Entity",
+        service_city="Beja",
+        service_date="2026-03-05",
+        lang="FR",
+        pages=3,
+        word_count=1000,
+        rate_per_word=0.08,
+        expected_total=80.0,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="run-1",
+        target_lang="FR",
+        total_tokens=5000,
+        estimated_api_cost=2.5,
+        quality_risk_score=0.2,
+        profit=77.5,
+        pdf_path=tmp_path / "sample.pdf",
+        output_docx=tmp_path / "translated.docx",
+    )
+
+    dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.width() <= 672
+        assert dialog.height() <= 545
+        assert dialog.form_scroll_area.widgetResizable() is True
+        assert dialog.metrics_section.is_expanded() is False
+        assert dialog.finance_section.is_expanded() is False
+        assert dialog.save_btn.parentWidget() is dialog.action_bar
+        assert dialog.cancel_btn.parentWidget() is dialog.action_bar
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
 def _joblog_row_payload(
     index: int = 0,
     *,
@@ -5795,6 +5978,35 @@ def test_joblog_window_uses_scrollable_resizable_columns_and_persists_widths(
         window.table.setColumnWidth(window._table_column_index("court_email"), 240)
         loaded = user_settings.load_joblog_settings()
         assert loaded["joblog_column_widths"]["court_email"] == 240
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_joblog_window_small_screen_is_bounded(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        window_adaptive_module,
+        "available_screen_geometry",
+        lambda _widget: QRect(0, 0, 900, 640),
+    )
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        insert_job_run(conn, _joblog_row_payload(case_number="109/26.0PBBJA"))
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        window.show()
+        app.processEvents()
+        assert window.width() <= 810
+        assert window.height() <= 537
     finally:
         window.close()
         window.deleteLater()

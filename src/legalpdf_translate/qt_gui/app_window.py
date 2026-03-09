@@ -133,6 +133,7 @@ from legalpdf_translate.qt_gui.dialogs import (
     normalize_review_queue_entries,
 )
 from legalpdf_translate.qt_gui.tools_dialogs import QtCalibrationAuditDialog, QtGlossaryBuilderDialog
+from legalpdf_translate.qt_gui.window_adaptive import ResponsiveWindowController
 from legalpdf_translate.qt_gui.styles import apply_primary_glow, apply_soft_shadow
 from legalpdf_translate.qt_gui.worker import (
     AnalyzeWorker,
@@ -662,7 +663,6 @@ class QtMainWindow(QMainWindow):
         self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.setMinimumSize(720, 540)
         self.resize(1680, 960)
-        self._initial_resize_done = False
         self._simple_mode = _is_simple_mode()
 
         self._defaults = load_gui_settings()
@@ -732,6 +732,8 @@ class QtMainWindow(QMainWindow):
         self._gmail_intake_bridge: LocalGmailIntakeBridge | None = None
         self._workspace_pristine_job_context: tuple[object, ...] | None = None
         self._layout_mode = _LAYOUT_DESKTOP_EXACT
+        self._applied_layout_mode: str | None = None
+        self._last_content_card_width: int | None = None
         self._click_debug_enabled = _is_truthy_env(os.getenv("LEGALPDF_QT_CLICK_DEBUG"))
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
@@ -743,6 +745,14 @@ class QtMainWindow(QMainWindow):
         self.gmail_intake_received.connect(self._on_gmail_intake_received)
 
         self._build_ui()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="shell",
+            preferred_size=QSize(1680, 960),
+            expand_to_role_target=True,
+            resize_callback=self._flush_responsive_shell_resize,
+            resize_interval_ms=24,
+        )
         self._install_menu()
         self._restore_settings()
         self._set_adv_visible(False)
@@ -858,13 +868,15 @@ class QtMainWindow(QMainWindow):
         hero_row.setContentsMargins(0, 0, 0, 6)
         hero_row.setHorizontalSpacing(0)
         hero_row.setVerticalSpacing(0)
-        hero_row.setColumnStretch(0, 1)
-        hero_row.setColumnStretch(2, 1)
+        hero_row.setColumnStretch(1, 1)
         self.title_label = QLabel("LegalPDF Translate", objectName="HeroTitleLabel")
+        self.hero_status_spacer = QWidget()
         self.header_status_label = QLabel("Idle", objectName="HeroStatusLabel")
         self.header_status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.header_status_label.setMinimumWidth(120)
+        self.header_status_label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
         apply_primary_glow(self.title_label, blur_radius=34)
+        hero_row.addWidget(self.hero_status_spacer, 0, 0)
         hero_row.addWidget(self.title_label, 0, 1, Qt.AlignmentFlag.AlignCenter)
         hero_row.addWidget(self.header_status_label, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         card_shell.addLayout(hero_row)
@@ -1369,7 +1381,8 @@ class QtMainWindow(QMainWindow):
 
     def _apply_responsive_layout(self, *, viewport_width: int | None = None) -> None:
         viewport = self._scroll_area.viewport()
-        width = viewport_width if viewport_width is not None else (viewport.width() if viewport is not None else self.width())
+        live_width = viewport.width() if viewport is not None else 0
+        width = viewport_width if viewport_width is not None else (live_width if live_width > 0 else self.width())
         probe_budget = max(360, width - 36)
         mode = self._layout_mode_for_budget(probe_budget)
         self._layout_mode = mode
@@ -1390,7 +1403,7 @@ class QtMainWindow(QMainWindow):
             field_label_width = 176
             field_min_width = (260, 280)
             body_spacing = 24
-            title_status_min_width = 120
+            title_status_min_width = 148
             progress_stretch = (10, 9)
             progress_panel_min_width = 580
         elif mode == _LAYOUT_DESKTOP_COMPACT:
@@ -1409,7 +1422,7 @@ class QtMainWindow(QMainWindow):
             field_label_width = 154
             field_min_width = (220, 230)
             body_spacing = 22
-            title_status_min_width = 104
+            title_status_min_width = 132
             progress_stretch = (9, 8)
             progress_panel_min_width = 500
         else:
@@ -1428,46 +1441,55 @@ class QtMainWindow(QMainWindow):
             field_label_width = 120
             field_min_width = (150, 170)
             body_spacing = 18
-            title_status_min_width = 84
+            title_status_min_width = 112
             progress_stretch = (0, 0)
             progress_panel_min_width = 0
 
-        self.sidebar_frame.setFixedWidth(sidebar_width)
-        self.sidebar_layout.setContentsMargins(*sidebar_margins)
-        self.sidebar_layout.setSpacing(sidebar_spacing)
-        self.sidebar_logo_label.setPixmap(
-            self._icon("resources/icons/dashboard/logo_l.svg").pixmap(QSize(logo_size, logo_size))
-        )
-        for button in self._sidebar_nav_buttons:
-            button.setFixedWidth(nav_width)
-            button.setMinimumHeight(nav_height)
-            button.setMaximumHeight(nav_height)
-            button.setIconSize(QSize(icon_size, icon_size))
+        if self._applied_layout_mode != mode:
+            self.sidebar_frame.setFixedWidth(sidebar_width)
+            self.sidebar_layout.setContentsMargins(*sidebar_margins)
+            self.sidebar_layout.setSpacing(sidebar_spacing)
+            self.sidebar_logo_label.setPixmap(
+                self._icon("resources/icons/dashboard/logo_l.svg").pixmap(QSize(logo_size, logo_size))
+            )
+            for button in self._sidebar_nav_buttons:
+                button.setFixedWidth(nav_width)
+                button.setMinimumHeight(nav_height)
+                button.setMaximumHeight(nav_height)
+                button.setIconSize(QSize(icon_size, icon_size))
 
-        self.scroll_layout.setContentsMargins(*scroll_margins)
-        self.dashboard_layout.setContentsMargins(*dashboard_margins)
-        self.dashboard_layout.setSpacing(dashboard_spacing)
-        self.setup_layout.setContentsMargins(*setup_panel_margins)
-        self.progress_layout.setContentsMargins(*progress_panel_margins)
-        self.setup_grid.setColumnMinimumWidth(0, field_label_width)
-        self.pdf_edit.setMinimumWidth(field_min_width[0])
-        self.outdir_edit.setMinimumWidth(field_min_width[1])
-        self.header_status_label.setMinimumWidth(title_status_min_width)
-        self.progress_panel.setMinimumWidth(progress_panel_min_width)
+            self.scroll_layout.setContentsMargins(*scroll_margins)
+            self.dashboard_layout.setContentsMargins(*dashboard_margins)
+            self.dashboard_layout.setSpacing(dashboard_spacing)
+            self.setup_layout.setContentsMargins(*setup_panel_margins)
+            self.progress_layout.setContentsMargins(*progress_panel_margins)
+            self.setup_grid.setColumnMinimumWidth(0, field_label_width)
+            self.pdf_edit.setMinimumWidth(field_min_width[0])
+            self.outdir_edit.setMinimumWidth(field_min_width[1])
+            self.progress_panel.setMinimumWidth(progress_panel_min_width)
+            self.body_layout.setSpacing(body_spacing)
+            if mode == _LAYOUT_STACKED_COMPACT:
+                self.body_layout.setDirection(QBoxLayout.Direction.TopToBottom)
+                self.body_layout.setStretch(0, 0)
+                self.body_layout.setStretch(1, 0)
+            else:
+                self.body_layout.setDirection(QBoxLayout.Direction.LeftToRight)
+                self.body_layout.setStretch(0, progress_stretch[0])
+                self.body_layout.setStretch(1, progress_stretch[1])
+            self._configure_footer_layout(compact=mode == _LAYOUT_STACKED_COMPACT)
+            self._applied_layout_mode = mode
+
+        self._sync_hero_status_width(title_status_min_width)
         self.progress_panel_title.setVisible(mode != _LAYOUT_STACKED_COMPACT or self.width() > 900)
 
-        self.body_layout.setSpacing(body_spacing)
-        if mode == _LAYOUT_STACKED_COMPACT:
-            self.body_layout.setDirection(QBoxLayout.Direction.TopToBottom)
-            self.body_layout.setStretch(0, 0)
-            self.body_layout.setStretch(1, 0)
-        else:
-            self.body_layout.setDirection(QBoxLayout.Direction.LeftToRight)
-            self.body_layout.setStretch(0, progress_stretch[0])
-            self.body_layout.setStretch(1, progress_stretch[1])
+    def _sync_hero_status_width(self, minimum_width: int) -> None:
+        resolved_width = max(0, int(minimum_width))
+        self.header_status_label.setMinimumWidth(resolved_width)
+        self.hero_status_spacer.setFixedWidth(resolved_width)
 
-        self._configure_footer_layout(compact=mode == _LAYOUT_STACKED_COMPACT)
-        self.centralWidget().update()
+    def _flush_responsive_shell_resize(self) -> None:
+        self._update_card_max_width()
+        self._refresh_canvas()
 
     def _focus_dashboard(self) -> None:
         self._set_dashboard_nav_active(self.dashboard_nav_btn)
@@ -5274,39 +5296,22 @@ class QtMainWindow(QMainWindow):
 
     def _update_card_max_width(self, *, viewport_width: int | None = None) -> None:
         vp = self._scroll_area.viewport()
-        resolved_viewport_width = viewport_width if viewport_width is not None else (vp.width() if vp is not None else self.width())
+        live_width = vp.width() if vp is not None else 0
+        resolved_viewport_width = viewport_width if viewport_width is not None else (live_width if live_width > 0 else self.width())
         self._apply_responsive_layout(viewport_width=resolved_viewport_width)
         scroll_layout = self._scroll_area.widget().layout()
         lr = scroll_layout.contentsMargins()
         available = max(360, resolved_viewport_width - lr.left() - lr.right())
         target_width = max(360, min(1760, available))
-        self.content_card.setFixedWidth(target_width)
+        if self._last_content_card_width != target_width:
+            self.content_card.setFixedWidth(target_width)
+            self._last_content_card_width = target_width
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
-        self._update_card_max_width()
-        central = self.centralWidget()
-        if central is not None:
-            central.update()
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
-        if self._initial_resize_done:
-            return
-        self._initial_resize_done = True
-        screen = self.screen()
-        if screen is None:
-            from PySide6.QtGui import QGuiApplication
-            screen = QGuiApplication.primaryScreen()
-        if screen is not None:
-            avail = screen.availableGeometry()
-            w = int(avail.width() * 0.94)
-            h = int(avail.height() * 0.93)
-            self.resize(w, h)
-            self.move(
-                avail.x() + (avail.width() - w) // 2,
-                avail.y() + (avail.height() - h) // 2,
-            )
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._busy:
