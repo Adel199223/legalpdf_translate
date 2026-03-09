@@ -103,3 +103,29 @@
 - Stage 1 boundary status:
   - merge commit pending
   - exact continuation token required for the next pass after Stage 1 completion: `NEXT_STAGE_2`
+
+## Stage 2 execution log
+- Implemented Stage 2 files:
+  - `docs/assistant/runtime/CANONICAL_BUILD.json`
+    - retargeted `canonical_branch` and `approved_base_branch` to `main` while preserving the existing floor SHAs
+  - `docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md`
+    - updated the current-state guide for a single default main worktree with optional side worktrees only when intentionally created
+  - `docs/assistant/DOCS_REFRESH_NOTES.md`
+    - appended the convergence note and captured the Stage 2 validation results
+  - `tests/test_launch_qt_build.py`
+    - made the dry-run identity test branch-aware so it passes when the convergence worktree is intentionally noncanonical under the retargeted canonical-build contract
+- Implemented Stage 2 local environment update:
+  - `/mnt/c/Users/FA507/.codex/legalpdf_translate-worktrees.code-workspace`
+    - reduced the saved VS Code workspace to the single active main worktree
+- Executed Stage 2 validations:
+  - `PYTHONPATH=src /mnt/c/Users/FA507/.codex/legalpdf_translate/.venv311/Scripts/python.exe -m pytest -q`
+    - result: `785 passed in 26.91s`
+  - `python3 -m compileall src tests tooling`
+    - result: pass
+  - `dart run tooling/validate_agent_docs.dart`
+    - result: `PASS: agent docs validation succeeded.`
+  - `dart run tooling/validate_workspace_hygiene.dart`
+    - result: `PASS: workspace hygiene validation succeeded.`
+- Stage 2 boundary status:
+  - governance/docs retarget ready for PR stage
+  - exact continuation token required for the next pass: `NEXT_STAGE_3`

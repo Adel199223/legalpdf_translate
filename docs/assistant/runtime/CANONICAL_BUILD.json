@@ -1,7 +1,7 @@
 {
   "canonical_worktree_path": "/mnt/c/Users/FA507/.codex/legalpdf_translate",
-  "canonical_branch": "feat/ai-docs-bootstrap",
-  "approved_base_branch": "feat/ai-docs-bootstrap",
+  "canonical_branch": "main",
+  "approved_base_branch": "main",
   "approved_base_head_floor": "4e9d20e",
   "canonical_head_floor": "4e9d20e",
   "allow_noncanonical_by_flag": true

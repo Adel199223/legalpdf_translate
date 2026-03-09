@@ -16,6 +16,25 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-09 — chore/converge-main-approved-base (working tree)
+- Files changed:
+  - docs/assistant/runtime/CANONICAL_BUILD.json
+  - docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+- Key symbols / entrypoints changed:
+  - docs/assistant/runtime/CANONICAL_BUILD.json::canonical_branch
+  - docs/assistant/runtime/CANONICAL_BUILD.json::approved_base_branch
+  - docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md::Open The Saved Workspace
+- User-visible behavior:
+  - Live governance now retargets the canonical branch and approved base branch back to `main` on the convergence branch.
+  - The worktree workspace guide now reflects the current local state: one default main worktree, with extra side worktrees created only intentionally.
+  - Historical notes about `feat/ai-docs-bootstrap` remain as history instead of being rewritten.
+- Tests:
+  - `PYTHONPATH=src /mnt/c/Users/FA507/.codex/legalpdf_translate/.venv311/Scripts/python.exe -m pytest -q` -> `785 passed`
+  - `python3 -m compileall src tests tooling` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
 ## 2026-03-08 — feat/ai-docs-bootstrap (working tree)
 - Files changed:
   - APP_KNOWLEDGE.md
