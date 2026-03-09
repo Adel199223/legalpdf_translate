@@ -25,6 +25,7 @@ from legalpdf_translate.gmail_batch import (
 )
 import legalpdf_translate.qt_gui.app_window as app_window_module
 import legalpdf_translate.qt_gui.dialogs as dialogs_module
+import legalpdf_translate.qt_gui.window_controller as window_controller_module
 import legalpdf_translate.user_settings as user_settings
 from legalpdf_translate.build_identity import RuntimeBuildIdentity
 from legalpdf_translate.docx_writer import assemble_docx
@@ -50,6 +51,7 @@ from legalpdf_translate.qt_gui.dialogs import (
     count_words_from_output_artifacts,
 )
 from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
+from legalpdf_translate.qt_gui.window_controller import WorkspaceWindowController
 from legalpdf_translate.qt_gui.worker import (
     GmailAttachmentPreviewBootstrapResult,
     GmailAttachmentPreviewPageResult,
@@ -260,6 +262,15 @@ def _build_gmail_batch_confirmed_item(
     )
 
 
+def _close_qt_windows(app: QApplication, windows: list[QtMainWindow]) -> None:
+    for window in windows:
+        window._busy = False
+        window._running = False
+        window.close()
+        window.deleteLater()
+    app.processEvents()
+
+
 def _make_restore_settings_fake(defaults: dict[str, object]) -> SimpleNamespace:
     return SimpleNamespace(
         _defaults=defaults,
@@ -349,9 +360,11 @@ def test_stage_two_shell_smoke() -> None:
         assert window.translate_btn.minimumHeight() == window.cancel_btn.minimumHeight() == window.more_btn.minimumHeight()
         assert window.cancel_btn.width() == 186
         assert window.more_btn.width() == 92
+        assert "new_window" in window._menu_actions
         assert "review_queue" in window._menu_actions
         assert "save_joblog" in window._menu_actions
         assert "job_log" in window._menu_actions
+        assert "new_window" in window._overflow_menu_actions
     finally:
         window.close()
         window.deleteLater()
@@ -1323,6 +1336,227 @@ def test_gmail_intake_bridge_runtime_metadata_is_written_and_cleared(monkeypatch
             app.quit()
 
     assert metadata_path.exists() is False
+
+
+def test_workspace_controller_gmail_intake_reuses_last_active_pristine_workspace(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    _FakeBridge.instances = []
+    settings = _base_gui_settings(
+        gmail_intake_bridge_enabled=True,
+        gmail_intake_bridge_token="stage-two-token",
+        gmail_intake_port=9021,
+    )
+    monkeypatch.setattr(window_controller_module, "LocalGmailIntakeBridge", _FakeBridge)
+    monkeypatch.setattr(window_controller_module, "load_gui_settings", lambda: dict(settings))
+    monkeypatch.setattr(window_controller_module, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(app_window_module, "load_gui_settings", lambda: dict(settings))
+    monkeypatch.setattr(app_window_module, "save_gui_settings", lambda _values: None)
+    monkeypatch.setattr(app_window_module, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        app_window_module,
+        "ensure_edge_native_host_registered",
+        lambda *, base_dir: SimpleNamespace(
+            ok=True,
+            changed=False,
+            manifest_path=str(base_dir / "native.json"),
+            executable_path=str(base_dir / "focus.exe"),
+            reason="ready",
+        ),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "request_window_attention",
+        lambda window: WindowAttentionResult(
+            requested=True,
+            restored=False,
+            focused=True,
+            flashed=False,
+            reason=f"focused:{window.windowTitle()}",
+        ),
+    )
+    accepted: list[tuple[QtMainWindow, InboundMailContext]] = []
+    monkeypatch.setattr(QtMainWindow, "_start_gmail_message_load", lambda self, context: accepted.append((self, context)))
+
+    controller = WorkspaceWindowController(app=app, build_identity=None)
+    windows: list[QtMainWindow] = []
+    try:
+        first = controller.create_workspace(show=False, focus=False)
+        second = controller.create_workspace(show=False, focus=False)
+        windows.extend([first, second])
+        controller.note_window_activated(second)
+
+        context = InboundMailContext(
+            message_id="msg-201",
+            thread_id="thread-301",
+            subject="Stage 2 intake reuse",
+        )
+        controller._route_gmail_intake_on_main_thread(context)
+
+        assert len(_FakeBridge.instances) == 1
+        assert first._gmail_intake_bridge is None
+        assert second._gmail_intake_bridge is None
+        assert controller.gmail_intake_bridge() is _FakeBridge.instances[0]
+        assert len(controller.windows()) == 2
+        assert accepted == [(second, context)]
+        payload = load_bridge_runtime_metadata(tmp_path)
+        assert payload is not None
+        assert payload["window_title"] == second.windowTitle()
+        assert payload["port"] == 9021
+    finally:
+        _close_qt_windows(app, windows)
+        if owns_app:
+            app.quit()
+
+
+def test_workspace_controller_gmail_intake_opens_new_window_for_occupied_workspace(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    _FakeBridge.instances = []
+    settings = _base_gui_settings(
+        gmail_intake_bridge_enabled=True,
+        gmail_intake_bridge_token="stage-two-token",
+        gmail_intake_port=9022,
+    )
+    monkeypatch.setattr(window_controller_module, "LocalGmailIntakeBridge", _FakeBridge)
+    monkeypatch.setattr(window_controller_module, "load_gui_settings", lambda: dict(settings))
+    monkeypatch.setattr(window_controller_module, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(app_window_module, "load_gui_settings", lambda: dict(settings))
+    monkeypatch.setattr(app_window_module, "save_gui_settings", lambda _values: None)
+    monkeypatch.setattr(app_window_module, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        app_window_module,
+        "ensure_edge_native_host_registered",
+        lambda *, base_dir: SimpleNamespace(
+            ok=True,
+            changed=False,
+            manifest_path=str(base_dir / "native.json"),
+            executable_path=str(base_dir / "focus.exe"),
+            reason="ready",
+        ),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "request_window_attention",
+        lambda _window: WindowAttentionResult(
+            requested=True,
+            restored=False,
+            focused=True,
+            flashed=False,
+            reason="focused",
+        ),
+    )
+    accepted: list[tuple[QtMainWindow, InboundMailContext]] = []
+    monkeypatch.setattr(QtMainWindow, "_start_gmail_message_load", lambda self, context: accepted.append((self, context)))
+
+    controller = WorkspaceWindowController(app=app, build_identity=None)
+    windows: list[QtMainWindow] = []
+    try:
+        first = controller.create_workspace(show=False, focus=False)
+        windows.append(first)
+        controller.note_window_activated(first)
+        first.pdf_edit.setText("C:/occupied-job.pdf")
+
+        context = InboundMailContext(
+            message_id="msg-202",
+            thread_id="thread-302",
+            subject="Stage 2 intake new window",
+        )
+        controller._route_gmail_intake_on_main_thread(context)
+
+        routed_window = accepted[0][0]
+        windows.extend(window for window in controller.windows() if window not in windows)
+        assert len(controller.windows()) == 2
+        assert routed_window is not first
+        assert accepted == [(routed_window, context)]
+        assert "Workspace 2" in routed_window.windowTitle()
+    finally:
+        _close_qt_windows(app, windows)
+        if owns_app:
+            app.quit()
+
+
+def test_workspace_controller_reconfigures_gmail_bridge_without_overwriting_other_window_drafts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    _FakeBridge.instances = []
+    settings_store = _base_gui_settings(
+        gmail_intake_bridge_enabled=True,
+        gmail_intake_bridge_token="initial-token",
+        gmail_intake_port=9023,
+    )
+    monkeypatch.setattr(window_controller_module, "LocalGmailIntakeBridge", _FakeBridge)
+    monkeypatch.setattr(window_controller_module, "load_gui_settings", lambda: dict(settings_store))
+    monkeypatch.setattr(window_controller_module, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(app_window_module, "load_gui_settings", lambda: dict(settings_store))
+    monkeypatch.setattr(app_window_module, "save_gui_settings", lambda values: settings_store.update(values))
+    monkeypatch.setattr(app_window_module, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        app_window_module,
+        "ensure_edge_native_host_registered",
+        lambda *, base_dir: SimpleNamespace(
+            ok=True,
+            changed=False,
+            manifest_path=str(base_dir / "native.json"),
+            executable_path=str(base_dir / "focus.exe"),
+            reason="ready",
+        ),
+    )
+
+    controller = WorkspaceWindowController(app=app, build_identity=None)
+    windows: list[QtMainWindow] = []
+    try:
+        first = controller.create_workspace(show=False, focus=False)
+        second = controller.create_workspace(show=False, focus=False)
+        windows.extend([first, second])
+
+        initial_bridge = _FakeBridge.instances[0]
+        second.pdf_edit.setText("C:/draft-job.pdf")
+        second.outdir_edit.setText("C:/draft-out")
+        second.queue_manifest_edit.setText("C:/draft-queue.json")
+
+        first.apply_settings_from_dialog(
+            {
+                "gmail_intake_bridge_enabled": True,
+                "gmail_intake_bridge_token": "updated-token",
+                "gmail_intake_port": 9024,
+            },
+            True,
+        )
+
+        updated_bridge = _FakeBridge.instances[-1]
+        assert initial_bridge.stopped is True
+        assert updated_bridge.started is True
+        assert updated_bridge is not initial_bridge
+        assert controller.gmail_intake_bridge() is updated_bridge
+        assert second._gmail_intake_bridge is None
+        assert second.pdf_edit.text() == "C:/draft-job.pdf"
+        assert second.outdir_edit.text() == "C:/draft-out"
+        assert second.queue_manifest_edit.text() == "C:/draft-queue.json"
+        assert second._defaults["gmail_intake_bridge_token"] == "updated-token"
+        assert second._defaults["gmail_intake_port"] == 9024
+    finally:
+        _close_qt_windows(app, windows)
+        if owns_app:
+            app.quit()
 
 
 def test_gmail_intake_acceptance_updates_visible_ui_without_starting_translation(monkeypatch) -> None:
@@ -3937,6 +4171,103 @@ def test_noncanonical_main_window_title_includes_branch_and_sha() -> None:
             app.quit()
 
 
+def test_workspace_controller_assigns_titles_and_tracks_last_active_window() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    controller = WorkspaceWindowController(app=app, build_identity=None)
+    first = controller.create_workspace(show=False, focus=False)
+    second = controller.create_workspace(show=False, focus=False)
+    try:
+        assert "Workspace 1" in first.windowTitle()
+        assert "Workspace 2" in second.windowTitle()
+        controller.note_window_activated(second)
+        assert controller.last_active_window() is second
+    finally:
+        _close_qt_windows(app, [first, second])
+        if owns_app:
+            app.quit()
+
+
+def test_workspace_title_includes_selected_pdf_name(tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    controller = WorkspaceWindowController(app=app, build_identity=None)
+    window = controller.create_workspace(show=False, focus=False)
+    pdf_path = tmp_path / "sample-title.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    try:
+        window.pdf_edit.setText(str(pdf_path))
+        app.processEvents()
+        assert "Workspace 1" in window.windowTitle()
+        assert "sample-title.pdf" in window.windowTitle()
+    finally:
+        _close_qt_windows(app, [window])
+        if owns_app:
+            app.quit()
+
+
+def test_new_window_action_stays_available_while_workspace_is_busy() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    controller = WorkspaceWindowController(app=app, build_identity=None)
+    window = controller.create_workspace(show=False, focus=False)
+    try:
+        window._set_busy(True, translation=True)
+        assert window.more_btn.isEnabled() is True
+        assert window._overflow_menu_actions["new_window"].isEnabled() is True
+        window._open_new_window()
+        app.processEvents()
+        titles = [item.windowTitle() for item in controller.windows()]
+        assert len(titles) == 2
+        assert any("Workspace 2" in title for title in titles)
+    finally:
+        _close_qt_windows(app, list(controller.windows()))
+        if owns_app:
+            app.quit()
+
+
+def test_workspace_controller_run_target_reservations_block_other_workspaces(tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    controller = WorkspaceWindowController(app=app, build_identity=None)
+    first = controller.create_workspace(show=False, focus=False)
+    second = controller.create_workspace(show=False, focus=False)
+    queue_targets = (
+        tmp_path / "alpha_EN_run",
+        tmp_path / "beta_EN_run",
+    )
+    try:
+        first_reservation = controller.reserve_run_targets(first, queue_targets)
+        assert first_reservation.reservation is not None
+        assert first_reservation.conflict is None
+
+        blocked = controller.reserve_run_targets(second, (queue_targets[1],))
+        assert blocked.conflict is not None
+        assert blocked.conflict.owner_workspace_index == 1
+        assert blocked.reservation is None
+
+        controller.release_run_targets(first, first_reservation.reservation)
+        second_reservation = controller.reserve_run_targets(second, (queue_targets[1],))
+        assert second_reservation.conflict is None
+        assert second_reservation.reservation is not None
+    finally:
+        _close_qt_windows(app, [first, second])
+        if owns_app:
+            app.quit()
+
+
 def test_settings_dialog_shows_build_identity_summary() -> None:
     app = QApplication.instance()
     owns_app = app is None
@@ -4147,6 +4478,7 @@ def test_fixed_xhigh_warning_switch_sets_fixed_high(monkeypatch) -> None:
         monkeypatch.setattr(window, "_build_config", _build_config)
         monkeypatch.setattr(window, "_warn_ocr_api_only_if_needed", lambda config, rebuild_config=None: config)
         monkeypatch.setattr(window, "_save_settings", lambda: None)
+        monkeypatch.setattr(window, "_start_translation_run", lambda **_kwargs: True)
         window._start()
         assert window.effort_policy_combo.currentText() == "fixed_high"
         assert config_calls["count"] == 2
@@ -4165,16 +4497,15 @@ def test_busy_close_force_close_accepts_and_uses_force_exit(monkeypatch) -> None
 
     window = QtMainWindow()
     try:
-        calls = {"saved": False, "forced": False}
+        calls = {"forced": False}
         window._busy = True
         window._running = True
         window._resolve_busy_close_choice = lambda: "force_close"  # type: ignore[method-assign]
-        monkeypatch.setattr(window, "_save_settings", lambda: calls.__setitem__("saved", True))
         monkeypatch.setattr(window, "_force_exit_app", lambda: calls.__setitem__("forced", True))
         event = QCloseEvent()
         window.closeEvent(event)
         assert event.isAccepted() is True
-        assert calls == {"saved": True, "forced": True}
+        assert calls == {"forced": True}
     finally:
         window._busy = False
         window._running = False
@@ -4229,8 +4560,22 @@ def test_restore_settings_leaves_output_folder_blank_when_saved_paths_are_missin
     assert fake.outdir_edit.text() == ""
 
 
+def test_restore_settings_keeps_queue_form_session_local() -> None:
+    fake = _make_restore_settings_fake(
+        _base_gui_settings(
+            queue_manifest_path="C:/tmp/queue.json",
+            queue_rerun_failed_only=True,
+        )
+    )
+
+    QtMainWindow._restore_settings(fake)
+
+    assert fake.queue_manifest_edit.text() == ""
+    assert fake.queue_rerun_failed_only_check.isChecked() is False
+
+
 def test_new_run_resets_runtime_state() -> None:
-    calls = {"details": None, "save_settings": False, "update_controls": False, "advisor_refreshed": False}
+    calls = {"details": None, "update_controls": False, "advisor_refreshed": False}
     fake = SimpleNamespace(
         _busy=False,
         _review_queue_dialog=None,
@@ -4257,7 +4602,6 @@ def test_new_run_resets_runtime_state() -> None:
         details_btn=_FakeButton(),
         _set_details_visible=lambda visible: calls.__setitem__("details", visible),
         _refresh_advisor_banner=lambda: calls.__setitem__("advisor_refreshed", True),
-        _save_settings=lambda: calls.__setitem__("save_settings", True),
         _update_controls=lambda: calls.__setitem__("update_controls", True),
         _reset_live_counters=lambda: None,
     )
@@ -4284,7 +4628,7 @@ def test_new_run_resets_runtime_state() -> None:
     assert fake.final_docx_edit.text() == ""
     assert fake.log_text.cleared is True
     assert fake.details_btn.checked is False
-    assert calls == {"details": False, "save_settings": True, "update_controls": True, "advisor_refreshed": True}
+    assert calls == {"details": False, "update_controls": True, "advisor_refreshed": True}
 
 
 def test_save_settings_uses_existing_gui_keys(monkeypatch) -> None:
@@ -4312,8 +4656,6 @@ def test_save_settings_uses_existing_gui_keys(monkeypatch) -> None:
         resume_check=_FakeCheck(True),
         breaks_check=_FakeCheck(False),
         keep_check=_FakeCheck(True),
-        queue_manifest_edit=_FakeEdit("C:/tmp/queue.json"),
-        queue_rerun_failed_only_check=_FakeCheck(False),
     )
 
     QtMainWindow._save_settings(fake)
@@ -4333,12 +4675,128 @@ def test_save_settings_uses_existing_gui_keys(monkeypatch) -> None:
         "resume",
         "page_breaks",
         "keep_intermediates",
-        "queue_manifest_path",
-        "queue_rerun_failed_only",
     }
     assert set(captured.keys()) == expected
     assert fake._defaults["last_lang"] == "FR"
     assert fake._defaults["workers"] == 4
+
+
+def test_apply_settings_from_dialog_keeps_workspace_draft_fields(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    settings = _base_gui_settings()
+    default_outdir = tmp_path / "defaults"
+    default_outdir.mkdir()
+    monkeypatch.setattr(app_window_module, "load_gui_settings", lambda: dict(settings))
+    monkeypatch.setattr(app_window_module, "save_gui_settings", lambda values: settings.update(values))
+
+    window = QtMainWindow()
+    try:
+        draft_outdir = tmp_path / "draft-out"
+        draft_outdir.mkdir()
+        window.lang_combo.setCurrentText("FR")
+        window.outdir_edit.setText(str(draft_outdir))
+        window.start_edit.setText("9")
+        window.apply_settings_from_dialog(
+            {
+                "default_lang": "AR",
+                "default_effort": "xhigh",
+                "default_effort_policy": "fixed_high",
+                "default_start_page": 3,
+                "default_outdir": str(default_outdir),
+            },
+            False,
+        )
+
+        assert window.lang_combo.currentText() == "FR"
+        assert window.outdir_edit.text() == str(draft_outdir)
+        assert window.start_edit.text() == "9"
+        assert window._defaults["default_lang"] == "AR"
+        assert window._defaults["default_outdir"] == str(default_outdir)
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_closing_window_does_not_persist_workspace_draft_state(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    persisted: list[dict[str, object]] = []
+    settings = _base_gui_settings()
+    monkeypatch.setattr(app_window_module, "load_gui_settings", lambda: dict(settings))
+    monkeypatch.setattr(app_window_module, "save_gui_settings", lambda values: persisted.append(dict(values)))
+
+    window = QtMainWindow()
+    try:
+        draft_outdir = tmp_path / "draft-close"
+        draft_outdir.mkdir()
+        window.lang_combo.setCurrentText("FR")
+        window.outdir_edit.setText(str(draft_outdir))
+        window.start_edit.setText("12")
+        window.close()
+        assert persisted == []
+    finally:
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_workspace_draft_state_is_isolated_until_explicit_commit(monkeypatch, tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    settings_store = _base_gui_settings(
+        gmail_intake_bridge_enabled=False,
+        last_lang="EN",
+        last_outdir="",
+        start_page=1,
+        workers=3,
+    )
+    monkeypatch.setattr(window_controller_module, "load_gui_settings", lambda: dict(settings_store))
+    monkeypatch.setattr(app_window_module, "load_gui_settings", lambda: dict(settings_store))
+    monkeypatch.setattr(app_window_module, "save_gui_settings", lambda values: settings_store.update(values))
+
+    controller = WorkspaceWindowController(app=app, build_identity=None)
+    windows: list[QtMainWindow] = []
+    try:
+        first = controller.create_workspace(show=False, focus=False)
+        windows.append(first)
+        committed_outdir = tmp_path / "committed-out"
+        committed_outdir.mkdir()
+        first.lang_combo.setCurrentText("FR")
+        first.outdir_edit.setText(str(committed_outdir))
+        first.start_edit.setText("7")
+
+        second = controller.create_workspace(show=False, focus=False)
+        windows.append(second)
+        assert second.lang_combo.currentText() == "EN"
+        assert second.outdir_edit.text() == ""
+        assert second.start_edit.text() == "1"
+
+        first._save_settings()
+
+        third = controller.create_workspace(show=False, focus=False)
+        windows.append(third)
+        assert third.lang_combo.currentText() == "FR"
+        assert third.outdir_edit.text() == str(committed_outdir.resolve())
+        assert third.start_edit.text() == "7"
+        assert second.lang_combo.currentText() == "EN"
+        assert second.outdir_edit.text() == ""
+        assert second.start_edit.text() == "1"
+    finally:
+        _close_qt_windows(app, windows)
+        if owns_app:
+            app.quit()
 
 
 def test_derive_queue_base_inputs_uses_manifest_when_form_is_blank() -> None:
@@ -4364,17 +4822,16 @@ def test_derive_queue_base_inputs_uses_manifest_when_form_is_blank() -> None:
     assert lang_value == "FR"
 
 
-def test_on_form_changed_uses_scheduled_save() -> None:
-    calls = {"scheduled": False, "page_count": False, "controls": False}
+def test_on_form_changed_keeps_workspace_state_session_local() -> None:
+    calls = {"page_count": False, "controls": False}
     fake = SimpleNamespace(
-        _schedule_save_settings=lambda: calls.__setitem__("scheduled", True),
         _refresh_page_count=lambda: calls.__setitem__("page_count", True),
         _update_controls=lambda: calls.__setitem__("controls", True),
     )
 
     QtMainWindow._on_form_changed(fake)
 
-    assert calls == {"scheduled": True, "page_count": True, "controls": True}
+    assert calls == {"page_count": True, "controls": True}
 
 
 def test_schedule_save_settings_starts_timer() -> None:

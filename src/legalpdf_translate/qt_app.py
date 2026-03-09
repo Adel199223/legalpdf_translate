@@ -17,8 +17,8 @@ def run(argv: list[str] | None = None) -> int:
         ) from exc
 
     from legalpdf_translate.build_identity import detect_runtime_build_identity
-    from legalpdf_translate.qt_gui.app_window import QtMainWindow
     from legalpdf_translate.qt_gui.styles import build_stylesheet
+    from legalpdf_translate.qt_gui.window_controller import WorkspaceWindowController
     from legalpdf_translate.resources_loader import resource_path
 
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
@@ -36,9 +36,12 @@ def run(argv: list[str] | None = None) -> int:
     app_icon = QIcon(str(icon_path))
     app.setWindowIcon(app_icon)
 
-    window = QtMainWindow(build_identity=detect_runtime_build_identity())
-    window.setWindowIcon(app_icon)
-    window.show()
+    controller = WorkspaceWindowController(
+        app=app,
+        build_identity=detect_runtime_build_identity(),
+        window_icon=app_icon,
+    )
+    controller.create_workspace(show=True, focus=False)
     return app.exec()
 
 

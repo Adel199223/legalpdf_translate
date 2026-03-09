@@ -12,16 +12,17 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from shutil import which
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from openai import OpenAI
-from PySide6.QtCore import QSize, QStandardPaths, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QSize, QStandardPaths, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
     QColor,
     QDesktopServices,
     QIcon,
+    QKeySequence,
     QLinearGradient,
     QMouseEvent,
     QPainter,
@@ -168,6 +169,13 @@ from legalpdf_translate.user_settings import (
 )
 from legalpdf_translate.workflow import TranslationWorkflow
 
+if TYPE_CHECKING:
+    from legalpdf_translate.qt_gui.window_controller import (
+        RunTargetConflict,
+        RunTargetReservation,
+        WorkspaceWindowController,
+    )
+
 
 _FRAME_INSETS = (16, 96, 16, 18)  # (left, top, right, bottom)
 _LAYOUT_DESKTOP_EXACT = "desktop_exact"
@@ -184,6 +192,22 @@ _REQUEST_BUDGET_LOG_RE = re.compile(
     r"request_timeout_budget_seconds=(?P<budget>[0-9]+(?:\.[0-9]+)?)"
 )
 _PAGE_TERMINAL_LOG_RE = re.compile(r"page=(?P<page>\d+)\s+image_used=.*\sstatus=(?P<status>done|failed|skipped)")
+_COMMITTED_LAUNCH_SETTING_KEYS = (
+    "last_outdir",
+    "last_lang",
+    "effort",
+    "effort_policy",
+    "image_mode",
+    "ocr_mode",
+    "ocr_engine",
+    "start_page",
+    "end_page",
+    "max_pages",
+    "workers",
+    "resume",
+    "page_breaks",
+    "keep_intermediates",
+)
 
 
 def _build_identity_metadata(build_identity: RuntimeBuildIdentity | None) -> dict[str, object] | None:
@@ -618,13 +642,23 @@ class QtMainWindow(QMainWindow):
     request_cancel = Signal()
     gmail_intake_received = Signal(object)
 
-    def __init__(self, *, build_identity: RuntimeBuildIdentity | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        build_identity: RuntimeBuildIdentity | None = None,
+        controller: WorkspaceWindowController | None = None,
+        workspace_index: int | None = None,
+    ) -> None:
         super().__init__()
         self._build_identity = build_identity
-        if build_identity is None:
-            self.setWindowTitle("LegalPDF Translate")
-        else:
-            self.setWindowTitle(build_identity.window_title("LegalPDF Translate"))
+        self._controller = controller
+        self._workspace_index = workspace_index
+        self._base_window_title = (
+            "LegalPDF Translate"
+            if build_identity is None
+            else build_identity.window_title("LegalPDF Translate")
+        )
+        self.setWindowTitle(self._base_window_title)
         self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.setMinimumSize(720, 540)
         self.resize(1680, 960)
@@ -657,6 +691,7 @@ class QtMainWindow(QMainWindow):
         self._settings_dialog: QtSettingsDialog | None = None
         self._glossary_builder_dialog: QtGlossaryBuilderDialog | None = None
         self._calibration_dialog: QtCalibrationAuditDialog | None = None
+        self._active_run_reservation: RunTargetReservation | None = None
         self._menu_actions: dict[str, QAction] = {}
         self._overflow_menu_actions: dict[str, QAction] = {}
         self._joblog_db_path = job_log_db_path()
@@ -695,6 +730,7 @@ class QtMainWindow(QMainWindow):
         self._gmail_batch_in_progress = False
         self._gmail_batch_current_index: int | None = None
         self._gmail_intake_bridge: LocalGmailIntakeBridge | None = None
+        self._workspace_pristine_job_context: tuple[object, ...] | None = None
         self._layout_mode = _LAYOUT_DESKTOP_EXACT
         self._click_debug_enabled = _is_truthy_env(os.getenv("LEGALPDF_QT_CLICK_DEBUG"))
         self._settings_save_timer = QTimer(self)
@@ -712,9 +748,12 @@ class QtMainWindow(QMainWindow):
         self._set_adv_visible(False)
         self._set_details_visible(False)
         self._refresh_page_count()
-        self._sync_gmail_intake_bridge()
+        if self._controller is None:
+            self._sync_gmail_intake_bridge()
         self._update_controls()
         self._refresh_canvas()
+        self.refresh_workspace_title()
+        self._capture_workspace_pristine_job_context()
 
     def _build_ui(self) -> None:
         root = _FuturisticCanvas(self)
@@ -1446,12 +1485,17 @@ class QtMainWindow(QMainWindow):
     def _install_overflow_menu(self) -> None:
         menu = self.more_menu
         actions = {
+            "new_window": menu.addAction(
+                self._icon("resources/icons/dashboard/new_job.svg"),
+                "New Window",
+            ),
             "open_output_folder": menu.addAction(self._icon("resources/icons/dashboard/open_folder.svg"), "Open Output Folder"),
             "export_partial": menu.addAction(self._icon("resources/icons/dashboard/export.svg"), "Export Partial DOCX"),
             "rebuild_docx": menu.addAction(self._icon("resources/icons/dashboard/rebuild.svg"), "Rebuild DOCX"),
             "run_report": menu.addAction(self._icon("resources/icons/dashboard/report.svg"), "Generate Run Report"),
             "job_log": menu.addAction(self._icon("resources/icons/dashboard/joblog.svg"), "View Job Log"),
         }
+        actions["new_window"].triggered.connect(self._open_new_window)
         actions["open_output_folder"].triggered.connect(self._open_output_folder)
         actions["export_partial"].triggered.connect(self._export_partial)
         actions["rebuild_docx"].triggered.connect(self._start_rebuild_docx)
@@ -1472,6 +1516,191 @@ class QtMainWindow(QMainWindow):
         hours = rounded // 3600
         minutes = int(round((rounded % 3600) / 60.0))
         return f"~{hours}h {minutes}m" if minutes else f"~{hours}h"
+
+    def _window_title_hint(self) -> str:
+        queue_manifest_text = self.queue_manifest_edit.text().strip()
+        if queue_manifest_text:
+            try:
+                return Path(queue_manifest_text).expanduser().resolve().name
+            except OSError:
+                return Path(queue_manifest_text).name
+        pdf_text = self.pdf_edit.text().strip()
+        if pdf_text:
+            try:
+                return Path(pdf_text).expanduser().resolve().name
+            except OSError:
+                return Path(pdf_text).name
+        return ""
+
+    def refresh_workspace_title(self) -> None:
+        parts = [self._base_window_title]
+        if self._workspace_index is not None:
+            parts.append(f"Workspace {self._workspace_index}")
+        hint = self._window_title_hint()
+        if hint:
+            parts.append(hint)
+        self.setWindowTitle(" | ".join(parts))
+
+    def _active_gmail_intake_bridge(self) -> LocalGmailIntakeBridge | None:
+        controller = self._controller
+        if controller is not None:
+            bridge_getter = getattr(controller, "gmail_intake_bridge", None)
+            if callable(bridge_getter):
+                bridge = bridge_getter()
+                if bridge is not None:
+                    return bridge
+        return self._gmail_intake_bridge
+
+    def _workspace_job_context_snapshot(self) -> tuple[object, ...]:
+        return (
+            self.pdf_edit.text().strip(),
+            self.queue_manifest_edit.text().strip(),
+            self.outdir_edit.text().strip(),
+            self.lang_combo.currentText().strip().upper(),
+            self.effort_combo.currentText().strip().lower(),
+            self.effort_policy_combo.currentText().strip().lower(),
+            self.images_combo.currentText().strip().lower(),
+            self.ocr_mode_combo.currentText().strip().lower(),
+            self.ocr_engine_combo.currentText().strip().lower(),
+            self.start_edit.text().strip(),
+            self.end_edit.text().strip(),
+            self.max_edit.text().strip(),
+            int(self.workers_spin.value()),
+            bool(self.resume_check.isChecked()),
+            bool(self.breaks_check.isChecked()),
+            bool(self.keep_check.isChecked()),
+            bool(self.queue_rerun_failed_only_check.isChecked()),
+        )
+
+    def _capture_workspace_pristine_job_context(self) -> None:
+        self._workspace_pristine_job_context = self._workspace_job_context_snapshot()
+
+    def is_workspace_reusable_for_gmail(self) -> bool:
+        if self._busy or self._worker is not None or self._worker_thread is not None:
+            return False
+        if self._has_active_gmail_batch():
+            return False
+        if self._gmail_batch_session is not None:
+            return False
+        review_dialog = self._gmail_batch_review_dialog
+        if review_dialog is not None and review_dialog.isVisible():
+            return False
+        if self._last_gmail_intake_context is not None or self._last_gmail_message_load_result is not None:
+            return False
+        if self._last_summary is not None or self._last_output_docx is not None:
+            return False
+        if self._last_run_config is not None or self._last_run_dir is not None:
+            return False
+        if self._last_run_report_path is not None or self._last_queue_summary_path is not None:
+            return False
+        if self._last_joblog_seed is not None or self._last_workflow is not None:
+            return False
+        if self._last_review_queue:
+            return False
+        if self._workspace_pristine_job_context is None:
+            return False
+        return self._workspace_job_context_snapshot() == self._workspace_pristine_job_context
+
+    def accept_gmail_intake(self, context: InboundMailContext) -> None:
+        if not isinstance(context, InboundMailContext):
+            return
+        self.gmail_intake_received.emit(context)
+
+    def reload_shared_settings(self, values: dict[str, object]) -> None:
+        self._defaults.update(values)
+        self._update_controls()
+
+    def _open_new_window(self) -> None:
+        controller = self._controller
+        if controller is not None:
+            controller.create_workspace(show=True, focus=True)
+            return
+        app = QApplication.instance()
+        if app is None:
+            return
+        window = QtMainWindow(build_identity=self._build_identity)
+        window.setWindowIcon(self.windowIcon())
+        cache_key = "_legalpdf_translate_standalone_windows"
+        windows = [item for item in getattr(app, cache_key, []) if item is not None]
+        windows.append(window)
+        setattr(app, cache_key, windows)
+        window.destroyed.connect(
+            lambda _obj=None, app=app, cache_key=cache_key, key=id(window): setattr(
+                app,
+                cache_key,
+                [item for item in getattr(app, cache_key, []) if id(item) != key],
+            )
+        )
+        window.show()
+        if hasattr(window, "raise_"):
+            window.raise_()
+        if hasattr(window, "activateWindow"):
+            window.activateWindow()
+
+    def _run_target_paths_for_config(self, config: RunConfig) -> tuple[Path, ...]:
+        return (build_output_paths(config.output_dir, config.pdf_path, config.target_lang).run_dir,)
+
+    def _queue_run_target_paths(
+        self,
+        *,
+        manifest_jobs: list[dict[str, Any]],
+        base_config: RunConfig,
+    ) -> tuple[Path, ...]:
+        targets: list[Path] = []
+        seen: set[str] = set()
+        for row in manifest_jobs:
+            payload = row.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            config = self._build_queue_job_config_from_base(base_config, payload)
+            target = build_output_paths(config.output_dir, config.pdf_path, config.target_lang).run_dir
+            key = str(target).replace("\\", "/").lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append(target)
+        return tuple(targets)
+
+    def _release_active_run_targets(self) -> None:
+        controller = self._controller
+        reservation = self._active_run_reservation
+        self._active_run_reservation = None
+        if controller is None:
+            return
+        controller.release_run_targets(self, reservation)
+
+    def _show_run_target_conflict(self, operation_name: str, conflict: RunTargetConflict) -> None:
+        owner_label = (
+            f"Workspace {conflict.owner_workspace_index}"
+            if isinstance(conflict.owner_workspace_index, int)
+            else "another window"
+        )
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle(f"{operation_name} blocked")
+        dialog.setText(f"{operation_name} is already active in {owner_label}.")
+        dialog.setInformativeText(
+            "This job would reuse the same run folder, which is not allowed.\n\n"
+            f"Run folder:\n{conflict.target_path}\n\n"
+            f"Owner window:\n{conflict.owner_title or owner_label}"
+        )
+        focus_btn = dialog.addButton("Focus other workspace", QMessageBox.ButtonRole.ActionRole)
+        dialog.addButton(QMessageBox.StandardButton.Close)
+        dialog.exec()
+        if dialog.clickedButton() is focus_btn and self._controller is not None:
+            self._controller.focus_window(conflict.owner_window)
+
+    def _reserve_run_targets(self, *, operation_name: str, target_paths: tuple[Path, ...]) -> bool:
+        controller = self._controller
+        if controller is None or not target_paths:
+            return True
+        self._release_active_run_targets()
+        result = controller.reserve_run_targets(self, target_paths)
+        if result.conflict is not None:
+            self._show_run_target_conflict(operation_name, result.conflict)
+            return False
+        self._active_run_reservation = result.reservation
+        return True
 
     def _selected_pdf_page_total(self) -> int | None:
         pages_text = self.pages_label.text().strip()
@@ -1660,15 +1889,11 @@ class QtMainWindow(QMainWindow):
         self.resume_check.setChecked(bool(defaults.get("resume", defaults.get("default_resume", True))))
         self.breaks_check.setChecked(bool(defaults.get("page_breaks", defaults.get("default_page_breaks", True))))
         self.keep_check.setChecked(bool(defaults.get("keep_intermediates", defaults.get("default_keep_intermediates", True))))
-        self.queue_manifest_edit.setText(str(defaults.get("queue_manifest_path", "") or ""))
-        self.queue_rerun_failed_only_check.setChecked(bool(defaults.get("queue_rerun_failed_only", False)))
+        self.queue_manifest_edit.clear()
+        self.queue_rerun_failed_only_check.setChecked(False)
         self._refresh_lang_badge()
 
-    def _save_settings(self) -> None:
-        timer = getattr(self, "_settings_save_timer", None)
-        if timer is not None and timer.isActive():
-            timer.stop()
-
+    def _committed_launch_settings_values(self) -> dict[str, object]:
         def opt_int(text: str) -> int | None:
             cleaned = text.strip()
             if cleaned == "":
@@ -1701,15 +1926,27 @@ class QtMainWindow(QMainWindow):
             "resume": self.resume_check.isChecked(),
             "page_breaks": self.breaks_check.isChecked(),
             "keep_intermediates": self.keep_check.isChecked(),
-            "queue_manifest_path": self.queue_manifest_edit.text().strip(),
-            "queue_rerun_failed_only": self.queue_rerun_failed_only_check.isChecked(),
         }
         if self._transient_safe_profile_active and self._transient_safe_profile_backup is not None:
             for key, value in self._transient_safe_profile_backup.items():
-                values[key] = value
+                if key in values:
+                    values[key] = value
+        return values
+
+    def _save_settings(self) -> None:
+        timer = getattr(self, "_settings_save_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+        committed_settings_getter = getattr(self, "_committed_launch_settings_values", None)
+        if callable(committed_settings_getter):
+            values = committed_settings_getter()
+        else:
+            values = QtMainWindow._committed_launch_settings_values(self)
         try:
             save_gui_settings(values)
-            self._defaults.update(values)
+            for key in _COMMITTED_LAUNCH_SETTING_KEYS:
+                if key in values:
+                    self._defaults[key] = values[key]
         except Exception:
             pass
 
@@ -1717,6 +1954,9 @@ class QtMainWindow(QMainWindow):
         menu_bar = self.menuBar()
 
         file_menu = menu_bar.addMenu("File")
+        file_new_window = file_menu.addAction("New Window")
+        file_new_window.setShortcut(QKeySequence("Ctrl+Shift+N"))
+        file_new_window.triggered.connect(self._open_new_window)
         file_new = file_menu.addAction("New Run")
         file_new.triggered.connect(self._new_run)
         file_open = file_menu.addAction("Open Output Folder")
@@ -1765,6 +2005,7 @@ class QtMainWindow(QMainWindow):
         help_how.triggered.connect(self._show_how_it_works)
 
         self._menu_actions = {
+            "new_window": file_new_window,
             "new_run": file_new,
             "open_output_folder": file_open,
             "export_partial": file_export,
@@ -2120,7 +2361,12 @@ class QtMainWindow(QMainWindow):
         status_text: str,
         header_status_text: str,
         dashboard_task: str,
-    ) -> None:
+    ) -> bool:
+        if not self._reserve_run_targets(
+            operation_name="Translate",
+            target_paths=self._run_target_paths_for_config(config),
+        ):
+            return False
         advisor_applied = (
             config.advisor_recommendation_applied
             if isinstance(config.advisor_recommendation_applied, bool)
@@ -2184,6 +2430,7 @@ class QtMainWindow(QMainWindow):
         self._worker = worker
         self._set_busy(True, translation=True)
         thread.start()
+        return True
 
     def _run_after_worker_cleanup(self, callback: Callable[[], None]) -> None:
         if self._worker is None and self._worker_thread is None:
@@ -2619,10 +2866,12 @@ class QtMainWindow(QMainWindow):
         self._gmail_batch_preview_cache_transfer = None
         if preview_cache_transfer is not None:
             preview_cache_transfer.cleanup()
+        active_bridge_getter = getattr(self, "_active_gmail_intake_bridge", None)
+        active_bridge = active_bridge_getter() if callable(active_bridge_getter) else getattr(self, "_gmail_intake_bridge", None)
         _request_gmail_window_attention(
             self,
             reason="review_dialog",
-            bridge=getattr(self, "_gmail_intake_bridge", None),
+            bridge=active_bridge,
             build_identity=getattr(self, "_build_identity", None),
             append_log=getattr(self, "_append_log", None),
         )
@@ -2721,6 +2970,12 @@ class QtMainWindow(QMainWindow):
         clear_bridge_runtime_metadata(app_data_dir())
 
     def _sync_gmail_intake_bridge(self) -> None:
+        controller = self._controller
+        if controller is not None:
+            sync_bridge = getattr(controller, "sync_gmail_intake_bridge", None)
+            if callable(sync_bridge):
+                sync_bridge(anchor_window=self)
+            return
         enabled, port, token = self._gmail_intake_settings()
         current = self._gmail_intake_bridge
         current_matches = (
@@ -2800,10 +3055,12 @@ class QtMainWindow(QMainWindow):
             f"message_id={context_obj.message_id} "
             f"subject={subject}{account_suffix}"
         )
+        active_bridge_getter = getattr(self, "_active_gmail_intake_bridge", None)
+        active_bridge = active_bridge_getter() if callable(active_bridge_getter) else getattr(self, "_gmail_intake_bridge", None)
         _request_gmail_window_attention(
             self,
             reason="intake_received",
-            bridge=getattr(self, "_gmail_intake_bridge", None),
+            bridge=active_bridge,
             build_identity=getattr(self, "_build_identity", None),
             append_log=getattr(self, "_append_log", None),
         )
@@ -2818,7 +3075,7 @@ class QtMainWindow(QMainWindow):
             _request_gmail_window_attention(
                 self,
                 reason="intake_blocked",
-                bridge=getattr(self, "_gmail_intake_bridge", None),
+                bridge=active_bridge,
                 build_identity=getattr(self, "_build_identity", None),
                 append_log=getattr(self, "_append_log", None),
             )
@@ -2948,28 +3205,17 @@ class QtMainWindow(QMainWindow):
         if persist:
             save_gui_settings(values)
             self._defaults = load_gui_settings()
-
-        self.lang_combo.setCurrentText(str(self._defaults.get("default_lang", "EN")))
-        self.effort_combo.setCurrentText(str(self._defaults.get("default_effort", "high")))
-        self.effort_policy_combo.setCurrentText(str(self._defaults.get("default_effort_policy", "adaptive")))
-        self.images_combo.setCurrentText(str(self._defaults.get("default_images_mode", "off")))
-        self.resume_check.setChecked(bool(self._defaults.get("default_resume", True)))
-        self.keep_check.setChecked(bool(self._defaults.get("default_keep_intermediates", True)))
-        self.breaks_check.setChecked(bool(self._defaults.get("default_page_breaks", True)))
-        self.start_edit.setText(str(self._defaults.get("default_start_page", 1)))
-        default_end = self._defaults.get("default_end_page")
-        self.end_edit.setText("" if default_end in (None, "") else str(default_end))
-        try:
-            default_workers = int(self._defaults.get("default_workers", 3))
-        except (TypeError, ValueError):
-            default_workers = 3
-        self.workers_spin.setValue(max(1, min(6, default_workers)))
-        default_outdir = str(self._defaults.get("default_outdir", "") or "")
-        if default_outdir and not self.outdir_edit.text().strip():
-            self.outdir_edit.setText(default_outdir)
-        self.ocr_mode_combo.setCurrentText(str(self._defaults.get("ocr_mode_default", "auto")))
-        self.ocr_engine_combo.setCurrentText(str(self._defaults.get("ocr_engine_default", "local_then_api")))
-        self._sync_gmail_intake_bridge()
+        controller = self._controller
+        if controller is not None:
+            apply_shared_settings = getattr(controller, "apply_shared_settings", None)
+            if callable(apply_shared_settings):
+                apply_shared_settings(
+                    source_window=self,
+                    persist=persist,
+                    values=dict(values),
+                )
+        else:
+            self._sync_gmail_intake_bridge()
         self._update_controls()
 
     def _open_settings_dialog(self) -> None:
@@ -3157,7 +3403,9 @@ class QtMainWindow(QMainWindow):
         self._refresh_advisor_banner()
 
     def _on_form_changed(self) -> None:
-        self._schedule_save_settings()
+        refresh_workspace_title = getattr(self, "refresh_workspace_title", None)
+        if callable(refresh_workspace_title):
+            refresh_workspace_title()
         refresh_lang_badge = getattr(self, "_refresh_lang_badge", None)
         if callable(refresh_lang_badge):
             refresh_lang_badge()
@@ -3619,7 +3867,7 @@ class QtMainWindow(QMainWindow):
         self.open_joblog_btn.setEnabled(not self._busy)
         more_btn = getattr(self, "more_btn", None)
         if more_btn is not None:
-            more_btn.setEnabled(not self._busy)
+            more_btn.setEnabled(True)
 
         self._set_menu_enabled("open_output_folder", can_open)
         self._set_menu_enabled("export_partial", (not self._busy) and self._can_export_partial)
@@ -3632,6 +3880,7 @@ class QtMainWindow(QMainWindow):
         self._set_menu_enabled("settings", not self._busy)
         overflow_actions = getattr(self, "_overflow_menu_actions", {})
         if overflow_actions:
+            overflow_actions["new_window"].setEnabled(True)
             overflow_actions["open_output_folder"].setEnabled(can_open)
             overflow_actions["export_partial"].setEnabled((not self._busy) and self._can_export_partial)
             overflow_actions["rebuild_docx"].setEnabled((not self._busy) and self._has_rebuildable_pages())
@@ -3666,6 +3915,7 @@ class QtMainWindow(QMainWindow):
             if w is not None:
                 w.setEnabled(not busy)
         self._update_controls()
+        self.refresh_workspace_title()
 
     def _start(self) -> None:
         if self._busy:
@@ -3725,6 +3975,19 @@ class QtMainWindow(QMainWindow):
             ),
         )
         if base_config is None:
+            return
+        try:
+            queue_targets = self._queue_run_target_paths(
+                manifest_jobs=manifest_jobs,
+                base_config=base_config,
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Invalid configuration", str(exc))
+            return
+        if not self._reserve_run_targets(
+            operation_name="Run Queue",
+            target_paths=queue_targets,
+        ):
             return
         rerun_failed_only = self.queue_rerun_failed_only_check.isChecked()
         self._save_settings()
@@ -3895,6 +4158,11 @@ class QtMainWindow(QMainWindow):
             config = self._build_config()
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Invalid configuration", str(exc))
+            return
+        if not self._reserve_run_targets(
+            operation_name="Analyze",
+            target_paths=self._run_target_paths_for_config(config),
+        ):
             return
 
         self._save_settings()
@@ -4508,12 +4776,16 @@ class QtMainWindow(QMainWindow):
         if self._worker_thread is not None:
             self._worker_thread.deleteLater()
             self._worker_thread = None
+        self._release_active_run_targets()
         if callback is not None:
             callback()
 
     def _new_run(self) -> None:
         if self._busy:
             return
+        release_targets = getattr(self, "_release_active_run_targets", None)
+        if callable(release_targets):
+            release_targets()
         if self._review_queue_dialog is not None and self._review_queue_dialog.isVisible():
             self._review_queue_dialog.close()
             self._review_queue_dialog = None
@@ -4567,8 +4839,10 @@ class QtMainWindow(QMainWindow):
         focus_dashboard = getattr(self, "_focus_dashboard", None)
         if callable(focus_dashboard):
             focus_dashboard()
-        self._save_settings()
         self._update_controls()
+        refresh_workspace_title = getattr(self, "refresh_workspace_title", None)
+        if callable(refresh_workspace_title):
+            refresh_workspace_title()
 
     def _export_partial(self) -> None:
         wf = self._last_workflow
@@ -4593,6 +4867,11 @@ class QtMainWindow(QMainWindow):
             config = self._build_config()
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Invalid configuration", str(exc))
+            return
+        if not self._reserve_run_targets(
+            operation_name="Rebuild DOCX",
+            target_paths=self._run_target_paths_for_config(config),
+        ):
             return
 
         self._save_settings()
@@ -4988,6 +5267,11 @@ class QtMainWindow(QMainWindow):
                 self._append_log(f"[click-debug] widgetAt={target.__class__.__name__} objectName={object_name}")
         super().mousePressEvent(event)
 
+    def event(self, event) -> bool:  # type: ignore[override]
+        if event is not None and event.type() == QEvent.Type.WindowActivate and self._controller is not None:
+            self._controller.note_window_activated(self)
+        return super().event(event)
+
     def _update_card_max_width(self, *, viewport_width: int | None = None) -> None:
         vp = self._scroll_area.viewport()
         resolved_viewport_width = viewport_width if viewport_width is not None else (vp.width() if vp is not None else self.width())
@@ -5036,7 +5320,6 @@ class QtMainWindow(QMainWindow):
                     self._settings_save_timer.stop()
                 if self._settings_dialog is not None and self._settings_dialog.isVisible():
                     self._settings_dialog.close()
-                self._save_settings()
                 self._append_log("Force close requested while a task was still running.")
                 if self._gmail_batch_review_dialog is not None and self._gmail_batch_review_dialog.isVisible():
                     self._gmail_batch_review_dialog.close()
@@ -5053,7 +5336,6 @@ class QtMainWindow(QMainWindow):
             self._settings_dialog.close()
         if self._gmail_batch_review_dialog is not None and self._gmail_batch_review_dialog.isVisible():
             self._gmail_batch_review_dialog.close()
-        self._save_settings()
         self._clear_gmail_batch_session()
         self._stop_gmail_intake_bridge()
         super().closeEvent(event)
