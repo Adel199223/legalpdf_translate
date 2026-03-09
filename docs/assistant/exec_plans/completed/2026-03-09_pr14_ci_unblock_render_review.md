@@ -83,5 +83,18 @@ Unblock PR 14 by stabilizing Qt render-review captures, then merge and clean the
   - Passed: `53 cases`.
 - `dart run tooling/validate_workspace_hygiene.dart`
   - Passed.
-- Pending:
-  - follow-up commit, push, PR `#14` recheck, merge, and thread cleanup
+- `git commit -m "fix(ci): stabilize qt render review profiles"`
+  - Passed: follow-up commit `e705c20`.
+- `git push origin feat/joblog-inline-editing`
+  - Passed: PR `#14` updated to `e705c2097584af75127c5992011cfbafc3ac21d6`.
+- GitHub Actions rerun for PR `#14`
+  - Passed:
+    - `CI / test (3.11)` pull_request run `22859381682`
+    - `CI / test (3.11)` push run `22859378910`
+    - both `docs_tooling_contracts` checks
+- `gh pr merge 14 --merge --delete-branch`
+  - Passed: PR `#14` merged into `main` at merge commit `cccf13e31a4db3ed4e0d7fe931c645fd8d55d47c`.
+- `git fetch --prune origin`
+  - Passed: remote branch `origin/feat/joblog-inline-editing` removed.
+- Local cleanup
+  - Passed: repository returned to `main`, local feature branch no longer present, `tmp_ui_review/` removed, and `git status --short --branch` is clean.
