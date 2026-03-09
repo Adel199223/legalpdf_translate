@@ -1,4 +1,5 @@
 from legalpdf_translate.prompt_builder import (
+    build_ar_token_retry_prompt,
     build_language_retry_prompt,
     build_page_prompt,
     build_retry_prompt,
@@ -59,6 +60,29 @@ def test_retry_prompt_ar_keeps_shared_header_without_language_hint() -> None:
     assert "<<<END PRIOR OUTPUT>>>" in prompt
 
 
+def test_ar_token_retry_prompt_includes_locked_token_inventory_and_markers() -> None:
+    prompt = build_ar_token_retry_prompt("PRIOR", ["Adel Belghali", "PT50003506490000832760029"])
+    assert "ARABIC TOKEN CORRECTION ONLY" in prompt
+    assert "<<<BEGIN LOCKED TOKENS>>>" in prompt
+    assert "1. [[Adel Belghali]]" in prompt
+    assert "2. [[PT50003506490000832760029]]" in prompt
+    assert "Do not translate, edit, split, remove, reorder, or add token contents." in prompt
+    assert "Every listed token must appear only inside [[...]]." in prompt
+    assert "No Latin letters or digits may appear outside protected tokens." in prompt
+    assert "<<<BEGIN PRIOR OUTPUT>>>" in prompt
+    assert "<<<END PRIOR OUTPUT>>>" in prompt
+
+
+def test_ar_token_retry_prompt_highlights_outside_token_violation() -> None:
+    prompt = build_ar_token_retry_prompt(
+        "PRIOR",
+        ["Adel Belghali"],
+        violation_kind="latin_or_digits_outside_wrapped_tokens",
+    )
+    assert "CURRENT DEFECT TO FIX: Latin letters or digits still appear outside [[...]] tokens." in prompt
+    assert "Wrap every verbatim identifier span in [[...]]" in prompt
+
+
 def test_language_retry_prompt_fr_has_language_correction_header_and_markers() -> None:
     prompt = build_language_retry_prompt(TargetLang.FR, "PRIOR")
     assert "LANGUAGE CORRECTION ONLY: Re-emit the SAME content, fix language compliance only" in prompt
@@ -73,3 +97,9 @@ def test_language_retry_prompt_en_has_language_correction_header_and_markers() -
     assert "Re-emit in legal English only; remove Portuguese residual terms" in prompt
     assert "<<<BEGIN PRIOR OUTPUT>>>" in prompt
     assert "<<<END PRIOR OUTPUT>>>" in prompt
+
+
+def test_language_retry_prompt_ar_allows_portuguese_only_inside_protected_tokens() -> None:
+    prompt = build_language_retry_prompt(TargetLang.AR, "PRIOR")
+    assert "Portuguese is allowed only inside verbatim protected [[...]] tokens." in prompt
+    assert "Outside protected tokens, all remaining text must be Arabic." in prompt

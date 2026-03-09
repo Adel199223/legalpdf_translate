@@ -28,3 +28,11 @@ def test_qt_spec_resolves_project_root_from_specpath_candidates() -> None:
     text = spec_path.read_text(encoding="utf-8")
     assert "candidates = [spec_root, spec_root.parent]" in text
     assert "raise RuntimeError(" in text
+
+
+def test_qt_spec_builds_native_focus_host_executable() -> None:
+    spec_path = Path("build/pyinstaller_qt.spec")
+    text = spec_path.read_text(encoding="utf-8")
+    assert "\"gmail_focus_host.py\"" in text
+    assert 'name="LegalPDFGmailFocusHost"' in text
+    assert "console=True" in text

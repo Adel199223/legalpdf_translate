@@ -107,6 +107,79 @@ def test_arabic_expected_token_partial_wrapper_is_repaired() -> None:
     assert normalized == f"الاسم: {LRI}[[Adel Belghali]]{PDI}"
 
 
+def test_arabic_expected_token_near_match_with_accent_drift_is_repaired() -> None:
+    text = "العنوان: [[Rua Luis de Camoes no 6, 7960-011 Marmelar, Pedrogao, Vidigueira]]"
+    normalized = normalize_output_text(
+        text,
+        lang=TargetLang.AR,
+        expected_ar_tokens=["Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira"],
+    )
+    assert normalized == (
+        "العنوان: "
+        f"{LRI}[[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]{PDI}"
+    )
+
+
+def test_arabic_expected_token_near_match_with_identifier_ocr_drift_is_repaired() -> None:
+    text = "الملف: [[21/25.OFBPTM]]"
+    normalized = normalize_output_text(
+        text,
+        lang=TargetLang.AR,
+        expected_ar_tokens=["21/25.0FBPTM"],
+    )
+    assert normalized == f"الملف: {LRI}[[21/25.0FBPTM]]{PDI}"
+
+
+def test_arabic_expected_token_real_content_drift_is_not_repaired() -> None:
+    text = "العنوان: [[Rua Luís de Camões no 9, 7960-011 Marmelar, Pedrógão, Vidigueira]]"
+    normalized = normalize_output_text(
+        text,
+        lang=TargetLang.AR,
+        expected_ar_tokens=["Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira"],
+    )
+    assert normalized == (
+        "العنوان: "
+        f"{LRI}[[Rua Luís de Camões no 9, 7960-011 Marmelar, Pedrógão, Vidigueira]]{PDI}"
+    )
+
+
+def test_arabic_conservative_identifier_spans_are_wrapped_outside_existing_tokens() -> None:
+    text = "المرجع 21/25.0FBPTM والبريد beja.judicial@tribunais.org.pt"
+    normalized = normalize_output_text(text, lang=TargetLang.AR)
+    assert f"{LRI}[[21/25.0FBPTM]]{PDI}" in normalized
+    assert f"{LRI}[[beja.judicial@tribunais.org.pt]]{PDI}" in normalized
+
+
+def test_arabic_conservative_full_value_label_is_wrapped_when_label_is_portuguese() -> None:
+    text = "Nome: Adel Belghali"
+    normalized = normalize_output_text(text, lang=TargetLang.AR)
+    assert normalized == f"Nome: {LRI}[[Adel Belghali]]{PDI}"
+
+
+def test_arabic_conservative_retok_does_not_wrap_arbitrary_portuguese_prose() -> None:
+    text = "هذا Tribunal Judicial da Comarca de Beja"
+    normalized = normalize_output_text(text, lang=TargetLang.AR)
+    assert normalized == text
+
+
+def test_arabic_malformed_nested_marker_for_number_is_repaired_to_bracket_safe_token() -> None:
+    text = "[[[36231063]]]"
+    normalized = normalize_output_text(text, lang=TargetLang.AR)
+    assert normalized == f"[{LRI}[[36231063]]{PDI}]"
+
+
+def test_arabic_malformed_nested_marker_for_case_ref_is_repaired_to_bracket_safe_token() -> None:
+    text = "[[[21/25.0FBPTM]]]"
+    normalized = normalize_output_text(text, lang=TargetLang.AR)
+    assert normalized == f"[{LRI}[[21/25.0FBPTM]]{PDI}]"
+
+
+def test_arabic_malformed_nested_prose_is_not_repaired_into_clean_protected_token() -> None:
+    text = "[[[Tribunal Judicial da Comarca de Beja]]]"
+    normalized = normalize_output_text(text, lang=TargetLang.AR)
+    assert normalized != f"[{LRI}[[Tribunal Judicial da Comarca de Beja]]{PDI}]"
+
+
 def test_arabic_portuguese_month_date_token_is_normalized_to_arabic_month() -> None:
     text = "بتاريخ [[10 de fevereiro de 2026]]"
     normalized = normalize_output_text(text, lang=TargetLang.AR)

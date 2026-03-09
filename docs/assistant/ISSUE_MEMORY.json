@@ -1,0 +1,364 @@
+{
+  "version": 1,
+  "last_updated": "2026-03-09T01:00:00Z",
+  "issues": [
+    {
+      "id": "workflow-wrong-build-under-test",
+      "title": "Wrong app/build under test because of mixed branches/worktrees and noncanonical launch",
+      "first_seen_timestamp": "2026-03-06T00:00:00Z",
+      "last_seen_timestamp": "2026-03-09T01:00:00Z",
+      "repeat_count": 5,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "The wrong LegalPDF Translate window was opened for testing.",
+        "Accepted functionality appeared to be missing because it existed only on a side branch or the wrong worktree was launched.",
+        "Repeated user-visible confusion occurred during Gemini, Gmail, and UI follow-up testing.",
+        "The user needed extra support guidance about which sibling folder or workspace file should be the normal daily entry point."
+      ],
+      "likely_root_cause": "Feature work progressed on side branches after acceptance, the approved base was not promoted immediately, and multiple runnable worktrees existed without strong enough canonical-build enforcement.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-07T00:00:00Z",
+          "summary": "Added worktree baseline discipline governance/docs.",
+          "outcome": "insufficient"
+        },
+        {
+          "timestamp": "2026-03-07T00:00:00Z",
+          "summary": "Added Qt build identity helper and noncanonical build markers.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-03-09T01:00:00Z",
+          "summary": "Added a saved multi-root VS Code workspace guide and archived a stale broken sibling folder out of the daily view.",
+          "outcome": "partial_only"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-07T10:33:19Z",
+        "summary": "Canonical build enforcement plus approved-base promotion discipline, launcher identity packet gating, and noncanonical launch override rules.",
+        "expected_result": "Only the canonical approved-base build is the default test target, and wrong-build launches fail closed unless explicitly overridden."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md",
+        "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "docs/assistant/runtime/CANONICAL_BUILD.json",
+        "docs/assistant/DOCS_REFRESH_NOTES.md",
+        "docs/assistant/INDEX.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md"
+      ],
+      "bootstrap_relevance": "required",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "worktree/build identity governance",
+          "approved-base promotion rules",
+          "canonical launch/default test target guidance",
+          "plain-language local workspace entry guidance"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/active/2026-03-07_worktree_baseline_docs_sync.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/active/2026-03-07_qt_build_identity_hardening.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/active/2026-03-07_accepted_feature_promotion_canonical_enforcement.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-09_worktree_workspace_organization.md"
+        },
+        {
+          "type": "branch",
+          "ref": "feat/ai-docs-bootstrap"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        },
+        {
+          "type": "workspace",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate-worktrees.code-workspace"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_integration"
+        }
+      ]
+    },
+    {
+      "id": "harness-live-state-contamination",
+      "title": "Tests or harness cleanup reused live user state or user-facing ports and contaminated real runtime checks",
+      "first_seen_timestamp": "2026-03-08T00:00:00Z",
+      "last_seen_timestamp": "2026-03-08T09:27:00Z",
+      "repeat_count": 2,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "The expected localhost listener belonged to pytest or another non-user runtime instead of the visible app.",
+        "Tests reused live roaming/profile settings or bridge configuration.",
+        "The browser showed a successful handoff while the visible app stayed idle."
+      ],
+      "likely_root_cause": "Tests and ad hoc debugging reused live %APPDATA%, live settings, or default user-facing ports instead of isolated temp state.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-08T00:00:00Z",
+          "summary": "Isolated pytest APPDATA and stopped bridge tests from using the live Gmail port.",
+          "outcome": "partial_only"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-08T09:27:00Z",
+        "summary": "Project guidance now requires temp env/filesystem isolation, non-live or ephemeral test ports, explicit teardown, and visible listener-conflict status.",
+        "expected_result": "Tests no longer hijack live machine state, and listener/runtime conflicts are triaged as harness issues before product debugging starts."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md",
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "docs/assistant/LOCAL_ENV_PROFILE.local.md",
+        "docs/assistant/LOCAL_CAPABILITIES.md",
+        "docs/assistant/ISSUE_MEMORY.md"
+      ],
+      "bootstrap_relevance": "required",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "test isolation defaults",
+          "listener ownership guidance",
+          "visible runtime conflict handling"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_gmail_intake"
+        },
+        {
+          "type": "template",
+          "ref": "docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md"
+        },
+        {
+          "type": "template",
+          "ref": "docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md"
+        }
+      ]
+    },
+    {
+      "id": "workflow-fragmented-multi-surface-diagnostics",
+      "title": "Fragmented diagnostics across handoff, per-run execution, and finalization slowed root-cause analysis",
+      "first_seen_timestamp": "2026-03-08T00:00:00Z",
+      "last_seen_timestamp": "2026-03-08T09:27:00Z",
+      "repeat_count": 2,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Browser banners, app bridge state, run reports, and finalization/draft failures had to be correlated manually.",
+        "Repeated debugging required back-and-forth between transient UI evidence and durable run artifacts.",
+        "Support packets were inconsistent across handoff, execution, and finalization failures."
+      ],
+      "likely_root_cause": "Project docs did not yet encode one support-packet order or one durable app-owned session-artifact pattern for multi-surface workflows.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-08T00:00:00Z",
+          "summary": "Feature-specific Gmail diagnostics were added.",
+          "outcome": "partial_only"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-08T09:27:00Z",
+        "summary": "Project guidance now routes multi-surface debugging through per-run artifacts first, additive workflow context when needed, one app-owned session artifact, and a fixed support-packet order.",
+        "expected_result": "Future host-bound workflows can be debugged from one predictable packet instead of reconstructing the incident from thread memory."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/ISSUE_MEMORY.md"
+      ],
+      "bootstrap_relevance": "required",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "session-artifact layering guidance",
+          "support-packet order",
+          "multi-surface troubleshooting workflow routing"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_gmail_intake"
+        },
+        {
+          "type": "template",
+          "ref": "docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md"
+        },
+        {
+          "type": "file",
+          "ref": "C:\\Users\\FA507\\Downloads\\run_report.md"
+        }
+      ]
+    },
+    {
+      "id": "product-arabic-docx-word-right-alignment",
+      "title": "Arabic DOCX right alignment in Word could not be solved durably with OOXML-only writer changes",
+      "first_seen_timestamp": "2026-03-08T00:00:00Z",
+      "last_seen_timestamp": "2026-03-08T20:45:00Z",
+      "repeat_count": 4,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Arabic DOCX output still opened left-aligned in Word even though the text itself remained RTL.",
+        "Some attempted fixes worsened mixed Arabic/Portuguese line ordering or misplaced Latin fragments.",
+        "Source-side XML/test changes could appear correct while the real Word-rendered document still required manual right alignment."
+      ],
+      "likely_root_cause": "Mixed RTL/LTR Word layout is not reliably controlled by the current OOXML writer path alone, so writer-only fixes were not durable enough for shipped user-visible behavior.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-08T00:00:00Z",
+          "summary": "Switched RTL paragraph handling toward left-justified bidi semantics.",
+          "outcome": "insufficient"
+        },
+        {
+          "timestamp": "2026-03-08T00:00:00Z",
+          "summary": "Kept jc=right while removing paragraph bidi/rtl.",
+          "outcome": "insufficient"
+        },
+        {
+          "timestamp": "2026-03-08T00:00:00Z",
+          "summary": "Tried a bidi-only paragraph shape with build/delivery verification.",
+          "outcome": "insufficient"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-08T20:45:00Z",
+        "summary": "Added an Arabic-only Word review gate with Align Right + Save, automatic save detection, and manual fallback actions before Save to Job Log / Gmail continuation.",
+        "expected_result": "Arabic output can be reviewed and aligned on the real Windows Word surface before the app continues, without claiming a durable OOXML-only right-alignment fix."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/TRANSLATION_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/LOCAL_CAPABILITIES.md",
+        "docs/assistant/LOCAL_ENV_PROFILE.local.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "Arabic Word review gate behavior",
+          "Windows Word + PowerShell same-host requirement",
+          "durable memory of failed OOXML-only fixes without presenting them as current behavior"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-08_arabic_docx_review_gate.md"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/word_automation.py"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/qt_gui/dialogs.py"
+        },
+        {
+          "type": "file",
+          "ref": "tests/test_word_automation.py"
+        },
+        {
+          "type": "file",
+          "ref": "tests/test_qt_app_state.py"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        }
+      ]
+    },
+    {
+      "id": "workflow-gmail-post-save-finalization-regression",
+      "title": "Gmail batch post-save continuation changes regressed behavior when special-casing the last saved item",
+      "first_seen_timestamp": "2026-03-08T00:00:00Z",
+      "last_seen_timestamp": "2026-03-08T20:45:00Z",
+      "repeat_count": 1,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "A same-day change to make Save continue Gmail finalization made the flow worse and had to be rolled back.",
+        "Gmail batch post-save behavior became harder to reason about because final-item behavior diverged from the conservative continuation path."
+      ],
+      "likely_root_cause": "Gmail batch post-save continuation is stateful and fragile, so special-casing the last item without full host validation can regress user-visible flow quickly.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-08T00:00:00Z",
+          "summary": "Added a last-item post-save finalization helper and related tests.",
+          "outcome": "insufficient"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-08T20:45:00Z",
+        "summary": "Reverted to the previous conservative _start_next_gmail_batch_translation() post-save path and raised the change bar to full-file green plus manual host validation before touching Gmail post-save continuation again.",
+        "expected_result": "Future Gmail post-save changes should not ship without both broad automated coverage and a real host check of the user-visible batch flow."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/TRANSLATION_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "docs/assistant/ISSUE_MEMORY.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "medium",
+        "targets": [
+          "Gmail batch post-save continuation caution",
+          "require stronger validation before changing final-item save behavior again"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/qt_gui/app_window.py"
+        },
+        {
+          "type": "file",
+          "ref": "tests/test_qt_app_state.py"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        }
+      ]
+    }
+  ]
+}

@@ -7,6 +7,8 @@ import re
 from typing import Any
 
 from .config import OPENAI_MODEL
+from .glossary import detect_source_lang_for_glossary
+from .validators import strip_ar_protected_spans_for_language_detection
 
 # ---------------------------------------------------------------------------
 # Model price table (per 1M tokens) — fallback when env vars are not set
@@ -195,14 +197,16 @@ def check_target_language(
     target_lang: str,
 ) -> dict[str, Any]:
     """Cheap heuristic: detect if output is primarily in the target language."""
-    from .glossary import detect_source_lang_for_glossary
-
-    detected = detect_source_lang_for_glossary(output)
     # Map expected: EN→EN, FR→FR, AR→expect non-PT detection
     if target_lang == "AR":
-        # For Arabic, just check that Portuguese is not dominant
+        stripped = strip_ar_protected_spans_for_language_detection(output)
+        if stripped == "":
+            detected = "AUTO"
+        else:
+            detected = detect_source_lang_for_glossary(stripped)
         language_ok = detected != "PT"
     else:
+        detected = detect_source_lang_for_glossary(output)
         language_ok = detected in (target_lang, "AUTO")
     return {
         "detected_lang": detected,

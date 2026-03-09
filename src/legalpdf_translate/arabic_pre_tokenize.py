@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+LRI = "\u2066"
+PDI = "\u2069"
 
 EXISTING_TOKEN_RE = re.compile(r"\[\[.*?\]\]", re.DOTALL)
-TOKEN_CONTENT_RE = re.compile(r"\[\[(.*?)\]\]", re.DOTALL)
+TOKEN_CONTENT_RE = re.compile(r"(?<!\[)\[\[(?!\[)(.*?)\]\](?!\])", re.DOTALL)
 
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 URL_RE = re.compile(r"\bhttps?://[^\s]+", re.IGNORECASE)
@@ -119,6 +121,13 @@ def _merge_spans(spans: list[_Span]) -> list[_Span]:
     return merged
 
 
+def is_safe_ar_identifier_token_content(value: str) -> bool:
+    normalized = " ".join(value.replace("\xa0", " ").split()).strip()
+    if normalized == "":
+        return False
+    return IDENTIFIER_VALUE_RE.fullmatch(normalized) is not None
+
+
 def _wrap_plain_segment(segment: str) -> str:
     spans = _merge_spans(_collect_spans(segment))
     if not spans:
@@ -126,8 +135,13 @@ def _wrap_plain_segment(segment: str) -> str:
     result: list[str] = []
     cursor = 0
     for span in spans:
-        result.append(segment[cursor : span.start])
         token = segment[span.start : span.end]
+        if span.start > 0 and span.end < len(segment) and segment[span.start - 1] == "[" and segment[span.end] == "]":
+            result.append(segment[cursor : span.start - 1])
+            result.append(f"[{LRI}[[{token}]]{PDI}]")
+            cursor = span.end + 1
+            continue
+        result.append(segment[cursor : span.start])
         result.append(f"[[{token}]]")
         cursor = span.end
     result.append(segment[cursor:])

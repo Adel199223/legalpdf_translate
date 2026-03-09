@@ -317,6 +317,36 @@ def test_run_report_clarifies_ocr_not_needed_when_provider_missing(tmp_path: Pat
     assert '"ocr_preflight_checked": false' in markdown
 
 
+def test_run_report_renders_gmail_batch_context_section(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    summary_path = run_dir / "run_summary.json"
+    run_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    run_summary["gmail_batch_context"] = {
+        "source": "gmail_intake",
+        "session_id": "gmail_batch_abc123",
+        "message_id": "msg-100",
+        "thread_id": "thread-200",
+        "selected_attachment_filename": "21-25.pdf",
+        "selected_attachment_count": 1,
+        "selected_target_lang": "AR",
+        "selected_start_page": 3,
+        "gmail_batch_session_report_path": r"C:\Users\FA507\Downloads\gmail_batch_session.json",
+    }
+    _write_json(summary_path, run_summary)
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "## Gmail Intake / Batch Context" in markdown
+    assert "gmail_batch_abc123" in markdown
+    assert "21-25.pdf" in markdown
+    assert "Selected start page: `3`" in markdown
+    assert "C:\\Users\\FA507\\Downloads\\gmail_batch_session.json" in markdown
+
+
 def test_run_report_warns_when_ocr_required_but_unavailable(tmp_path: Path) -> None:
     run_dir = tmp_path / "required_unavailable_run"
     pages_dir = run_dir / "pages"
@@ -875,3 +905,131 @@ def test_run_report_adds_pt_leak_counters_and_image_mode_optimization_hint(tmp_p
     assert '"pt_language_leak_retries": 1' in markdown
     assert '"image_mode_optimization_hint": "image_mode=always attached images on all pages while EN/FR auto-image heuristics would skip image attachments for this run; consider image_mode=auto."' in markdown
     assert "Optimization hint: image_mode=always attached images on all pages" in markdown
+
+
+def test_run_report_renders_budget_guardrail_section_when_present(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    summary_path = run_dir / "run_summary.json"
+    run_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    run_summary.update(
+        {
+            "cost_estimation_status": "available",
+            "cost_profile_id": "default_local",
+            "budget_cap_usd": 0.01,
+            "budget_decision": "warn",
+            "budget_decision_reason": "estimate_exceeds_budget_cap",
+            "budget_pre_run": {
+                "estimated_cost_usd": 0.023,
+                "estimation_status": "available",
+            },
+            "budget_post_run": {
+                "estimated_cost_usd": 0.003,
+                "estimation_status": "available",
+            },
+        }
+    )
+    _write_json(summary_path, run_summary)
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "Budget guardrail decision `warn`" in markdown
+    assert "Budget decision reason: `estimate_exceeds_budget_cap`." in markdown
+
+
+def test_run_report_legacy_summary_without_budget_keys_remains_compatible(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "## Summary" in markdown
+    assert "Budget guardrail decision" not in markdown
+
+
+def test_run_report_renders_quality_risk_summary_when_present(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    summary_path = run_dir / "run_summary.json"
+    run_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    run_summary.update(
+        {
+            "quality_risk_score": 0.4721,
+            "review_queue_count": 3,
+        }
+    )
+    _write_json(summary_path, run_summary)
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "Quality risk score `0.4721` with `3` flagged review page(s)." in markdown
+
+
+def test_run_report_renders_ocr_observability_summary_when_present(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    summary_path = run_dir / "run_summary.json"
+    run_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    pipeline = dict(run_summary.get("pipeline", {}))
+    pipeline.update(
+        {
+            "ocr_source_profile": "pt_latin_default",
+            "ocr_local_pass_strategy": "single_pass_baseline",
+            "ocr_api_fallback_policy": "required_only_for_paid_fallback",
+            "ocr_quality_score_avg": 0.8123,
+            "ocr_track_quality_packet": {
+                "enfr_avg": 0.81,
+                "ar_avg": 0.66,
+                "weighted_score": 0.75,
+            },
+        }
+    )
+    run_summary["pipeline"] = pipeline
+    _write_json(summary_path, run_summary)
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "OCR observability: profile `pt_latin_default`" in markdown
+    assert "OCR track quality packet: EN/FR avg `0.81`, AR avg `0.66`, weighted `0.75`" in markdown
+    assert '"ocr_local_pass_strategy": "single_pass_baseline"' in markdown
+    assert '"ocr_api_fallback_policy": "required_only_for_paid_fallback"' in markdown
+
+
+def test_run_report_renders_ocr_advisor_summary_when_present(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    summary_path = run_dir / "run_summary.json"
+    run_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    run_summary.update(
+        {
+            "advisor_recommendation_applied": False,
+            "advisor_recommendation": {
+                "recommended_ocr_mode": "auto",
+                "recommended_image_mode": "auto",
+                "recommendation_reasons": ["enfr_layout_or_text_quality_requires_ocr"],
+                "confidence": 0.8123,
+                "advisor_track": "enfr",
+            },
+        }
+    )
+    _write_json(summary_path, run_summary)
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "OCR advisor recommends OCR mode `auto`, image mode `auto`" in markdown
+    assert "OCR advisor reasons: `enfr_layout_or_text_quality_requires_ocr`." in markdown
+    assert "OCR advisor recommendation applied: `False`." in markdown

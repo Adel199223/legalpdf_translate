@@ -4,6 +4,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from docx import Document
+import pytest
 
 import legalpdf_translate.docx_writer as docx_writer
 from legalpdf_translate.docx_writer import (
@@ -12,12 +13,27 @@ from legalpdf_translate.docx_writer import (
     sanitize_bidi_controls,
 )
 from legalpdf_translate.output_normalize import normalize_output_text
+from legalpdf_translate.qt_gui.dialogs import count_words_from_docx
 from legalpdf_translate.types import TargetLang
+
+_DOCX_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 
 def _write_page(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _extract_docx_paragraph_texts(docx_path: Path) -> list[str]:
+    with ZipFile(docx_path) as archive:
+        document_xml = archive.read("word/document.xml")
+    root = ET.fromstring(document_xml)
+    paragraphs = []
+    for paragraph in root.findall(".//w:body/w:p", _DOCX_NS):
+        text = "".join(node.text or "" for node in paragraph.findall(".//w:t", _DOCX_NS)).strip()
+        if text:
+            paragraphs.append(text)
+    return paragraphs
 
 
 def test_assemble_docx_has_no_empty_paragraphs_and_page_break(tmp_path: Path) -> None:
@@ -33,6 +49,15 @@ def test_assemble_docx_has_no_empty_paragraphs_and_page_break(tmp_path: Path) ->
     assert "" not in texts
     assert texts == ["Line A", "Line B", "Line C"]
     assert 'w:type="page"' in doc.element.xml
+
+
+def test_assemble_docx_raises_when_no_page_files_exist(tmp_path: Path) -> None:
+    pages_dir = tmp_path / "pages"
+    pages_dir.mkdir()
+    out = tmp_path / "empty.docx"
+
+    with pytest.raises(RuntimeError, match="No page text files available for DOCX assembly"):
+        assemble_docx(pages_dir, out, lang=TargetLang.EN, page_breaks=False)
 
 
 def test_assemble_docx_arabic_sets_rtl_bidi_flags(tmp_path: Path) -> None:
@@ -158,6 +183,61 @@ def test_generated_docx_has_no_compatibility_mode(tmp_path: Path) -> None:
             assert "compatibilityMode" not in settings_xml
             _assert_ignorable_prefixes_declared(settings_xml)
     _assert_all_xml_parts_wellformed(out)
+
+
+def test_assemble_docx_preserves_visible_content_after_compatibility_rewrite(tmp_path: Path) -> None:
+    pages_dir = tmp_path / "pages"
+    _write_page(pages_dir / "page_0001.txt", "Premier paragraphe\nDeuxième paragraphe")
+    _write_page(pages_dir / "page_0002.txt", "Troisième paragraphe")
+    out = tmp_path / "preserved.docx"
+
+    assemble_docx(pages_dir, out, lang=TargetLang.FR, page_breaks=True)
+
+    summary = docx_writer._read_docx_visible_content_summary(out)
+    assert summary.visible_paragraph_count == 3
+    assert summary.text_char_count > 0
+    assert _extract_docx_paragraph_texts(out) == [
+        "Premier paragraphe",
+        "Deuxième paragraphe",
+        "Troisième paragraphe",
+    ]
+
+
+def test_assemble_docx_keeps_word_count_non_zero_after_full_save_path(tmp_path: Path) -> None:
+    pages_dir = tmp_path / "pages"
+    _write_page(pages_dir / "page_0001.txt", "one two three")
+    _write_page(pages_dir / "page_0002.txt", "four five")
+    out = tmp_path / "counted.docx"
+
+    assemble_docx(pages_dir, out, lang=TargetLang.EN, page_breaks=True)
+
+    assert count_words_from_docx(out) == 5
+
+
+def test_assemble_docx_raises_when_post_write_verification_detects_blank_docx(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    pages_dir = tmp_path / "pages"
+    _write_page(pages_dir / "page_0001.txt", "Visible content")
+    out = tmp_path / "broken.docx"
+
+    original_verify = docx_writer._verify_docx_visible_content
+
+    def _fake_verify(path: Path, *, stage: str, expected_visible_paragraphs: int, baseline=None):
+        if stage == "compatibility rewrite":
+            raise RuntimeError("simulated blank saved DOCX")
+        return original_verify(
+            path,
+            stage=stage,
+            expected_visible_paragraphs=expected_visible_paragraphs,
+            baseline=baseline,
+        )
+
+    monkeypatch.setattr(docx_writer, "_verify_docx_visible_content", _fake_verify)
+
+    with pytest.raises(RuntimeError, match="simulated blank saved DOCX"):
+        assemble_docx(pages_dir, out, lang=TargetLang.EN, page_breaks=False)
 
 
 # -- Synthetic settings.xml tests for _remove_compatibility_mode --

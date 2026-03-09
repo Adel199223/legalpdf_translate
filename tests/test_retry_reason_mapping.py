@@ -60,3 +60,83 @@ def test_retry_reason_pt_language_leak_when_portuguese_legal_term_leaks() -> Non
     assert evaluation.validator_failed is True
     assert evaluation.defect_reason == "Portuguese legal/institution terms leaked after normalization."
     assert reason == "pt_language_leak"
+
+
+def test_retry_reason_ar_token_violation_when_expected_token_mismatch() -> None:
+    workflow = TranslationWorkflow(client=object())
+    raw = "```\nالاسم: [[Adel Belghaly]]\n```"
+    evaluation = workflow._evaluate_output(  # type: ignore[attr-defined]
+        raw,
+        TargetLang.AR,
+        expected_ar_tokens=["Adel Belghali"],
+    )
+    reason = workflow._retry_reason_from_evaluation(  # type: ignore[attr-defined]
+        evaluation,
+        lang=TargetLang.AR,
+        fallback_reason=evaluation.defect_reason,
+    )
+    assert evaluation.ok is False
+    assert evaluation.validator_failed is True
+    assert evaluation.defect_reason == "Expected locked token mismatch."
+    assert evaluation.ar_violation_kind == "expected_token_mismatch"
+    assert evaluation.ar_violation_samples == ["Adel Belghali", "Adel Belghaly"]
+    assert reason == "ar_token_violation"
+
+
+def test_retry_reason_ar_pt_language_leak_after_token_strip() -> None:
+    workflow = TranslationWorkflow(client=object())
+    raw = "```\nالنص ãõç\n```"
+    evaluation = workflow._evaluate_output(raw, TargetLang.AR)  # type: ignore[attr-defined]
+    reason = workflow._retry_reason_from_evaluation(  # type: ignore[attr-defined]
+        evaluation,
+        lang=TargetLang.AR,
+        fallback_reason=evaluation.defect_reason,
+    )
+    assert evaluation.ok is False
+    assert evaluation.validator_failed is True
+    assert evaluation.defect_reason is not None
+    assert "Portuguese" in evaluation.defect_reason
+    assert "leak" in evaluation.defect_reason
+    assert reason == "pt_language_leak"
+
+
+def test_ar_violation_kind_for_latin_digits_outside_wrapped_tokens() -> None:
+    workflow = TranslationWorkflow(client=object())
+    raw = "```\nالاسم: Adel Belghali\n```"
+    evaluation = workflow._evaluate_output(  # type: ignore[attr-defined]
+        raw,
+        TargetLang.AR,
+        expected_ar_tokens=[],
+    )
+    reason = workflow._retry_reason_from_evaluation(  # type: ignore[attr-defined]
+        evaluation,
+        lang=TargetLang.AR,
+        fallback_reason=evaluation.defect_reason,
+    )
+    assert evaluation.ok is False
+    assert evaluation.validator_failed is True
+    assert evaluation.defect_reason == "Latin letters or digits found outside wrapped tokens."
+    assert evaluation.ar_violation_kind == "latin_or_digits_outside_wrapped_tokens"
+    assert evaluation.ar_violation_samples == ["الاسم: Adel Belghali"]
+    assert reason == "ar_token_violation"
+
+
+def test_ar_violation_kind_for_unwrapped_marker() -> None:
+    workflow = TranslationWorkflow(client=object())
+    raw = "```\nالاسم: [[Adel Belghali]\n```"
+    evaluation = workflow._evaluate_output(  # type: ignore[attr-defined]
+        raw,
+        TargetLang.AR,
+        expected_ar_tokens=[],
+    )
+    reason = workflow._retry_reason_from_evaluation(  # type: ignore[attr-defined]
+        evaluation,
+        lang=TargetLang.AR,
+        fallback_reason=evaluation.defect_reason,
+    )
+    assert evaluation.ok is False
+    assert evaluation.validator_failed is True
+    assert evaluation.defect_reason == "Found unwrapped [[ token start."
+    assert evaluation.ar_violation_kind == "unwrapped_token_marker"
+    assert evaluation.ar_violation_samples is not None
+    assert reason == "ar_token_violation"

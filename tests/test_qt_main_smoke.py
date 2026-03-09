@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 
 
 class _FakeQt:
@@ -65,7 +66,7 @@ class _FakeQApplication:
 class _FakeWindow:
     instances: list["_FakeWindow"] = []
 
-    def __init__(self) -> None:
+    def __init__(self, *_args, **_kwargs) -> None:
         self.shown = False
         self.window_icon: _FakeQIcon | None = None
         _FakeWindow.instances.append(self)
@@ -75,6 +76,26 @@ class _FakeWindow:
 
     def setWindowIcon(self, icon: _FakeQIcon) -> None:
         self.window_icon = icon
+
+
+class _FakeWindowController:
+    last_instance: "_FakeWindowController | None" = None
+
+    def __init__(self, *, app, build_identity, window_icon) -> None:
+        self.app = app
+        self.build_identity = build_identity
+        self.window_icon = window_icon
+        self.create_calls: list[tuple[bool, bool]] = []
+        _FakeWindowController.last_instance = self
+
+    def create_workspace(self, *, show: bool = True, focus: bool = True) -> _FakeWindow:
+        self.create_calls.append((show, focus))
+        window = _FakeWindow()
+        if self.window_icon is not None:
+            window.setWindowIcon(self.window_icon)
+        if show:
+            window.show()
+        return window
 
 
 def test_qt_app_run_smoke(monkeypatch) -> None:
@@ -89,15 +110,15 @@ def test_qt_app_run_smoke(monkeypatch) -> None:
 
     styles_mod = types.ModuleType("legalpdf_translate.qt_gui.styles")
     styles_mod.build_stylesheet = lambda: "fake-style"
-    app_window_mod = types.ModuleType("legalpdf_translate.qt_gui.app_window")
-    app_window_mod.QtMainWindow = _FakeWindow
+    controller_mod = types.ModuleType("legalpdf_translate.qt_gui.window_controller")
+    controller_mod.WorkspaceWindowController = _FakeWindowController
 
     monkeypatch.setitem(sys.modules, "PySide6", pyside_mod)
     monkeypatch.setitem(sys.modules, "PySide6.QtCore", qtcore_mod)
     monkeypatch.setitem(sys.modules, "PySide6.QtGui", qtgui_mod)
     monkeypatch.setitem(sys.modules, "PySide6.QtWidgets", qtwidgets_mod)
     monkeypatch.setitem(sys.modules, "legalpdf_translate.qt_gui.styles", styles_mod)
-    monkeypatch.setitem(sys.modules, "legalpdf_translate.qt_gui.app_window", app_window_mod)
+    monkeypatch.setitem(sys.modules, "legalpdf_translate.qt_gui.window_controller", controller_mod)
 
     from legalpdf_translate import qt_app
 
@@ -109,6 +130,10 @@ def test_qt_app_run_smoke(monkeypatch) -> None:
     assert app.stylesheet == "fake-style"
     assert app.window_icon is not None
     assert app.window_icon.path.replace("\\", "/").endswith("resources/icons/LegalPDFTranslate.png")
+    controller = _FakeWindowController.last_instance
+    assert controller is not None
+    assert controller.app is app
+    assert controller.create_calls == [(True, False)]
     assert _FakeWindow.instances
     assert _FakeWindow.instances[-1].shown is True
     assert _FakeWindow.instances[-1].window_icon is not None
@@ -131,3 +156,8 @@ def test_qt_main_smoke(monkeypatch) -> None:
     qt_main.main()
     assert called["run"] is True
 
+
+def test_qt_app_module_main_guard_invokes_run() -> None:
+    source = Path("src/legalpdf_translate/qt_app.py").read_text(encoding="utf-8")
+    assert 'if __name__ == "__main__":' in source
+    assert "raise SystemExit(run())" in source

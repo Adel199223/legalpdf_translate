@@ -51,13 +51,53 @@ def build_retry_prompt(lang: TargetLang, prior_output: str) -> str:
     )
 
 
+def build_ar_token_retry_prompt(
+    prior_output: str,
+    expected_tokens: list[str],
+    *,
+    violation_kind: str | None = None,
+) -> str:
+    tokens = [token for token in expected_tokens if isinstance(token, str) and token != ""]
+    token_lines = [f"{index}. [[{token}]]" for index, token in enumerate(tokens, start=1)]
+    header = (
+        "ARABIC TOKEN CORRECTION ONLY: Re-emit the SAME content as ONE plain-text code block and NOTHING ELSE. "
+        "Keep every listed [[...]] token exactly character-for-character. "
+        "Do not translate, edit, split, remove, reorder, or add token contents. "
+        "Every listed token must appear only inside [[...]]. "
+        "If a listed token appears outside [[...]], wrap it instead of rewriting it. "
+        "No Latin letters or digits may appear outside protected tokens. "
+        "All non-token text must be Arabic."
+    )
+    defect_hint = ""
+    if violation_kind == "latin_or_digits_outside_wrapped_tokens":
+        defect_hint = (
+            "CURRENT DEFECT TO FIX: Latin letters or digits still appear outside [[...]] tokens. "
+            "Wrap every verbatim identifier span in [[...]] and keep the remaining text Arabic."
+        )
+    lines = [
+        header,
+        "<<<BEGIN LOCKED TOKENS>>>",
+        *token_lines,
+        "<<<END LOCKED TOKENS>>>",
+        "<<<BEGIN PRIOR OUTPUT>>>",
+        prior_output,
+        "<<<END PRIOR OUTPUT>>>",
+    ]
+    if defect_hint:
+        lines.insert(1, defect_hint)
+    return "\n".join(lines)
+
+
 def build_language_retry_prompt(lang: TargetLang, prior_output: str) -> str:
     if lang == TargetLang.EN:
         language_hint = " Re-emit in legal English only; remove Portuguese residual terms except verbatim-allowed fields."
     elif lang == TargetLang.FR:
         language_hint = " Re-emit in legal French only; remove Portuguese residual terms except verbatim-allowed fields."
     else:
-        language_hint = " Re-emit in target language only."
+        language_hint = (
+            " Re-emit in Arabic only; Portuguese is allowed only inside verbatim protected [[...]] tokens. "
+            "Outside protected tokens, all remaining text must be Arabic."
+        )
     header = (
         "LANGUAGE CORRECTION ONLY: Re-emit the SAME content, fix language compliance only, "
         "as ONE plain-text code block and NOTHING ELSE."

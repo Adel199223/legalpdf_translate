@@ -44,6 +44,16 @@ class OcrEnginePolicy(str, Enum):
     API = "api"
 
 
+class OcrApiProvider(str, Enum):
+    OPENAI = "openai"
+    GEMINI = "gemini"
+
+
+class BudgetExceedPolicy(str, Enum):
+    WARN = "warn"
+    BLOCK = "block"
+
+
 class ApiKeySource(str, Enum):
     ENV = "env"
     CREDMAN = "credman"
@@ -72,6 +82,7 @@ class RunConfig:
     keep_intermediates: bool = True
     ocr_mode: OcrMode = OcrMode.AUTO
     ocr_engine: OcrEnginePolicy = OcrEnginePolicy.LOCAL_THEN_API
+    ocr_api_provider: OcrApiProvider = OcrApiProvider.OPENAI
     ocr_api_base_url: str | None = None
     ocr_api_model: str | None = None
     ocr_api_key_env_name: str = "DEEPSEEK_API_KEY"
@@ -80,9 +91,15 @@ class RunConfig:
     glossary_file: Path | None = None
     effort_policy: EffortPolicy = EffortPolicy.ADAPTIVE
     allow_xhigh_escalation: bool = False
+    budget_cap_usd: float | None = None
+    cost_profile_id: str = "default_local"
+    budget_on_exceed: BudgetExceedPolicy = BudgetExceedPolicy.WARN
     diagnostics_admin_mode: bool = False
     diagnostics_include_sanitized_snippets: bool = False
     strip_bidi_controls: bool = True
+    advisor_recommendation_applied: bool | None = None
+    advisor_recommendation: dict[str, Any] | None = None
+    gmail_batch_context: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass
+from typing import Any
 
 from .output_normalize import LRI, PDI
 from .types import TargetLang
@@ -54,7 +55,8 @@ class CodeBlockParseResult:
 class ValidationResult:
     ok: bool
     reason: str | None = None
-    details: dict[str, int] | None = None
+    details: dict[str, Any] | None = None
+    kind: str | None = None
 
 
 def parse_code_block_output(raw_output: str) -> CodeBlockParseResult:
@@ -151,42 +153,144 @@ def _extract_wrapped_token_contents(text: str) -> list[str]:
     return values
 
 
+def _dedupe_samples(items: list[str], *, limit: int = 3) -> list[str]:
+    samples: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        cleaned = str(item or "").strip()
+        if cleaned == "" or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        samples.append(cleaned)
+        if len(samples) >= limit:
+            break
+    return samples
+
+
+def _build_expected_token_details(expected_tokens: list[str], actual_tokens: list[str]) -> dict[str, Any]:
+    expected_counts = Counter(expected_tokens)
+    actual_counts = Counter(actual_tokens)
+    missing_count = sum(
+        max(0, expected_counts[token] - actual_counts.get(token, 0))
+        for token in expected_counts
+    )
+    extra_count = sum(
+        max(0, actual_counts[token] - expected_counts.get(token, 0))
+        for token in actual_counts
+    )
+
+    remaining_expected = Counter(expected_tokens)
+    unexpected_samples: list[str] = []
+    for token in actual_tokens:
+        if remaining_expected.get(token, 0) > 0:
+            remaining_expected[token] -= 1
+            if remaining_expected[token] <= 0:
+                del remaining_expected[token]
+        else:
+            unexpected_samples.append(token)
+
+    missing_samples: list[str] = []
+    remaining_actual = Counter(actual_tokens)
+    for token in expected_tokens:
+        if remaining_actual.get(token, 0) > 0:
+            remaining_actual[token] -= 1
+            if remaining_actual[token] <= 0:
+                del remaining_actual[token]
+        else:
+            missing_samples.append(token)
+
+    return {
+        "expected_total": int(sum(expected_counts.values())),
+        "actual_total": int(sum(actual_counts.values())),
+        "missing_count": int(missing_count),
+        "altered_count": int(min(missing_count, extra_count)),
+        "unexpected_count": int(extra_count),
+        "missing_token_samples": _dedupe_samples(missing_samples),
+        "unexpected_token_samples": _dedupe_samples(unexpected_samples),
+    }
+
+
+def _sample_unwrapped_marker_context(text: str, marker: str, *, limit: int = 3) -> list[str]:
+    samples: list[str] = []
+    for match in re.finditer(re.escape(marker), text):
+        start = max(0, match.start() - 24)
+        end = min(len(text), match.end() + 24)
+        snippet = text[start:end].replace("\n", " ").strip()
+        if snippet:
+            samples.append(snippet)
+        if len(samples) >= limit:
+            break
+    return _dedupe_samples(samples, limit=limit)
+
+
+def _sample_outside_latin_digit_snippets(text: str, *, limit: int = 3) -> list[str]:
+    stripped = re.sub(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]", "", text)
+    samples: list[str] = []
+    for line in stripped.split("\n"):
+        if not re.search(r"[A-Za-z0-9]", line):
+            continue
+        candidate = " ".join(line.split()).strip()
+        if candidate == "":
+            continue
+        if len(candidate) > 120:
+            match = re.search(r"[A-Za-z0-9]", candidate)
+            if match is not None:
+                start = max(0, match.start() - 24)
+                end = min(len(candidate), match.start() + 56)
+                candidate = candidate[start:end].strip()
+        samples.append(candidate)
+        if len(samples) >= limit:
+            break
+    return _dedupe_samples(samples, limit=limit)
+
+
+def strip_ar_protected_spans_for_language_detection(text: str) -> str:
+    stripped = AR_VALID_TOKEN_RE.sub(" ", text)
+    stripped = re.sub(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]", "", stripped)
+    stripped = re.sub(r"[ \t]+", " ", stripped)
+    stripped = re.sub(r"\n{3,}", "\n\n", stripped)
+    return stripped.strip()
+
+
 def validate_ar(normalized_text: str, expected_tokens: list[str] | None = None) -> ValidationResult:
     if normalized_text.strip() == "":
         return ValidationResult(ok=False, reason="Arabic output is empty.")
     if re.search(rf"(?<!{re.escape(LRI)})\[\[", normalized_text):
-        return ValidationResult(ok=False, reason="Found unwrapped [[ token start.")
+        return ValidationResult(
+            ok=False,
+            reason="Found unwrapped [[ token start.",
+            kind="unwrapped_token_marker",
+            details={"marker": "[[", "samples": _sample_unwrapped_marker_context(normalized_text, "[[")},
+        )
     if re.search(rf"\]\](?!{re.escape(PDI)})", normalized_text):
-        return ValidationResult(ok=False, reason="Found unwrapped ]] token end.")
-    token_details: dict[str, int] | None = None
+        return ValidationResult(
+            ok=False,
+            reason="Found unwrapped ]] token end.",
+            kind="unwrapped_token_marker",
+            details={"marker": "]]", "samples": _sample_unwrapped_marker_context(normalized_text, "]]")},
+        )
+    token_details: dict[str, Any] | None = None
     if expected_tokens is not None:
         expected = [token for token in expected_tokens if isinstance(token, str) and token != ""]
-        expected_counts = Counter(expected)
-        actual_counts = Counter(_extract_wrapped_token_contents(normalized_text))
-        missing_count = sum(
-            max(0, expected_counts[token] - actual_counts.get(token, 0))
-            for token in expected_counts
-        )
-        extra_count = sum(
-            max(0, actual_counts[token] - expected_counts.get(token, 0))
-            for token in actual_counts
-        )
-        token_details = {
-            "expected_total": int(sum(expected_counts.values())),
-            "actual_total": int(sum(actual_counts.values())),
-            "missing_count": int(missing_count),
-            "altered_count": int(min(missing_count, extra_count)),
-            "unexpected_count": int(extra_count),
-        }
-        if missing_count > 0:
+        actual_tokens = _extract_wrapped_token_contents(normalized_text)
+        token_details = _build_expected_token_details(expected, actual_tokens)
+        if int(token_details.get("missing_count", 0) or 0) > 0:
             return ValidationResult(
                 ok=False,
                 reason="Expected locked token mismatch.",
+                kind="expected_token_mismatch",
                 details=token_details,
             )
     text_without_tokens = AR_VALID_TOKEN_RE.sub("", normalized_text)
     if re.search(r"[A-Za-z0-9]", text_without_tokens):
-        return ValidationResult(ok=False, reason="Latin letters or digits found outside wrapped tokens.")
+        return ValidationResult(
+            ok=False,
+            reason="Latin letters or digits found outside wrapped tokens.",
+            kind="latin_or_digits_outside_wrapped_tokens",
+            details={
+                "offending_snippets": _sample_outside_latin_digit_snippets(text_without_tokens),
+            },
+        )
     if token_details is not None and token_details.get("unexpected_count", 0) > 0:
         return ValidationResult(ok=True, details=token_details)
     return ValidationResult(ok=True)

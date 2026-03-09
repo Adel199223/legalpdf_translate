@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from docx import Document
 
 import legalpdf_translate.workflow as workflow_module
 from legalpdf_translate.checkpoint import (
@@ -255,3 +256,87 @@ def test_workflow_logs_unreadable_checkpoint_and_starts_new_state(
 
     assert summary.success is True
     assert any("run_state.json is unreadable" in line for line in logs)
+
+
+def test_completed_checkpoint_with_missing_page_outputs_starts_fresh_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.OFF,
+        max_pages=1,
+        workers=1,
+        resume=True,
+        page_breaks=True,
+        keep_intermediates=False,
+    )
+    paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
+    ensure_run_dirs(paths)
+    stale_run_id = "20260307_232630"
+    state = new_run_state(
+        config=config,
+        paths=build_run_paths(
+            config.output_dir,
+            config.pdf_path,
+            config.target_lang,
+            run_started_at=stale_run_id,
+        ),
+        pdf_fingerprint=sha256_of_text("pdf-fingerprint"),
+        context_hash=sha256_of_text(None),
+        total_pages=1,
+        selected_pages=[1],
+    )
+    mark_page_done(state, 1, image_used=False, retry_used=False, usage={})
+    state.run_status = "completed"
+    state.finished_at = "2026-03-07T23:27:00+00:00"
+    state.done_count = 1
+    state.pending_count = 0
+    state.run_dir_abs = str(paths.run_dir)
+    state.frozen_outdir_abs = str(paths.frozen_outdir)
+    state.run_started_at = stale_run_id
+    save_run_state_atomic(paths.run_state_path, state)
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "sha256_of_file", lambda _pdf: sha256_of_text("pdf-fingerprint"))
+
+    called_pages: list[int] = []
+
+    def _fake_process_page(
+        self, *, client, config, paths, instructions, context_text, page_number, total_pages, ocr_engine
+    ):  # type: ignore[no-untyped-def]
+        called_pages.append(page_number)
+        page_path = paths.pages_dir / f"page_{page_number:04d}.txt"
+        page_path.write_text("OK", encoding="utf-8")
+        return _PageOutcome(
+            status=PageStatus.DONE,
+            image_used=False,
+            retry_used=False,
+            usage={},
+            error=None,
+        )
+
+    monkeypatch.setattr(TranslationWorkflow, "_process_page", _fake_process_page)
+    logs: list[str] = []
+    workflow = TranslationWorkflow(client=object(), log_callback=logs.append)
+    summary = workflow.run(config)
+
+    assert summary.success is True
+    assert called_pages == [1]
+    assert summary.output_docx is not None
+    assert stale_run_id not in summary.output_docx.name
+    assert Document(summary.output_docx).paragraphs[0].text == "OK"
+
+    refreshed = load_run_state(paths.run_state_path)
+    assert refreshed is not None
+    assert refreshed.run_started_at != stale_run_id
+    assert any("saved page files are missing" in line for line in logs)

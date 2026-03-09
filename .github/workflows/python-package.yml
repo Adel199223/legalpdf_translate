@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
@@ -22,14 +23,70 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      - name: Setup Dart
+        uses: dart-lang/setup-dart@v1
+
       - name: Install
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m pip install pytest
 
+      - name: Validate Agent Docs
+        run: dart run tooling/validate_agent_docs.dart
+
+      - name: Validate Localization Contracts
+        run: dart run tooling/validate_agent_docs.dart --scope localization
+
+      - name: Agent Docs Validator Tests
+        run: dart run test/tooling/validate_agent_docs_test.dart
+
+      - name: Validate Workspace Hygiene
+        run: dart run tooling/validate_workspace_hygiene.dart
+
+      - name: Workspace Hygiene Validator Tests
+        run: dart run test/tooling/validate_workspace_hygiene_test.dart
+
       - name: Compile
         run: python -m compileall src tests
 
-      - name: Tests
+      - name: Targeted Core Regressions
+        run: python -m pytest -q tests/test_cli_flags.py tests/test_workflow_parallel.py tests/test_run_report.py
+
+      - name: Full Tests
         run: python -m pytest -q
+
+  docs_tooling_contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Dart
+        uses: dart-lang/setup-dart@v1
+
+      - name: Validate Agent Docs
+        run: dart run tooling/validate_agent_docs.dart
+
+      - name: Validate Workspace Hygiene
+        run: dart run tooling/validate_workspace_hygiene.dart
+
+      - name: Agent Docs Validator Tests
+        run: dart run test/tooling/validate_agent_docs_test.dart
+
+      - name: Workspace Hygiene Validator Tests
+        run: dart run test/tooling/validate_workspace_hygiene_test.dart
+
+      - name: Automation Preflight Tests
+        run: dart run test/tooling/automation_preflight_test.dart
+
+      - name: Cloud Eval Preflight Tests
+        run: dart run test/tooling/cloud_eval_preflight_test.dart
+
+      - name: Compile
+        run: python -m compileall src tests

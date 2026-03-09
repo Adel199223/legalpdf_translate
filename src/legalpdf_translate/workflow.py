@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import random
 import shutil
@@ -39,8 +38,21 @@ from .checkpoint import (
     sha256_of_file,
     sha256_of_text,
 )
-from .config import load_environment, OPENAI_MODEL
+from .config import (
+    DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
+    DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+    OPENAI_MODEL,
+    load_environment,
+)
 from .config import IMAGE_MAX_DATA_URL_BYTES_AR, IMAGE_MAX_DATA_URL_BYTES_ENFR
+from .cost_guardrails import (
+    deterministic_sample_pages,
+    estimate_cost_usd,
+    estimate_pre_run_tokens,
+    evaluate_budget_decision,
+    normalize_cost_profile_id,
+    resolve_pricing,
+)
 from .docx_writer import assemble_docx
 from .glossary import (
     cap_entries_for_prompt,
@@ -55,7 +67,7 @@ from .glossary import (
     sort_entries_for_prompt,
     supported_target_langs,
 )
-from .image_io import render_page_image_data_url, should_include_image
+from .image_io import should_include_image
 from .ocr_engine import (
     OCREngine,
     OcrResult,
@@ -63,17 +75,20 @@ from .ocr_engine import (
     local_only_ocr_engine_config_from_run_config,
     ocr_engine_config_from_run_config,
 )
-from .ocr_helpers import ocr_pdf_page_text
 from .openai_client import ApiCallError, OpenAIResponsesClient
-from .output_normalize import normalize_output_text_with_stats
 from .output_paths import require_writable_output_dir
 from .page_selection import resolve_page_selection
-from .pdf_text_order import extract_ordered_page_text, get_page_count
-from .prompt_builder import build_language_retry_prompt, build_page_prompt, build_retry_prompt
+from .prompt_builder import (
+    build_ar_token_retry_prompt,
+    build_language_retry_prompt,
+    build_page_prompt,
+    build_retry_prompt,
+)
 from .run_report import RunEventCollector
 from .resources_loader import load_system_instructions
 from .types import (
     AnalyzeSummary,
+    BudgetExceedPolicy,
     ImageMode,
     OcrMode,
     PageStatus,
@@ -84,7 +99,32 @@ from .types import (
     TargetLang,
 )
 from .user_settings import load_gui_settings
-from .validators import parse_code_block_output, validate_ar, validate_enfr
+from .workflow_components.contracts import (
+    OutputEvaluation,
+    SummarySignalInputs,
+)
+from .workflow_components.evaluation import (
+    evaluate_output as evaluate_workflow_output,
+)
+from .workflow_components.evaluation import (
+    retry_reason_from_evaluation as derive_retry_reason,
+)
+from .workflow_components.ocr_advisor import (
+    build_ocr_image_advisor,
+)
+from .workflow_components.summary import (
+    classify_suspected_cause as classify_summary_cause,
+)
+from .workflow_components.quality_risk import (
+    build_quality_risk_summary,
+)
+from .source_document import (
+    extract_ordered_source_text as extract_ordered_page_text,
+    get_source_page_count as get_page_count,
+    is_supported_source_file,
+    ocr_source_page_text as ocr_pdf_page_text,
+    render_source_page_image_data_url as render_page_image_data_url,
+)
 
 MIN_CHARS_REQUIRED = 64
 MAX_JUNK_RATIO_REQUIRED = 0.12
@@ -99,6 +139,11 @@ SIGNAL_NEWLINE_MIN_RATIO = 0.22
 SIGNAL_NEWLINE_MIN_CHARS = 120
 SIGNAL_SHORTLINES_MIN_RATIO = 0.55
 SIGNAL_SHORTLINES_MIN_LINES = 16
+OCR_SOURCE_PROFILE_PT_LATIN = "pt_latin_default"
+OCR_SOURCE_PROFILE_AR_TRACK = "ar_track_default"
+OCR_LOCAL_PASS_STRATEGY = "single_pass_baseline"
+OCR_API_FALLBACK_POLICY = "required_only_for_paid_fallback"
+OCR_TEXT_ONLY_IMAGE_QUALITY_FLOOR = 0.28
 
 
 def _is_usable_source_text_value(value: str) -> bool:
@@ -201,17 +246,75 @@ def classify_extracted_text_quality(text: str) -> dict[str, object]:
     }
 
 
-@dataclass(slots=True)
-class _Evaluation:
-    ok: bool
-    normalized_text: str | None
-    defect_reason: str | None
-    parser_failed: bool = False
-    validator_failed: bool = False
-    outside_text: bool = False
-    block_count: int = 0
-    ar_autofix_applied_count: int = 0
-    ar_token_details: dict[str, int] | None = None
+def _ocr_track_for_target(target_lang: TargetLang) -> str:
+    return "ar" if target_lang == TargetLang.AR else "enfr"
+
+
+def _ocr_source_profile_for_track(track: str) -> str:
+    if track == "ar":
+        return OCR_SOURCE_PROFILE_AR_TRACK
+    return OCR_SOURCE_PROFILE_PT_LATIN
+
+
+def _ocr_quality_score(extraction_quality: dict[str, object]) -> float:
+    extracted_chars = int(extraction_quality.get("extracted_char_count", 0) or 0)
+    junk_ratio = float(extraction_quality.get("junk_ratio", 0.0) or 0.0)
+    ocr_required = bool(extraction_quality.get("ocr_required", False))
+    ocr_helpful = bool(extraction_quality.get("ocr_helpful", False))
+    signals = extraction_quality.get("signals", [])
+    signal_count = len(signals) if isinstance(signals, list) else 0
+    char_score = min(1.0, extracted_chars / 420.0)
+    junk_penalty = min(0.7, junk_ratio * 2.5)
+    signal_penalty = min(0.24, signal_count * 0.06)
+    required_penalty = 0.45 if ocr_required else 0.0
+    helpful_penalty = 0.12 if ocr_helpful else 0.0
+    score = char_score - junk_penalty - signal_penalty - required_penalty - helpful_penalty
+    return round(max(0.0, min(1.0, score)), 4)
+
+
+def _ocr_failure_category(reason: str | None) -> str:
+    lowered = str(reason or "").strip().lower()
+    if lowered == "":
+        return "none"
+    if "not_requested" in lowered:
+        return "not_requested"
+    if "unavailable" in lowered:
+        return "unavailable"
+    if "render failed" in lowered:
+        return "render_failed"
+    if "tesseract execution failed" in lowered or "tesseract exited with code" in lowered:
+        return "local_engine_error"
+    if "below acceptance threshold" in lowered or "unusable" in lowered:
+        return "local_unusable"
+    if "empty output" in lowered or "empty_result" in lowered:
+        return "empty_result"
+    if "api ocr request failed" in lowered:
+        return "api_error"
+    if "fallback" in lowered:
+        return "fallback_exhausted"
+    return "other"
+
+
+def _derive_cancel_halt_reason(run_state: RunState) -> str:
+    saw_transport_retry = False
+    for key in sorted(run_state.pages.keys(), key=lambda item: int(str(item)) if str(item).isdigit() else str(item)):
+        page = run_state.pages.get(str(key))
+        if not isinstance(page, dict):
+            continue
+        if not bool(page.get("cancel_requested_before_failure", False)):
+            continue
+        exception_class = str(page.get("exception_class", "") or "").strip()
+        if exception_class == "APITimeoutError":
+            return "cancelled_after_request_timeout"
+        try:
+            transport_retries = int(page.get("transport_retries_count", 0) or 0)
+        except Exception:
+            transport_retries = 0
+        if transport_retries > 0:
+            saw_transport_retry = True
+    if saw_transport_retry:
+        return "cancelled_during_transport_retry"
+    return "cancelled_by_user"
 
 
 class TranslationWorkflow:
@@ -252,6 +355,16 @@ class TranslationWorkflow:
             supported_target_langs(),
         )
         self._prompt_addendum_by_lang: dict[str, str] = {lang: "" for lang in supported_target_langs()}
+        self._budget_pre_run_packet: dict[str, Any] | None = None
+        self._budget_post_run_packet: dict[str, Any] | None = None
+        self._budget_decision: str = "n/a"
+        self._budget_decision_reason: str = ""
+        self._cost_estimation_status: str = "unavailable"
+        self._cost_profile_id: str = "default_local"
+        self._budget_cap_usd: float | None = None
+        self._advisor_recommendation_applied: bool | None = None
+        self._translation_timeout_text_seconds = float(DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS)
+        self._translation_timeout_image_seconds = float(DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS)
 
     def cancel(self) -> None:
         self._cancel_event.set()
@@ -271,9 +384,26 @@ class TranslationWorkflow:
         self._ocr_helpful_engine = None
         self._ocr_required_engine_checked = False
         self._ocr_helpful_engine_checked = False
+        self._budget_pre_run_packet = None
+        self._budget_post_run_packet = None
+        self._budget_decision = "n/a"
+        self._budget_decision_reason = ""
+        self._cost_estimation_status = "unavailable"
+        self._cost_profile_id = "default_local"
+        self._budget_cap_usd = None
+        self._advisor_recommendation_applied = None
+        self._translation_timeout_text_seconds = float(DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS)
+        self._translation_timeout_image_seconds = float(DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS)
 
         config = self._normalize_config(config)
         self._validate_config(config)
+        self._cost_profile_id = normalize_cost_profile_id(config.cost_profile_id)
+        self._budget_cap_usd = config.budget_cap_usd
+        self._advisor_recommendation_applied = (
+            config.advisor_recommendation_applied
+            if isinstance(config.advisor_recommendation_applied, bool)
+            else None
+        )
         gui_settings = load_gui_settings()
         personal_glossaries = normalize_glossaries(
             gui_settings.get("personal_glossaries_by_lang", gui_settings.get("glossaries_by_lang")),
@@ -290,6 +420,14 @@ class TranslationWorkflow:
             lang: str(raw_addendum_map.get(lang, "") or "").strip()
             for lang in supported_target_langs()
         }
+        self._translation_timeout_text_seconds = float(
+            gui_settings.get("perf_timeout_text_seconds", DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS)
+            or DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS
+        )
+        self._translation_timeout_image_seconds = float(
+            gui_settings.get("perf_timeout_image_seconds", DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS)
+            or DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS
+        )
         project_glossaries = normalize_glossaries({}, supported_target_langs())
         if config.glossary_file:
             # Preserve fail-fast behavior for invalid custom glossary files.
@@ -445,7 +583,13 @@ class TranslationWorkflow:
                     logger=self._log,
                 )
             else:
-                client_instance = OpenAIResponsesClient(logger=self._log)
+                client_instance = OpenAIResponsesClient(
+                    request_timeout_seconds=max(
+                        self._translation_timeout_text_seconds,
+                        self._translation_timeout_image_seconds,
+                    ),
+                    logger=self._log,
+                )
             thread_local.client = client_instance
             return client_instance
 
@@ -462,6 +606,95 @@ class TranslationWorkflow:
                 )
                 continue
             pending_pages.append(page_number)
+
+        self._budget_pre_run_packet = self._build_budget_pre_run_packet(
+            config=config,
+            selected_pages=selected_pages,
+            selected_pages_count=selection_page_count,
+        )
+        self._cost_estimation_status = str(self._budget_pre_run_packet.get("estimation_status", "unavailable") or "unavailable")
+        pre_run_estimated_cost = self._budget_pre_run_packet.get("estimated_cost_usd")
+        if isinstance(pre_run_estimated_cost, (int, float)):
+            pre_run_cost_value: float | None = float(pre_run_estimated_cost)
+        else:
+            pre_run_cost_value = None
+        decision = evaluate_budget_decision(
+            budget_cap_usd=config.budget_cap_usd,
+            estimated_cost_usd=pre_run_cost_value,
+            budget_on_exceed=config.budget_on_exceed,
+        )
+        self._budget_decision = decision.decision
+        self._budget_decision_reason = decision.reason
+
+        self._record_event(
+            event_type="run_budget_preflight",
+            stage="run",
+            counters={
+                "selected_pages_count": int(selection_page_count),
+                "sample_pages_count": int(self._budget_pre_run_packet.get("sample_pages_count", 0) or 0),
+                "estimated_total_tokens": int(self._budget_pre_run_packet.get("estimated_total_tokens", 0) or 0),
+            },
+            decisions={
+                "cost_profile_id": self._cost_profile_id,
+                "cost_estimation_status": self._cost_estimation_status,
+                "budget_cap_configured": config.budget_cap_usd is not None,
+                "budget_on_exceed": config.budget_on_exceed.value,
+                "budget_decision": self._budget_decision,
+                "budget_decision_reason": self._budget_decision_reason,
+            },
+            details={
+                "estimated_cost_usd": pre_run_cost_value,
+                "budget_cap_usd": config.budget_cap_usd,
+                "pricing_source": self._budget_pre_run_packet.get("pricing_source"),
+                "pricing_explanation": self._budget_pre_run_packet.get("pricing_explanation"),
+            },
+        )
+
+        if self._budget_decision == "warn":
+            self._log(
+                "Budget preflight warning: estimated cost exceeds configured cap "
+                f"(estimate={pre_run_cost_value}, cap={config.budget_cap_usd}). Continuing by policy."
+            )
+        elif self._budget_decision == "n/a" and config.budget_cap_usd is not None:
+            self._log(
+                "Budget preflight unavailable: estimate could not be computed with configured cap; "
+                "continuing by policy."
+            )
+        elif self._budget_decision == "block":
+            with state_lock:
+                run_state.run_status = "budget_blocked"
+                run_state.finished_at = self._utc_now()
+                run_state.final_docx_path_abs = None
+                run_state.halt_reason = "budget_cap_exceeded"
+                save_run_state_atomic(paths.run_state_path, run_state)
+            self._last_state = run_state
+            self._run_stage_timings_ms["run_total"] = round((time.perf_counter() - run_started_perf) * 1000.0, 3)
+            run_summary_path = self._write_run_summary(
+                config=config,
+                paths=paths,
+                run_state=run_state,
+            )
+            self._record_event(
+                event_type="run_budget_blocked",
+                stage="run",
+                error="budget_cap_exceeded",
+                details={
+                    "estimated_cost_usd": pre_run_cost_value,
+                    "budget_cap_usd": config.budget_cap_usd,
+                    "decision_reason": self._budget_decision_reason,
+                },
+            )
+            return RunSummary(
+                success=False,
+                exit_code=1,
+                output_docx=None,
+                partial_docx=None,
+                run_dir=paths.run_dir,
+                completed_pages=0,
+                failed_page=None,
+                error="budget_cap_exceeded",
+                run_summary_path=run_summary_path,
+            )
 
         if run_state.done_count > 0:
             self._progress(run_state.done_count, selection_page_count, f"Resumed {run_state.done_count} page(s)")
@@ -814,8 +1047,7 @@ class TranslationWorkflow:
             with state_lock:
                 run_state.run_status = "cancelled"
                 run_state.finished_at = self._utc_now()
-                if run_state.halt_reason is None:
-                    run_state.halt_reason = "cancelled_by_user"
+                run_state.halt_reason = _derive_cancel_halt_reason(run_state)
                 save_run_state_atomic(paths.run_state_path, run_state)
             run_summary_path = self._write_run_summary(
                 config=config,
@@ -825,7 +1057,10 @@ class TranslationWorkflow:
             self._record_event(
                 event_type="run_cancelled",
                 stage="run",
-                details={"completed_pages": int(completed_pages)},
+                details={
+                    "completed_pages": int(completed_pages),
+                    "halt_reason": str(run_state.halt_reason or "cancelled_by_user"),
+                },
             )
             return RunSummary(
                 success=False,
@@ -895,6 +1130,17 @@ class TranslationWorkflow:
         for page_number in selected_pages:
             ordered = extract_ordered_page_text(config.pdf_path, page_number - 1)
             extracted_text = ordered.text
+            extraction_quality = classify_extracted_text_quality(extracted_text)
+            ocr_required = bool(extraction_quality.get("ocr_required", False))
+            ocr_helpful = bool(extraction_quality.get("ocr_helpful", False))
+            ocr_request_reason = "not_requested"
+            if config.ocr_mode == OcrMode.ALWAYS:
+                ocr_request_reason = "required"
+            elif config.ocr_mode == OcrMode.AUTO:
+                if ocr_required:
+                    ocr_request_reason = "required"
+                elif ocr_helpful:
+                    ocr_request_reason = "helpful"
             would_attach_image = should_include_image(
                 config.image_mode,
                 extracted_text,
@@ -912,6 +1158,12 @@ class TranslationWorkflow:
                     "blocks_count": int(ordered.block_count),
                     "two_column_detected": bool(ordered.two_column_detected),
                     "would_attach_image": would_attach_image,
+                    "ocr_request_reason": ocr_request_reason,
+                    "extraction_quality_signals": [
+                        str(item)
+                        for item in extraction_quality.get("signals", [])
+                        if isinstance(item, str)
+                    ],
                     "reason": self._analyze_image_reason(
                         lang=config.target_lang,
                         mode=config.image_mode.value,
@@ -923,6 +1175,13 @@ class TranslationWorkflow:
                 }
             )
 
+        advisor_recommendation = build_ocr_image_advisor(
+            rows=rows,
+            target_lang=config.target_lang.value,
+            current_ocr_mode=config.ocr_mode.value,
+            current_image_mode=config.image_mode.value,
+            source="analyze_report",
+        )
         payload = {
             "run_id": paths.run_started_at,
             "pdf_path": str(config.pdf_path),
@@ -930,6 +1189,19 @@ class TranslationWorkflow:
             "image_mode": config.image_mode.value,
             "selected_pages_count": len(selected_pages),
             "pages_would_attach_images": pages_would_attach_images,
+            "recommended_ocr_mode": str(
+                advisor_recommendation.get("recommended_ocr_mode", config.ocr_mode.value) or config.ocr_mode.value
+            ),
+            "recommended_image_mode": str(
+                advisor_recommendation.get("recommended_image_mode", config.image_mode.value) or config.image_mode.value
+            ),
+            "recommendation_reasons": [
+                str(item)
+                for item in advisor_recommendation.get("recommendation_reasons", [])
+                if isinstance(item, str)
+            ],
+            "confidence": float(advisor_recommendation.get("confidence", 0.5) or 0.5),
+            "advisor_track": str(advisor_recommendation.get("advisor_track", "enfr") or "enfr"),
             "pages": rows,
         }
         analyze_report_path = paths.run_dir / "analyze_report.json"
@@ -1024,6 +1296,8 @@ class TranslationWorkflow:
             return None, False
 
         policy_value = config.ocr_engine.value if request_reason == "required" else "local"
+        ocr_track = _ocr_track_for_target(config.target_lang)
+        ocr_source_profile = _ocr_source_profile_for_track(ocr_track)
         checked_now = False
         configured = False
         engine: OCREngine | None = None
@@ -1065,6 +1339,10 @@ class TranslationWorkflow:
                     "request_reason": request_reason,
                     "engine_policy": policy_value,
                     "configured": bool(configured),
+                    "ocr_track": ocr_track,
+                    "ocr_source_profile": ocr_source_profile,
+                    "ocr_local_pass_strategy": OCR_LOCAL_PASS_STRATEGY,
+                    "ocr_api_fallback_policy": OCR_API_FALLBACK_POLICY,
                 },
             )
 
@@ -1150,11 +1428,14 @@ class TranslationWorkflow:
         extract_seconds = time.perf_counter() - extract_started
         extracted_text = ordered.text
         extraction_quality = classify_extracted_text_quality(extracted_text)
+        ocr_quality_score = _ocr_quality_score(extraction_quality)
         extracted_usable = self._is_usable_source_text(extracted_text)
         extracted_lines = int(extraction_quality.get("line_count", 0) or 0)
         extraction_signals = [str(item) for item in extraction_quality.get("signals", []) if isinstance(item, str)]
         ocr_required = bool(extraction_quality.get("ocr_required", False))
         ocr_helpful = bool(extraction_quality.get("ocr_helpful", False))
+        ocr_track = _ocr_track_for_target(config.target_lang)
+        ocr_source_profile = _ocr_source_profile_for_track(ocr_track)
         ocr_request_reason = "not_requested"
         if config.ocr_mode == OcrMode.ALWAYS:
             ocr_request_reason = "required"
@@ -1195,6 +1476,15 @@ class TranslationWorkflow:
             "ocr_provider_configured": False,
             "ocr_engine_used": "",
             "ocr_failed_reason": "",
+            "ocr_failure_category": "none",
+            "ocr_quality_score": float(ocr_quality_score),
+            "ocr_candidate_quality_score": 0.0,
+            "ocr_selected_pass": "",
+            "ocr_attempts_count": 0,
+            "ocr_track": ocr_track,
+            "ocr_source_profile": ocr_source_profile,
+            "ocr_local_pass_strategy": OCR_LOCAL_PASS_STRATEGY,
+            "ocr_api_fallback_policy": OCR_API_FALLBACK_POLICY,
             "extraction_quality_signals": [],
             "ar_locked_tokens_expected": 0,
             "ar_locked_token_autofix_applied": 0,
@@ -1209,7 +1499,15 @@ class TranslationWorkflow:
             "compliance_defect_outside_text": False,
             "parser_failed": False,
             "validator_failed": False,
+            "validator_defect_reason": "",
+            "ar_violation_kind": "",
+            "ar_violation_samples": [],
+            "ar_token_details": {},
             "retry_reason": "",
+            "request_type": "",
+            "request_timeout_budget_seconds": 0.0,
+            "request_elapsed_before_failure_seconds": 0.0,
+            "cancel_requested_before_failure": False,
             "openai_request_id": "",
             "status_code": None,
             "exception_class": "",
@@ -1266,7 +1564,7 @@ class TranslationWorkflow:
                 mode=OcrMode.ALWAYS,
                 engine=ocr_engine,
                 prefer_header=False,
-                lang_hint=config.target_lang.value,
+                lang_hint=ocr_source_profile,
             )
             page_metadata["ocr_seconds"] = round(time.perf_counter() - ocr_started, 3)
 
@@ -1295,6 +1593,10 @@ class TranslationWorkflow:
         page_metadata["ocr_provider_configured"] = bool(ocr_provider_configured)
         page_metadata["ocr_engine_used"] = ocr_result.engine
         page_metadata["ocr_failed_reason"] = ocr_result.failed_reason or ""
+        page_metadata["ocr_failure_category"] = _ocr_failure_category(ocr_result.failed_reason)
+        page_metadata["ocr_candidate_quality_score"] = float(ocr_result.quality_score or 0.0)
+        page_metadata["ocr_selected_pass"] = str(ocr_result.selected_pass or "")
+        page_metadata["ocr_attempts_count"] = int(len(ocr_result.attempts or []))
         page_metadata["extraction_quality_signals"] = extraction_signals
 
         self._record_event(
@@ -1312,6 +1614,15 @@ class TranslationWorkflow:
                 "median_line_len": float(extraction_quality.get("median_line_len", 0.0) or 0.0),
                 "ocr_engine": ocr_result.engine,
                 "ocr_chars": int(ocr_result.chars),
+                "ocr_quality_score": float(ocr_quality_score),
+                "ocr_candidate_quality_score": float(ocr_result.quality_score or 0.0),
+                "ocr_selected_pass": str(ocr_result.selected_pass or ""),
+                "ocr_attempts_count": int(len(ocr_result.attempts or [])),
+                "ocr_failure_category": str(page_metadata.get("ocr_failure_category", "")),
+                "ocr_track": ocr_track,
+                "ocr_source_profile": ocr_source_profile,
+                "ocr_local_pass_strategy": OCR_LOCAL_PASS_STRATEGY,
+                "ocr_api_fallback_policy": OCR_API_FALLBACK_POLICY,
             },
         )
 
@@ -1330,23 +1641,19 @@ class TranslationWorkflow:
             expected_ar_tokens = [token for token in all_tokens if not is_portuguese_month_date_token(token)]
             page_metadata["ar_locked_tokens_expected"] = int(len(expected_ar_tokens))
 
-        image_used = should_include_image(
-            config.image_mode,
-            extracted_text,
-            ordered.extraction_failed,
-            ordered.fragmented,
-            lang=config.target_lang,
-        )
-        image_decision_reason = self._analyze_image_reason(
-            lang=config.target_lang,
-            mode=config.image_mode.value,
-            extraction_failed=ordered.extraction_failed,
+        image_used, image_decision_reason = self._resolve_page_image_usage(
+            config=config,
             ordered_text=extracted_text,
+            source_text=source_text,
+            extraction_failed=ordered.extraction_failed,
             fragmented=ordered.fragmented,
-            would_attach_image=image_used,
+            two_column_detected=ordered.two_column_detected,
+            ocr_chars=int(ocr_result.chars),
+            ocr_quality_score=float(ocr_result.quality_score or 0.0),
         )
         page_metadata["image_decision_reason"] = image_decision_reason
-        short_or_failed = ordered.extraction_failed or len(extracted_text.strip()) < 20
+        effective_image_text = source_text if ocr_result.chars > 0 else extracted_text
+        short_or_failed = ordered.extraction_failed or len(effective_image_text.strip()) < 20
         image_detail = "low"
         if short_or_failed and config.image_mode in (ImageMode.AUTO, ImageMode.ALWAYS):
             image_detail = "high"
@@ -1371,6 +1678,15 @@ class TranslationWorkflow:
             page_metadata["image_compress_steps"] = int(rendered_image.compress_steps)
         else:
             page_metadata["image_detail"] = ""
+        request_type = self._translation_request_type(image_used=image_used)
+        request_timeout_budget_seconds = self._translation_request_timeout_seconds(image_used=image_used)
+        page_request_started = time.perf_counter()
+        page_metadata["request_type"] = request_type
+        page_metadata["request_timeout_budget_seconds"] = float(request_timeout_budget_seconds)
+        self._log(
+            f"page={page_number} request_type={request_type} "
+            f"request_timeout_budget_seconds={request_timeout_budget_seconds:.1f}"
+        )
         self._record_event(
             event_type="page_image_decision",
             stage="image",
@@ -1380,20 +1696,23 @@ class TranslationWorkflow:
                 "image_used": bool(image_used),
                 "reason": image_decision_reason,
                 "image_detail": image_detail if image_used else "",
+                "request_type": request_type,
+                "request_timeout_budget_seconds": float(request_timeout_budget_seconds),
             },
         )
 
         attempt1_effort = self._resolve_attempt1_effort(
             config=config,
             image_used=image_used,
-            ordered_text_chars=len(extracted_text.strip()),
+            ordered_text_chars=len(source_text.strip()),
         )
         page_metadata["attempt1_effort"] = attempt1_effort.value
 
         ocr_reason = ocr_result.failed_reason or "none"
         self._log(
             f"page={page_number} ocr_used={ocr_result.engine} ocr_chars={ocr_result.chars} "
-            f"ocr_failed_reason={ocr_reason}"
+            f"ocr_failed_reason={ocr_reason} ocr_selected_pass={ocr_result.selected_pass or 'n/a'} "
+            f"ocr_candidate_score={float(ocr_result.quality_score or 0.0):.4f}"
         )
 
         _prompt_build_t0 = time.perf_counter()
@@ -1439,10 +1758,13 @@ class TranslationWorkflow:
                 "engine": ocr_result.engine,
                 "chars": ocr_result.chars,
                 "failed_reason": ocr_result.failed_reason,
+                "quality_score": float(ocr_result.quality_score or 0.0),
+                "selected_pass": str(ocr_result.selected_pass or ""),
+                "attempts_count": int(len(ocr_result.attempts or [])),
             }
         }
 
-        def _record_ar_eval_diagnostics(evaluation: _Evaluation, *, attempt: int) -> None:
+        def _record_ar_eval_diagnostics(evaluation: OutputEvaluation, *, attempt: int) -> None:
             if config.target_lang != TargetLang.AR:
                 return
             if evaluation.ar_autofix_applied_count > 0:
@@ -1465,12 +1787,19 @@ class TranslationWorkflow:
                         for key, value in evaluation.ar_token_details.items()
                         if isinstance(value, int)
                     }
+                    detail_payload = {
+                        "ar_violation_samples": list(evaluation.ar_violation_samples or []),
+                    }
+                    for key, value in evaluation.ar_token_details.items():
+                        if isinstance(value, list) and value:
+                            detail_payload[key] = value
                     self._record_event(
                         event_type="ar_locked_token_extra_tokens",
                         stage="translate",
                         page_index=page_number,
                         decisions={"attempt": int(attempt)},
                         counters=detail_counters,
+                        details=detail_payload,
                     )
             if evaluation.validator_failed and evaluation.ar_token_details is not None:
                 detail_counters = {
@@ -1478,14 +1807,47 @@ class TranslationWorkflow:
                     for key, value in evaluation.ar_token_details.items()
                     if isinstance(value, int)
                 }
+                detail_payload: dict[str, object] = {
+                    "validator_defect_reason": evaluation.defect_reason or "",
+                    "ar_violation_kind": str(evaluation.ar_violation_kind or ""),
+                    "ar_violation_samples": list(evaluation.ar_violation_samples or []),
+                }
+                for key, value in evaluation.ar_token_details.items():
+                    if not isinstance(value, int) and value not in ({}, [], "", None):
+                        detail_payload[key] = value
+                event_type = "ar_validation_failure"
+                if evaluation.ar_violation_kind == "expected_token_mismatch":
+                    event_type = "ar_locked_token_violation"
+                elif evaluation.ar_violation_kind == "latin_or_digits_outside_wrapped_tokens":
+                    event_type = "ar_outside_token_leakage"
+                elif evaluation.ar_violation_kind == "unwrapped_token_marker":
+                    event_type = "ar_unwrapped_token_marker"
                 self._record_event(
-                    event_type="ar_locked_token_violation",
+                    event_type=event_type,
                     stage="translate",
                     page_index=page_number,
                     decisions={"attempt": int(attempt)},
                     counters=detail_counters,
                     error=evaluation.defect_reason or "Expected locked token mismatch.",
+                    details=detail_payload,
                 )
+
+        def _apply_evaluation_metadata(evaluation: OutputEvaluation) -> None:
+            page_metadata["parser_failed"] = bool(page_metadata["parser_failed"]) or bool(evaluation.parser_failed)
+            page_metadata["validator_failed"] = bool(page_metadata["validator_failed"]) or bool(evaluation.validator_failed)
+            page_metadata["compliance_defect_outside_text"] = bool(
+                page_metadata["compliance_defect_outside_text"]
+            ) or bool(evaluation.outside_text)
+            if evaluation.defect_reason:
+                page_metadata["validator_defect_reason"] = str(evaluation.defect_reason)
+            if config.target_lang != TargetLang.AR:
+                return
+            if evaluation.ar_violation_kind:
+                page_metadata["ar_violation_kind"] = str(evaluation.ar_violation_kind)
+            if evaluation.ar_violation_samples:
+                page_metadata["ar_violation_samples"] = [str(item) for item in evaluation.ar_violation_samples[:3]]
+            if isinstance(evaluation.ar_token_details, dict) and evaluation.ar_token_details:
+                page_metadata["ar_token_details"] = dict(evaluation.ar_token_details)
 
         def _finalize_page_metadata() -> None:
             page_metadata["api_calls_count"] = int(api_calls_count)
@@ -1504,12 +1866,17 @@ class TranslationWorkflow:
 
         attempt1_started = time.perf_counter()
         try:
+            attempt1_timeout = self._remaining_request_budget_seconds(
+                started_at=page_request_started,
+                total_budget_seconds=request_timeout_budget_seconds,
+            )
             initial = client.create_page_response(
                 instructions=instructions,
                 prompt_text=prompt_text,
                 effort=attempt1_effort.value,
                 image_data_url=image_data_url,
                 image_detail=str(page_metadata["image_detail"] or "low"),
+                timeout_seconds=attempt1_timeout,
             )
             page_metadata["attempt1_seconds"] = round(time.perf_counter() - attempt1_started, 3)
             api_calls_count += 1
@@ -1522,6 +1889,11 @@ class TranslationWorkflow:
             page_metadata["last_backoff_seconds"] = float(exc.last_backoff_seconds)
             page_metadata["backoff_wait_seconds_total"] = float(exc.total_backoff_seconds)
             page_metadata["rate_limit_hit"] = bool(exc.rate_limit_hit)
+            page_metadata["request_elapsed_before_failure_seconds"] = round(
+                time.perf_counter() - page_request_started,
+                3,
+            )
+            page_metadata["cancel_requested_before_failure"] = bool(self._cancel_event.is_set())
             self._record_event(
                 event_type="api_call_failed",
                 stage="translate",
@@ -1532,7 +1904,22 @@ class TranslationWorkflow:
                     "transport_retries_count": int(exc.transport_retries_count),
                     "backoff_wait_seconds_total": float(exc.total_backoff_seconds),
                     "rate_limit_hit": bool(exc.rate_limit_hit),
+                    "request_timeout_budget_seconds": float(request_timeout_budget_seconds),
+                    "request_elapsed_before_failure_seconds": float(
+                        page_metadata["request_elapsed_before_failure_seconds"]
+                    ),
                 },
+                error=exc.exception_class,
+                details={"request_type": request_type, "cancel_requested": bool(self._cancel_event.is_set())},
+            )
+            self._log_failure_context(
+                page_number=page_number,
+                request_type=request_type,
+                request_timeout_budget_seconds=float(request_timeout_budget_seconds),
+                request_elapsed_before_failure_seconds=float(
+                    page_metadata["request_elapsed_before_failure_seconds"]
+                ),
+                cancel_requested_before_failure=bool(page_metadata["cancel_requested_before_failure"]),
                 error=exc.exception_class,
             )
             _finalize_page_metadata()
@@ -1575,9 +1962,7 @@ class TranslationWorkflow:
             expected_ar_tokens=expected_ar_tokens,
         )
         _record_ar_eval_diagnostics(initial_eval, attempt=1)
-        page_metadata["parser_failed"] = bool(initial_eval.parser_failed)
-        page_metadata["validator_failed"] = bool(initial_eval.validator_failed)
-        page_metadata["compliance_defect_outside_text"] = bool(initial_eval.outside_text)
+        _apply_evaluation_metadata(initial_eval)
         if initial_eval.ok and initial_eval.normalized_text is not None:
             if self._diagnostics_admin_mode:
                 from .translation_diagnostics import run_all_quality_checks, emit_validation_summary_event
@@ -1605,7 +1990,17 @@ class TranslationWorkflow:
             fallback_reason=initial_eval.defect_reason,
         )
         page_metadata["retry_reason"] = retry_reason
-        if retry_reason == "pt_language_leak" and config.target_lang in (TargetLang.EN, TargetLang.FR):
+        if retry_reason == "ar_token_violation" and config.target_lang == TargetLang.AR:
+            retry_prompt = build_ar_token_retry_prompt(
+                initial.raw_output,
+                expected_ar_tokens or [],
+                violation_kind=initial_eval.ar_violation_kind,
+            )
+            if initial_eval.ar_violation_kind == "latin_or_digits_outside_wrapped_tokens":
+                page_metadata["retry_prompt_type"] = "ar_wrap_correction"
+            else:
+                page_metadata["retry_prompt_type"] = "ar_token_correction"
+        elif retry_reason == "pt_language_leak":
             retry_prompt = build_language_retry_prompt(config.target_lang, initial.raw_output)
             page_metadata["retry_prompt_type"] = "language_correction"
         else:
@@ -1613,6 +2008,60 @@ class TranslationWorkflow:
             page_metadata["retry_prompt_type"] = "formatting"
         retry_effort = self._resolve_retry_effort(config=config)
         page_metadata["attempt2_effort"] = retry_effort.value
+        remaining_retry_budget = self._remaining_request_budget_seconds(
+            started_at=page_request_started,
+            total_budget_seconds=request_timeout_budget_seconds,
+        )
+        if remaining_retry_budget <= 0.0:
+            page_metadata["attempt2_seconds"] = 0.0
+            page_metadata["status_code"] = None
+            page_metadata["exception_class"] = "APITimeoutError"
+            page_metadata["request_elapsed_before_failure_seconds"] = round(
+                time.perf_counter() - page_request_started,
+                3,
+            )
+            page_metadata["cancel_requested_before_failure"] = bool(self._cancel_event.is_set())
+            self._record_event(
+                event_type="api_call_failed",
+                stage="translate",
+                page_index=page_number,
+                duration_ms=0.0,
+                counters={
+                    "attempt": 2,
+                    "transport_retries_count": 0,
+                    "backoff_wait_seconds_total": 0.0,
+                    "rate_limit_hit": False,
+                    "request_timeout_budget_seconds": float(request_timeout_budget_seconds),
+                    "request_elapsed_before_failure_seconds": float(
+                        page_metadata["request_elapsed_before_failure_seconds"]
+                    ),
+                },
+                error="APITimeoutError",
+                details={
+                    "request_type": request_type,
+                    "cancel_requested": bool(self._cancel_event.is_set()),
+                    "reason": "request_budget_exhausted_before_retry",
+                },
+            )
+            self._log_failure_context(
+                page_number=page_number,
+                request_type=request_type,
+                request_timeout_budget_seconds=float(request_timeout_budget_seconds),
+                request_elapsed_before_failure_seconds=float(
+                    page_metadata["request_elapsed_before_failure_seconds"]
+                ),
+                cancel_requested_before_failure=bool(page_metadata["cancel_requested_before_failure"]),
+                error="APITimeoutError",
+            )
+            _finalize_page_metadata()
+            return _PageOutcome(
+                status=PageStatus.FAILED,
+                image_used=image_used,
+                retry_used=True,
+                usage=usage_payload,
+                error="runtime_failure",
+                page_metadata=page_metadata,
+            )
         attempt2_started = time.perf_counter()
         try:
             retry = client.create_page_response(
@@ -1620,6 +2069,7 @@ class TranslationWorkflow:
                 prompt_text=retry_prompt,
                 effort=retry_effort.value,
                 image_data_url=None,
+                timeout_seconds=remaining_retry_budget,
             )
             page_metadata["attempt2_seconds"] = round(time.perf_counter() - attempt2_started, 3)
             api_calls_count += 1
@@ -1636,6 +2086,11 @@ class TranslationWorkflow:
                 exc.total_backoff_seconds
             )
             page_metadata["rate_limit_hit"] = bool(page_metadata["rate_limit_hit"]) or bool(exc.rate_limit_hit)
+            page_metadata["request_elapsed_before_failure_seconds"] = round(
+                time.perf_counter() - page_request_started,
+                3,
+            )
+            page_metadata["cancel_requested_before_failure"] = bool(self._cancel_event.is_set())
             self._record_event(
                 event_type="api_call_failed",
                 stage="translate",
@@ -1646,7 +2101,22 @@ class TranslationWorkflow:
                     "transport_retries_count": int(exc.transport_retries_count),
                     "backoff_wait_seconds_total": float(exc.total_backoff_seconds),
                     "rate_limit_hit": bool(exc.rate_limit_hit),
+                    "request_timeout_budget_seconds": float(request_timeout_budget_seconds),
+                    "request_elapsed_before_failure_seconds": float(
+                        page_metadata["request_elapsed_before_failure_seconds"]
+                    ),
                 },
+                error=exc.exception_class,
+                details={"request_type": request_type, "cancel_requested": bool(self._cancel_event.is_set())},
+            )
+            self._log_failure_context(
+                page_number=page_number,
+                request_type=request_type,
+                request_timeout_budget_seconds=float(request_timeout_budget_seconds),
+                request_elapsed_before_failure_seconds=float(
+                    page_metadata["request_elapsed_before_failure_seconds"]
+                ),
+                cancel_requested_before_failure=bool(page_metadata["cancel_requested_before_failure"]),
                 error=exc.exception_class,
             )
             _finalize_page_metadata()
@@ -1694,11 +2164,7 @@ class TranslationWorkflow:
             expected_ar_tokens=expected_ar_tokens,
         )
         _record_ar_eval_diagnostics(retry_eval, attempt=2)
-        page_metadata["parser_failed"] = bool(page_metadata["parser_failed"]) or bool(retry_eval.parser_failed)
-        page_metadata["validator_failed"] = bool(page_metadata["validator_failed"]) or bool(retry_eval.validator_failed)
-        page_metadata["compliance_defect_outside_text"] = bool(page_metadata["compliance_defect_outside_text"]) or bool(
-            retry_eval.outside_text
-        )
+        _apply_evaluation_metadata(retry_eval)
         if retry_eval.ok and retry_eval.normalized_text is not None:
             if self._diagnostics_admin_mode:
                 from .translation_diagnostics import run_all_quality_checks, emit_validation_summary_event
@@ -1721,6 +2187,8 @@ class TranslationWorkflow:
             )
 
         defect_reason = retry_eval.defect_reason or initial_eval.defect_reason or "compliance_failure"
+        if defect_reason:
+            page_metadata["validator_defect_reason"] = str(defect_reason)
         page_metadata["retry_reason"] = self._retry_reason_from_evaluation(
             retry_eval,
             lang=config.target_lang,
@@ -1796,88 +2264,11 @@ class TranslationWorkflow:
         lang: TargetLang,
         *,
         expected_ar_tokens: list[str] | None = None,
-    ) -> _Evaluation:
-        parsed = parse_code_block_output(raw_output)
-        if parsed.block_count == 0:
-            return _Evaluation(
-                ok=False,
-                normalized_text=None,
-                defect_reason="No code block in model output.",
-                parser_failed=True,
-                validator_failed=False,
-                outside_text=False,
-                block_count=0,
-                ar_autofix_applied_count=0,
-                ar_token_details=None,
-            )
-        if parsed.block_count > 1:
-            return _Evaluation(
-                ok=False,
-                normalized_text=None,
-                defect_reason="More than one code block in model output.",
-                parser_failed=True,
-                validator_failed=False,
-                outside_text=False,
-                block_count=parsed.block_count,
-                ar_autofix_applied_count=0,
-                ar_token_details=None,
-            )
-        if parsed.inner_content is None:
-            return _Evaluation(
-                ok=False,
-                normalized_text=None,
-                defect_reason="Missing inner code block content.",
-                parser_failed=True,
-                validator_failed=False,
-                outside_text=False,
-                block_count=1,
-                ar_autofix_applied_count=0,
-                ar_token_details=None,
-            )
-
-        normalized, ar_autofix_applied_count = normalize_output_text_with_stats(
-            parsed.inner_content,
-            lang=lang,
+    ) -> OutputEvaluation:
+        return evaluate_workflow_output(
+            raw_output,
+            lang,
             expected_ar_tokens=expected_ar_tokens,
-        )
-        if lang in (TargetLang.EN, TargetLang.FR):
-            validation = validate_enfr(normalized, lang=lang)
-        else:
-            validation = validate_ar(normalized, expected_tokens=expected_ar_tokens)
-        if not validation.ok:
-            return _Evaluation(
-                ok=False,
-                normalized_text=normalized,
-                defect_reason=validation.reason,
-                parser_failed=False,
-                validator_failed=True,
-                outside_text=False,
-                block_count=1,
-                ar_autofix_applied_count=int(ar_autofix_applied_count),
-                ar_token_details=validation.details,
-            )
-        if parsed.outside_has_non_whitespace:
-            return _Evaluation(
-                ok=False,
-                normalized_text=normalized,
-                defect_reason="Non-whitespace text found outside code block.",
-                parser_failed=False,
-                validator_failed=False,
-                outside_text=True,
-                block_count=1,
-                ar_autofix_applied_count=int(ar_autofix_applied_count),
-                ar_token_details=validation.details,
-            )
-        return _Evaluation(
-            ok=True,
-            normalized_text=normalized,
-            defect_reason=None,
-            parser_failed=False,
-            validator_failed=False,
-            outside_text=False,
-            block_count=1,
-            ar_autofix_applied_count=int(ar_autofix_applied_count),
-            ar_token_details=validation.details,
         )
 
     def _accumulate_usage_totals(self, page_metadata: dict[str, object], usage: dict[str, Any]) -> None:
@@ -1891,26 +2282,16 @@ class TranslationWorkflow:
 
     def _retry_reason_from_evaluation(
         self,
-        evaluation: _Evaluation,
+        evaluation: OutputEvaluation,
         *,
         lang: TargetLang,
         fallback_reason: str | None,
     ) -> str:
-        if evaluation.outside_text:
-            return "outside_text"
-        if evaluation.block_count == 0:
-            return "no_code_block"
-        if evaluation.block_count > 1:
-            return "multi_code_block"
-        reason = (fallback_reason or "").strip().lower()
-        if "blank line" in reason:
-            return "blank_lines"
-        if "portuguese" in reason and "leak" in reason:
-            return "pt_language_leak"
-        if lang == TargetLang.AR:
-            if "latin" in reason or "digit" in reason or "token" in reason or "wrapped" in reason:
-                return "ar_token_violation"
-        return "other"
+        return derive_retry_reason(
+            evaluation,
+            lang=lang,
+            fallback_reason=fallback_reason,
+        )
 
     def _write_run_summary(
         self,
@@ -1942,6 +2323,11 @@ class TranslationWorkflow:
             if isinstance(page, dict):
                 page_rows.append((page_number, page))
         page_rows.sort(key=lambda item: item[0])
+        failed_rows = [
+            (page_number, page)
+            for page_number, page in page_rows
+            if str(page.get("status", "")).strip().lower() == PageStatus.FAILED.value
+        ]
 
         total_wall_seconds = sum(float(page.get("wall_seconds", 0.0) or 0.0) for _, page in page_rows)
         total_input_tokens = sum(int(page.get("input_tokens", 0) or 0) for _, page in page_rows)
@@ -1977,6 +2363,72 @@ class TranslationWorkflow:
                 "unavailable" in str(page.get("ocr_failed_reason", "")).strip().lower()
                 or not bool(page.get("ocr_provider_configured", False))
             )
+        )
+        ocr_source_profile_values = [
+            str(page.get("ocr_source_profile", "") or "").strip()
+            for _, page in page_rows
+            if str(page.get("ocr_source_profile", "") or "").strip() != ""
+        ]
+        ocr_local_pass_strategy_values = [
+            str(page.get("ocr_local_pass_strategy", "") or "").strip()
+            for _, page in page_rows
+            if str(page.get("ocr_local_pass_strategy", "") or "").strip() != ""
+        ]
+        ocr_api_fallback_policy_values = [
+            str(page.get("ocr_api_fallback_policy", "") or "").strip()
+            for _, page in page_rows
+            if str(page.get("ocr_api_fallback_policy", "") or "").strip() != ""
+        ]
+        ocr_quality_score_values = [
+            float(page.get("ocr_quality_score", 0.0) or 0.0)
+            for _, page in page_rows
+        ]
+        ocr_track_enfr_pages = sum(
+            1 for _, page in page_rows if str(page.get("ocr_track", "") or "").strip().lower() == "enfr"
+        )
+        ocr_track_ar_pages = sum(
+            1 for _, page in page_rows if str(page.get("ocr_track", "") or "").strip().lower() == "ar"
+        )
+        ocr_track_enfr_scores = [
+            float(page.get("ocr_quality_score", 0.0) or 0.0)
+            for _, page in page_rows
+            if str(page.get("ocr_track", "") or "").strip().lower() == "enfr"
+        ]
+        ocr_track_ar_scores = [
+            float(page.get("ocr_quality_score", 0.0) or 0.0)
+            for _, page in page_rows
+            if str(page.get("ocr_track", "") or "").strip().lower() == "ar"
+        ]
+        ocr_track_enfr_avg = round(
+            sum(ocr_track_enfr_scores) / float(len(ocr_track_enfr_scores) or 1),
+            4,
+        )
+        ocr_track_ar_avg = round(
+            sum(ocr_track_ar_scores) / float(len(ocr_track_ar_scores) or 1),
+            4,
+        )
+        ocr_track_weighted_score = round(
+            (0.60 * ocr_track_enfr_avg) + (0.40 * ocr_track_ar_avg),
+            4,
+        )
+        ocr_source_profile = (
+            Counter(ocr_source_profile_values).most_common(1)[0][0]
+            if ocr_source_profile_values
+            else _ocr_source_profile_for_track(_ocr_track_for_target(config.target_lang))
+        )
+        ocr_local_pass_strategy = (
+            Counter(ocr_local_pass_strategy_values).most_common(1)[0][0]
+            if ocr_local_pass_strategy_values
+            else OCR_LOCAL_PASS_STRATEGY
+        )
+        ocr_api_fallback_policy = (
+            Counter(ocr_api_fallback_policy_values).most_common(1)[0][0]
+            if ocr_api_fallback_policy_values
+            else OCR_API_FALLBACK_POLICY
+        )
+        ocr_quality_score_avg = round(
+            sum(ocr_quality_score_values) / float(len(ocr_quality_score_values) or 1),
+            4,
         )
         ocr_requested = config.ocr_mode == OcrMode.ALWAYS or ocr_requested_pages > 0
         if config.ocr_mode == OcrMode.OFF:
@@ -2027,14 +2479,70 @@ class TranslationWorkflow:
             total_output_tokens=total_output_tokens,
             total_reasoning_tokens=total_reasoning_tokens,
         )
+        quality_risk_payload = build_quality_risk_summary(page_rows)
+        advisor_rows = [page for _, page in page_rows]
+        advisor_recommendation = build_ocr_image_advisor(
+            rows=advisor_rows,
+            target_lang=config.target_lang.value,
+            current_ocr_mode=config.ocr_mode.value,
+            current_image_mode=config.image_mode.value,
+            source="run_summary",
+        )
+        advisor_recommendation_applied = (
+            self._advisor_recommendation_applied
+            if isinstance(self._advisor_recommendation_applied, bool)
+            else None
+        )
+        self._budget_post_run_packet = self._build_budget_post_run_packet(
+            total_input_tokens=total_input_tokens,
+            total_output_tokens=total_output_tokens,
+            total_reasoning_tokens=total_reasoning_tokens,
+        )
+        post_status = str(self._budget_post_run_packet.get("estimation_status", "unavailable") or "unavailable")
+        cost_estimation_status = str(self._cost_estimation_status or "").strip() or post_status
+        failure_context: dict[str, Any] = {}
+        if failed_rows:
+            failed_page_number, failed_page = failed_rows[0]
+            failure_context = {
+                "page_number": int(failed_page_number),
+                "error": str(failed_page.get("error", "") or ""),
+                "exception_class": str(failed_page.get("exception_class", "") or ""),
+                "retry_reason": str(failed_page.get("retry_reason", "") or ""),
+                "validator_defect_reason": str(failed_page.get("validator_defect_reason", "") or ""),
+                "ar_violation_kind": str(failed_page.get("ar_violation_kind", "") or ""),
+                "ar_violation_samples": [
+                    str(item)
+                    for item in failed_page.get("ar_violation_samples", [])
+                    if str(item or "").strip() != ""
+                ],
+                "request_type": str(failed_page.get("request_type", "") or ""),
+                "request_timeout_budget_seconds": float(
+                    failed_page.get("request_timeout_budget_seconds", 0.0) or 0.0
+                ),
+                "request_elapsed_before_failure_seconds": float(
+                    failed_page.get("request_elapsed_before_failure_seconds", 0.0) or 0.0
+                ),
+                "cancel_requested_before_failure": bool(
+                    failed_page.get("cancel_requested_before_failure", False)
+                ),
+            }
 
         payload: dict[str, Any] = {
             "run_id": run_state.run_started_at or paths.run_started_at,
             "pdf_path": str(config.pdf_path),
             "lang": config.target_lang.value,
+            "run_status": str(run_state.run_status or ""),
+            "halt_reason": str(run_state.halt_reason or ""),
             "selected_pages_count": selected_pages_count,
             "effort_policy": effort_policy,
             "image_mode": config.image_mode.value,
+            "cost_estimation_status": cost_estimation_status,
+            "cost_profile_id": self._cost_profile_id,
+            "budget_cap_usd": self._budget_cap_usd,
+            "budget_decision": self._budget_decision,
+            "budget_decision_reason": self._budget_decision_reason,
+            "budget_pre_run": dict(self._budget_pre_run_packet or {}),
+            "budget_post_run": dict(self._budget_post_run_packet or {}),
             "pipeline": {
                 "image_mode": config.image_mode.value,
                 "ocr_mode": config.ocr_mode.value,
@@ -2048,6 +2556,21 @@ class TranslationWorkflow:
                 "ocr_helpful_pages": int(ocr_helpful_pages),
                 "ocr_required_unavailable_pages": int(ocr_required_unavailable_pages),
                 "ocr_preflight_checked": bool(ocr_preflight_checked),
+                "ocr_source_profile": ocr_source_profile,
+                "ocr_local_pass_strategy": ocr_local_pass_strategy,
+                "ocr_api_fallback_policy": ocr_api_fallback_policy,
+                "ocr_quality_score_avg": float(ocr_quality_score_avg),
+                "ocr_track_enfr_pages": int(ocr_track_enfr_pages),
+                "ocr_track_ar_pages": int(ocr_track_ar_pages),
+                "ocr_track_weighting": {
+                    "enfr": 0.60,
+                    "ar": 0.40,
+                },
+                "ocr_track_quality_packet": {
+                    "enfr_avg": float(ocr_track_enfr_avg),
+                    "ar_avg": float(ocr_track_ar_avg),
+                    "weighted_score": float(ocr_track_weighted_score),
+                },
             },
             "totals": {
                 "total_wall_seconds": round(total_wall_seconds, 3),
@@ -2068,7 +2591,35 @@ class TranslationWorkflow:
             "top_reasoning_pages": [_row(page_number, page) for page_number, page in top_reasoning],
             "suspected_cause": suspected_cause,
             "evidence": evidence,
+            "failure_context": failure_context,
+            "advisor_recommendation_applied": advisor_recommendation_applied,
+            "advisor_recommendation": dict(advisor_recommendation),
+            "quality_risk_score": quality_risk_payload.get("quality_risk_score", 0.0),
+            "review_queue_count": quality_risk_payload.get("review_queue_count", 0),
+            "review_queue": quality_risk_payload.get("review_queue", []),
         }
+        if isinstance(config.gmail_batch_context, dict) and config.gmail_batch_context:
+            payload["gmail_batch_context"] = {
+                "source": str(config.gmail_batch_context.get("source", "") or ""),
+                "session_id": str(config.gmail_batch_context.get("session_id", "") or ""),
+                "message_id": str(config.gmail_batch_context.get("message_id", "") or ""),
+                "thread_id": str(config.gmail_batch_context.get("thread_id", "") or ""),
+                "selected_attachment_filename": str(
+                    config.gmail_batch_context.get("selected_attachment_filename", "") or ""
+                ),
+                "selected_attachment_count": int(
+                    config.gmail_batch_context.get("selected_attachment_count", 0) or 0
+                ),
+                "selected_target_lang": str(
+                    config.gmail_batch_context.get("selected_target_lang", "") or ""
+                ),
+                "selected_start_page": int(
+                    config.gmail_batch_context.get("selected_start_page", 0) or 0
+                ),
+                "gmail_batch_session_report_path": str(
+                    config.gmail_batch_context.get("gmail_batch_session_report_path", "") or ""
+                ),
+            }
         if self._diagnostics_admin_mode:
             api_calls_total = sum(int(page.get("api_calls_count", 0) or 0) for _, page in page_rows)
             backoff_wait_seconds_total = sum(
@@ -2091,6 +2642,15 @@ class TranslationWorkflow:
                     "ocr_provider_configured": bool(page.get("ocr_provider_configured", False)),
                     "ocr_engine_used": str(page.get("ocr_engine_used", "") or ""),
                     "ocr_failed_reason": str(page.get("ocr_failed_reason", "") or ""),
+                    "ocr_failure_category": str(page.get("ocr_failure_category", "") or ""),
+                    "ocr_quality_score": float(page.get("ocr_quality_score", 0.0) or 0.0),
+                    "ocr_candidate_quality_score": float(page.get("ocr_candidate_quality_score", 0.0) or 0.0),
+                    "ocr_selected_pass": str(page.get("ocr_selected_pass", "") or ""),
+                    "ocr_attempts_count": int(page.get("ocr_attempts_count", 0) or 0),
+                    "ocr_track": str(page.get("ocr_track", "") or ""),
+                    "ocr_source_profile": str(page.get("ocr_source_profile", "") or ""),
+                    "ocr_local_pass_strategy": str(page.get("ocr_local_pass_strategy", "") or ""),
+                    "ocr_api_fallback_policy": str(page.get("ocr_api_fallback_policy", "") or ""),
                     "extraction_quality_signals": (
                         list(page.get("extraction_quality_signals", []))
                         if isinstance(page.get("extraction_quality_signals", []), list)
@@ -2112,6 +2672,12 @@ class TranslationWorkflow:
                     "exception_class": str(page.get("exception_class", "") or ""),
                     "error": str(page.get("error", "") or ""),
                     "retry_reason": str(page.get("retry_reason", "") or ""),
+                    "request_type": str(page.get("request_type", "") or ""),
+                    "request_timeout_budget_seconds": float(page.get("request_timeout_budget_seconds", 0.0) or 0.0),
+                    "request_elapsed_before_failure_seconds": float(
+                        page.get("request_elapsed_before_failure_seconds", 0.0) or 0.0
+                    ),
+                    "cancel_requested_before_failure": bool(page.get("cancel_requested_before_failure", False)),
                 }
                 for page_number, page in page_rows
             ]
@@ -2180,6 +2746,22 @@ class TranslationWorkflow:
             return ReasoningEffort.HIGH
         return ReasoningEffort.MEDIUM
 
+    def _translation_request_type(self, *, image_used: bool) -> str:
+        return "image_backed" if image_used else "text_only"
+
+    def _translation_request_timeout_seconds(self, *, image_used: bool) -> float:
+        if image_used:
+            return max(5.0, float(self._translation_timeout_image_seconds))
+        return max(5.0, float(self._translation_timeout_text_seconds))
+
+    def _remaining_request_budget_seconds(
+        self,
+        *,
+        started_at: float,
+        total_budget_seconds: float,
+    ) -> float:
+        return max(0.0, float(total_budget_seconds) - (time.perf_counter() - started_at))
+
     def _classify_suspected_cause(
         self,
         *,
@@ -2193,33 +2775,19 @@ class TranslationWorkflow:
         rate_limit_hits: int,
         transport_retries_total: int,
     ) -> tuple[str, list[str]]:
-        evidence: list[str] = []
-        selected = max(1, selected_pages_count)
-        images_ratio = pages_with_images / float(selected)
-        retries_ratio = pages_with_retries / float(selected)
-        reasoning_ratio = total_reasoning_tokens / float(max(1, total_tokens))
-        transport_threshold = max(3, int(math.ceil(0.5 * selected)))
-
-        if images_ratio >= 0.30 and avg_image_bytes >= 1_048_576:
-            evidence.append(
-                f"images_ratio={images_ratio:.3f}>=0.300 and avg_image_bytes={int(avg_image_bytes)}>=1048576"
+        return classify_summary_cause(
+            SummarySignalInputs(
+                selected_pages_count=selected_pages_count,
+                pages_with_images=pages_with_images,
+                avg_image_bytes=avg_image_bytes,
+                total_reasoning_tokens=total_reasoning_tokens,
+                total_tokens=total_tokens,
+                effort_policy=effort_policy,
+                pages_with_retries=pages_with_retries,
+                rate_limit_hits=rate_limit_hits,
+                transport_retries_total=transport_retries_total,
             )
-            return "image_auto_triggering", evidence
-        if reasoning_ratio >= 0.60 and effort_policy == "fixed_xhigh":
-            evidence.append(
-                f"reasoning_ratio={reasoning_ratio:.3f}>=0.600 and effort_policy=fixed_xhigh"
-            )
-            return "xhigh_reasoning_tokens", evidence
-        if retries_ratio >= 0.20:
-            evidence.append(f"retries_ratio={retries_ratio:.3f}>=0.200")
-            return "compliance_retries", evidence
-        if rate_limit_hits > 0 or transport_retries_total >= transport_threshold:
-            evidence.append(
-                f"rate_limit_hits={rate_limit_hits}, transport_retries_total={transport_retries_total}, threshold={transport_threshold}"
-            )
-            return "rate_limiting", evidence
-        evidence.append("no primary threshold fired")
-        return "mixed_or_unknown", evidence
+        )
 
     def _estimate_cost_if_available(
         self,
@@ -2228,31 +2796,205 @@ class TranslationWorkflow:
         total_output_tokens: int,
         total_reasoning_tokens: int,
     ) -> float | None:
-        input_rate = self._env_float("LEGALPDF_COST_INPUT_PER_1M")
-        output_rate = self._env_float("LEGALPDF_COST_OUTPUT_PER_1M")
-        reasoning_rate = self._env_float("LEGALPDF_COST_REASONING_PER_1M")
-        if input_rate is None or output_rate is None or reasoning_rate is None:
+        pricing = resolve_pricing(OPENAI_MODEL)
+        if pricing.status != "available" or pricing.rates is None:
             return None
-        estimate = (
-            (total_input_tokens / 1_000_000.0) * input_rate
-            + (total_output_tokens / 1_000_000.0) * output_rate
-            + (total_reasoning_tokens / 1_000_000.0) * reasoning_rate
+        return estimate_cost_usd(
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            reasoning_tokens=total_reasoning_tokens,
+            rates=pricing.rates,
         )
-        return round(estimate, 6)
 
-    def _env_float(self, key: str) -> float | None:
-        raw = os.getenv(key, "").strip()
-        if raw == "":
-            return None
-        try:
-            return float(raw)
-        except ValueError:
-            return None
+    def _build_budget_pre_run_packet(
+        self,
+        *,
+        config: RunConfig,
+        selected_pages: list[int],
+        selected_pages_count: int,
+    ) -> dict[str, Any]:
+        sample_pages = deterministic_sample_pages(selected_pages, max_samples=3)
+        sampled_char_counts: list[int] = []
+        sample_failures: list[str] = []
+        for page_number in sample_pages:
+            try:
+                ordered = extract_ordered_page_text(config.pdf_path, page_number - 1)
+                sampled_char_counts.append(len((ordered.text or "").strip()))
+            except Exception as exc:  # noqa: BLE001
+                sample_failures.append(f"page={page_number}:{type(exc).__name__}")
+
+        pre_run_tokens = estimate_pre_run_tokens(
+            selected_pages_count=selected_pages_count,
+            sampled_page_char_counts=sampled_char_counts,
+            target_lang=config.target_lang,
+            effort_policy=config.effort_policy,
+            image_mode=config.image_mode,
+            ocr_mode=config.ocr_mode,
+        )
+        pricing = resolve_pricing(OPENAI_MODEL)
+        estimated_cost: float | None = None
+        estimation_status = "unavailable"
+        estimation_reason = "sample_extraction_failed"
+        pricing_source = ""
+        pricing_explanation = ""
+        if pricing.rates is not None:
+            pricing_source = pricing.rates.source
+            pricing_explanation = pricing.rates.explanation
+
+        if pre_run_tokens is None:
+            if not sample_pages:
+                estimation_reason = "no_selected_pages"
+            elif sampled_char_counts:
+                estimation_reason = "insufficient_sample_for_estimate"
+            elif sample_failures:
+                estimation_reason = "sample_extraction_failed"
+            else:
+                estimation_reason = "sample_unavailable"
+            if pricing.status == "failed":
+                estimation_status = "failed"
+                estimation_reason = pricing.reason
+        elif pricing.status != "available" or pricing.rates is None:
+            estimation_status = pricing.status
+            estimation_reason = pricing.reason
+        else:
+            estimation_status = "available"
+            estimation_reason = pricing.reason
+            estimated_cost = estimate_cost_usd(
+                input_tokens=pre_run_tokens.estimated_input_tokens,
+                output_tokens=pre_run_tokens.estimated_output_tokens,
+                reasoning_tokens=pre_run_tokens.estimated_reasoning_tokens,
+                rates=pricing.rates,
+            )
+
+        packet: dict[str, Any] = {
+            "model": OPENAI_MODEL,
+            "cost_profile_id": self._cost_profile_id,
+            "selected_pages_count": int(selected_pages_count),
+            "sample_pages": list(sample_pages),
+            "sample_pages_count": int(len(sample_pages)),
+            "sampled_page_char_counts": list(sampled_char_counts),
+            "sample_failures": list(sample_failures),
+            "estimation_status": estimation_status,
+            "estimation_reason": estimation_reason,
+            "pricing_source": pricing_source,
+            "pricing_explanation": pricing_explanation,
+            "estimated_cost_usd": estimated_cost,
+        }
+        if pre_run_tokens is not None:
+            packet.update(pre_run_tokens.to_dict())
+        else:
+            packet.update(
+                {
+                    "source_tokens_per_page_estimate": None,
+                    "prompt_overhead_tokens_per_page": None,
+                    "output_multiplier": None,
+                    "reasoning_ratio": None,
+                    "image_multiplier": None,
+                    "ocr_multiplier": None,
+                    "estimated_input_tokens": None,
+                    "estimated_output_tokens": None,
+                    "estimated_reasoning_tokens": None,
+                    "estimated_total_tokens": None,
+                }
+            )
+        return packet
+
+    def _build_budget_post_run_packet(
+        self,
+        *,
+        total_input_tokens: int,
+        total_output_tokens: int,
+        total_reasoning_tokens: int,
+    ) -> dict[str, Any]:
+        pricing = resolve_pricing(OPENAI_MODEL)
+        estimated_cost: float | None = None
+        pricing_source = ""
+        pricing_explanation = ""
+        if pricing.rates is not None:
+            pricing_source = pricing.rates.source
+            pricing_explanation = pricing.rates.explanation
+        if pricing.status == "available" and pricing.rates is not None:
+            estimated_cost = estimate_cost_usd(
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                reasoning_tokens=total_reasoning_tokens,
+                rates=pricing.rates,
+            )
+        return {
+            "model": OPENAI_MODEL,
+            "cost_profile_id": self._cost_profile_id,
+            "estimation_status": pricing.status,
+            "estimation_reason": pricing.reason,
+            "pricing_source": pricing_source,
+            "pricing_explanation": pricing_explanation,
+            "budget_cap_usd": self._budget_cap_usd,
+            "cap_exceeded": (
+                None
+                if self._budget_cap_usd is None or estimated_cost is None
+                else bool(estimated_cost > self._budget_cap_usd)
+            ),
+            "input_tokens": int(total_input_tokens),
+            "output_tokens": int(total_output_tokens),
+            "reasoning_tokens": int(total_reasoning_tokens),
+            "total_tokens": int(total_input_tokens + total_output_tokens + total_reasoning_tokens),
+            "estimated_cost_usd": estimated_cost,
+        }
 
     def _image_cap_for_lang(self, lang: TargetLang) -> int:
         if lang == TargetLang.AR:
             return IMAGE_MAX_DATA_URL_BYTES_AR
         return IMAGE_MAX_DATA_URL_BYTES_ENFR
+
+    def _resolve_page_image_usage(
+        self,
+        *,
+        config: RunConfig,
+        ordered_text: str,
+        source_text: str,
+        extraction_failed: bool,
+        fragmented: bool,
+        two_column_detected: bool,
+        ocr_chars: int,
+        ocr_quality_score: float,
+    ) -> tuple[bool, str]:
+        if config.image_mode == ImageMode.OFF:
+            return False, "image_mode_off"
+        if config.image_mode == ImageMode.ALWAYS:
+            return True, "image_mode_always"
+
+        ocr_used = ocr_chars > 0
+        ocr_text_usable = ocr_used and self._is_usable_source_text(source_text)
+        layout_needs_visual_grounding = bool(fragmented or two_column_detected)
+        quality_needs_visual_grounding = (
+            ocr_used and ocr_text_usable and ocr_quality_score < OCR_TEXT_ONLY_IMAGE_QUALITY_FLOOR
+        )
+
+        if ocr_text_usable and not layout_needs_visual_grounding and not quality_needs_visual_grounding:
+            return False, "ocr_success_text_sufficient"
+        if ocr_text_usable and layout_needs_visual_grounding:
+            return True, "ocr_success_layout_needs_image"
+        if quality_needs_visual_grounding:
+            return True, "ocr_success_quality_low"
+
+        effective_ordered_text = source_text if ocr_used else ordered_text
+        effective_extraction_failed = extraction_failed and not ocr_used
+        effective_fragmented = bool(fragmented or two_column_detected)
+        image_used = should_include_image(
+            config.image_mode,
+            effective_ordered_text,
+            effective_extraction_failed,
+            effective_fragmented,
+            lang=config.target_lang,
+        )
+        reason = self._analyze_image_reason(
+            lang=config.target_lang,
+            mode=config.image_mode.value,
+            extraction_failed=effective_extraction_failed,
+            ordered_text=effective_ordered_text,
+            fragmented=effective_fragmented,
+            would_attach_image=image_used,
+        )
+        return image_used, reason
 
     def _analyze_image_reason(
         self,
@@ -2287,6 +3029,21 @@ class TranslationWorkflow:
             return "fragmented_blocks"
         return "not_needed" if not would_attach_image else "heuristic_triggered"
 
+    def _missing_checkpoint_page_outputs(self, state: RunState, *, run_dir: Path) -> list[int]:
+        pages_dir = run_dir / "pages"
+        missing_pages: list[int] = []
+        for page_key, page_state in state.pages.items():
+            if str(page_state.get("status", "")).strip().lower() != PageStatus.DONE.value:
+                continue
+            try:
+                page_number = int(str(page_key))
+            except ValueError:
+                continue
+            page_path = pages_dir / f"page_{page_number:04d}.txt"
+            if not page_path.exists():
+                missing_pages.append(page_number)
+        return sorted(missing_pages)
+
     def _resolve_paths_for_run(self, config: RunConfig) -> tuple[RunPaths, RunState | None]:
         paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
         existing = load_run_state(paths.run_state_path)
@@ -2298,6 +3055,18 @@ class TranslationWorkflow:
                 warning="Existing run_state.json is unreadable; starting a new run state.",
             )
         if not config.resume or existing is None:
+            if (
+                existing is not None
+                and str(existing.run_status or "").strip().lower() == "running"
+                and not str(existing.finished_at or "").strip()
+            ):
+                self._log("Found abandoned prior run state; starting a new run with resume disabled.")
+                self._record_event(
+                    event_type="checkpoint_abandoned_prior_run",
+                    stage="checkpoint",
+                    warning="Found abandoned prior run state; starting a new run with resume disabled.",
+                    details={"run_state_path": str(paths.run_state_path)},
+                )
             return paths, existing
 
         if existing.frozen_outdir_abs:
@@ -2314,6 +3083,26 @@ class TranslationWorkflow:
             lang=config.target_lang,
             run_started_at=run_started_at,
         )
+        missing_page_outputs = self._missing_checkpoint_page_outputs(existing, run_dir=resolved_paths.run_dir)
+        if missing_page_outputs:
+            self._log(
+                "Checkpoint references completed pages whose saved page files are missing; "
+                "starting a new run state."
+            )
+            self._record_event(
+                event_type="checkpoint_resume_missing_page_outputs",
+                stage="checkpoint",
+                warning=(
+                    "Checkpoint references completed pages whose saved page files are missing; "
+                    "starting a new run state."
+                ),
+                details={
+                    "missing_pages": missing_page_outputs,
+                    "run_dir": str(resolved_paths.run_dir),
+                },
+            )
+            clear_run_dirs(paths)
+            return paths, None
         self._record_event(
             event_type="checkpoint_detected",
             stage="checkpoint",
@@ -2341,6 +3130,16 @@ class TranslationWorkflow:
             existing = load_run_state(paths.run_state_path)
 
         if config.resume and existing is not None:
+            if (
+                str(existing.run_status or "").strip().lower() == "running"
+                and not str(existing.finished_at or "").strip()
+            ):
+                self._log("Found abandoned prior run state from a previous session; resuming from saved checkpoint.")
+                self._record_event(
+                    event_type="checkpoint_resume_from_abandoned_run",
+                    stage="checkpoint",
+                    warning="Found abandoned prior run state from a previous session; resuming from saved checkpoint.",
+                )
             if existing.frozen_outdir_abs:
                 frozen_from_state = Path(existing.frozen_outdir_abs).expanduser().resolve()
                 if frozen_from_state != paths.frozen_outdir:
@@ -2406,6 +3205,13 @@ class TranslationWorkflow:
     def _normalize_config(self, config: RunConfig) -> RunConfig:
         outdir_abs = require_writable_output_dir(config.output_dir)
         context_file_abs = config.context_file.expanduser().resolve() if config.context_file else None
+        budget_policy = config.budget_on_exceed
+        if not isinstance(budget_policy, BudgetExceedPolicy):
+            normalized_policy = str(budget_policy or "").strip().lower()
+            if normalized_policy == BudgetExceedPolicy.BLOCK.value:
+                budget_policy = BudgetExceedPolicy.BLOCK
+            else:
+                budget_policy = BudgetExceedPolicy.WARN
         return RunConfig(
             pdf_path=config.pdf_path.expanduser().resolve(),
             output_dir=outdir_abs,
@@ -2423,15 +3229,29 @@ class TranslationWorkflow:
             keep_intermediates=config.keep_intermediates,
             ocr_mode=config.ocr_mode,
             ocr_engine=config.ocr_engine,
+            ocr_api_provider=config.ocr_api_provider,
             ocr_api_base_url=(config.ocr_api_base_url or "").strip() or None,
             ocr_api_model=(config.ocr_api_model or "").strip() or None,
             ocr_api_key_env_name=(config.ocr_api_key_env_name or "").strip() or "DEEPSEEK_API_KEY",
             context_file=context_file_abs,
             context_text=config.context_text,
             glossary_file=config.glossary_file.expanduser().resolve() if config.glossary_file else None,
+            budget_cap_usd=None if config.budget_cap_usd is None else float(config.budget_cap_usd),
+            cost_profile_id=normalize_cost_profile_id(config.cost_profile_id),
+            budget_on_exceed=budget_policy,
             diagnostics_admin_mode=bool(config.diagnostics_admin_mode),
             diagnostics_include_sanitized_snippets=bool(config.diagnostics_include_sanitized_snippets),
             strip_bidi_controls=bool(config.strip_bidi_controls),
+            advisor_recommendation_applied=(
+                config.advisor_recommendation_applied
+                if isinstance(config.advisor_recommendation_applied, bool)
+                else None
+            ),
+            advisor_recommendation=(
+                dict(config.advisor_recommendation)
+                if isinstance(config.advisor_recommendation, dict)
+                else None
+            ),
         )
 
     def _is_usable_source_text(self, value: str) -> bool:
@@ -2439,7 +3259,13 @@ class TranslationWorkflow:
 
     def _validate_config(self, config: RunConfig) -> None:
         if not config.pdf_path.exists():
-            raise FileNotFoundError(f"PDF not found: {config.pdf_path}")
+            raise FileNotFoundError(f"Source file not found: {config.pdf_path}")
+        if not config.pdf_path.is_file():
+            raise ValueError(f"Source path must be a file: {config.pdf_path}")
+        if not is_supported_source_file(config.pdf_path):
+            raise ValueError(
+                "Unsupported source file type. Supported types: PDF, PNG, JPG, JPEG, WEBP, BMP, TIF, TIFF."
+            )
         if config.target_lang not in (TargetLang.EN, TargetLang.FR, TargetLang.AR):
             raise ValueError("Invalid target language.")
         if config.start_page <= 0:
@@ -2452,6 +3278,8 @@ class TranslationWorkflow:
             raise ValueError("max_pages must be a positive integer when provided.")
         if config.workers < 1 or config.workers > 6:
             raise ValueError("workers must be between 1 and 6.")
+        if config.budget_cap_usd is not None and float(config.budget_cap_usd) < 0.0:
+            raise ValueError("budget_cap_usd must be >= 0 when provided.")
         if config.context_file and not config.context_file.exists():
             raise FileNotFoundError(f"Context file not found: {config.context_file}")
         if config.glossary_file and not config.glossary_file.exists():
@@ -2502,6 +3330,25 @@ class TranslationWorkflow:
     def _log(self, message: str) -> None:
         if self._log_callback:
             self._log_callback(message)
+
+    def _log_failure_context(
+        self,
+        *,
+        page_number: int,
+        request_type: str,
+        request_timeout_budget_seconds: float,
+        request_elapsed_before_failure_seconds: float,
+        cancel_requested_before_failure: bool,
+        error: str,
+    ) -> None:
+        self._log(
+            "page="
+            f"{page_number} failure_context request_type={request_type or 'unknown'} "
+            f"request_timeout_budget_seconds={request_timeout_budget_seconds:.1f} "
+            f"request_elapsed_before_failure_seconds={request_elapsed_before_failure_seconds:.3f} "
+            f"cancel_requested_before_failure={'yes' if cancel_requested_before_failure else 'no'} "
+            f"error={error or 'unknown'}"
+        )
 
     def _progress(self, current_page: int, total_pages: int, status: str) -> None:
         if self._progress_callback:
