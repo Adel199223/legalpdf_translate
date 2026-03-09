@@ -1,19 +1,20 @@
 {
   "version": 1,
-  "last_updated": "2026-03-08T20:45:00Z",
+  "last_updated": "2026-03-09T01:00:00Z",
   "issues": [
     {
       "id": "workflow-wrong-build-under-test",
       "title": "Wrong app/build under test because of mixed branches/worktrees and noncanonical launch",
       "first_seen_timestamp": "2026-03-06T00:00:00Z",
-      "last_seen_timestamp": "2026-03-07T10:33:19Z",
-      "repeat_count": 4,
+      "last_seen_timestamp": "2026-03-09T01:00:00Z",
+      "repeat_count": 5,
       "status": "mitigated",
       "trigger_source": "both",
       "symptoms": [
         "The wrong LegalPDF Translate window was opened for testing.",
         "Accepted functionality appeared to be missing because it existed only on a side branch or the wrong worktree was launched.",
-        "Repeated user-visible confusion occurred during Gemini, Gmail, and UI follow-up testing."
+        "Repeated user-visible confusion occurred during Gemini, Gmail, and UI follow-up testing.",
+        "The user needed extra support guidance about which sibling folder or workspace file should be the normal daily entry point."
       ],
       "likely_root_cause": "Feature work progressed on side branches after acceptance, the approved base was not promoted immediately, and multiple runnable worktrees existed without strong enough canonical-build enforcement.",
       "attempted_fix_history": [
@@ -25,6 +26,11 @@
         {
           "timestamp": "2026-03-07T00:00:00Z",
           "summary": "Added Qt build identity helper and noncanonical build markers.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-03-09T01:00:00Z",
+          "summary": "Added a saved multi-root VS Code workspace guide and archived a stale broken sibling folder out of the daily view.",
           "outcome": "partial_only"
         }
       ],
@@ -42,7 +48,9 @@
       "affected_docs": [
         "docs/assistant/runtime/CANONICAL_BUILD.json",
         "docs/assistant/DOCS_REFRESH_NOTES.md",
-        "docs/assistant/INDEX.md"
+        "docs/assistant/INDEX.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md"
       ],
       "bootstrap_relevance": "required",
       "docs_sync_relevance": {
@@ -50,7 +58,8 @@
         "targets": [
           "worktree/build identity governance",
           "approved-base promotion rules",
-          "canonical launch/default test target guidance"
+          "canonical launch/default test target guidance",
+          "plain-language local workspace entry guidance"
         ]
       },
       "evidence_refs": [
@@ -67,12 +76,20 @@
           "ref": "docs/assistant/exec_plans/active/2026-03-07_accepted_feature_promotion_canonical_enforcement.md"
         },
         {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-09_worktree_workspace_organization.md"
+        },
+        {
           "type": "branch",
           "ref": "feat/ai-docs-bootstrap"
         },
         {
           "type": "worktree",
           "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        },
+        {
+          "type": "workspace",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate-worktrees.code-workspace"
         },
         {
           "type": "worktree",

@@ -89,14 +89,15 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 ### workflow-wrong-build-under-test
 - Title: Wrong app/build under test because of mixed branches/worktrees and noncanonical launch
 - First seen timestamp: `2026-03-06T00:00:00Z`
-- Last seen timestamp: `2026-03-07T10:33:19Z`
-- Repeat count: `4`
+- Last seen timestamp: `2026-03-09T01:00:00Z`
+- Repeat count: `5`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
   - the wrong `LegalPDF Translate` window was opened for testing
   - accepted functionality appeared to be missing because it lived only on a side branch or the wrong worktree was launched
   - repeated user-visible confusion during Gemini/Gmail/UI follow-up testing
+  - the user also needed extra support guidance about which sibling folder or workspace file should be the normal daily entry point
 - Likely root cause:
   - feature work progressed on side branches after acceptance
   - the approved base was not promoted immediately
@@ -104,6 +105,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 - Attempted fix history:
   - `2026-03-07T00:00:00Z` — added worktree baseline discipline docs; outcome: insufficient on its own
   - `2026-03-07T00:00:00Z` — added Qt build identity helper and noncanonical build markers; outcome: reduced ambiguity but did not solve accepted-feature promotion drift by itself
+  - `2026-03-09T01:00:00Z` — added a saved multi-root VS Code workspace guide and archived a stale broken sibling folder out of the daily view; outcome: partial_only because it reduces navigation confusion but does not replace canonical build identity enforcement
 - Accepted fix:
   - `2026-03-07T10:33:19Z` — canonical build enforcement + approved-base promotion discipline + launcher identity packet gating + noncanonical launch override rules
 - Regressed after accepted fix: `no`
@@ -112,6 +114,8 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
   - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
   - `docs/assistant/runtime/CANONICAL_BUILD.json`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md`
 - Bootstrap relevance: `required`
 - Docs-sync relevance:
   - Priority: `high`
@@ -119,12 +123,15 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - worktree/build identity governance
     - approved-base promotion rules
     - canonical launch/default test target guidance
+    - plain-language local workspace entry guidance
 - Evidence refs:
   - ExecPlan: `docs/assistant/exec_plans/active/2026-03-07_worktree_baseline_docs_sync.md`
   - ExecPlan: `docs/assistant/exec_plans/active/2026-03-07_qt_build_identity_hardening.md`
   - ExecPlan: `docs/assistant/exec_plans/active/2026-03-07_accepted_feature_promotion_canonical_enforcement.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-09_worktree_workspace_organization.md`
   - Branch: `feat/ai-docs-bootstrap`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+  - Workspace: `C:\Users\FA507\.codex\legalpdf_translate-worktrees.code-workspace`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_integration`
 
 ### harness-live-state-contamination

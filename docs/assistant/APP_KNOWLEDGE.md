@@ -23,6 +23,7 @@ Use this file to route quickly to canonical and workflow docs. Do not treat this
 For support/non-technical explanations, start with:
 - `docs/assistant/features/APP_USER_GUIDE.md`
 - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+- Local folder/worktree/workspace organization questions route to `docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md` first, then `docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md` if branch/build provenance matters.
 - Qt dashboard shell/launch behavior routes to `docs/assistant/QT_UI_KNOWLEDGE.md` and `docs/assistant/QT_UI_PLAYBOOK.md`.
 - Reference-locked Qt UI work routes to `docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md`.
 - OCR-heavy translation triage routes to `docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md`.
