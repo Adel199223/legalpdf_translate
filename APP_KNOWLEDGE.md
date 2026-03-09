@@ -3,7 +3,7 @@
 This file is canonical for app-level architecture and status.
 
 ## App Summary
-LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX using one-page-per-request processing for each translation job, supports sequential multi-document queue execution, and now also supports a Windows-only Gmail intake batch-reply workflow.
+LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX using one-page-per-request processing for each translation job, supports sequential multi-document queue execution, supports true multi-window Qt workspaces for parallel jobs, and supports a Windows-only Gmail intake batch-reply workflow.
 
 - Primary UI: Qt/PySide6 desktop app.
 - Secondary interface: CLI.
@@ -20,6 +20,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 
 ## Desktop UI Shell
 - The desktop app now uses a dashboard-style shell instead of the older stacked utility card.
+- Each top-level app window is an independent workspace under one `QApplication`.
 - Main visible regions:
   - left sidebar: `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`
   - hero row: centered `LegalPDF Translate` title and right-aligned status text
@@ -28,6 +29,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
   - bottom action rail: `Start Translate`, `Cancel`, `...`
 - `Advanced Settings` stays collapsed by default inside the setup card.
 - Review Queue and Save to Job Log remain available from the `Tools` menu; the `...` menu keeps output/report/job-log actions.
+- Workspace titles show `Workspace N` and can add the current source filename as a hint so parallel windows stay distinguishable.
 - The shell uses three responsive layout modes:
   - `desktop_exact`
   - `desktop_compact`
@@ -66,6 +68,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 9. Save completed runs to the Job Log with prefilled run metrics.
 10. Execute a queue manifest with checkpoint-aware resume and failed-only rerun behavior.
 11. Start from an open Gmail message in Edge/Chromium, review supported attachments from that exact email, translate them one by one with mandatory Save-to-Job-Log checkpoints, then optionally generate one honorarios DOCX and one threaded Gmail reply draft.
+12. Open multiple workspaces and translate different jobs in parallel without interrupting the current run.
 
 ## Output and Run Artifacts
 Run artifacts live under:
@@ -123,7 +126,10 @@ Queue manifests create sidecar artifacts beside the manifest file:
 ## Persistence Notes
 - The job log SQLite schema now includes additive run-metric/risk columns: `run_id`, `target_lang`, `total_tokens`, `estimated_api_cost`, and `quality_risk_score`.
 - The job log also stores additive translation artifact paths for Gmail/honorarios reuse: `output_docx_path` and `partial_docx_path`.
+- Job-form draft edits are workspace-local session state. Shared settings now persist launch fields only when a task explicitly starts, so closing or resetting one workspace does not write another window's draft inputs back into `settings.json`.
 - Gmail intake bridge settings persist in GUI settings as `gmail_intake_bridge_enabled`, `gmail_intake_bridge_token`, and `gmail_intake_port`.
+- In normal app launches, the Gmail intake bridge is app-level. It reuses the last active workspace only when that workspace is idle and pristine; otherwise it opens a new blank workspace for the intake automatically.
+- Multi-window runs share a controller-owned reservation map keyed by the resolved run directory. A second workspace cannot start `translate`, `analyze`, `rebuild`, or `queue` if it would reuse the same run folder as an active workspace.
 - Gmail intake batches now write one durable app-owned session report at `<effective_outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`.
   - This is the main cross-run/debug bridge between browser handoff, per-item translation runs, and Gmail draft finalization.
   - The browser extension does not write its own report file.
@@ -172,6 +178,8 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - attached launch: `python -m legalpdf_translate.qt_app`
   - detached Windows launch: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`
 - `python -m legalpdf_translate.qt_gui` remains a valid GUI compatibility entrypoint, but `qt_app` is the canonical docs command.
+- Open another workspace from `File > New Window`, `Ctrl+Shift+N`, or the `...` overflow action. `New Window` stays available even while another workspace is busy.
+- Duplicate run-folder blocking across windows is intentional. If two workspaces resolve to the same run directory, the second start is blocked until the owner workspace finishes or you change the effective source/output/language combination.
 - Arabic DOCX review/automation is a Windows-host feature that depends on installed Microsoft Word plus PowerShell COM automation; WSL-only validation is not enough for this path.
 - Screenshot-driven Qt UI work should use the fixed render contract in `docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md` rather than approximate visual review.
 - OCR-heavy documents should start with a small slice and safe settings:

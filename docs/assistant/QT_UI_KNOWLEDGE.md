@@ -6,6 +6,7 @@
 |------|----------------------|
 | `src/legalpdf_translate/qt_app.py` | `run()` creates `QApplication`, applies stylesheet, shows `QtMainWindow`; real GUI module entrypoint |
 | `src/legalpdf_translate/qt_main.py` | compatibility shim that delegates to `qt_app.run()` |
+| `src/legalpdf_translate/qt_gui/window_controller.py` | `WorkspaceWindowController` (workspace registry, numbering, last-active tracking, Gmail intake routing, duplicate-target reservation map) |
 | `src/legalpdf_translate/qt_gui/app_window.py` | `_FuturisticCanvas` (background/frame paint), `QtMainWindow` (`_build_ui`, `_apply_responsive_layout`, `_update_card_max_width`, `_refresh_lang_badge`, `_configure_footer_layout`, `_install_overflow_menu`) |
 | `src/legalpdf_translate/qt_gui/styles.py` | `build_stylesheet()` (dashboard QSS), `PALETTE`, `apply_soft_shadow()`, `apply_primary_glow()` |
 | `src/legalpdf_translate/qt_gui/dialogs.py` | `QtSettingsDialog`, `QtJobLogWindow`, `QtReviewQueueDialog`, `QtSaveToJobLogDialog` |
@@ -95,6 +96,12 @@ QtMainWindow
 - **Why:** `qt_app.py` owns `QApplication`, stylesheet setup, icon setup, and `QtMainWindow.show()`.
 - **Verify:** `python -m legalpdf_translate.qt_app`
 - **Breaks if:** docs or scripts keep pointing to `legalpdf_translate.qt_gui`.
+
+### 1a. Multi-window workspace contract
+- **What:** The app now uses independent top-level workspaces under one `QApplication`, not tabs or an MDI shell.
+- **Where:** `qt_app.run()` creates a `WorkspaceWindowController`, which owns top-level windows, workspace numbering, last-active tracking, and duplicate-target reservations.
+- **Behavior:** `File > New Window`, `Ctrl+Shift+N`, and the overflow blank-window action must stay available even while another workspace is busy.
+- **Verify:** a new window opens with an incremented `Workspace N` title; starting a second job is allowed only when it resolves to a different run folder.
 
 ### 2. Three responsive layout modes
 - **What:** Layout is controlled by explicit size classes, not ad-hoc widget drift.
@@ -206,3 +213,7 @@ python -m compileall src tests
 9. Scroll over the closed run-critical selectors and confirm they do not change by accident
 10. Trigger the EN/FR xhigh warning and confirm `Switch to fixed high` changes the current effort policy
 11. Trigger the OCR-heavy warning and confirm `Apply safe OCR profile` changes the current run only
+12. Open `File > New Window` or press `Ctrl+Shift+N` and confirm a second top-level window appears with the next `Workspace N` title
+13. Start a run in one workspace and confirm another workspace stays usable while it is busy
+14. Configure the same source file, target language, and output folder in two workspaces and confirm the second start is blocked as duplicate run-folder reuse
+15. If Gmail intake is enabled, confirm intake reuses an idle blank workspace first and opens a new workspace when the last active one is busy or already has job context

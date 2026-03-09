@@ -73,6 +73,38 @@ It does not silently overwrite your saved defaults.
 - OCR: Reading text from page images when normal extraction is poor.
 - Run summary: A final report about what happened in the run.
 
+## Multi-Window Workspaces
+Use this when you want to work on more than one translation job at the same time.
+
+### Open another workspace
+1. Use `File > New Window`.
+2. Or press `Ctrl+Shift+N`.
+3. Or open the bottom `...` menu and choose the blank-window action there.
+
+### How it behaves
+1. Each top-level window is its own workspace.
+2. The title bar shows `Workspace N` and can also add the current source filename so you can tell windows apart quickly.
+3. `New Run` still resets only the current workspace.
+4. A busy workspace does not block `New Window`; you can open and prepare another job while the first one is running.
+5. Unstarted form edits stay local to that workspace until you explicitly start a task.
+
+### Run jobs in parallel
+1. Start the first job in one workspace.
+2. Open another workspace and set up the second job there.
+3. Use a different effective output target if you want both jobs to run at once.
+4. The app keeps workers, dialogs, progress, and summaries local to each workspace.
+
+### Duplicate target protection
+- The app blocks a second `translate`, `analyze`, `rebuild`, or `queue` start when it would reuse the same resolved run folder as an active workspace.
+- In practice, the collision usually means the same source file, target language, and output folder would produce the same `<outdir>/<pdf_stem>_<LANG>_run/`.
+- When this happens, use `Focus other workspace` or change the output folder / target language before retrying.
+
+### Gmail intake + workspaces
+- The normal app launch now owns one shared Gmail intake bridge for all workspaces.
+- If the last active workspace is idle and pristine, Gmail intake reuses it.
+- If the last active workspace is busy or already has job context/draft state, Gmail intake opens a new blank workspace automatically.
+- Gmail-related settings stay global, but another window's unstarted launch-form edits should not be overwritten by those updates.
+
 ## Analyze + OCR Advisor
 Use Analyze when you want the app to inspect the PDF before spending translation time or money.
 
@@ -224,6 +256,7 @@ Queue mode writes these sidecar files next to the manifest:
 25. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets.
 26. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
 27. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
+28. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.

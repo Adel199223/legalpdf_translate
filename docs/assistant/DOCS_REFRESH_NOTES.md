@@ -16,6 +16,33 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-09 — main (working tree)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/QT_UI_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/exec_plans/completed/2026-03-09_converge_branch_governance_main.md
+  - docs/assistant/exec_plans/completed/2026-03-09_multi_window_translation_workspaces.md
+  - docs/assistant/exec_plans/completed/2026-03-09_narrow_assistant_docs_sync_mainline.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::App Summary
+  - APP_KNOWLEDGE.md::Persistence Notes
+  - docs/assistant/APP_KNOWLEDGE.md::Current-Truth Note
+  - docs/assistant/features/APP_USER_GUIDE.md::Multiple Windows
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md::Multi-Window Workspaces
+  - docs/assistant/QT_UI_KNOWLEDGE.md::Multi-window workspace contract
+  - docs/assistant/exec_plans/completed/2026-03-09_converge_branch_governance_main.md::Stage 3 execution log
+- User-visible behavior:
+  - Fresh assistant sessions can now discover the shipped multi-window Qt behavior from canonical, bridge, user-guide, and Qt verification docs instead of relying on thread history.
+  - User-facing docs now explain how to open another workspace, run jobs in parallel, recognize intentional duplicate-target blocking, and understand when Gmail intake reuses a workspace versus opening a new one.
+  - The March 9 convergence and multi-window ExecPlans now read as completed work, and the convergence record includes the final `main` merge, validation, canonical build-identity dry run, and retired branch cleanup.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
 ## 2026-03-09 — chore/converge-main-approved-base (working tree)
 - Files changed:
   - docs/assistant/runtime/CANONICAL_BUILD.json

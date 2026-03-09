@@ -29,6 +29,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 
 ## What You See On Screen
 - Left sidebar: quick buttons for `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, and `Profile`.
+- Window title: shows `Workspace N`; when a file is loaded it can also add that filename so parallel windows are easier to tell apart.
 - Job Setup: where you choose the PDF, target language, and output folder.
 - Conversion Output: where you watch progress, current task text, and page/image/error counts.
 - Advanced Settings: a fold-open section for Analyze, OCR options, queue manifest, and other expert controls.
@@ -59,7 +60,16 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 6. Save the finished run to the Job Log so the case and cost details are stored together.
 7. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
 8. Use Gmail intake when you want to start from one open Gmail message instead of choosing files manually.
-9. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when `Court Email` is available.
+9. Open `File > New Window` or press `Ctrl+Shift+N` when you want a second independent workspace for another job.
+10. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when `Court Email` is available.
+
+## Multiple Windows
+1. Open another workspace from `File > New Window`, `Ctrl+Shift+N`, or the bottom `...` menu.
+2. Each window is a separate workspace. Starting, stopping, or resetting one window does not reset the others.
+3. You can run different jobs in parallel as long as they do not resolve to the same run folder.
+4. If the app says a translation is already active in another workspace, both windows would write to the same output run folder. Change the output folder or target language, or wait for the other workspace to finish.
+5. Unstarted edits stay in that window only. A new blank workspace should not copy draft file/language/output changes from another workspace.
+6. Gmail intake reuses the last active blank idle workspace when possible. If that workspace is already busy or has job context, the app opens a new workspace for the intake automatically.
 
 ## Gmail Intake Batch Replies
 1. In `Settings > Keys & Providers > Gmail Drafts (Windows)`, turn on the Gmail intake bridge and keep the app running on Windows.
