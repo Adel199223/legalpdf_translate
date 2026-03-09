@@ -62,6 +62,17 @@ Create or update these core artifacts in every bootstrapped repo:
 
 ### Bare `push`
 - treat as Push+PR+Merge+Cleanup unless the user narrows scope
+- require branch-scoped ExecPlan closeout before merge
+- when roadmap governance is active, require roadmap closeout and `SESSION_RESUME.md` update before merge
+- treat cleanup of known scratch outputs as part of merge cleanup, not as an afterthought
+
+### Post-Merge Repair Default
+- If continuity or cleanup was missed after merge, generated repos should default to a follow-up branch/PR.
+- Direct repair on `main` should happen only when the user explicitly asks for it.
+
+## Scratch Output Rule
+- Deterministic assistant review/debug artifacts should default under ignored `tmp/` unless a generated repo has a stricter local equivalent.
+- Generated repos should treat scratch artifact Source Control noise as a workflow failure, not as normal cleanup trivia.
 
 ## OpenAI Freshness Rule
 OpenAI-specific behavior is temporally unstable and should be routed through official docs or an `openai-docs` capability when available.

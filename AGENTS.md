@@ -34,6 +34,7 @@ Ask before executing any of the following:
   - `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`
 - If the user says `resume master plan`, `where did we leave off`, or `what is the next roadmap step`, open:
   - `docs/assistant/SESSION_RESUME.md`
+- If `docs/assistant/SESSION_RESUME.md` shows a dormant roadmap state, default to normal ExecPlan flow unless the user explicitly asks for roadmap/master-plan work.
 - `update codex bootstrap` / `UCBS` means template-system maintenance only, not project-local harness sync.
 - If user asks for parity/inspiration against a named product/site/app, run:
   - `docs/assistant/workflows/REFERENCE_DISCOVERY_WORKFLOW.md`

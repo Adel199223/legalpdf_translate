@@ -127,14 +127,23 @@ When this module is activated, generated repos should include:
 
 Generated repos should also document:
 - `docs/assistant/SESSION_RESUME.md` as the roadmap anchor file
+- both valid roadmap states:
+  - active roadmap state
+  - dormant roadmap state on `main`
 - stages as optional research/spec phases and waves as implementation slices
 - the active-worktree authority rule for live roadmap state
 - the update order:
   1. active wave ExecPlan
   2. active roadmap tracker
   3. `docs/assistant/SESSION_RESUME.md`
+- closeout ending in either archived roadmap artifacts or a dormant anchor on `main`
 - the right to resequence future stages or waves when new discoveries force a better sequence
 - the rule that roadmap mode is not the default for every task
+
+Generated repos should also treat this as a reusable cleanup lesson routed through the existing governance modules:
+- stale post-merge continuity
+- stale active-plan inventory
+- scratch artifact Source Control noise
 
 ## Stage-Gate Rules
 Use staged execution when at least two of these are true:
@@ -182,3 +191,11 @@ Generated repos must keep docs-sync policy explicit:
 - significant implementation change -> ask the exact docs-sync prompt only when relevant touched-scope docs still remain unsynced
 - if the relevant docs sync already ran during the same task/pass, do not ask the prompt again
 - if approved, update only relevant docs for touched scope
+
+## Cleanup and Publish Rule
+Generated repos should encode cleanup-complete bare `push` semantics through the existing governance modules:
+- continuity-closeout before merge
+- roadmap closeout when active
+- `SESSION_RESUME.md` update before merge
+- cleanup of known scratch outputs
+- follow-up branch/PR as the default if post-merge repair is still needed

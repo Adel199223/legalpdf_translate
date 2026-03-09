@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-03-09T01:00:00Z",
+  "last_updated": "2026-03-09T23:30:00Z",
   "issues": [
     {
       "id": "workflow-wrong-build-under-test",
@@ -65,15 +65,15 @@
       "evidence_refs": [
         {
           "type": "execplan",
-          "ref": "docs/assistant/exec_plans/active/2026-03-07_worktree_baseline_docs_sync.md"
+          "ref": "docs/assistant/exec_plans/completed/2026-03-07_worktree_baseline_docs_sync.md"
         },
         {
           "type": "execplan",
-          "ref": "docs/assistant/exec_plans/active/2026-03-07_qt_build_identity_hardening.md"
+          "ref": "docs/assistant/exec_plans/completed/2026-03-07_qt_build_identity_hardening.md"
         },
         {
           "type": "execplan",
-          "ref": "docs/assistant/exec_plans/active/2026-03-07_accepted_feature_promotion_canonical_enforcement.md"
+          "ref": "docs/assistant/exec_plans/completed/2026-03-07_accepted_feature_promotion_canonical_enforcement.md"
         },
         {
           "type": "execplan",
@@ -353,6 +353,86 @@
         {
           "type": "file",
           "ref": "tests/test_qt_app_state.py"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        }
+      ]
+    },
+    {
+      "id": "workflow-post-merge-continuity-cleanup-drift",
+      "title": "Post-merge cleanup drift left stale roadmap continuity and scratch artifacts behind",
+      "first_seen_timestamp": "2026-03-09T23:30:00Z",
+      "last_seen_timestamp": "2026-03-09T23:30:00Z",
+      "repeat_count": 1,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "docs/assistant/SESSION_RESUME.md still pointed to a deleted feature branch after merge.",
+        "docs/assistant/exec_plans/active/ still held clearly completed or dead-branch plans.",
+        "A docs-only continuity repair was needed on main after the merge was already complete.",
+        "Deterministic Qt render-review outputs showed up as untracked Source Control noise."
+      ],
+      "likely_root_cause": "Branch cleanup did not require roadmap closeout, resume-anchor updates, and scratch-output cleanup to be decision-complete before merge.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-09T23:30:00Z",
+          "summary": "Merged the feature thread first and repaired continuity state afterward on main.",
+          "outcome": "partial_only"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-09T23:30:00Z",
+        "summary": "Added dormant-roadmap support for SESSION_RESUME.md, archived deterministically stale plans, hardened commit/publish and docs-maintenance workflows, moved Qt render-review scratch output under ignored tmp/, and added validator coverage for stale resume branches and legacy scratch-path guidance.",
+        "expected_result": "Post-merge cleanup should no longer rely on thread memory to restore roadmap continuity or remove deterministic assistant-tool scratch artifacts."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md",
+        "docs/assistant/workflows/ROADMAP_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "docs/assistant/UPDATE_POLICY.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/ISSUE_MEMORY.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "stale roadmap continuity repair",
+          "active/completed ExecPlan lifecycle hygiene",
+          "post-merge cleanup guardrails",
+          "ignored scratch-output defaults for assistant tooling"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "file",
+          "ref": "docs/assistant/SESSION_RESUME.md"
+        },
+        {
+          "type": "file",
+          "ref": "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md"
+        },
+        {
+          "type": "file",
+          "ref": "docs/assistant/workflows/ROADMAP_WORKFLOW.md"
+        },
+        {
+          "type": "file",
+          "ref": "tooling/qt_render_review.py"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-09_cleanup_continuity_hardening.md"
+        },
+        {
+          "type": "branch",
+          "ref": "main"
         },
         {
           "type": "worktree",

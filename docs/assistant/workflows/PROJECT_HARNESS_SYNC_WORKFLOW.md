@@ -6,6 +6,7 @@ Applying the vendored template set in `docs/assistant/templates/` to this repo's
 ## Expected Outputs
 - Updated project-local routing docs, manifest contracts, workflows, and validator coverage that match the current vendored template set.
 - Explicit boundary between local harness application and global bootstrap maintenance.
+- Resynced continuity/cleanup governance docs when vendored template changes alter resume, merge-cleanup, or scratch-output rules.
 - Successful harness validation after the local apply pass.
 
 ## When To Use
@@ -36,6 +37,8 @@ Instead use:
 - `docs/assistant/INDEX.md`
 - `docs/assistant/manifest.json`
 - `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`
+- `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+- `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
 - `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
 - `docs/assistant/SESSION_RESUME.md`
 - `tooling/validate_agent_docs.dart`
@@ -64,6 +67,10 @@ dart run tooling/validate_workspace_hygiene.dart
   - read `docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json` first
   - load only the vendored template files needed for the requested scope
   - patch project-local docs, workflows, manifest contracts, and validators in that order
+- Template changes affect continuity or merge cleanup behavior:
+  - resync `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+  - resync `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - resync local deterministic review/debug tooling docs when scratch-path rules changed
 - The work accidentally starts targeting `docs/assistant/templates/*`:
   - stop
   - restate the boundary between local harness apply and global bootstrap maintenance
@@ -71,6 +78,8 @@ dart run tooling/validate_workspace_hygiene.dart
 - Validator coverage still assumes an older template set:
   - update `tooling/validate_agent_docs.dart` and `test/tooling/validate_agent_docs_test.dart`
   - do not normalize the vendored template folder to fit the old validator
+- Vendored template changes and local harness changes coexist in one dirty tree:
+  - keep vendored template sync and project-local harness implementation as separate logical commit scopes by default
 - The requested change is inspection only:
   - switch to `audit project harness` or `check project harness` behavior
   - report drift without editing files by default
@@ -84,5 +93,11 @@ dart run tooling/validate_workspace_hygiene.dart
    3. workflow docs
    4. validator and test coverage
    5. roadmap docs when continuity contracts changed
-4. Confirm the boundary between local harness apply and `update codex bootstrap` / `UCBS`.
-5. Report validator/test results.
+   6. cleanup/publish and scratch-output guidance when continuity or merge cleanup behavior changed:
+      - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+      - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+      - local deterministic review/debug tooling docs
+4. Confirm whether continuity/cleanup governance docs were resynced during the pass.
+5. If vendored template changes and local harness changes coexisted, state the intended logical commit split.
+6. Confirm the boundary between local harness apply and `update codex bootstrap` / `UCBS`.
+7. Report validator/test results.

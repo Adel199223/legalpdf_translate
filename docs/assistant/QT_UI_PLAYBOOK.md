@@ -82,7 +82,7 @@ rg -n "_refresh_lang_badge|_LANG_FLAG_ICON_BY_CODE|FieldChrome|LangCaretButton|F
 - [ ] Run `python -m pytest -q`
 - [ ] Run `python -m compileall src tests`
 - [ ] Launch app: `python -m legalpdf_translate.qt_app`
-- [ ] Generate deterministic review renders: `python tooling/qt_render_review.py --outdir tmp_ui_review --preview reference_sample`
+- [ ] Generate deterministic review renders: `python tooling/qt_render_review.py --outdir tmp/qt_ui_review --preview reference_sample`
 - [ ] Desktop exact: readable sidebar labels, `Conversion Output`, two-column shell
 - [ ] Desktop compact: still two-column, no clipped field chrome
 - [ ] Stacked compact: setup/output stack cleanly, footer reflows to two rows

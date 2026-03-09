@@ -53,6 +53,12 @@ git ls-files --others --exclude-standard
 - Unintended staged files: `git restore --staged <path>` and restage explicitly.
 - Push safety risk: never force-push `main`; use PR flow.
 - User said `push`, but checks are red, merge is blocked, or cleanup is unsafe: report the exact blocker and stop at the highest clean point instead of silently stopping after the raw branch push.
+- Branch-scoped closeout is missing before merge:
+  - update completed ExecPlans, roadmap artifacts, and `docs/assistant/SESSION_RESUME.md` on the feature branch before merge
+  - remove known scratch outputs such as Qt render-review directories before calling the branch clean
+- Something was missed after merge:
+  - do not repair it by default through a direct push to `main`
+  - open a follow-up branch/PR unless the user explicitly asks for a direct post-merge repair
 
 ## Handoff Checklist
 1. Branch safety gate (before staging):
@@ -92,6 +98,11 @@ git ls-files --others --exclude-standard
    - create or update the PR
    - verify the latest SHA is the one under review
    - wait for required checks or CI
+   - before merge, make branch-scoped closeout decision-complete:
+     - close or archive completed ExecPlans
+     - close or archive completed roadmap artifacts
+     - update `docs/assistant/SESSION_RESUME.md`
+     - remove known scratch outputs
    - merge when:
      - checks are green
      - the PR base is correct
@@ -109,4 +120,5 @@ git ls-files --others --exclude-standard
    - delete the source branch when it is no longer needed
    - prune refs
    - remove stale local branch state when safe
+   - remove known scratch outputs if they still exist locally
    - verify final clean repo state

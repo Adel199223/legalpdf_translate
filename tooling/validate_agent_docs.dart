@@ -202,8 +202,12 @@ const Map<String, List<String>> _requiredContractKeysByModule =
       'project_harness_sync': <String>[
         'project_harness_sync_policy',
         'vendored_template_protection_policy',
+        'cleanup_complete_push_policy',
+        'post_merge_repair_default_policy',
+        'scratch_root_default_policy',
       ],
       'roadmap_governance': <String>[
+        'roadmap_dormant_main_policy',
         'roadmap_resume_anchor_policy',
         'roadmap_active_worktree_authority_policy',
         'roadmap_update_order_policy',
@@ -247,6 +251,10 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'bootstrap_roadmap_governance.md',
     'implement the template files',
     'session_resume.md',
+    'both active and dormant `session_resume.md` states',
+    'continuity-closeout plus cleanup',
+    'ignored `tmp/`',
+    'follow-up branch/pr',
     'bootstrap_harness_isolation_and_diagnostics.md',
     'host-bound workflows span browser/app/local bridge or fragile listeners',
     'read-on-demand',
@@ -261,6 +269,12 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'must not edit `docs/assistant/templates/*`',
     'bare `commit`',
     'push+pr+merge+cleanup',
+    'branch-scoped execplan closeout before merge',
+    'roadmap closeout and `session_resume.md` update before merge',
+    'cleanup of known scratch outputs',
+    'follow-up branch/pr',
+    'ignored `tmp/`',
+    'scratch artifact source control noise',
     'openai-specific behavior is temporally unstable',
     'docs-sync prompt',
   ],
@@ -274,6 +288,10 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'assistant docs sync',
     'repeat_count >= 2',
     'do not seed fake incidents',
+    'stale post-merge continuity',
+    'stale active-plan inventory',
+    'scratch artifact source control noise',
+    'bootstrap relevance `possible`',
   ],
   'docs/assistant/templates/BOOTSTRAP_MODULES_AND_TRIGGERS.md': <String>[
     'issue memory system',
@@ -287,6 +305,9 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'local desktop workflow',
     'roadmap governance',
     'docs/assistant/session_resume.md',
+    'dormant roadmap state on `main`',
+    'stale post-merge continuity',
+    'cleanup-complete bare `push` semantics',
     'harness isolation + diagnostics',
     'tests could collide with live machine state',
     'merge-immediately-after-acceptance discipline',
@@ -296,15 +317,16 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'browser automation rules',
     'harness isolation + diagnostics rules',
   ],
-  'docs/assistant/templates/BOOTSTRAP_PROJECT_HARNESS_SYNC_POLICY.md':
-      <String>[
-        'implement the template files',
-        'sync project harness',
-        'audit project harness',
-        'check project harness',
-        'local apply order',
-        'update codex bootstrap',
-      ],
+  'docs/assistant/templates/BOOTSTRAP_PROJECT_HARNESS_SYNC_POLICY.md': <String>[
+    'implement the template files',
+    'sync project harness',
+    'audit project harness',
+    'check project harness',
+    'local apply order',
+    'update codex bootstrap',
+    'continuity or merge cleanup behavior',
+    'commit_publish_workflow.md',
+  ],
   'docs/assistant/templates/BOOTSTRAP_LOCAL_ENV_OVERLAY.md': <String>[
     'windows vs wsl routing',
     'local_env_profile.example.md',
@@ -329,9 +351,14 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'fresh-session resume continuity is required',
     'docs/assistant/session_resume.md',
     'resume master plan',
+    'dormant roadmap state on `main`',
+    'no active roadmap currently open on this worktree',
+    'normal execplan flow',
     'the active roadmap tracker is the sequence source',
     'the active wave execplan is the implementation-detail source',
     '1. active wave execplan',
+    'either archive roadmap artifacts or leave a dormant anchor on `main`',
+    'post_merge_continuity_cleanup_drift',
   ],
   'docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md': <String>[
     'verify required installs before feature work',
@@ -362,12 +389,30 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'docs/assistant/issue_memory.json',
     'repeat_count >= 2',
     'bootstrap relevance is:',
+    'stale post-merge continuity',
+    'stale active-plan inventory',
+    'scratch artifact source control noise',
+    'follow-up branch/pr as the default',
     'dart run tooling/validate_agent_docs.dart',
     'docs sync prompt rule',
     'relevant touched-scope docs still remain unsynced',
     'already ran during the same task/pass',
   ],
 };
+
+const Map<String, List<String>> _requiredBootstrapTopicsByModule =
+    <String, List<String>>{
+      'core_contract': <String>[
+        'cleanup-complete push semantics',
+        'ignored tmp scratch root guidance',
+      ],
+      'issue_memory_system': <String>['cleanup continuity issue classes'],
+      'project_harness_sync': <String>[
+        'continuity and cleanup governance resync',
+      ],
+      'roadmap_governance': <String>['dormant roadmap state on main'],
+      'bootstrap_update_policy': <String>['cleanup continuity promotion rule'],
+    };
 
 const List<String> _requiredBootstrapModuleIds = <String>[
   'core_contract',
@@ -441,19 +486,16 @@ List<ValidationIssue> validateAgentDocs({
     _validateUserGuides(manifest, issues, readText, exists);
     _validateDocsMaintenance(issues, readText);
     _validateIssueMemory(issues, readText, exists, rootPath);
+    _validateQtRenderScratchPathGuidance(issues, readText);
     _validateProjectLocalOperationalLayer(manifest, issues, readText, exists);
     _validateProjectHarnessAndRoadmapGovernance(
       manifest,
       issues,
       readText,
       exists,
+      rootPath,
     );
-    _validateHarnessIsolationAndDiagnostics(
-      manifest,
-      issues,
-      readText,
-      exists,
-    );
+    _validateHarnessIsolationAndDiagnostics(manifest, issues, readText, exists);
     _validateTemplatePolicy(manifest, issues, readText);
     _validateBootstrapTemplateIntegrity(issues, readText, exists);
     _validateExternalSourceRegistry(issues, readText, exists);
@@ -1470,6 +1512,49 @@ void _validateDocsMaintenance(
       ),
     );
   }
+  if (!text.contains('session_resume.md') ||
+      !text.contains('active/completed execplan lifecycle state') ||
+      !text.contains('scratch outputs')) {
+    issues.add(
+      ValidationIssue(
+        'AD041',
+        'Docs maintenance workflow must repair stale continuity state and scratch-output drift during docs sync.',
+      ),
+    );
+  }
+}
+
+void _validateQtRenderScratchPathGuidance(
+  List<ValidationIssue> issues,
+  String Function(String relPath) readText,
+) {
+  const String expectedPath = 'tmp/qt_ui_review';
+  const String legacyPath = 'tmp_ui_review';
+  final String toolText = readText('tooling/qt_render_review.py').toLowerCase();
+  if (!toolText.contains('"tmp" / "qt_ui_review"') ||
+      toolText.contains('"tmp_ui_review"')) {
+    issues.add(
+      ValidationIssue(
+        'AD047',
+        'tooling/qt_render_review.py must default deterministic Qt render-review scratch output to tmp/qt_ui_review.',
+      ),
+    );
+  }
+
+  for (final String path in <String>[
+    'docs/assistant/QT_UI_PLAYBOOK.md',
+    'docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md',
+  ]) {
+    final String text = readText(path).toLowerCase();
+    if (!text.contains(expectedPath) || text.contains(legacyPath)) {
+      issues.add(
+        ValidationIssue(
+          'AD047',
+          '$path must route deterministic Qt render-review scratch output through $expectedPath and not $legacyPath.',
+        ),
+      );
+    }
+  }
 }
 
 void _validateIssueMemory(
@@ -1798,6 +1883,7 @@ void _validateProjectHarnessAndRoadmapGovernance(
   List<ValidationIssue> issues,
   String Function(String relPath) readText,
   bool Function(String relPath) exists,
+  String rootPath,
 ) {
   final Map<String, bool> moduleFlags = _extractModuleFlags(manifest);
   const String harnessWorkflowPath =
@@ -1811,6 +1897,9 @@ void _validateProjectHarnessAndRoadmapGovernance(
         manifest['contracts'] is Map<String, dynamic>
         ? manifest['contracts'] as Map<String, dynamic>
         : <String, dynamic>{};
+    final List<dynamic> workflows = manifest['workflows'] is List<dynamic>
+        ? manifest['workflows'] as List<dynamic>
+        : <dynamic>[];
     if (!exists(harnessWorkflowPath)) {
       issues.add(
         ValidationIssue(
@@ -1820,7 +1909,9 @@ void _validateProjectHarnessAndRoadmapGovernance(
       );
     }
 
-    final String harnessWorkflowText = readText(harnessWorkflowPath).toLowerCase();
+    final String harnessWorkflowText = readText(
+      harnessWorkflowPath,
+    ).toLowerCase();
     for (final String marker in <String>[
       'implement the template files',
       'sync project harness',
@@ -1828,6 +1919,10 @@ void _validateProjectHarnessAndRoadmapGovernance(
       'check project harness',
       'docs/assistant/templates/*',
       'update codex bootstrap',
+      'continuity or merge cleanup behavior',
+      'commit_publish_workflow.md',
+      'docs_maintenance_workflow.md',
+      'separate logical commit scopes by default',
     ]) {
       if (!harnessWorkflowText.contains(marker)) {
         issues.add(
@@ -1840,8 +1935,22 @@ void _validateProjectHarnessAndRoadmapGovernance(
     }
 
     final String harnessPolicy =
-        (contracts['project_harness_sync_policy'] ?? '').toString().toLowerCase();
-    final String templateProtection = (contracts['vendored_template_protection_policy'] ?? '')
+        (contracts['project_harness_sync_policy'] ?? '')
+            .toString()
+            .toLowerCase();
+    final String templateProtection =
+        (contracts['vendored_template_protection_policy'] ?? '')
+            .toString()
+            .toLowerCase();
+    final String cleanupCompletePush =
+        (contracts['cleanup_complete_push_policy'] ?? '')
+            .toString()
+            .toLowerCase();
+    final String postMergeRepair =
+        (contracts['post_merge_repair_default_policy'] ?? '')
+            .toString()
+            .toLowerCase();
+    final String scratchRoot = (contracts['scratch_root_default_policy'] ?? '')
         .toString()
         .toLowerCase();
     if (!harnessPolicy.contains('implement the template files') ||
@@ -1851,6 +1960,53 @@ void _validateProjectHarnessAndRoadmapGovernance(
         ValidationIssue(
           'AD045',
           'Manifest contracts must make local harness apply and vendored-template protection explicit.',
+        ),
+      );
+    }
+    if (!cleanupCompletePush.contains('bare push') ||
+        !cleanupCompletePush.contains('session_resume.md') ||
+        !cleanupCompletePush.contains('scratch outputs') ||
+        !postMergeRepair.contains('follow-up branch/pr') ||
+        !postMergeRepair.contains('main') ||
+        !scratchRoot.contains('tmp/') ||
+        !scratchRoot.contains('stricter')) {
+      issues.add(
+        ValidationIssue(
+          'AD045',
+          'Manifest project-harness cleanup contracts must define cleanup-complete push, post-merge repair default, and ignored scratch-root defaults.',
+        ),
+      );
+    }
+
+    Map<String, dynamic>? harnessWorkflowEntry;
+    for (final dynamic item in workflows) {
+      if (item is! Map<String, dynamic>) {
+        continue;
+      }
+      if ((item['id'] ?? '').toString() == 'project_harness_sync_workflow') {
+        harnessWorkflowEntry = item;
+        break;
+      }
+    }
+    final List<dynamic> primaryFilesRaw =
+        harnessWorkflowEntry?['primary_files'] is List<dynamic>
+        ? harnessWorkflowEntry!['primary_files'] as List<dynamic>
+        : <dynamic>[];
+    final Set<String> primaryFiles = primaryFilesRaw
+        .map((dynamic item) => item.toString())
+        .toSet();
+    final List<String> missingPrimaryFiles = <String>[
+      'docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md',
+      'docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md',
+      'docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md',
+      'docs/assistant/workflows/ROADMAP_WORKFLOW.md',
+      'docs/assistant/SESSION_RESUME.md',
+    ].where((String path) => !primaryFiles.contains(path)).toList();
+    if (missingPrimaryFiles.isNotEmpty) {
+      issues.add(
+        ValidationIssue(
+          'AD045',
+          'Manifest project_harness_sync_workflow.primary_files must include continuity/cleanup governance docs. Missing: ${missingPrimaryFiles.join(', ')}',
         ),
       );
     }
@@ -1879,9 +2035,7 @@ void _validateProjectHarnessAndRoadmapGovernance(
         'check project harness',
         'update codex bootstrap',
       ],
-      'docs/assistant/INDEX.md': <String>[
-        'project_harness_sync_workflow.md',
-      ],
+      'docs/assistant/INDEX.md': <String>['project_harness_sync_workflow.md'],
     };
     for (final MapEntry<String, List<String>> entry in routingDocs.entries) {
       final String text = readText(entry.key).toLowerCase();
@@ -1917,7 +2071,9 @@ void _validateProjectHarnessAndRoadmapGovernance(
     final List<dynamic> canonical = manifest['canonical'] is List<dynamic>
         ? manifest['canonical'] as List<dynamic>
         : <dynamic>[];
-    if (!canonical.map((dynamic item) => item.toString()).contains(sessionResumePath)) {
+    if (!canonical
+        .map((dynamic item) => item.toString())
+        .contains(sessionResumePath)) {
       issues.add(
         ValidationIssue(
           'AD046',
@@ -1927,14 +2083,27 @@ void _validateProjectHarnessAndRoadmapGovernance(
     }
 
     final String resumePolicy =
-        (contracts['roadmap_resume_anchor_policy'] ?? '').toString().toLowerCase();
-    final String authorityPolicy = (contracts['roadmap_active_worktree_authority_policy'] ?? '')
-        .toString()
-        .toLowerCase();
+        (contracts['roadmap_resume_anchor_policy'] ?? '')
+            .toString()
+            .toLowerCase();
+    final String dormantMainPolicy =
+        (contracts['roadmap_dormant_main_policy'] ?? '')
+            .toString()
+            .toLowerCase();
+    final String authorityPolicy =
+        (contracts['roadmap_active_worktree_authority_policy'] ?? '')
+            .toString()
+            .toLowerCase();
     final String updateOrderPolicy =
-        (contracts['roadmap_update_order_policy'] ?? '').toString().toLowerCase();
+        (contracts['roadmap_update_order_policy'] ?? '')
+            .toString()
+            .toLowerCase();
     if (!resumePolicy.contains('docs/assistant/session_resume.md') ||
         !resumePolicy.contains('resume master plan') ||
+        !dormantMainPolicy.contains('main') ||
+        !dormantMainPolicy.contains('dormant roadmap state') ||
+        !dormantMainPolicy.contains('no active roadmap') ||
+        !dormantMainPolicy.contains('execplan flow') ||
         !authorityPolicy.contains('session_resume.md') ||
         !authorityPolicy.contains('active wave execplan') ||
         !updateOrderPolicy.contains('active wave execplan') ||
@@ -1947,10 +2116,14 @@ void _validateProjectHarnessAndRoadmapGovernance(
       );
     }
 
-    final String roadmapWorkflowText = readText(roadmapWorkflowPath).toLowerCase();
+    final String roadmapWorkflowText = readText(
+      roadmapWorkflowPath,
+    ).toLowerCase();
     for (final String marker in <String>[
       'docs/assistant/session_resume.md',
       'resume master plan',
+      'dormant roadmap state',
+      'normal execplan flow',
       'the active roadmap tracker is the sequence source',
       'the active wave execplan is the implementation-detail source',
       '1. active wave execplan',
@@ -1968,14 +2141,13 @@ void _validateProjectHarnessAndRoadmapGovernance(
       }
     }
 
-    final String sessionText = readText(sessionResumePath).toLowerCase();
+    final String sessionOriginalText = readText(sessionResumePath);
+    final String sessionText = sessionOriginalText.toLowerCase();
     for (final String marker in <String>[
       'resume master plan',
       'roadmap anchor file',
       'authoritative worktree',
       'branch:',
-      'active roadmap tracker',
-      'active wave execplan',
       'next concrete action',
       'issue memory is only for repeatable governance/workflow failures',
     ]) {
@@ -1989,18 +2161,80 @@ void _validateProjectHarnessAndRoadmapGovernance(
       }
     }
 
+    final bool dormantRoadmapMarker = sessionText.contains(
+      'dormant roadmap state',
+    );
+    final bool dormantNoActiveRoadmap = sessionText.contains(
+      'no active roadmap currently open on this worktree',
+    );
+    final bool dormantRoadmap = dormantRoadmapMarker || dormantNoActiveRoadmap;
+    if (dormantRoadmap) {
+      for (final String marker in <String>[
+        'dormant roadmap state',
+        'no active roadmap currently open on this worktree',
+        'normal execplan flow',
+      ]) {
+        if (!sessionText.contains(marker)) {
+          issues.add(
+            ValidationIssue(
+              'AD046',
+              '$sessionResumePath is missing required dormant-roadmap marker: $marker',
+            ),
+          );
+        }
+      }
+    } else {
+      for (final String marker in <String>[
+        'active roadmap tracker',
+        'active wave execplan',
+      ]) {
+        if (!sessionText.contains(marker)) {
+          issues.add(
+            ValidationIssue(
+              'AD046',
+              '$sessionResumePath is missing required active-roadmap marker: $marker',
+            ),
+          );
+        }
+      }
+    }
+
+    final String? branchName = _extractSessionResumeBranch(sessionOriginalText);
+    if (branchName == null || branchName.trim().isEmpty) {
+      issues.add(
+        ValidationIssue(
+          'AD046',
+          '$sessionResumePath must name an authoritative branch.',
+        ),
+      );
+    } else if (_isGitRepo(rootPath) &&
+        !_gitBranchExists(rootPath, branchName.trim()) &&
+        !_sessionResumeBranchAllowedWithoutRef(rootPath, branchName.trim())) {
+      issues.add(
+        ValidationIssue(
+          'AD046',
+          '$sessionResumePath points to a branch that does not exist in this repo: $branchName',
+        ),
+      );
+    }
+
     final Map<String, List<String>> routingDocs = <String, List<String>>{
       'agent.md': <String>[
         'resume master plan',
         'session_resume.md',
+        'dormant roadmap state',
+        'normal execplan flow',
       ],
       'AGENTS.md': <String>[
         'resume master plan',
         'session_resume.md',
+        'dormant roadmap state',
       ],
       'README.md': <String>[
         'resume master plan',
         'session_resume.md',
+        'dormant roadmap state',
+        'normal execplan flow',
       ],
       'docs/assistant/INDEX.md': <String>[
         'session_resume.md',
@@ -2010,11 +2244,13 @@ void _validateProjectHarnessAndRoadmapGovernance(
         'session_resume.md',
         'issue memory remains a reusable repeated-issue registry',
         'active roadmap tracker',
+        'dormant roadmap state',
       ],
       'docs/assistant/APP_KNOWLEDGE.md': <String>[
         'session_resume.md',
         'issue memory is not roadmap history',
         'active roadmap tracker',
+        'dormant roadmap state',
       ],
     };
     for (final MapEntry<String, List<String>> entry in routingDocs.entries) {
@@ -2031,6 +2267,141 @@ void _validateProjectHarnessAndRoadmapGovernance(
         );
       }
     }
+  }
+}
+
+String? _extractSessionResumeBranch(String sessionText) {
+  for (final String line in LineSplitter.split(sessionText)) {
+    final String trimmed = line.trim();
+    if (!trimmed.toLowerCase().startsWith('- branch:')) {
+      continue;
+    }
+    final String branch = trimmed.substring('- Branch:'.length).trim();
+    if (branch.isEmpty) {
+      return null;
+    }
+    if (branch.startsWith('`') && branch.endsWith('`') && branch.length >= 2) {
+      return branch.substring(1, branch.length - 1);
+    }
+    return branch;
+  }
+  return null;
+}
+
+bool _isGitRepo(String rootPath) {
+  try {
+    final ProcessResult result = Process.runSync('git', <String>[
+      '-C',
+      rootPath,
+      'rev-parse',
+      '--is-inside-work-tree',
+    ]);
+    return result.exitCode == 0 && result.stdout.toString().trim() == 'true';
+  } catch (_) {
+    return false;
+  }
+}
+
+bool _gitBranchExists(String rootPath, String branchName) {
+  for (final String ref in <String>[
+    'refs/heads/$branchName',
+    'refs/remotes/origin/$branchName',
+  ]) {
+    try {
+      final ProcessResult result = Process.runSync('git', <String>[
+        '-C',
+        rootPath,
+        'show-ref',
+        '--verify',
+        '--quiet',
+        ref,
+      ]);
+      if (result.exitCode == 0) {
+        return true;
+      }
+    } catch (_) {
+      return false;
+    }
+  }
+  return false;
+}
+
+bool _sessionResumeBranchAllowedWithoutRef(String rootPath, String branchName) {
+  final Set<String> allowedBranches = <String>{};
+
+  final Map<String, dynamic>? canonicalBuild = _loadCanonicalBuildConfig(
+    rootPath,
+  );
+  if (canonicalBuild != null) {
+    for (final String key in <String>[
+      'canonical_branch',
+      'approved_base_branch',
+    ]) {
+      final String value = (canonicalBuild[key] ?? '').toString().trim();
+      if (value.isNotEmpty) {
+        allowedBranches.add(value);
+      }
+    }
+  }
+
+  for (final String key in <String>[
+    'GITHUB_HEAD_REF',
+    'GITHUB_REF_NAME',
+    'GITHUB_BASE_REF',
+  ]) {
+    final String value = (Platform.environment[key] ?? '').trim();
+    if (value.isNotEmpty) {
+      allowedBranches.add(value);
+    }
+  }
+
+  final String? currentBranch = _gitCurrentBranchName(rootPath);
+  if (currentBranch != null &&
+      currentBranch.isNotEmpty &&
+      currentBranch != 'HEAD') {
+    allowedBranches.add(currentBranch);
+  }
+
+  return allowedBranches.contains(branchName);
+}
+
+Map<String, dynamic>? _loadCanonicalBuildConfig(String rootPath) {
+  final File file = File(
+    _resolvePath(rootPath, 'docs/assistant/runtime/CANONICAL_BUILD.json'),
+  );
+  if (!file.existsSync()) {
+    return null;
+  }
+  try {
+    final dynamic decoded = jsonDecode(file.readAsStringSync());
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
+String? _gitCurrentBranchName(String rootPath) {
+  try {
+    final ProcessResult result = Process.runSync('git', <String>[
+      '-C',
+      rootPath,
+      'rev-parse',
+      '--abbrev-ref',
+      'HEAD',
+    ]);
+    if (result.exitCode != 0) {
+      return null;
+    }
+    final String branchName = result.stdout.toString().trim();
+    if (branchName.isEmpty) {
+      return null;
+    }
+    return branchName;
+  } catch (_) {
+    return null;
   }
 }
 
@@ -2295,6 +2666,7 @@ void _validateBootstrapTemplateIntegrity(
   }
 
   final Set<String> moduleIds = <String>{};
+  final Map<String, List<String>> moduleTopicsById = <String, List<String>>{};
   final List<String> invalidModuleRefs = <String>[];
   for (final dynamic module in rawModules) {
     if (module is! Map<String, dynamic>) {
@@ -2310,7 +2682,11 @@ void _validateBootstrapTemplateIntegrity(
     }
     if (topics is! List || topics.isEmpty) {
       invalidModuleRefs.add('$id missing non-empty topics');
+      continue;
     }
+    moduleTopicsById[id] = topics
+        .map((dynamic item) => item.toString().toLowerCase())
+        .toList();
   }
 
   final List<String> missingModuleIds = _requiredBootstrapModuleIds
@@ -2321,6 +2697,25 @@ void _validateBootstrapTemplateIntegrity(
       ValidationIssue(
         'AD039',
         'Bootstrap template map is incomplete. Invalid refs: ${invalidModuleRefs.join(', ')}. Missing modules: ${missingModuleIds.join(', ')}',
+      ),
+    );
+  }
+
+  final List<String> missingTopicMarkers = <String>[];
+  for (final MapEntry<String, List<String>> entry
+      in _requiredBootstrapTopicsByModule.entries) {
+    final List<String> topics = moduleTopicsById[entry.key] ?? <String>[];
+    for (final String marker in entry.value) {
+      if (!topics.contains(marker)) {
+        missingTopicMarkers.add('${entry.key} -> $marker');
+      }
+    }
+  }
+  if (missingTopicMarkers.isNotEmpty) {
+    issues.add(
+      ValidationIssue(
+        'AD039',
+        'Bootstrap template map topics are missing required markers: ${missingTopicMarkers.join(', ')}',
       ),
     );
   }

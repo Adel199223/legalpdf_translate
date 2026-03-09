@@ -64,8 +64,9 @@ Cost-guardrail support routing:
 - Canonical current-truth also includes historical Job Log row editing through either the icon-triggered full dialog or inline row editing, confirmed row deletion, missing-`pdf_path` historical edit tolerance, and header-auto-fit plus persisted-width horizontal-scroll behavior for dense Job Log tables.
 - Canonical current-truth also includes the shared responsive-window helper in `qt_gui/window_adaptive.py`, screen-bounded main/dialog sizing, deferred/coalesced shell and preview resize handling, and the scrollable Save-to-Job-Log form with lower detail sections collapsed by default.
 - Canonical current-truth also includes project-local harness sync from vendored templates, with `implement the template files` / `sync project harness` reserved for local harness application and `update codex bootstrap` / `UCBS` reserved for template-system maintenance.
-- Canonical current-truth also includes roadmap governance for this repo: `docs/assistant/SESSION_RESUME.md` is the roadmap anchor file, the active roadmap tracker is the sequence source, the active wave ExecPlan is the implementation-detail source, and issue memory is not roadmap history.
-- Canonical current-truth also includes active-worktree authority for live roadmap state during in-progress wave work.
+- Canonical current-truth also includes the local harness-sync rule that vendored template changes affecting continuity or cleanup must resync the publish/docs-maintenance governance surfaces, not just routing docs and validators.
+- Canonical current-truth also includes roadmap governance for this repo: `docs/assistant/SESSION_RESUME.md` is the roadmap anchor file, roadmap state may be active or in a dormant roadmap state, the active roadmap tracker is the sequence source when present, the active wave ExecPlan is the implementation-detail source when present, and issue memory is not roadmap history.
+- Canonical current-truth also includes active-worktree authority for live roadmap state during in-progress wave work, while `main` may intentionally carry a dormant roadmap state between roadmap-scoped threads.
 
 ## Workflow Routing
 - Core translation: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`

@@ -75,5 +75,5 @@ dart run tooling/validate_workspace_hygiene.dart
 - `implement the template files` / `sync project harness`: apply the vendored templates in `docs/assistant/templates/` to this repo's local harness without editing the template folder itself.
 - `audit project harness`: inspect vendored-template drift without editing files.
 - `check project harness`: run harness validation only.
-- `resume master plan`: open `docs/assistant/SESSION_RESUME.md` first, then the linked active roadmap tracker and active wave ExecPlan.
+- `resume master plan`: open `docs/assistant/SESSION_RESUME.md` first. If it shows active-roadmap state, continue into the linked tracker and wave; if it shows dormant roadmap state, default to normal ExecPlan flow unless the user explicitly asks to open a new roadmap.
 - `update codex bootstrap` / `UCBS`: maintain the reusable template system itself. Do not use this when you only want to sync this repo to its vendored templates.

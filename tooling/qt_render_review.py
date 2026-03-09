@@ -352,7 +352,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--outdir",
         type=Path,
-        default=REPO_ROOT / "tmp_ui_review",
+        default=REPO_ROOT / "tmp" / "qt_ui_review",
         help="Directory where profile screenshots and metadata JSON should be written.",
     )
     parser.add_argument(

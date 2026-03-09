@@ -105,6 +105,12 @@ print(json.dumps(result))
     assert metadata["layout_mode"] == "desktop_exact"
 
 
+def test_build_arg_parser_defaults_to_ignored_tmp_dir() -> None:
+    parser = render_tool.build_arg_parser()
+    args = parser.parse_args([])
+    assert args.outdir == render_tool.REPO_ROOT / "tmp" / "qt_ui_review"
+
+
 def test_render_gmail_review_dialog_sample_writes_png_and_metadata(tmp_path: Path) -> None:
     result = render_tool.render_gmail_review_dialog_sample(outdir=tmp_path)
     png_path = tmp_path / "gmail_review.png"

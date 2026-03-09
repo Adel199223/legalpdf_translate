@@ -19,6 +19,10 @@ If approved:
 1. Update only touched-scope docs.
 2. Keep canonical-first order (`APP_KNOWLEDGE.md` -> bridge/workflows/user guides).
 3. Re-run docs validators before completion.
+4. If the sync discovers stale continuity state from merge/cleanup drift, repair the relevant live anchors during the same pass:
+   - `docs/assistant/SESSION_RESUME.md`
+   - stale `docs/assistant/exec_plans/active/` vs `completed/` lifecycle state
+   - assistant-facing scratch-path guidance when temp artifacts pollute Source Control
 
 ## Project harness apply vs bootstrap maintenance
 - `implement the template files` / `sync project harness` is project-local harness application, not a docs-only sync and not global bootstrap maintenance.
@@ -33,6 +37,7 @@ If approved:
 If a task changes `src/` or `tests/` and docs sync is not approved:
 1. Append a short entry to `docs/assistant/DOCS_REFRESH_NOTES.md`.
 2. Avoid unrelated `docs/assistant/*` rewrites.
+3. If merge/cleanup drift leaves stale continuity state behind, do not pretend the repo is clean; record the gap and fix it in the next approved docs-maintenance pass.
 
 Required evidence in deferred notes:
 - branch name + commit hash (or "working tree")

@@ -16,6 +16,68 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-09 — main (working tree)
+- Files changed:
+  - agent.md
+  - AGENTS.md
+  - README.md
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/SESSION_RESUME.md
+  - docs/assistant/UPDATE_POLICY.md
+  - docs/assistant/QT_UI_PLAYBOOK.md
+  - docs/assistant/ISSUE_MEMORY.md
+  - docs/assistant/ISSUE_MEMORY.json
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
+  - docs/assistant/workflows/ROADMAP_WORKFLOW.md
+  - docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md
+  - docs/assistant/exec_plans/completed/2026-03-09_cleanup_continuity_hardening.md
+  - docs/assistant/exec_plans/completed/2026-03-05_assistant_docs_sync_catchup.md
+  - docs/assistant/exec_plans/completed/2026-03-05_cost_guardrails_phase1.md
+  - docs/assistant/exec_plans/completed/2026-03-05_max_enforcement_optimization.md
+  - docs/assistant/exec_plans/completed/2026-03-05_ocr_first_stage_rollout.md
+  - docs/assistant/exec_plans/completed/2026-03-05_product_workflow_benchmark_upgrade.md
+  - docs/assistant/exec_plans/completed/2026-03-05_remaining_top5_stage_rollout.md
+  - docs/assistant/exec_plans/completed/2026-03-05_ui_screenshot_match_rollout.md
+  - docs/assistant/exec_plans/completed/2026-03-06_honorarios_docx_feature.md
+  - docs/assistant/exec_plans/completed/2026-03-06_joblog_output_word_count_fix.md
+  - docs/assistant/exec_plans/completed/2026-03-06_ocr_runtime_stabilization_auto1.md
+  - docs/assistant/exec_plans/completed/2026-03-07_accepted_feature_promotion_canonical_enforcement.md
+  - docs/assistant/exec_plans/completed/2026-03-07_commit_push_semantics_hardening.md
+  - docs/assistant/exec_plans/completed/2026-03-07_docs_sync_prompt_relevance.md
+  - docs/assistant/exec_plans/completed/2026-03-07_gmail_draft_attachment_auto_reuse.md
+  - docs/assistant/exec_plans/completed/2026-03-07_issue_memory_system.md
+  - docs/assistant/exec_plans/completed/2026-03-07_qt_build_identity_hardening.md
+  - docs/assistant/exec_plans/completed/2026-03-07_worktree_baseline_docs_sync.md
+  - docs/assistant/exec_plans/completed/2026-03-09_project_harness_alignment_roadmap.md
+  - docs/assistant/exec_plans/completed/2026-03-09_project_harness_alignment_wave1.md
+  - tooling/qt_render_review.py
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+  - tests/test_qt_render_review.py
+- Key symbols / entrypoints changed:
+  - docs/assistant/SESSION_RESUME.md::Roadmap State
+  - docs/assistant/workflows/ROADMAP_WORKFLOW.md::Failure Modes and Fallback Steps
+  - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md::Push default (`push` with no narrower wording)
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md::Failure Modes and Fallback Steps
+  - tooling/qt_render_review.py::build_arg_parser
+  - tooling/validate_agent_docs.dart::_validateProjectHarnessAndRoadmapGovernance
+  - tooling/validate_agent_docs.dart::_validateQtRenderScratchPathGuidance
+  - docs/assistant/ISSUE_MEMORY.md::workflow-post-merge-continuity-cleanup-drift
+- User-visible behavior:
+  - The live roadmap anchor on `main` now carries a dormant roadmap state instead of pointing at the deleted `feat/joblog-inline-editing` branch.
+  - `docs/assistant/exec_plans/active/` was triaged down to only clearly live or ambiguous plans; deterministically stale March 5 to March 9 plans were archived to `completed/`.
+  - Commit/publish and docs-maintenance guidance now require roadmap/ExecPlan closeout and `SESSION_RESUME.md` updates before merge, with follow-up branch/PR repair as the default if anything is missed afterward.
+  - Deterministic Qt render-review output now defaults to `tmp/qt_ui_review`, which is already ignored, so those files stop showing up as Source Control noise by default.
+  - Issue memory now captures stale post-merge continuity and scratch-artifact cleanup drift as a reusable workflow lesson.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `./.venv311/Scripts/python.exe -m pytest -q tests/test_qt_render_review.py` -> PASS
+
 ## 2026-03-09 — feat/joblog-inline-editing (working tree)
 - Files changed:
   - agent.md
@@ -30,8 +92,8 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
   - docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md
   - docs/assistant/workflows/ROADMAP_WORKFLOW.md
   - docs/assistant/audits/PROJECT_HARNESS_ALIGNMENT_AUDIT_2026-03-09.md
-  - docs/assistant/exec_plans/active/2026-03-09_project_harness_alignment_roadmap.md
-  - docs/assistant/exec_plans/active/2026-03-09_project_harness_alignment_wave1.md
+  - docs/assistant/exec_plans/completed/2026-03-09_project_harness_alignment_roadmap.md
+  - docs/assistant/exec_plans/completed/2026-03-09_project_harness_alignment_wave1.md
   - tooling/validate_agent_docs.dart
   - test/tooling/validate_agent_docs_test.dart
 - Key symbols / entrypoints changed:
@@ -274,7 +336,7 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
   - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
   - docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md
   - docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md
-  - docs/assistant/exec_plans/active/2026-03-07_accepted_feature_promotion_canonical_enforcement.md
+  - docs/assistant/exec_plans/completed/2026-03-07_accepted_feature_promotion_canonical_enforcement.md
   - src/legalpdf_translate/build_identity.py
   - tooling/launch_qt_build.py
   - tooling/validate_agent_docs.dart
@@ -329,7 +391,7 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
   - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md
   - docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md
   - docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md
-  - docs/assistant/exec_plans/active/2026-03-07_qt_build_identity_hardening.md
+  - docs/assistant/exec_plans/completed/2026-03-07_qt_build_identity_hardening.md
   - src/legalpdf_translate/build_identity.py
   - src/legalpdf_translate/qt_app.py
   - src/legalpdf_translate/qt_gui/app_window.py
@@ -371,7 +433,7 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
   - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md
   - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
   - docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md
-  - docs/assistant/exec_plans/active/2026-03-07_worktree_baseline_docs_sync.md
+  - docs/assistant/exec_plans/completed/2026-03-07_worktree_baseline_docs_sync.md
 - Key symbols / entrypoints changed:
   - docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md::Handoff Checklist
   - docs/assistant/exec_plans/PLANS.md::Required Plan Template
