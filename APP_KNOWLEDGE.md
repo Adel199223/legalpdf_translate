@@ -34,6 +34,8 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
   - `desktop_exact`
   - `desktop_compact`
   - `stacked_compact`
+- Top-level windows and major dialogs now use shared screen-bounded sizing via `src/legalpdf_translate/qt_gui/window_adaptive.py`.
+- Main-shell resize work is deferred/coalesced so live resizing stays stable; the hero row also reserves width for the status label so short states such as `Idle` are not clipped during narrow-width transitions.
 
 ## Core Runtime Modules
 - `src/legalpdf_translate/workflow.py`: translation pipeline orchestration.
@@ -50,6 +52,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - `src/legalpdf_translate/workflow_components/summary.py`: run-summary and cost/suspected-cause delegation.
 - `src/legalpdf_translate/cli.py`: CLI parsing/execution.
 - `src/legalpdf_translate/qt_gui/app_window.py`: main GUI workflow orchestration.
+- `src/legalpdf_translate/qt_gui/window_adaptive.py`: shared screen-bounded top-level sizing, deferred resize callbacks, and collapsible section helpers.
 - `src/legalpdf_translate/openai_client.py`: OpenAI transport and retry handling.
 - `src/legalpdf_translate/ocr_engine.py`: OCR routing and policy.
 - `src/legalpdf_translate/docx_writer.py`: DOCX output construction.
@@ -136,6 +139,8 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - The browser extension does not write its own report file.
 - Save-to-Job-Log pre-fills those values from `run_summary.json` when available, while preserving user edit control before save.
 - Save-to-Job-Log now also exposes `Open translated DOCX`, which reopens the resolved final or partial DOCX for the current run without leaving the dialog.
+- Save-to-Job-Log now uses a scrollable form body with a fixed action row so create/edit flows stay usable on smaller screens without hiding `Save`, `Cancel`, `Open translated DOCX`, or the honorários action.
+- In that dialog, `Run Metrics` and `Amounts` start collapsed by default on every open; the main case/service/edit fields remain visible first.
 - The same Job Log payload normalization now backs create-mode save, historical full-dialog edit mode, and inline row editing, so numeric/date validation and `expected_total` / `profit` recalculation stay aligned.
 - Job Log `Words` now means translated output words, with precedence: final DOCX, then partial DOCX, then `pages/page_*.txt`, then `0`.
 - `expected_total` and `profit` in the Save-to-Job-Log flow are recalculated from that translated-output word count.
@@ -167,6 +172,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - The attachment review step also includes the target-language selector for the whole Gmail batch, and the selected language is pushed back into the main app UI before preparation starts.
 - The review dialog now also supports per-attachment start-page selection and an in-app attachment preview before preparation begins.
 - PDF previews use a lazy continuous-scroll viewer so the user can inspect the document and apply `Use this page as start` on the correct page; image attachments remain single-page and always start at page `1`.
+- The Gmail attachment preview now coalesces resize-driven rescaling instead of recomputing scaled preview geometry on every live resize tick, which reduces visible jitter while dragging the window.
 - Previewed attachments are cached temporarily and reused during `Prepare selected attachments` when still valid so the batch does not redownload the same file unnecessarily.
 - If the current output folder is stale or missing, Gmail batch startup recovers automatically in this order: current valid output folder, valid `default_outdir`, then `Downloads`.
 - Completed checkpoints with missing page artifacts are treated as stale and are not reused as resumable state.
@@ -185,6 +191,8 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - detached Windows launch: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`
 - `python -m legalpdf_translate.qt_gui` remains a valid GUI compatibility entrypoint, but `qt_app` is the canonical docs command.
 - Open another workspace from `File > New Window`, `Ctrl+Shift+N`, or the `...` overflow action. `New Window` stays available even while another workspace is busy.
+- The main dashboard shell should stay horizontally adaptive without a shell-level horizontal scrollbar; dense secondary tables such as Job Log may still overflow horizontally inside their own window or table viewport.
+- Major dialogs and dense secondary windows should remain screen-bounded and user-resizable instead of relying on fixed geometries that can open off-screen on smaller displays.
 - Duplicate run-folder blocking across windows is intentional. If two workspaces resolve to the same run directory, the second start is blocked until the owner workspace finishes or you change the effective source/output/language combination.
 - Arabic DOCX review/automation is a Windows-host feature that depends on installed Microsoft Word plus PowerShell COM automation; WSL-only validation is not enough for this path.
 - Screenshot-driven Qt UI work should use the fixed render contract in `docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md` rather than approximate visual review.

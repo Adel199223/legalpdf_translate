@@ -18,6 +18,34 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 ## Entries
 ## 2026-03-09 — feat/joblog-inline-editing (working tree)
 - Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/QT_UI_KNOWLEDGE.md
+  - docs/assistant/QT_UI_PLAYBOOK.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/exec_plans/completed/2026-03-09_recent_accepted_changes_docs_integration.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::Desktop UI Shell
+  - APP_KNOWLEDGE.md::Persistence Notes
+  - docs/assistant/APP_KNOWLEDGE.md::Current-Truth Note
+  - docs/assistant/QT_UI_KNOWLEDGE.md::Shared top-level window sizing contract
+  - docs/assistant/QT_UI_PLAYBOOK.md::Rules of Engagement
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md::Save to Job Log
+  - docs/assistant/features/APP_USER_GUIDE.md::Using the Job Log
+- User-visible behavior:
+  - Assistant docs now record the shipped responsive-window layer in `qt_gui/window_adaptive.py`, including screen-bounded main/dialog sizing, deferred shell resize handling, and coalesced Gmail preview rescaling.
+  - User-facing docs now explain that Save/Edit Job Log scrolls internally on smaller screens and that `Run Metrics` plus `Amounts` start collapsed by default.
+  - The earlier Job Log edit/delete/inline-edit/column-width docs were re-audited and only patched where the new adaptive dialog behavior added a real gap.
+  - The current Qt UI state was reported satisfactory by the user and should be treated as the baseline for future incremental UI refinements rather than rediscovering these resize contracts from scratch.
+- Tests:
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> FAIL under the current local `docs/assistant/templates/` state (`AD001`, `AD039`, `AD040` for the intentionally missing harness-isolation bootstrap template).
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> FAIL under the same intentional template-folder state (`passes for current fixture` and `fails when harness isolation bootstrap wording drifts`).
+
+## 2026-03-09 — feat/joblog-inline-editing (working tree)
+- Files changed:
   - docs/assistant/audits/BOOTSTRAP_APPLICATION_AUDIT_2026-03-09.md
   - docs/assistant/INDEX.md
   - docs/assistant/DOCS_REFRESH_NOTES.md

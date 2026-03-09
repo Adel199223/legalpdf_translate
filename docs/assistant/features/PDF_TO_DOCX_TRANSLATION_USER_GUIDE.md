@@ -142,6 +142,8 @@ After a successful run, the app can prefill the Job Log dialog using the latest 
    - translated output word count
 4. Edit any field you want before saving.
 5. Use `Open translated DOCX` if you want to reopen the current run's final or partial DOCX from inside the dialog.
+6. On smaller screens, scroll inside the dialog instead of expecting the whole form to stay visible at once.
+7. `Run Metrics` and `Amounts` start collapsed by default so the main case and service fields stay easier to reach first.
 
 The prefill helps, but you still stay in control of the saved row.
 
@@ -158,7 +160,7 @@ For Arabic target runs, the app inserts an Arabic review step before `Save to Jo
 ## Job Log window
 Use `Tools > View Job Log` when you want to review or correct saved rows later.
 
-1. Use the pen button in `Actions` to open the full `Edit Job Log Entry` form for that row.
+1. Use the pen button in `Actions` to open the full `Edit Job Log Entry` form for that row. That form now scrolls internally on smaller screens instead of opening off-screen.
 2. Double-click a visible value when you want a quicker inline edit. That row switches to `Save` / `Cancel`, and the rest of the table waits until you finish that edit.
 3. Use the trash button only when you want to remove a saved row completely. The app asks for confirmation first.
 4. Historical rows can still open the full edit dialog even if the original source PDF is no longer available. In that case `Autofill from PDF header` stays disabled, but `Open translated DOCX` still works when the saved translated DOCX path still resolves.

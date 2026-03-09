@@ -71,6 +71,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 5. If the original PDF is gone, you can still edit the saved row.
 6. Drag column borders wider when names or values are cut off. If the table gets wider than the window, scroll sideways.
 7. The app remembers the widths you set for Job Log columns.
+8. In the Save to Job Log form, scroll inside the window on smaller screens. The lower detail sections start collapsed so the main fields stay easier to reach.
 
 ## Multiple Windows
 1. Open another workspace from `File > New Window`, `Ctrl+Shift+N`, or the bottom `...` menu.

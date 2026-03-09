@@ -3,13 +3,14 @@
 ## A. Rules of Engagement
 
 1. **Use `REFERENCE_LOCKED_QT_UI_WORKFLOW.md` when a visual reference is the acceptance target.** Desktop exactness is a binary contract, not a “close enough” discussion.
-2. **Prefer the responsive size-class path over one-off geometry tweaks.** Desktop behavior is driven by `_layout_mode_for_budget()` and `_apply_responsive_layout()`. Change that first.
+2. **Prefer the shared adaptive-window helper and the responsive size-class path over one-off geometry tweaks.** Start with `qt_gui/window_adaptive.py`, `_layout_mode_for_budget()`, and `_apply_responsive_layout()` before adding local `resize(...)` or fixed-geometry workarounds.
 3. **Never change paint geometry in isolation.** `_FuturisticCanvas.paintEvent()` must stay aligned with live widget geometry, especially `sidebar_frame.width()` and the computed `content_card` width.
 4. **Keep UI changes isolated to `qt_gui/`** unless the change absolutely requires touching other modules (e.g., adding a new `RunConfig` field that the UI exposes).
 5. **Test layout changes visually with deterministic renders first.** Run `tooling/qt_render_review.py` before relying on ad hoc desktop screenshots.
 6. **Preserve LTR direction overrides.** The window and footer card force `LeftToRight` so that RTL target languages don't flip UI chrome. Do not remove these.
 7. **Do not add a horizontal scrollbar to the main dashboard shell.** `ScrollBarAlwaysOff` is intentional there. Dense data tables such as Job Log are the exception: prefer interactive column sizing plus horizontal overflow over clipped headers.
 8. **Do not let run-critical selectors drift on wheel events.** Translation-critical combo/spin controls are intentionally guarded; keep accidental wheel changes blocked unless the popup is intentionally open.
+9. **Preserve the current resize-stability baseline unless the redesign is intentional.** Main-shell layout updates and preview rescaling are now coalesced on resize; do not reintroduce per-tick jitter through eager recomputation.
 
 ## B. Search Recipes
 
@@ -21,6 +22,11 @@ rg -n "_FuturisticCanvas|paintEvent|sidebar_line_x|content_card|_FRAME_INSETS" s
 ### Find layout mode and centering code
 ```bash
 rg -n "_LAYOUT_DESKTOP|_apply_responsive_layout|_update_card_max_width|content_card|ScrollBarAlwaysOff" src/legalpdf_translate/qt_gui/
+```
+
+### Find shared top-level sizing and resize coalescing
+```bash
+rg -n "ResponsiveWindowController|WINDOW_SIZING_PRESETS|CollapsibleSection|schedule_layout_update|_scaled_preview_timer" src/legalpdf_translate/qt_gui/
 ```
 
 ### Find button styling and glow
@@ -56,15 +62,18 @@ rg -n "_refresh_lang_badge|_LANG_FLAG_ICON_BY_CODE|FieldChrome|LangCaretButton|F
 ### Before making a Qt UI change
 
 - [ ] Read `docs/assistant/QT_UI_KNOWLEDGE.md` — especially the invariants (section C)
+- [ ] Check whether `qt_gui/window_adaptive.py` already provides the right `shell` / `form` / `table` / `preview` path before inventing local geometry
 - [ ] Identify which invariant(s) the change might affect
 - [ ] Search for related code using the recipes above
 
 ### During the change
 
-- [ ] If touching layout behavior → update `_layout_mode_for_budget()` / `_apply_responsive_layout()` before adding local widget hacks
+- [ ] If touching layout behavior → update `qt_gui/window_adaptive.py` and/or `_layout_mode_for_budget()` / `_apply_responsive_layout()` before adding local widget hacks
 - [ ] If touching paint geometry → confirm paint logic still derives from live sidebar/card geometry
 - [ ] If changing card width behavior → update `_update_card_max_width()` and verify the centered `content_row_layout` still works
+- [ ] If touching dialog sizing → keep top-level windows screen-bounded and user-resizable; prefer scrollable interiors over off-screen forms
 - [ ] If touching dense data tables → keep headers readable by default; prefer auto-fit + user resizing + horizontal overflow over forced squeeze
+- [ ] If touching preview resizing → preserve deferred/coalesced refresh; do not rescale on every viewport resize tick
 - [ ] If adding a new widget → set appropriate `objectName` for QSS targeting
 - [ ] If adding a new shell panel → use `objectName="ShellPanel"` for consistent styling
 
@@ -77,6 +86,9 @@ rg -n "_refresh_lang_badge|_LANG_FLAG_ICON_BY_CODE|FieldChrome|LangCaretButton|F
 - [ ] Desktop exact: readable sidebar labels, `Conversion Output`, two-column shell
 - [ ] Desktop compact: still two-column, no clipped field chrome
 - [ ] Stacked compact: setup/output stack cleanly, footer reflows to two rows
+- [ ] Smaller-screen dialogs: Save/Edit Job Log and other major dialogs stay within screen bounds and rely on internal scrolling where needed
+- [ ] Save/Edit Job Log: `Run Metrics` and `Amounts` start collapsed; action row stays visible
+- [ ] Main shell and preview: drag-resize does not visibly tremble from repeated full refreshes
 - [ ] Verify `...` menu actions and `Tools` menu routes still match the dashboard shell contract
 - [ ] If warning flows were touched, verify `Switch to fixed high` and `Apply safe OCR profile` still behave exactly as documented
 - [ ] Update `docs/assistant/QT_UI_KNOWLEDGE.md` if any invariant changed
