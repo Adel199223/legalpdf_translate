@@ -126,6 +126,7 @@ from legalpdf_translate.qt_gui.dialogs import (
     QtGmailBatchReviewDialog,
     QtHonorariosExportDialog,
     QtJobLogWindow,
+    QtProfileManagerDialog,
     QtReviewQueueDialog,
     QtSaveToJobLogDialog,
     QtSettingsDialog,
@@ -165,9 +166,12 @@ from legalpdf_translate.user_settings import (
     app_data_dir,
     load_gui_settings,
     load_joblog_settings,
+    load_profile_settings,
+    save_profile_settings,
     save_gui_settings,
     settings_path,
 )
+from legalpdf_translate.user_profile import UserProfile, primary_profile
 from legalpdf_translate.workflow import TranslationWorkflow
 
 if TYPE_CHECKING:
@@ -689,6 +693,7 @@ class QtMainWindow(QMainWindow):
         self._review_queue_dialog: QtReviewQueueDialog | None = None
         self._gmail_batch_review_dialog: QtGmailBatchReviewDialog | None = None
         self._settings_dialog: QtSettingsDialog | None = None
+        self._profile_dialog: QtProfileManagerDialog | None = None
         self._glossary_builder_dialog: QtGlossaryBuilderDialog | None = None
         self._calibration_dialog: QtCalibrationAuditDialog | None = None
         self._active_run_reservation: RunTargetReservation | None = None
@@ -809,8 +814,7 @@ class QtMainWindow(QMainWindow):
         self.profile_nav_btn = self._make_sidebar_button(
             "Profile",
             "resources/icons/dashboard/profile.svg",
-            self._show_profile_coming_soon,
-            coming_soon=True,
+            self._open_profile_dialog,
         )
         self._sidebar_nav_buttons = [
             self.dashboard_nav_btn,
@@ -1494,8 +1498,39 @@ class QtMainWindow(QMainWindow):
     def _focus_dashboard(self) -> None:
         self._set_dashboard_nav_active(self.dashboard_nav_btn)
 
-    def _show_profile_coming_soon(self) -> None:
-        QMessageBox.information(self, "Profile", "Coming soon.")
+    def _save_profile_settings_from_dialog(self, profiles, primary_profile_id: str) -> None:
+        save_profile_settings(profiles=list(profiles), primary_profile_id=primary_profile_id)
+        self._defaults = load_gui_settings()
+        controller = self._controller
+        if controller is not None:
+            controller.apply_shared_settings(
+                source_window=self,
+                persist=True,
+                values={
+                    "profiles": self._defaults.get("profiles"),
+                    "primary_profile_id": self._defaults.get("primary_profile_id"),
+                },
+            )
+        self._update_controls()
+
+    def _open_profile_dialog(self) -> None:
+        if self._profile_dialog is not None and self._profile_dialog.isVisible():
+            self._profile_dialog.raise_()
+            self._profile_dialog.activateWindow()
+            return
+
+        dialog = QtProfileManagerDialog(
+            parent=self,
+            settings=self._defaults,
+            save_callback=self._save_profile_settings_from_dialog,
+        )
+        dialog.setModal(False)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(lambda _obj=None: setattr(self, "_profile_dialog", None))
+        self._profile_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _set_dashboard_nav_active(self, active_button: QToolButton) -> None:
         buttons = getattr(self, "_sidebar_nav_buttons", [])
@@ -2533,11 +2568,13 @@ class QtMainWindow(QMainWindow):
             raise ValueError("No confirmed Gmail batch items are available for honorários generation.")
         first_item = session.confirmed_items[0]
         combined_word_count = sum(int(item.translated_word_count) for item in session.confirmed_items)
+        profiles, primary_profile_id = load_profile_settings()
         return build_honorarios_draft(
             case_number=first_item.case_number,
             word_count=combined_word_count,
             case_entity=first_item.case_entity,
             case_city=first_item.case_city,
+            profile=primary_profile(profiles, primary_profile_id),
         )
 
     def _set_gmail_batch_finalization_state(
@@ -2554,7 +2591,7 @@ class QtMainWindow(QMainWindow):
             self._append_log(log_message)
         self._update_controls()
 
-    def _offer_gmail_batch_reply_draft(self, honorarios_docx: Path) -> bool:
+    def _offer_gmail_batch_reply_draft(self, honorarios_docx: Path, profile: UserProfile) -> bool:
         session = self._gmail_batch_session
         persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
         if session is None or not session.confirmed_items:
@@ -2613,6 +2650,7 @@ class QtMainWindow(QMainWindow):
                 reply_to_message_id=session.intake_context.message_id or session.message.message_id,
                 translated_docxs=translated_docxs,
                 honorarios_docx=honorarios_docx,
+                profile=profile,
             )
         except ValueError as exc:
             session.draft_preflight_result = "failed"
@@ -2720,11 +2758,15 @@ class QtMainWindow(QMainWindow):
                 log_message=f"Gmail batch finalization failed: {exc}",
             )
             return
-        dialog = QtHonorariosExportDialog(
-            parent=self,
-            draft=draft,
-            default_directory=self._gmail_batch_honorarios_default_directory(),
-        )
+        profile_save_callback = getattr(self, "_save_profile_settings_from_dialog", None)
+        dialog_kwargs = {
+            "parent": self,
+            "draft": draft,
+            "default_directory": self._gmail_batch_honorarios_default_directory(),
+        }
+        if callable(profile_save_callback):
+            dialog_kwargs["profile_save_callback"] = profile_save_callback
+        dialog = QtHonorariosExportDialog(**dialog_kwargs)
         if dialog.exec() != QDialog.DialogCode.Accepted or dialog.saved_path is None:
             if callable(persist_report):
                 persist_report(
@@ -2740,13 +2782,14 @@ class QtMainWindow(QMainWindow):
             dialog.deleteLater()
             return
         honorarios_docx = dialog.saved_path.expanduser().resolve()
+        selected_profile = dialog.generated_draft.profile if getattr(dialog, "generated_draft", None) is not None else draft.profile
         session.requested_honorarios_path = dialog.requested_path
         session.actual_honorarios_path = honorarios_docx
         session.honorarios_auto_renamed = bool(dialog.auto_renamed)
         if callable(persist_report):
             persist_report(session=session, status="honorarios_ready", halt_reason="")
         dialog.deleteLater()
-        self._offer_gmail_batch_reply_draft(honorarios_docx)
+        self._offer_gmail_batch_reply_draft(honorarios_docx, selected_profile)
 
     def _record_gmail_batch_saved_result(self, saved_result: JobLogSavedResult, *, run_dir: Path) -> bool:
         session = self._gmail_batch_session

@@ -68,6 +68,7 @@ from legalpdf_translate.types import (
     RunConfig,
     RunSummary,
 )
+from legalpdf_translate.user_profile import default_primary_profile
 from legalpdf_translate.word_automation import WordAutomationResult
 
 
@@ -3930,7 +3931,10 @@ def test_finalize_completed_gmail_batch_stops_when_honorarios_dialog_is_cancelle
         ),
         _gmail_batch_honorarios_default_directory=lambda: translated.parent,
         _set_gmail_batch_finalization_state=lambda **kwargs: calls.__setitem__("state", kwargs),
-        _offer_gmail_batch_reply_draft=lambda honorarios_docx: calls.__setitem__("offered", honorarios_docx),
+        _offer_gmail_batch_reply_draft=lambda honorarios_docx, profile: calls.__setitem__(
+            "offered",
+            (honorarios_docx, profile.document_name),
+        ),
     )
 
     QtMainWindow._finalize_completed_gmail_batch(fake)
@@ -3966,6 +3970,7 @@ def test_finalize_completed_gmail_batch_records_honorarios_paths_in_session_repo
             self.saved_path = saved_path
             self.requested_path = requested_path
             self.auto_renamed = True
+            self.generated_draft = draft
 
         def exec(self) -> int:
             return 1
@@ -3982,7 +3987,11 @@ def test_finalize_completed_gmail_batch_records_honorarios_paths_in_session_repo
         ),
         _gmail_batch_honorarios_default_directory=lambda: translated.parent,
         _set_gmail_batch_finalization_state=lambda **kwargs: calls.__setitem__("state", kwargs),
-        _offer_gmail_batch_reply_draft=lambda honorarios_docx: calls.__setitem__("offered", honorarios_docx) or True,
+        _offer_gmail_batch_reply_draft=lambda honorarios_docx, profile: calls.__setitem__(
+            "offered",
+            (honorarios_docx, profile.document_name),
+        )
+        or True,
         _persist_gmail_batch_session_report=lambda **kwargs: app_window_module.QtMainWindow._persist_gmail_batch_session_report(
             SimpleNamespace(_gmail_batch_session=session, _append_log=lambda *_args, **_kwargs: None),
             **kwargs,
@@ -3997,7 +4006,7 @@ def test_finalize_completed_gmail_batch_records_honorarios_paths_in_session_repo
     assert payload["finalization"]["requested_save_path"].endswith("translated-1.docx")
     assert payload["finalization"]["actual_saved_path"].endswith("Requerimento_Honorarios_123-26.docx")
     assert payload["finalization"]["auto_renamed"] is True
-    assert calls["offered"] == saved_path
+    assert calls["offered"] == (saved_path, "Adel Belghali")
     assert calls["deleted"] is True
 
 
@@ -4080,12 +4089,16 @@ def test_offer_gmail_batch_reply_draft_builds_threaded_request_and_clears_batch(
         ),
     )
 
-    assert QtMainWindow._offer_gmail_batch_reply_draft(fake, honorarios) is True
+    profile = default_primary_profile(email="adel@example.com")
+    profile.phone_number = "+351912345678"
+
+    assert QtMainWindow._offer_gmail_batch_reply_draft(fake, honorarios, profile) is True
 
     assert calls["request_kwargs"]["subject"] == "Court reply needed"
     assert calls["request_kwargs"]["reply_to_message_id"] == "msg-100"
     assert calls["request_kwargs"]["translated_docxs"] == (translated_one, translated_two)
     assert calls["request_kwargs"]["honorarios_docx"] == honorarios
+    assert calls["request_kwargs"]["profile"].phone_number == "+351912345678"
     assert calls["state"]["status_text"] == "Gmail reply draft ready"
     assert calls["cleared"] is True
     assert opened == []
@@ -4140,7 +4153,7 @@ def test_offer_gmail_batch_reply_draft_keeps_batch_when_prereqs_are_missing(
         _clear_gmail_batch_session=lambda: calls.__setitem__("cleared", True),
     )
 
-    assert QtMainWindow._offer_gmail_batch_reply_draft(fake, honorarios) is False
+    assert QtMainWindow._offer_gmail_batch_reply_draft(fake, honorarios, default_primary_profile()) is False
     assert "No Gmail account is authenticated in gog." in calls["warning"]
     assert calls["state"]["status_text"] == "Gmail draft unavailable"
 
@@ -4194,7 +4207,7 @@ def test_offer_gmail_batch_reply_draft_rejects_duplicate_attachment_paths(
         _clear_gmail_batch_session=lambda: calls.__setitem__("cleared", True),
     )
 
-    assert QtMainWindow._offer_gmail_batch_reply_draft(fake, translated) is False
+    assert QtMainWindow._offer_gmail_batch_reply_draft(fake, translated, default_primary_profile()) is False
 
     assert "Duplicate Gmail draft attachment paths" in calls["critical"]
     assert calls["state"]["status_text"] == "Gmail draft failed"
@@ -4260,7 +4273,7 @@ def test_offer_gmail_batch_reply_draft_blocks_contaminated_translated_attachment
         _clear_gmail_batch_session=lambda: calls.__setitem__("cleared", True),
     )
 
-    assert QtMainWindow._offer_gmail_batch_reply_draft(fake, honorarios) is False
+    assert QtMainWindow._offer_gmail_batch_reply_draft(fake, honorarios, default_primary_profile()) is False
     assert "contaminated with honorários content" in calls["critical"]
     assert calls["state"]["status_text"] == "Gmail draft failed"
     assert "cleared" not in calls
@@ -4434,6 +4447,63 @@ def test_settings_dialog_shows_build_identity_summary() -> None:
         settings_dialog.deleteLater()
         if owns_app:
             app.quit()
+
+
+def test_open_profile_dialog_creates_and_reuses_profile_manager(monkeypatch) -> None:
+    calls: dict[str, object] = {"created": 0, "raised": 0, "activated": 0, "shown": 0}
+
+    class _FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class _FakeProfileDialog:
+        def __init__(self, *, parent, settings, save_callback) -> None:
+            calls["created"] = int(calls["created"]) + 1
+            calls["parent"] = parent
+            calls["settings"] = settings
+            calls["save_callback"] = save_callback
+            self.destroyed = _FakeSignal()
+            self._visible = True
+
+        def isVisible(self) -> bool:
+            return self._visible
+
+        def raise_(self) -> None:
+            calls["raised"] = int(calls["raised"]) + 1
+
+        def activateWindow(self) -> None:
+            calls["activated"] = int(calls["activated"]) + 1
+
+        def setModal(self, _value: bool) -> None:
+            return None
+
+        def setAttribute(self, *_args) -> None:
+            return None
+
+        def show(self) -> None:
+            calls["shown"] = int(calls["shown"]) + 1
+
+    monkeypatch.setattr(app_window_module, "QtProfileManagerDialog", _FakeProfileDialog)
+
+    fake = SimpleNamespace(
+        _profile_dialog=None,
+        _defaults={"profiles": [], "primary_profile_id": "primary"},
+        _save_profile_settings_from_dialog=lambda profiles, primary_profile_id: None,
+    )
+
+    QtMainWindow._open_profile_dialog(fake)
+    assert calls["created"] == 1
+    assert calls["shown"] == 1
+    assert calls["raised"] == 1
+    assert calls["activated"] == 1
+    assert fake._profile_dialog is not None
+
+    existing = fake._profile_dialog
+    QtMainWindow._open_profile_dialog(fake)
+    assert calls["created"] == 1
+    assert fake._profile_dialog is existing
+    assert calls["raised"] == 2
+    assert calls["activated"] == 2
 
 
 def test_joblog_combo_boxes_remain_plain_editable_inputs(tmp_path: Path) -> None:

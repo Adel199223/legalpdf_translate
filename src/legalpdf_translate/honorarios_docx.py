@@ -13,12 +13,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Mm, Pt
 
 from .docx_writer import resolve_noncolliding_output_path
-
-FIXED_NAME = "Adel Belghali"
-FIXED_ADDRESS = "Rua Luís de Camões nº 6, 7960-011 Marmelar, Pedrógão, Vidigueira"
-FIXED_IBAN = "PT50003506490000832760029"
-FIXED_IVA = "23%"
-FIXED_IRS = "Sem retenção"
+from .user_profile import UserProfile
 
 _PT_MONTHS = {
     1: "janeiro",
@@ -44,6 +39,7 @@ class HonorariosDraft:
     case_entity: str
     case_city: str
     date_pt: str
+    profile: UserProfile
 
 
 def format_portuguese_date(value: date) -> str:
@@ -56,6 +52,7 @@ def build_honorarios_draft(
     word_count: int,
     case_entity: str,
     case_city: str,
+    profile: UserProfile,
     today: date | None = None,
 ) -> HonorariosDraft:
     current_date = today or date.today()
@@ -65,6 +62,7 @@ def build_honorarios_draft(
         case_entity=case_entity.strip(),
         case_city=case_city.strip(),
         date_pt=format_portuguese_date(current_date),
+        profile=profile,
     )
 
 
@@ -80,14 +78,22 @@ def default_honorarios_filename(case_number: str, today: date | None = None) -> 
     return f"Requerimento_Honorarios_{slug}_{current_date:%Y%m%d}.docx"
 
 
+def _irs_sentence_fragment(value: str) -> str:
+    cleaned = value.strip().rstrip(".")
+    if cleaned.casefold() == "sem retenção":
+        return "não tem retenção de IRS"
+    return cleaned
+
+
 def build_honorarios_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]]:
+    profile = draft.profile
     return [
         (f"Número de processo: {draft.case_number}", "left"),
         ("", "left"),
         ("Exmo. Sr(a). Procurador(a) da república do " + draft.case_entity, "address"),
         ("", "left"),
-        (f"Nome: {FIXED_NAME}", "left"),
-        (f"Morada: {FIXED_ADDRESS}", "left"),
+        (f"Nome: {profile.document_name}", "left"),
+        (f"Morada: {profile.postal_address}", "left"),
         ("", "left"),
         (
             "Venho por este meio requerer o pagamento dos honorários devidos, em virtude de ter sido nomeado "
@@ -95,8 +101,11 @@ def build_honorarios_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, 
             "left",
         ),
         (f"O documento traduzido contém {draft.word_count} palavras.", "left"),
-        (f"Este serviço inclui a taxa IVA de {FIXED_IVA} e não tem retenção de IRS.", "left"),
-        (f"O Pagamento deverá ser efetuado para o seguinte IBAN: {FIXED_IBAN}", "left"),
+        (
+            f"Este serviço inclui a taxa IVA de {profile.iva_text} e {_irs_sentence_fragment(profile.irs_text)}.",
+            "left",
+        ),
+        (f"O Pagamento deverá ser efetuado para o seguinte IBAN: {profile.iban}", "left"),
         ("", "left"),
         ("Melhores cumprimentos,", "left"),
         ("", "left"),
@@ -104,7 +113,7 @@ def build_honorarios_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, 
         ("", "left"),
         (f"{draft.case_city}, {draft.date_pt}", "center"),
         ("", "left"),
-        (FIXED_NAME, "center"),
+        (profile.document_name, "center"),
     ]
 
 

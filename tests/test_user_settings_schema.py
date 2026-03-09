@@ -5,6 +5,7 @@ from pathlib import Path
 
 import legalpdf_translate.user_settings as user_settings
 from legalpdf_translate.glossary import default_ar_entries, default_en_entries, default_fr_entries
+from legalpdf_translate.user_profile import DEFAULT_PRIMARY_PROFILE_ID
 
 
 def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypatch) -> None:
@@ -59,6 +60,11 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert loaded["ocr_engine"] == "local_then_api"
     assert loaded["gmail_gog_path"] == ""
     assert loaded["gmail_account_email"] == ""
+    assert isinstance(loaded["profiles"], list)
+    assert len(loaded["profiles"]) == 1
+    assert loaded["primary_profile_id"] == DEFAULT_PRIMARY_PROFILE_ID
+    assert loaded["profiles"][0]["id"] == DEFAULT_PRIMARY_PROFILE_ID
+    assert loaded["profiles"][0]["phone_number"] == ""
     assert loaded["gmail_intake_bridge_enabled"] is False
     assert loaded["gmail_intake_bridge_token"] == ""
     assert loaded["gmail_intake_port"] == 8765
@@ -91,6 +97,158 @@ def test_load_gui_settings_coerces_gmail_intake_bridge_fields(tmp_path: Path, mo
     assert loaded["gmail_intake_bridge_enabled"] is True
     assert loaded["gmail_intake_bridge_token"] == "shared-token"
     assert loaded["gmail_intake_port"] == 65535
+
+
+def test_load_gui_settings_seeds_profile_email_from_existing_gmail_account(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "gmail_account_email": "translator@example.com",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["profiles"][0]["email"] == "translator@example.com"
+    assert loaded["profiles"][0]["phone_number"] == ""
+
+
+def test_load_gui_settings_preserves_profile_email_when_profiles_exist(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "gmail_account_email": "translator@example.com",
+                "profiles": [
+                    {
+                        "id": "alt",
+                        "first_name": "Jane",
+                        "last_name": "Doe",
+                        "document_name_override": "",
+                        "email": "custom@example.com",
+                        "phone_number": "+351912345678",
+                        "postal_address": "Rua A",
+                        "iban": "PT50003506490000832760029",
+                        "iva_text": "23%",
+                        "irs_text": "Sem retenção",
+                    }
+                ],
+                "primary_profile_id": "alt",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["profiles"][0]["email"] == "custom@example.com"
+    assert loaded["profiles"][0]["phone_number"] == "+351912345678"
+    assert loaded["primary_profile_id"] == "alt"
+
+
+def test_load_gui_settings_backfills_blank_phone_when_profile_payload_is_legacy(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "id": "alt",
+                        "first_name": "Jane",
+                        "last_name": "Doe",
+                        "document_name_override": "",
+                        "email": "custom@example.com",
+                        "postal_address": "Rua A",
+                        "iban": "PT50003506490000832760029",
+                        "iva_text": "23%",
+                        "irs_text": "Sem retenção",
+                    }
+                ],
+                "primary_profile_id": "alt",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["profiles"][0]["phone_number"] == ""
+
+
+def test_load_gui_settings_normalizes_missing_primary_profile_id(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "id": "secondary",
+                        "first_name": "Jane",
+                        "last_name": "Doe",
+                        "document_name_override": "",
+                        "email": "",
+                        "phone_number": "",
+                        "postal_address": "Rua A",
+                        "iban": "PT50003506490000832760029",
+                        "iva_text": "23%",
+                        "irs_text": "Sem retenção",
+                    }
+                ],
+                "primary_profile_id": "missing",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["primary_profile_id"] == "secondary"
+
+
+def test_save_profile_settings_persists_profiles_and_primary(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+
+    profiles, primary_profile_id = user_settings.load_profile_settings()
+    extra_profile = {
+        "id": "secondary",
+        "first_name": "Jane",
+        "last_name": "Doe",
+        "document_name_override": "",
+        "email": "",
+        "phone_number": "+351911111111",
+        "postal_address": "Rua B",
+        "iban": "PT50003506490000832760029",
+        "iva_text": "23%",
+        "irs_text": "Sem retenção",
+    }
+    normalized = user_settings.load_gui_settings()
+    profile_objects, _ = user_settings.normalize_profiles(
+        normalized["profiles"] + [extra_profile],
+        "secondary",
+    )
+
+    user_settings.save_profile_settings(
+        profiles=profile_objects,
+        primary_profile_id="secondary",
+    )
+
+    reloaded = user_settings.load_gui_settings()
+
+    assert reloaded["primary_profile_id"] == "secondary"
+    assert len(reloaded["profiles"]) == 2
+    assert reloaded["profiles"][1]["phone_number"] == "+351911111111"
 
 
 def test_load_gui_settings_migrates_old_last_used_fields(tmp_path: Path, monkeypatch) -> None:
