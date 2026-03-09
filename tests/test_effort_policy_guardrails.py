@@ -81,13 +81,36 @@ def test_run_summary_written_on_failure(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr(TranslationWorkflow, "_process_page", _fail_page)
 
-    summary = TranslationWorkflow(client=object()).run(_base_config(pdf, outdir))
+    config = _base_config(pdf, outdir)
+    config.advisor_recommendation_applied = True
+    config.advisor_recommendation = {
+        "recommended_ocr_mode": "auto",
+        "recommended_image_mode": "auto",
+        "advisor_track": "enfr",
+        "confidence": 0.81,
+        "recommendation_reasons": ["enfr_layout_or_text_quality_requires_ocr"],
+    }
+
+    summary = TranslationWorkflow(client=object()).run(config)
 
     assert summary.success is False
     assert summary.run_summary_path is not None
     assert summary.run_summary_path.exists()
     payload = json.loads(summary.run_summary_path.read_text(encoding="utf-8"))
     assert payload["counts"]["pages_failed"] == 1
+    assert "cost_estimation_status" in payload
+    assert "cost_profile_id" in payload
+    assert "budget_cap_usd" in payload
+    assert "budget_decision" in payload
+    assert "budget_decision_reason" in payload
+    assert "budget_pre_run" in payload
+    assert "budget_post_run" in payload
+    assert "quality_risk_score" in payload
+    assert "review_queue_count" in payload
+    assert "review_queue" in payload
+    assert "advisor_recommendation_applied" in payload
+    assert "advisor_recommendation" in payload
+    assert payload["advisor_recommendation_applied"] is True
 
 
 def test_telemetry_no_content_fields(tmp_path: Path, monkeypatch) -> None:

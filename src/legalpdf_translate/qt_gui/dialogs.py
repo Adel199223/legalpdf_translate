@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import json
+import os
+import secrets
+import subprocess
+import sys
+import tempfile
 import time
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
+from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from openai import OpenAI
-from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import QEvent, QObject, QStandardPaths, QThread, QTimer, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -43,7 +51,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from legalpdf_translate.config import OPENAI_MODEL
+from legalpdf_translate.config import (
+    DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
+    DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+    OPENAI_MODEL,
+)
 from legalpdf_translate.glossary import (
     GlossaryEntry,
     build_consistency_glossary_markdown,
@@ -59,22 +71,60 @@ from legalpdf_translate.glossary import (
     valid_glossary_tiers,
     valid_source_langs,
 )
+from legalpdf_translate.gmail_draft import (
+    GMAIL_DRAFTS_URL,
+    assess_gmail_draft_prereqs,
+    build_honorarios_gmail_request,
+    create_gmail_draft_via_gog,
+    validate_translated_docx_artifacts_for_gmail_draft,
+)
+from legalpdf_translate.gmail_batch import (
+    FetchedGmailMessage,
+    GmailAttachmentCandidate,
+    GmailAttachmentSelection,
+)
+from legalpdf_translate.build_identity import RuntimeBuildIdentity
+from legalpdf_translate.honorarios_docx import (
+    HonorariosDraft,
+    build_honorarios_draft,
+    default_honorarios_filename,
+    generate_honorarios_docx,
+)
 from legalpdf_translate.joblog_db import (
     insert_job_run,
     list_job_runs,
     open_job_log,
+    update_job_run_output_paths,
     update_joblog_visible_columns,
 )
 from legalpdf_translate.metadata_autofill import (
     MetadataAutofillConfig,
     MetadataSuggestion,
     apply_service_case_default_rule,
-    extract_pdf_header_metadata,
+    choose_court_email_suggestion,
+    extract_pdf_header_metadata_priority_pages,
     extract_photo_metadata_from_image,
     metadata_config_from_settings,
+    rank_court_email_suggestions,
 )
 from legalpdf_translate.openai_client import OpenAIResponsesClient
+from legalpdf_translate.ocr_engine import (
+    OcrEngineConfig,
+    default_ocr_api_base_url,
+    default_ocr_api_env_name,
+    default_ocr_api_model,
+    normalize_ocr_api_provider,
+    test_ocr_provider_connection,
+)
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
+from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
+from legalpdf_translate.qt_gui.worker import (
+    GmailAttachmentPreviewBootstrapResult,
+    GmailAttachmentPreviewBootstrapWorker,
+    GmailAttachmentPreviewPageResult,
+    GmailAttachmentPreviewPageWorker,
+)
+from legalpdf_translate.review_export import export_review_queue
 from legalpdf_translate.secrets_store import (
     delete_openai_key,
     delete_ocr_key,
@@ -102,11 +152,25 @@ from legalpdf_translate.study_glossary import (
     tokenize_page_for_mode,
     update_candidate_stats_from_page,
 )
-from legalpdf_translate.user_settings import app_data_dir, load_joblog_settings, save_gui_settings, save_joblog_settings
+from legalpdf_translate.types import OcrApiProvider
+from legalpdf_translate.user_settings import (
+    app_data_dir,
+    load_gui_settings,
+    load_joblog_settings,
+    save_gui_settings,
+    save_joblog_settings,
+)
+from legalpdf_translate.word_automation import (
+    WordAutomationResult,
+    align_right_and_save_docx_in_word,
+    open_docx_in_word,
+)
 
 JOBLOG_COLUMNS = [
     "translation_date",
     "case_number",
+    "court_email",
+    "run_id",
     "job_type",
     "case_entity",
     "case_city",
@@ -114,18 +178,24 @@ JOBLOG_COLUMNS = [
     "service_city",
     "service_date",
     "lang",
+    "target_lang",
     "pages",
     "word_count",
+    "total_tokens",
     "rate_per_word",
     "expected_total",
     "amount_paid",
     "api_cost",
+    "estimated_api_cost",
+    "quality_risk_score",
     "profit",
 ]
 
 JOBLOG_COLUMN_LABELS = {
     "translation_date": "Date",
     "case_number": "Case #",
+    "court_email": "Court Email",
+    "run_id": "Run ID",
     "job_type": "Job Type",
     "case_entity": "Case Entity",
     "case_city": "Case City",
@@ -133,12 +203,16 @@ JOBLOG_COLUMN_LABELS = {
     "service_city": "Service City",
     "service_date": "Service Date",
     "lang": "Lang",
+    "target_lang": "Target",
     "pages": "Pages",
     "word_count": "Words",
+    "total_tokens": "Total Tokens",
     "rate_per_word": "Rate/Word",
     "expected_total": "Expected",
     "amount_paid": "Paid",
     "api_cost": "API Cost",
+    "estimated_api_cost": "Est. API Cost",
+    "quality_risk_score": "Risk Score",
     "profit": "Profit",
 }
 
@@ -149,6 +223,7 @@ class JobLogSeed:
     translation_date: str
     job_type: str
     case_number: str
+    court_email: str
     case_entity: str
     case_city: str
     service_entity: str
@@ -161,8 +236,54 @@ class JobLogSeed:
     expected_total: float
     amount_paid: float
     api_cost: float
+    run_id: str
+    target_lang: str
+    total_tokens: int | None
+    estimated_api_cost: float | None
+    quality_risk_score: float | None
     profit: float
     pdf_path: Path
+    output_docx: Path | None = None
+    partial_docx: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class JobLogSavedResult:
+    row_id: int
+    translated_docx_path: Path
+    word_count: int
+    case_number: str
+    case_entity: str
+    case_city: str
+    court_email: str
+    run_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class GmailBatchReviewResult:
+    selections: tuple[GmailAttachmentSelection, ...]
+    target_lang: str
+
+    @property
+    def attachments(self) -> tuple[GmailAttachmentCandidate, ...]:
+        return tuple(selection.candidate for selection in self.selections)
+
+
+@dataclass(slots=True)
+class GmailBatchReviewPreviewCacheTransfer:
+    cached_paths: dict[str, Path]
+    cached_page_counts: dict[str, int]
+    temp_dir: tempfile.TemporaryDirectory[str] | None = field(default=None, repr=False)
+
+    def cleanup(self) -> None:
+        temp_dir = self.temp_dir
+        self.temp_dir = None
+        if temp_dir is not None:
+            temp_dir.cleanup()
+
+
+_WORD_XML_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+_DOCX_WORD_SEPARATOR_TAGS = {"tab", "br", "cr"}
 
 
 def count_words_from_pages_dir(pages_dir: Path) -> int:
@@ -171,6 +292,59 @@ def count_words_from_pages_dir(pages_dir: Path) -> int:
         text = page_file.read_text(encoding="utf-8")
         total += len(text.split())
     return total
+
+
+def _extract_visible_text_from_docx(docx_path: Path) -> str:
+    if not docx_path.exists() or not docx_path.is_file():
+        return ""
+    try:
+        with ZipFile(docx_path) as archive:
+            raw_xml = archive.read("word/document.xml")
+    except (OSError, KeyError):
+        return ""
+    try:
+        root = ET.fromstring(raw_xml)
+    except ET.ParseError:
+        return ""
+
+    paragraphs: list[str] = []
+    for paragraph in root.findall(".//w:p", _WORD_XML_NS):
+        parts: list[str] = []
+        for node in paragraph.iter():
+            tag = node.tag.rsplit("}", 1)[-1]
+            if tag == "t":
+                if node.text:
+                    parts.append(node.text)
+            elif tag in _DOCX_WORD_SEPARATOR_TAGS:
+                parts.append(" ")
+        paragraph_text = "".join(parts).strip()
+        if paragraph_text:
+            paragraphs.append(paragraph_text)
+    return "\n".join(paragraphs)
+
+
+def count_words_from_docx(docx_path: Path | None) -> int:
+    if docx_path is None:
+        return 0
+    text = _extract_visible_text_from_docx(docx_path)
+    return len(text.split()) if text else 0
+
+
+def count_words_from_output_artifacts(
+    *,
+    output_docx: Path | None,
+    partial_docx: Path | None,
+    pages_dir: Path | None,
+) -> int:
+    final_count = count_words_from_docx(output_docx)
+    if final_count > 0:
+        return final_count
+    partial_count = count_words_from_docx(partial_docx)
+    if partial_count > 0:
+        return partial_count
+    if pages_dir is None:
+        return 0
+    return count_words_from_pages_dir(pages_dir)
 
 
 def _date_from_completed_at(completed_at: str) -> str:
@@ -187,19 +361,26 @@ def build_seed_from_run(
     *,
     pdf_path: Path,
     lang: str,
-    pages_dir: Path,
+    output_docx: Path | None,
+    partial_docx: Path | None,
+    pages_dir: Path | None,
     completed_pages: int,
     completed_at: str,
     default_rate_per_word: float,
     api_cost: float = 0.0,
 ) -> JobLogSeed:
-    word_count = count_words_from_pages_dir(pages_dir)
+    word_count = count_words_from_output_artifacts(
+        output_docx=output_docx,
+        partial_docx=partial_docx,
+        pages_dir=pages_dir,
+    )
     expected_total = round(float(default_rate_per_word) * float(word_count), 2)
     return JobLogSeed(
         completed_at=completed_at,
         translation_date=_date_from_completed_at(completed_at),
         job_type="Translation",
         case_number="",
+        court_email="",
         case_entity="",
         case_city="",
         service_entity="",
@@ -212,9 +393,355 @@ def build_seed_from_run(
         expected_total=expected_total,
         amount_paid=0.0,
         api_cost=float(api_cost),
+        run_id="",
+        target_lang=lang,
+        total_tokens=None,
+        estimated_api_cost=None,
+        quality_risk_score=None,
         profit=round(expected_total - float(api_cost), 2),
         pdf_path=pdf_path,
+        output_docx=output_docx,
+        partial_docx=partial_docx,
     )
+
+
+def _default_documents_dir() -> Path:
+    candidate = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+    if candidate:
+        return Path(candidate).expanduser().resolve()
+    return (Path.home() / "Documents").expanduser().resolve()
+
+
+def _default_downloads_dir() -> Path:
+    candidate = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+    if candidate:
+        return Path(candidate).expanduser().resolve()
+    return (Path.home() / "Downloads").expanduser().resolve()
+
+
+def _open_folder_for_path(parent: QWidget, target: Path) -> None:
+    folder = target.expanduser().resolve().parent
+    try:
+        if os.name == "nt":
+            subprocess.Popen(["explorer", f"/select,{target.expanduser().resolve()}"])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(folder)])
+        else:
+            subprocess.Popen(["xdg-open", str(folder)])
+    except Exception as exc:  # noqa: BLE001
+        QMessageBox.critical(parent, "Open folder failed", str(exc))
+
+
+def _open_path_in_system(parent: QWidget, target: Path) -> None:
+    resolved = target.expanduser().resolve()
+    if not resolved.exists():
+        QMessageBox.critical(parent, "Open file failed", f"Path not found:\n{resolved}")
+        return
+    try:
+        if os.name == "nt":
+            os.startfile(str(resolved))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(resolved)])
+        else:
+            subprocess.Popen(["xdg-open", str(resolved)])
+    except Exception as exc:  # noqa: BLE001
+        QMessageBox.critical(parent, "Open file failed", str(exc))
+
+
+class QtHonorariosExportDialog(QDialog):
+    """Generate a deterministic Requerimento de Honorarios DOCX."""
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        draft: HonorariosDraft,
+        default_directory: Path,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Gerar Requerimento de Honorários")
+        self.resize(760, 300)
+        self._default_directory = default_directory.expanduser().resolve()
+        self._initial_draft = draft
+        self.saved_path: Path | None = None
+        self.requested_path: Path | None = None
+        self.auto_renamed: bool = False
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        form = QFormLayout()
+        self.case_number_edit = QLineEdit(self._initial_draft.case_number)
+        self.word_count_edit = QLineEdit(str(self._initial_draft.word_count))
+        self.case_entity_edit = QLineEdit(self._initial_draft.case_entity)
+        self.case_city_edit = QLineEdit(self._initial_draft.case_city)
+        self.date_preview_label = QLabel(f"Beja, {self._initial_draft.date_pt}")
+        form.addRow("Número de processo", self.case_number_edit)
+        form.addRow("Número de palavras", self.word_count_edit)
+        form.addRow("Case Entity", self.case_entity_edit)
+        form.addRow("Case City", self.case_city_edit)
+        form.addRow("Data", self.date_preview_label)
+        root.addLayout(form)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self.cancel_btn = QPushButton("Cancel")
+        self.generate_btn = QPushButton("Gerar DOCX")
+        actions.addWidget(self.cancel_btn)
+        actions.addWidget(self.generate_btn)
+        root.addLayout(actions)
+
+        self.cancel_btn.clicked.connect(self.reject)
+        self.generate_btn.clicked.connect(self._generate)
+
+    def _build_draft(self) -> HonorariosDraft:
+        case_number = self.case_number_edit.text().strip()
+        case_entity = self.case_entity_edit.text().strip()
+        case_city = self.case_city_edit.text().strip()
+        if not case_number:
+            raise ValueError("Número de processo é obrigatório.")
+        if not case_entity:
+            raise ValueError("Case Entity is required.")
+        if not case_city:
+            raise ValueError("Case City is required.")
+        try:
+            word_count = int(self.word_count_edit.text().strip())
+        except ValueError as exc:
+            raise ValueError("Número de palavras must be an integer.") from exc
+        if word_count <= 0:
+            raise ValueError("Número de palavras must be greater than zero.")
+        return build_honorarios_draft(
+            case_number=case_number,
+            word_count=word_count,
+            case_entity=case_entity,
+            case_city=case_city,
+        )
+
+    def _generate(self) -> None:
+        try:
+            draft = self._build_draft()
+        except ValueError as exc:
+            QMessageBox.critical(self, "Requerimento de Honorários", str(exc))
+            return
+
+        default_path = self._default_directory / default_honorarios_filename(draft.case_number)
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar Requerimento de Honorários",
+            str(default_path),
+            "Word Document (*.docx)",
+        )
+        if not selected:
+            return
+        requested_path = Path(selected).expanduser().resolve()
+        self.requested_path = requested_path
+        try:
+            saved = generate_honorarios_docx(draft, requested_path)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Requerimento de Honorários", f"Failed to generate DOCX:\n{exc}")
+            return
+        self.saved_path = saved
+        self.auto_renamed = saved != requested_path
+        if saved != requested_path:
+            QMessageBox.information(
+                self,
+                "Requerimento de Honorários",
+                "The selected file already existed. The honorários DOCX was saved as:\n"
+                f"{saved}",
+            )
+        open_now = QMessageBox.question(
+            self,
+            "Requerimento de Honorários",
+            "Open containing folder now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if open_now == QMessageBox.StandardButton.Yes:
+            _open_folder_for_path(self, saved)
+        self.accept()
+
+
+class QtArabicDocxReviewDialog(QDialog):
+    """Arabic-only Word handoff gate before the app continues."""
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        docx_path: Path,
+        is_gmail_batch: bool,
+        attachment_label: str | None = None,
+        poll_interval_ms: int = 500,
+        quiet_period_ms: int = 1500,
+        auto_open: bool = True,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Arabic DOCX review")
+        self.resize(760, 260)
+        self._docx_path = docx_path.expanduser().resolve()
+        self._is_gmail_batch = bool(is_gmail_batch)
+        self._attachment_label = (attachment_label or "").strip()
+        self._poll_interval_ms = max(100, int(poll_interval_ms))
+        self._quiet_period_ms = max(self._poll_interval_ms, int(quiet_period_ms))
+        self._auto_open = bool(auto_open)
+        self._baseline_fingerprint = self._read_fingerprint()
+        self._last_seen_fingerprint = self._baseline_fingerprint
+        self._save_change_detected = False
+        self._last_change_monotonic: float | None = None
+        self._opened_once = False
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(self._poll_interval_ms)
+        self._poll_timer.timeout.connect(self._poll_for_save)
+        self._build_ui()
+        QTimer.singleShot(0, self._start_review)
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        if self._is_gmail_batch and self._attachment_label:
+            header = (
+                "Arabic Gmail batch item ready. Review the DOCX in Word, then save it to continue "
+                "this batch item automatically."
+            )
+        else:
+            header = (
+                "Arabic translation complete. Review the DOCX in Word, then save it to continue "
+                "to Save to Job Log."
+            )
+        if self._attachment_label:
+            header += f"\n\nAttachment: {self._attachment_label}"
+
+        self.info_label = QLabel(header)
+        self.info_label.setWordWrap(True)
+        root.addWidget(self.info_label)
+
+        self.path_label = QLabel(str(self._docx_path))
+        self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.path_label.setWordWrap(True)
+        root.addWidget(self.path_label)
+
+        self.status_label = QLabel(
+            "The DOCX will open in Word. Save after editing and the app will continue automatically."
+        )
+        self.status_label.setWordWrap(True)
+        root.addWidget(self.status_label)
+
+        actions = QHBoxLayout()
+        self.align_right_btn = QPushButton("Align Right + Save")
+        self.open_word_btn = QPushButton("Open in Word")
+        self.continue_without_changes_btn = QPushButton("Continue without changes")
+        self.continue_now_btn = QPushButton("Continue now")
+        self.cancel_btn = QPushButton("Cancel")
+        actions.addWidget(self.align_right_btn)
+        actions.addWidget(self.open_word_btn)
+        actions.addStretch(1)
+        actions.addWidget(self.continue_without_changes_btn)
+        actions.addWidget(self.continue_now_btn)
+        actions.addWidget(self.cancel_btn)
+        root.addLayout(actions)
+
+        self.align_right_btn.clicked.connect(self._align_right_and_save)
+        self.open_word_btn.clicked.connect(lambda: self._open_in_word(initial=False))
+        self.continue_without_changes_btn.clicked.connect(self.accept)
+        self.continue_now_btn.clicked.connect(self.accept)
+        self.cancel_btn.clicked.connect(self.reject)
+
+    def done(self, result: int) -> None:
+        self._poll_timer.stop()
+        super().done(result)
+
+    def _set_status(self, message: str) -> None:
+        self.status_label.setText(message)
+
+    def _read_fingerprint(self) -> tuple[int, int] | None:
+        try:
+            stat = self._docx_path.stat()
+        except OSError:
+            return None
+        return (int(stat.st_mtime_ns), int(stat.st_size))
+
+    def _apply_open_result(self, result: WordAutomationResult, *, initial: bool) -> None:
+        if result.ok:
+            if initial:
+                self._set_status(
+                    "DOCX opened in Word. Save after editing and the app will continue automatically."
+                )
+            else:
+                self._set_status("DOCX reopened in Word. Save after editing to continue automatically.")
+            return
+        fallback_message = result.message.strip() or "Word automation failed."
+        if os.name == "nt":
+            try:
+                os.startfile(str(self._docx_path))  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                self._set_status(
+                    f"{fallback_message}\n\nUse 'Continue now' after saving manually if detection misses."
+                )
+                if not initial:
+                    QMessageBox.warning(self, "Arabic review", fallback_message)
+                return
+            self._set_status(
+                "Word automation failed, but the DOCX was opened with the default Windows handler. "
+                "Save after editing and the app will continue automatically."
+            )
+            if not initial:
+                QMessageBox.warning(
+                    self,
+                    "Arabic review",
+                    f"{fallback_message}\n\nOpened with the default Windows handler instead.",
+                )
+            return
+        self._set_status(
+            f"{fallback_message}\n\nUse 'Continue now' after saving manually if detection misses."
+        )
+        if not initial:
+            QMessageBox.warning(self, "Arabic review", fallback_message)
+
+    def _start_review(self) -> None:
+        if self._auto_open and not self._opened_once:
+            self._opened_once = True
+            self._open_in_word(initial=True)
+        self._poll_timer.start()
+
+    def _open_in_word(self, *, initial: bool) -> None:
+        self._apply_open_result(open_docx_in_word(self._docx_path), initial=initial)
+
+    def _align_right_and_save(self) -> None:
+        result = align_right_and_save_docx_in_word(self._docx_path)
+        if result.ok:
+            self._set_status("DOCX aligned right and saved in Word. Continuing now.")
+            self.accept()
+            return
+        self._set_status(
+            f"{result.message}\n\nYou can keep editing manually in Word and save, or use Continue now."
+        )
+        QMessageBox.warning(self, "Arabic review", result.message)
+
+    def _poll_for_save(self) -> None:
+        current = self._read_fingerprint()
+        if current is None:
+            return
+        if self._baseline_fingerprint is None:
+            self._baseline_fingerprint = current
+            self._last_seen_fingerprint = current
+            return
+        if current != self._last_seen_fingerprint:
+            self._last_seen_fingerprint = current
+            if current != self._baseline_fingerprint or self._save_change_detected:
+                self._save_change_detected = True
+                self._last_change_monotonic = time.monotonic()
+                self._set_status("Save detected. Waiting for Word to finish writing...")
+                return
+        if self._save_change_detected and self._last_change_monotonic is not None:
+            elapsed_ms = (time.monotonic() - self._last_change_monotonic) * 1000.0
+            if elapsed_ms >= float(self._quiet_period_ms):
+                self._set_status("Save complete. Continuing now.")
+                self.accept()
 
 
 class QtSaveToJobLogDialog(QDialog):
@@ -227,6 +754,7 @@ class QtSaveToJobLogDialog(QDialog):
         db_path: Path,
         seed: JobLogSeed,
         on_saved: Callable[[], None] | None = None,
+        allow_honorarios_export: bool = True,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Save to Job Log")
@@ -235,8 +763,11 @@ class QtSaveToJobLogDialog(QDialog):
         self._db_path = db_path
         self._seed = seed
         self._on_saved = on_saved
+        self._allow_honorarios_export = bool(allow_honorarios_export)
         self._saved = False
+        self._saved_result: JobLogSavedResult | None = None
         self._settings = load_joblog_settings()
+        self._gui_settings = load_gui_settings()
         self._metadata_config: MetadataAutofillConfig = metadata_config_from_settings(self._settings)
         self._case_entity_user_set = False
         self._case_city_user_set = False
@@ -248,6 +779,10 @@ class QtSaveToJobLogDialog(QDialog):
     @property
     def saved(self) -> bool:
         return self._saved
+
+    @property
+    def saved_result(self) -> JobLogSavedResult | None:
+        return self._saved_result
 
     def _fill_combo(self, combo: QComboBox, values: list[str]) -> None:
         current = combo.currentText().strip()
@@ -303,6 +838,12 @@ class QtSaveToJobLogDialog(QDialog):
         case_form.addWidget(QLabel("Case number"), 1, 0)
         self.case_number_edit = QLineEdit(self._seed.case_number)
         case_form.addWidget(self.case_number_edit, 1, 1, 1, 2)
+        case_form.addWidget(QLabel("Court Email"), 1, 3)
+        self.court_email_combo = QComboBox()
+        self.court_email_combo.setEditable(True)
+        self.court_email_combo.addItems(list(self._settings["vocab_court_emails"]))
+        self.court_email_combo.setCurrentText(self._seed.court_email)
+        case_form.addWidget(self.court_email_combo, 1, 4, 1, 2)
         case_form.setColumnStretch(1, 1)
         case_form.setColumnStretch(4, 1)
         root.addWidget(case_group)
@@ -350,6 +891,33 @@ class QtSaveToJobLogDialog(QDialog):
         autofill_row.addWidget(self.photo_hint)
         root.addLayout(autofill_row)
 
+        metrics_group = QGroupBox("Run Metrics (auto-filled)")
+        metrics_form = QGridLayout(metrics_group)
+        metrics_form.addWidget(QLabel("Run ID"), 0, 0)
+        self.run_id_edit = QLineEdit(self._seed.run_id)
+        metrics_form.addWidget(self.run_id_edit, 0, 1)
+        metrics_form.addWidget(QLabel("Target lang"), 0, 2)
+        self.target_lang_edit = QLineEdit(self._seed.target_lang)
+        metrics_form.addWidget(self.target_lang_edit, 0, 3)
+        metrics_form.addWidget(QLabel("Total tokens"), 1, 0)
+        self.total_tokens_edit = QLineEdit(
+            "" if self._seed.total_tokens is None else str(int(self._seed.total_tokens))
+        )
+        metrics_form.addWidget(self.total_tokens_edit, 1, 1)
+        metrics_form.addWidget(QLabel("Est. API cost"), 1, 2)
+        self.estimated_api_cost_edit = QLineEdit(
+            "" if self._seed.estimated_api_cost is None else f"{float(self._seed.estimated_api_cost):.2f}"
+        )
+        metrics_form.addWidget(self.estimated_api_cost_edit, 1, 3)
+        metrics_form.addWidget(QLabel("Quality risk score"), 2, 0)
+        self.quality_risk_score_edit = QLineEdit(
+            "" if self._seed.quality_risk_score is None else f"{float(self._seed.quality_risk_score):.4f}"
+        )
+        metrics_form.addWidget(self.quality_risk_score_edit, 2, 1)
+        metrics_form.setColumnStretch(1, 1)
+        metrics_form.setColumnStretch(3, 1)
+        root.addWidget(metrics_group)
+
         finance_group = QGroupBox("Amounts (EUR)")
         finance_form = QGridLayout(finance_group)
         finance_form.addWidget(QLabel("Rate/word"), 0, 0)
@@ -372,6 +940,12 @@ class QtSaveToJobLogDialog(QDialog):
         root.addWidget(finance_group)
 
         actions = QHBoxLayout()
+        self.open_translation_btn = QPushButton("Open translated DOCX")
+        self.open_translation_btn.setEnabled(self._resolved_seed_docx_path() is not None)
+        actions.addWidget(self.open_translation_btn)
+        self.honorarios_btn = QPushButton("Gerar Requerimento de Honorários...")
+        self.honorarios_btn.setEnabled(self._allow_honorarios_export)
+        actions.addWidget(self.honorarios_btn)
         actions.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
         self.save_btn = QPushButton("Save")
@@ -379,8 +953,10 @@ class QtSaveToJobLogDialog(QDialog):
         actions.addWidget(self.save_btn)
         root.addLayout(actions)
 
+        self.open_translation_btn.clicked.connect(self._open_translation_docx)
         self.cancel_btn.clicked.connect(self.reject)
         self.save_btn.clicked.connect(self._save)
+        self.honorarios_btn.clicked.connect(self._open_honorarios_dialog)
         self.job_type_combo.currentTextChanged.connect(self._refresh_photo_controls)
         self.photo_translation_check.toggled.connect(self._refresh_photo_controls)
         self.case_entity_combo.currentTextChanged.connect(self._on_case_fields_changed)
@@ -423,12 +999,26 @@ class QtSaveToJobLogDialog(QDialog):
         self._fill_combo(self.case_city_combo, list(self._settings["vocab_cities"]))
         self._fill_combo(self.service_city_combo, list(self._settings["vocab_cities"]))
         self._fill_combo(self.job_type_combo, list(self._settings["vocab_job_types"]))
+        self._fill_combo(self.court_email_combo, list(self._settings["vocab_court_emails"]))
+
+    def _set_court_email_from_context(self, *, exact_email: str | None = None, force: bool = False) -> None:
+        if not force and exact_email is None and self.court_email_combo.currentText().strip():
+            return
+        suggestion = choose_court_email_suggestion(
+            exact_email=exact_email,
+            case_entity=self.case_entity_combo.currentText().strip(),
+            case_city=self.case_city_combo.currentText().strip(),
+            vocab_court_emails=list(self._settings["vocab_court_emails"]),
+        )
+        if suggestion:
+            self.court_email_combo.setCurrentText(suggestion)
 
     def _on_case_fields_changed(self) -> None:
         self._case_entity_user_set = True
         self._case_city_user_set = True
         if self.service_same_check.isChecked():
             self._sync_service_with_case()
+        self._set_court_email_from_context()
 
     def _on_service_fields_changed(self) -> None:
         self._apply_non_court_default_rule()
@@ -466,6 +1056,109 @@ class QtSaveToJobLogDialog(QDialog):
         self.autofill_photo_btn.setEnabled(enabled)
         self.photo_hint.setText("Usually Interpretation.")
 
+    def _build_honorarios_draft(self) -> HonorariosDraft:
+        case_number = self.case_number_edit.text().strip()
+        case_entity = self.case_entity_combo.currentText().strip()
+        case_city = self.case_city_combo.currentText().strip()
+        return build_honorarios_draft(
+            case_number=case_number,
+            word_count=int(self._seed.word_count),
+            case_entity=case_entity,
+            case_city=case_city,
+        )
+
+    def _honorarios_default_directory(self) -> Path:
+        for candidate in (self._seed.output_docx, self._seed.partial_docx):
+            if isinstance(candidate, Path):
+                resolved = candidate.expanduser().resolve()
+                if resolved.exists():
+                    return resolved.parent
+        return _default_documents_dir()
+
+    def _current_translation_docx_path(self) -> Path | None:
+        for candidate in (self._seed.output_docx, self._seed.partial_docx):
+            if isinstance(candidate, Path):
+                resolved = candidate.expanduser().resolve()
+                if resolved.exists():
+                    return resolved
+        return None
+
+    def _offer_gmail_draft_for_honorarios(self, honorarios_docx: Path) -> None:
+        court_email = self.court_email_combo.currentText().strip()
+        if not court_email:
+            return
+        prereqs = assess_gmail_draft_prereqs(
+            configured_gog_path=str(self._gui_settings.get("gmail_gog_path", "") or ""),
+            configured_account_email=str(self._gui_settings.get("gmail_account_email", "") or ""),
+        )
+        if not prereqs.ready or prereqs.gog_path is None or prereqs.account_email is None:
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Gmail draft",
+            f"Criar rascunho no Gmail para {court_email}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        translation_docx = self._current_translation_docx_path()
+        if translation_docx is None:
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Translated DOCX is unavailable for this run. The Gmail draft was not created.",
+            )
+            return
+        try:
+            validate_translated_docx_artifacts_for_gmail_draft(
+                translated_docxs=(translation_docx,),
+                honorarios_docx=honorarios_docx,
+            )
+            request = build_honorarios_gmail_request(
+                gog_path=prereqs.gog_path,
+                account_email=prereqs.account_email,
+                to_email=court_email,
+                case_number=self.case_number_edit.text().strip(),
+                translation_docx=translation_docx,
+                honorarios_docx=honorarios_docx,
+            )
+        except ValueError as exc:
+            QMessageBox.critical(self, "Gmail draft", str(exc))
+            return
+        result = create_gmail_draft_via_gog(request)
+        if not result.ok:
+            details = result.stderr or result.stdout or result.message
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Failed to create Gmail draft.\n\n"
+                f"{details}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        open_gmail = QMessageBox.question(
+            self,
+            "Gmail draft",
+            "Gmail draft created successfully. Abrir Gmail?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if open_gmail == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
+
+    def _open_honorarios_dialog(self) -> None:
+        if not self._allow_honorarios_export:
+            return
+        dialog = QtHonorariosExportDialog(
+            parent=self,
+            draft=self._build_honorarios_draft(),
+            default_directory=self._honorarios_default_directory(),
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_path is not None:
+            self._offer_gmail_draft_for_honorarios(dialog.saved_path)
+
     def _apply_header_suggestion(self, suggestion: MetadataSuggestion) -> None:
         if suggestion.case_entity:
             self._ensure_in_vocab("vocab_case_entities", suggestion.case_entity)
@@ -485,19 +1178,27 @@ class QtSaveToJobLogDialog(QDialog):
                 self._ensure_in_vocab("vocab_cities", suggestion.service_city)
                 self.service_city_combo.setCurrentText(suggestion.service_city)
         self._apply_non_court_default_rule()
+        ranked = rank_court_email_suggestions(
+            exact_email=suggestion.court_email,
+            case_entity=self.case_entity_combo.currentText().strip(),
+            case_city=self.case_city_combo.currentText().strip(),
+            vocab_court_emails=list(self._settings["vocab_court_emails"]),
+        )
+        if ranked:
+            self.court_email_combo.setCurrentText(ranked[0])
 
     def _autofill_from_pdf_header(self) -> None:
-        suggestion = extract_pdf_header_metadata(
+        suggestion = extract_pdf_header_metadata_priority_pages(
             self._seed.pdf_path,
             vocab_cities=list(self._settings["vocab_cities"]),
             config=self._metadata_config,
-            page_number=1,
         )
         if not any(
             (
                 suggestion.case_entity,
                 suggestion.case_city,
                 suggestion.case_number,
+                suggestion.court_email,
                 suggestion.service_entity,
                 suggestion.service_city,
             )
@@ -558,6 +1259,41 @@ class QtSaveToJobLogDialog(QDialog):
         except ValueError as exc:
             raise ValueError(f"{label} must be numeric.") from exc
 
+    def _parse_optional_int(self, value: str, label: str) -> int | None:
+        cleaned = value.strip()
+        if cleaned == "":
+            return None
+        try:
+            return int(cleaned)
+        except ValueError as exc:
+            raise ValueError(f"{label} must be an integer.") from exc
+
+    def _parse_optional_float(self, value: str, label: str) -> float | None:
+        cleaned = value.strip().replace(",", ".")
+        if cleaned == "":
+            return None
+        try:
+            return float(cleaned)
+        except ValueError as exc:
+            raise ValueError(f"{label} must be numeric.") from exc
+
+    def _resolved_seed_docx_path(self) -> Path | None:
+        for candidate in (self._seed.output_docx, self._seed.partial_docx):
+            if isinstance(candidate, Path):
+                return candidate.expanduser().resolve()
+        return None
+
+    def _open_translation_docx(self) -> None:
+        resolved = self._resolved_seed_docx_path()
+        if resolved is None:
+            QMessageBox.critical(
+                self,
+                "Open translated DOCX",
+                "No translated DOCX is available for this run.",
+            )
+            return
+        _open_path_in_system(self, resolved)
+
     def _save(self) -> None:
         try:
             rate = self._parse_float(self.rate_edit.text(), "Rate/word")
@@ -565,6 +1301,15 @@ class QtSaveToJobLogDialog(QDialog):
             amount_paid = self._parse_float(self.amount_paid_edit.text(), "Amount paid")
             api_cost = self._parse_float(self.api_cost_edit.text(), "API cost")
             profit = self._parse_float(self.profit_edit.text(), "Profit")
+            total_tokens = self._parse_optional_int(self.total_tokens_edit.text(), "Total tokens")
+            estimated_api_cost = self._parse_optional_float(
+                self.estimated_api_cost_edit.text(),
+                "Estimated API cost",
+            )
+            quality_risk_score = self._parse_optional_float(
+                self.quality_risk_score_edit.text(),
+                "Quality risk score",
+            )
         except ValueError as exc:
             QMessageBox.critical(self, "Invalid values", str(exc))
             return
@@ -598,23 +1343,39 @@ class QtSaveToJobLogDialog(QDialog):
             "translation_date": self._seed.translation_date,
             "job_type": self.job_type_combo.currentText().strip() or "Translation",
             "case_number": self.case_number_edit.text().strip(),
+            "court_email": self.court_email_combo.currentText().strip(),
             "case_entity": case_entity,
             "case_city": case_city,
             "service_entity": service_entity,
             "service_city": service_city,
             "service_date": service_date,
             "lang": self._seed.lang,
+            "target_lang": self.target_lang_edit.text().strip() or self._seed.target_lang,
+            "run_id": self.run_id_edit.text().strip(),
             "pages": int(self._seed.pages),
             "word_count": int(self._seed.word_count),
+            "total_tokens": total_tokens,
             "rate_per_word": rate,
             "expected_total": expected_total,
             "amount_paid": amount_paid,
             "api_cost": api_cost,
+            "estimated_api_cost": estimated_api_cost,
+            "quality_risk_score": quality_risk_score,
             "profit": profit,
+            "output_docx_path": (
+                str(self._seed.output_docx.expanduser().resolve())
+                if isinstance(self._seed.output_docx, Path)
+                else None
+            ),
+            "partial_docx_path": (
+                str(self._seed.partial_docx.expanduser().resolve())
+                if isinstance(self._seed.partial_docx, Path)
+                else None
+            ),
         }
 
         with closing(open_job_log(self._db_path)) as conn:
-            insert_job_run(conn, payload)
+            row_id = insert_job_run(conn, payload)
 
         self._ensure_in_vocab("vocab_job_types", payload["job_type"])
         if case_entity:
@@ -625,6 +1386,8 @@ class QtSaveToJobLogDialog(QDialog):
             self._ensure_in_vocab("vocab_cities", case_city)
         if service_city:
             self._ensure_in_vocab("vocab_cities", service_city)
+        if payload["court_email"]:
+            self._ensure_in_vocab("vocab_court_emails", str(payload["court_email"]))
 
         save_joblog_settings(
             {
@@ -632,6 +1395,7 @@ class QtSaveToJobLogDialog(QDialog):
                 "vocab_service_entities": self._settings["vocab_service_entities"],
                 "vocab_cities": self._settings["vocab_cities"],
                 "vocab_job_types": self._settings["vocab_job_types"],
+                "vocab_court_emails": self._settings["vocab_court_emails"],
                 "default_rate_per_word": self._settings["default_rate_per_word"],
                 "joblog_visible_columns": self._settings["joblog_visible_columns"],
                 "metadata_ai_enabled": self._settings["metadata_ai_enabled"],
@@ -645,6 +1409,18 @@ class QtSaveToJobLogDialog(QDialog):
                 "ocr_api_key_env_name": self._settings["ocr_api_key_env_name"],
             }
         )
+        translated_docx_path = self._resolved_seed_docx_path()
+        if translated_docx_path is not None:
+            self._saved_result = JobLogSavedResult(
+                row_id=int(row_id),
+                translated_docx_path=translated_docx_path,
+                word_count=int(self._seed.word_count),
+                case_number=str(payload["case_number"] or ""),
+                case_entity=case_entity,
+                case_city=case_city,
+                court_email=str(payload["court_email"] or ""),
+                run_id=str(payload["run_id"] or ""),
+            )
         self._saved = True
         if self._on_saved is not None:
             self._on_saved()
@@ -661,16 +1437,21 @@ class QtJobLogWindow(QDialog):
 
         self._db_path = db_path
         self._settings = load_joblog_settings()
+        self._gui_settings = load_gui_settings()
         self._visible_columns = update_joblog_visible_columns(self._settings["joblog_visible_columns"])
         if not self._visible_columns:
             self._visible_columns = ["translation_date", "case_number", "job_type"]
+        self._rows_data: list[dict[str, object]] = []
 
         root = QVBoxLayout(self)
         controls = QHBoxLayout()
         self.refresh_btn = QPushButton("Refresh")
         self.columns_btn = QPushButton("Columns...")
+        self.honorarios_btn = QPushButton("Gerar Requerimento de Honorários...")
+        self.honorarios_btn.setEnabled(False)
         controls.addWidget(self.refresh_btn)
         controls.addWidget(self.columns_btn)
+        controls.addWidget(self.honorarios_btn)
         controls.addStretch(1)
         root.addLayout(controls)
 
@@ -685,6 +1466,8 @@ class QtJobLogWindow(QDialog):
 
         self.refresh_btn.clicked.connect(self.refresh_rows)
         self.columns_btn.clicked.connect(self._open_columns_dialog)
+        self.honorarios_btn.clicked.connect(self._open_honorarios_dialog)
+        self.table.itemSelectionChanged.connect(self._refresh_action_state)
         self._apply_visible_columns()
         self.refresh_rows()
 
@@ -695,15 +1478,223 @@ class QtJobLogWindow(QDialog):
 
     def refresh_rows(self) -> None:
         self.table.setRowCount(0)
+        self._rows_data = []
         with closing(open_job_log(self._db_path)) as conn:
             rows = list_job_runs(conn, limit=1000)
         for row in rows:
+            row_data = {key: row[key] for key in row.keys()}
+            self._rows_data.append(row_data)
             row_idx = self.table.rowCount()
             self.table.insertRow(row_idx)
             for col_idx, col in enumerate(JOBLOG_COLUMNS):
                 raw = row[col] if col in row.keys() else ""
                 text = "" if raw is None else str(raw)
                 self.table.setItem(row_idx, col_idx, QTableWidgetItem(text))
+        self._refresh_action_state()
+
+    def _refresh_action_state(self) -> None:
+        self.honorarios_btn.setEnabled(self._selected_row_data() is not None)
+
+    def _selected_row_data(self) -> dict[str, object] | None:
+        row = self.table.currentRow()
+        if row < 0:
+            selection_model = self.table.selectionModel()
+            if selection_model is not None:
+                selected_rows = selection_model.selectedRows()
+                if selected_rows:
+                    row = int(selected_rows[0].row())
+        if row < 0 or row >= len(self._rows_data):
+            return None
+        return self._rows_data[row]
+
+    def _offer_gmail_draft_for_honorarios(self, row: dict[str, object], honorarios_docx: Path) -> None:
+        court_email = str(row.get("court_email", "") or "").strip()
+        if not court_email:
+            QMessageBox.information(
+                self,
+                "Gmail draft",
+                "Court Email is missing for this Job Log entry. The Gmail draft was not created.",
+            )
+            return
+        prereqs = assess_gmail_draft_prereqs(
+            configured_gog_path=str(self._gui_settings.get("gmail_gog_path", "") or ""),
+            configured_account_email=str(self._gui_settings.get("gmail_account_email", "") or ""),
+        )
+        if not prereqs.ready or prereqs.gog_path is None or prereqs.account_email is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                f"{prereqs.message}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Gmail draft",
+            f"Criar rascunho no Gmail para {court_email}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        translation_docx = self._historical_translation_docx_path(row, honorarios_docx=honorarios_docx)
+        if translation_docx is None:
+            selected, _ = QFileDialog.getOpenFileName(
+                self,
+                "Selecionar DOCX traduzido",
+                str(honorarios_docx.expanduser().resolve().parent),
+                "Word Document (*.docx)",
+            )
+            if not selected:
+                return
+            translation_docx = Path(selected).expanduser().resolve()
+            self._persist_historical_translation_docx(row, translation_docx)
+        try:
+            validate_translated_docx_artifacts_for_gmail_draft(
+                translated_docxs=(translation_docx,),
+                honorarios_docx=honorarios_docx,
+            )
+            request = build_honorarios_gmail_request(
+                gog_path=prereqs.gog_path,
+                account_email=prereqs.account_email,
+                to_email=court_email,
+                case_number=str(row.get("case_number", "") or "").strip(),
+                translation_docx=translation_docx,
+                honorarios_docx=honorarios_docx,
+            )
+        except ValueError as exc:
+            QMessageBox.critical(self, "Gmail draft", str(exc))
+            return
+        result = create_gmail_draft_via_gog(request)
+        if not result.ok:
+            details = result.stderr or result.stdout or result.message
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Failed to create Gmail draft.\n\n"
+                f"{details}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        open_gmail = QMessageBox.question(
+            self,
+            "Gmail draft",
+            "Gmail draft created successfully. Abrir Gmail?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if open_gmail == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
+
+    def _historical_translation_docx_path(
+        self,
+        row: dict[str, object],
+        *,
+        honorarios_docx: Path | None = None,
+    ) -> Path | None:
+        for key in ("output_docx_path", "partial_docx_path"):
+            raw = str(row.get(key, "") or "").strip()
+            if raw == "":
+                continue
+            candidate = Path(raw).expanduser().resolve()
+            if candidate.exists():
+                return candidate
+        recovered = self._recover_historical_translation_docx_path(row, honorarios_docx=honorarios_docx)
+        if recovered is not None:
+            self._persist_historical_translation_docx(row, recovered)
+            return recovered
+        return None
+
+    def _recover_historical_translation_docx_path(
+        self,
+        row: dict[str, object],
+        *,
+        honorarios_docx: Path | None = None,
+    ) -> Path | None:
+        run_id = str(row.get("run_id", "") or "").strip()
+        if run_id == "":
+            return None
+
+        ignored_path = honorarios_docx.expanduser().resolve() if honorarios_docx is not None else None
+        search_roots: list[Path] = []
+        if honorarios_docx is not None:
+            search_roots.append(honorarios_docx.expanduser().resolve().parent)
+        search_roots.extend((_default_downloads_dir(), _default_documents_dir()))
+
+        unique_roots: list[Path] = []
+        seen_roots: set[Path] = set()
+        for root in search_roots:
+            resolved_root = root.expanduser().resolve()
+            if resolved_root in seen_roots:
+                continue
+            seen_roots.add(resolved_root)
+            unique_roots.append(resolved_root)
+
+        final_matches: list[Path] = []
+        partial_matches: list[Path] = []
+        final_suffix = f"_{run_id}.docx".lower()
+        partial_suffix = f"_{run_id}_partial.docx".lower()
+
+        for root in unique_roots:
+            if not root.exists() or not root.is_dir():
+                continue
+            for candidate in root.glob("*.docx"):
+                resolved_candidate = candidate.expanduser().resolve()
+                if ignored_path is not None and resolved_candidate == ignored_path:
+                    continue
+                name_lower = resolved_candidate.name.lower()
+                if name_lower.endswith(partial_suffix):
+                    partial_matches.append(resolved_candidate)
+                elif name_lower.endswith(final_suffix):
+                    final_matches.append(resolved_candidate)
+
+        if len(final_matches) == 1:
+            return final_matches[0]
+        if len(final_matches) > 1:
+            return None
+        if len(partial_matches) == 1:
+            return partial_matches[0]
+        return None
+
+    def _persist_historical_translation_docx(self, row: dict[str, object], translation_docx: Path) -> None:
+        row_id = row.get("id")
+        if row_id is None:
+            return
+        resolved = translation_docx.expanduser().resolve()
+        path_key = "partial_docx_path" if resolved.name.lower().endswith("_partial.docx") else "output_docx_path"
+        with closing(open_job_log(self._db_path)) as conn:
+            update_job_run_output_paths(
+                conn,
+                row_id=int(row_id),
+                output_docx_path=str(resolved) if path_key == "output_docx_path" else None,
+                partial_docx_path=str(resolved) if path_key == "partial_docx_path" else None,
+            )
+        row[path_key] = str(resolved)
+
+    def _open_honorarios_dialog(self) -> None:
+        row = self._selected_row_data()
+        if row is None:
+            QMessageBox.information(self, "Requerimento de Honorários", "Select one Job Log row first.")
+            return
+        try:
+            word_count = int(str(row.get("word_count", "") or "0").strip())
+        except ValueError:
+            word_count = 0
+        draft = build_honorarios_draft(
+            case_number=str(row.get("case_number", "") or "").strip(),
+            word_count=word_count,
+            case_entity=str(row.get("case_entity", "") or "").strip(),
+            case_city=str(row.get("case_city", "") or "").strip(),
+        )
+        dialog = QtHonorariosExportDialog(
+            parent=self,
+            draft=draft,
+            default_directory=_default_documents_dir(),
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_path is not None:
+            self._offer_gmail_draft_for_honorarios(row, dialog.saved_path)
 
     def _open_columns_dialog(self) -> None:
         dialog = QDialog(self)
@@ -741,12 +1732,1215 @@ class QtJobLogWindow(QDialog):
         dialog.exec()
 
 
+REVIEW_QUEUE_COLUMNS = [
+    "page_number",
+    "score",
+    "status",
+    "reasons",
+    "recommended_action",
+]
+
+REVIEW_QUEUE_COLUMN_LABELS = {
+    "page_number": "Page",
+    "score": "Score",
+    "status": "Status",
+    "reasons": "Reasons",
+    "recommended_action": "Action",
+}
+
+
+def _coerce_queue_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned == "":
+            return default
+        try:
+            return int(cleaned)
+        except ValueError:
+            try:
+                return int(float(cleaned))
+            except ValueError:
+                return default
+    return default
+
+
+def _coerce_queue_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", ".")
+        if cleaned == "":
+            return default
+        try:
+            return float(cleaned)
+        except ValueError:
+            return default
+    return default
+
+
+def _coerce_queue_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def normalize_review_queue_entries(review_queue: object) -> list[dict[str, object]]:
+    if not isinstance(review_queue, list):
+        return []
+    entries: list[dict[str, object]] = []
+    for raw_item in review_queue:
+        if not isinstance(raw_item, dict):
+            continue
+        page_number = _coerce_queue_int(raw_item.get("page_number", 0), 0)
+        if page_number <= 0:
+            continue
+        reasons_raw = raw_item.get("reasons", [])
+        reasons: list[str] = []
+        if isinstance(reasons_raw, list):
+            for reason in reasons_raw:
+                reason_text = _coerce_queue_text(reason)
+                if reason_text:
+                    reasons.append(reason_text)
+        entries.append(
+            {
+                "page_number": int(page_number),
+                "score": round(min(1.0, max(0.0, _coerce_queue_float(raw_item.get("score", 0.0), 0.0))), 4),
+                "status": _coerce_queue_text(raw_item.get("status", "")),
+                "reasons": reasons,
+                "recommended_action": _coerce_queue_text(raw_item.get("recommended_action", "")),
+                "retry_reason": _coerce_queue_text(raw_item.get("retry_reason", "")),
+            }
+        )
+    entries.sort(
+        key=lambda item: (
+            -_coerce_queue_float(item.get("score", 0.0), 0.0),
+            _coerce_queue_int(item.get("page_number", 0), 0),
+        )
+    )
+    return entries
+
+
+def build_review_queue_markdown(entries: list[dict[str, object]]) -> str:
+    lines: list[str] = []
+    lines.append("# Review Queue")
+    lines.append("")
+    if not entries:
+        lines.append("No flagged pages were found for the current run.")
+        lines.append("")
+        return "\n".join(lines)
+    lines.append("| Page | Score | Status | Action | Reasons |")
+    lines.append("|------|-------|--------|--------|---------|")
+    for entry in entries:
+        reasons = entry.get("reasons", [])
+        reason_text = " | ".join(reasons) if isinstance(reasons, list) else str(reasons or "")
+        lines.append(
+            f"| {entry.get('page_number', '')} | {entry.get('score', '')} "
+            f"| {entry.get('status', '') or '-'} | {entry.get('recommended_action', '') or '-'} "
+            f"| {reason_text or '-'} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+class QtReviewQueueDialog(QDialog):
+    """Review queue panel for flagged pages from latest run summary."""
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        review_queue: object,
+        run_dir: Path | None,
+        run_summary_path: Path | None,
+        open_path_callback: Callable[[Path], None] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Review Queue")
+        self.resize(980, 560)
+        self._entries = normalize_review_queue_entries(review_queue)
+        self._run_dir = run_dir.expanduser().resolve() if isinstance(run_dir, Path) else None
+        self._run_summary_path = (
+            run_summary_path.expanduser().resolve() if isinstance(run_summary_path, Path) else None
+        )
+        self._open_path_callback = open_path_callback
+        self._build_ui()
+        self._populate_table()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        self.summary_label = QLabel("")
+        self.summary_label.setWordWrap(True)
+        root.addWidget(self.summary_label)
+
+        self.table = QTableWidget(0, len(REVIEW_QUEUE_COLUMNS), self)
+        self.table.setHorizontalHeaderLabels([REVIEW_QUEUE_COLUMN_LABELS[col] for col in REVIEW_QUEUE_COLUMNS])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        root.addWidget(self.table, 1)
+
+        actions = QHBoxLayout()
+        self.export_btn = QPushButton("Export...")
+        self.copy_btn = QPushButton("Copy list")
+        self.open_page_btn = QPushButton("Open page file")
+        self.close_btn = QPushButton("Close")
+        actions.addWidget(self.export_btn)
+        actions.addWidget(self.copy_btn)
+        actions.addWidget(self.open_page_btn)
+        actions.addStretch(1)
+        actions.addWidget(self.close_btn)
+        root.addLayout(actions)
+
+        self.export_btn.clicked.connect(self._export_queue)
+        self.copy_btn.clicked.connect(self._copy_queue)
+        self.open_page_btn.clicked.connect(self._open_selected_page_file)
+        self.close_btn.clicked.connect(self.accept)
+
+    def _populate_table(self) -> None:
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(0)
+        for entry in self._entries:
+            row_idx = self.table.rowCount()
+            self.table.insertRow(row_idx)
+            reasons = entry.get("reasons", [])
+            reason_text = " | ".join(reasons) if isinstance(reasons, list) else str(reasons or "")
+            values = {
+                "page_number": str(int(_coerce_queue_int(entry.get("page_number", 0), 0))),
+                "score": f"{_coerce_queue_float(entry.get('score', 0.0), 0.0):.4f}",
+                "status": _coerce_queue_text(entry.get("status", "")),
+                "reasons": reason_text,
+                "recommended_action": _coerce_queue_text(entry.get("recommended_action", "")),
+            }
+            for col_idx, col in enumerate(REVIEW_QUEUE_COLUMNS):
+                self.table.setItem(row_idx, col_idx, QTableWidgetItem(values[col]))
+        self.table.setSortingEnabled(True)
+        if self.table.rowCount() > 0:
+            self.table.sortItems(1, Qt.SortOrder.DescendingOrder)
+            self.summary_label.setText(f"Flagged pages: {self.table.rowCount()} (sorted by score).")
+        else:
+            self.summary_label.setText("No flagged pages found for this run.")
+
+    def _selected_entry(self) -> dict[str, object] | None:
+        row = self.table.currentRow()
+        if row < 0:
+            selection_model = self.table.selectionModel()
+            if selection_model is not None:
+                selected_rows = selection_model.selectedRows()
+                if selected_rows:
+                    row = int(selected_rows[0].row())
+        if row < 0 or row >= len(self._entries):
+            return None
+        return self._entries[row]
+
+    def _copy_queue(self) -> None:
+        markdown = build_review_queue_markdown(self._entries)
+        QApplication.clipboard().setText(markdown)
+        QMessageBox.information(self, "Review Queue", "Review queue copied to clipboard.")
+
+    def _export_queue(self) -> None:
+        if self._run_summary_path is None:
+            QMessageBox.warning(self, "Review Queue", "Run summary path is unavailable for export.")
+            return
+        default_base = self._run_summary_path.parent / "review_queue"
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export review queue",
+            str(default_base),
+            "All Files (*.*)",
+        )
+        if not selected:
+            return
+        try:
+            csv_path, markdown_path, count = export_review_queue(
+                self._run_summary_path,
+                Path(selected),
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Review Queue", f"Failed to export review queue:\n{exc}")
+            return
+        QMessageBox.information(
+            self,
+            "Review Queue",
+            f"Exported {count} item(s).\n\nCSV: {csv_path}\nMarkdown: {markdown_path}",
+        )
+
+    def _open_selected_page_file(self) -> None:
+        entry = self._selected_entry()
+        if entry is None:
+            QMessageBox.information(self, "Review Queue", "Select one row first.")
+            return
+        if self._run_dir is None:
+            QMessageBox.warning(self, "Review Queue", "Run folder is unavailable.")
+            return
+        page_number = _coerce_queue_int(entry.get("page_number", 0), 0)
+        page_file = self._run_dir / "pages" / f"page_{page_number:04d}.txt"
+        if not page_file.exists():
+            QMessageBox.warning(self, "Review Queue", f"Page file not found:\n{page_file}")
+            return
+        if self._open_path_callback is not None:
+            self._open_path_callback(page_file)
+            return
+        QMessageBox.information(self, "Review Queue", f"Page file:\n{page_file}")
+
+
+_ATTACHMENT_IMAGE_SUFFIXES = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".bmp",
+    ".tif",
+    ".tiff",
+}
+
+
+def _is_image_attachment(candidate: GmailAttachmentCandidate) -> bool:
+    suffix = Path(candidate.filename).suffix.strip().lower()
+    return candidate.mime_type.strip().lower().startswith("image/") or suffix in _ATTACHMENT_IMAGE_SUFFIXES
+
+
+class _GmailPreviewPageCard(QFrame):
+    """Single page card used by the scrolling Gmail preview dialog."""
+
+    _FALLBACK_PAGE_RATIO = 1.41421356237
+
+    def __init__(
+        self,
+        *,
+        page_number: int,
+        page_size: tuple[float, float] | None,
+        select_page_callback: Callable[[int], None],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.page_number = page_number
+        self._original_pixmap: QPixmap | None = None
+        self._page_size = self._normalize_page_size(page_size)
+        self._target_width = 320
+        self.setObjectName("ShellPanel")
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(10)
+
+        header = QHBoxLayout()
+        header.setSpacing(8)
+        self.title_label = QLabel(f"Page {page_number}")
+        self.use_page_btn = QPushButton("Use this page as start")
+        header.addWidget(self.title_label)
+        header.addStretch(1)
+        header.addWidget(self.use_page_btn)
+        root.addLayout(header)
+
+        self.state_label = QLabel("")
+        self.state_label.setWordWrap(True)
+        self.state_label.setMinimumHeight(max(28, self.fontMetrics().lineSpacing() * 2))
+        root.addWidget(self.state_label)
+
+        self.preview_label = QLabel("")
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self.preview_label.setWordWrap(True)
+        root.addWidget(self.preview_label)
+
+        self.use_page_btn.clicked.connect(lambda: select_page_callback(self.page_number))
+        self.set_idle_placeholder()
+
+    @staticmethod
+    def _normalize_page_size(page_size: tuple[float, float] | None) -> tuple[float, float] | None:
+        if not isinstance(page_size, tuple) or len(page_size) != 2:
+            return None
+        width, height = page_size
+        try:
+            resolved_width = max(1.0, float(width))
+            resolved_height = max(1.0, float(height))
+        except (TypeError, ValueError):
+            return None
+        return resolved_width, resolved_height
+
+    def _reserved_ratio(self) -> float:
+        if self._page_size is None:
+            return self._FALLBACK_PAGE_RATIO
+        width, height = self._page_size
+        return max(0.75, min(2.5, height / max(1.0, width)))
+
+    def _reserved_height_for_width(self, target_width: int) -> int:
+        width = max(320, int(target_width))
+        return max(240, int(round(width * self._reserved_ratio())))
+
+    def _apply_reserved_height(self, target_width: int) -> None:
+        self._target_width = max(320, int(target_width))
+        self.preview_label.setFixedHeight(self._reserved_height_for_width(self._target_width))
+
+    def _set_state_text(self, message: str) -> None:
+        self.state_label.setText(message if message else " ")
+
+    def set_idle_placeholder(self) -> None:
+        self._original_pixmap = None
+        self._set_state_text("Preview will load when visible.")
+        self.preview_label.setPixmap(QPixmap())
+        self.preview_label.setText("")
+        self._apply_reserved_height(self._target_width)
+
+    def set_loading(self) -> None:
+        self._set_state_text("Loading preview...")
+        if self._original_pixmap is None:
+            self.preview_label.setPixmap(QPixmap())
+            self.preview_label.setText("")
+        self._apply_reserved_height(self._target_width)
+
+    def set_error(self, message: str) -> None:
+        self._original_pixmap = None
+        self._set_state_text(message)
+        self.preview_label.setPixmap(QPixmap())
+        self.preview_label.setText("")
+        self._apply_reserved_height(self._target_width)
+
+    def set_pixmap(self, pixmap: QPixmap, target_width: int) -> None:
+        self._original_pixmap = pixmap
+        self._set_state_text("")
+        self.preview_label.setText("")
+        self.update_scaled_pixmap(target_width)
+
+    def clear_cached_pixmap(self) -> None:
+        self._original_pixmap = None
+        self._set_state_text("Preview will reload when visible.")
+        self.preview_label.setPixmap(QPixmap())
+        self.preview_label.setText("")
+        self._apply_reserved_height(self._target_width)
+
+    def update_scaled_pixmap(self, target_width: int) -> None:
+        self._apply_reserved_height(target_width)
+        if self._original_pixmap is None:
+            return
+        width = self._target_width
+        pixmap = self._original_pixmap
+        if pixmap.width() != width:
+            display = pixmap.scaledToWidth(width, Qt.TransformationMode.SmoothTransformation)
+        else:
+            display = pixmap
+        self.preview_label.setPixmap(display)
+        self.preview_label.setFixedHeight(display.height())
+
+
+class QtGmailAttachmentPreviewDialog(QDialog):
+    """Preview a Gmail attachment before batch preparation."""
+
+    _PAGE_PREFETCH_BUFFER = 1
+    _PAGE_RENDER_CONCURRENCY = 1
+    _PAGE_CACHE_LIMIT = 16
+    _PAGE_REFRESH_DEBOUNCE_MS = 75
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        attachment: GmailAttachmentCandidate,
+        gog_path: Path,
+        account_email: str,
+        preview_dir: Path,
+        initial_start_page: int,
+        cached_path: Path | None = None,
+        known_page_count: int | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Attachment Preview")
+        self.resize(980, 760)
+        self._attachment = attachment
+        self._gog_path = gog_path.expanduser().resolve()
+        self._account_email = account_email.strip()
+        self._preview_dir = preview_dir.expanduser().resolve()
+        self._local_path = cached_path.expanduser().resolve() if isinstance(cached_path, Path) else None
+        self._page_count = int(known_page_count) if isinstance(known_page_count, int) and known_page_count > 0 else None
+        self._is_image = _is_image_attachment(self._attachment)
+        self._current_page = 1 if self._is_image else max(1, int(initial_start_page))
+        self._closing = False
+        self._bootstrap_loading = False
+        self._bootstrap_complete = False
+        self._bootstrap_thread: QThread | None = None
+        self._bootstrap_worker: GmailAttachmentPreviewBootstrapWorker | None = None
+        self._page_threads: dict[int, QThread] = {}
+        self._page_workers: dict[int, GmailAttachmentPreviewPageWorker] = {}
+        self._page_cards: dict[int, _GmailPreviewPageCard] = {}
+        self._page_sizes: tuple[tuple[float, float], ...] = ()
+        self._page_cache: OrderedDict[int, QPixmap] = OrderedDict()
+        self._page_errors: dict[int, str] = {}
+        self._queued_pages: list[int] = []
+        self._queued_page_set: set[int] = set()
+        self._inflight_pages: set[int] = set()
+        self._visible_refresh_timer = QTimer(self)
+        self._visible_refresh_timer.setSingleShot(True)
+        self._visible_refresh_timer.setInterval(self._PAGE_REFRESH_DEBOUNCE_MS)
+        self._visible_refresh_timer.timeout.connect(self._refresh_visible_pages)
+        self._image_pixmap: QPixmap | None = None
+        self.selected_start_page: int | None = None
+        self.resolved_local_path: Path | None = self._local_path
+        self.resolved_page_count: int | None = self._page_count
+        self._build_ui()
+        QTimer.singleShot(0, self._start_bootstrap)
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        self.header_label = QLabel(f"Attachment: {self._attachment.filename}")
+        self.header_label.setWordWrap(True)
+        root.addWidget(self.header_label)
+
+        self.status_label = QLabel("Loading preview...")
+        self.status_label.setWordWrap(True)
+        root.addWidget(self.status_label)
+
+        self.jump_widget = QWidget(self)
+        jump_layout = QHBoxLayout(self.jump_widget)
+        jump_layout.setContentsMargins(0, 0, 0, 0)
+        jump_layout.setSpacing(8)
+        self.jump_label = QLabel("Go to page")
+        self.jump_spin = NoWheelSpinBox()
+        self.jump_spin.setMinimum(1)
+        self.jump_spin.setMaximum(max(1, self._page_count) if isinstance(self._page_count, int) else 1)
+        self.jump_spin.setValue(self._current_page)
+        self.jump_btn = QPushButton("Go")
+        jump_layout.addWidget(self.jump_label)
+        jump_layout.addWidget(self.jump_spin)
+        jump_layout.addWidget(self.jump_btn)
+        jump_layout.addStretch(1)
+        root.addWidget(self.jump_widget)
+
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.preview_content = QWidget(self.scroll_area)
+        self.preview_layout = QVBoxLayout(self.preview_content)
+        self.preview_layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_layout.setSpacing(12)
+        self.preview_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.preview_label = QLabel("Loading preview...")
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self.preview_label.setWordWrap(True)
+        self.preview_layout.addWidget(self.preview_label)
+        self.scroll_area.setWidget(self.preview_content)
+        root.addWidget(self.scroll_area, 1)
+
+        actions = QHBoxLayout()
+        self.use_page_btn = QPushButton("Use current page as start")
+        self.close_btn = QPushButton("Close")
+        actions.addStretch(1)
+        actions.addWidget(self.use_page_btn)
+        actions.addWidget(self.close_btn)
+        root.addLayout(actions)
+
+        self.jump_btn.clicked.connect(self._jump_to_page)
+        self.use_page_btn.clicked.connect(self._use_current_page)
+        self.close_btn.clicked.connect(self.reject)
+        self.scroll_area.verticalScrollBar().valueChanged.connect(lambda _value: self._schedule_visible_page_refresh())
+        self.scroll_area.viewport().installEventFilter(self)
+        self._refresh_controls()
+
+    def done(self, result: int) -> None:
+        self._closing = True
+        self._visible_refresh_timer.stop()
+        bootstrap_thread = self._bootstrap_thread
+        if bootstrap_thread is not None and bootstrap_thread.isRunning():
+            bootstrap_thread.quit()
+            bootstrap_thread.wait(1000)
+        for thread in list(self._page_threads.values()):
+            if thread.isRunning():
+                thread.quit()
+                thread.wait(1000)
+        self._bootstrap_thread = None
+        self._bootstrap_worker = None
+        self._page_threads.clear()
+        self._page_workers.clear()
+        super().done(result)
+
+    def eventFilter(self, watched: QObject, event: object) -> bool:
+        if watched is self.scroll_area.viewport() and isinstance(event, QEvent):
+            if event.type() in {QEvent.Type.Resize, QEvent.Type.Show}:
+                self._refresh_scaled_preview()
+                self._schedule_visible_page_refresh()
+        return super().eventFilter(watched, event)
+
+    def _refresh_controls(self) -> None:
+        jump_enabled = (
+            not self._is_image
+            and self._bootstrap_complete
+            and isinstance(self.resolved_page_count, int)
+            and self.resolved_page_count > 0
+        )
+        self.jump_widget.setVisible(not self._is_image)
+        self.jump_spin.setEnabled(jump_enabled)
+        self.jump_btn.setEnabled(jump_enabled)
+        self.use_page_btn.setVisible(self._is_image)
+        self.use_page_btn.setEnabled(self._is_image and self._bootstrap_complete and self._image_pixmap is not None)
+
+    def _set_preview_message(self, message: str) -> None:
+        self._clear_preview_layout()
+        self.preview_label = QLabel(message)
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self.preview_label.setWordWrap(True)
+        self.preview_layout.addWidget(self.preview_label)
+
+    def _clear_preview_layout(self) -> None:
+        while self.preview_layout.count() > 0:
+            item = self.preview_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self._page_cards = {}
+
+    def _start_bootstrap(self) -> None:
+        if self._closing or self._bootstrap_loading or self._bootstrap_complete:
+            return
+        self._bootstrap_loading = True
+        self.status_label.setText("Loading preview...")
+        self._set_preview_message("Loading preview...")
+        self._refresh_controls()
+
+        thread = QThread(self)
+        worker = GmailAttachmentPreviewBootstrapWorker(
+            gog_path=self._gog_path,
+            account_email=self._account_email,
+            attachment=self._attachment,
+            preview_dir=self._preview_dir,
+            local_path=self._local_path,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_bootstrap_loaded)
+        worker.error.connect(self._on_bootstrap_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(self._cleanup_bootstrap_worker)
+        self._bootstrap_thread = thread
+        self._bootstrap_worker = worker
+        thread.start()
+
+    def _cleanup_bootstrap_worker(self) -> None:
+        worker = self._bootstrap_worker
+        thread = self._bootstrap_thread
+        self._bootstrap_worker = None
+        self._bootstrap_thread = None
+        if worker is not None:
+            worker.deleteLater()
+        if thread is not None:
+            thread.deleteLater()
+
+    def _on_bootstrap_loaded(self, result_obj: object) -> None:
+        self._bootstrap_loading = False
+        if not isinstance(result_obj, GmailAttachmentPreviewBootstrapResult):
+            self._on_bootstrap_error("Attachment preview returned an invalid result.")
+            return
+        result = result_obj
+        self._local_path = result.local_path
+        self.resolved_local_path = result.local_path
+        self._page_count = max(1, int(result.page_count))
+        self._page_sizes = tuple(result.page_sizes) if len(result.page_sizes) == self._page_count else ()
+        self.resolved_page_count = self._page_count
+        self._current_page = min(max(1, self._current_page), self._page_count)
+        self._bootstrap_complete = True
+        self.jump_spin.setMaximum(self._page_count)
+        self.jump_spin.blockSignals(True)
+        self.jump_spin.setValue(self._current_page)
+        self.jump_spin.blockSignals(False)
+
+        if self._is_image:
+            self.status_label.setText("Single-image attachment preview.")
+            self._set_preview_message("Loading preview...")
+            self._queue_page_render(1)
+            self._start_next_page_workers()
+        else:
+            self.status_label.setText(
+                f"Scroll to inspect {self._page_count} page(s). Click 'Use this page as start' on the page you need."
+            )
+            self._build_pdf_page_cards()
+            QTimer.singleShot(0, self._scroll_to_initial_page)
+        self._refresh_controls()
+
+    def _on_bootstrap_error(self, message: str) -> None:
+        self._bootstrap_loading = False
+        self.status_label.setText("Preview unavailable.")
+        self._set_preview_message(message)
+        self._refresh_controls()
+        QMessageBox.warning(self, "Attachment Preview", message)
+
+    def _build_pdf_page_cards(self) -> None:
+        self._clear_preview_layout()
+        target_width = self._target_page_width()
+        for page_number in range(1, max(1, self._page_count) + 1):
+            card = _GmailPreviewPageCard(
+                page_number=page_number,
+                page_size=self._page_sizes[page_number - 1] if page_number - 1 < len(self._page_sizes) else None,
+                select_page_callback=self._select_pdf_page,
+                parent=self.preview_content,
+            )
+            if page_number in self._page_cache:
+                card.set_pixmap(self._page_cache[page_number], target_width)
+            elif page_number in self._page_errors:
+                card.set_error(self._page_errors[page_number])
+            else:
+                card.set_idle_placeholder()
+            card.update_scaled_pixmap(target_width)
+            self.preview_layout.addWidget(card)
+            self._page_cards[page_number] = card
+        self.preview_layout.addStretch(1)
+
+    def _scroll_to_initial_page(self) -> None:
+        self._scroll_to_page(self._current_page)
+
+    def _target_page_width(self) -> int:
+        return max(320, self.scroll_area.viewport().width() - 64)
+
+    def _refresh_scaled_preview(self) -> None:
+        target_width = self._target_page_width()
+        for card in self._page_cards.values():
+            card.update_scaled_pixmap(target_width)
+        if self._is_image and self._image_pixmap is not None:
+            pixmap = self._image_pixmap
+            if pixmap.width() != target_width:
+                display = pixmap.scaledToWidth(target_width, Qt.TransformationMode.SmoothTransformation)
+            else:
+                display = pixmap
+            self.preview_label.setPixmap(display)
+            self.preview_label.setFixedHeight(display.height())
+
+    def _scroll_to_page(self, page_number: int) -> None:
+        if self._is_image:
+            return
+        page = min(max(1, int(page_number)), max(1, self._page_count or 1))
+        self._current_page = page
+        self.jump_spin.blockSignals(True)
+        self.jump_spin.setValue(page)
+        self.jump_spin.blockSignals(False)
+        card = self._page_cards.get(page)
+        if card is None:
+            return
+        self.scroll_area.verticalScrollBar().setValue(max(0, card.y() - 8))
+        self._schedule_visible_page_refresh()
+
+    def _jump_to_page(self) -> None:
+        if self._is_image or not self._bootstrap_complete:
+            return
+        self._scroll_to_page(int(self.jump_spin.value()))
+
+    def _select_pdf_page(self, page_number: int) -> None:
+        self.selected_start_page = max(1, int(page_number))
+        self.accept()
+
+    def _use_current_page(self) -> None:
+        self.selected_start_page = 1 if self._is_image else max(1, self._current_page)
+        self.accept()
+
+    def _schedule_visible_page_refresh(self) -> None:
+        if self._closing or self._is_image or not self._bootstrap_complete:
+            return
+        self._visible_refresh_timer.start()
+
+    def _refresh_visible_pages(self) -> None:
+        if self._closing or self._is_image or not self._bootstrap_complete:
+            return
+        desired_pages = self._desired_pages_for_render()
+        for page_number in desired_pages:
+            self._queue_page_render(page_number)
+        self._start_next_page_workers()
+        self._trim_page_cache(protected_pages=set(desired_pages))
+
+    def _desired_pages_for_render(self) -> list[int]:
+        if self._page_count is None or self._page_count <= 0:
+            return []
+        scrollbar = self.scroll_area.verticalScrollBar()
+        visible_top = scrollbar.value()
+        visible_bottom = visible_top + self.scroll_area.viewport().height()
+        visible_pages: list[int] = []
+        for page_number, card in self._page_cards.items():
+            top = card.y()
+            bottom = top + card.height()
+            if bottom >= visible_top and top <= visible_bottom:
+                visible_pages.append(page_number)
+        if not visible_pages:
+            visible_pages = [min(max(1, self._current_page), self._page_count)]
+        first_page = max(1, min(visible_pages) - self._PAGE_PREFETCH_BUFFER)
+        last_page = min(self._page_count, max(visible_pages) + self._PAGE_PREFETCH_BUFFER)
+        return list(range(first_page, last_page + 1))
+
+    def _queue_page_render(self, page_number: int) -> None:
+        if self._closing or self._local_path is None or self._page_count is None:
+            return
+        page = min(max(1, int(page_number)), self._page_count)
+        if page in self._page_cache:
+            self._page_cache.move_to_end(page)
+            return
+        if page in self._inflight_pages or page in self._queued_page_set or page in self._page_errors:
+            return
+        card = self._page_cards.get(page)
+        if card is not None:
+            card.set_loading()
+        self._queued_pages.append(page)
+        self._queued_page_set.add(page)
+
+    def _start_next_page_workers(self) -> None:
+        if self._closing or self._local_path is None or self._page_count is None:
+            return
+        while self._queued_pages and len(self._inflight_pages) < self._PAGE_RENDER_CONCURRENCY:
+            page = self._queued_pages.pop(0)
+            self._queued_page_set.discard(page)
+            self._start_page_worker(page)
+
+    def _start_page_worker(self, page_number: int) -> None:
+        if self._local_path is None or self._page_count is None:
+            return
+        thread = QThread(self)
+        worker = GmailAttachmentPreviewPageWorker(
+            attachment=self._attachment,
+            local_path=self._local_path,
+            page_count=self._page_count,
+            requested_page=page_number,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_page_loaded)
+        worker.error.connect(self._on_page_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(lambda _page, _message: thread.quit())
+        thread.finished.connect(lambda page=page_number: self._cleanup_page_worker(page))
+        self._page_threads[page_number] = thread
+        self._page_workers[page_number] = worker
+        self._inflight_pages.add(page_number)
+        thread.start()
+
+    def _cleanup_page_worker(self, page_number: int) -> None:
+        worker = self._page_workers.pop(page_number, None)
+        thread = self._page_threads.pop(page_number, None)
+        if worker is not None:
+            worker.deleteLater()
+        if thread is not None:
+            thread.deleteLater()
+
+    def _on_page_loaded(self, result_obj: object) -> None:
+        if not isinstance(result_obj, GmailAttachmentPreviewPageResult):
+            self._on_bootstrap_error("Attachment preview returned an invalid page result.")
+            return
+        result = result_obj
+        page_number = int(result.page_number)
+        self._inflight_pages.discard(page_number)
+        if self._closing:
+            return
+
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(result.image_bytes):
+            self._on_page_error(page_number, "Attachment preview image could not be decoded.")
+            return
+
+        if self._is_image:
+            self._image_pixmap = pixmap
+            self._set_preview_message("")
+            self.preview_label.setText("")
+            self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+            self.preview_label.setWordWrap(True)
+            self._refresh_scaled_preview()
+            self.status_label.setText("Single-image attachment preview.")
+        else:
+            self._page_errors.pop(page_number, None)
+            self._page_cache[page_number] = pixmap
+            self._page_cache.move_to_end(page_number)
+            card = self._page_cards.get(page_number)
+            if card is not None:
+                card.set_pixmap(pixmap, self._target_page_width())
+        self._refresh_controls()
+        self._start_next_page_workers()
+        self._schedule_visible_page_refresh()
+
+    def _on_page_error(self, page_number: int, message: str) -> None:
+        self._inflight_pages.discard(int(page_number))
+        if self._closing:
+            return
+        if self._is_image:
+            self.status_label.setText("Preview unavailable.")
+            self._set_preview_message(message)
+            self._refresh_controls()
+            QMessageBox.warning(self, "Attachment Preview", message)
+            return
+        self._page_errors[int(page_number)] = message
+        card = self._page_cards.get(int(page_number))
+        if card is not None:
+            card.set_error(message)
+        self.status_label.setText("Some preview pages failed to render.")
+        self._refresh_controls()
+        self._start_next_page_workers()
+
+    def _trim_page_cache(self, *, protected_pages: set[int]) -> None:
+        while len(self._page_cache) > self._PAGE_CACHE_LIMIT:
+            order_index = {page: index for index, page in enumerate(self._page_cache.keys())}
+            desired_pages = sorted(protected_pages)
+            anchor_page = desired_pages[len(desired_pages) // 2] if desired_pages else self._current_page
+            eviction_candidates = [
+                candidate_page
+                for candidate_page in self._page_cache.keys()
+                if candidate_page not in protected_pages
+            ]
+            if not eviction_candidates:
+                eviction_candidates = list(self._page_cache.keys())
+            victim_page = max(
+                eviction_candidates,
+                key=lambda candidate_page: (
+                    abs(candidate_page - anchor_page),
+                    -order_index[candidate_page],
+                ),
+            )
+            self._page_cache.pop(victim_page, None)
+            card = self._page_cards.get(victim_page)
+            if card is not None and victim_page not in self._inflight_pages:
+                card.clear_cached_pixmap()
+
+
+class QtGmailBatchReviewDialog(QDialog):
+    """Review supported Gmail attachments for the exact fetched message."""
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        message: FetchedGmailMessage,
+        gog_path: Path,
+        account_email: str,
+        target_lang: str,
+        default_start_page: int,
+        output_dir_text: str,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Gmail Attachment Review")
+        self.resize(980, 620)
+        self._message = message
+        self._gog_path = gog_path.expanduser().resolve()
+        self._account_email = account_email.strip()
+        self._target_lang = target_lang.strip().upper() or "-"
+        self._default_start_page = max(1, int(default_start_page))
+        self._output_dir_text = output_dir_text.strip()
+        self._page_counts: list[int | None] = [
+            1 if _is_image_attachment(attachment) else None
+            for attachment in self._message.attachments
+        ]
+        self._start_pages: list[int] = [
+            1 if _is_image_attachment(attachment) else self._default_start_page
+            for attachment in self._message.attachments
+        ]
+        self._preview_cache: dict[str, Path] = {}
+        self._preview_tempdir: tempfile.TemporaryDirectory[str] | None = None
+        self.selected_attachments: tuple[GmailAttachmentCandidate, ...] = ()
+        self.review_result: GmailBatchReviewResult | None = None
+        self._build_ui()
+        self._populate_table()
+        self._refresh_actions()
+        self._refresh_detail_panel()
+
+    def done(self, result: int) -> None:
+        if result != QDialog.DialogCode.Accepted:
+            self._cleanup_preview_cache()
+        super().done(result)
+
+    def _cleanup_preview_cache(self) -> None:
+        preview_tempdir = self._preview_tempdir
+        self._preview_tempdir = None
+        self._preview_cache = {}
+        if preview_tempdir is not None:
+            preview_tempdir.cleanup()
+
+    def _ensure_preview_dir(self) -> Path:
+        if self._preview_tempdir is None:
+            self._preview_tempdir = tempfile.TemporaryDirectory(prefix="legalpdf_gmail_preview_")
+        return Path(self._preview_tempdir.name).expanduser().resolve()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        self.summary_label = QLabel("")
+        self.summary_label.setWordWrap(True)
+        root.addWidget(self.summary_label)
+
+        context_row = QHBoxLayout()
+        context_row.setSpacing(8)
+        self.target_lang_label = QLabel("Target language")
+        self.target_lang_combo = NoWheelComboBox()
+        supported_langs = [str(lang).strip().upper() for lang in supported_target_langs()]
+        self.target_lang_combo.addItems(supported_langs)
+        if self._target_lang in supported_langs:
+            self.target_lang_combo.setCurrentText(self._target_lang)
+        self.output_dir_label = QLabel("")
+        self.output_dir_label.setWordWrap(True)
+        context_row.addWidget(self.target_lang_label)
+        context_row.addWidget(self.target_lang_combo, 0)
+        context_row.addSpacing(12)
+        context_row.addWidget(self.output_dir_label, 1)
+        root.addLayout(context_row)
+
+        self.table = QTableWidget(0, 4, self)
+        self.table.setHorizontalHeaderLabels(["Filename", "Type", "Size", "Start page"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.MultiSelection)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        root.addWidget(self.table, 1)
+
+        detail_row = QHBoxLayout()
+        detail_row.setSpacing(8)
+        self.detail_attachment_label = QLabel("Selected attachment: -")
+        self.detail_attachment_label.setWordWrap(True)
+        self.pages_value_label = QLabel("Pages: -")
+        self.start_page_label = QLabel("Start translating from page")
+        self.start_page_spin = NoWheelSpinBox()
+        self.start_page_spin.setMinimum(1)
+        self.start_page_spin.setMaximum(9999)
+        self.preview_btn = QPushButton("Preview selected attachment")
+        detail_row.addWidget(self.detail_attachment_label, 1)
+        detail_row.addWidget(self.pages_value_label)
+        detail_row.addWidget(self.start_page_label)
+        detail_row.addWidget(self.start_page_spin)
+        detail_row.addWidget(self.preview_btn)
+        root.addLayout(detail_row)
+
+        actions = QHBoxLayout()
+        self.cancel_btn = QPushButton("Cancel")
+        self.prepare_btn = QPushButton("Prepare selected attachments")
+        actions.addStretch(1)
+        actions.addWidget(self.cancel_btn)
+        actions.addWidget(self.prepare_btn)
+        root.addLayout(actions)
+
+        self.table.itemSelectionChanged.connect(self._refresh_actions)
+        self.table.currentCellChanged.connect(lambda *_args: self._refresh_detail_panel())
+        self.table.itemDoubleClicked.connect(lambda _item: self._open_preview_for_current_row())
+        self.start_page_spin.valueChanged.connect(self._update_current_row_start_page)
+        self.preview_btn.clicked.connect(self._open_preview_for_current_row)
+        self.cancel_btn.clicked.connect(self.reject)
+        self.prepare_btn.clicked.connect(self._accept_selection)
+
+    def _populate_table(self) -> None:
+        sender_summary = self._message.from_header or "(unknown sender)"
+        subject = self._message.subject or "(no subject)"
+        attachment_count = len(self._message.attachments)
+        self.summary_label.setText(
+            "Subject: "
+            f"{subject}\n"
+            f"Sender: {sender_summary}\n"
+            f"Gmail account: {self._message.account_email}\n"
+            f"Supported attachments in this exact message: {attachment_count}"
+        )
+        output_summary = self._output_dir_text or "(not set yet)"
+        self.output_dir_label.setText(f"Output folder: {output_summary}")
+        self.table.setRowCount(0)
+        for attachment in self._message.attachments:
+            row_idx = self.table.rowCount()
+            self.table.insertRow(row_idx)
+            self.table.setItem(row_idx, 0, QTableWidgetItem(attachment.filename))
+            self.table.setItem(row_idx, 1, QTableWidgetItem(attachment.mime_type))
+            self.table.setItem(row_idx, 2, QTableWidgetItem(_format_bytes(attachment.size_bytes)))
+            self.table.setItem(row_idx, 3, QTableWidgetItem(str(self._start_pages[row_idx])))
+
+    def _selected_rows(self) -> list[int]:
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            return []
+        return sorted(index.row() for index in selection_model.selectedRows())
+
+    def _current_row(self) -> int | None:
+        row = self.table.currentRow()
+        if 0 <= row < len(self._message.attachments):
+            return row
+        selected_rows = self._selected_rows()
+        if selected_rows:
+            return selected_rows[0]
+        return None
+
+    def _page_count_text_for_row(self, row: int) -> str:
+        page_count = self._page_counts[row]
+        if isinstance(page_count, int) and page_count > 0:
+            return f"Pages: {page_count}"
+        return "Pages: preview to inspect"
+
+    def _set_row_start_page(self, row: int, value: int) -> None:
+        attachment = self._message.attachments[row]
+        if _is_image_attachment(attachment):
+            next_value = 1
+        else:
+            page_count = self._page_counts[row]
+            next_value = max(1, int(value))
+            if isinstance(page_count, int) and page_count > 0:
+                next_value = min(next_value, page_count)
+        self._start_pages[row] = next_value
+        item = self.table.item(row, 3)
+        if item is None:
+            item = QTableWidgetItem(str(next_value))
+            self.table.setItem(row, 3, item)
+        else:
+            item.setText(str(next_value))
+
+    def _set_row_page_count(self, row: int, page_count: int) -> None:
+        resolved_page_count = max(1, int(page_count))
+        self._page_counts[row] = resolved_page_count
+        if self._start_pages[row] > resolved_page_count:
+            self._set_row_start_page(row, resolved_page_count)
+
+    def _selected_selections(self) -> tuple[GmailAttachmentSelection, ...]:
+        rows = self._selected_rows()
+        selected: list[GmailAttachmentSelection] = []
+        for row in rows:
+            if row < 0 or row >= len(self._message.attachments):
+                continue
+            selected.append(
+                GmailAttachmentSelection(
+                    candidate=self._message.attachments[row],
+                    start_page=int(self._start_pages[row]),
+                )
+            )
+        return tuple(selected)
+
+    def _refresh_actions(self) -> None:
+        has_rows = len(self._message.attachments) > 0
+        selected_rows = self._selected_rows()
+        self.prepare_btn.setEnabled(has_rows and len(selected_rows) > 0)
+        if not has_rows:
+            self.prepare_btn.setText("No supported attachments found")
+        else:
+            self.prepare_btn.setText("Prepare selected attachments")
+        self._refresh_detail_panel()
+
+    def _refresh_detail_panel(self) -> None:
+        row = self._current_row()
+        if row is None:
+            self.detail_attachment_label.setText("Selected attachment: -")
+            self.pages_value_label.setText("Pages: -")
+            self.start_page_spin.blockSignals(True)
+            self.start_page_spin.setValue(1)
+            self.start_page_spin.blockSignals(False)
+            self.start_page_spin.setEnabled(False)
+            self.preview_btn.setEnabled(False)
+            return
+
+        attachment = self._message.attachments[row]
+        self.detail_attachment_label.setText(f"Selected attachment: {attachment.filename}")
+        self.pages_value_label.setText(self._page_count_text_for_row(row))
+        self.start_page_spin.blockSignals(True)
+        self.start_page_spin.setMaximum(
+            max(1, self._page_counts[row]) if isinstance(self._page_counts[row], int) else 9999
+        )
+        self.start_page_spin.setValue(int(self._start_pages[row]))
+        self.start_page_spin.blockSignals(False)
+        editable = not _is_image_attachment(attachment)
+        self.start_page_spin.setEnabled(editable)
+        self.preview_btn.setEnabled(True)
+
+    def _update_current_row_start_page(self, value: int) -> None:
+        row = self._current_row()
+        if row is None:
+            return
+        self._set_row_start_page(row, int(value))
+        self._refresh_detail_panel()
+
+    def _open_preview_for_current_row(self) -> None:
+        row = self._current_row()
+        if row is None:
+            QMessageBox.information(
+                self,
+                "Gmail Attachment Review",
+                "Select one attachment row first.",
+            )
+            return
+        attachment = self._message.attachments[row]
+        preview = QtGmailAttachmentPreviewDialog(
+            parent=self,
+            attachment=attachment,
+            gog_path=self._gog_path,
+            account_email=self._account_email,
+            preview_dir=self._ensure_preview_dir(),
+            initial_start_page=int(self._start_pages[row]),
+            cached_path=self._preview_cache.get(attachment.attachment_id),
+            known_page_count=self._page_counts[row],
+        )
+        if preview.exec() == QDialog.DialogCode.Accepted and preview.selected_start_page is not None:
+            self._set_row_start_page(row, int(preview.selected_start_page))
+        if isinstance(preview.resolved_local_path, Path):
+            self._preview_cache[attachment.attachment_id] = preview.resolved_local_path
+        if isinstance(preview.resolved_page_count, int) and preview.resolved_page_count > 0:
+            self._set_row_page_count(row, int(preview.resolved_page_count))
+        preview.deleteLater()
+        self._refresh_detail_panel()
+
+    def take_preview_cache_transfer(self) -> GmailBatchReviewPreviewCacheTransfer | None:
+        preview_tempdir = self._preview_tempdir
+        cached_paths: dict[str, Path] = {}
+        cached_page_counts: dict[str, int] = {}
+        for row, attachment in enumerate(self._message.attachments):
+            cached_path = self._preview_cache.get(attachment.attachment_id)
+            if not isinstance(cached_path, Path):
+                continue
+            cached_paths[attachment.attachment_id] = cached_path
+            page_count = self._page_counts[row]
+            if isinstance(page_count, int) and page_count > 0:
+                cached_page_counts[attachment.attachment_id] = int(page_count)
+        self._preview_tempdir = None
+        self._preview_cache = {}
+        if not cached_paths:
+            if preview_tempdir is not None:
+                preview_tempdir.cleanup()
+            return None
+        return GmailBatchReviewPreviewCacheTransfer(
+            cached_paths=cached_paths,
+            cached_page_counts=cached_page_counts,
+            temp_dir=preview_tempdir,
+        )
+
+    def _accept_selection(self) -> None:
+        selected = self._selected_selections()
+        if not selected:
+            QMessageBox.information(
+                self,
+                "Gmail Attachment Review",
+                "Select at least one supported attachment first.",
+            )
+            return
+        self.selected_attachments = tuple(selection.candidate for selection in selected)
+        self.review_result = GmailBatchReviewResult(
+            selections=selected,
+            target_lang=self.target_lang_combo.currentText().strip().upper() or self._target_lang,
+        )
+        self.accept()
+
+
 def _validate_url_or_blank(value: str) -> bool:
     cleaned = value.strip()
     if cleaned == "":
         return True
     parsed = urlparse(cleaned)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _format_bytes(value: int) -> str:
+    size = max(0, int(value))
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024.0:.1f} KB"
+    return f"{size / (1024.0 * 1024.0):.1f} MB"
 
 
 def _to_int(value: str, *, field: str, min_value: int, max_value: int) -> int:
@@ -1177,6 +3371,7 @@ class QtSettingsDialog(QDialog):
         apply_callback: Callable[[dict[str, object], bool], None],
         collect_debug_paths: Callable[[], list[Path]],
         current_pdf_path: Path | None = None,
+        build_identity: RuntimeBuildIdentity | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
@@ -1187,6 +3382,7 @@ class QtSettingsDialog(QDialog):
         self._apply_callback = apply_callback
         self._collect_debug_paths = collect_debug_paths
         self._study_current_pdf_path: Path | None = current_pdf_path
+        self._build_identity = build_identity
         self._glossaries_by_lang: dict[str, list[GlossaryEntry]] = normalize_glossaries({}, supported_target_langs())
         self._enabled_glossary_tiers_by_lang: dict[str, list[int]] = normalize_enabled_tiers_by_target_lang(
             {},
@@ -1314,15 +3510,46 @@ class QtSettingsDialog(QDialog):
 
         provider_group = QGroupBox("Provider Settings")
         provider_form = QFormLayout(provider_group)
+        self.ocr_provider_combo = NoWheelComboBox()
+        self.ocr_provider_combo.addItems(["openai", "gemini"])
         self.ocr_base_url_edit = QLineEdit()
         self.ocr_model_edit = QLineEdit()
         self.ocr_env_edit = QLineEdit()
         self.provider_summary_label = QLabel("")
+        provider_form.addRow("OCR provider", self.ocr_provider_combo)
         provider_form.addRow("OCR base URL", self.ocr_base_url_edit)
         provider_form.addRow("OCR model", self.ocr_model_edit)
         provider_form.addRow("OCR env var name", self.ocr_env_edit)
         provider_form.addRow("Summary", self.provider_summary_label)
         layout.addWidget(provider_group)
+
+        gmail_group = QGroupBox("Gmail Drafts (Windows)")
+        gmail_layout = QGridLayout(gmail_group)
+        gmail_layout.addWidget(QLabel("gog path"), 0, 0)
+        self.gmail_gog_path_edit = QLineEdit()
+        gmail_layout.addWidget(self.gmail_gog_path_edit, 0, 1)
+        self.gmail_gog_browse_btn = QPushButton("Browse")
+        gmail_layout.addWidget(self.gmail_gog_browse_btn, 0, 2)
+        gmail_layout.addWidget(QLabel("Gmail account"), 1, 0)
+        self.gmail_account_edit = QLineEdit()
+        gmail_layout.addWidget(self.gmail_account_edit, 1, 1, 1, 2)
+        self.gmail_intake_enabled_check = QCheckBox("Enable localhost Gmail intake bridge")
+        gmail_layout.addWidget(self.gmail_intake_enabled_check, 2, 0, 1, 3)
+        gmail_layout.addWidget(QLabel("Bridge token"), 3, 0)
+        self.gmail_intake_token_edit = QLineEdit()
+        self.gmail_intake_token_edit.setPlaceholderText("Auto-generated on Apply/Save when enabled")
+        gmail_layout.addWidget(self.gmail_intake_token_edit, 3, 1, 1, 2)
+        gmail_layout.addWidget(QLabel("Bridge port"), 4, 0)
+        self.gmail_intake_port_spin = NoWheelSpinBox()
+        self.gmail_intake_port_spin.setRange(1, 65535)
+        gmail_layout.addWidget(self.gmail_intake_port_spin, 4, 1)
+        self.gmail_test_btn = QPushButton("Test Gmail draft prerequisites")
+        gmail_layout.addWidget(self.gmail_test_btn, 5, 0, 1, 3)
+        self.gmail_summary_label = QLabel("")
+        self.gmail_summary_label.setWordWrap(True)
+        gmail_layout.addWidget(self.gmail_summary_label, 6, 0, 1, 3)
+        gmail_layout.setColumnStretch(1, 1)
+        layout.addWidget(gmail_group)
         layout.addStretch(1)
 
         self.openai_toggle_btn.clicked.connect(self._toggle_openai_key)
@@ -1333,14 +3560,28 @@ class QtSettingsDialog(QDialog):
         self.ocr_save_btn.clicked.connect(self._save_ocr_key)
         self.ocr_clear_btn.clicked.connect(self._clear_ocr_key)
         self.ocr_test_btn.clicked.connect(self._test_ocr_key)
+        self.ocr_provider_combo.currentTextChanged.connect(self._refresh_provider_controls)
+        self.ocr_base_url_edit.textChanged.connect(self._refresh_provider_controls)
+        self.ocr_model_edit.textChanged.connect(self._refresh_provider_controls)
+        self.ocr_env_edit.textChanged.connect(self._refresh_provider_controls)
+        self.gmail_gog_browse_btn.clicked.connect(self._pick_gmail_gog_path)
+        self.gmail_test_btn.clicked.connect(self._test_gmail_draft_prereqs)
+        self.gmail_gog_path_edit.textChanged.connect(lambda _text: self._refresh_key_status())
+        self.gmail_account_edit.textChanged.connect(lambda _text: self._refresh_key_status())
+        self.gmail_intake_enabled_check.stateChanged.connect(lambda _state: self._refresh_gmail_bridge_summary())
+        self.gmail_intake_token_edit.textChanged.connect(lambda _text: self._refresh_gmail_bridge_summary())
+        self.gmail_intake_port_spin.valueChanged.connect(lambda _value: self._refresh_gmail_bridge_summary())
 
     def _build_tab_ocr_defaults(self) -> None:
         form = QFormLayout(self.tab_ocr)
-        self.ocr_mode_default_combo = QComboBox()
+        self.ocr_provider_default_combo = NoWheelComboBox()
+        self.ocr_provider_default_combo.addItems(["openai", "gemini"])
+        self.ocr_mode_default_combo = NoWheelComboBox()
         self.ocr_mode_default_combo.addItems(["off", "auto", "always"])
-        self.ocr_engine_default_combo = QComboBox()
+        self.ocr_engine_default_combo = NoWheelComboBox()
         self.ocr_engine_default_combo.addItems(["local", "local_then_api", "api"])
         self.min_chars_edit = QLineEdit()
+        form.addRow("Default OCR provider", self.ocr_provider_default_combo)
         form.addRow("Default OCR mode", self.ocr_mode_default_combo)
         form.addRow("Default OCR engine", self.ocr_engine_default_combo)
         form.addRow("Min chars to accept OCR", self.min_chars_edit)
@@ -1359,12 +3600,12 @@ class QtSettingsDialog(QDialog):
         grid = QGridLayout()
         row = 0
 
-        self.default_lang_combo = QComboBox(); self.default_lang_combo.addItems(["EN", "FR", "AR"])
-        self.default_effort_combo = QComboBox(); self.default_effort_combo.addItems(["high", "xhigh"])
-        self.default_effort_policy_combo = QComboBox(); self.default_effort_policy_combo.addItems(["adaptive", "fixed_high", "fixed_xhigh"])
-        self.lemma_effort_combo = QComboBox(); self.lemma_effort_combo.addItems(["medium", "high", "xhigh"])
-        self.default_images_combo = QComboBox(); self.default_images_combo.addItems(["off", "auto", "always"])
-        self.default_workers_combo = QComboBox(); self.default_workers_combo.addItems(["1", "2", "3", "4", "5", "6"])
+        self.default_lang_combo = NoWheelComboBox(); self.default_lang_combo.addItems(["EN", "FR", "AR"])
+        self.default_effort_combo = NoWheelComboBox(); self.default_effort_combo.addItems(["high", "xhigh"])
+        self.default_effort_policy_combo = NoWheelComboBox(); self.default_effort_policy_combo.addItems(["adaptive", "fixed_high", "fixed_xhigh"])
+        self.lemma_effort_combo = NoWheelComboBox(); self.lemma_effort_combo.addItems(["medium", "high", "xhigh"])
+        self.default_images_combo = NoWheelComboBox(); self.default_images_combo.addItems(["off", "auto", "always"])
+        self.default_workers_combo = NoWheelComboBox(); self.default_workers_combo.addItems(["1", "2", "3", "4", "5", "6"])
         self.default_start_edit = QLineEdit()
         self.default_end_edit = QLineEdit()
         self.default_outdir_edit = QLineEdit()
@@ -3023,6 +5264,12 @@ class QtSettingsDialog(QDialog):
 
     def _build_tab_diagnostics(self) -> None:
         layout = QVBoxLayout(self.tab_diag)
+        build_group = QGroupBox("Build under test")
+        build_layout = QVBoxLayout(build_group)
+        self.build_identity_label = QLabel("")
+        self.build_identity_label.setWordWrap(True)
+        build_layout.addWidget(self.build_identity_label)
+        layout.addWidget(build_group)
         self.diag_cost_summary_check = QCheckBox("Show cost summary")
         self.diag_verbose_meta_check = QCheckBox("Verbose metadata logs")
         self.diag_admin_mode_check = QCheckBox("Admin diagnostics mode")
@@ -3056,16 +5303,31 @@ class QtSettingsDialog(QDialog):
         self.default_end_edit.setText("" if default_end in (None, "") else str(default_end))
         self.default_outdir_edit.setText(str(settings.get("default_outdir", "")))
         self.glossary_file_edit.setText(str(settings.get("glossary_file_path", "")))
+        current_provider = str(settings.get("ocr_api_provider", settings.get("ocr_api_provider_default", "openai")) or "openai")
+        self.ocr_provider_combo.setCurrentText(current_provider)
+        self.ocr_provider_default_combo.setCurrentText(
+            str(settings.get("ocr_api_provider_default", current_provider) or current_provider)
+        )
         self.ocr_mode_default_combo.setCurrentText(str(settings.get("ocr_mode_default", "auto")))
         self.ocr_engine_default_combo.setCurrentText(str(settings.get("ocr_engine_default", "local_then_api")))
         self.min_chars_edit.setText(str(settings.get("min_chars_to_accept_ocr", 200)))
         self.ocr_base_url_edit.setText(str(settings.get("ocr_api_base_url", "")))
         self.ocr_model_edit.setText(str(settings.get("ocr_api_model", "")))
-        self.ocr_env_edit.setText(str(settings.get("ocr_api_key_env_name", "DEEPSEEK_API_KEY")))
+        provider = normalize_ocr_api_provider(current_provider)
+        self.ocr_env_edit.setText(str(settings.get("ocr_api_key_env_name", default_ocr_api_env_name(provider))))
+        self.gmail_gog_path_edit.setText(str(settings.get("gmail_gog_path", "")))
+        self.gmail_account_edit.setText(str(settings.get("gmail_account_email", "")))
+        self.gmail_intake_enabled_check.setChecked(bool(settings.get("gmail_intake_bridge_enabled", False)))
+        self.gmail_intake_token_edit.setText(str(settings.get("gmail_intake_bridge_token", "")))
+        self.gmail_intake_port_spin.setValue(int(settings.get("gmail_intake_port", 8765)))
         self.retries_edit.setText(str(settings.get("perf_max_transport_retries", 4)))
         self.backoff_cap_edit.setText(str(settings.get("perf_backoff_cap_seconds", 12.0)))
-        self.timeout_text_edit.setText(str(settings.get("perf_timeout_text_seconds", 90)))
-        self.timeout_image_edit.setText(str(settings.get("perf_timeout_image_seconds", 120)))
+        self.timeout_text_edit.setText(
+            str(settings.get("perf_timeout_text_seconds", DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS))
+        )
+        self.timeout_image_edit.setText(
+            str(settings.get("perf_timeout_image_seconds", DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS))
+        )
         self.allow_xhigh_check.setChecked(bool(settings.get("allow_xhigh_escalation", False)))
         self.diag_cost_summary_check.setChecked(bool(settings.get("diagnostics_show_cost_summary", True)))
         self.diag_verbose_meta_check.setChecked(bool(settings.get("diagnostics_verbose_metadata_logs", False)))
@@ -3074,6 +5336,123 @@ class QtSettingsDialog(QDialog):
         self.diag_snippets_check.setEnabled(self.diag_admin_mode_check.isChecked())
         self._set_glossaries_from_settings(settings)
         self._set_study_from_settings(settings)
+        self._refresh_provider_controls()
+        self._refresh_build_identity()
+
+    def _current_ocr_provider(self) -> OcrApiProvider:
+        provider_value = getattr(self, "ocr_provider_combo", None)
+        current_text = provider_value.currentText() if provider_value is not None else "openai"
+        return normalize_ocr_api_provider(current_text)
+
+    def _refresh_provider_controls(self) -> None:
+        provider_value = getattr(self, "ocr_provider_combo", None)
+        current_text = provider_value.currentText() if provider_value is not None else "openai"
+        provider = normalize_ocr_api_provider(current_text)
+        model_default = default_ocr_api_model(provider)
+        env_default = default_ocr_api_env_name(provider)
+        base_default = default_ocr_api_base_url(provider)
+        model_edit = getattr(self, "ocr_model_edit", None)
+        env_edit = getattr(self, "ocr_env_edit", None)
+        base_edit = getattr(self, "ocr_base_url_edit", None)
+        if model_edit is not None:
+            model_edit.setPlaceholderText(model_default)
+        if env_edit is not None:
+            env_edit.setPlaceholderText(env_default)
+        if base_edit is not None:
+            base_edit.setPlaceholderText(base_default or "Provider default")
+        summary = getattr(self, "provider_summary_label", None)
+        if summary is None:
+            return
+        try:
+            openai_stored = bool(get_openai_key())
+            ocr_stored = bool(get_ocr_key())
+        except RuntimeError:
+            openai_stored = False
+            ocr_stored = False
+        resolved_model = model_edit.text().strip() if model_edit is not None else ""
+        resolved_env = env_edit.text().strip() if env_edit is not None else ""
+        resolved_base = base_edit.text().strip() if base_edit is not None else ""
+        resolved_model = resolved_model or model_default
+        resolved_env = resolved_env or env_default
+        resolved_base = resolved_base or (base_default or "provider default")
+        summary.setText(
+            f"OCR provider: {provider.value}; model: {resolved_model}; env: {resolved_env}; "
+            f"base URL: {resolved_base}; OpenAI credentials {'present' if openai_stored else 'missing'}, "
+            f"OCR credentials {'present' if ocr_stored else 'missing'}."
+        )
+        QtSettingsDialog._refresh_gmail_bridge_summary(self)
+
+    def _refresh_gmail_bridge_summary(self) -> None:
+        summary = getattr(self, "gmail_summary_label", None)
+        if summary is None:
+            return
+
+        configured_path = self.gmail_gog_path_edit.text().strip() if hasattr(self, "gmail_gog_path_edit") else ""
+        configured_account = self.gmail_account_edit.text().strip() if hasattr(self, "gmail_account_edit") else ""
+        bridge_enabled = (
+            bool(self.gmail_intake_enabled_check.isChecked())
+            if hasattr(self, "gmail_intake_enabled_check")
+            else False
+        )
+        bridge_token = (
+            self.gmail_intake_token_edit.text().strip()
+            if hasattr(self, "gmail_intake_token_edit")
+            else ""
+        )
+        bridge_port = (
+            int(self.gmail_intake_port_spin.value())
+            if hasattr(self, "gmail_intake_port_spin")
+            else 8765
+        )
+        summary.setText(
+            f"Configured gog path: {configured_path or 'auto-detect'}\n"
+            f"Configured Gmail account: {configured_account or 'auto-detect'}\n"
+            f"Localhost bridge: {'enabled' if bridge_enabled else 'disabled'}\n"
+            f"Bridge endpoint: http://127.0.0.1:{bridge_port}/gmail-intake\n"
+            f"Bridge token: {'present' if bridge_token else 'missing'}"
+        )
+
+    def _refresh_build_identity(self) -> None:
+        if not hasattr(self, "build_identity_label"):
+            return
+        if self._build_identity is None:
+            self.build_identity_label.setText("Build identity unavailable.")
+            return
+        self.build_identity_label.setText(self._build_identity.summary_text())
+
+    def _pick_gmail_gog_path(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select gog.exe",
+            "",
+            "Executable Files (*.exe);;All Files (*.*)",
+        )
+        if selected:
+            self.gmail_gog_path_edit.setText(selected)
+            self._refresh_key_status()
+
+    def _test_gmail_draft_prereqs(self) -> None:
+        status = assess_gmail_draft_prereqs(
+            configured_gog_path=self.gmail_gog_path_edit.text().strip(),
+            configured_account_email=self.gmail_account_edit.text().strip(),
+        )
+        self._refresh_key_status()
+        if status.ready:
+            path_text = str(status.gog_path) if status.gog_path is not None else "auto-detect"
+            QMessageBox.information(
+                self,
+                "Gmail draft",
+                (
+                    f"{status.message}\n\n"
+                    f"gog path: {path_text}\n"
+                    f"Gmail account: {status.account_email}"
+                ),
+            )
+            return
+        details = status.message
+        if status.accounts:
+            details += "\n\nAuthenticated Gmail accounts:\n- " + "\n- ".join(status.accounts)
+        QMessageBox.warning(self, "Gmail draft", details)
 
     def _pick_default_outdir(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "Choose default output folder")
@@ -3216,10 +5595,7 @@ class QtSettingsDialog(QDialog):
             self.ocr_key_edit.clear()
             self.ocr_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
             self.ocr_toggle_btn.setText("Show")
-        self.provider_summary_label.setText(
-            "Provider mode: OpenAI credentials "
-            f"{'present' if openai_stored else 'missing'}, OCR credentials {'present' if ocr_stored else 'missing'}."
-        )
+        QtSettingsDialog._refresh_provider_controls(self)
 
     def _save_openai_key(self) -> None:
         key = self.openai_key_edit.text().strip()
@@ -3312,26 +5688,26 @@ class QtSettingsDialog(QDialog):
         if not key:
             QMessageBox.warning(self, "Key Test", "OCR key is not stored.")
             return
-        base_url = self.ocr_base_url_edit.text().strip()
-        model = self.ocr_model_edit.text().strip() or "gpt-4o-mini"
+        provider = self._current_ocr_provider()
+        base_url = self.ocr_base_url_edit.text().strip() or default_ocr_api_base_url(provider)
+        model = self.ocr_model_edit.text().strip() or default_ocr_api_model(provider)
+        env_name = self.ocr_env_edit.text().strip() or default_ocr_api_env_name(provider)
         started = time.perf_counter()
-        if base_url == "":
-            latency_ms = int((time.perf_counter() - started) * 1000)
-            QMessageBox.information(self, "Key Test", f"OCR key is present ({latency_ms} ms).")
-            return
         try:
-            client = OpenAI(api_key=key, base_url=base_url)
-            client.responses.create(
-                model=model,
-                input=[{"role": "user", "content": [{"type": "input_text", "text": "Reply exactly with OK."}]}],
-                max_output_tokens=8,
-                store=False,
+            test_ocr_provider_connection(
+                OcrEngineConfig(
+                    api_provider=provider,
+                    api_base_url=base_url or None,
+                    api_model=model,
+                    api_key_env_name=env_name,
+                ),
+                api_key=key,
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Key Test", f"OCR key test failed: {type(exc).__name__}")
             return
         latency_ms = int((time.perf_counter() - started) * 1000)
-        QMessageBox.information(self, "Key Test", f"OCR test passed ({latency_ms} ms).")
+        QMessageBox.information(self, "Key Test", f"OCR test passed for {provider.value} ({latency_ms} ms).")
 
     def _restore_defaults(self) -> None:
         self.default_lang_combo.setCurrentText("EN")
@@ -3368,13 +5744,24 @@ class QtSettingsDialog(QDialog):
                 "study_glossary_default_coverage_percent": 80,
             }
         )
+        self.ocr_provider_combo.setCurrentText("openai")
+        self.ocr_provider_default_combo.setCurrentText("openai")
         self.ocr_mode_default_combo.setCurrentText("auto")
         self.ocr_engine_default_combo.setCurrentText("local_then_api")
+        self.ocr_base_url_edit.clear()
+        self.ocr_model_edit.clear()
+        self.ocr_env_edit.setText(default_ocr_api_env_name(OcrApiProvider.OPENAI))
+        self.gmail_gog_path_edit.clear()
+        self.gmail_account_edit.clear()
+        self.gmail_intake_enabled_check.setChecked(False)
+        self.gmail_intake_token_edit.clear()
+        self.gmail_intake_port_spin.setValue(8765)
         self.retries_edit.setText("4")
         self.backoff_cap_edit.setText("12.0")
-        self.timeout_text_edit.setText("90")
-        self.timeout_image_edit.setText("120")
+        self.timeout_text_edit.setText(str(DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS))
+        self.timeout_image_edit.setText(str(DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS))
         self.allow_xhigh_check.setChecked(False)
+        self._refresh_provider_controls()
 
     def _collect_values(self) -> dict[str, object]:
         self._commit_glossary_cell_editor()
@@ -3401,6 +5788,11 @@ class QtSettingsDialog(QDialog):
             self._enabled_glossary_tiers_by_lang,
             supported_target_langs(),
         )
+        bridge_enabled = bool(self.gmail_intake_enabled_check.isChecked())
+        bridge_token = self.gmail_intake_token_edit.text().strip()
+        if bridge_enabled and bridge_token == "":
+            bridge_token = secrets.token_urlsafe(24)
+            self.gmail_intake_token_edit.setText(bridge_token)
 
         return {
             "ui_theme": self.ui_theme_combo.currentText().strip(),
@@ -3426,11 +5818,19 @@ class QtSettingsDialog(QDialog):
             "glossary_seed_version": max(2, int(self._glossary_seed_version)),
             "glossary_file_path": self.glossary_file_edit.text().strip(),
             **self._collect_study_settings_values(),
+            "ocr_api_provider": self.ocr_provider_combo.currentText().strip().lower(),
+            "ocr_api_provider_default": self.ocr_provider_default_combo.currentText().strip().lower(),
             "ocr_mode_default": self.ocr_mode_default_combo.currentText().strip().lower(),
             "ocr_engine_default": self.ocr_engine_default_combo.currentText().strip().lower(),
             "ocr_api_base_url": base_url,
             "ocr_api_model": self.ocr_model_edit.text().strip(),
-            "ocr_api_key_env_name": self.ocr_env_edit.text().strip() or "DEEPSEEK_API_KEY",
+            "ocr_api_key_env_name": self.ocr_env_edit.text().strip()
+            or default_ocr_api_env_name(normalize_ocr_api_provider(self.ocr_provider_combo.currentText())),
+            "gmail_gog_path": self.gmail_gog_path_edit.text().strip(),
+            "gmail_account_email": self.gmail_account_edit.text().strip(),
+            "gmail_intake_bridge_enabled": bridge_enabled,
+            "gmail_intake_bridge_token": bridge_token,
+            "gmail_intake_port": int(self.gmail_intake_port_spin.value()),
             "perf_max_transport_retries": _to_int(self.retries_edit.text(), field="Transport retries", min_value=0, max_value=12),
             "perf_backoff_cap_seconds": _to_float(self.backoff_cap_edit.text(), field="Backoff cap", min_value=1.0, max_value=120.0),
             "perf_timeout_text_seconds": _to_int(self.timeout_text_edit.text(), field="Text timeout", min_value=5, max_value=600),

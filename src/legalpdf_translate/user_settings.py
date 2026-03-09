@@ -7,6 +7,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .config import (
+    DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
+    DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+)
 from .glossary import (
     default_ar_entries,
     entries_from_legacy_rules,
@@ -20,7 +24,7 @@ from .study_glossary import normalize_study_entries, serialize_study_entries, su
 
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
-SETTINGS_SCHEMA_VERSION = 2
+SETTINGS_SCHEMA_VERSION = 5
 DEFAULT_VOCAB_CASE_ENTITIES = [
     "Ministério Público",
     "Tribunal Judicial",
@@ -43,24 +47,43 @@ DEFAULT_VOCAB_CITIES = [
     "Serpa",
 ]
 DEFAULT_VOCAB_JOB_TYPES = ["Translation", "Interpretation"]
+DEFAULT_VOCAB_COURT_EMAILS = [
+    "beja.ministeriopublico@tribunais.org.pt",
+    "beja.trabalho.ministeriopublico@tribunais.org.pt",
+    "beja.familia.ministeriopublico@tribunais.org.pt",
+    "moita.ministeriopublico@tribunais.org.pt",
+    "cuba.ministeriopublico@tribunais.org.pt",
+    "beja.judicial@tribunais.org.pt",
+    "falentejo.judicial@tribunais.org.pt",
+    "serpa.judicial@tribunais.org.pt",
+    "moura.judicial@tribunais.org.pt",
+    "rmonsaraz.judicial@tribunais.org.pt",
+    "cuba.judicial@tribunais.org.pt",
+]
 DEFAULT_JOBLOG_VISIBLE_COLUMNS = [
     "translation_date",
     "case_number",
+    "run_id",
     "job_type",
     "service_entity",
     "service_city",
     "lang",
+    "target_lang",
     "pages",
     "word_count",
+    "total_tokens",
     "rate_per_word",
     "expected_total",
     "amount_paid",
     "api_cost",
+    "estimated_api_cost",
+    "quality_risk_score",
     "profit",
 ]
 DEFAULT_OCR_SETTINGS: dict[str, Any] = {
     "ocr_mode": "auto",
     "ocr_engine": "local_then_api",
+    "ocr_api_provider": "openai",
     "ocr_api_base_url": "",
     "ocr_api_model": "",
     "ocr_api_key_env_name": "DEEPSEEK_API_KEY",
@@ -100,10 +123,11 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "study_glossary_default_coverage_percent": 80,
     "ocr_mode_default": "auto",
     "ocr_engine_default": "local_then_api",
+    "ocr_api_provider_default": "openai",
     "perf_max_transport_retries": 4,
     "perf_backoff_cap_seconds": 12.0,
-    "perf_timeout_text_seconds": 90,
-    "perf_timeout_image_seconds": 120,
+    "perf_timeout_text_seconds": DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+    "perf_timeout_image_seconds": DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
     "adaptive_effort_enabled": False,
     "adaptive_effort_xhigh_only_when_image_or_validator_fail": True,
     "allow_xhigh_escalation": False,
@@ -113,6 +137,11 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "diagnostics_include_sanitized_snippets": False,
     "min_chars_to_accept_ocr": 200,
     "openai_reasoning_effort_lemma": "high",
+    "gmail_gog_path": "",
+    "gmail_account_email": "",
+    "gmail_intake_bridge_enabled": False,
+    "gmail_intake_bridge_token": "",
+    "gmail_intake_port": 8765,
 }
 ALLOWED_GUI_KEYS = {
     "settings_schema_version",
@@ -176,15 +205,22 @@ ALLOWED_GUI_KEYS = {
     "max_pages",
     "ocr_mode",
     "ocr_engine",
+    "ocr_api_provider",
     "ocr_api_base_url",
     "ocr_api_model",
     "ocr_api_key_env_name",
+    "gmail_gog_path",
+    "gmail_account_email",
+    "gmail_intake_bridge_enabled",
+    "gmail_intake_bridge_token",
+    "gmail_intake_port",
 }
 ALLOWED_JOBLOG_KEYS = {
     "vocab_case_entities",
     "vocab_service_entities",
     "vocab_cities",
     "vocab_job_types",
+    "vocab_court_emails",
     "default_rate_per_word",
     "joblog_visible_columns",
     "metadata_ai_enabled",
@@ -193,6 +229,7 @@ ALLOWED_JOBLOG_KEYS = {
     "non_court_service_entities",
     "ocr_mode",
     "ocr_engine",
+    "ocr_api_provider",
     "ocr_api_base_url",
     "ocr_api_model",
     "ocr_api_key_env_name",
@@ -219,6 +256,7 @@ DEFAULT_JOBLOG_SETTINGS: dict[str, Any] = {
     "vocab_service_entities": list(DEFAULT_VOCAB_SERVICE_ENTITIES),
     "vocab_cities": list(DEFAULT_VOCAB_CITIES),
     "vocab_job_types": list(DEFAULT_VOCAB_JOB_TYPES),
+    "vocab_court_emails": list(DEFAULT_VOCAB_COURT_EMAILS),
     "default_rate_per_word": {"EN": 0.08, "FR": 0.08, "AR": 0.09},
     "joblog_visible_columns": list(DEFAULT_JOBLOG_VISIBLE_COLUMNS),
     "metadata_ai_enabled": True,
@@ -453,12 +491,31 @@ def load_gui_settings() -> dict[str, Any]:
         default="local_then_api",
         allowed={"local", "local_then_api", "api"},
     )
+    merged["ocr_api_provider"] = _coerce_choice(
+        merged.get("ocr_api_provider"),
+        default="openai",
+        allowed={"openai", "gemini"},
+    )
     merged["ocr_api_base_url"] = str(merged.get("ocr_api_base_url", "") or "")
     merged["ocr_api_model"] = str(merged.get("ocr_api_model", "") or "")
     ocr_env_value = merged.get("ocr_api_key_env_name")
     if "ocr_api_key_env_name" not in data or not str(ocr_env_value or "").strip():
-        ocr_env_value = data.get("ocr_api_key_env", "DEEPSEEK_API_KEY")
-    merged["ocr_api_key_env_name"] = str(ocr_env_value or "DEEPSEEK_API_KEY")
+        fallback_env = "GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY"
+        ocr_env_value = data.get("ocr_api_key_env", fallback_env)
+    merged["ocr_api_key_env_name"] = str(
+        ocr_env_value or ("GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY")
+    )
+    merged["gmail_gog_path"] = str(merged.get("gmail_gog_path", "") or "")
+    merged["gmail_account_email"] = str(merged.get("gmail_account_email", "") or "")
+    merged["gmail_intake_bridge_enabled"] = _coerce_bool(
+        merged.get("gmail_intake_bridge_enabled"),
+        False,
+    )
+    merged["gmail_intake_bridge_token"] = str(merged.get("gmail_intake_bridge_token", "") or "").strip()
+    merged["gmail_intake_port"] = max(
+        1,
+        min(65535, _coerce_int(merged.get("gmail_intake_port"), 8765)),
+    )
     merged["settings_schema_version"] = _coerce_int(
         merged.get("settings_schema_version"),
         SETTINGS_SCHEMA_VERSION,
@@ -497,6 +554,11 @@ def load_gui_settings() -> dict[str, Any]:
     merged["default_start_page"] = max(1, _coerce_int(merged.get("default_start_page"), 1))
     merged["default_end_page"] = _coerce_optional_int(merged.get("default_end_page"))
     merged["default_outdir"] = str(merged.get("default_outdir", "") or "")
+    merged["ocr_api_provider_default"] = _coerce_choice(
+        merged.get("ocr_api_provider_default"),
+        default="openai",
+        allowed={"openai", "gemini"},
+    )
     supported_langs = supported_target_langs()
     has_personal_scope = "personal_glossaries_by_lang" in data
     personal_source = (
@@ -582,8 +644,37 @@ def load_gui_settings() -> dict[str, Any]:
     )
     merged["perf_max_transport_retries"] = max(0, _coerce_int(merged.get("perf_max_transport_retries"), 4))
     merged["perf_backoff_cap_seconds"] = max(1.0, _coerce_float(merged.get("perf_backoff_cap_seconds"), 12.0))
-    merged["perf_timeout_text_seconds"] = max(5, _coerce_int(merged.get("perf_timeout_text_seconds"), 90))
-    merged["perf_timeout_image_seconds"] = max(5, _coerce_int(merged.get("perf_timeout_image_seconds"), 120))
+    settings_schema_version_raw = _coerce_int(
+        data.get("settings_schema_version"),
+        0,
+    )
+    legacy_text_timeout = _coerce_int(
+        data.get("perf_timeout_text_seconds"),
+        DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+    )
+    legacy_image_timeout = _coerce_int(
+        data.get("perf_timeout_image_seconds"),
+        DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
+    )
+    if settings_schema_version_raw < 3:
+        if "perf_timeout_text_seconds" not in data or legacy_text_timeout == 90:
+            merged["perf_timeout_text_seconds"] = DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS
+        if "perf_timeout_image_seconds" not in data or legacy_image_timeout == 120:
+            merged["perf_timeout_image_seconds"] = DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS
+    merged["perf_timeout_text_seconds"] = max(
+        5,
+        _coerce_int(
+            merged.get("perf_timeout_text_seconds"),
+            DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+        ),
+    )
+    merged["perf_timeout_image_seconds"] = max(
+        5,
+        _coerce_int(
+            merged.get("perf_timeout_image_seconds"),
+            DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
+        ),
+    )
     merged["adaptive_effort_enabled"] = _coerce_bool(merged.get("adaptive_effort_enabled"), False)
     merged["adaptive_effort_xhigh_only_when_image_or_validator_fail"] = _coerce_bool(
         merged.get("adaptive_effort_xhigh_only_when_image_or_validator_fail"),
@@ -692,6 +783,10 @@ def load_joblog_settings() -> dict[str, Any]:
         merged.get("vocab_job_types"),
         fallback=DEFAULT_VOCAB_JOB_TYPES,
     )
+    merged["vocab_court_emails"] = _coerce_str_list(
+        merged.get("vocab_court_emails"),
+        fallback=DEFAULT_VOCAB_COURT_EMAILS,
+    )
     merged["vocab_entities"] = _coerce_str_list(
         merged.get("vocab_entities"),
         fallback=DEFAULT_VOCAB_CASE_ENTITIES,
@@ -721,12 +816,20 @@ def load_joblog_settings() -> dict[str, Any]:
         default="local_then_api",
         allowed={"local", "local_then_api", "api"},
     )
+    merged["ocr_api_provider"] = _coerce_choice(
+        merged.get("ocr_api_provider"),
+        default="openai",
+        allowed={"openai", "gemini"},
+    )
     merged["ocr_api_base_url"] = str(merged.get("ocr_api_base_url", "") or "")
     merged["ocr_api_model"] = str(merged.get("ocr_api_model", "") or "")
     ocr_env_value = merged.get("ocr_api_key_env_name")
     if "ocr_api_key_env_name" not in data or not str(ocr_env_value or "").strip():
-        ocr_env_value = data.get("ocr_api_key_env", "DEEPSEEK_API_KEY")
-    merged["ocr_api_key_env_name"] = str(ocr_env_value or "DEEPSEEK_API_KEY")
+        fallback_env = "GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY"
+        ocr_env_value = data.get("ocr_api_key_env", fallback_env)
+    merged["ocr_api_key_env_name"] = str(
+        ocr_env_value or ("GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY")
+    )
     if not merged["vocab_case_entities"]:
         merged["vocab_case_entities"] = list(merged["vocab_entities"])
     if not merged["vocab_service_entities"]:

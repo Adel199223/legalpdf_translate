@@ -28,7 +28,7 @@ legalpdf-translate-qt = "legalpdf_translate.qt_main:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-packages = ["legalpdf_translate", "legalpdf_translate.qt_gui"]
+packages = ["legalpdf_translate", "legalpdf_translate.qt_gui", "legalpdf_translate.workflow_components"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

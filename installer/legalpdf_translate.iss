@@ -20,6 +20,9 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 
+#define EdgeNativeHostName "com.legalpdf.gmail_focus"
+#define EdgeExtensionOrigin "chrome-extension://afckgbhjkmojchdlinolkepffchlgpin/"
+
 [Tasks]
 Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
@@ -33,5 +36,48 @@ Name: "{group}\LegalPDF Translate"; Filename: "{app}\LegalPDFTranslate.exe"
 Name: "{group}\Uninstall LegalPDF Translate"; Filename: "{uninstallexe}"
 Name: "{userdesktop}\LegalPDF Translate"; Filename: "{app}\LegalPDFTranslate.exe"; Tasks: desktopicon
 
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\{#EdgeNativeHostName}"; \
+  ValueType: string; ValueName: ""; ValueData: "{app}\native_messaging\{#EdgeNativeHostName}.edge.json"; \
+  Flags: uninsdeletekey
+
+[UninstallDelete]
+Type: files; Name: "{app}\native_messaging\{#EdgeNativeHostName}.edge.json"
+Type: dirifempty; Name: "{app}\native_messaging"
+
 [Run]
 Filename: "{app}\LegalPDFTranslate.exe"; Description: "Launch LegalPDF Translate"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function JsonEscapePath(Value: string): string;
+begin
+  Result := StringChangeEx(Value, '\', '\\', True);
+end;
+
+function EdgeNativeHostManifestText(HostExePath: string): string;
+begin
+  Result :=
+    '{' + #13#10 +
+    '  "name": "{#EdgeNativeHostName}",' + #13#10 +
+    '  "description": "LegalPDF Translate foreground activation host",' + #13#10 +
+    '  "path": "' + JsonEscapePath(HostExePath) + '",' + #13#10 +
+    '  "type": "stdio",' + #13#10 +
+    '  "allowed_origins": [' + #13#10 +
+    '    "{#EdgeExtensionOrigin}"' + #13#10 +
+    '  ]' + #13#10 +
+    '}' + #13#10;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  HostExePath: string;
+  ManifestPath: string;
+begin
+  if CurStep <> ssPostInstall then
+    exit;
+
+  HostExePath := ExpandConstant('{app}\LegalPDFGmailFocusHost.exe');
+  ManifestPath := ExpandConstant('{app}\native_messaging\{#EdgeNativeHostName}.edge.json');
+  ForceDirectories(ExtractFileDir(ManifestPath));
+  SaveStringToFile(ManifestPath, EdgeNativeHostManifestText(HostExePath), False);
+end;

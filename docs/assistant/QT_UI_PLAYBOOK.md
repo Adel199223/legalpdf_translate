@@ -2,23 +2,25 @@
 
 ## A. Rules of Engagement
 
-1. **Prefer size policies and layout constraints over fixed pixel sizes.** Use `setMinimumSize`, `setMaximumWidth`, and `QSizePolicy` rather than hard-coded `resize()` or `setFixedSize()`.
-2. **Never change paint geometry without updating `_FRAME_INSETS`.** The decorative frame in `_FuturisticCanvas.paintEvent` and the outer layout margins both read from this single constant. Changing one without the other silently breaks card centering.
-3. **Keep UI changes isolated to `qt_gui/`** unless the change absolutely requires touching other modules (e.g., adding a new `RunConfig` field that the UI exposes).
-4. **Test layout changes visually** — automated tests catch imports and smoke, but layout regressions (clipping, overflow, misalignment) require a manual resize/maximize/restore check.
-5. **Preserve LTR direction overrides.** The window and footer card force `LeftToRight` so that RTL target languages don't flip UI chrome. Do not remove these.
-6. **Do not add a horizontal scrollbar.** `ScrollBarAlwaysOff` is intentional — if content clips, fix the content width, don't enable horizontal scroll.
+1. **Use `REFERENCE_LOCKED_QT_UI_WORKFLOW.md` when a visual reference is the acceptance target.** Desktop exactness is a binary contract, not a “close enough” discussion.
+2. **Prefer the responsive size-class path over one-off geometry tweaks.** Desktop behavior is driven by `_layout_mode_for_budget()` and `_apply_responsive_layout()`. Change that first.
+3. **Never change paint geometry in isolation.** `_FuturisticCanvas.paintEvent()` must stay aligned with live widget geometry, especially `sidebar_frame.width()` and the computed `content_card` width.
+4. **Keep UI changes isolated to `qt_gui/`** unless the change absolutely requires touching other modules (e.g., adding a new `RunConfig` field that the UI exposes).
+5. **Test layout changes visually with deterministic renders first.** Run `tooling/qt_render_review.py` before relying on ad hoc desktop screenshots.
+6. **Preserve LTR direction overrides.** The window and footer card force `LeftToRight` so that RTL target languages don't flip UI chrome. Do not remove these.
+7. **Do not add a horizontal scrollbar.** `ScrollBarAlwaysOff` is intentional — if content clips, fix the content width, don't enable horizontal scroll.
+8. **Do not let run-critical selectors drift on wheel events.** Translation-critical combo/spin controls are intentionally guarded; keep accidental wheel changes blocked unless the popup is intentionally open.
 
 ## B. Search Recipes
 
 ### Find frame/paint geometry code
 ```bash
-rg -n "_FuturisticCanvas|paintEvent|frame_rect|_FRAME_INSETS" src/legalpdf_translate/qt_gui/
+rg -n "_FuturisticCanvas|paintEvent|sidebar_line_x|content_card|_FRAME_INSETS" src/legalpdf_translate/qt_gui/
 ```
 
-### Find layout margin and centering code
+### Find layout mode and centering code
 ```bash
-rg -n "setContentsMargins|content_card|setMaximumWidth|AlignHCenter|ScrollBarAlwaysOff" src/legalpdf_translate/qt_gui/
+rg -n "_LAYOUT_DESKTOP|_apply_responsive_layout|_update_card_max_width|content_card|ScrollBarAlwaysOff" src/legalpdf_translate/qt_gui/
 ```
 
 ### Find button styling and glow
@@ -28,7 +30,7 @@ rg -n "PrimaryButton|DangerButton|apply_primary_glow|QPushButton" src/legalpdf_t
 
 ### Find footer button layout
 ```bash
-rg -n "footer_card|QGridLayout|btn_grid|setToolTip" src/legalpdf_translate/qt_gui/
+rg -n "ActionRail|_configure_footer_layout|OverflowMenuButton|PrimaryButton|DangerButton" src/legalpdf_translate/qt_gui/
 ```
 
 ### Find stylesheet selectors and palette
@@ -36,12 +38,20 @@ rg -n "footer_card|QGridLayout|btn_grid|setToolTip" src/legalpdf_translate/qt_gu
 rg -n "objectName|PALETTE|build_stylesheet" src/legalpdf_translate/qt_gui/styles.py
 ```
 
-### Find scroll area setup
+### Find language badge and field chrome
 ```bash
-rg -n "QScrollArea|setWidgetResizable|setFrameShape|ScrollBarPolicy" src/legalpdf_translate/qt_gui/
+rg -n "_refresh_lang_badge|_LANG_FLAG_ICON_BY_CODE|FieldChrome|LangCaretButton|FieldBrowseButton" src/legalpdf_translate/qt_gui/
 ```
 
 ## C. Change Checklists
+
+### Reference-locked review contract
+
+- [ ] Freeze one desktop validation size and keep it constant through the pass
+- [ ] Review these regions independently: sidebar, hero row, setup card, output card, footer rail, overflow menu, background scene
+- [ ] Mark each region pass/fail; do not advance on vague “closer” language
+- [ ] Treat desktop exact as authoritative; medium/narrow are stability checks only
+- [ ] Generate deterministic wide/medium/narrow renders with `tooling/qt_render_review.py`
 
 ### Before making a Qt UI change
 
@@ -51,20 +61,21 @@ rg -n "QScrollArea|setWidgetResizable|setFrameShape|ScrollBarPolicy" src/legalpd
 
 ### During the change
 
-- [ ] If touching paint geometry → update `_FRAME_INSETS` (not the raw numbers)
-- [ ] If adding/removing footer buttons → update both `row0`/`row1` lists and keep `setColumnStretch` after the last column
-- [ ] If changing card width → update both `setMaximumWidth()` and the `min(1180, ...)` in `_update_card_max_width()`
+- [ ] If touching layout behavior → update `_layout_mode_for_budget()` / `_apply_responsive_layout()` before adding local widget hacks
+- [ ] If touching paint geometry → confirm paint logic still derives from live sidebar/card geometry
+- [ ] If changing card width behavior → update `_update_card_max_width()` and verify the centered `content_row_layout` still works
 - [ ] If adding a new widget → set appropriate `objectName` for QSS targeting
-- [ ] If adding a new panel → use `objectName="SurfacePanel"` for consistent styling
+- [ ] If adding a new shell panel → use `objectName="ShellPanel"` for consistent styling
 
 ### After the change
 
 - [ ] Run `python -m pytest -q`
 - [ ] Run `python -m compileall src tests`
-- [ ] Launch app: `python -m legalpdf_translate.qt_gui`
-- [ ] Resize window to various sizes — card stays inside painted frame
-- [ ] Maximize — card centered, no horizontal scrollbar
-- [ ] Restore to normal size — card adapts
-- [ ] Check all footer button labels are fully readable
-- [ ] Toggle Show Advanced — card grows, vertical scrollbar appears if needed
+- [ ] Launch app: `python -m legalpdf_translate.qt_app`
+- [ ] Generate deterministic review renders: `python tooling/qt_render_review.py --outdir tmp_ui_review --preview reference_sample`
+- [ ] Desktop exact: readable sidebar labels, `Conversion Output`, two-column shell
+- [ ] Desktop compact: still two-column, no clipped field chrome
+- [ ] Stacked compact: setup/output stack cleanly, footer reflows to two rows
+- [ ] Verify `...` menu actions and `Tools` menu routes still match the dashboard shell contract
+- [ ] If warning flows were touched, verify `Switch to fixed high` and `Apply safe OCR profile` still behave exactly as documented
 - [ ] Update `docs/assistant/QT_UI_KNOWLEDGE.md` if any invariant changed

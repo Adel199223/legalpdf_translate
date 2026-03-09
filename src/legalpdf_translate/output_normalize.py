@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+import unicodedata
 
+from .arabic_pre_tokenize import is_safe_ar_identifier_token_content, pretokenize_arabic_source
 from .types import TargetLang
 
 LRI = "\u2066"
 PDI = "\u2069"
 
 TOKEN_RE = re.compile(r"\[\[.*?\]\]", re.DOTALL)
+MALFORMED_BRACKET_WRAPPED_TOKEN_RE = re.compile(r"\[\[\[(?P<token>[^\[\]\n]+?)\]\]\]")
 _STANDALONE_LIST_MARKER_RE = re.compile(r"^\s*(?:\d+|[A-Za-z])[.)]\s*$")
 PT_MONTH_PATTERN = r"(?:janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)"
 PORTUGUESE_MONTH_DATE_PLAIN_RE = re.compile(
@@ -127,11 +130,21 @@ def normalize_output_text_with_stats(
 
     autofix_applied_count = 0
     if lang == TargetLang.AR:
+        normalized, malformed_repair_count = repair_bracket_wrapped_ar_tokens(normalized)
+        autofix_applied_count += malformed_repair_count
         normalized = normalize_ar_portuguese_month_dates(normalized)
-        normalized, autofix_applied_count = autofix_expected_ar_tokens(
+        normalized, expected_token_wrap_count = autofix_expected_ar_tokens(
             normalized,
             expected_tokens=expected_ar_tokens or [],
         )
+        autofix_applied_count += expected_token_wrap_count
+        normalized, conservative_wrap_count = wrap_conservative_ar_identifier_spans(normalized)
+        autofix_applied_count += conservative_wrap_count
+        normalized, near_match_repair_count = repair_expected_ar_token_near_matches(
+            normalized,
+            expected_tokens=expected_ar_tokens or [],
+        )
+        autofix_applied_count += near_match_repair_count
         normalized = wrap_existing_tokens_with_isolates(normalized)
     elif lang in (TargetLang.EN, TargetLang.FR):
         normalized = normalize_enfr_portuguese_month_dates(normalized, lang=lang)
@@ -171,6 +184,24 @@ def _wrap_literal_token(segment: str, token: str) -> tuple[str, int]:
     return "".join(chunks), replaced
 
 
+def repair_bracket_wrapped_ar_tokens(text: str) -> tuple[str, int]:
+    if not text:
+        return text, 0
+
+    repaired_count = 0
+
+    def _replace(match: re.Match[str]) -> str:
+        nonlocal repaired_count
+        token = " ".join((match.group("token") or "").replace("\xa0", " ").split()).strip()
+        if token == "" or not is_safe_ar_identifier_token_content(token):
+            return match.group(0)
+        repaired_count += 1
+        return f"[{LRI}[[{token}]]{PDI}]"
+
+    repaired = MALFORMED_BRACKET_WRAPPED_TOKEN_RE.sub(_replace, text)
+    return repaired, repaired_count
+
+
 def autofix_expected_ar_tokens(text: str, *, expected_tokens: list[str]) -> tuple[str, int]:
     if not text or not expected_tokens:
         return text, 0
@@ -203,6 +234,144 @@ def autofix_expected_ar_tokens(text: str, *, expected_tokens: list[str]) -> tupl
         pieces.append(outside_tail)
 
     return "".join(pieces), applied
+
+
+def wrap_conservative_ar_identifier_spans(text: str) -> tuple[str, int]:
+    if not text:
+        return text, 0
+
+    pieces: list[str] = []
+    cursor = 0
+    applied = 0
+    for match in TOKEN_RE.finditer(text):
+        if match.start() > cursor:
+            outside = text[cursor : match.start()]
+            wrapped = pretokenize_arabic_source(outside)
+            applied += max(0, wrapped.count("[[") - outside.count("[["))
+            pieces.append(wrapped)
+        pieces.append(match.group(0))
+        cursor = match.end()
+
+    if cursor < len(text):
+        tail = text[cursor:]
+        wrapped_tail = pretokenize_arabic_source(tail)
+        applied += max(0, wrapped_tail.count("[[") - tail.count("[["))
+        pieces.append(wrapped_tail)
+
+    return "".join(pieces), applied
+
+
+def _normalize_repair_token(token: str) -> str:
+    normalized = unicodedata.normalize("NFKD", token.replace("\xa0", " "))
+    without_marks = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return " ".join(without_marks.split()).strip().lower()
+
+
+def _alnum_repair_token(token: str) -> str:
+    return "".join(ch for ch in _normalize_repair_token(token) if ch.isalnum())
+
+
+def _repairable_ar_token_score(expected: str, actual: str) -> float | None:
+    expected_norm = _normalize_repair_token(expected)
+    actual_norm = _normalize_repair_token(actual)
+    if expected_norm == "" or actual_norm == "":
+        return None
+    if expected_norm == actual_norm:
+        return 1.0
+
+    expected_alnum = _alnum_repair_token(expected)
+    actual_alnum = _alnum_repair_token(actual)
+    if expected_alnum == "" or actual_alnum == "":
+        return None
+    if expected_alnum == actual_alnum:
+        return 0.995
+
+    ambiguous_pairs = {
+        ("0", "o"),
+        ("o", "0"),
+        ("0", "O"),
+        ("O", "0"),
+        ("1", "l"),
+        ("l", "1"),
+        ("1", "I"),
+        ("I", "1"),
+    }
+    max_len = max(len(expected_alnum), len(actual_alnum))
+    if len(expected_alnum) == len(actual_alnum) and max_len >= 6:
+        differing_positions = [(lhs, rhs) for lhs, rhs in zip(expected_alnum, actual_alnum) if lhs != rhs]
+        if len(differing_positions) == 1 and differing_positions[0] in ambiguous_pairs:
+            return 0.99
+    return None
+
+
+def repair_expected_ar_token_near_matches(text: str, *, expected_tokens: list[str]) -> tuple[str, int]:
+    if not text or not expected_tokens:
+        return text, 0
+
+    cleaned_expected = [token for token in expected_tokens if token and "[[" not in token and "]]" not in token]
+    if not cleaned_expected:
+        return text, 0
+
+    token_matches = list(TOKEN_RE.finditer(text))
+    if not token_matches:
+        return text, 0
+
+    actual_tokens = [match.group(0)[2:-2] for match in token_matches]
+    remaining_expected = Counter(cleaned_expected)
+    unmatched_actual: list[tuple[int, str]] = []
+    for index, actual in enumerate(actual_tokens):
+        if remaining_expected.get(actual, 0) > 0:
+            remaining_expected[actual] -= 1
+            if remaining_expected[actual] <= 0:
+                del remaining_expected[actual]
+        else:
+            unmatched_actual.append((index, actual))
+
+    missing_expected: list[str] = []
+    for token in cleaned_expected:
+        if remaining_expected.get(token, 0) > 0:
+            missing_expected.append(token)
+            remaining_expected[token] -= 1
+            if remaining_expected[token] <= 0:
+                del remaining_expected[token]
+
+    if not missing_expected or not unmatched_actual:
+        return text, 0
+
+    replacements: dict[int, str] = {}
+    available_actual = list(unmatched_actual)
+    for expected in missing_expected:
+        scored: list[tuple[float, int]] = []
+        for actual_index, actual_token in available_actual:
+            score = _repairable_ar_token_score(expected, actual_token)
+            if score is not None:
+                scored.append((score, actual_index))
+        if not scored:
+            return text, 0
+        scored.sort(reverse=True)
+        best_score, best_index = scored[0]
+        if len(scored) > 1 and (best_score - scored[1][0]) < 0.02:
+            return text, 0
+        replacements[best_index] = expected
+        available_actual = [(idx, token) for idx, token in available_actual if idx != best_index]
+
+    if not replacements:
+        return text, 0
+
+    pieces: list[str] = []
+    cursor = 0
+    repaired_count = 0
+    for index, match in enumerate(token_matches):
+        pieces.append(text[cursor : match.start()])
+        replacement = replacements.get(index)
+        if replacement is None:
+            pieces.append(match.group(0))
+        else:
+            pieces.append(f"[[{replacement}]]")
+            repaired_count += 1
+        cursor = match.end()
+    pieces.append(text[cursor:])
+    return "".join(pieces), repaired_count
 
 
 def _normalize_month_key(month: str) -> str:

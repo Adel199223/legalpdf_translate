@@ -47,9 +47,50 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert "preferred_translation" in loaded["glossaries_by_lang"]["AR"][0]
     assert "match_mode" in loaded["glossaries_by_lang"]["AR"][0]
     assert "tier" in loaded["glossaries_by_lang"]["AR"][0]
-    assert loaded["default_effort_policy"] in {"adaptive", "fixed_high", "fixed_xhigh"}
-    assert loaded["effort_policy"] in {"adaptive", "fixed_high", "fixed_xhigh"}
+    assert loaded["default_effort_policy"] == "adaptive"
+    assert loaded["effort_policy"] == "adaptive"
+    assert loaded["default_workers"] == 3
+    assert loaded["workers"] == 3
+    assert loaded["default_resume"] is True
+    assert loaded["resume"] is True
+    assert loaded["ocr_mode_default"] == "auto"
+    assert loaded["ocr_engine_default"] == "local_then_api"
+    assert loaded["ocr_mode"] == "auto"
+    assert loaded["ocr_engine"] == "local_then_api"
+    assert loaded["gmail_gog_path"] == ""
+    assert loaded["gmail_account_email"] == ""
+    assert loaded["gmail_intake_bridge_enabled"] is False
+    assert loaded["gmail_intake_bridge_token"] == ""
+    assert loaded["gmail_intake_port"] == 8765
     assert isinstance(loaded["allow_xhigh_escalation"], bool)
+    assert loaded["perf_timeout_text_seconds"] == 480
+    assert loaded["perf_timeout_image_seconds"] == 720
+    assert loaded["ocr_api_provider"] in {"openai", "gemini"}
+    assert loaded["ocr_api_provider_default"] in {"openai", "gemini"}
+
+
+def test_load_gui_settings_coerces_gmail_intake_bridge_fields(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 5,
+                "gmail_intake_bridge_enabled": True,
+                "gmail_intake_bridge_token": "  shared-token  ",
+                "gmail_intake_port": "70000",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["settings_schema_version"] == 5
+    assert loaded["gmail_intake_bridge_enabled"] is True
+    assert loaded["gmail_intake_bridge_token"] == "shared-token"
+    assert loaded["gmail_intake_port"] == 65535
 
 
 def test_load_gui_settings_migrates_old_last_used_fields(tmp_path: Path, monkeypatch) -> None:
@@ -82,6 +123,18 @@ def test_load_gui_settings_migrates_old_last_used_fields(tmp_path: Path, monkeyp
     assert loaded["ocr_api_key_env_name"] == "LEGACY_ENV_NAME"
     assert loaded["default_effort_policy"] == "fixed_xhigh"
     assert loaded["effort_policy"] == "fixed_xhigh"
+
+
+def test_load_gui_settings_uses_provider_aware_ocr_env_default(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(json.dumps({"ocr_api_provider": "gemini", "ocr_api_key_env_name": ""}), encoding="utf-8")
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["ocr_api_provider"] == "gemini"
+    assert loaded["ocr_api_key_env_name"] == "GEMINI_API_KEY"
 
 
 def test_load_gui_settings_migrates_legacy_single_scope_to_personal(tmp_path: Path, monkeypatch) -> None:
@@ -134,6 +187,48 @@ def test_load_gui_settings_maps_legacy_adaptive_flags(tmp_path: Path, monkeypatc
 
     assert loaded["default_effort_policy"] == "adaptive"
     assert loaded["allow_xhigh_escalation"] is True
+
+
+def test_load_gui_settings_migrates_legacy_timeout_defaults(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 2,
+                "perf_timeout_text_seconds": 90,
+                "perf_timeout_image_seconds": 120,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["perf_timeout_text_seconds"] == 480
+    assert loaded["perf_timeout_image_seconds"] == 720
+
+
+def test_load_gui_settings_preserves_custom_timeout_values(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 2,
+                "perf_timeout_text_seconds": 300,
+                "perf_timeout_image_seconds": 900,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["perf_timeout_text_seconds"] == 300
+    assert loaded["perf_timeout_image_seconds"] == 900
 
 
 def test_save_gui_settings_writes_schema_version(tmp_path: Path, monkeypatch) -> None:

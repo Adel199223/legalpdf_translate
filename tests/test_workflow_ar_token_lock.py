@@ -29,9 +29,10 @@ def _ordered_text_result(text: str) -> SimpleNamespace:
 class _SequenceClient:
     def __init__(self, outputs: list[str]) -> None:
         self._outputs = list(outputs)
+        self.calls: list[dict[str, object]] = []
 
     def create_page_response(self, **kwargs) -> ApiCallResult:  # noqa: ANN003
-        _ = kwargs
+        self.calls.append(dict(kwargs))
         if not self._outputs:
             raise RuntimeError("No more fake responses configured.")
         raw_output = self._outputs.pop(0)
@@ -92,6 +93,10 @@ def _source_text_with_month_date() -> str:
             "IBAN: PT50003506490000832760029",
         ]
     )
+
+
+def _source_text_with_bracketed_reference() -> str:
+    return "21/25.0FBPTM [36231063]"
 
 
 def test_ar_expected_tokens_autofix_unwrapped_literals(tmp_path: Path, monkeypatch) -> None:
@@ -189,6 +194,250 @@ def test_ar_expected_token_mismatch_fails_after_retry(tmp_path: Path, monkeypatc
     assert int(counters.get("missing_count", 0) or 0) >= 1
     assert int(counters.get("altered_count", 0) or 0) >= 1
 
+    run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
+    assert run_state["pages"]["1"]["retry_prompt_type"] == "ar_token_correction"
+
+
+def test_ar_expected_token_mismatch_can_recover_on_retry(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", lambda _pdf, _idx: _ordered_text_result(_source_text()))
+    monkeypatch.setattr(workflow_module, "should_include_image", lambda *args, **kwargs: False)
+
+    altered = (
+        "```\n"
+        "الاسم: [[Adel Belghali]]\n"
+        "العنوان: [[Rua Luís de Camões no 9, 7960-011 Marmelar, Pedrógão, Vidigueira]]\n"
+        "آيبان: [[PT50003506490000832760029]]\n"
+        "```"
+    )
+    corrected = (
+        "```\n"
+        "الاسم: [[Adel Belghali]]\n"
+        "العنوان: [[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]\n"
+        "آيبان: [[PT50003506490000832760029]]\n"
+        "```"
+    )
+    client = _SequenceClient([altered, corrected])
+    summary = TranslationWorkflow(client=client).run(_config(pdf, outdir))
+
+    assert summary.success is True
+    assert len(client.calls) == 2
+    retry_prompt = str(client.calls[1].get("prompt_text", ""))
+    assert "<<<BEGIN LOCKED TOKENS>>>" in retry_prompt
+    assert "[[Adel Belghali]]" in retry_prompt
+    assert "[[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]" in retry_prompt
+    assert "All non-token text must be Arabic." in retry_prompt
+
+    run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
+    assert run_state["pages"]["1"]["retry_prompt_type"] == "ar_token_correction"
+
+
+def test_ar_expected_token_near_match_can_recover_after_retry(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", lambda _pdf, _idx: _ordered_text_result(_source_text()))
+    monkeypatch.setattr(workflow_module, "should_include_image", lambda *args, **kwargs: False)
+
+    altered = (
+        "```\n"
+        "الاسم: [[Adel Belghali]]\n"
+        "العنوان: [[Rua Luís de Camões no 9, 7960-011 Marmelar, Pedrógão, Vidigueira]]\n"
+        "آيبان: [[PT50003506490000832760029]]\n"
+        "```"
+    )
+    near_match = (
+        "```\n"
+        "الاسم: [[Adel Belghali]]\n"
+        "العنوان: [[Rua Luis de Camoes no 6, 7960-011 Marmelar, Pedrogao, Vidigueira]]\n"
+        "آيبان: [[PT50003506490000832760029]]\n"
+        "```"
+    )
+    summary = TranslationWorkflow(client=_SequenceClient([altered, near_match])).run(_config(pdf, outdir))
+
+    assert summary.success is True
+    page_text = (summary.run_dir / "pages" / "page_0001.txt").read_text(encoding="utf-8")
+    assert "\u2066[[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]\u2069" in page_text
+
+
+def test_ar_safe_identifier_span_outside_tokens_can_autowrap(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", lambda _pdf, _idx: _ordered_text_result(_source_text()))
+    monkeypatch.setattr(workflow_module, "should_include_image", lambda *args, **kwargs: False)
+
+    raw_output = (
+        "```\n"
+        "الاسم: [[Adel Belghali]]\n"
+        "العنوان: [[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]\n"
+        "آيبان: PT50003506490000832760029\n"
+        "```"
+    )
+    summary = TranslationWorkflow(client=_SequenceClient([raw_output])).run(_config(pdf, outdir))
+
+    assert summary.success is True
+    page_text = (summary.run_dir / "pages" / "page_0001.txt").read_text(encoding="utf-8")
+    assert "\u2066[[PT50003506490000832760029]]\u2069" in page_text
+
+
+def test_ar_outside_token_violation_uses_wrap_retry_prompt(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", lambda _pdf, _idx: _ordered_text_result(_source_text()))
+    monkeypatch.setattr(workflow_module, "should_include_image", lambda *args, **kwargs: False)
+
+    leaking = (
+        "```\n"
+        "الاسم: [[Adel Belghali]]\n"
+        "المرجع: Tribunal Judicial da Comarca de Beja\n"
+        "العنوان: [[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]\n"
+        "آيبان: [[PT50003506490000832760029]]\n"
+        "```"
+    )
+    corrected = (
+        "```\n"
+        "الاسم: [[Adel Belghali]]\n"
+        "المرجع: [[Tribunal Judicial da Comarca de Beja]]\n"
+        "العنوان: [[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]\n"
+        "آيبان: [[PT50003506490000832760029]]\n"
+        "```"
+    )
+    client = _SequenceClient([leaking, corrected])
+    summary = TranslationWorkflow(client=client).run(_config(pdf, outdir))
+
+    assert summary.success is True
+    assert len(client.calls) == 2
+    retry_prompt = str(client.calls[1].get("prompt_text", ""))
+    assert "CURRENT DEFECT TO FIX: Latin letters or digits still appear outside [[...]] tokens." in retry_prompt
+
+    run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
+    assert run_state["pages"]["1"]["retry_prompt_type"] == "ar_wrap_correction"
+
+
+def test_ar_failure_artifacts_capture_violation_kind_and_samples(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", lambda _pdf, _idx: _ordered_text_result(_source_text()))
+    monkeypatch.setattr(workflow_module, "should_include_image", lambda *args, **kwargs: False)
+
+    leaking = (
+        "```\n"
+        "الاسم: [[Adel Belghali]]\n"
+        "المرجع: Tribunal Judicial da Comarca de Beja\n"
+        "العنوان: [[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]\n"
+        "آيبان: [[PT50003506490000832760029]]\n"
+        "```"
+    )
+    summary = TranslationWorkflow(client=_SequenceClient([leaking, leaking])).run(_config(pdf, outdir))
+
+    assert summary.success is False
+    run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
+    page = run_state["pages"]["1"]
+    assert page["ar_violation_kind"] == "latin_or_digits_outside_wrapped_tokens"
+    assert page["validator_defect_reason"] == "Latin letters or digits found outside wrapped tokens."
+    assert page["ar_violation_samples"] == ["المرجع: Tribunal Judicial da Comarca de Beja"]
+
+    run_summary = json.loads((summary.run_dir / "run_summary.json").read_text(encoding="utf-8"))
+    failure_context = run_summary["failure_context"]
+    assert failure_context["ar_violation_kind"] == "latin_or_digits_outside_wrapped_tokens"
+    assert failure_context["validator_defect_reason"] == "Latin letters or digits found outside wrapped tokens."
+    assert failure_context["ar_violation_samples"] == ["المرجع: Tribunal Judicial da Comarca de Beja"]
+
+
+def test_ar_language_leakage_inside_protected_tokens_is_non_fatal(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", lambda _pdf, _idx: _ordered_text_result(_source_text()))
+    monkeypatch.setattr(workflow_module, "should_include_image", lambda *args, **kwargs: False)
+
+    raw_output = (
+        "```\n"
+        "الاسم: [[Adel Belghali]]\n"
+        "العنوان: [[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]\n"
+        "آيبان: [[PT50003506490000832760029]]\n"
+        "المرجع: [[Tribunal Judicial da Comarca de Beja]]\n"
+        "```"
+    )
+    summary = TranslationWorkflow(client=_SequenceClient([raw_output])).run(_config(pdf, outdir))
+
+    assert summary.success is True
+
+
+def test_ar_language_leakage_outside_protected_tokens_uses_language_retry(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", lambda _pdf, _idx: _ordered_text_result(_source_text()))
+    monkeypatch.setattr(workflow_module, "should_include_image", lambda *args, **kwargs: False)
+
+    leaking = (
+        "```\n"
+        "الاسم: [[Adel Belghali]]\n"
+        "العنوان: [[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]\n"
+        "آيبان: [[PT50003506490000832760029]]\n"
+        "ãõç\n"
+        "```"
+    )
+    corrected = (
+        "```\n"
+        "الاسم: [[Adel Belghali]]\n"
+        "العنوان: [[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]\n"
+        "آيبان: [[PT50003506490000832760029]]\n"
+        "```"
+    )
+    client = _SequenceClient([leaking, corrected])
+    summary = TranslationWorkflow(client=client).run(_config(pdf, outdir))
+
+    assert summary.success is True
+    assert len(client.calls) == 2
+    retry_prompt = str(client.calls[1].get("prompt_text", ""))
+    assert "LANGUAGE CORRECTION ONLY" in retry_prompt
+    assert "Portuguese is allowed only inside verbatim protected [[...]] tokens." in retry_prompt
+
+    run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
+    assert run_state["pages"]["1"]["retry_prompt_type"] == "language_correction"
+
 
 def test_ar_month_date_conversion_is_not_a_token_lock_violation(tmp_path: Path, monkeypatch) -> None:
     pdf = tmp_path / "sample.pdf"
@@ -224,3 +473,41 @@ def test_ar_month_date_conversion_is_not_a_token_lock_violation(tmp_path: Path, 
     events = _event_rows(summary.run_dir / "run_events.jsonl")
     event_types = [str(item.get("event_type", "")) for item in events]
     assert "ar_locked_token_violation" not in event_types
+
+
+def test_ar_bracketed_reference_retry_prompt_uses_clean_token_inventory(tmp_path: Path, monkeypatch) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(
+        workflow_module,
+        "extract_ordered_page_text",
+        lambda _pdf, _idx: _ordered_text_result(_source_text_with_bracketed_reference()),
+    )
+    monkeypatch.setattr(workflow_module, "should_include_image", lambda *args, **kwargs: False)
+
+    leaking = (
+        "```\n"
+        "الملف: [[21/25.0FBPTM]] [\u2066[[36231063]]\u2069]\n"
+        "المرجع: Tribunal Judicial da Comarca de Beja\n"
+        "```"
+    )
+    corrected = (
+        "```\n"
+        "الملف: [[21/25.0FBPTM]] [\u2066[[36231063]]\u2069]\n"
+        "المرجع: [[Tribunal Judicial da Comarca de Beja]]\n"
+        "```"
+    )
+    client = _SequenceClient([leaking, corrected])
+    summary = TranslationWorkflow(client=client).run(_config(pdf, outdir))
+
+    assert summary.success is True
+    assert len(client.calls) == 2
+    retry_prompt = str(client.calls[1].get("prompt_text", ""))
+    assert "[[36231063]]" in retry_prompt
+    assert "[[[36231063]]]" not in retry_prompt

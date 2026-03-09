@@ -16,6 +16,360 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-09 — chore/converge-main-approved-base (working tree)
+- Files changed:
+  - docs/assistant/runtime/CANONICAL_BUILD.json
+  - docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+- Key symbols / entrypoints changed:
+  - docs/assistant/runtime/CANONICAL_BUILD.json::canonical_branch
+  - docs/assistant/runtime/CANONICAL_BUILD.json::approved_base_branch
+  - docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md::Open The Saved Workspace
+- User-visible behavior:
+  - Live governance now retargets the canonical branch and approved base branch back to `main` on the convergence branch.
+  - The worktree workspace guide now reflects the current local state: one default main worktree, with extra side worktrees created only intentionally.
+  - Historical notes about `feat/ai-docs-bootstrap` remain as history instead of being rewritten.
+- Tests:
+  - `PYTHONPATH=src /mnt/c/Users/FA507/.codex/legalpdf_translate/.venv311/Scripts/python.exe -m pytest -q` -> `785 passed`
+  - `python3 -m compileall src tests tooling` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
+## 2026-03-08 — feat/ai-docs-bootstrap (working tree)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/manifest.json
+  - docs/assistant/ISSUE_MEMORY.md
+  - docs/assistant/ISSUE_MEMORY.json
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/LOCAL_ENV_PROFILE.local.md
+  - docs/assistant/LOCAL_CAPABILITIES.md
+  - docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md
+  - docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+- Key symbols / entrypoints changed:
+  - docs/assistant/manifest.json::harness_isolation_and_diagnostics_workflow
+  - docs/assistant/manifest.json::test_live_state_isolation_policy
+  - docs/assistant/manifest.json::multi_surface_diagnostics_packet_policy
+  - tooling/validate_agent_docs.dart::_validateHarnessIsolationAndDiagnostics
+- User-visible behavior:
+  - Project docs now route host-bound listener isolation and multi-surface diagnostics through a dedicated workflow instead of leaving the rules implicit in thread history.
+  - Host-integration preflight now documents listener ownership as part of readiness instead of treating any listener on the expected port as healthy.
+  - Issue memory now captures repeated test/live-state contamination and fragmented diagnostics as durable project lessons that can inform future docs sync and UCBS work.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+  - `dart run test/tooling/validate_workspace_hygiene_test.dart` -> PASS
+
+## 2026-03-07 — feat/gmail-intake-batch-reply (working tree)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/ISSUE_MEMORY.md
+  - docs/assistant/ISSUE_MEMORY.json
+  - docs/assistant/LOCAL_CAPABILITIES.md
+  - docs/assistant/LOCAL_ENV_PROFILE.local.md
+  - docs/assistant/exec_plans/completed/2026-03-07_gmail_intake_reply_batch_workflow.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md
+  - extensions/gmail_intake/README.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::Gmail Intake Batch Workflow
+  - docs/assistant/APP_KNOWLEDGE.md::Current-Truth Note
+  - docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md::Same-Host Validation Rule
+  - docs/assistant/ISSUE_MEMORY.md::workflow-windows-gog-host-auth-preflight
+- User-visible behavior:
+  - Assistant docs now describe the shipped Windows-only Gmail intake flow from exact-message handoff through supported-attachment review, sequential Save-to-Job-Log confirmation, one honorarios DOCX, and one threaded reply draft.
+  - User-facing docs now explain the fail-closed cases for Gmail intake, including bridge/token problems, ambiguous Gmail DOM state, no supported attachments, Save-to-Job-Log cancellation, metadata mismatch, and skipped/failed honorarios finalization.
+  - Same-host Gmail preflight docs were tightened because of the new `workflow-windows-gog-host-auth-preflight` issue-memory entry, so WSL keyring-prompt blocks are now documented as `unavailable` host/auth failures instead of passed Windows smoke.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+  - `dart run test/tooling/validate_workspace_hygiene_test.dart` -> PASS
+
+## 2026-03-08 — feat/gmail-intake-batch-reply (e204376)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md
+  - docs/assistant/exec_plans/completed/2026-03-08_gmail_attachment_review_preview_start_page.md
+  - docs/assistant/exec_plans/completed/2026-03-08_gmail_attachment_preview_lazy_scroll.md
+  - docs/assistant/exec_plans/completed/2026-03-08_gmail_preview_smoothness_prepare_handoff.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::Gmail Intake Batch Workflow
+  - APP_KNOWLEDGE.md::gmail_batch_context
+  - docs/assistant/features/APP_USER_GUIDE.md::Gmail Intake Batch Replies
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md::Gmail Intake Batch Replies
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md::gmail_batch_context
+- User-visible behavior:
+  - Gmail attachment review now supports per-attachment start-page selection with an in-app preview before preparation begins.
+  - PDF preview now uses a lazy continuous-scroll viewer with `Use this page as start`, while image attachments remain fixed to page `1`.
+  - `Prepare selected attachments` now reuses previously previewed files when possible instead of redownloading them.
+  - Gmail run/report context now documents the selected start page for each translated attachment.
+- Tests:
+  - `"/mnt/c/Users/FA507/.codex/legalpdf_translate/.venv311/Scripts/python.exe" -m compileall src tests` -> PASS
+  - `"/mnt/c/Users/FA507/.codex/legalpdf_translate/.venv311/Scripts/python.exe" -m pytest -q tests/test_qt_app_state.py tests/test_gmail_batch.py tests/test_qt_render_review.py tests/test_run_report.py tests/test_checkpoint_resume.py tests/test_translation_diagnostics.py tests/test_translation_report.py` -> `177 passed`
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+## 2026-03-07 — feat/ai-docs-bootstrap (working tree)
+- Files changed:
+  - agent.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/exec_plans/PLANS.md
+  - docs/assistant/runtime/CANONICAL_BUILD.json
+  - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
+  - docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md
+  - docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md
+  - docs/assistant/exec_plans/active/2026-03-07_accepted_feature_promotion_canonical_enforcement.md
+  - src/legalpdf_translate/build_identity.py
+  - tooling/launch_qt_build.py
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+  - tests/test_launch_qt_build.py
+  - tests/test_qt_app_state.py
+- Key symbols / entrypoints changed:
+  - docs/assistant/runtime/CANONICAL_BUILD.json::approved_base_branch
+  - docs/assistant/runtime/CANONICAL_BUILD.json::approved_base_head_floor
+  - src/legalpdf_translate.build_identity.RuntimeBuildIdentity::summary_text
+  - tooling/launch_qt_build.py::_build_identity_packet
+  - tooling/launch_qt_build.py::main
+  - tooling/validate_agent_docs.dart::_validateApprovedBasePromotionDiscipline
+- User-visible behavior:
+  - The canonical build policy now records the approved base branch/floor explicitly instead of relying only on canonical-worktree memory.
+  - Noncanonical side-branch launches are now blocked entirely if the branch does not contain the approved-base floor, even when an override is requested.
+  - Governance docs now make merge-immediately-after-acceptance the default lifecycle instead of leaving accepted features stranded on side branches.
+- Tests:
+  - `./.venv311/Scripts/python.exe -m pytest -q tests/test_launch_qt_build.py tests/test_qt_main_smoke.py tests/test_qt_app_state.py` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
+## 2026-03-07 — feat/ai-docs-bootstrap (working tree)
+- Files changed:
+  - agent.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/exec_plans/PLANS.md
+  - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
+  - docs/assistant/exec_plans/active/2026-03-07_commit_push_semantics_hardening.md
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+- Key symbols / entrypoints changed:
+  - tooling/validate_agent_docs.dart::_validateCommitPushShorthandDiscipline
+- User-visible behavior:
+  - Governance docs now lock shorthand git semantics so bare `commit` means full pending-tree triage with logical grouped commits, and bare `push` means Push+PR+Merge+Cleanup by default.
+  - Commit flows now explicitly require an immediate push suggestion after commit unless the user narrowed scope.
+  - Docs maintenance and ExecPlan rules now treat ambiguous commit/push shorthand as a durable workflow concern that must be enforced by validators.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+
+## 2026-03-07 — feat/ai-docs-bootstrap (working tree)
+- Files changed:
+  - agent.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/exec_plans/PLANS.md
+  - docs/assistant/runtime/CANONICAL_BUILD.json
+  - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md
+  - docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md
+  - docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md
+  - docs/assistant/exec_plans/active/2026-03-07_qt_build_identity_hardening.md
+  - src/legalpdf_translate/build_identity.py
+  - src/legalpdf_translate/qt_app.py
+  - src/legalpdf_translate/qt_gui/app_window.py
+  - src/legalpdf_translate/qt_gui/dialogs.py
+  - tooling/launch_qt_build.py
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+  - tests/test_launch_qt_build.py
+  - tests/test_qt_app_state.py
+  - tests/test_qt_main_smoke.py
+- Key symbols / entrypoints changed:
+  - src/legalpdf_translate/build_identity.py::detect_runtime_build_identity
+  - src/legalpdf_translate.build_identity.RuntimeBuildIdentity::window_title
+  - src/legalpdf_translate.qt_gui.dialogs.QtSettingsDialog::_refresh_build_identity
+  - tooling/launch_qt_build.py::build_identity_packet
+  - tooling/launch_qt_build.py::main
+  - tooling/validate_agent_docs.dart::_validateQtLaunchIdentityDiscipline
+- User-visible behavior:
+  - Existing baseline-discipline docs are now reinforced with a canonical runnable-build policy in `docs/assistant/runtime/CANONICAL_BUILD.json` and a canonical Qt launch helper for ambiguous multi-worktree GUI situations.
+  - GUI handoffs must now include worktree path, branch, HEAD SHA, canonical vs noncanonical status, and distinguishing feature labels from the helper-emitted build identity packet.
+  - Noncanonical builds now identify themselves in the app via the window title suffix and the Settings diagnostics “Build under test” summary.
+  - The durable fix for wrong-window launches is canonical-build enforcement plus helper-emitted build identity, not ad hoc launch narration.
+- Tests:
+  - `./.venv311/Scripts/python.exe -m compileall src tests tooling` -> PASS
+  - `./.venv311/Scripts/python.exe -m pytest -q tests/test_launch_qt_build.py` -> PASS
+  - `./.venv311/Scripts/python.exe -m pytest -q tests/test_qt_main_smoke.py tests/test_qt_app_state.py` -> PASS
+  - `./.venv311/Scripts/python.exe -m pytest -q` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
+## 2026-03-07 — feat/ocr-runtime-stabilization-20260306 (working tree)
+- Files changed:
+  - agent.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/manifest.json
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/exec_plans/PLANS.md
+  - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
+  - docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md
+  - docs/assistant/exec_plans/active/2026-03-07_worktree_baseline_docs_sync.md
+- Key symbols / entrypoints changed:
+  - docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md::Handoff Checklist
+  - docs/assistant/exec_plans/PLANS.md::Required Plan Template
+  - docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md::Handoff Checklist
+  - docs/assistant/manifest.json::worktree_baseline_discipline_workflow
+- User-visible behavior:
+  - Governance docs now require parallel work to start from the latest approved baseline branch/SHA instead of an older convenient worktree base.
+  - Active ExecPlans must now record worktree provenance and, for GUI work, the exact build under test.
+  - Docs routing now includes a dedicated workflow for preventing mixed-up branches/worktrees and ambiguous app windows.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
+## 2026-03-06 — feat/ocr-runtime-stabilization-20260306 (working tree)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DB_DRIFT_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/QT_UI_KNOWLEDGE.md
+  - docs/assistant/QT_UI_PLAYBOOK.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md
+  - docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md
+  - docs/assistant/exec_plans/active/2026-03-06_ocr_runtime_stabilization_auto1.md
+  - docs/assistant/exec_plans/active/2026-03-06_safe_ocr_defaults_no_wheel.md
+  - docs/assistant/exec_plans/active/2026-03-06_joblog_output_word_count_fix.md
+- Key symbols / entrypoints changed:
+  - src/legalpdf_translate/openai_client.py::OpenAIResponsesClient.call
+  - src/legalpdf_translate/workflow.py::failure_context
+  - src/legalpdf_translate/qt_gui/app_window.py::_show_ocr_heavy_runtime_warning
+  - src/legalpdf_translate/qt_gui/guarded_inputs.py::NoWheelComboBox
+  - src/legalpdf_translate/qt_gui/guarded_inputs.py::NoWheelSpinBox
+  - src/legalpdf_translate/qt_gui/dialogs.py::count_words_from_output_artifacts
+- User-visible behavior:
+  - OCR-heavy runs now use bounded request deadlines and a bounded cooperative `Cancel and wait` flow instead of effectively unbounded waiting.
+  - The GUI now offers a non-persistent `Apply safe OCR profile` action for risky OCR-heavy runs and `Switch to fixed high` for the EN/FR xhigh cost/time warning.
+  - Run-critical selectors now ignore accidental mouse-wheel changes when closed.
+  - Save to Job Log now treats `Words` as translated output words using DOCX-first precedence, which fixes `Words: 0` on successful OCR-heavy runs.
+- Tests:
+  - `./.venv311/Scripts/python.exe -m pytest -q` -> `556 passed`
+  - `./.venv311/Scripts/python.exe -m compileall src tests` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
+## 2026-03-06 — feat/ocr-runtime-stabilization-20260306 (working tree)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/QT_UI_PLAYBOOK.md
+  - docs/assistant/manifest.json
+  - docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md
+  - docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
+  - docs/assistant/exec_plans/active/2026-03-06_workflow_hardening_ui_ocr.md
+  - tooling/qt_render_review.py
+  - tooling/ocr_translation_probe.py
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+  - tests/test_qt_render_review.py
+  - tests/test_ocr_translation_probe.py
+- Key symbols / entrypoints changed:
+  - tooling/qt_render_review.py::render_profiles
+  - tooling/qt_render_review.py::apply_reference_sample
+  - tooling/ocr_translation_probe.py::collect_probe_packet
+  - tooling/validate_agent_docs.dart::_validateWorkflowDocs
+- User-visible behavior:
+  - Assistant workflow docs now include a reusable reference-locked Qt UI workflow and a reusable OCR-heavy translation triage workflow.
+  - The docs/index/manifest routing now makes those workflows and their helper tools discoverable instead of leaving the lessons only in historical ExecPlans.
+  - Internal helper tooling now supports deterministic Qt wide/medium/narrow render review and small-slice OCR-heavy probe packets for urgent document triage.
+- Tests:
+  - `./.venv311/Scripts/python.exe -m pytest -q tests/test_qt_render_review.py tests/test_ocr_translation_probe.py tests/test_qt_app_state.py tests/test_workflow_ocr_availability.py` -> `32 passed`
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> `29 cases passed`
+  - `./.venv311/Scripts/python.exe -m compileall src tests tooling` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
+## 2026-03-06 — chore/import-optmax-2026-03-05 (85250eb + working tree)
+- Files changed:
+  - src/legalpdf_translate/qt_app.py
+  - src/legalpdf_translate/qt_gui/app_window.py
+  - src/legalpdf_translate/qt_gui/styles.py
+  - tests/test_qt_app_state.py
+  - tests/test_qt_main_smoke.py
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/QT_UI_KNOWLEDGE.md
+  - docs/assistant/QT_UI_PLAYBOOK.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/exec_plans/active/2026-03-05_ui_screenshot_match_rollout.md
+- Key symbols / entrypoints changed:
+  - src/legalpdf_translate/qt_app.py::run
+  - src/legalpdf_translate/qt_app.py::__main__ guard
+  - src/legalpdf_translate/qt_gui/app_window.py::QtMainWindow
+  - src/legalpdf_translate/qt_gui/app_window.py::_apply_responsive_layout
+  - src/legalpdf_translate/qt_gui/app_window.py::_refresh_lang_badge
+  - src/legalpdf_translate/qt_gui/app_window.py::_install_overflow_menu
+- User-visible behavior:
+  - The Qt desktop shell now uses the screenshot-driven dashboard layout with a left sidebar, centered hero title, setup/output cards, and bottom action rail.
+  - The GUI launch path is now documented correctly as `python -m legalpdf_translate.qt_app`, and the module can be run directly because `qt_app.py` now has a `__main__` guard.
+  - Assistant docs now reflect the real visible menu split: `...` for output/report actions, `Tools` for Review Queue and Save to Job Log.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `./.venv311/Scripts/python.exe -m compileall src tests` -> PASS
+  - `./.venv311/Scripts/python.exe -m pytest -q` -> `508 passed`
+
+## 2026-03-05 — chore/import-optmax-2026-03-05 (d29c163)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DB_DRIFT_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/QT_UI_KNOWLEDGE.md
+  - docs/assistant/audits/RELIABILITY_SIGNOFF_2026-03-05.md
+  - docs/assistant/exec_plans/active/2026-03-05_assistant_docs_sync_catchup.md
+  - docs/assistant/exec_plans/active/2026-03-05_ocr_first_stage_rollout.md
+  - docs/assistant/exec_plans/active/2026-03-05_product_workflow_benchmark_upgrade.md
+  - docs/assistant/exec_plans/active/2026-03-05_remaining_top5_stage_rollout.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md
+- Key symbols / entrypoints changed:
+  - docs-only sync for shipped features through final signoff `d29c163`
+- User-visible behavior:
+  - Synced assistant docs for cost guardrails, job-log auto-sync, quality risk/review export, review queue GUI, OCR advisor backend + GUI, queue runner + failed-only rerun, and final queue hardening/signoff.
+  - Preserved dated benchmark/audit packets as historical snapshots instead of rewriting them as current state.
+- Tests:
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+  - `./.venv311/Scripts/python.exe -m compileall src tests` -> PASS
+  - `./.venv311/Scripts/python.exe -m pytest -q` -> `497 passed`
+
 ## 2026-02-17 — fix/qt-settings-claude-guardrails (eb6f84e)
 - Files changed:
   - CLAUDE.md
@@ -480,3 +834,61 @@ Verification commands/results:
 - python -m compileall src tests -> OK
 - git diff --name-only -> pending
 - git status --short -> pending
+# 2026-03-07
+- Hardened docs-sync prompt semantics across project governance and bootstrap templates.
+- The exact prompt remains unchanged, but it is now conditional: ask it only when relevant touched-scope docs still remain unsynced.
+- If the relevant docs sync already ran during the same task/pass, the prompt should not be asked again.
+
+# 2026-03-07
+- Instantiated the bootstrap local operational layer into this project.
+- Added tracked project-local runtime/capability docs:
+  - `docs/assistant/LOCAL_ENV_PROFILE.local.md`
+  - `docs/assistant/LOCAL_CAPABILITIES.md`
+- Added `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md` so Windows-bound/local-auth integrations route through installation/auth/same-host/live-smoke preflight instead of thread memory.
+- Routed those files through `APP_KNOWLEDGE.md`, `docs/assistant/APP_KNOWLEDGE.md`, `docs/assistant/INDEX.md`, and `docs/assistant/manifest.json`.
+
+# 2026-03-07
+- Historical Gmail draft attachment reuse now prefers stored translation artifact paths before prompting the user.
+- Job Log rows gained additive artifact-path semantics:
+  - `output_docx_path`
+  - `partial_docx_path`
+- Historical honorarios Gmail draft flow now resolves translated attachments in this order:
+  1. stored final DOCX
+  2. stored partial DOCX
+  3. exact `run_id` recovery
+  4. manual picker only as a last resort
+- Legacy rows are self-healing: if one manual translated-DOCX selection is needed, that path is saved back into the row so the same row should not prompt again.
+
+# 2026-03-08
+- Ran a narrow Assistant Docs Sync for the Gmail-intake worktree after repeated same-day Gmail intake, Arabic, run-report, and draft-finalization debugging loops.
+- Added one durable observability layer: app-owned `gmail_batch_session.json` under the effective output directory, and linked it from Gmail-intake `run_summary.json` / `run_report.md` via additive `gmail_batch_context`.
+- Synced durable troubleshooting guidance for:
+  - extension self-healing and visible banner errors instead of silent no-ops
+  - visible `Gmail intake bridge unavailable` state on localhost bind conflicts
+  - Gmail batch target-language selection in the review dialog
+  - stale output-folder recovery and stale-checkpoint fail-closed behavior
+  - honorários auto-rename on save collisions
+  - duplicate/contaminated Gmail draft attachment blocking
+  - Arabic failure fields `validator_defect_reason`, `ar_violation_kind`, and sample snippets
+- Tightened the documented Gmail support packet order so future triage starts from:
+  1. Gmail banner text/screenshot
+  2. app window title + visible bridge status
+  3. `run_report.md` / `run_summary.json`
+  4. `gmail_batch_session.json`
+- Updated `ISSUE_MEMORY.md` / `ISSUE_MEMORY.json` because of two new repeated issue-memory entries:
+  - pytest/live Gmail bridge cross-contamination through real `%APPDATA%` and port `8765`
+  - fragmented Gmail-intake diagnostics across extension/app/run/finalization surfaces
+
+# 2026-03-08
+- Ran a scoped Assistant Docs Sync for the shipped Arabic DOCX review-gate feature and its durable issue-memory follow-up.
+- Synced current-truth and user-facing docs for:
+  - the Arabic Word review gate before `Save to Job Log` in both normal runs and Arabic Gmail batch items
+  - `Align Right + Save`, save-detection auto-resume, and manual `Continue now` / `Continue without changes` fallback behavior
+  - the `Open translated DOCX` action inside `Save to Job Log`
+  - Windows Word + PowerShell COM plus same-host Windows validation as the runtime contract for this feature
+- Updated `ISSUE_MEMORY.md` / `ISSUE_MEMORY.json` because of two new issue classes:
+  - repeated Arabic DOCX right-alignment back-and-forth where multiple OOXML-only fixes failed or regressed mixed Arabic/LTR rendering before the Word review gate became the accepted mitigation
+  - a reverted Gmail post-save finalization experiment that made the flow worse and established a higher validation bar for future changes in that area
+- Superseding note:
+  - the older historical Arabic writer-only refresh notes from `2026-02-13` should not be treated as the current supported mitigation for user-facing Arabic right alignment in Word
+  - the current supported mitigation is the Arabic Word review gate plus manual-or-assisted save before continuation

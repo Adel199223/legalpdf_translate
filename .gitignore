@@ -3,6 +3,7 @@
 
 # virtualenv / python cache
 .venv/
+.venv311/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -16,6 +17,7 @@ build/*
 # app run outputs
 *_run/
 *.docx
+tmp/
 
 # assistant scratch docs (local archive only)
 docs/assistant/_scratch/

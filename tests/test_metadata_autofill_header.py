@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from legalpdf_translate.metadata_autofill import extract_from_header_text
+from pathlib import Path
+
+import legalpdf_translate.metadata_autofill as metadata_autofill
+from legalpdf_translate.metadata_autofill import (
+    MetadataAutofillConfig,
+    choose_court_email_suggestion,
+    extract_from_header_text,
+    extract_pdf_header_metadata_priority_pages,
+    rank_court_email_suggestions,
+)
 
 
 def test_extract_header_metadata_with_court_pattern_and_case_number() -> None:
@@ -35,3 +44,136 @@ def test_extract_header_city_from_comarca_heuristic() -> None:
     assert "Ministério Público" in suggestion.case_entity
     assert suggestion.case_city == "Serpa"
     assert suggestion.case_number == "69/26.8PBBBJA"
+
+
+def test_extract_header_court_email_prefers_court_nearest_match() -> None:
+    header = """
+    contacto-geral@example.org
+    Tribunal Judicial da Comarca de Beja
+    Juízo Local Cível de Beja
+    secretaria.beja@tribunais.org.pt
+    Processo n.º 140/22.5JAFAR
+    """
+    suggestion = extract_from_header_text(
+        header,
+        vocab_cities=["Beja"],
+        ai_enabled=False,
+    )
+    assert suggestion.court_email == "secretaria.beja@tribunais.org.pt"
+
+
+def test_extract_header_court_email_falls_back_to_first_email_when_no_court_nearby() -> None:
+    header = """
+    contacto.geral@example.org
+    Processo n.º 140/22.5JAFAR
+    Documento processado por terceiros
+    """
+    suggestion = extract_from_header_text(
+        header,
+        vocab_cities=["Beja"],
+        ai_enabled=False,
+    )
+    assert suggestion.court_email == "contacto.geral@example.org"
+
+
+def test_priority_page_metadata_falls_back_to_second_page_email(monkeypatch) -> None:
+    def _fake_header_text(_pdf_path: Path, *, page_number: int, config: MetadataAutofillConfig | None = None) -> str:
+        del config
+        if page_number == 1:
+            return "Processo n.º 140/22.5JAFAR"
+        return """
+        Tribunal Judicial da Comarca de Beja
+        Juízo Local Criminal de Beja
+        expediente.beja@tribunais.org.pt
+        """
+
+    monkeypatch.setattr(
+        "legalpdf_translate.metadata_autofill.extract_header_text_from_pdf_page_with_ocr_fallback",
+        _fake_header_text,
+    )
+
+    suggestion = extract_pdf_header_metadata_priority_pages(
+        Path("sample.pdf"),
+        vocab_cities=["Beja"],
+        config=MetadataAutofillConfig(metadata_ai_enabled=False),
+    )
+
+    assert suggestion.case_number == "140/22.5JAFAR"
+    assert suggestion.case_entity == "Juízo Local Criminal de Beja"
+    assert suggestion.case_city == "Beja"
+    assert suggestion.court_email == "expediente.beja@tribunais.org.pt"
+
+
+def test_rank_court_email_suggestions_prefers_ministerio_publico_curated_match() -> None:
+    ranked = rank_court_email_suggestions(
+        exact_email=None,
+        case_entity="Ministério Público - Família e Menores",
+        case_city="Beja",
+        vocab_court_emails=[
+            "beja.judicial@tribunais.org.pt",
+            "beja.ministeriopublico@tribunais.org.pt",
+            "beja.familia.ministeriopublico@tribunais.org.pt",
+        ],
+    )
+    assert ranked[0] == "beja.familia.ministeriopublico@tribunais.org.pt"
+    assert ranked[1] == "beja.ministeriopublico@tribunais.org.pt"
+
+
+def test_rank_court_email_suggestions_uses_alias_slug_for_reguengos_de_monsaraz() -> None:
+    ranked = rank_court_email_suggestions(
+        exact_email=None,
+        case_entity="Tribunal Judicial",
+        case_city="Reguengos de Monsaraz",
+        vocab_court_emails=[
+            "beja.judicial@tribunais.org.pt",
+            "rmonsaraz.judicial@tribunais.org.pt",
+        ],
+    )
+    assert ranked[0] == "rmonsaraz.judicial@tribunais.org.pt"
+
+
+def test_choose_court_email_suggestion_prefers_exact_email_when_present() -> None:
+    selected = choose_court_email_suggestion(
+        exact_email="header.found@example.org",
+        case_entity="Tribunal Judicial",
+        case_city="Beja",
+        vocab_court_emails=["beja.judicial@tribunais.org.pt"],
+    )
+    assert selected == "header.found@example.org"
+
+
+def test_resolve_api_client_uses_bounded_retry_and_timeout(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeOpenAI:
+        def __init__(
+            self,
+            *,
+            api_key: str,
+            base_url: str | None = None,
+            max_retries: int = 99,
+            timeout: float | None = None,
+        ) -> None:
+            captured["api_key"] = api_key
+            captured["base_url"] = base_url
+            captured["max_retries"] = max_retries
+            captured["timeout"] = timeout
+
+    monkeypatch.setattr(metadata_autofill, "OpenAI", _FakeOpenAI)
+    monkeypatch.setattr(metadata_autofill, "get_ocr_key", lambda: "stored-key")
+
+    client = metadata_autofill._resolve_api_client(
+        MetadataAutofillConfig(
+            metadata_ai_enabled=True,
+            ocr_api_base_url="https://example.invalid/v1",
+            metadata_ai_timeout_seconds=120.0,
+        )
+    )
+
+    assert client is not None
+    assert captured == {
+        "api_key": "stored-key",
+        "base_url": "https://example.invalid/v1",
+        "max_retries": 0,
+        "timeout": 120.0,
+    }

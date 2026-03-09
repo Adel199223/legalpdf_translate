@@ -10,6 +10,7 @@ class _FakeLineEdit:
     def __init__(self, text: str = "") -> None:
         self._text = text
         self._echo = dialogs.QLineEdit.EchoMode.Password
+        self._placeholder = ""
 
     def text(self) -> str:
         return self._text
@@ -25,6 +26,12 @@ class _FakeLineEdit:
 
     def setEchoMode(self, mode) -> None:  # type: ignore[no-untyped-def]
         self._echo = mode
+
+    def setPlaceholderText(self, value: str) -> None:
+        self._placeholder = value
+
+    def placeholderText(self) -> str:
+        return self._placeholder
 
 
 class _FakeButton:
@@ -45,6 +52,14 @@ class _FakeLabel:
 
     def setText(self, text: str) -> None:
         self.text = text
+
+
+class _FakeCombo:
+    def __init__(self, value: str) -> None:
+        self._value = value
+
+    def currentText(self) -> str:
+        return self._value
 
 
 def test_refresh_key_status_enables_show_button_when_key_exists(monkeypatch) -> None:
@@ -115,3 +130,22 @@ def test_clear_openai_key_resets_mask_and_refreshes(monkeypatch) -> None:
     assert fake.openai_key_edit.echoMode() == dialogs.QLineEdit.EchoMode.Password
     assert fake.openai_toggle_btn.text == "Show"
     assert calls["refresh"] == 1
+
+
+def test_refresh_provider_controls_uses_selected_provider_defaults(monkeypatch) -> None:
+    monkeypatch.setattr(dialogs, "get_openai_key", lambda: "stored-openai")
+    monkeypatch.setattr(dialogs, "get_ocr_key", lambda: "stored-ocr")
+
+    fake = SimpleNamespace(
+        ocr_provider_combo=_FakeCombo("gemini"),
+        ocr_model_edit=_FakeLineEdit(""),
+        ocr_env_edit=_FakeLineEdit(""),
+        ocr_base_url_edit=_FakeLineEdit(""),
+        provider_summary_label=_FakeLabel(),
+    )
+
+    QtSettingsDialog._refresh_provider_controls(fake)
+
+    assert fake.ocr_model_edit.placeholderText() == "gemini-3.1-flash-lite-preview"
+    assert fake.ocr_env_edit.placeholderText() == "GEMINI_API_KEY"
+    assert "OCR provider: gemini" in fake.provider_summary_label.text

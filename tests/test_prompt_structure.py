@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from legalpdf_translate.glossary import GlossaryEntry, format_glossary_for_prompt
 from legalpdf_translate.prompt_builder import (
+    build_ar_token_retry_prompt,
     build_language_retry_prompt,
     build_page_prompt,
     build_retry_prompt,
@@ -181,6 +182,22 @@ def test_retry_prompts_preserve_prior_output_verbatim() -> None:
         end = lines.index("<<<END PRIOR OUTPUT>>>")
         inner = "\n".join(lines[begin + 1 : end])
         assert inner == prior
+
+
+def test_ar_token_retry_prompt_preserves_prior_output_and_lists_tokens_in_order() -> None:
+    prior = "Line 1\nLine 2"
+    prompt = build_ar_token_retry_prompt(prior, ["First Token", "Second Token", "Second Token"])
+    lines = prompt.splitlines()
+    tokens_begin = lines.index("<<<BEGIN LOCKED TOKENS>>>")
+    tokens_end = lines.index("<<<END LOCKED TOKENS>>>")
+    assert lines[tokens_begin + 1 : tokens_end] == [
+        "1. [[First Token]]",
+        "2. [[Second Token]]",
+        "3. [[Second Token]]",
+    ]
+    begin = lines.index("<<<BEGIN PRIOR OUTPUT>>>")
+    end = lines.index("<<<END PRIOR OUTPUT>>>")
+    assert "\n".join(lines[begin + 1 : end]) == prior
 
 
 # ---------------------------------------------------------------------------
