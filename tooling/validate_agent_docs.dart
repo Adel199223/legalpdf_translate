@@ -2208,7 +2208,8 @@ void _validateProjectHarnessAndRoadmapGovernance(
         ),
       );
     } else if (_isGitRepo(rootPath) &&
-        !_gitBranchExists(rootPath, branchName.trim())) {
+        !_gitBranchExists(rootPath, branchName.trim()) &&
+        !_sessionResumeBranchAllowedWithoutRef(rootPath, branchName.trim())) {
       issues.add(
         ValidationIssue(
           'AD046',
@@ -2323,6 +2324,85 @@ bool _gitBranchExists(String rootPath, String branchName) {
     }
   }
   return false;
+}
+
+bool _sessionResumeBranchAllowedWithoutRef(String rootPath, String branchName) {
+  final Set<String> allowedBranches = <String>{};
+
+  final Map<String, dynamic>? canonicalBuild = _loadCanonicalBuildConfig(
+    rootPath,
+  );
+  if (canonicalBuild != null) {
+    for (final String key in <String>[
+      'canonical_branch',
+      'approved_base_branch',
+    ]) {
+      final String value = (canonicalBuild[key] ?? '').toString().trim();
+      if (value.isNotEmpty) {
+        allowedBranches.add(value);
+      }
+    }
+  }
+
+  for (final String key in <String>[
+    'GITHUB_HEAD_REF',
+    'GITHUB_REF_NAME',
+    'GITHUB_BASE_REF',
+  ]) {
+    final String value = (Platform.environment[key] ?? '').trim();
+    if (value.isNotEmpty) {
+      allowedBranches.add(value);
+    }
+  }
+
+  final String? currentBranch = _gitCurrentBranchName(rootPath);
+  if (currentBranch != null &&
+      currentBranch.isNotEmpty &&
+      currentBranch != 'HEAD') {
+    allowedBranches.add(currentBranch);
+  }
+
+  return allowedBranches.contains(branchName);
+}
+
+Map<String, dynamic>? _loadCanonicalBuildConfig(String rootPath) {
+  final File file = File(
+    _resolvePath(rootPath, 'docs/assistant/runtime/CANONICAL_BUILD.json'),
+  );
+  if (!file.existsSync()) {
+    return null;
+  }
+  try {
+    final dynamic decoded = jsonDecode(file.readAsStringSync());
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
+String? _gitCurrentBranchName(String rootPath) {
+  try {
+    final ProcessResult result = Process.runSync('git', <String>[
+      '-C',
+      rootPath,
+      'rev-parse',
+      '--abbrev-ref',
+      'HEAD',
+    ]);
+    if (result.exitCode != 0) {
+      return null;
+    }
+    final String branchName = result.stdout.toString().trim();
+    if (branchName.isEmpty) {
+      return null;
+    }
+    return branchName;
+  } catch (_) {
+    return null;
+  }
 }
 
 void _validateHarnessIsolationAndDiagnostics(

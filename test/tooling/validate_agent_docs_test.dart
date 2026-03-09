@@ -124,6 +124,20 @@ void _runGit(String root, List<String> args) {
   }
 }
 
+String _runGitCapture(String root, List<String> args) {
+  final ProcessResult result = Process.runSync('git', <String>[
+    '-C',
+    root,
+    ...args,
+  ]);
+  if (result.exitCode != 0) {
+    throw _CaseFailure(
+      'Git command failed: git -C $root ${args.join(' ')}\n${result.stderr}',
+    );
+  }
+  return result.stdout.toString().trim();
+}
+
 void _initGitFixtureRepo(String root) {
   _runGit(root, <String>['init']);
   _runGit(root, <String>['checkout', '-b', 'main']);
@@ -1269,6 +1283,21 @@ void main() {
   }, failures);
 
   _runCase(
+    'passes when SESSION_RESUME points to canonical main in detached git repo',
+    () {
+      final String root = _fixtureRoot();
+      _initGitFixtureRepo(root);
+      final String sha = _runGitCapture(root, <String>['rev-parse', 'HEAD']);
+      _runGit(root, <String>['checkout', '--detach', sha]);
+      _runGit(root, <String>['branch', '-D', 'main']);
+      final List<validator.ValidationIssue> issues = validator
+          .validateAgentDocs(rootPath: root);
+      _expect(!_hasRule(issues, 'AD046'), 'Did not expect AD046');
+    },
+    failures,
+  );
+
+  _runCase(
     'fails when SESSION_RESUME points to a deleted branch in a git repo',
     () {
       final String root = _fixtureRoot();
@@ -1313,5 +1342,5 @@ void main() {
     exit(1);
   }
 
-  stdout.writeln('All agent docs validator tests passed (66 cases).');
+  stdout.writeln('All agent docs validator tests passed (67 cases).');
 }
