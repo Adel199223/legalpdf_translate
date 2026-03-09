@@ -10,10 +10,10 @@ from types import SimpleNamespace
 if os.name != "nt" and "DISPLAY" not in os.environ:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QBuffer, QIODevice
+from PySide6.QtCore import QBuffer, QIODevice, QRect
 from PySide6.QtGui import QCloseEvent, QColor, QImage, QPainter, QPen
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QBoxLayout, QDialog
+from PySide6.QtWidgets import QApplication, QBoxLayout, QComboBox, QDialog, QLineEdit, QToolButton
 
 from legalpdf_translate.gmail_batch import (
     FetchedGmailMessage,
@@ -25,6 +25,7 @@ from legalpdf_translate.gmail_batch import (
 )
 import legalpdf_translate.qt_gui.app_window as app_window_module
 import legalpdf_translate.qt_gui.dialogs as dialogs_module
+import legalpdf_translate.qt_gui.window_adaptive as window_adaptive_module
 import legalpdf_translate.qt_gui.window_controller as window_controller_module
 import legalpdf_translate.user_settings as user_settings
 from legalpdf_translate.build_identity import RuntimeBuildIdentity
@@ -35,6 +36,7 @@ from legalpdf_translate.gmail_focus import (
     load_bridge_runtime_metadata,
 )
 from legalpdf_translate.gmail_intake import InboundMailContext
+from legalpdf_translate.joblog_db import insert_job_run, open_job_log
 from legalpdf_translate.qt_gui.app_window import QtMainWindow
 from legalpdf_translate.qt_gui.dialogs import (
     GmailBatchReviewPreviewCacheTransfer,
@@ -44,6 +46,7 @@ from legalpdf_translate.qt_gui.dialogs import (
     QtArabicDocxReviewDialog,
     QtGmailAttachmentPreviewDialog,
     QtGmailBatchReviewDialog,
+    QtJobLogWindow,
     QtSaveToJobLogDialog,
     QtSettingsDialog,
     build_seed_from_run,
@@ -497,6 +500,67 @@ def test_dashboard_keeps_two_column_layout_for_medium_width() -> None:
     finally:
         window.close()
         window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_main_window_small_screen_is_bounded_and_reserves_status_width(monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        window_adaptive_module,
+        "available_screen_geometry",
+        lambda _widget: QRect(0, 0, 1000, 700),
+    )
+
+    window = QtMainWindow()
+    try:
+        window.show()
+        app.processEvents()
+        assert window.width() <= 940
+        assert window.height() <= 651
+        window._update_card_max_width(viewport_width=920)
+        app.processEvents()
+        assert window.hero_status_spacer.width() == window.header_status_label.minimumWidth()
+        assert window.header_status_label.minimumWidth() >= (
+            window.header_status_label.fontMetrics().horizontalAdvance("Idle")
+        )
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_settings_dialog_small_screen_is_bounded(monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        window_adaptive_module,
+        "available_screen_geometry",
+        lambda _widget: QRect(0, 0, 860, 640),
+    )
+
+    dialog = QtSettingsDialog(
+        parent=None,
+        settings=_base_gui_settings(),
+        apply_callback=lambda _values, _persist: None,
+        collect_debug_paths=lambda: [],
+    )
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.width() <= 705
+        assert dialog.height() <= 563
+    finally:
+        dialog.close()
+        dialog.deleteLater()
         if owns_app:
             app.quit()
 
@@ -1860,6 +1924,16 @@ class _FakeLazyPreviewDialog(QtGmailAttachmentPreviewDialog):
         )
 
 
+class _TrackingScaledPreviewDialog(_FakeLazyPreviewDialog):
+    def __init__(self, *args, **kwargs) -> None:
+        self.scaled_refresh_count = 0
+        super().__init__(*args, **kwargs)
+
+    def _refresh_scaled_preview(self) -> None:
+        self.scaled_refresh_count += 1
+        super()._refresh_scaled_preview()
+
+
 def _wait_for_preview_refresh(dialog: QtGmailAttachmentPreviewDialog) -> None:
     app = QApplication.instance()
     assert app is not None
@@ -2072,6 +2146,57 @@ def test_gmail_attachment_preview_dialog_preserves_reserved_height_after_cache_e
         first_card.clear_cached_pixmap()
         app.processEvents()
         assert first_card.preview_label.height() == rendered_height
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_gmail_attachment_preview_dialog_coalesces_scaled_preview_refresh(tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    attachment = GmailAttachmentCandidate(
+        attachment_id="att-1",
+        filename="court.pdf",
+        mime_type="application/pdf",
+        size_bytes=2048,
+        source_message_id="msg-100",
+    )
+    dialog = _TrackingScaledPreviewDialog(
+        parent=None,
+        attachment=attachment,
+        gog_path=Path("C:/gog.exe"),
+        account_email="court@example.com",
+        preview_dir=tmp_path,
+        initial_start_page=1,
+        cached_path=tmp_path / "preview.pdf",
+        known_page_count=3,
+    )
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog._on_bootstrap_loaded(
+            GmailAttachmentPreviewBootstrapResult(
+                attachment=attachment,
+                local_path=tmp_path / "preview.pdf",
+                page_count=3,
+                page_sizes=((420.0, 620.0),) * 3,
+            )
+        )
+        _wait_for_preview_refresh(dialog)
+        baseline = dialog.scaled_refresh_count
+        dialog._schedule_scaled_preview_refresh()
+        dialog._schedule_scaled_preview_refresh()
+        dialog._schedule_scaled_preview_refresh()
+        app.processEvents()
+        assert dialog.scaled_refresh_count == baseline
+        QTest.qWait(90)
+        app.processEvents()
+        assert dialog.scaled_refresh_count == baseline + 1
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -5256,14 +5381,21 @@ def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path
         _db_path=tmp_path / "joblog.sqlite3",
         _settings=settings,
         _on_saved=lambda: callback_state.__setitem__("called", True),
+        _edit_row_id=None,
         _saved=False,
         _saved_result=None,
-        _ensure_in_vocab=_ensure_in_vocab,
         accept=lambda: callback_state.__setitem__("accepted", True),
         _parse_float=None,
         _parse_optional_int=None,
         _parse_optional_float=None,
+        _collect_raw_values=None,
+        _normalized_payload=None,
         _resolved_seed_docx_path=None,
+        _refresh_vocab_widgets=lambda: None,
+        translation_date_edit=_FakeEdit("2026-03-05"),
+        lang_edit=_FakeEdit("FR"),
+        pages_edit=_FakeEdit("3"),
+        word_count_edit=_FakeEdit("1000"),
         rate_edit=_FakeEdit("0.08"),
         expected_total_edit=_FakeEdit("80"),
         amount_paid_edit=_FakeEdit("0"),
@@ -5287,6 +5419,8 @@ def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path
     fake._parse_float = QtSaveToJobLogDialog._parse_float.__get__(fake, QtSaveToJobLogDialog)
     fake._parse_optional_int = QtSaveToJobLogDialog._parse_optional_int.__get__(fake, QtSaveToJobLogDialog)
     fake._parse_optional_float = QtSaveToJobLogDialog._parse_optional_float.__get__(fake, QtSaveToJobLogDialog)
+    fake._collect_raw_values = QtSaveToJobLogDialog._collect_raw_values.__get__(fake, QtSaveToJobLogDialog)
+    fake._normalized_payload = QtSaveToJobLogDialog._normalized_payload.__get__(fake, QtSaveToJobLogDialog)
     fake._resolved_seed_docx_path = QtSaveToJobLogDialog._resolved_seed_docx_path.__get__(fake, QtSaveToJobLogDialog)
 
     QtSaveToJobLogDialog._save(fake)
@@ -5304,6 +5438,580 @@ def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path
     assert fake._saved_result is not None
     assert fake._saved_result.row_id == 42
     assert fake._saved_result.translated_docx_path == (tmp_path / "translated.docx").resolve()
+
+
+def test_save_to_joblog_dialog_edit_mode_updates_existing_row(monkeypatch, tmp_path: Path) -> None:
+    updated: dict[str, object] = {}
+    callback_state = {"called": False, "accepted": False}
+
+    class _FakeConn:
+        def close(self) -> None:
+            return
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.open_job_log",
+        lambda _path: _FakeConn(),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.update_job_run",
+        lambda _conn, *, row_id, values: updated.update({"row_id": row_id, **values}),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.insert_job_run",
+        lambda _conn, _payload: (_ for _ in ()).throw(AssertionError("insert should not be used in edit mode")),
+    )
+    monkeypatch.setattr("legalpdf_translate.qt_gui.dialogs.save_joblog_settings", lambda _payload: None)
+
+    seed = JobLogSeed(
+        completed_at="2026-03-05T10:00:00",
+        translation_date="2026-03-05",
+        job_type="Translation",
+        case_number="ABC-1",
+        court_email="court@example.pt",
+        case_entity="Case Entity",
+        case_city="Beja",
+        service_entity="Case Entity",
+        service_city="Beja",
+        service_date="2026-03-05",
+        lang="FR",
+        pages=3,
+        word_count=1000,
+        rate_per_word=0.08,
+        expected_total=80.0,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="run-1",
+        target_lang="FR",
+        total_tokens=5000,
+        estimated_api_cost=2.5,
+        quality_risk_score=0.2,
+        profit=77.5,
+        pdf_path=None,
+        output_docx=tmp_path / "translated.docx",
+    )
+
+    settings = {
+        "vocab_case_entities": [],
+        "vocab_service_entities": [],
+        "vocab_cities": [],
+        "vocab_job_types": [],
+        "vocab_court_emails": [],
+        "default_rate_per_word": {"FR": 0.08},
+        "joblog_visible_columns": [],
+        "metadata_ai_enabled": True,
+        "metadata_photo_enabled": True,
+        "service_equals_case_by_default": True,
+        "non_court_service_entities": [],
+        "ocr_mode": "auto",
+        "ocr_engine": "local_then_api",
+        "ocr_api_base_url": "",
+        "ocr_api_model": "",
+        "ocr_api_key_env_name": "DEEPSEEK_API_KEY",
+    }
+
+    fake = SimpleNamespace(
+        _seed=seed,
+        _db_path=tmp_path / "joblog.sqlite3",
+        _settings=settings,
+        _on_saved=lambda: callback_state.__setitem__("called", True),
+        _edit_row_id=77,
+        _saved=False,
+        _saved_result=None,
+        accept=lambda: callback_state.__setitem__("accepted", True),
+        _parse_float=None,
+        _parse_optional_int=None,
+        _parse_optional_float=None,
+        _collect_raw_values=None,
+        _normalized_payload=None,
+        _resolved_seed_docx_path=None,
+        _refresh_vocab_widgets=lambda: None,
+        translation_date_edit=_FakeEdit("2026-03-06"),
+        lang_edit=_FakeEdit("AR"),
+        pages_edit=_FakeEdit("7"),
+        word_count_edit=_FakeEdit("1666"),
+        rate_edit=_FakeEdit("0.09"),
+        expected_total_edit=_FakeEdit("149.94"),
+        amount_paid_edit=_FakeEdit("100"),
+        api_cost_edit=_FakeEdit("2.50"),
+        profit_edit=_FakeEdit("97.50"),
+        total_tokens_edit=_FakeEdit("5300"),
+        estimated_api_cost_edit=_FakeEdit("2.90"),
+        quality_risk_score_edit=_FakeEdit("0.44"),
+        service_date_edit=_FakeEdit("2026-03-06"),
+        case_entity_combo=_FakeCombo("Case Entity"),
+        case_city_combo=_FakeCombo("Beja"),
+        service_entity_combo=_FakeCombo("Case Entity"),
+        service_city_combo=_FakeCombo("Beja"),
+        service_same_check=_FakeCheck(False),
+        job_type_combo=_FakeCombo("Translation"),
+        case_number_edit=_FakeEdit("XYZ-2"),
+        court_email_combo=_FakeCombo("history@example.pt"),
+        run_id_edit=_FakeEdit("run-edited"),
+        target_lang_edit=_FakeEdit("AR"),
+    )
+    fake._parse_float = QtSaveToJobLogDialog._parse_float.__get__(fake, QtSaveToJobLogDialog)
+    fake._parse_optional_int = QtSaveToJobLogDialog._parse_optional_int.__get__(fake, QtSaveToJobLogDialog)
+    fake._parse_optional_float = QtSaveToJobLogDialog._parse_optional_float.__get__(fake, QtSaveToJobLogDialog)
+    fake._collect_raw_values = QtSaveToJobLogDialog._collect_raw_values.__get__(fake, QtSaveToJobLogDialog)
+    fake._normalized_payload = QtSaveToJobLogDialog._normalized_payload.__get__(fake, QtSaveToJobLogDialog)
+    fake._resolved_seed_docx_path = QtSaveToJobLogDialog._resolved_seed_docx_path.__get__(fake, QtSaveToJobLogDialog)
+
+    QtSaveToJobLogDialog._save(fake)
+
+    assert updated["row_id"] == 77
+    assert updated["translation_date"] == "2026-03-06"
+    assert updated["lang"] == "AR"
+    assert updated["pages"] == 7
+    assert updated["word_count"] == 1666
+    assert updated["case_number"] == "XYZ-2"
+    assert updated["run_id"] == "run-edited"
+    assert callback_state == {"called": True, "accepted": True}
+    assert fake._saved_result is not None
+    assert fake._saved_result.row_id == 77
+
+
+def test_edit_joblog_dialog_disables_header_autofill_without_pdf_path(tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    translated = tmp_path / "translated.docx"
+    translated.write_bytes(b"docx")
+    seed = JobLogSeed(
+        completed_at="2026-03-05T10:00:00",
+        translation_date="2026-03-05",
+        job_type="Interpretation",
+        case_number="ABC-1",
+        court_email="court@example.pt",
+        case_entity="Case Entity",
+        case_city="Beja",
+        service_entity="Case Entity",
+        service_city="Beja",
+        service_date="2026-03-05",
+        lang="FR",
+        pages=3,
+        word_count=1000,
+        rate_per_word=0.08,
+        expected_total=80.0,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="run-1",
+        target_lang="FR",
+        total_tokens=5000,
+        estimated_api_cost=2.5,
+        quality_risk_score=0.2,
+        profit=77.5,
+        pdf_path=None,
+        output_docx=translated,
+    )
+
+    dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed, edit_row_id=5)
+    try:
+        assert dialog.windowTitle() == "Edit Job Log Entry"
+        assert dialog.autofill_header_btn.isEnabled() is False
+        assert dialog.autofill_photo_btn.isEnabled() is True
+        assert dialog.open_translation_btn.isEnabled() is True
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_save_to_joblog_dialog_small_screen_uses_scrollable_body_and_collapsed_sections(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        window_adaptive_module,
+        "available_screen_geometry",
+        lambda _widget: QRect(0, 0, 820, 620),
+    )
+
+    seed = JobLogSeed(
+        completed_at="2026-03-05T10:00:00",
+        translation_date="2026-03-05",
+        job_type="Translation",
+        case_number="ABC-1",
+        court_email="court@example.pt",
+        case_entity="Case Entity",
+        case_city="Beja",
+        service_entity="Case Entity",
+        service_city="Beja",
+        service_date="2026-03-05",
+        lang="FR",
+        pages=3,
+        word_count=1000,
+        rate_per_word=0.08,
+        expected_total=80.0,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="run-1",
+        target_lang="FR",
+        total_tokens=5000,
+        estimated_api_cost=2.5,
+        quality_risk_score=0.2,
+        profit=77.5,
+        pdf_path=tmp_path / "sample.pdf",
+        output_docx=tmp_path / "translated.docx",
+    )
+
+    dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.width() <= 672
+        assert dialog.height() <= 545
+        assert dialog.form_scroll_area.widgetResizable() is True
+        assert dialog.metrics_section.is_expanded() is False
+        assert dialog.finance_section.is_expanded() is False
+        assert dialog.save_btn.parentWidget() is dialog.action_bar
+        assert dialog.cancel_btn.parentWidget() is dialog.action_bar
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def _joblog_row_payload(
+    index: int = 0,
+    *,
+    completed_at: str | None = None,
+    translation_date: str | None = None,
+    case_number: str | None = None,
+    lang: str = "AR",
+    target_lang: str | None = None,
+) -> dict[str, object]:
+    day = index + 6
+    resolved_translation_date = translation_date or f"2026-03-{day:02d}"
+    return {
+        "completed_at": completed_at or f"{resolved_translation_date}T16:58:34",
+        "translation_date": resolved_translation_date,
+        "job_type": "Translation",
+        "case_number": case_number or f"case-{index}",
+        "court_email": "beja.judicial@tribunais.org.pt",
+        "case_entity": "Juizo Local Criminal de Beja",
+        "case_city": "Beja",
+        "service_entity": "Juizo Local Criminal de Beja",
+        "service_city": "Beja",
+        "service_date": resolved_translation_date,
+        "lang": lang,
+        "target_lang": target_lang or lang,
+        "run_id": f"20260306_16583{index}",
+        "pages": 7,
+        "word_count": 1666,
+        "total_tokens": 57126,
+        "rate_per_word": 0.09,
+        "expected_total": 149.94,
+        "amount_paid": 0.0,
+        "api_cost": 0.56,
+        "estimated_api_cost": 0.56,
+        "quality_risk_score": 0.1754,
+        "profit": 149.38,
+    }
+
+
+def test_joblog_window_inline_edit_uses_combo_and_text_editors_and_saves(tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        insert_job_run(conn, _joblog_row_payload(case_number="109/26.0PBBJA"))
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        window._on_table_cell_double_clicked(0, window._table_column_index("job_type"))
+        job_type_widget = window.table.cellWidget(0, window._table_column_index("job_type"))
+        pages_widget = window.table.cellWidget(0, window._table_column_index("pages"))
+        assert isinstance(job_type_widget, QComboBox)
+        assert isinstance(pages_widget, QLineEdit)
+        assert window.refresh_btn.isEnabled() is False
+        assert window.columns_btn.isEnabled() is False
+
+        assert isinstance(job_type_widget, QComboBox)
+        job_type_widget.setCurrentText("Interpretation")
+        assert isinstance(pages_widget, QLineEdit)
+        pages_widget.setText("9")
+
+        case_number_widget = window.table.cellWidget(0, window._table_column_index("case_number"))
+        assert isinstance(case_number_widget, QLineEdit)
+        case_number_widget.setText("updated-case")
+
+        window._save_inline_edit(int(window._rows_data[0]["id"]))
+
+        with open_job_log(db_path) as conn:
+            row = conn.execute(
+                "SELECT job_type, pages, case_number FROM job_runs WHERE id = 1"
+            ).fetchone()
+        assert row is not None
+        assert row[0] == "Interpretation"
+        assert int(row[1]) == 9
+        assert row[2] == "updated-case"
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_joblog_window_inline_edit_cancel_restores_values_and_blocks_other_row(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        for index in range(2):
+            insert_job_run(conn, _joblog_row_payload(index=index))
+
+    messages: list[str] = []
+    monkeypatch.setattr(
+        dialogs_module.QMessageBox,
+        "information",
+        lambda _parent, _title, message: messages.append(message),
+    )
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        window._on_table_cell_double_clicked(0, window._table_column_index("case_number"))
+        case_number_widget = window.table.cellWidget(0, window._table_column_index("case_number"))
+        assert isinstance(case_number_widget, QLineEdit)
+        case_number_widget.setText("changed")
+
+        window._on_table_cell_double_clicked(1, window._table_column_index("case_number"))
+        assert messages == ["Finish editing the current row first."]
+
+        window._cancel_inline_edit(int(window._rows_data[0]["id"]))
+        restored_item = window.table.item(0, window._table_column_index("case_number"))
+        assert restored_item is not None
+        assert restored_item.text() == "case-1"
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_joblog_window_edit_action_opens_historical_row_in_edit_mode(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        insert_job_run(conn, _joblog_row_payload(case_number="109/26.0PBBJA"))
+
+    captured: dict[str, object] = {}
+
+    class _FakeEditDialog:
+        def __init__(self, *, parent, db_path, seed, on_saved, allow_honorarios_export, edit_row_id) -> None:
+            captured["db_path"] = db_path
+            captured["seed"] = seed
+            captured["allow_honorarios_export"] = allow_honorarios_export
+            captured["edit_row_id"] = edit_row_id
+            captured["on_saved"] = on_saved
+
+        def exec(self) -> int:
+            captured["exec"] = True
+            return 0
+
+    monkeypatch.setattr("legalpdf_translate.qt_gui.dialogs.QtSaveToJobLogDialog", _FakeEditDialog)
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        row_id = int(window._rows_data[0]["id"])
+        window._open_edit_dialog(row_id)
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+    assert captured["db_path"] == db_path
+    assert captured["edit_row_id"] == row_id
+    assert captured["allow_honorarios_export"] is True
+    assert captured["exec"] is True
+    seed = captured["seed"]
+    assert isinstance(seed, JobLogSeed)
+    assert seed.case_number == "109/26.0PBBJA"
+    assert seed.pdf_path is None
+
+
+def test_joblog_window_action_cell_uses_icon_buttons_and_delete_removes_row(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        for index in range(2):
+            insert_job_run(conn, _joblog_row_payload(index=index))
+
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        dialogs_module.QMessageBox,
+        "question",
+        lambda _parent, _title, message, *_args, **_kwargs: (
+            prompts.append(message),
+            dialogs_module.QMessageBox.StandardButton.Yes,
+        )[1],
+    )
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        action_widget = window.table.cellWidget(0, 0)
+        assert action_widget is not None
+        buttons = action_widget.findChildren(QToolButton)
+        assert len(buttons) == 2
+        assert [button.toolTip() for button in buttons] == ["Edit row", "Delete row"]
+        assert [button.text() for button in buttons] == ["", ""]
+
+        deleted_row_id = int(window._rows_data[0]["id"])
+        window._confirm_delete_row(deleted_row_id)
+
+        with open_job_log(db_path) as conn:
+            rows = conn.execute("SELECT id FROM job_runs ORDER BY completed_at DESC, id DESC").fetchall()
+        assert [int(row[0]) for row in rows] == [1]
+        assert prompts == ["Delete this Job Log row (case-1)?"]
+        assert window.table.currentRow() == 0
+        assert int(window._rows_data[0]["id"]) == 1
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_joblog_window_delete_is_blocked_during_inline_edit_and_other_row_actions_disable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        for index in range(2):
+            insert_job_run(conn, _joblog_row_payload(index=index))
+
+    messages: list[str] = []
+    monkeypatch.setattr(
+        dialogs_module.QMessageBox,
+        "information",
+        lambda _parent, _title, message: messages.append(message),
+    )
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        window._on_table_cell_double_clicked(0, window._table_column_index("case_number"))
+        second_row_actions = window.table.cellWidget(1, 0)
+        assert second_row_actions is not None
+        buttons = second_row_actions.findChildren(QToolButton)
+        assert len(buttons) == 2
+        assert all(button.isEnabled() is False for button in buttons)
+
+        window._confirm_delete_row(int(window._rows_data[1]["id"]))
+        assert messages == ["Finish editing the current row first."]
+
+        with open_job_log(db_path) as conn:
+            count = conn.execute("SELECT COUNT(*) FROM job_runs").fetchone()
+        assert count is not None
+        assert int(count[0]) == 2
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_joblog_window_uses_scrollable_resizable_columns_and_persists_widths(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    user_settings.save_joblog_settings(
+        {
+            "joblog_visible_columns": [
+                "translation_date",
+                "case_number",
+                "court_email",
+                "service_entity",
+            ],
+            "joblog_column_widths": {
+                "case_number": 220,
+            },
+        }
+    )
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        insert_job_run(conn, _joblog_row_payload(case_number="109/26.0PBBJA"))
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        header = window.table.horizontalHeader()
+        assert window.table.horizontalScrollBarPolicy() == dialogs_module.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        assert window.table.horizontalScrollMode() == dialogs_module.QAbstractItemView.ScrollMode.ScrollPerPixel
+        assert header.sectionResizeMode(window._table_column_index("case_number")) == dialogs_module.QHeaderView.ResizeMode.Interactive
+        assert window.table.columnWidth(window._table_column_index("case_number")) == 220
+        service_entity_column = window._table_column_index("service_entity")
+        assert window.table.columnWidth(service_entity_column) >= window._header_text_width(service_entity_column)
+
+        window.table.setColumnWidth(window._table_column_index("court_email"), 240)
+        loaded = user_settings.load_joblog_settings()
+        assert loaded["joblog_column_widths"]["court_email"] == 240
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_joblog_window_small_screen_is_bounded(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        window_adaptive_module,
+        "available_screen_geometry",
+        lambda _widget: QRect(0, 0, 900, 640),
+    )
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        insert_job_run(conn, _joblog_row_payload(case_number="109/26.0PBBJA"))
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        window.show()
+        app.processEvents()
+        assert window.width() <= 810
+        assert window.height() <= 537
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
 
 
 def test_save_to_joblog_dialog_saved_result_is_none_until_saved(tmp_path: Path) -> None:

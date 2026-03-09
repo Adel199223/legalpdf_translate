@@ -39,6 +39,7 @@ String _fixtureRoot() {
   final List<String> seedPaths = <String>[
     'AGENTS.md',
     'agent.md',
+    'README.md',
     'APP_KNOWLEDGE.md',
     '.vscode/settings.json',
     'docs/assistant',
@@ -825,8 +826,8 @@ void main() {
     _replaceInFile(
       root,
       'docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md',
-      '## Same-Host Validation Rule',
-      '## Same Runtime Validation Guidance',
+      'verify required installs before feature work',
+      'verify installs sometime later',
     );
     final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
       rootPath: root,
@@ -839,8 +840,8 @@ void main() {
     _replaceInFile(
       root,
       'docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md',
-      '## Listener Ownership and Runtime Conflict Rules',
-      '## Runtime Conflict Guidance',
+      'one durable session artifact',
+      'session notes when helpful',
     );
     final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
       rootPath: root,
@@ -995,6 +996,76 @@ void main() {
     failures,
   );
 
+  _runCase('fails when project harness sync template file missing', () {
+    final String root = _fixtureRoot();
+    _removePath(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_PROJECT_HARNESS_SYNC_POLICY.md',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(
+      _hasRule(issues, 'AD001') || _hasRule(issues, 'AD039'),
+      'Expected AD001 or AD039',
+    );
+  }, failures);
+
+  _runCase('fails when roadmap governance template file missing', () {
+    final String root = _fixtureRoot();
+    _removePath(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_ROADMAP_GOVERNANCE.md',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(
+      _hasRule(issues, 'AD001') || _hasRule(issues, 'AD039'),
+      'Expected AD001 or AD039',
+    );
+  }, failures);
+
+  _runCase('fails when project harness sync workflow missing', () {
+    final String root = _fixtureRoot();
+    _removePath(
+      root,
+      'docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(
+      _hasRule(issues, 'AD001') ||
+          _hasRule(issues, 'AD030') ||
+          _hasRule(issues, 'AD045'),
+      'Expected AD001, AD030, or AD045',
+    );
+  }, failures);
+
+  _runCase('fails when SESSION_RESUME missing under roadmap governance', () {
+    final String root = _fixtureRoot();
+    _removePath(root, 'docs/assistant/SESSION_RESUME.md');
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD046'), 'Expected AD046');
+  }, failures);
+
+  _runCase('fails when local harness/apply boundary becomes ambiguous', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'agent.md',
+      'docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md',
+      'docs/assistant/workflows/HARNESS_SYNC_REMOVED.md',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD045'), 'Expected AD045');
+  }, failures);
+
   if (failures.isNotEmpty) {
     stderr.writeln(
       'Agent docs validator tests failed: ${failures.length} case(s).',
@@ -1005,5 +1076,5 @@ void main() {
     exit(1);
   }
 
-  stdout.writeln('All agent docs validator tests passed (48 cases).');
+  stdout.writeln('All agent docs validator tests passed (53 cases).');
 }

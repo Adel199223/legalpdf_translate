@@ -14,15 +14,16 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from openai import OpenAI
-from PySide6.QtCore import QEvent, QObject, QStandardPaths, QThread, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut
+from PySide6.QtCore import QEvent, QObject, QSize, QStandardPaths, QThread, QTimer, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QDoubleValidator, QFontMetrics, QIcon, QIntValidator, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -47,6 +48,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -91,9 +93,11 @@ from legalpdf_translate.honorarios_docx import (
     generate_honorarios_docx,
 )
 from legalpdf_translate.joblog_db import (
+    delete_job_run,
     insert_job_run,
     list_job_runs,
     open_job_log,
+    update_job_run,
     update_job_run_output_paths,
     update_joblog_visible_columns,
 )
@@ -118,6 +122,7 @@ from legalpdf_translate.ocr_engine import (
 )
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
 from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
+from legalpdf_translate.qt_gui.window_adaptive import CollapsibleSection, ResponsiveWindowController
 from legalpdf_translate.qt_gui.worker import (
     GmailAttachmentPreviewBootstrapResult,
     GmailAttachmentPreviewBootstrapWorker,
@@ -125,6 +130,7 @@ from legalpdf_translate.qt_gui.worker import (
     GmailAttachmentPreviewPageWorker,
 )
 from legalpdf_translate.review_export import export_review_queue
+from legalpdf_translate.resources_loader import resource_path
 from legalpdf_translate.secrets_store import (
     delete_openai_key,
     delete_ocr_key,
@@ -216,6 +222,289 @@ JOBLOG_COLUMN_LABELS = {
     "profit": "Profit",
 }
 
+JOBLOG_ACTIONS_COLUMN_LABEL = "Actions"
+JOBLOG_ACTIONS_COLUMN_KEY = "__actions__"
+JOBLOG_COLUMN_WIDTH_PADDING = 24
+JOBLOG_INLINE_COMBO_COLUMNS = {
+    "job_type",
+    "case_entity",
+    "case_city",
+    "service_entity",
+    "service_city",
+    "court_email",
+    "lang",
+    "target_lang",
+}
+JOBLOG_INLINE_INTEGER_COLUMNS = {"pages", "word_count", "total_tokens"}
+JOBLOG_INLINE_FLOAT_COLUMNS = {
+    "rate_per_word",
+    "expected_total",
+    "amount_paid",
+    "api_cost",
+    "estimated_api_cost",
+    "quality_risk_score",
+    "profit",
+}
+JOBLOG_VOCAB_SETTINGS_MAP = {
+    "job_type": "vocab_job_types",
+    "case_entity": "vocab_case_entities",
+    "case_city": "vocab_cities",
+    "service_entity": "vocab_service_entities",
+    "service_city": "vocab_cities",
+    "court_email": "vocab_court_emails",
+}
+JOBLOG_LANG_OPTIONS = ["EN", "FR", "AR"]
+
+
+def _set_fixed_height_if_needed(widget: QWidget, height: int) -> None:
+    resolved = max(0, int(height))
+    if widget.minimumHeight() == resolved and widget.maximumHeight() == resolved:
+        return
+    widget.setFixedHeight(resolved)
+
+
+def _coerce_joblog_path(value: object) -> Path | None:
+    cleaned = str(value or "").strip()
+    if cleaned == "":
+        return None
+    return Path(cleaned).expanduser().resolve()
+
+
+def _coerce_joblog_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    cleaned = str(value or "").strip()
+    if cleaned == "":
+        return default
+    try:
+        return int(cleaned)
+    except ValueError:
+        return default
+
+
+def _coerce_joblog_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    cleaned = str(value or "").strip().replace(",", ".")
+    if cleaned == "":
+        return default
+    try:
+        return float(cleaned)
+    except ValueError:
+        return default
+
+
+def build_seed_from_joblog_row(row: Mapping[str, object]) -> JobLogSeed:
+    completed_at = str(row.get("completed_at", "") or "").strip()
+    translation_date = str(row.get("translation_date", "") or "").strip()
+    if translation_date == "":
+        translation_date = _date_from_completed_at(completed_at)
+    service_date = str(row.get("service_date", "") or "").strip()
+    if service_date == "" and completed_at:
+        service_date = _date_from_completed_at(completed_at)
+    return JobLogSeed(
+        completed_at=completed_at or f"{translation_date}T00:00:00",
+        translation_date=translation_date,
+        job_type=str(row.get("job_type", "") or "Translation").strip() or "Translation",
+        case_number=str(row.get("case_number", "") or "").strip(),
+        court_email=str(row.get("court_email", "") or "").strip(),
+        case_entity=str(row.get("case_entity", "") or "").strip(),
+        case_city=str(row.get("case_city", "") or "").strip(),
+        service_entity=str(row.get("service_entity", "") or "").strip(),
+        service_city=str(row.get("service_city", "") or "").strip(),
+        service_date=service_date,
+        lang=str(row.get("lang", "") or "").strip(),
+        pages=_coerce_joblog_int(row.get("pages")),
+        word_count=_coerce_joblog_int(row.get("word_count")),
+        rate_per_word=_coerce_joblog_float(row.get("rate_per_word")),
+        expected_total=_coerce_joblog_float(row.get("expected_total")),
+        amount_paid=_coerce_joblog_float(row.get("amount_paid")),
+        api_cost=_coerce_joblog_float(row.get("api_cost")),
+        run_id=str(row.get("run_id", "") or "").strip(),
+        target_lang=str(row.get("target_lang", "") or "").strip(),
+        total_tokens=(
+            None
+            if str(row.get("total_tokens", "") or "").strip() == ""
+            else _coerce_joblog_int(row.get("total_tokens"))
+        ),
+        estimated_api_cost=(
+            None
+            if str(row.get("estimated_api_cost", "") or "").strip() == ""
+            else _coerce_joblog_float(row.get("estimated_api_cost"))
+        ),
+        quality_risk_score=(
+            None
+            if str(row.get("quality_risk_score", "") or "").strip() == ""
+            else _coerce_joblog_float(row.get("quality_risk_score"))
+        ),
+        profit=_coerce_joblog_float(row.get("profit")),
+        pdf_path=None,
+        output_docx=_coerce_joblog_path(row.get("output_docx_path")),
+        partial_docx=_coerce_joblog_path(row.get("partial_docx_path")),
+    )
+
+
+def _parse_joblog_float(value: str, label: str) -> float:
+    cleaned = value.strip().replace(",", ".")
+    if cleaned == "":
+        return 0.0
+    try:
+        return float(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be numeric.") from exc
+
+
+def _parse_joblog_required_int(value: str, label: str) -> int:
+    cleaned = value.strip()
+    if cleaned == "":
+        raise ValueError(f"{label} must be an integer.")
+    try:
+        return int(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an integer.") from exc
+
+
+def _parse_joblog_optional_int(value: str, label: str) -> int | None:
+    cleaned = value.strip()
+    if cleaned == "":
+        return None
+    try:
+        return int(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an integer.") from exc
+
+
+def _parse_joblog_optional_float(value: str, label: str) -> float | None:
+    cleaned = value.strip().replace(",", ".")
+    if cleaned == "":
+        return None
+    try:
+        return float(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be numeric.") from exc
+
+
+def _validate_joblog_date(value: str, label: str) -> str:
+    cleaned = value.strip()
+    if cleaned == "":
+        return ""
+    try:
+        datetime.strptime(cleaned, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError(f"{label} must be YYYY-MM-DD.") from exc
+    return cleaned
+
+
+def _normalize_joblog_payload(
+    *,
+    seed: JobLogSeed,
+    raw_values: Mapping[str, str],
+    service_same_checked: bool,
+) -> dict[str, Any]:
+    rate = _parse_joblog_float(raw_values["rate_per_word"], "Rate/word")
+    expected_total = _parse_joblog_float(raw_values["expected_total"], "Expected total")
+    amount_paid = _parse_joblog_float(raw_values["amount_paid"], "Amount paid")
+    api_cost = _parse_joblog_float(raw_values["api_cost"], "API cost")
+    profit = _parse_joblog_float(raw_values["profit"], "Profit")
+    pages = _parse_joblog_required_int(raw_values["pages"], "Pages")
+    word_count = _parse_joblog_required_int(raw_values["word_count"], "Words")
+    total_tokens = _parse_joblog_optional_int(raw_values["total_tokens"], "Total tokens")
+    estimated_api_cost = _parse_joblog_optional_float(raw_values["estimated_api_cost"], "Estimated API cost")
+    quality_risk_score = _parse_joblog_optional_float(raw_values["quality_risk_score"], "Quality risk score")
+
+    translation_date = _validate_joblog_date(raw_values["translation_date"], "Translation date")
+    service_date = _validate_joblog_date(raw_values["service_date"], "Service date")
+
+    case_entity = raw_values["case_entity"].strip()
+    case_city = raw_values["case_city"].strip()
+    service_entity = raw_values["service_entity"].strip()
+    service_city = raw_values["service_city"].strip()
+    if service_same_checked:
+        service_entity = case_entity
+        service_city = case_city
+
+    if expected_total == 0.0 and rate > 0:
+        expected_total = round(rate * float(word_count), 2)
+    if profit == 0.0:
+        if amount_paid > 0:
+            profit = round(amount_paid - api_cost, 2)
+        else:
+            profit = round(expected_total - api_cost, 2)
+
+    return {
+        "translation_date": translation_date or seed.translation_date,
+        "job_type": raw_values["job_type"].strip() or "Translation",
+        "case_number": raw_values["case_number"].strip(),
+        "court_email": raw_values["court_email"].strip(),
+        "case_entity": case_entity,
+        "case_city": case_city,
+        "service_entity": service_entity,
+        "service_city": service_city,
+        "service_date": service_date,
+        "lang": raw_values["lang"].strip() or seed.lang,
+        "target_lang": raw_values["target_lang"].strip() or seed.target_lang,
+        "run_id": raw_values["run_id"].strip(),
+        "pages": pages,
+        "word_count": word_count,
+        "total_tokens": total_tokens,
+        "rate_per_word": rate,
+        "expected_total": expected_total,
+        "amount_paid": amount_paid,
+        "api_cost": api_cost,
+        "estimated_api_cost": estimated_api_cost,
+        "quality_risk_score": quality_risk_score,
+        "profit": profit,
+    }
+
+
+def _ensure_value_in_joblog_settings(settings: dict[str, Any], key: str, value: str) -> None:
+    cleaned = value.strip()
+    if cleaned == "":
+        return
+    bucket = list(settings[key])
+    lowered = {item.casefold() for item in bucket}
+    if cleaned.casefold() in lowered:
+        return
+    bucket.append(cleaned)
+    settings[key] = bucket
+
+
+def _persist_joblog_vocab_settings(settings: dict[str, Any], payload: Mapping[str, Any]) -> None:
+    for column, key in JOBLOG_VOCAB_SETTINGS_MAP.items():
+        value = str(payload.get(column, "") or "").strip()
+        if value:
+            _ensure_value_in_joblog_settings(settings, key, value)
+
+
+def _save_joblog_settings_bundle(settings: dict[str, Any], *, service_equals_case_by_default: bool) -> None:
+    save_joblog_settings(
+        {
+            "vocab_case_entities": settings["vocab_case_entities"],
+            "vocab_service_entities": settings["vocab_service_entities"],
+            "vocab_cities": settings["vocab_cities"],
+            "vocab_job_types": settings["vocab_job_types"],
+            "vocab_court_emails": settings["vocab_court_emails"],
+            "default_rate_per_word": settings["default_rate_per_word"],
+            "joblog_visible_columns": settings["joblog_visible_columns"],
+            "joblog_column_widths": settings.get("joblog_column_widths", {}),
+            "metadata_ai_enabled": settings["metadata_ai_enabled"],
+            "metadata_photo_enabled": settings["metadata_photo_enabled"],
+            "service_equals_case_by_default": service_equals_case_by_default,
+            "non_court_service_entities": settings["non_court_service_entities"],
+            "ocr_mode": settings["ocr_mode"],
+            "ocr_engine": settings["ocr_engine"],
+            "ocr_api_base_url": settings["ocr_api_base_url"],
+            "ocr_api_model": settings["ocr_api_model"],
+            "ocr_api_key_env_name": settings["ocr_api_key_env_name"],
+        }
+    )
+
 
 @dataclass(slots=True)
 class JobLogSeed:
@@ -242,7 +531,7 @@ class JobLogSeed:
     estimated_api_cost: float | None
     quality_risk_score: float | None
     profit: float
-    pdf_path: Path
+    pdf_path: Path | None
     output_docx: Path | None = None
     partial_docx: Path | None = None
 
@@ -460,13 +749,18 @@ class QtHonorariosExportDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Gerar Requerimento de Honorários")
-        self.resize(760, 300)
+        self.setMinimumSize(520, 240)
         self._default_directory = default_directory.expanduser().resolve()
         self._initial_draft = draft
         self.saved_path: Path | None = None
         self.requested_path: Path | None = None
         self.auto_renamed: bool = False
         self._build_ui()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(760, 300),
+        )
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -580,7 +874,7 @@ class QtArabicDocxReviewDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Arabic DOCX review")
-        self.resize(760, 260)
+        self.setMinimumSize(620, 240)
         self._docx_path = docx_path.expanduser().resolve()
         self._is_gmail_batch = bool(is_gmail_batch)
         self._attachment_label = (attachment_label or "").strip()
@@ -596,6 +890,11 @@ class QtArabicDocxReviewDialog(QDialog):
         self._poll_timer.setInterval(self._poll_interval_ms)
         self._poll_timer.timeout.connect(self._poll_for_save)
         self._build_ui()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(760, 260),
+        )
         QTimer.singleShot(0, self._start_review)
 
     def _build_ui(self) -> None:
@@ -755,10 +1054,12 @@ class QtSaveToJobLogDialog(QDialog):
         seed: JobLogSeed,
         on_saved: Callable[[], None] | None = None,
         allow_honorarios_export: bool = True,
+        edit_row_id: int | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Save to Job Log")
-        self.resize(980, 660)
+        self._edit_row_id = int(edit_row_id) if edit_row_id is not None else None
+        self.setWindowTitle("Edit Job Log Entry" if self._edit_row_id is not None else "Save to Job Log")
+        self.setMinimumSize(620, 460)
 
         self._db_path = db_path
         self._seed = seed
@@ -773,6 +1074,11 @@ class QtSaveToJobLogDialog(QDialog):
         self._case_city_user_set = False
 
         self._build_ui()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(980, 660),
+        )
         self._refresh_service_mirror_state()
         self._refresh_photo_controls()
 
@@ -797,7 +1103,16 @@ class QtSaveToJobLogDialog(QDialog):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        top = QFrame()
+        self.form_scroll_area = QScrollArea(self)
+        self.form_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.form_scroll_area.setWidgetResizable(True)
+        self.form_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_content = QWidget(self.form_scroll_area)
+        scroll_root = QVBoxLayout(scroll_content)
+        scroll_root.setContentsMargins(0, 0, 0, 0)
+        scroll_root.setSpacing(10)
+
+        top = QFrame(scroll_content)
         top_grid = QGridLayout(top)
         top_grid.addWidget(QLabel("Job type"), 0, 0)
         self.job_type_combo = QComboBox()
@@ -805,17 +1120,24 @@ class QtSaveToJobLogDialog(QDialog):
         self.job_type_combo.addItems(list(self._settings["vocab_job_types"]))
         self.job_type_combo.setCurrentText(self._seed.job_type or "Translation")
         top_grid.addWidget(self.job_type_combo, 0, 1)
-        top_grid.addWidget(QLabel(f"Translation date: {self._seed.translation_date}"), 0, 2)
-        top_grid.addWidget(
-            QLabel(f"Lang: {self._seed.lang} | Pages: {self._seed.pages} | Words: {self._seed.word_count}"),
-            0,
-            3,
-        )
+        top_grid.addWidget(QLabel("Translation date"), 0, 2)
+        self.translation_date_edit = QLineEdit(self._seed.translation_date)
+        top_grid.addWidget(self.translation_date_edit, 0, 3)
+        top_grid.addWidget(QLabel("Lang"), 1, 0)
+        self.lang_edit = QLineEdit(self._seed.lang)
+        top_grid.addWidget(self.lang_edit, 1, 1)
+        top_grid.addWidget(QLabel("Pages"), 1, 2)
+        self.pages_edit = QLineEdit(str(int(self._seed.pages)))
+        top_grid.addWidget(self.pages_edit, 1, 3)
+        top_grid.addWidget(QLabel("Words"), 1, 4)
+        self.word_count_edit = QLineEdit(str(int(self._seed.word_count)))
+        top_grid.addWidget(self.word_count_edit, 1, 5)
         top_grid.setColumnStretch(1, 1)
         top_grid.setColumnStretch(3, 1)
-        root.addWidget(top)
+        top_grid.setColumnStretch(5, 1)
+        scroll_root.addWidget(top)
 
-        case_group = QGroupBox("CASE (belongs to)")
+        case_group = QGroupBox("CASE (belongs to)", scroll_content)
         case_form = QGridLayout(case_group)
         case_form.addWidget(QLabel("Case entity"), 0, 0)
         self.case_entity_combo = QComboBox()
@@ -846,12 +1168,26 @@ class QtSaveToJobLogDialog(QDialog):
         case_form.addWidget(self.court_email_combo, 1, 4, 1, 2)
         case_form.setColumnStretch(1, 1)
         case_form.setColumnStretch(4, 1)
-        root.addWidget(case_group)
+        scroll_root.addWidget(case_group)
 
-        service_group = QGroupBox("SERVICE (provided to)")
+        service_group = QGroupBox("SERVICE (provided to)", scroll_content)
         service_grid = QGridLayout(service_group)
         self.service_same_check = QCheckBox("Service same as Case")
-        self.service_same_check.setChecked(bool(self._settings["service_equals_case_by_default"]))
+        has_seed_service_values = any(
+            (
+                self._seed.case_entity.strip(),
+                self._seed.case_city.strip(),
+                self._seed.service_entity.strip(),
+                self._seed.service_city.strip(),
+            )
+        )
+        if has_seed_service_values:
+            self.service_same_check.setChecked(
+                self._seed.case_entity.strip() == self._seed.service_entity.strip()
+                and self._seed.case_city.strip() == self._seed.service_city.strip()
+            )
+        else:
+            self.service_same_check.setChecked(bool(self._settings["service_equals_case_by_default"]))
         service_grid.addWidget(self.service_same_check, 0, 0, 1, 2)
 
         service_grid.addWidget(QLabel("Service entity"), 1, 0)
@@ -877,10 +1213,11 @@ class QtSaveToJobLogDialog(QDialog):
         service_grid.addWidget(self.service_date_edit, 2, 1)
         service_grid.setColumnStretch(1, 1)
         service_grid.setColumnStretch(4, 1)
-        root.addWidget(service_group)
+        scroll_root.addWidget(service_group)
 
         autofill_row = QHBoxLayout()
         self.autofill_header_btn = QPushButton("Autofill from PDF header")
+        self.autofill_header_btn.setEnabled(self._can_autofill_from_pdf_header())
         self.autofill_photo_btn = QPushButton("Autofill from photo...")
         self.photo_translation_check = QCheckBox("Usually for Interpretation; enable anyway")
         self.photo_hint = QLabel("")
@@ -889,10 +1226,12 @@ class QtSaveToJobLogDialog(QDialog):
         autofill_row.addWidget(self.photo_translation_check)
         autofill_row.addStretch(1)
         autofill_row.addWidget(self.photo_hint)
-        root.addLayout(autofill_row)
+        scroll_root.addLayout(autofill_row)
 
-        metrics_group = QGroupBox("Run Metrics (auto-filled)")
-        metrics_form = QGridLayout(metrics_group)
+        metrics_panel = QFrame(scroll_content)
+        metrics_panel.setObjectName("ShellPanel")
+        metrics_form = QGridLayout(metrics_panel)
+        metrics_form.setContentsMargins(12, 12, 12, 12)
         metrics_form.addWidget(QLabel("Run ID"), 0, 0)
         self.run_id_edit = QLineEdit(self._seed.run_id)
         metrics_form.addWidget(self.run_id_edit, 0, 1)
@@ -916,10 +1255,14 @@ class QtSaveToJobLogDialog(QDialog):
         metrics_form.addWidget(self.quality_risk_score_edit, 2, 1)
         metrics_form.setColumnStretch(1, 1)
         metrics_form.setColumnStretch(3, 1)
-        root.addWidget(metrics_group)
+        self.metrics_section = CollapsibleSection("Run Metrics (auto-filled)", expanded=False, parent=scroll_content)
+        self.metrics_section.set_content_widget(metrics_panel)
+        scroll_root.addWidget(self.metrics_section)
 
-        finance_group = QGroupBox("Amounts (EUR)")
-        finance_form = QGridLayout(finance_group)
+        finance_panel = QFrame(scroll_content)
+        finance_panel.setObjectName("ShellPanel")
+        finance_form = QGridLayout(finance_panel)
+        finance_form.setContentsMargins(12, 12, 12, 12)
         finance_form.addWidget(QLabel("Rate/word"), 0, 0)
         self.rate_edit = QLineEdit(f"{self._seed.rate_per_word:.4f}")
         finance_form.addWidget(self.rate_edit, 0, 1)
@@ -937,21 +1280,30 @@ class QtSaveToJobLogDialog(QDialog):
         finance_form.addWidget(self.profit_edit, 2, 1)
         finance_form.setColumnStretch(1, 1)
         finance_form.setColumnStretch(3, 1)
-        root.addWidget(finance_group)
+        self.finance_section = CollapsibleSection("Amounts (EUR)", expanded=False, parent=scroll_content)
+        self.finance_section.set_content_widget(finance_panel)
+        scroll_root.addWidget(self.finance_section)
+        scroll_root.addStretch(1)
 
-        actions = QHBoxLayout()
+        self.form_scroll_area.setWidget(scroll_content)
+        root.addWidget(self.form_scroll_area, 1)
+
+        self.action_bar = QWidget(self)
+        actions = QHBoxLayout(self.action_bar)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(8)
         self.open_translation_btn = QPushButton("Open translated DOCX")
-        self.open_translation_btn.setEnabled(self._resolved_seed_docx_path() is not None)
+        self.open_translation_btn.setEnabled(self._current_translation_docx_path() is not None)
         actions.addWidget(self.open_translation_btn)
         self.honorarios_btn = QPushButton("Gerar Requerimento de Honorários...")
         self.honorarios_btn.setEnabled(self._allow_honorarios_export)
         actions.addWidget(self.honorarios_btn)
         actions.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
-        self.save_btn = QPushButton("Save")
+        self.save_btn = QPushButton("Update" if self._edit_row_id is not None else "Save")
         actions.addWidget(self.cancel_btn)
         actions.addWidget(self.save_btn)
-        root.addLayout(actions)
+        root.addWidget(self.action_bar)
 
         self.open_translation_btn.clicked.connect(self._open_translation_docx)
         self.cancel_btn.clicked.connect(self.reject)
@@ -982,15 +1334,7 @@ class QtSaveToJobLogDialog(QDialog):
         combo.setCurrentText(cleaned)
 
     def _ensure_in_vocab(self, key: str, value: str) -> None:
-        cleaned = value.strip()
-        if cleaned == "":
-            return
-        bucket = list(self._settings[key])
-        lowered = {item.casefold() for item in bucket}
-        if cleaned.casefold() in lowered:
-            return
-        bucket.append(cleaned)
-        self._settings[key] = bucket
+        _ensure_value_in_joblog_settings(self._settings, key, value)
         self._refresh_vocab_widgets()
 
     def _refresh_vocab_widgets(self) -> None:
@@ -1056,13 +1400,24 @@ class QtSaveToJobLogDialog(QDialog):
         self.autofill_photo_btn.setEnabled(enabled)
         self.photo_hint.setText("Usually Interpretation.")
 
+    def _can_autofill_from_pdf_header(self) -> bool:
+        if self._seed.pdf_path is None:
+            return False
+        return self._seed.pdf_path.expanduser().resolve().exists()
+
+    def _current_word_count_value(self) -> int:
+        try:
+            return _parse_joblog_required_int(self.word_count_edit.text(), "Words")
+        except ValueError:
+            return int(self._seed.word_count)
+
     def _build_honorarios_draft(self) -> HonorariosDraft:
         case_number = self.case_number_edit.text().strip()
         case_entity = self.case_entity_combo.currentText().strip()
         case_city = self.case_city_combo.currentText().strip()
         return build_honorarios_draft(
             case_number=case_number,
-            word_count=int(self._seed.word_count),
+            word_count=self._current_word_count_value(),
             case_entity=case_entity,
             case_city=case_city,
         )
@@ -1188,6 +1543,9 @@ class QtSaveToJobLogDialog(QDialog):
             self.court_email_combo.setCurrentText(ranked[0])
 
     def _autofill_from_pdf_header(self) -> None:
+        if self._seed.pdf_path is None or not self._seed.pdf_path.expanduser().resolve().exists():
+            QMessageBox.warning(self, "Autofill", "Source PDF is unavailable for this Job Log entry.")
+            return
         suggestion = extract_pdf_header_metadata_priority_pages(
             self._seed.pdf_path,
             vocab_cities=list(self._settings["vocab_cities"]),
@@ -1251,31 +1609,13 @@ class QtSaveToJobLogDialog(QDialog):
             self._ensure_in_vocab("vocab_cities", case_city)
 
     def _parse_float(self, value: str, label: str) -> float:
-        cleaned = value.strip().replace(",", ".")
-        if cleaned == "":
-            return 0.0
-        try:
-            return float(cleaned)
-        except ValueError as exc:
-            raise ValueError(f"{label} must be numeric.") from exc
+        return _parse_joblog_float(value, label)
 
     def _parse_optional_int(self, value: str, label: str) -> int | None:
-        cleaned = value.strip()
-        if cleaned == "":
-            return None
-        try:
-            return int(cleaned)
-        except ValueError as exc:
-            raise ValueError(f"{label} must be an integer.") from exc
+        return _parse_joblog_optional_int(value, label)
 
     def _parse_optional_float(self, value: str, label: str) -> float | None:
-        cleaned = value.strip().replace(",", ".")
-        if cleaned == "":
-            return None
-        try:
-            return float(cleaned)
-        except ValueError as exc:
-            raise ValueError(f"{label} must be numeric.") from exc
+        return _parse_joblog_optional_float(value, label)
 
     def _resolved_seed_docx_path(self) -> Path | None:
         for candidate in (self._seed.output_docx, self._seed.partial_docx):
@@ -1283,8 +1623,41 @@ class QtSaveToJobLogDialog(QDialog):
                 return candidate.expanduser().resolve()
         return None
 
+    def _collect_raw_values(self) -> dict[str, str]:
+        return {
+            "translation_date": self.translation_date_edit.text(),
+            "job_type": self.job_type_combo.currentText(),
+            "case_number": self.case_number_edit.text(),
+            "court_email": self.court_email_combo.currentText(),
+            "case_entity": self.case_entity_combo.currentText(),
+            "case_city": self.case_city_combo.currentText(),
+            "service_entity": self.service_entity_combo.currentText(),
+            "service_city": self.service_city_combo.currentText(),
+            "service_date": self.service_date_edit.text(),
+            "lang": self.lang_edit.text(),
+            "target_lang": self.target_lang_edit.text(),
+            "run_id": self.run_id_edit.text(),
+            "pages": self.pages_edit.text(),
+            "word_count": self.word_count_edit.text(),
+            "total_tokens": self.total_tokens_edit.text(),
+            "rate_per_word": self.rate_edit.text(),
+            "expected_total": self.expected_total_edit.text(),
+            "amount_paid": self.amount_paid_edit.text(),
+            "api_cost": self.api_cost_edit.text(),
+            "estimated_api_cost": self.estimated_api_cost_edit.text(),
+            "quality_risk_score": self.quality_risk_score_edit.text(),
+            "profit": self.profit_edit.text(),
+        }
+
+    def _normalized_payload(self) -> dict[str, Any]:
+        return _normalize_joblog_payload(
+            seed=self._seed,
+            raw_values=self._collect_raw_values(),
+            service_same_checked=self.service_same_check.isChecked(),
+        )
+
     def _open_translation_docx(self) -> None:
-        resolved = self._resolved_seed_docx_path()
+        resolved = self._current_translation_docx_path()
         if resolved is None:
             QMessageBox.critical(
                 self,
@@ -1296,128 +1669,47 @@ class QtSaveToJobLogDialog(QDialog):
 
     def _save(self) -> None:
         try:
-            rate = self._parse_float(self.rate_edit.text(), "Rate/word")
-            expected_total = self._parse_float(self.expected_total_edit.text(), "Expected total")
-            amount_paid = self._parse_float(self.amount_paid_edit.text(), "Amount paid")
-            api_cost = self._parse_float(self.api_cost_edit.text(), "API cost")
-            profit = self._parse_float(self.profit_edit.text(), "Profit")
-            total_tokens = self._parse_optional_int(self.total_tokens_edit.text(), "Total tokens")
-            estimated_api_cost = self._parse_optional_float(
-                self.estimated_api_cost_edit.text(),
-                "Estimated API cost",
-            )
-            quality_risk_score = self._parse_optional_float(
-                self.quality_risk_score_edit.text(),
-                "Quality risk score",
-            )
+            payload = self._normalized_payload()
         except ValueError as exc:
             QMessageBox.critical(self, "Invalid values", str(exc))
             return
 
-        if expected_total == 0.0 and rate > 0:
-            expected_total = round(rate * float(self._seed.word_count), 2)
-        if profit == 0.0:
-            if amount_paid > 0:
-                profit = round(amount_paid - api_cost, 2)
-            else:
-                profit = round(expected_total - api_cost, 2)
-
-        service_date = self.service_date_edit.text().strip()
-        if service_date:
-            try:
-                datetime.strptime(service_date, "%Y-%m-%d")
-            except ValueError:
-                QMessageBox.critical(self, "Invalid date", "Service date must be YYYY-MM-DD.")
-                return
-
-        case_entity = self.case_entity_combo.currentText().strip()
-        case_city = self.case_city_combo.currentText().strip()
-        service_entity = self.service_entity_combo.currentText().strip()
-        service_city = self.service_city_combo.currentText().strip()
-        if self.service_same_check.isChecked():
-            service_entity = case_entity
-            service_city = case_city
-
-        payload = {
-            "completed_at": self._seed.completed_at,
-            "translation_date": self._seed.translation_date,
-            "job_type": self.job_type_combo.currentText().strip() or "Translation",
-            "case_number": self.case_number_edit.text().strip(),
-            "court_email": self.court_email_combo.currentText().strip(),
-            "case_entity": case_entity,
-            "case_city": case_city,
-            "service_entity": service_entity,
-            "service_city": service_city,
-            "service_date": service_date,
-            "lang": self._seed.lang,
-            "target_lang": self.target_lang_edit.text().strip() or self._seed.target_lang,
-            "run_id": self.run_id_edit.text().strip(),
-            "pages": int(self._seed.pages),
-            "word_count": int(self._seed.word_count),
-            "total_tokens": total_tokens,
-            "rate_per_word": rate,
-            "expected_total": expected_total,
-            "amount_paid": amount_paid,
-            "api_cost": api_cost,
-            "estimated_api_cost": estimated_api_cost,
-            "quality_risk_score": quality_risk_score,
-            "profit": profit,
-            "output_docx_path": (
-                str(self._seed.output_docx.expanduser().resolve())
-                if isinstance(self._seed.output_docx, Path)
-                else None
-            ),
-            "partial_docx_path": (
-                str(self._seed.partial_docx.expanduser().resolve())
-                if isinstance(self._seed.partial_docx, Path)
-                else None
-            ),
-        }
-
         with closing(open_job_log(self._db_path)) as conn:
-            row_id = insert_job_run(conn, payload)
+            if self._edit_row_id is not None:
+                update_job_run(conn, row_id=self._edit_row_id, values=payload)
+                row_id = self._edit_row_id
+            else:
+                insert_payload = {
+                    "completed_at": self._seed.completed_at,
+                    **payload,
+                    "output_docx_path": (
+                        str(self._seed.output_docx.expanduser().resolve())
+                        if isinstance(self._seed.output_docx, Path)
+                        else None
+                    ),
+                    "partial_docx_path": (
+                        str(self._seed.partial_docx.expanduser().resolve())
+                        if isinstance(self._seed.partial_docx, Path)
+                        else None
+                    ),
+                }
+                row_id = insert_job_run(conn, insert_payload)
 
-        self._ensure_in_vocab("vocab_job_types", payload["job_type"])
-        if case_entity:
-            self._ensure_in_vocab("vocab_case_entities", case_entity)
-        if service_entity:
-            self._ensure_in_vocab("vocab_service_entities", service_entity)
-        if case_city:
-            self._ensure_in_vocab("vocab_cities", case_city)
-        if service_city:
-            self._ensure_in_vocab("vocab_cities", service_city)
-        if payload["court_email"]:
-            self._ensure_in_vocab("vocab_court_emails", str(payload["court_email"]))
-
-        save_joblog_settings(
-            {
-                "vocab_case_entities": self._settings["vocab_case_entities"],
-                "vocab_service_entities": self._settings["vocab_service_entities"],
-                "vocab_cities": self._settings["vocab_cities"],
-                "vocab_job_types": self._settings["vocab_job_types"],
-                "vocab_court_emails": self._settings["vocab_court_emails"],
-                "default_rate_per_word": self._settings["default_rate_per_word"],
-                "joblog_visible_columns": self._settings["joblog_visible_columns"],
-                "metadata_ai_enabled": self._settings["metadata_ai_enabled"],
-                "metadata_photo_enabled": self._settings["metadata_photo_enabled"],
-                "service_equals_case_by_default": bool(self.service_same_check.isChecked()),
-                "non_court_service_entities": self._settings["non_court_service_entities"],
-                "ocr_mode": self._settings["ocr_mode"],
-                "ocr_engine": self._settings["ocr_engine"],
-                "ocr_api_base_url": self._settings["ocr_api_base_url"],
-                "ocr_api_model": self._settings["ocr_api_model"],
-                "ocr_api_key_env_name": self._settings["ocr_api_key_env_name"],
-            }
+        _persist_joblog_vocab_settings(self._settings, payload)
+        self._refresh_vocab_widgets()
+        _save_joblog_settings_bundle(
+            self._settings,
+            service_equals_case_by_default=bool(self.service_same_check.isChecked()),
         )
         translated_docx_path = self._resolved_seed_docx_path()
         if translated_docx_path is not None:
             self._saved_result = JobLogSavedResult(
                 row_id=int(row_id),
                 translated_docx_path=translated_docx_path,
-                word_count=int(self._seed.word_count),
+                word_count=int(payload["word_count"]),
                 case_number=str(payload["case_number"] or ""),
-                case_entity=case_entity,
-                case_city=case_city,
+                case_entity=str(payload["case_entity"] or ""),
+                case_city=str(payload["case_city"] or ""),
                 court_email=str(payload["court_email"] or ""),
                 run_id=str(payload["run_id"] or ""),
             )
@@ -1433,7 +1725,7 @@ class QtJobLogWindow(QDialog):
     def __init__(self, *, parent: QWidget | None, db_path: Path) -> None:
         super().__init__(parent)
         self.setWindowTitle("Job Log")
-        self.resize(1280, 520)
+        self.setMinimumSize(760, 420)
 
         self._db_path = db_path
         self._settings = load_joblog_settings()
@@ -1442,6 +1734,16 @@ class QtJobLogWindow(QDialog):
         if not self._visible_columns:
             self._visible_columns = ["translation_date", "case_number", "job_type"]
         self._rows_data: list[dict[str, object]] = []
+        self._inline_edit_row_id: int | None = None
+        self._inline_edit_row_index: int | None = None
+        self._inline_original_row: dict[str, object] | None = None
+        self._inline_edit_widgets: dict[str, QWidget] = {}
+        self._selection_guard_active = False
+        self._suspend_width_persistence = False
+        self._action_icons = {
+            "edit": self._joblog_icon("resources/icons/dashboard/edit.svg"),
+            "delete": self._joblog_icon("resources/icons/dashboard/delete.svg"),
+        }
 
         root = QVBoxLayout(self)
         controls = QHBoxLayout()
@@ -1455,28 +1757,343 @@ class QtJobLogWindow(QDialog):
         controls.addStretch(1)
         root.addLayout(controls)
 
-        self.table = QTableWidget(0, len(JOBLOG_COLUMNS), self)
-        self.table.setHorizontalHeaderLabels([JOBLOG_COLUMN_LABELS[col] for col in JOBLOG_COLUMNS])
+        self.table = QTableWidget(0, len(JOBLOG_COLUMNS) + 1, self)
+        self.table.setHorizontalHeaderLabels([JOBLOG_ACTIONS_COLUMN_LABEL] + [JOBLOG_COLUMN_LABELS[col] for col in JOBLOG_COLUMNS])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setWordWrap(False)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.sectionResized.connect(self._on_header_section_resized)
+        if hasattr(header, "sectionHandleDoubleClicked"):
+            header.sectionHandleDoubleClicked.connect(self._on_header_handle_double_clicked)
         root.addWidget(self.table, 1)
 
         self.refresh_btn.clicked.connect(self.refresh_rows)
         self.columns_btn.clicked.connect(self._open_columns_dialog)
         self.honorarios_btn.clicked.connect(self._open_honorarios_dialog)
         self.table.itemSelectionChanged.connect(self._refresh_action_state)
+        self.table.cellDoubleClicked.connect(self._on_table_cell_double_clicked)
         self._apply_visible_columns()
         self.refresh_rows()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="table",
+            preferred_size=QSize(1280, 520),
+        )
+
+    def _joblog_icon(self, rel_path: str) -> QIcon:
+        return QIcon(str(resource_path(rel_path)))
+
+    def _header_text_width(self, table_column: int) -> int:
+        item = self.table.horizontalHeaderItem(table_column)
+        label = item.text() if item is not None else ""
+        metrics = QFontMetrics(self.table.horizontalHeader().font())
+        return metrics.horizontalAdvance(label) + JOBLOG_COLUMN_WIDTH_PADDING
+
+    def _autofit_column(self, table_column: int) -> None:
+        if self.table.isColumnHidden(table_column):
+            return
+        if table_column == 0:
+            self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            self.table.resizeColumnToContents(0)
+            return
+        self.table.resizeColumnToContents(table_column)
+        self.table.setColumnWidth(
+            table_column,
+            max(self.table.columnWidth(table_column), self._header_text_width(table_column)),
+        )
+
+    def _apply_column_widths(self) -> None:
+        saved_widths = dict(self._settings.get("joblog_column_widths", {}))
+        self._suspend_width_persistence = True
+        try:
+            self._autofit_column(0)
+            for table_column, column_name in enumerate(JOBLOG_COLUMNS, start=1):
+                if self.table.isColumnHidden(table_column):
+                    continue
+                self._autofit_column(table_column)
+                saved_width = int(saved_widths.get(column_name, 0) or 0)
+                if saved_width > 0:
+                    self.table.setColumnWidth(table_column, saved_width)
+        finally:
+            self._suspend_width_persistence = False
+
+    def _persist_joblog_column_width(self, column_name: str, width: int) -> None:
+        if width <= 0:
+            return
+        widths = dict(self._settings.get("joblog_column_widths", {}))
+        widths[column_name] = int(width)
+        self._settings["joblog_column_widths"] = widths
+        save_joblog_settings({"joblog_column_widths": widths})
+
+    def _column_name_for_table_column(self, table_column: int) -> str | None:
+        if table_column <= 0 or table_column > len(JOBLOG_COLUMNS):
+            return None
+        return JOBLOG_COLUMNS[table_column - 1]
+
+    def _on_header_section_resized(self, logical_index: int, _old_size: int, new_size: int) -> None:
+        if self._suspend_width_persistence or new_size <= 0 or self.table.isColumnHidden(logical_index):
+            return
+        column_name = self._column_name_for_table_column(logical_index)
+        if column_name is None:
+            return
+        self._persist_joblog_column_width(column_name, new_size)
+
+    def _on_header_handle_double_clicked(self, logical_index: int) -> None:
+        if self.table.isColumnHidden(logical_index):
+            return
+        self._autofit_column(logical_index)
 
     def _apply_visible_columns(self) -> None:
         visible = set(self._visible_columns)
-        for idx, col in enumerate(JOBLOG_COLUMNS):
+        header = self.table.horizontalHeader()
+        self.table.setColumnHidden(0, False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        for idx, col in enumerate(JOBLOG_COLUMNS, start=1):
             self.table.setColumnHidden(idx, col not in visible)
+            header.setSectionResizeMode(idx, QHeaderView.ResizeMode.Interactive)
 
-    def refresh_rows(self) -> None:
+    def _table_column_index(self, column_name: str) -> int:
+        return JOBLOG_COLUMNS.index(column_name) + 1
+
+    def _row_index_for_row_id(self, row_id: int) -> int | None:
+        for index, row in enumerate(self._rows_data):
+            if int(row.get("id", 0) or 0) == int(row_id):
+                return index
+        return None
+
+    def _render_display_row(self, row_index: int, row_data: Mapping[str, object]) -> None:
+        for col in JOBLOG_COLUMNS:
+            table_col = self._table_column_index(col)
+            self.table.removeCellWidget(row_index, table_col)
+            raw = row_data.get(col, "")
+            text = "" if raw is None else str(raw)
+            self.table.setItem(row_index, table_col, QTableWidgetItem(text))
+        self._set_row_action_widget(row_index, row_data, editing=False)
+
+    def _set_row_action_widget(self, row_index: int, row_data: Mapping[str, object], *, editing: bool) -> None:
+        row_id = int(row_data.get("id", 0) or 0)
+        container = QWidget(self.table)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(4)
+        if editing:
+            save_btn = QPushButton("Save", container)
+            cancel_btn = QPushButton("Cancel", container)
+            save_btn.clicked.connect(lambda _checked=False, rid=row_id: self._save_inline_edit(rid))
+            cancel_btn.clicked.connect(lambda _checked=False, rid=row_id: self._cancel_inline_edit(rid))
+            layout.addWidget(save_btn)
+            layout.addWidget(cancel_btn)
+        else:
+            actions_enabled = self._inline_edit_row_id in {None, row_id}
+            edit_btn = QToolButton(container)
+            edit_btn.setAutoRaise(True)
+            edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            edit_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            edit_btn.setIcon(self._action_icons["edit"])
+            edit_btn.setIconSize(QSize(14, 14))
+            edit_btn.setFixedSize(QSize(22, 22))
+            edit_btn.setToolTip("Edit row")
+            edit_btn.setEnabled(actions_enabled)
+            edit_btn.clicked.connect(lambda _checked=False, rid=row_id: self._open_edit_dialog(rid))
+            delete_btn = QToolButton(container)
+            delete_btn.setAutoRaise(True)
+            delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            delete_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            delete_btn.setIcon(self._action_icons["delete"])
+            delete_btn.setIconSize(QSize(14, 14))
+            delete_btn.setFixedSize(QSize(22, 22))
+            delete_btn.setToolTip("Delete row")
+            delete_btn.setEnabled(actions_enabled)
+            delete_btn.clicked.connect(lambda _checked=False, rid=row_id: self._confirm_delete_row(rid))
+            layout.addWidget(edit_btn)
+            layout.addWidget(delete_btn)
+        layout.addStretch(1)
+        self.table.setCellWidget(row_index, 0, container)
+
+    def _combo_values_for_column(self, column_name: str) -> list[str]:
+        if column_name in {"lang", "target_lang"}:
+            return list(JOBLOG_LANG_OPTIONS)
+        setting_key = JOBLOG_VOCAB_SETTINGS_MAP.get(column_name)
+        if setting_key is None:
+            return []
+        return list(self._settings[setting_key])
+
+    def _build_inline_editor(self, column_name: str, row_data: Mapping[str, object]) -> QWidget:
+        value = "" if row_data.get(column_name) is None else str(row_data.get(column_name))
+        if column_name in JOBLOG_INLINE_COMBO_COLUMNS:
+            combo = QComboBox(self.table)
+            combo.setEditable(True)
+            combo.addItems(self._combo_values_for_column(column_name))
+            combo.setCurrentText(value)
+            return combo
+        edit = QLineEdit(value, self.table)
+        if column_name in JOBLOG_INLINE_INTEGER_COLUMNS:
+            validator = QIntValidator(0, 1_000_000_000, edit)
+            edit.setValidator(validator)
+        elif column_name in JOBLOG_INLINE_FLOAT_COLUMNS:
+            validator = QDoubleValidator(-1_000_000_000.0, 1_000_000_000.0, 6, edit)
+            validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+            edit.setValidator(validator)
+        return edit
+
+    def _begin_inline_edit(self, row_index: int, row_data: Mapping[str, object]) -> None:
+        row_id = int(row_data.get("id", 0) or 0)
+        self._inline_edit_row_id = row_id
+        self._inline_edit_row_index = row_index
+        self._inline_original_row = dict(row_data)
+        self._inline_edit_widgets = {}
+        self.refresh_btn.setEnabled(False)
+        self.columns_btn.setEnabled(False)
+        self.honorarios_btn.setEnabled(False)
+        for column_name in JOBLOG_COLUMNS:
+            table_col = self._table_column_index(column_name)
+            if self.table.isColumnHidden(table_col):
+                continue
+            editor = self._build_inline_editor(column_name, row_data)
+            self._inline_edit_widgets[column_name] = editor
+            self.table.setCellWidget(row_index, table_col, editor)
+        self._refresh_action_widgets()
+        self.table.selectRow(row_index)
+        self._refresh_action_state()
+
+    def _clear_inline_edit_state(self) -> None:
+        self._inline_edit_row_id = None
+        self._inline_edit_row_index = None
+        self._inline_original_row = None
+        self._inline_edit_widgets = {}
+
+    def _collect_inline_raw_values(self) -> dict[str, str]:
+        if self._inline_original_row is None:
+            return {}
+        raw_values = {
+            column_name: "" if self._inline_original_row.get(column_name) is None else str(self._inline_original_row.get(column_name))
+            for column_name in JOBLOG_COLUMNS
+        }
+        for column_name, widget in self._inline_edit_widgets.items():
+            if isinstance(widget, QComboBox):
+                raw_values[column_name] = widget.currentText()
+            elif isinstance(widget, QLineEdit):
+                raw_values[column_name] = widget.text()
+        return raw_values
+
+    def _save_inline_edit(self, row_id: int) -> None:
+        if self._inline_edit_row_id != int(row_id) or self._inline_original_row is None:
+            return
+        try:
+            payload = _normalize_joblog_payload(
+                seed=build_seed_from_joblog_row(self._inline_original_row),
+                raw_values=self._collect_inline_raw_values(),
+                service_same_checked=False,
+            )
+        except ValueError as exc:
+            QMessageBox.critical(self, "Invalid values", str(exc))
+            return
+        with closing(open_job_log(self._db_path)) as conn:
+            update_job_run(conn, row_id=int(row_id), values=payload)
+        _persist_joblog_vocab_settings(self._settings, payload)
+        _save_joblog_settings_bundle(
+            self._settings,
+            service_equals_case_by_default=bool(self._settings["service_equals_case_by_default"]),
+        )
+        self._clear_inline_edit_state()
+        self.refresh_rows(selected_row_id=int(row_id), force=True)
+
+    def _cancel_inline_edit(self, row_id: int) -> None:
+        if self._inline_edit_row_id != int(row_id) or self._inline_original_row is None:
+            return
+        row_index = self._inline_edit_row_index
+        original_row = dict(self._inline_original_row)
+        self._clear_inline_edit_state()
+        if row_index is not None and 0 <= row_index < self.table.rowCount():
+            self._render_display_row(row_index, original_row)
+            self.table.selectRow(row_index)
+        self._refresh_action_widgets()
+        self._refresh_action_state()
+
+    def _on_table_cell_double_clicked(self, row_index: int, table_column: int) -> None:
+        if table_column == 0:
+            return
+        row_data = self._rows_data[row_index]
+        row_id = int(row_data.get("id", 0) or 0)
+        if self._inline_edit_row_id is not None:
+            if self._inline_edit_row_id == row_id:
+                return
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return
+        self._begin_inline_edit(row_index, row_data)
+
+    def _open_edit_dialog(self, row_id: int) -> None:
+        if self._inline_edit_row_id is not None:
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return
+        row_index = self._row_index_for_row_id(int(row_id))
+        if row_index is None:
+            return
+        row_data = self._rows_data[row_index]
+        dialog = QtSaveToJobLogDialog(
+            parent=self,
+            db_path=self._db_path,
+            seed=build_seed_from_joblog_row(row_data),
+            on_saved=lambda rid=int(row_id): self.refresh_rows(selected_row_id=rid, force=True),
+            allow_honorarios_export=True,
+            edit_row_id=int(row_id),
+        )
+        dialog.exec()
+
+    def _refresh_action_widgets(self) -> None:
+        for row_index, row_data in enumerate(self._rows_data):
+            row_id = int(row_data.get("id", 0) or 0)
+            self._set_row_action_widget(
+                row_index,
+                row_data,
+                editing=self._inline_edit_row_id == row_id,
+            )
+        self._autofit_column(0)
+
+    def _confirm_delete_row(self, row_id: int) -> None:
+        if self._inline_edit_row_id is not None:
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return
+        row_index = self._row_index_for_row_id(int(row_id))
+        if row_index is None:
+            return
+        row_data = self._rows_data[row_index]
+        case_number = str(row_data.get("case_number", "") or "").strip()
+        title_suffix = f" ({case_number})" if case_number else ""
+        confirmed = QMessageBox.question(
+            self,
+            "Delete Job Log Row",
+            f"Delete this Job Log row{title_suffix}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+        with closing(open_job_log(self._db_path)) as conn:
+            delete_job_run(conn, row_id=int(row_id))
+        self.refresh_rows(selected_row_index=row_index, force=True)
+
+    def refresh_rows(
+        self,
+        selected_row_id: int | None = None,
+        *,
+        selected_row_index: int | None = None,
+        force: bool = False,
+    ) -> None:
+        if self._inline_edit_row_id is not None and not force:
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return
+        if force:
+            self._clear_inline_edit_state()
         self.table.setRowCount(0)
         self._rows_data = []
         with closing(open_job_log(self._db_path)) as conn:
@@ -1486,14 +2103,29 @@ class QtJobLogWindow(QDialog):
             self._rows_data.append(row_data)
             row_idx = self.table.rowCount()
             self.table.insertRow(row_idx)
-            for col_idx, col in enumerate(JOBLOG_COLUMNS):
-                raw = row[col] if col in row.keys() else ""
-                text = "" if raw is None else str(raw)
-                self.table.setItem(row_idx, col_idx, QTableWidgetItem(text))
+            self._render_display_row(row_idx, row_data)
+        self._refresh_action_widgets()
+        self._apply_column_widths()
+        selected_index: int | None = None
+        if selected_row_id is not None:
+            selected_index = self._row_index_for_row_id(int(selected_row_id))
+        elif selected_row_index is not None and self.table.rowCount() > 0:
+            selected_index = min(max(int(selected_row_index), 0), self.table.rowCount() - 1)
+        if selected_index is not None:
+            self.table.selectRow(selected_index)
         self._refresh_action_state()
 
     def _refresh_action_state(self) -> None:
-        self.honorarios_btn.setEnabled(self._selected_row_data() is not None)
+        if self._inline_edit_row_id is not None and not self._selection_guard_active:
+            edit_row_index = self._row_index_for_row_id(self._inline_edit_row_id)
+            if edit_row_index is not None and self.table.currentRow() != edit_row_index:
+                self._selection_guard_active = True
+                self.table.selectRow(edit_row_index)
+                self._selection_guard_active = False
+        is_editing = self._inline_edit_row_id is not None
+        self.refresh_btn.setEnabled(not is_editing)
+        self.columns_btn.setEnabled(not is_editing)
+        self.honorarios_btn.setEnabled(not is_editing and self._selected_row_data() is not None)
 
     def _selected_row_data(self) -> dict[str, object] | None:
         row = self.table.currentRow()
@@ -1726,6 +2358,7 @@ class QtJobLogWindow(QDialog):
             self._settings["joblog_visible_columns"] = list(selected)
             save_joblog_settings({"joblog_visible_columns": list(selected)})
             self._apply_visible_columns()
+            self._apply_column_widths()
             dialog.accept()
 
         apply_btn.clicked.connect(apply_columns)
@@ -1862,7 +2495,7 @@ class QtReviewQueueDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Review Queue")
-        self.resize(980, 560)
+        self.setMinimumSize(720, 420)
         self._entries = normalize_review_queue_entries(review_queue)
         self._run_dir = run_dir.expanduser().resolve() if isinstance(run_dir, Path) else None
         self._run_summary_path = (
@@ -1871,6 +2504,11 @@ class QtReviewQueueDialog(QDialog):
         self._open_path_callback = open_path_callback
         self._build_ui()
         self._populate_table()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="table",
+            preferred_size=QSize(980, 560),
+        )
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -2082,7 +2720,7 @@ class _GmailPreviewPageCard(QFrame):
 
     def _apply_reserved_height(self, target_width: int) -> None:
         self._target_width = max(320, int(target_width))
-        self.preview_label.setFixedHeight(self._reserved_height_for_width(self._target_width))
+        _set_fixed_height_if_needed(self.preview_label, self._reserved_height_for_width(self._target_width))
 
     def _set_state_text(self, message: str) -> None:
         self.state_label.setText(message if message else " ")
@@ -2132,7 +2770,7 @@ class _GmailPreviewPageCard(QFrame):
         else:
             display = pixmap
         self.preview_label.setPixmap(display)
-        self.preview_label.setFixedHeight(display.height())
+        _set_fixed_height_if_needed(self.preview_label, display.height())
 
 
 class QtGmailAttachmentPreviewDialog(QDialog):
@@ -2157,7 +2795,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Attachment Preview")
-        self.resize(980, 760)
+        self.setMinimumSize(720, 520)
         self._attachment = attachment
         self._gog_path = gog_path.expanduser().resolve()
         self._account_email = account_email.strip()
@@ -2184,11 +2822,21 @@ class QtGmailAttachmentPreviewDialog(QDialog):
         self._visible_refresh_timer.setSingleShot(True)
         self._visible_refresh_timer.setInterval(self._PAGE_REFRESH_DEBOUNCE_MS)
         self._visible_refresh_timer.timeout.connect(self._refresh_visible_pages)
+        self._scaled_preview_timer = QTimer(self)
+        self._scaled_preview_timer.setSingleShot(True)
+        self._scaled_preview_timer.setInterval(60)
+        self._scaled_preview_timer.timeout.connect(self._refresh_scaled_preview)
         self._image_pixmap: QPixmap | None = None
+        self._image_display_width: int | None = None
         self.selected_start_page: int | None = None
         self.resolved_local_path: Path | None = self._local_path
         self.resolved_page_count: int | None = self._page_count
         self._build_ui()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="preview",
+            preferred_size=QSize(980, 760),
+        )
         QTimer.singleShot(0, self._start_bootstrap)
 
     def _build_ui(self) -> None:
@@ -2253,6 +2901,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
     def done(self, result: int) -> None:
         self._closing = True
         self._visible_refresh_timer.stop()
+        self._scaled_preview_timer.stop()
         bootstrap_thread = self._bootstrap_thread
         if bootstrap_thread is not None and bootstrap_thread.isRunning():
             bootstrap_thread.quit()
@@ -2270,7 +2919,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
     def eventFilter(self, watched: QObject, event: object) -> bool:
         if watched is self.scroll_area.viewport() and isinstance(event, QEvent):
             if event.type() in {QEvent.Type.Resize, QEvent.Type.Show}:
-                self._refresh_scaled_preview()
+                self._schedule_scaled_preview_refresh()
                 self._schedule_visible_page_refresh()
         return super().eventFilter(watched, event)
 
@@ -2293,6 +2942,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self.preview_label.setWordWrap(True)
         self.preview_layout.addWidget(self.preview_label)
+        self._image_display_width = None
 
     def _clear_preview_layout(self) -> None:
         while self.preview_layout.count() > 0:
@@ -2411,12 +3061,20 @@ class QtGmailAttachmentPreviewDialog(QDialog):
             card.update_scaled_pixmap(target_width)
         if self._is_image and self._image_pixmap is not None:
             pixmap = self._image_pixmap
+            if self._image_display_width == target_width:
+                return
             if pixmap.width() != target_width:
                 display = pixmap.scaledToWidth(target_width, Qt.TransformationMode.SmoothTransformation)
             else:
                 display = pixmap
             self.preview_label.setPixmap(display)
-            self.preview_label.setFixedHeight(display.height())
+            _set_fixed_height_if_needed(self.preview_label, display.height())
+            self._image_display_width = target_width
+
+    def _schedule_scaled_preview_refresh(self) -> None:
+        if self._closing or not self._bootstrap_complete:
+            return
+        self._scaled_preview_timer.start()
 
     def _scroll_to_page(self, page_number: int) -> None:
         if self._is_image:
@@ -2551,6 +3209,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
             self.preview_label.setText("")
             self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
             self.preview_label.setWordWrap(True)
+            self._image_display_width = None
             self._refresh_scaled_preview()
             self.status_label.setText("Single-image attachment preview.")
         else:
@@ -2623,7 +3282,7 @@ class QtGmailBatchReviewDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Gmail Attachment Review")
-        self.resize(980, 620)
+        self.setMinimumSize(760, 480)
         self._message = message
         self._gog_path = gog_path.expanduser().resolve()
         self._account_email = account_email.strip()
@@ -2646,6 +3305,11 @@ class QtGmailBatchReviewDialog(QDialog):
         self._populate_table()
         self._refresh_actions()
         self._refresh_detail_panel()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="table",
+            preferred_size=QSize(980, 620),
+        )
 
     def done(self, result: int) -> None:
         if result != QDialog.DialogCode.Accepted:
@@ -2978,7 +3642,7 @@ class QtGlossaryEditorDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Glossary Editor")
-        self.resize(860, 560)
+        self.setMinimumSize(680, 440)
 
         self._current_path = initial_path
         self._default_save_path = default_save_path.expanduser().resolve()
@@ -3011,6 +3675,11 @@ class QtGlossaryEditorDialog(QDialog):
         self.save_btn.clicked.connect(self._save)
         self.save_as_btn.clicked.connect(self._save_as)
         self.cancel_btn.clicked.connect(self.reject)
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="table",
+            preferred_size=QSize(860, 560),
+        )
 
     @staticmethod
     def _validated_text(text: str, *, source: str) -> str:
@@ -3375,7 +4044,6 @@ class QtSettingsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.resize(980, 700)
         self.setMinimumSize(780, 560)
 
         self._settings = dict(settings)
@@ -3413,6 +4081,11 @@ class QtSettingsDialog(QDialog):
         self._build_ui()
         self._set_values_from_settings(self._settings)
         self._refresh_key_status()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(980, 700),
+        )
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)

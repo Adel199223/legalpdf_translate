@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 import sys
@@ -18,7 +19,7 @@ if str(SRC_ROOT) not in sys.path:
 if os.name != "nt" and "DISPLAY" not in os.environ:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QBuffer, QIODevice
+from PySide6.QtCore import QBuffer, QIODevice, QRect
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPen
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -27,6 +28,7 @@ from legalpdf_translate.gmail_batch import FetchedGmailMessage, GmailAttachmentC
 from legalpdf_translate.qt_gui.app_window import QtMainWindow
 from legalpdf_translate.qt_gui.dialogs import QtGmailAttachmentPreviewDialog, QtGmailBatchReviewDialog
 from legalpdf_translate.qt_gui.styles import build_stylesheet
+from legalpdf_translate.qt_gui import window_adaptive as window_adaptive_module
 from legalpdf_translate.qt_gui.worker import (
     GmailAttachmentPreviewBootstrapResult,
     GmailAttachmentPreviewPageResult,
@@ -39,6 +41,7 @@ PROFILE_SIZES: dict[str, tuple[int, int]] = {
     "medium": (1360, 880),
     "narrow": (980, 760),
 }
+RENDER_SCREEN_GEOMETRY = QRect(0, 0, 2560, 1600)
 
 PREVIEW_TEXT = {
     "pdf_name": "test_document.pdf",
@@ -64,6 +67,20 @@ def _ensure_app() -> tuple[QApplication, bool]:
         app_icon = QIcon(str(icon_path))
         app.setWindowIcon(app_icon)
     return app, owns_app
+
+
+@contextmanager
+def _deterministic_render_screen():
+    original = window_adaptive_module.available_screen_geometry
+
+    def _fixed_geometry(_widget) -> QRect:
+        return QRect(RENDER_SCREEN_GEOMETRY)
+
+    window_adaptive_module.available_screen_geometry = _fixed_geometry
+    try:
+        yield
+    finally:
+        window_adaptive_module.available_screen_geometry = original
 
 
 def resolve_profiles(values: Iterable[str]) -> list[str]:
@@ -118,63 +135,64 @@ def apply_reference_sample(window: QtMainWindow) -> None:
 def render_gmail_review_dialog_sample(*, outdir: Path) -> dict[str, object]:
     outdir.mkdir(parents=True, exist_ok=True)
     app, owns_app = _ensure_app()
-    dialog = QtGmailBatchReviewDialog(
-        parent=None,
-        message=FetchedGmailMessage(
-            message_id="msg-100",
-            thread_id="thread-200",
-            subject="Remessa de peça processual",
-            from_header='Palmira M Romaneiro <palmira.m.romaneiro@tribunais.org.pt>',
-            account_email="adel.belghali@gmail.com",
-            attachments=(
-                GmailAttachmentCandidate(
-                    attachment_id="att-1",
-                    filename="cef31abb-bd4f-4582-b15e-09bbb40d1834_temp.pdf",
-                    mime_type="application/pdf",
-                    size_bytes=182_784,
-                    source_message_id="msg-100",
-                ),
-                GmailAttachmentCandidate(
-                    attachment_id="att-2",
-                    filename="scene.jpg",
-                    mime_type="image/jpeg",
-                    size_bytes=98_304,
-                    source_message_id="msg-100",
+    with _deterministic_render_screen():
+        dialog = QtGmailBatchReviewDialog(
+            parent=None,
+            message=FetchedGmailMessage(
+                message_id="msg-100",
+                thread_id="thread-200",
+                subject="Remessa de peça processual",
+                from_header='Palmira M Romaneiro <palmira.m.romaneiro@tribunais.org.pt>',
+                account_email="adel.belghali@gmail.com",
+                attachments=(
+                    GmailAttachmentCandidate(
+                        attachment_id="att-1",
+                        filename="cef31abb-bd4f-4582-b15e-09bbb40d1834_temp.pdf",
+                        mime_type="application/pdf",
+                        size_bytes=182_784,
+                        source_message_id="msg-100",
+                    ),
+                    GmailAttachmentCandidate(
+                        attachment_id="att-2",
+                        filename="scene.jpg",
+                        mime_type="image/jpeg",
+                        size_bytes=98_304,
+                        source_message_id="msg-100",
+                    ),
                 ),
             ),
-        ),
-        gog_path=Path("C:/gog.exe"),
-        account_email="adel.belghali@gmail.com",
-        target_lang="FR",
-        default_start_page=2,
-        output_dir_text="C:/Users/FA507/Downloads",
-    )
-    try:
-        dialog.table.selectRow(0)
-        dialog._set_row_page_count(0, 6)
-        dialog._set_row_start_page(0, 2)
-        dialog._refresh_detail_panel()
-        dialog.show()
-        app.processEvents()
-        image_path = outdir / "gmail_review.png"
-        meta_path = outdir / "gmail_review.json"
-        dialog.grab().save(str(image_path))
-        metadata = {
-            "sample": "gmail_review",
-            "width": int(dialog.width()),
-            "height": int(dialog.height()),
-            "row_count": int(dialog.table.rowCount()),
-            "current_row": int(dialog.table.currentRow()),
-            "target_lang": dialog.target_lang_combo.currentText(),
-            "image_path": str(image_path),
-        }
-        meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-        return metadata
-    finally:
-        dialog.close()
-        dialog.deleteLater()
-        if owns_app:
-            app.quit()
+            gog_path=Path("C:/gog.exe"),
+            account_email="adel.belghali@gmail.com",
+            target_lang="FR",
+            default_start_page=2,
+            output_dir_text="C:/Users/FA507/Downloads",
+        )
+        try:
+            dialog.table.selectRow(0)
+            dialog._set_row_page_count(0, 6)
+            dialog._set_row_start_page(0, 2)
+            dialog._refresh_detail_panel()
+            dialog.show()
+            app.processEvents()
+            image_path = outdir / "gmail_review.png"
+            meta_path = outdir / "gmail_review.json"
+            dialog.grab().save(str(image_path))
+            metadata = {
+                "sample": "gmail_review",
+                "width": int(dialog.width()),
+                "height": int(dialog.height()),
+                "row_count": int(dialog.table.rowCount()),
+                "current_row": int(dialog.table.currentRow()),
+                "target_lang": dialog.target_lang_combo.currentText(),
+                "image_path": str(image_path),
+            }
+            meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            return metadata
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+            if owns_app:
+                app.quit()
 
 
 def _sample_preview_image_bytes(page_number: int) -> tuple[bytes, int, int]:
@@ -224,54 +242,55 @@ def render_gmail_preview_dialog_sample(*, outdir: Path) -> dict[str, object]:
                 )
             )
 
-    dialog = _SamplePreviewDialog(
-        parent=None,
-        attachment=GmailAttachmentCandidate(
-            attachment_id="att-1",
-            filename="21-25.pdf",
-            mime_type="application/pdf",
-            size_bytes=182_784,
-            source_message_id="msg-100",
-        ),
-        gog_path=Path("C:/gog.exe"),
-        account_email="adel.belghali@gmail.com",
-        preview_dir=outdir,
-        initial_start_page=2,
-        cached_path=outdir / "sample_preview.pdf",
-        known_page_count=6,
-    )
-    try:
-        dialog._on_bootstrap_loaded(
-            GmailAttachmentPreviewBootstrapResult(
-                attachment=dialog._attachment,
-                local_path=outdir / "sample_preview.pdf",
-                page_count=6,
-                page_sizes=((900.0, 1260.0),) * 6,
-            )
+    with _deterministic_render_screen():
+        dialog = _SamplePreviewDialog(
+            parent=None,
+            attachment=GmailAttachmentCandidate(
+                attachment_id="att-1",
+                filename="21-25.pdf",
+                mime_type="application/pdf",
+                size_bytes=182_784,
+                source_message_id="msg-100",
+            ),
+            gog_path=Path("C:/gog.exe"),
+            account_email="adel.belghali@gmail.com",
+            preview_dir=outdir,
+            initial_start_page=2,
+            cached_path=outdir / "sample_preview.pdf",
+            known_page_count=6,
         )
-        dialog.show()
-        app.processEvents()
-        dialog._scroll_to_page(2)
-        QTest.qWait(dialog._PAGE_REFRESH_DEBOUNCE_MS + 40)
-        app.processEvents()
-        image_path = outdir / "gmail_preview.png"
-        meta_path = outdir / "gmail_preview.json"
-        dialog.grab().save(str(image_path))
-        metadata = {
-            "sample": "gmail_preview",
-            "width": int(dialog.width()),
-            "height": int(dialog.height()),
-            "page_count": int(dialog.resolved_page_count or 0),
-            "cached_pages": len(dialog._page_cache),
-            "image_path": str(image_path),
-        }
-        meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-        return metadata
-    finally:
-        dialog.close()
-        dialog.deleteLater()
-        if owns_app:
-            app.quit()
+        try:
+            dialog._on_bootstrap_loaded(
+                GmailAttachmentPreviewBootstrapResult(
+                    attachment=dialog._attachment,
+                    local_path=outdir / "sample_preview.pdf",
+                    page_count=6,
+                    page_sizes=((900.0, 1260.0),) * 6,
+                )
+            )
+            dialog.show()
+            app.processEvents()
+            dialog._scroll_to_page(2)
+            QTest.qWait(dialog._PAGE_REFRESH_DEBOUNCE_MS + 40)
+            app.processEvents()
+            image_path = outdir / "gmail_preview.png"
+            meta_path = outdir / "gmail_preview.json"
+            dialog.grab().save(str(image_path))
+            metadata = {
+                "sample": "gmail_preview",
+                "width": int(dialog.width()),
+                "height": int(dialog.height()),
+                "page_count": int(dialog.resolved_page_count or 0),
+                "cached_pages": len(dialog._page_cache),
+                "image_path": str(image_path),
+            }
+            meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            return metadata
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+            if owns_app:
+                app.quit()
 
 
 def render_profiles(
@@ -286,40 +305,41 @@ def render_profiles(
     results: list[dict[str, object]] = []
 
     try:
-        for profile_name in profile_names:
-            width, height = PROFILE_SIZES[profile_name]
-            window = QtMainWindow()
-            try:
-                window._initial_resize_done = True
-                window.resize(width, height)
-                if preview == "reference_sample":
-                    apply_reference_sample(window)
-                window.show()
-                app.processEvents()
-                window.resize(width, height)
-                app.processEvents()
-                window._update_card_max_width(viewport_width=width)
-                app.processEvents()
+        with _deterministic_render_screen():
+            for profile_name in profile_names:
+                width, height = PROFILE_SIZES[profile_name]
+                window = QtMainWindow()
+                try:
+                    window._initial_resize_done = True
+                    window.resize(width, height)
+                    if preview == "reference_sample":
+                        apply_reference_sample(window)
+                    window.show()
+                    app.processEvents()
+                    window.resize(width, height)
+                    app.processEvents()
+                    window._update_card_max_width(viewport_width=width)
+                    app.processEvents()
 
-                image_path = outdir / f"{profile_name}.png"
-                meta_path = outdir / f"{profile_name}.json"
-                window.grab().save(str(image_path))
-                metadata = {
-                    "profile": profile_name,
-                    "width": width,
-                    "height": height,
-                    "layout_mode": getattr(window, "_layout_mode", ""),
-                    "sidebar_width": int(window.sidebar_frame.width()),
-                    "content_card_width": int(window.content_card.width()),
-                    "setup_panel_width": int(window.setup_panel.width()),
-                    "progress_panel_width": int(window.progress_panel.width()),
-                    "image_path": str(image_path),
-                }
-                meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-                results.append(metadata)
-            finally:
-                window.close()
-                window.deleteLater()
+                    image_path = outdir / f"{profile_name}.png"
+                    meta_path = outdir / f"{profile_name}.json"
+                    window.grab().save(str(image_path))
+                    metadata = {
+                        "profile": profile_name,
+                        "width": width,
+                        "height": height,
+                        "layout_mode": getattr(window, "_layout_mode", ""),
+                        "sidebar_width": int(window.sidebar_frame.width()),
+                        "content_card_width": int(window.content_card.width()),
+                        "setup_panel_width": int(window.setup_panel.width()),
+                        "progress_panel_width": int(window.progress_panel.width()),
+                        "image_path": str(image_path),
+                    }
+                    meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+                    results.append(metadata)
+                finally:
+                    window.close()
+                    window.deleteLater()
     finally:
         if owns_app:
             app.quit()

@@ -62,6 +62,18 @@ Use the support response shape:
 Never handle commit requests blindly.
 Always follow `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`.
 
+## Project Harness Routing
+- If the user says `implement the template files` or `sync project harness`, follow `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`.
+- If the user says `audit project harness` or `check project harness`, use the same workflow in audit/validation-only mode.
+- Local harness application must read vendored templates as source input and must not edit `docs/assistant/templates/*`.
+- `update codex bootstrap` and `UCBS` are reserved for maintaining the reusable template system itself, not for project-local harness sync.
+
+## Roadmap Resume Routing
+- If the user says `resume master plan`, `where did we leave off`, or `what is the next roadmap step`, open `docs/assistant/SESSION_RESUME.md` first.
+- After `docs/assistant/SESSION_RESUME.md`, open the linked active roadmap tracker and then the linked active wave ExecPlan.
+- `docs/assistant/SESSION_RESUME.md` is the stable roadmap anchor file for fresh sessions.
+- During active work in a separate worktree, that worktree's `SESSION_RESUME.md`, active roadmap tracker, and active wave ExecPlan are authoritative for live roadmap state.
+
 ## Commit/Push Shorthand Defaults
 - When the user says `commit` without narrowing scope:
   - inspect the full pending Source Control tree first

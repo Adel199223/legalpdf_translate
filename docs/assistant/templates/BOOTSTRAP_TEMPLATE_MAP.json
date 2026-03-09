@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "entrypoint": "docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md",
   "modules": [
     {
@@ -42,6 +42,18 @@
       ]
     },
     {
+      "id": "project_harness_sync",
+      "path": "docs/assistant/templates/BOOTSTRAP_PROJECT_HARNESS_SYNC_POLICY.md",
+      "required": true,
+      "topics": [
+        "vendored template files",
+        "implement the template files trigger",
+        "sync project harness alias",
+        "local harness apply order",
+        "template-edit protection"
+      ]
+    },
+    {
       "id": "local_env_overlay",
       "path": "docs/assistant/templates/BOOTSTRAP_LOCAL_ENV_OVERLAY.md",
       "required": false,
@@ -72,6 +84,18 @@
         "worktree provenance",
         "canonical runnable build",
         "build under test identity"
+      ]
+    },
+    {
+      "id": "roadmap_governance",
+      "path": "docs/assistant/templates/BOOTSTRAP_ROADMAP_GOVERNANCE.md",
+      "required": false,
+      "topics": [
+        "adaptive roadmap triggering",
+        "roadmap vs execplan-only granularity",
+        "fresh-session resume entrypoint",
+        "active-worktree authority",
+        "detour and closeout update order"
       ]
     },
     {

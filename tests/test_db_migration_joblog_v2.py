@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from legalpdf_translate.joblog_db import open_job_log
+from legalpdf_translate.joblog_db import delete_job_run, open_job_log, update_job_run
 
 
 def _column_names(conn: sqlite3.Connection) -> set[str]:
@@ -104,3 +104,157 @@ def test_migration_adds_v2_columns_and_backfills(tmp_path: Path) -> None:
     assert row[11] is None
     assert row[12] is None
     assert row[13] is None
+
+
+def test_update_job_run_updates_only_selected_fields_and_preserves_paths(tmp_path: Path) -> None:
+    db_path = tmp_path / "job_log.sqlite3"
+    with open_job_log(db_path) as conn:
+        row_id = conn.execute(
+            """
+            INSERT INTO job_runs (
+                completed_at,
+                translation_date,
+                job_type,
+                case_number,
+                case_entity,
+                case_city,
+                service_entity,
+                service_city,
+                service_date,
+                lang,
+                target_lang,
+                run_id,
+                pages,
+                word_count,
+                total_tokens,
+                rate_per_word,
+                expected_total,
+                amount_paid,
+                api_cost,
+                estimated_api_cost,
+                quality_risk_score,
+                profit,
+                output_docx_path,
+                partial_docx_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-03-06T16:58:34",
+                "2026-03-06",
+                "Translation",
+                "109/26.0PBBJA",
+                "Juizo Local Criminal de Beja",
+                "Beja",
+                "Juizo Local Criminal de Beja",
+                "Beja",
+                "2026-03-06",
+                "AR",
+                "AR",
+                "run-1",
+                7,
+                1666,
+                57126,
+                0.09,
+                149.94,
+                0.0,
+                0.56,
+                0.56,
+                0.1754,
+                149.38,
+                "C:/tmp/out.docx",
+                "C:/tmp/out_partial.docx",
+            ),
+        ).lastrowid
+        update_job_run(
+            conn,
+            row_id=int(row_id),
+            values={
+                "job_type": "Interpretation",
+                "pages": 9,
+                "profit": 100.0,
+            },
+        )
+        row = conn.execute(
+            """
+            SELECT id, job_type, pages, profit, output_docx_path, partial_docx_path, case_number
+            FROM job_runs
+            WHERE id = ?
+            """,
+            (int(row_id),),
+        ).fetchone()
+
+    assert row is not None
+    assert int(row[0]) == int(row_id)
+    assert row[1] == "Interpretation"
+    assert int(row[2]) == 9
+    assert float(row[3]) == 100.0
+    assert row[4] == "C:/tmp/out.docx"
+    assert row[5] == "C:/tmp/out_partial.docx"
+    assert row[6] == "109/26.0PBBJA"
+
+
+def test_delete_job_run_removes_only_selected_row(tmp_path: Path) -> None:
+    db_path = tmp_path / "job_log.sqlite3"
+    with open_job_log(db_path) as conn:
+        first_id = conn.execute(
+            """
+            INSERT INTO job_runs (
+                completed_at,
+                translation_date,
+                case_number,
+                case_entity,
+                case_city,
+                service_entity,
+                service_city,
+                service_date,
+                lang,
+                target_lang
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-03-05T10:00:00",
+                "2026-03-05",
+                "case-1",
+                "Entity 1",
+                "Beja",
+                "Entity 1",
+                "Beja",
+                "2026-03-05",
+                "AR",
+                "AR",
+            ),
+        ).lastrowid
+        second_id = conn.execute(
+            """
+            INSERT INTO job_runs (
+                completed_at,
+                translation_date,
+                case_number,
+                case_entity,
+                case_city,
+                service_entity,
+                service_city,
+                service_date,
+                lang,
+                target_lang
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-03-06T10:00:00",
+                "2026-03-06",
+                "case-2",
+                "Entity 2",
+                "Beja",
+                "Entity 2",
+                "Beja",
+                "2026-03-06",
+                "FR",
+                "FR",
+            ),
+        ).lastrowid
+        delete_job_run(conn, row_id=int(first_id))
+        rows = conn.execute(
+            "SELECT id, case_number, lang FROM job_runs ORDER BY id"
+        ).fetchall()
+
+    assert [tuple(row) for row in rows] == [(int(second_id), "case-2", "FR")]

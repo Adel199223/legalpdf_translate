@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -61,6 +63,46 @@ def test_render_profiles_writes_png_and_metadata(tmp_path: Path) -> None:
     assert meta_path.exists()
     assert result["profile"] == "wide"
     assert result["layout_mode"] == "desktop_exact"
+
+
+def test_render_profiles_ignore_live_screen_geometry(tmp_path: Path) -> None:
+    script = f"""
+import json
+import sys
+from pathlib import Path
+from PySide6.QtCore import QRect
+
+repo_root = Path({str(Path(__file__).resolve().parents[1])!r})
+tooling_root = repo_root / "tooling"
+src_root = repo_root / "src"
+if str(tooling_root) not in sys.path:
+    sys.path.insert(0, str(tooling_root))
+if str(src_root) not in sys.path:
+    sys.path.insert(0, str(src_root))
+
+import qt_render_review as render_tool
+from legalpdf_translate.qt_gui import window_adaptive as window_adaptive_module
+
+window_adaptive_module.available_screen_geometry = lambda _widget: QRect(0, 0, 980, 760)
+result = render_tool.render_profiles(
+    outdir=Path({str(tmp_path)!r}),
+    profiles=["wide"],
+    preview="reference_sample",
+)[0]
+print(json.dumps(result))
+"""
+    env = os.environ.copy()
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    metadata = json.loads(result.stdout.strip())
+
+    assert metadata["profile"] == "wide"
+    assert metadata["layout_mode"] == "desktop_exact"
 
 
 def test_render_gmail_review_dialog_sample_writes_png_and_metadata(tmp_path: Path) -> None:

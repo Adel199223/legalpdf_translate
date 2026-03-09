@@ -63,6 +63,16 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 9. Open `File > New Window` or press `Ctrl+Shift+N` when you want a second independent workspace for another job.
 10. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when `Court Email` is available.
 
+## Using the Job Log
+1. Open `Tools > View Job Log` when you want to check or fix something you already saved.
+2. Use the small pen button for the full edit form.
+3. Double-click a visible row value for a quick inline change, then use `Save` or `Cancel` on that row.
+4. Use the trash button only when you want to remove that saved row completely. The app asks before deleting it.
+5. If the original PDF is gone, you can still edit the saved row.
+6. Drag column borders wider when names or values are cut off. If the table gets wider than the window, scroll sideways.
+7. The app remembers the widths you set for Job Log columns.
+8. In the Save to Job Log form, scroll inside the window on smaller screens. The lower detail sections start collapsed so the main fields stay easier to reach.
+
 ## Multiple Windows
 1. Open another workspace from `File > New Window`, `Ctrl+Shift+N`, or the bottom `...` menu.
 2. Each window is a separate workspace. Starting, stopping, or resetting one window does not reset the others.
@@ -136,7 +146,8 @@ Use this fix:
 2. If you choose `Cancel and wait`, the app now waits only until the current request finishes or hits its deadline. It should no longer look indefinitely stuck.
 3. If a run stops partway through, open the run report and the run folder before trying again.
 4. In Save to Job Log, `Words` now means translated output words from the DOCX, not raw OCR/source page text.
-5. When Gmail draft creation is offered after generating honorários, the app should usually reuse the translated DOCX automatically. Historical Job Log rows only ask you to pick a translation file when the row has no stored path and exact `run_id` recovery is not possible.
-6. Gmail intake live testing must happen on the same Windows host as the signed-in browser and Windows `gog`. A WSL-only smoke is not enough for the final check.
-7. In Gmail batches, if you accidentally choose the translated DOCX filename while saving honorários, the app now auto-renames the honorários file instead of overwriting the translation.
-8. If a Gmail batch reply draft still fails after translation finished, look for `gmail_batch_session.json` under your output folder’s `_gmail_batch_sessions` directory before retrying blindly.
+5. In the Job Log window, use the pen button for the full form, double-click visible cells for quick inline edits, and expect a confirmation before any delete.
+6. When Gmail draft creation is offered after generating honorários, the app should usually reuse the translated DOCX automatically. Historical Job Log rows only ask you to pick a translation file when the row has no stored path and exact `run_id` recovery is not possible.
+7. Gmail intake live testing must happen on the same Windows host as the signed-in browser and Windows `gog`. A WSL-only smoke is not enough for the final check.
+8. In Gmail batches, if you accidentally choose the translated DOCX filename while saving honorários, the app now auto-renames the honorários file instead of overwriting the translation.
+9. If a Gmail batch reply draft still fails after translation finished, look for `gmail_batch_session.json` under your output folder’s `_gmail_batch_sessions` directory before retrying blindly.

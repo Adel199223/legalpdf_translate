@@ -47,6 +47,7 @@ const List<String> _requiredFiles = <String>[
   'docs/assistant/workflows/CI_REPO_WORKFLOW.md',
   'docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md',
   'docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md',
+  'docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md',
   'docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md',
   'docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md',
   'docs/assistant/runtime/CANONICAL_BUILD.json',
@@ -54,10 +55,12 @@ const List<String> _requiredFiles = <String>[
   'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json',
   'docs/assistant/templates/BOOTSTRAP_CORE_CONTRACT.md',
   'docs/assistant/templates/BOOTSTRAP_ISSUE_MEMORY_SYSTEM.md',
+  'docs/assistant/templates/BOOTSTRAP_PROJECT_HARNESS_SYNC_POLICY.md',
   'docs/assistant/templates/BOOTSTRAP_MODULES_AND_TRIGGERS.md',
   'docs/assistant/templates/BOOTSTRAP_LOCAL_ENV_OVERLAY.md',
   'docs/assistant/templates/BOOTSTRAP_CAPABILITY_DISCOVERY.md',
   'docs/assistant/templates/BOOTSTRAP_WORKTREE_BUILD_IDENTITY.md',
+  'docs/assistant/templates/BOOTSTRAP_ROADMAP_GOVERNANCE.md',
   'docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md',
   'docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md',
   'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md',
@@ -81,14 +84,23 @@ const List<String> _requiredWorkflowIds = <String>[
   'ci_repo_ops',
   'commit_publish_ops',
   'docs_maintenance_workflow',
+  'project_harness_sync_workflow',
   'harness_isolation_and_diagnostics_workflow',
 ];
 
 const List<String> _requiredModuleFlags = <String>[
   'core_contract',
   'beginner_layer',
+  'issue_memory_system',
+  'project_harness_sync',
   'localization_performance',
+  'local_env_overlay',
+  'capability_discovery',
+  'worktree_build_identity',
+  'roadmap_governance',
   'reference_discovery',
+  'host_integration_preflight',
+  'harness_isolation_diagnostics',
   'browser_automation_environment_provenance',
   'cloud_machine_evaluation_local_acceptance',
   'staged_execution',
@@ -97,6 +109,14 @@ const List<String> _requiredModuleFlags = <String>[
 
 const Map<String, List<String>> _requiredWorkflowIdsByModule =
     <String, List<String>>{
+      'project_harness_sync': <String>['project_harness_sync_workflow'],
+      'roadmap_governance': <String>['roadmap_workflow'],
+      'host_integration_preflight': <String>[
+        'host_integration_preflight_workflow',
+      ],
+      'harness_isolation_diagnostics': <String>[
+        'harness_isolation_and_diagnostics_workflow',
+      ],
       'staged_execution': <String>['staged_execution_workflow'],
       'browser_automation_environment_provenance': <String>[
         'browser_automation_env_provenance',
@@ -140,6 +160,8 @@ const List<String> _requiredContractKeys = <String>[
   'approval_gates_policy',
   'worktree_isolation_policy',
   'doc_gardening_policy',
+  'project_harness_sync_policy',
+  'vendored_template_protection_policy',
   'user_guides_support_usage_policy',
   'user_guides_canonical_deference_policy',
   'user_guides_update_sync_policy',
@@ -177,6 +199,15 @@ const List<String> _requiredIssueMemoryIssueKeys = <String>[
 
 const Map<String, List<String>> _requiredContractKeysByModule =
     <String, List<String>>{
+      'project_harness_sync': <String>[
+        'project_harness_sync_policy',
+        'vendored_template_protection_policy',
+      ],
+      'roadmap_governance': <String>[
+        'roadmap_resume_anchor_policy',
+        'roadmap_active_worktree_authority_policy',
+        'roadmap_update_order_policy',
+      ],
       'staged_execution': <String>['stage_gate_policy'],
       'reference_discovery': <String>['reference_discovery_policy'],
       'openai_docs_citation': <String>['openai_docs_citation_freshness_policy'],
@@ -211,41 +242,51 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'bootstrap_template_map.json',
     'bootstrap_core_contract.md',
     'bootstrap_issue_memory_system.md',
+    'bootstrap_project_harness_sync_policy.md',
     'bootstrap_modules_and_triggers.md',
+    'bootstrap_roadmap_governance.md',
+    'implement the template files',
+    'session_resume.md',
     'bootstrap_harness_isolation_and_diagnostics.md',
-    'host-bound workflows span more than one failure surface',
+    'host-bound workflows span browser/app/local bridge or fragile listeners',
     'read-on-demand',
   ],
   'docs/assistant/templates/BOOTSTRAP_CORE_CONTRACT.md': <String>[
     'docs/assistant/issue_memory.md',
     'docs/assistant/issue_memory.json',
-    'commit and push shorthand defaults',
-    'full pending-tree triage',
+    'session_resume.md',
+    'when roadmap governance is active',
+    'implement the template files',
+    'sync project harness',
+    'must not edit `docs/assistant/templates/*`',
+    'bare `commit`',
     'push+pr+merge+cleanup',
-    'openai / codex freshness rule',
-    'relevant touched-scope docs still remain unsynced',
-    'must not ask the prompt again',
+    'openai-specific behavior is temporally unstable',
+    'docs-sync prompt',
   ],
   'docs/assistant/templates/BOOTSTRAP_ISSUE_MEMORY_SYSTEM.md': <String>[
-    'required generated files',
+    'required output',
     'docs/assistant/issue_memory.md',
     'docs/assistant/issue_memory.json',
-    'operational triggers take priority',
-    'repeated test/live-state contamination',
-    'repeated fragmented diagnostics across workflow surfaces',
-    'wording triggers are secondary signals',
+    'prefer operational triggers first and wording triggers second',
+    'do not use issue memory as a substitute for normal roadmap history',
+    'assistant docs sync should consult issue memory',
     'assistant docs sync',
-    'update codex bootstrap',
     'repeat_count >= 2',
-    'do not preseed fake incidents',
+    'do not seed fake incidents',
   ],
   'docs/assistant/templates/BOOTSTRAP_MODULES_AND_TRIGGERS.md': <String>[
     'issue memory system',
     'always on',
+    'project harness sync',
+    'implement the template files',
+    'sync project harness',
     'worktree / build identity',
     'auto-conditional',
     'runnable app',
     'local desktop workflow',
+    'roadmap governance',
+    'docs/assistant/session_resume.md',
     'harness isolation + diagnostics',
     'tests could collide with live machine state',
     'merge-immediately-after-acceptance discipline',
@@ -255,44 +296,58 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'browser automation rules',
     'harness isolation + diagnostics rules',
   ],
+  'docs/assistant/templates/BOOTSTRAP_PROJECT_HARNESS_SYNC_POLICY.md':
+      <String>[
+        'implement the template files',
+        'sync project harness',
+        'audit project harness',
+        'check project harness',
+        'local apply order',
+        'update codex bootstrap',
+      ],
   'docs/assistant/templates/BOOTSTRAP_LOCAL_ENV_OVERLAY.md': <String>[
-    'windows 11 home 64-bit',
-    'windows + wsl',
+    'windows vs wsl routing',
+    'local_env_profile.example.md',
     'local_env_profile.local.md',
-    'same-host rule',
+    'personal-machine facts must not be written into the core bootstrap contract',
   ],
   'docs/assistant/templates/BOOTSTRAP_CAPABILITY_DISCOVERY.md': <String>[
-    'agents.md',
+    'local tool discovery',
+    'agents skill discovery',
+    'mcp availability checks',
     'local_capabilities.md',
-    'openai-docs',
-    'dynamic discovery',
+    'do not hardcode stale tool assumptions',
   ],
   'docs/assistant/templates/BOOTSTRAP_WORKTREE_BUILD_IDENTITY.md': <String>[
-    'auto-activation rule',
     'runnable app',
-    'gui',
-    'merge-immediately-after-acceptance',
-    'latest approved baseline rule',
-    'build under test identity packet',
-    'canonical runnable build rule',
-    'worktree path',
+    'latest-approved-baseline discipline',
+    'canonical runnable-build rule',
+    'build-under-test identity packet',
+    'worktree path, branch, head sha, workspace file, and launch command',
+  ],
+  'docs/assistant/templates/BOOTSTRAP_ROADMAP_GOVERNANCE.md': <String>[
+    'fresh-session resume continuity is required',
+    'docs/assistant/session_resume.md',
+    'resume master plan',
+    'the active roadmap tracker is the sequence source',
+    'the active wave execplan is the implementation-detail source',
+    '1. active wave execplan',
   ],
   'docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md': <String>[
-    'tool installation exists on the target host',
-    'port is owned by the expected process',
-    'same-host validation rule',
-    'gmail draft feature backed by a local authenticated cli is just one example',
-    'live smoke check',
+    'verify required installs before feature work',
+    'verify auth state before relying on a host-bound tool',
+    'validate the target app and dependent tool on the same host',
+    'run one live smoke check before claiming the integration works',
+    'unavailable',
+    'failed',
   ],
   'docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md':
       <String>[
-        'tests must not read or write live user settings paths',
-        'non-live or ephemeral ports',
-        'listener ownership and runtime conflict rules',
-        'visible runtime status when listener startup fails',
-        'one durable app-owned session artifact',
-        'do not create a separate browser or extension report file by default',
-        'support packet order',
+        'isolate tests from live user state',
+        'non-live or ephemeral test ports',
+        'listener ownership problems clearly',
+        'one durable session artifact',
+        'support-packet order',
       ],
   'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md': <String>[
     'update codex bootstrap',
@@ -317,10 +372,12 @@ _requiredBootstrapMarkers = <String, List<String>>{
 const List<String> _requiredBootstrapModuleIds = <String>[
   'core_contract',
   'issue_memory_system',
+  'project_harness_sync',
   'modules_and_triggers',
   'local_env_overlay',
   'capability_discovery',
   'worktree_build_identity',
+  'roadmap_governance',
   'host_integration_preflight',
   'harness_isolation_diagnostics',
   'bootstrap_update_policy',
@@ -385,6 +442,12 @@ List<ValidationIssue> validateAgentDocs({
     _validateDocsMaintenance(issues, readText);
     _validateIssueMemory(issues, readText, exists, rootPath);
     _validateProjectLocalOperationalLayer(manifest, issues, readText, exists);
+    _validateProjectHarnessAndRoadmapGovernance(
+      manifest,
+      issues,
+      readText,
+      exists,
+    );
     _validateHarnessIsolationAndDiagnostics(
       manifest,
       issues,
@@ -1726,6 +1789,247 @@ void _validateProjectLocalOperationalLayer(
           '$workflowPath is missing required host-integration marker: $marker',
         ),
       );
+    }
+  }
+}
+
+void _validateProjectHarnessAndRoadmapGovernance(
+  Map<String, dynamic> manifest,
+  List<ValidationIssue> issues,
+  String Function(String relPath) readText,
+  bool Function(String relPath) exists,
+) {
+  final Map<String, bool> moduleFlags = _extractModuleFlags(manifest);
+  const String harnessWorkflowPath =
+      'docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md';
+  const String roadmapWorkflowPath =
+      'docs/assistant/workflows/ROADMAP_WORKFLOW.md';
+  const String sessionResumePath = 'docs/assistant/SESSION_RESUME.md';
+
+  if (moduleFlags['project_harness_sync'] == true) {
+    final Map<String, dynamic> contracts =
+        manifest['contracts'] is Map<String, dynamic>
+        ? manifest['contracts'] as Map<String, dynamic>
+        : <String, dynamic>{};
+    if (!exists(harnessWorkflowPath)) {
+      issues.add(
+        ValidationIssue(
+          'AD045',
+          'Project harness sync workflow is missing at $harnessWorkflowPath.',
+        ),
+      );
+    }
+
+    final String harnessWorkflowText = readText(harnessWorkflowPath).toLowerCase();
+    for (final String marker in <String>[
+      'implement the template files',
+      'sync project harness',
+      'audit project harness',
+      'check project harness',
+      'docs/assistant/templates/*',
+      'update codex bootstrap',
+    ]) {
+      if (!harnessWorkflowText.contains(marker)) {
+        issues.add(
+          ValidationIssue(
+            'AD045',
+            '$harnessWorkflowPath is missing required project-harness marker: $marker',
+          ),
+        );
+      }
+    }
+
+    final String harnessPolicy =
+        (contracts['project_harness_sync_policy'] ?? '').toString().toLowerCase();
+    final String templateProtection = (contracts['vendored_template_protection_policy'] ?? '')
+        .toString()
+        .toLowerCase();
+    if (!harnessPolicy.contains('implement the template files') ||
+        !harnessPolicy.contains('docs/assistant/templates/*') ||
+        !templateProtection.contains('docs/assistant/templates/*')) {
+      issues.add(
+        ValidationIssue(
+          'AD045',
+          'Manifest contracts must make local harness apply and vendored-template protection explicit.',
+        ),
+      );
+    }
+
+    final Map<String, List<String>> routingDocs = <String, List<String>>{
+      'agent.md': <String>[
+        'implement the template files',
+        'sync project harness',
+        'audit project harness',
+        'check project harness',
+        'project_harness_sync_workflow.md',
+        'update codex bootstrap',
+      ],
+      'AGENTS.md': <String>[
+        'implement the template files',
+        'sync project harness',
+        'audit project harness',
+        'check project harness',
+        'project_harness_sync_workflow.md',
+        'update codex bootstrap',
+      ],
+      'README.md': <String>[
+        'implement the template files',
+        'sync project harness',
+        'audit project harness',
+        'check project harness',
+        'update codex bootstrap',
+      ],
+      'docs/assistant/INDEX.md': <String>[
+        'project_harness_sync_workflow.md',
+      ],
+    };
+    for (final MapEntry<String, List<String>> entry in routingDocs.entries) {
+      final String text = readText(entry.key).toLowerCase();
+      final List<String> missing = entry.value
+          .where((String marker) => !text.contains(marker))
+          .toList();
+      if (missing.isNotEmpty) {
+        issues.add(
+          ValidationIssue(
+            'AD045',
+            '${entry.key} must route local project-harness sync clearly. Missing: ${missing.join(', ')}',
+          ),
+        );
+      }
+    }
+  }
+
+  if (moduleFlags['roadmap_governance'] == true) {
+    final Map<String, dynamic> contracts =
+        manifest['contracts'] is Map<String, dynamic>
+        ? manifest['contracts'] as Map<String, dynamic>
+        : <String, dynamic>{};
+    if (!exists(roadmapWorkflowPath) || !exists(sessionResumePath)) {
+      issues.add(
+        ValidationIssue(
+          'AD046',
+          'Roadmap governance requires both $roadmapWorkflowPath and $sessionResumePath.',
+        ),
+      );
+      return;
+    }
+
+    final List<dynamic> canonical = manifest['canonical'] is List<dynamic>
+        ? manifest['canonical'] as List<dynamic>
+        : <dynamic>[];
+    if (!canonical.map((dynamic item) => item.toString()).contains(sessionResumePath)) {
+      issues.add(
+        ValidationIssue(
+          'AD046',
+          'Manifest canonical routing must include $sessionResumePath when roadmap governance is active.',
+        ),
+      );
+    }
+
+    final String resumePolicy =
+        (contracts['roadmap_resume_anchor_policy'] ?? '').toString().toLowerCase();
+    final String authorityPolicy = (contracts['roadmap_active_worktree_authority_policy'] ?? '')
+        .toString()
+        .toLowerCase();
+    final String updateOrderPolicy =
+        (contracts['roadmap_update_order_policy'] ?? '').toString().toLowerCase();
+    if (!resumePolicy.contains('docs/assistant/session_resume.md') ||
+        !resumePolicy.contains('resume master plan') ||
+        !authorityPolicy.contains('session_resume.md') ||
+        !authorityPolicy.contains('active wave execplan') ||
+        !updateOrderPolicy.contains('active wave execplan') ||
+        !updateOrderPolicy.contains('docs/assistant/session_resume.md')) {
+      issues.add(
+        ValidationIssue(
+          'AD046',
+          'Manifest roadmap contracts must define the resume anchor, active-worktree authority, and update-order rule.',
+        ),
+      );
+    }
+
+    final String roadmapWorkflowText = readText(roadmapWorkflowPath).toLowerCase();
+    for (final String marker in <String>[
+      'docs/assistant/session_resume.md',
+      'resume master plan',
+      'the active roadmap tracker is the sequence source',
+      'the active wave execplan is the implementation-detail source',
+      '1. active wave execplan',
+      '2. active roadmap tracker',
+      '3. `docs/assistant/session_resume.md`',
+      'do not treat roadmap mode as the default',
+    ]) {
+      if (!roadmapWorkflowText.contains(marker)) {
+        issues.add(
+          ValidationIssue(
+            'AD046',
+            '$roadmapWorkflowPath is missing required roadmap marker: $marker',
+          ),
+        );
+      }
+    }
+
+    final String sessionText = readText(sessionResumePath).toLowerCase();
+    for (final String marker in <String>[
+      'resume master plan',
+      'roadmap anchor file',
+      'authoritative worktree',
+      'branch:',
+      'active roadmap tracker',
+      'active wave execplan',
+      'next concrete action',
+      'issue memory is only for repeatable governance/workflow failures',
+    ]) {
+      if (!sessionText.contains(marker)) {
+        issues.add(
+          ValidationIssue(
+            'AD046',
+            '$sessionResumePath is missing required session-resume marker: $marker',
+          ),
+        );
+      }
+    }
+
+    final Map<String, List<String>> routingDocs = <String, List<String>>{
+      'agent.md': <String>[
+        'resume master plan',
+        'session_resume.md',
+      ],
+      'AGENTS.md': <String>[
+        'resume master plan',
+        'session_resume.md',
+      ],
+      'README.md': <String>[
+        'resume master plan',
+        'session_resume.md',
+      ],
+      'docs/assistant/INDEX.md': <String>[
+        'session_resume.md',
+        'roadmap_workflow.md',
+      ],
+      'APP_KNOWLEDGE.md': <String>[
+        'session_resume.md',
+        'issue memory remains a reusable repeated-issue registry',
+        'active roadmap tracker',
+      ],
+      'docs/assistant/APP_KNOWLEDGE.md': <String>[
+        'session_resume.md',
+        'issue memory is not roadmap history',
+        'active roadmap tracker',
+      ],
+    };
+    for (final MapEntry<String, List<String>> entry in routingDocs.entries) {
+      final String text = readText(entry.key).toLowerCase();
+      final List<String> missing = entry.value
+          .where((String marker) => !text.contains(marker))
+          .toList();
+      if (missing.isNotEmpty) {
+        issues.add(
+          ValidationIssue(
+            'AD046',
+            '${entry.key} must route roadmap resume continuity. Missing: ${missing.join(', ')}',
+          ),
+        );
+      }
     }
   }
 }

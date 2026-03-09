@@ -8,6 +8,7 @@
 | `src/legalpdf_translate/qt_main.py` | compatibility shim that delegates to `qt_app.run()` |
 | `src/legalpdf_translate/qt_gui/window_controller.py` | `WorkspaceWindowController` (workspace registry, numbering, last-active tracking, Gmail intake routing, duplicate-target reservation map) |
 | `src/legalpdf_translate/qt_gui/app_window.py` | `_FuturisticCanvas` (background/frame paint), `QtMainWindow` (`_build_ui`, `_apply_responsive_layout`, `_update_card_max_width`, `_refresh_lang_badge`, `_configure_footer_layout`, `_install_overflow_menu`) |
+| `src/legalpdf_translate/qt_gui/window_adaptive.py` | `WINDOW_SIZING_PRESETS`, `ResponsiveWindowController`, `CollapsibleSection` |
 | `src/legalpdf_translate/qt_gui/styles.py` | `build_stylesheet()` (dashboard QSS), `PALETTE`, `apply_soft_shadow()`, `apply_primary_glow()` |
 | `src/legalpdf_translate/qt_gui/dialogs.py` | `QtSettingsDialog`, `QtJobLogWindow`, `QtReviewQueueDialog`, `QtSaveToJobLogDialog` |
 | `src/legalpdf_translate/qt_gui/tools_dialogs.py` | `QtGlossaryBuilderDialog`, `QtCalibrationAuditDialog` |
@@ -112,6 +113,13 @@ QtMainWindow
   - `stacked_compact`: `< 1180`
 - **Verify:** wide window = two-column shell; narrow window = stacked shell.
 
+### 2a. Shared top-level window sizing contract
+- **What:** Top-level windows and major dialogs must use the shared adaptive sizing helper instead of hardcoded open-time geometry.
+- **Where:** `qt_gui/window_adaptive.py` via `ResponsiveWindowController` and role presets in `WINDOW_SIZING_PRESETS`.
+- **Roles:** `shell`, `form`, `table`, `preview`.
+- **Behavior:** initial size is derived from the current screen, clamped to available geometry, and kept user-resizable; dialogs should not open larger than the current display.
+- **Verify:** `QtMainWindow`, `QtSaveToJobLogDialog`, `QtJobLogWindow`, `QtGmailAttachmentPreviewDialog`, `QtSettingsDialog`, `QtReviewQueueDialog`, and glossary/calibration tools all open within small-screen bounds without fixed-size clipping.
+
 ### 3. Sidebar geometry comes from `_apply_responsive_layout()`
 - **What:** Sidebar width, nav widths, nav heights, icon sizes, and logo size must stay tied to the active size class.
 - **Where:** `sidebar_width`, `nav_width`, `nav_height`, `icon_size`, `logo_size` values inside `_apply_responsive_layout()`.
@@ -121,6 +129,22 @@ QtMainWindow
 - **What:** `content_card` uses a computed fixed width based on viewport space, then is centered with `content_row_layout`.
 - **Where:** `_update_card_max_width()` sets `target_width = max(360, min(1760, available))` and `content_card.setFixedWidth(target_width)`.
 - **Verify:** large windows use most of the available width without horizontal scroll; shell remains centered.
+
+### 4a. Main-shell resize stability contract
+- **What:** The main shell should resize smoothly without clipped hero-status text or jittery full-layout recomputation on every tick.
+- **Where:** `QtMainWindow` uses `ResponsiveWindowController(..., role="shell", resize_callback=...)` plus the hero-status width reservation path (`hero_status_spacer` and `_sync_hero_status_width()`).
+- **Behavior:** the dashboard shell keeps `ScrollBarAlwaysOff`, reserves width for the status text, and coalesces live resize updates rather than thrashing the layout continuously.
+- **Verify:** narrow and wide resizing keeps `Idle`-style status text readable, avoids visible trembling, and never adds a horizontal scrollbar to the main shell.
+
+### 4b. Dense data tables may scroll horizontally on purpose
+- **What:** The no-horizontal-scroll rule applies to the main dashboard shell, not to dense data tables.
+- **Where:** `QtJobLogWindow` in `qt_gui/dialogs.py` intentionally uses interactive header widths, header auto-fit, persisted manual widths, and `ScrollBarAsNeeded`.
+- **Verify:** Job Log headers stay readable by default, columns can be resized manually, and a horizontal scrollbar appears when the table becomes wider than the window.
+
+### 4c. Dense secondary windows stay screen-bounded
+- **What:** Table-heavy and preview-heavy secondary windows may scroll internally, but the outer window itself should still open within the current screen bounds and remain stable while resizing.
+- **Where:** `ResponsiveWindowController` role presets `table` and `preview`, applied in `QtJobLogWindow`, `QtReviewQueueDialog`, `QtGmailBatchReviewDialog`, and `QtGmailAttachmentPreviewDialog`.
+- **Verify:** dense dialogs stay on-screen on smaller displays, while their table/preview content handles overflow inside the window instead of forcing off-screen geometry.
 
 ### 5. Paint layer must read live geometry
 - **What:** `_FuturisticCanvas.paintEvent()` must derive sidebar separator placement from the actual sidebar width, not stale constants.
@@ -160,6 +184,24 @@ QtMainWindow
 - **Where:** `QtMainWindow._resolve_busy_close_choice()`, `_begin_cancel_wait()`, and cancel-wait status refresh logic.
 - **Verify:** cancelling an OCR-heavy run shows wait-state progress and resolves within the request budget instead of appearing indefinitely frozen.
 
+### 12. Tall-form dialog contract
+- **What:** `QtSaveToJobLogDialog` must stay usable on smaller screens without pushing critical actions off-screen.
+- **Where:** `QtSaveToJobLogDialog` now uses `form_scroll_area` for the body, keeps the action bar outside the scrolling form body, and applies `ResponsiveWindowController(..., role="form")`.
+- **Behavior:** the main editable case/service fields remain immediately visible; the body scrolls vertically when needed; `Save`, `Cancel`, `Open translated DOCX`, and the honorários action stay accessible.
+- **Verify:** on a smaller display, the dialog fits within the screen bounds, the body scrolls internally, and the action row remains visible.
+
+### 13. Save-to-Job-Log collapse defaults
+- **What:** Lower-detail Job Log sections are collapsed by default on every open.
+- **Where:** `QtSaveToJobLogDialog` uses `CollapsibleSection` for `metrics_section` and `finance_section`.
+- **Behavior:** `Run Metrics (auto-filled)` and `Amounts (EUR)` start collapsed in both create mode and historical edit mode; the user can expand them on demand.
+- **Verify:** a newly opened Save/Edit Job Log dialog shows those sections collapsed while the main case/service fields stay visible.
+
+### 14. Preview resize coalescing contract
+- **What:** Attachment preview scaling must be coalesced so drag-resizing does not trigger full rescale/reflow work on every viewport tick.
+- **Where:** `QtGmailAttachmentPreviewDialog` uses `_scaled_preview_timer`, viewport event filtering, and a deferred `_refresh_scaled_preview()` path.
+- **Behavior:** preview refresh is scheduled after resize bursts settle, which reduces visible shake in PDF/image preview while preserving lazy page refresh behavior.
+- **Verify:** a burst of resize events results in one deferred scaled refresh instead of repeated immediate rescale churn.
+
 ## E. How to Change X
 
 ### Change sidebar width or nav rhythm
@@ -177,6 +219,20 @@ QtMainWindow
 ### Change output actions
 - Edit `_install_overflow_menu()` for `...` menu items.
 - Review Queue and Save to Job Log remain top-menu actions in `_install_menu()`.
+
+### Change top-level window sizing behavior
+- Start in `qt_gui/window_adaptive.py`.
+- Adjust `WINDOW_SIZING_PRESETS` or `ResponsiveWindowController` before adding per-dialog `resize(...)` calls.
+- Keep `shell` horizontally adaptive without a shell-level horizontal scrollbar; let dense table/preview content handle overflow inside the window instead.
+
+### Change Save-to-Job-Log layout
+- Edit `QtSaveToJobLogDialog` in `qt_gui/dialogs.py`.
+- Preserve the `form_scroll_area` body and the fixed action row unless the interaction model is intentionally being redesigned.
+- Keep `metrics_section` and `finance_section` collapsed by default unless product requirements change.
+
+### Change preview resizing behavior
+- Edit `QtGmailAttachmentPreviewDialog` in `qt_gui/dialogs.py`.
+- Preserve deferred/coalesced preview refresh; do not reintroduce per-resize-tick scaling work unless there is a strong reason and new verification coverage.
 
 ### Change field icons or language flags
 - Update assets under `resources/icons/dashboard/`.
@@ -210,10 +266,14 @@ python -m compileall src tests
    - `Generate Run Report`
    - `View Job Log`
 8. Open `Tools` and confirm `Review Queue...` and `Save to Job Log...` remain reachable
-9. Scroll over the closed run-critical selectors and confirm they do not change by accident
-10. Trigger the EN/FR xhigh warning and confirm `Switch to fixed high` changes the current effort policy
-11. Trigger the OCR-heavy warning and confirm `Apply safe OCR profile` changes the current run only
-12. Open `File > New Window` or press `Ctrl+Shift+N` and confirm a second top-level window appears with the next `Workspace N` title
-13. Start a run in one workspace and confirm another workspace stays usable while it is busy
-14. Configure the same source file, target language, and output folder in two workspaces and confirm the second start is blocked as duplicate run-folder reuse
-15. If Gmail intake is enabled, confirm intake reuses an idle blank workspace first and opens a new workspace when the last active one is busy or already has job context
+9. Resize the main window across wide and narrow states and confirm the hero status text still fits cleanly without trembling or a shell-level horizontal scrollbar
+10. Open `Tools > Save to Job Log...` and confirm the dialog fits on-screen, scrolls internally on smaller sizes, and starts with `Run Metrics` and `Amounts` collapsed
+11. Open `Tools > View Job Log` and confirm the table uses icon row actions, resizable headers, and horizontal scrolling only when the table is wider than the window
+12. Open Gmail attachment preview and confirm drag-resizing does not visibly shake from repeated rescale/reflow work
+13. Scroll over the closed run-critical selectors and confirm they do not change by accident
+14. Trigger the EN/FR xhigh warning and confirm `Switch to fixed high` changes the current effort policy
+15. Trigger the OCR-heavy warning and confirm `Apply safe OCR profile` changes the current run only
+16. Open `File > New Window` or press `Ctrl+Shift+N` and confirm a second top-level window appears with the next `Workspace N` title
+17. Start a run in one workspace and confirm another workspace stays usable while it is busy
+18. Configure the same source file, target language, and output folder in two workspaces and confirm the second start is blocked as duplicate run-folder reuse
+19. If Gmail intake is enabled, confirm intake reuses an idle blank workspace first and opens a new workspace when the last active one is busy or already has job context

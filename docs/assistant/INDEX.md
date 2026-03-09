@@ -7,6 +7,7 @@
 ## Use when you need governance rules
 - `agent.md`: operational runbook.
 - `AGENTS.md`: compatibility shim.
+- `docs/assistant/SESSION_RESUME.md`: first resume stop for `resume master plan` and fresh-session roadmap continuity.
 - `docs/assistant/GOLDEN_PRINCIPLES.md`: enforceable rule source-of-truth.
 - `docs/assistant/exec_plans/PLANS.md`: ExecPlan format and lifecycle.
 - `docs/assistant/runtime/CANONICAL_BUILD.json`: canonical runnable build policy for Qt launch handoffs.
@@ -37,6 +38,8 @@
 - `docs/assistant/workflows/CI_REPO_WORKFLOW.md`
 - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
 - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+- `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`
+- `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
 - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
 - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
 - `docs/assistant/workflows/FEATURE_WORKFLOW.md` (compat shim)
@@ -48,6 +51,8 @@
 ## Use when you need audit packets and roadmap outputs
 - `docs/assistant/audits/AUDIT_USAGE_PACKET_2026-03-05.md`
 - `docs/assistant/audits/AUDIT_USAGE_PACKET_2026-03-05.json`
+- `docs/assistant/audits/BOOTSTRAP_APPLICATION_AUDIT_2026-03-09.md`
+- `docs/assistant/audits/PROJECT_HARNESS_ALIGNMENT_AUDIT_2026-03-09.md`
 - `docs/assistant/audits/SIMILAR_APP_BENCHMARK_2026-03-05.md`
 - `docs/assistant/audits/GAP_OPPORTUNITY_MAP_2026-03-05.md`
 - `docs/assistant/audits/TOP5_UPGRADE_SPECS_2026-03-05.md`
@@ -79,4 +84,5 @@
 - `docs/assistant/WORKFLOW_GIT_AI.md`
 
 ## Template Read Policy
-`docs/assistant/templates/*` is read-on-demand only and must not be opened unless explicitly requested.
+`docs/assistant/templates/*` is read-on-demand only.
+Project-local harness application may read vendored templates when the user explicitly invokes `implement the template files` / `sync project harness`, but that flow must not edit the template folder.
