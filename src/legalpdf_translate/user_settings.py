@@ -223,6 +223,7 @@ ALLOWED_JOBLOG_KEYS = {
     "vocab_court_emails",
     "default_rate_per_word",
     "joblog_visible_columns",
+    "joblog_column_widths",
     "metadata_ai_enabled",
     "metadata_photo_enabled",
     "service_equals_case_by_default",
@@ -259,6 +260,7 @@ DEFAULT_JOBLOG_SETTINGS: dict[str, Any] = {
     "vocab_court_emails": list(DEFAULT_VOCAB_COURT_EMAILS),
     "default_rate_per_word": {"EN": 0.08, "FR": 0.08, "AR": 0.09},
     "joblog_visible_columns": list(DEFAULT_JOBLOG_VISIBLE_COLUMNS),
+    "joblog_column_widths": {},
     "metadata_ai_enabled": True,
     "metadata_photo_enabled": True,
     "service_equals_case_by_default": True,
@@ -378,6 +380,47 @@ def _coerce_str_list(value: object, *, fallback: list[str]) -> list[str]:
         output.append(cleaned)
     if not output:
         return list(fallback)
+    return output
+
+
+def _coerce_joblog_column_widths(value: object) -> dict[str, int]:
+    allowed = {
+        "translation_date",
+        "case_number",
+        "court_email",
+        "run_id",
+        "job_type",
+        "case_entity",
+        "case_city",
+        "service_entity",
+        "service_city",
+        "service_date",
+        "lang",
+        "target_lang",
+        "pages",
+        "word_count",
+        "total_tokens",
+        "rate_per_word",
+        "expected_total",
+        "amount_paid",
+        "api_cost",
+        "estimated_api_cost",
+        "quality_risk_score",
+        "profit",
+    }
+    if not isinstance(value, dict):
+        return {}
+    output: dict[str, int] = {}
+    for raw_key, raw_value in value.items():
+        if not isinstance(raw_key, str):
+            continue
+        key = raw_key.strip()
+        if key not in allowed:
+            continue
+        width = _coerce_int(raw_value, 0)
+        if width <= 0:
+            continue
+        output[key] = width
     return output
 
 
@@ -794,6 +837,9 @@ def load_joblog_settings() -> dict[str, Any]:
     merged["joblog_visible_columns"] = _coerce_str_list(
         merged.get("joblog_visible_columns"),
         fallback=DEFAULT_JOBLOG_VISIBLE_COLUMNS,
+    )
+    merged["joblog_column_widths"] = _coerce_joblog_column_widths(
+        merged.get("joblog_column_widths"),
     )
     merged["non_court_service_entities"] = _coerce_str_list(
         merged.get("non_court_service_entities"),

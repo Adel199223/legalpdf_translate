@@ -305,6 +305,38 @@ def update_job_run_output_paths(
     conn.commit()
 
 
+def update_job_run(
+    conn: sqlite3.Connection,
+    *,
+    row_id: int,
+    values: Mapping[str, Any],
+) -> None:
+    assignments: list[str] = []
+    params: list[Any] = []
+    allowed = [column for column in JOB_RUN_COLUMNS if column != "completed_at"]
+    for column in allowed:
+        if column not in values:
+            continue
+        assignments.append(f"{column} = ?")
+        params.append(values[column])
+    if not assignments:
+        return
+    params.append(int(row_id))
+    conn.execute(
+        f"UPDATE job_runs SET {', '.join(assignments)} WHERE id = ?",
+        params,
+    )
+    conn.commit()
+
+
+def delete_job_run(conn: sqlite3.Connection, *, row_id: int) -> None:
+    conn.execute(
+        "DELETE FROM job_runs WHERE id = ?",
+        (int(row_id),),
+    )
+    conn.commit()
+
+
 def update_joblog_visible_columns(
     visible_columns: Iterable[str],
 ) -> list[str]:
