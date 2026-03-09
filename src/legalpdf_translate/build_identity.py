@@ -180,10 +180,26 @@ def _run_git(repo: Path, *args: str) -> str:
 
 def current_branch(repo: Path | None = None) -> str:
     root = repo if repo is not None else repo_root()
-    branch = _run_git(root, "symbolic-ref", "--short", "-q", "HEAD")
-    if not branch:
-        raise RuntimeError(f"Detached or ambiguous HEAD in worktree: {root}")
-    return branch
+    proc = _run_git_proc(root, "symbolic-ref", "--short", "-q", "HEAD")
+    if proc.returncode == 0:
+        branch = proc.stdout.strip()
+        if branch:
+            return branch
+    for env_name in (
+        "LEGALPDF_BUILD_BRANCH",
+        "GITHUB_HEAD_REF",
+        "GITHUB_REF_NAME",
+        "BUILD_SOURCEBRANCHNAME",
+        "CI_COMMIT_REF_NAME",
+        "BRANCH_NAME",
+    ):
+        value = str(os.getenv(env_name, "") or "").strip()
+        if value:
+            return value
+    branch = _run_git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    if branch and branch != "HEAD":
+        return branch
+    return "HEAD"
 
 
 def current_head_sha(repo: Path | None = None) -> str:

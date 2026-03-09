@@ -78,3 +78,19 @@ def test_run_git_proc_uses_system32_wsl_when_which_is_missing(
         "-q",
         "HEAD",
     ]
+
+
+def test_current_branch_uses_ci_env_when_symbolic_ref_is_unavailable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("GITHUB_HEAD_REF", "chore/converge-main-approved-base")
+
+    def fake_run_git_proc(_repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        assert args == ("symbolic-ref", "--short", "-q", "HEAD")
+        return subprocess.CompletedProcess(args=["git", *args], returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(build_identity, "_run_git_proc", fake_run_git_proc)
+
+    assert build_identity.current_branch(repo) == "chore/converge-main-approved-base"
