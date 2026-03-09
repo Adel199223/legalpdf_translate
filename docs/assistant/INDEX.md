@@ -19,6 +19,7 @@
 - `docs/assistant/features/APP_USER_GUIDE.md`: beginner support guide covering OCR advisor, review queue, job log save, and queue runs.
 - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`: primary workflow guide covering cost guardrails, review export, OCR advisor, and queue runner behavior.
 - `docs/assistant/features/PRIMARY_FEATURE_USER_GUIDE.md`: compatibility shim to primary workflow guide.
+- `docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md`: plain-language guide for the saved multi-root VS Code workspace and the active LegalPDF Git worktrees on this machine.
 
 ## Use when you need workflow routing
 - `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`

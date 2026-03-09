@@ -29,7 +29,8 @@
   "user_guides": [
     "docs/assistant/features/APP_USER_GUIDE.md",
     "docs/assistant/features/PRIMARY_FEATURE_USER_GUIDE.md",
-    "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md"
+    "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+    "docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md"
   ],
   "workflows": [
     {
