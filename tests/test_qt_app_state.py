@@ -5863,6 +5863,87 @@ def test_edit_joblog_dialog_interpretation_service_city_switches_to_saved_distan
             app.quit()
 
 
+def test_edit_joblog_dialog_interpretation_uses_repaired_legacy_primary_profile_distance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    legacy_profile = default_primary_profile()
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 8,
+                "profiles": [
+                    {
+                        "id": legacy_profile.id,
+                        "first_name": legacy_profile.first_name,
+                        "last_name": legacy_profile.last_name,
+                        "document_name_override": legacy_profile.document_name_override,
+                        "email": legacy_profile.email,
+                        "phone_number": legacy_profile.phone_number,
+                        "postal_address": legacy_profile.postal_address,
+                        "iban": legacy_profile.iban,
+                        "iva_text": legacy_profile.iva_text,
+                        "irs_text": legacy_profile.irs_text,
+                        "travel_origin_label": "",
+                        "travel_distances_by_city": {},
+                    }
+                ],
+                "primary_profile_id": legacy_profile.id,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    seed = JobLogSeed(
+        completed_at="2026-03-05T10:00:00",
+        translation_date="2026-03-05",
+        job_type="Interpretation",
+        case_number="ABC-1",
+        court_email="court@example.pt",
+        case_entity="Case Entity",
+        case_city="Beja",
+        service_entity="",
+        service_city="",
+        service_date="2026-03-05",
+        lang="",
+        pages=0,
+        word_count=0,
+        rate_per_word=0.0,
+        expected_total=0.0,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="",
+        target_lang="",
+        total_tokens=None,
+        estimated_api_cost=None,
+        quality_risk_score=None,
+        profit=0.0,
+    )
+
+    dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.service_city_combo.currentText() == "Beja"
+        assert dialog.travel_km_outbound_edit.text() == "39"
+        profiles, primary_profile_id = user_settings.load_profile_settings()
+        stored_profile = next(profile for profile in profiles if profile.id == primary_profile_id)
+        assert stored_profile.travel_origin_label == "Marmelar"
+        assert stored_profile.travel_distances_by_city["Beja"] == 39.0
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
 def test_edit_joblog_dialog_interpretation_save_persists_manual_distance_for_service_city(
     tmp_path: Path, monkeypatch
 ) -> None:

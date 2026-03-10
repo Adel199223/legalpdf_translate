@@ -1309,6 +1309,10 @@ class QtHonorariosExportDialog(QDialog):
         self.generated_draft: HonorariosDraft | None = None
         self._recipient_block_user_edited = False
         self._setting_recipient_block = False
+        self._distance_sync_in_progress = False
+        self._distance_value_city_key = ""
+        self._distance_value_profile_id = ""
+        self._distance_value_is_manual = False
         self._build_ui()
         self._refresh_profile_selector(self._primary_profile_id)
         self._responsive_window = ResponsiveWindowController(
@@ -1345,23 +1349,33 @@ class QtHonorariosExportDialog(QDialog):
         self.case_number_edit = QLineEdit(self._initial_draft.case_number)
         self.case_entity_edit = QLineEdit(self._initial_draft.case_entity)
         self.case_city_edit = QLineEdit(self._initial_draft.case_city)
-        self.date_preview_label = QLabel(f"Beja, {self._initial_draft.date_pt}")
+        self.date_preview_label = QLabel("")
         form.addRow("Profile", profile_wrap)
         form.addRow("Número de processo", self.case_number_edit)
         form.addRow("Case Entity", self.case_entity_edit)
         form.addRow("Case City", self.case_city_edit)
         if self._initial_draft.kind == HonorariosKind.INTERPRETATION:
+            initial_service_entity = self._initial_draft.service_entity.strip()
+            initial_service_city = self._initial_draft.service_city.strip()
+            initial_case_entity = self._initial_draft.case_entity.strip()
+            initial_case_city = self._initial_draft.case_city.strip()
+            has_explicit_different_service = (
+                (initial_service_entity != "" and initial_service_entity != initial_case_entity)
+                or (initial_service_city != "" and initial_service_city != initial_case_city)
+            )
+            self.service_same_check = QCheckBox("Service same as Case")
+            self.service_same_check.setChecked(not has_explicit_different_service)
             self.service_date_edit = QLineEdit(self._initial_draft.service_date)
             self.service_entity_edit = QLineEdit(self._initial_draft.service_entity)
             self.service_city_edit = QLineEdit(self._initial_draft.service_city)
             self.use_service_location_check = QCheckBox("Mention explicit service location in body text")
             self.use_service_location_check.setChecked(self._initial_draft.use_service_location_in_honorarios)
-            self.travel_km_outbound_edit = QLineEdit(
-                "" if self._initial_draft.travel_km_outbound <= 0 else str(self._initial_draft.travel_km_outbound)
-            )
-            self.travel_km_return_edit = QLineEdit(
-                "" if self._initial_draft.travel_km_return <= 0 else str(self._initial_draft.travel_km_return)
-            )
+            distance_value = self._initial_draft.travel_km_outbound
+            if distance_value <= 0 and self._initial_draft.travel_km_return > 0:
+                distance_value = self._initial_draft.travel_km_return
+            self.distance_label = QLabel("KM (one way)")
+            self.travel_km_outbound_edit = QLineEdit("" if distance_value <= 0 else str(distance_value))
+            self.travel_km_return_edit = self.travel_km_outbound_edit
             self.recipient_block_edit = QPlainTextEdit()
             self.recipient_block_edit.setPlaceholderText("Recipient block")
             self.recipient_block_edit.setMinimumHeight(72)
@@ -1370,11 +1384,11 @@ class QtHonorariosExportDialog(QDialog):
                 self._initial_draft.recipient_block or default_interpretation_recipient_block(self._initial_draft.case_entity)
             )
             form.addRow("Service date", self.service_date_edit)
+            form.addRow("", self.service_same_check)
             form.addRow("Service entity", self.service_entity_edit)
             form.addRow("Service city", self.service_city_edit)
             form.addRow("", self.use_service_location_check)
-            form.addRow("KM ida", self.travel_km_outbound_edit)
-            form.addRow("KM volta", self.travel_km_return_edit)
+            form.addRow(self.distance_label.text(), self.travel_km_outbound_edit)
             form.addRow("Recipient", self.recipient_block_edit)
         else:
             self.word_count_edit = QLineEdit(str(self._initial_draft.word_count))
@@ -1400,14 +1414,19 @@ class QtHonorariosExportDialog(QDialog):
         self.generate_btn.clicked.connect(self._generate)
         self.profile_edit_btn.clicked.connect(self._edit_profiles)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
+        self.case_city_edit.textChanged.connect(self._refresh_date_preview)
         if self._initial_draft.kind == HonorariosKind.INTERPRETATION:
             self.case_entity_edit.textChanged.connect(self._sync_interpretation_recipient_block_if_auto)
-            self.case_city_edit.textChanged.connect(self._apply_interpretation_distance_defaults)
-            self.service_entity_edit.textChanged.connect(self._apply_interpretation_distance_defaults)
-            self.service_city_edit.textChanged.connect(self._apply_interpretation_distance_defaults)
-            self.use_service_location_check.toggled.connect(self._apply_interpretation_distance_defaults)
+            self.case_entity_edit.textChanged.connect(self._on_interpretation_case_fields_changed)
+            self.case_city_edit.textChanged.connect(self._on_interpretation_case_fields_changed)
+            self.service_same_check.toggled.connect(self._on_interpretation_service_same_toggled)
+            self.service_entity_edit.textChanged.connect(self._on_interpretation_service_fields_changed)
+            self.service_city_edit.textChanged.connect(self._on_interpretation_service_fields_changed)
+            self.travel_km_outbound_edit.textEdited.connect(self._on_interpretation_distance_edited)
             self.recipient_block_edit.textChanged.connect(self._on_recipient_block_text_changed)
+            self._refresh_interpretation_service_mirror_state()
             self._apply_interpretation_distance_defaults()
+        self._refresh_date_preview()
 
     def _refresh_profile_selector(self, selected_profile_id: str | None = None) -> None:
         selected = selected_profile_id or self._primary_profile_id
@@ -1442,6 +1461,10 @@ class QtHonorariosExportDialog(QDialog):
     def _default_interpretation_recipient_block(self) -> str:
         return default_interpretation_recipient_block(self.case_entity_edit.text().strip())
 
+    def _refresh_date_preview(self, *_args: object) -> None:
+        city = self.case_city_edit.text().strip() or self._initial_draft.case_city.strip()
+        self.date_preview_label.setText(f"{city}, {self._initial_draft.date_pt}" if city else self._initial_draft.date_pt)
+
     def _on_recipient_block_text_changed(self) -> None:
         if self._setting_recipient_block or self._initial_draft.kind != HonorariosKind.INTERPRETATION:
             return
@@ -1452,14 +1475,42 @@ class QtHonorariosExportDialog(QDialog):
             return
         self._set_recipient_block_text(self._default_interpretation_recipient_block())
 
+    def _sync_interpretation_service_with_case(self) -> None:
+        self.service_entity_edit.setText(self.case_entity_edit.text().strip())
+        self.service_city_edit.setText(self.case_city_edit.text().strip())
+
+    def _refresh_interpretation_service_mirror_state(self) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        same = self.service_same_check.isChecked()
+        if same:
+            self._sync_interpretation_service_with_case()
+        self.service_entity_edit.setEnabled(not same)
+        self.service_city_edit.setEnabled(not same)
+
+    def _on_interpretation_case_fields_changed(self, *_args: object) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        if self.service_same_check.isChecked():
+            self._sync_interpretation_service_with_case()
+        self._apply_interpretation_distance_defaults()
+
+    def _on_interpretation_service_fields_changed(self, *_args: object) -> None:
+        self._apply_interpretation_distance_defaults()
+
+    def _on_interpretation_service_same_toggled(self, *_args: object) -> None:
+        self._refresh_interpretation_service_mirror_state()
+        self._apply_interpretation_distance_defaults()
+
     def _effective_interpretation_travel_city(self) -> str:
         if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
             return ""
-        if self.use_service_location_check.isChecked():
-            service_city = self.service_city_edit.text().strip()
-            if service_city:
-                return service_city
-        return self.case_city_edit.text().strip()
+        service_city = self.service_city_edit.text().strip()
+        if service_city:
+            return service_city
+        if self.service_same_check.isChecked():
+            return self.case_city_edit.text().strip()
+        return ""
 
     def _persist_profile_distance(self, profile: UserProfile, city: str, distance_value: float) -> None:
         profile.travel_distances_by_city[city] = float(distance_value)
@@ -1467,20 +1518,60 @@ class QtHonorariosExportDialog(QDialog):
         self._profiles, self._primary_profile_id = load_profile_settings()
         self._refresh_profile_selector(str(self.profile_combo.currentData() or "").strip())
 
+    def _set_interpretation_distance_text(
+        self,
+        value: float | None,
+        *,
+        city_key: str,
+        profile_id: str,
+        manual: bool,
+    ) -> None:
+        self._distance_sync_in_progress = True
+        try:
+            self.travel_km_outbound_edit.setText("" if value is None else f"{float(value):g}")
+        finally:
+            self._distance_sync_in_progress = False
+        self._distance_value_city_key = city_key
+        self._distance_value_profile_id = profile_id
+        self._distance_value_is_manual = manual
+
+    def _on_interpretation_distance_edited(self, _text: str) -> None:
+        if self._distance_sync_in_progress or self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        profile = self._selected_profile()
+        city = self._effective_interpretation_travel_city()
+        self._distance_value_city_key = city.casefold() if city else ""
+        self._distance_value_profile_id = profile.id if profile is not None else ""
+        self._distance_value_is_manual = True
+
     def _apply_interpretation_distance_defaults(self, *_args: object) -> None:
         if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
             return
         profile = self._selected_profile()
-        if profile is None:
-            return
         city = self._effective_interpretation_travel_city()
+        if profile is None or city == "":
+            self._set_interpretation_distance_text(
+                None,
+                city_key=city.casefold() if city else "",
+                profile_id=profile.id if profile is not None else "",
+                manual=False,
+            )
+            return
+        city_key = city.casefold()
+        profile_id = profile.id
         distance_value = distance_for_city(profile, city)
         if distance_value is None:
+            if self._distance_value_city_key != city_key or self._distance_value_profile_id != profile_id:
+                self._set_interpretation_distance_text(None, city_key=city_key, profile_id=profile_id, manual=False)
             return
-        if not self.travel_km_outbound_edit.text().strip():
-            self.travel_km_outbound_edit.setText(f"{distance_value:g}")
-        if not self.travel_km_return_edit.text().strip():
-            self.travel_km_return_edit.setText(f"{distance_value:g}")
+        should_replace = (
+            self._distance_value_city_key != city_key
+            or self._distance_value_profile_id != profile_id
+            or not self.travel_km_outbound_edit.text().strip()
+            or not self._distance_value_is_manual
+        )
+        if should_replace:
+            self._set_interpretation_distance_text(distance_value, city_key=city_key, profile_id=profile_id, manual=False)
 
     def _parse_required_float(self, value: str, label: str) -> float:
         cleaned = value.strip().replace(",", ".")
@@ -1497,7 +1588,11 @@ class QtHonorariosExportDialog(QDialog):
     def _resolve_interpretation_distance(self, *, profile: UserProfile, city: str, current_value: str, label: str) -> float:
         cleaned = current_value.strip()
         if cleaned:
-            return self._parse_required_float(cleaned, label)
+            distance_value = self._parse_required_float(cleaned, label)
+            known_distance = distance_for_city(profile, city)
+            if known_distance is None or abs(float(known_distance) - float(distance_value)) >= 1e-9:
+                self._persist_profile_distance(profile, city, float(distance_value))
+            return float(distance_value)
         known_distance = distance_for_city(profile, city)
         if known_distance is not None:
             return float(known_distance)
@@ -1562,27 +1657,25 @@ class QtHonorariosExportDialog(QDialog):
             service_city = self.service_city_edit.text().strip()
             use_service_location = self.use_service_location_check.isChecked()
             service_entity_is_law_enforcement = service_entity.casefold() in {"gnr", "psp"}
-            if use_service_location and not service_city:
-                raise ValueError("Service city is required when explicit service location is enabled.")
+            if not service_city:
+                raise ValueError("Service city is required.")
             if service_entity_is_law_enforcement and (not use_service_location or not service_city):
                 raise ValueError("GNR/PSP interpretation rows require a confirmed service city in the honorários text.")
-            effective_travel_city = service_city if use_service_location and service_city else case_city
+            effective_travel_city = service_city
             if not effective_travel_city:
-                raise ValueError("Case City is required to resolve travel distance.")
-            travel_km_outbound = self._resolve_interpretation_distance(
+                raise ValueError("Service city is required to resolve travel distance.")
+            one_way_distance = self._resolve_interpretation_distance(
                 profile=selected_profile,
                 city=effective_travel_city,
                 current_value=self.travel_km_outbound_edit.text(),
-                label="KM ida",
+                label="KM (one way)",
             )
-            travel_km_return = self._resolve_interpretation_distance(
-                profile=selected_profile,
-                city=effective_travel_city,
-                current_value=self.travel_km_return_edit.text(),
-                label="KM volta",
+            self._set_interpretation_distance_text(
+                one_way_distance,
+                city_key=effective_travel_city.casefold(),
+                profile_id=selected_profile.id,
+                manual=False,
             )
-            self.travel_km_outbound_edit.setText(f"{travel_km_outbound:g}")
-            self.travel_km_return_edit.setText(f"{travel_km_return:g}")
             recipient_block = self.recipient_block_edit.toPlainText().strip() or self._default_interpretation_recipient_block()
             self._set_recipient_block_text(recipient_block)
             return build_interpretation_honorarios_draft(
@@ -1593,8 +1686,8 @@ class QtHonorariosExportDialog(QDialog):
                 service_entity=service_entity,
                 service_city=service_city,
                 use_service_location_in_honorarios=use_service_location,
-                travel_km_outbound=travel_km_outbound,
-                travel_km_return=travel_km_return,
+                travel_km_outbound=one_way_distance,
+                travel_km_return=one_way_distance,
                 recipient_block=recipient_block,
                 profile=selected_profile,
             )

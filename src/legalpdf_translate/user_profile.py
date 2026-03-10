@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
@@ -136,6 +136,32 @@ def default_primary_profile(*, email: str = "") -> UserProfile:
         iban=LEGACY_DEFAULT_IBAN,
         iva_text=DEFAULT_PROFILE_IVA_TEXT,
         irs_text=DEFAULT_PROFILE_IRS_TEXT,
+        travel_origin_label=LEGACY_DEFAULT_TRAVEL_ORIGIN_LABEL,
+        travel_distances_by_city=dict(LEGACY_DEFAULT_TRAVEL_DISTANCES_BY_CITY),
+    )
+
+
+def is_legacy_default_primary_profile_with_blank_travel_fields(profile: UserProfile) -> bool:
+    if profile.id != DEFAULT_PRIMARY_PROFILE_ID:
+        return False
+    if profile.first_name != LEGACY_DEFAULT_FIRST_NAME:
+        return False
+    if profile.last_name != LEGACY_DEFAULT_LAST_NAME:
+        return False
+    if profile.document_name_override != LEGACY_DEFAULT_DOCUMENT_NAME:
+        return False
+    if profile.postal_address != LEGACY_DEFAULT_POSTAL_ADDRESS:
+        return False
+    if profile.iban != LEGACY_DEFAULT_IBAN:
+        return False
+    return profile.travel_origin_label == "" and profile.travel_distances_by_city == {}
+
+
+def backfill_legacy_default_primary_profile_travel_fields(profile: UserProfile) -> UserProfile:
+    if not is_legacy_default_primary_profile_with_blank_travel_fields(profile):
+        return profile
+    return replace(
+        profile,
         travel_origin_label=LEGACY_DEFAULT_TRAVEL_ORIGIN_LABEL,
         travel_distances_by_city=dict(LEGACY_DEFAULT_TRAVEL_DISTANCES_BY_CITY),
     )

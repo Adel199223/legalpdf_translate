@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import date, datetime
@@ -57,6 +58,36 @@ def _patch_settings_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Pat
     settings_file = tmp_path / "settings.json"
     monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
     return settings_file
+
+
+def _write_legacy_blank_primary_settings(settings_file: Path) -> None:
+    profile = default_primary_profile()
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 8,
+                "profiles": [
+                    {
+                        "id": profile.id,
+                        "first_name": profile.first_name,
+                        "last_name": profile.last_name,
+                        "document_name_override": profile.document_name_override,
+                        "email": profile.email,
+                        "phone_number": profile.phone_number,
+                        "postal_address": profile.postal_address,
+                        "iban": profile.iban,
+                        "iva_text": profile.iva_text,
+                        "irs_text": profile.irs_text,
+                        "travel_origin_label": "",
+                        "travel_distances_by_city": {},
+                    }
+                ],
+                "primary_profile_id": profile.id,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_format_portuguese_date_uses_full_month_name() -> None:
@@ -217,7 +248,7 @@ def test_build_interpretation_honorarios_paragraph_texts_uses_interpretation_tem
     assert "intérprete" in paragraphs[7][0]
     assert "no dia 09/04/2025, na GNR de Vidigueira" in paragraphs[7][0]
     assert "entre Marmelar e Vidigueira" in paragraphs[7][0]
-    assert "50 km na ida e 50 km na volta" in paragraphs[7][0]
+    assert "50 km em cada sentido" in paragraphs[7][0]
     assert "não está sujeito a retenção de IRS" in paragraphs[8][0]
     assert paragraphs[13] == ("Melhores cumprimentos,", "left")
     assert paragraphs[14] == ("Pede deferimento.", "left")
@@ -424,6 +455,191 @@ def test_honorarios_dialog_small_screen_uses_scrollable_body_and_fixed_action_ba
         assert dialog.cancel_btn.parentWidget() is dialog.action_bar
         assert dialog.generate_btn.parentWidget() is dialog.action_bar
         assert dialog.recipient_block_edit.minimumHeight() == 72
+        assert dialog.service_same_check.isChecked() is True
+        assert dialog.travel_km_return_edit is dialog.travel_km_outbound_edit
+        assert dialog.travel_km_outbound_edit.text() == "39"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_defaults_service_same_and_one_way_distance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    user_settings.save_profile_settings(profiles=[_profile()], primary_profile_id="primary")
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="",
+        service_city="",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=0.0,
+        travel_km_return=0.0,
+        recipient_block=default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=_profile(),
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.service_same_check.isChecked() is True
+        assert dialog.service_entity_edit.text() == "Juízo Local Criminal de Beja"
+        assert dialog.service_city_edit.text() == "Beja"
+        assert dialog.service_entity_edit.isEnabled() is False
+        assert dialog.service_city_edit.isEnabled() is False
+        assert dialog.travel_km_outbound_edit.text() == "39"
+        assert dialog.travel_km_return_edit is dialog.travel_km_outbound_edit
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_uses_repaired_legacy_primary_profile_distance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings_file = _patch_settings_file(monkeypatch, tmp_path)
+    _write_legacy_blank_primary_settings(settings_file)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="",
+        service_city="",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=0.0,
+        travel_km_return=0.0,
+        recipient_block=default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=_profile(),
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.service_city_edit.text() == "Beja"
+        assert dialog.travel_km_outbound_edit.text() == "39"
+        profiles, primary_profile_id = user_settings.load_profile_settings()
+        stored_profile = next(profile for profile in profiles if profile.id == primary_profile_id)
+        assert stored_profile.travel_origin_label == "Marmelar"
+        assert stored_profile.travel_distances_by_city["Beja"] == 39.0
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_profile_change_refreshes_known_distance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    primary = _profile(id="primary")
+    primary.travel_distances_by_city = {"Beja": 39.0}
+    secondary = _profile(
+        id="secondary",
+        first_name="Jane",
+        last_name="Doe",
+        document_name_override="Jane Doe",
+        postal_address="Rua B",
+        iban="PT50003506490000832760030",
+        travel_origin_label="Marmelar",
+        travel_distances_by_city={"Beja": 44.0},
+    )
+    user_settings.save_profile_settings(profiles=[primary, secondary], primary_profile_id=primary.id)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="",
+        service_city="",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=0.0,
+        travel_km_return=0.0,
+        recipient_block=default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=primary,
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.travel_km_outbound_edit.text() == "39"
+        dialog.profile_combo.setCurrentIndex(dialog.profile_combo.findData("secondary"))
+        app.processEvents()
+        assert dialog.travel_km_outbound_edit.text() == "44"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_service_city_change_updates_distance_and_persists_one_way(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    profile = _profile()
+    profile.travel_distances_by_city = {"Beja": 39.0, "Cuba": 26.0}
+    user_settings.save_profile_settings(profiles=[profile], primary_profile_id=profile.id)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="Juízo Local Criminal de Beja",
+        service_city="Beja",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=39.0,
+        travel_km_return=39.0,
+        recipient_block=default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=profile,
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog.service_same_check.setChecked(False)
+        dialog.service_city_edit.setText("Cuba")
+        app.processEvents()
+        assert dialog.travel_km_outbound_edit.text() == "26"
+        dialog.travel_km_outbound_edit.setText("27")
+        rebuilt = dialog._build_draft()
+        assert rebuilt.travel_km_outbound == 27.0
+        assert rebuilt.travel_km_return == 27.0
+        profiles, primary_profile_id = user_settings.load_profile_settings()
+        stored_profile = next(profile for profile in profiles if profile.id == primary_profile_id)
+        assert stored_profile.travel_distances_by_city["Cuba"] == 27.0
     finally:
         dialog.close()
         dialog.deleteLater()

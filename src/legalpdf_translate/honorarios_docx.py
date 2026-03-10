@@ -186,9 +186,15 @@ def _interpretation_service_location_phrase(draft: HonorariosDraft) -> str:
 
 
 def _interpretation_travel_destination(draft: HonorariosDraft) -> str:
-    if draft.use_service_location_in_honorarios and draft.service_city.strip():
+    if draft.service_city.strip():
         return draft.service_city.strip()
     return draft.case_city.strip()
+
+
+def _interpretation_one_way_distance(draft: HonorariosDraft) -> float:
+    if float(draft.travel_km_outbound) > 0:
+        return float(draft.travel_km_outbound)
+    return float(draft.travel_km_return)
 
 
 def _translation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]]:
@@ -236,7 +242,7 @@ def _interpretation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, s
         "Venho, por este meio, requerer o pagamento dos honorários devidos, em virtude de ter sido nomeado "
         f"intérprete no âmbito do processo acima identificado, {date_phrase}, bem como o pagamento das despesas de transporte entre "
         f"{profile.travel_origin_label} e {travel_destination}, tendo percorrido "
-        f"{_format_km_value(draft.travel_km_outbound)} km na ida e {_format_km_value(draft.travel_km_return)} km na volta."
+        f"{_format_km_value(_interpretation_one_way_distance(draft))} km em cada sentido."
     )
     paragraphs: list[tuple[str, str]] = [
         (f"Número de processo: {draft.case_number}", "left"),
