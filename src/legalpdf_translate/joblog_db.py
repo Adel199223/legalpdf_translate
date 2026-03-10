@@ -22,6 +22,9 @@ JOB_RUN_COLUMNS = [
     "service_entity",
     "service_city",
     "service_date",
+    "travel_km_outbound",
+    "travel_km_return",
+    "use_service_location_in_honorarios",
     "lang",
     "target_lang",
     "run_id",
@@ -68,6 +71,9 @@ def ensure_joblog_schema(conn: sqlite3.Connection) -> None:
             service_entity TEXT,
             service_city TEXT,
             service_date TEXT,
+            travel_km_outbound REAL,
+            travel_km_return REAL,
+            use_service_location_in_honorarios INTEGER DEFAULT 0,
             lang TEXT,
             target_lang TEXT,
             run_id TEXT,
@@ -168,6 +174,9 @@ def migrate_joblog_v2(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, columns, "service_entity", "TEXT")
     _add_column_if_missing(conn, columns, "service_city", "TEXT")
     _add_column_if_missing(conn, columns, "service_date", "TEXT")
+    _add_column_if_missing(conn, columns, "travel_km_outbound", "REAL")
+    _add_column_if_missing(conn, columns, "travel_km_return", "REAL")
+    _add_column_if_missing(conn, columns, "use_service_location_in_honorarios", "INTEGER DEFAULT 0")
     _add_column_if_missing(conn, columns, "target_lang", "TEXT")
     _add_column_if_missing(conn, columns, "run_id", "TEXT")
     _add_column_if_missing(conn, columns, "total_tokens", "INTEGER")
@@ -256,6 +265,9 @@ def list_job_runs(conn: sqlite3.Connection, *, limit: int = 500) -> list[sqlite3
             service_entity,
             service_city,
             service_date,
+            travel_km_outbound,
+            travel_km_return,
+            COALESCE(use_service_location_in_honorarios, 0) AS use_service_location_in_honorarios,
             lang,
             COALESCE(NULLIF(trim(target_lang), ''), NULLIF(trim(lang), '')) AS target_lang,
             run_id,
@@ -353,6 +365,9 @@ def update_joblog_visible_columns(
         "service_entity",
         "service_city",
         "service_date",
+        "travel_km_outbound",
+        "travel_km_return",
+        "use_service_location_in_honorarios",
         "lang",
         "target_lang",
         "run_id",

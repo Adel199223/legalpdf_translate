@@ -5,7 +5,25 @@ from pathlib import Path
 
 import legalpdf_translate.user_settings as user_settings
 from legalpdf_translate.glossary import default_ar_entries, default_en_entries, default_fr_entries
-from legalpdf_translate.user_profile import DEFAULT_PRIMARY_PROFILE_ID
+from legalpdf_translate.user_profile import DEFAULT_PRIMARY_PROFILE_ID, default_primary_profile
+
+
+def _legacy_blank_default_primary_profile_payload() -> dict[str, object]:
+    profile = default_primary_profile()
+    return {
+        "id": profile.id,
+        "first_name": profile.first_name,
+        "last_name": profile.last_name,
+        "document_name_override": profile.document_name_override,
+        "email": profile.email,
+        "phone_number": profile.phone_number,
+        "postal_address": profile.postal_address,
+        "iban": profile.iban,
+        "iva_text": profile.iva_text,
+        "irs_text": profile.irs_text,
+        "travel_origin_label": "",
+        "travel_distances_by_city": {},
+    }
 
 
 def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypatch) -> None:
@@ -65,6 +83,8 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert loaded["primary_profile_id"] == DEFAULT_PRIMARY_PROFILE_ID
     assert loaded["profiles"][0]["id"] == DEFAULT_PRIMARY_PROFILE_ID
     assert loaded["profiles"][0]["phone_number"] == ""
+    assert loaded["profiles"][0]["travel_origin_label"] == "Marmelar"
+    assert loaded["profiles"][0]["travel_distances_by_city"]["Beja"] == 39.0
     assert loaded["gmail_intake_bridge_enabled"] is False
     assert loaded["gmail_intake_bridge_token"] == ""
     assert loaded["gmail_intake_port"] == 8765
@@ -138,6 +158,8 @@ def test_load_gui_settings_preserves_profile_email_when_profiles_exist(tmp_path:
                         "iban": "PT50003506490000832760029",
                         "iva_text": "23%",
                         "irs_text": "Sem retenção",
+                        "travel_origin_label": "Marmelar",
+                        "travel_distances_by_city": {"Beja": 39.0},
                     }
                 ],
                 "primary_profile_id": "alt",
@@ -150,6 +172,8 @@ def test_load_gui_settings_preserves_profile_email_when_profiles_exist(tmp_path:
 
     assert loaded["profiles"][0]["email"] == "custom@example.com"
     assert loaded["profiles"][0]["phone_number"] == "+351912345678"
+    assert loaded["profiles"][0]["travel_origin_label"] == "Marmelar"
+    assert loaded["profiles"][0]["travel_distances_by_city"]["Beja"] == 39.0
     assert loaded["primary_profile_id"] == "alt"
 
 
@@ -160,6 +184,7 @@ def test_load_gui_settings_backfills_blank_phone_when_profile_payload_is_legacy(
     settings_file.write_text(
         json.dumps(
             {
+                "settings_schema_version": 8,
                 "profiles": [
                     {
                         "id": "alt",
@@ -182,6 +207,37 @@ def test_load_gui_settings_backfills_blank_phone_when_profile_payload_is_legacy(
     loaded = user_settings.load_gui_settings()
 
     assert loaded["profiles"][0]["phone_number"] == ""
+    assert loaded["profiles"][0]["travel_origin_label"] == ""
+    assert loaded["profiles"][0]["travel_distances_by_city"] == {}
+
+
+def test_load_gui_settings_repairs_legacy_default_primary_blank_travel_fields(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 8,
+                "profiles": [_legacy_blank_default_primary_profile_payload()],
+                "primary_profile_id": DEFAULT_PRIMARY_PROFILE_ID,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["settings_schema_version"] == 8
+    assert loaded["profiles"][0]["travel_origin_label"] == "Marmelar"
+    assert loaded["profiles"][0]["travel_distances_by_city"] == {
+        "Beja": 39.0,
+        "Cuba": 26.0,
+        "Vidigueira": 15.0,
+        "Mora": 25.0,
+    }
 
 
 def test_load_gui_settings_normalizes_missing_primary_profile_id(tmp_path: Path, monkeypatch) -> None:
@@ -203,6 +259,8 @@ def test_load_gui_settings_normalizes_missing_primary_profile_id(tmp_path: Path,
                         "iban": "PT50003506490000832760029",
                         "iva_text": "23%",
                         "irs_text": "Sem retenção",
+                        "travel_origin_label": "Marmelar",
+                        "travel_distances_by_city": {"Beja": 39.0},
                     }
                 ],
                 "primary_profile_id": "missing",
@@ -232,6 +290,8 @@ def test_save_profile_settings_persists_profiles_and_primary(tmp_path: Path, mon
         "iban": "PT50003506490000832760029",
         "iva_text": "23%",
         "irs_text": "Sem retenção",
+        "travel_origin_label": "Rua B",
+        "travel_distances_by_city": {"Cuba": 12.5},
     }
     normalized = user_settings.load_gui_settings()
     profile_objects, _ = user_settings.normalize_profiles(
@@ -249,6 +309,45 @@ def test_save_profile_settings_persists_profiles_and_primary(tmp_path: Path, mon
     assert reloaded["primary_profile_id"] == "secondary"
     assert len(reloaded["profiles"]) == 2
     assert reloaded["profiles"][1]["phone_number"] == "+351911111111"
+    assert reloaded["profiles"][1]["travel_origin_label"] == "Rua B"
+    assert reloaded["profiles"][1]["travel_distances_by_city"]["Cuba"] == 12.5
+
+
+def test_save_profile_settings_persists_repaired_legacy_default_primary_travel_fields(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 8,
+                "profiles": [_legacy_blank_default_primary_profile_payload()],
+                "primary_profile_id": DEFAULT_PRIMARY_PROFILE_ID,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    profiles, primary_profile_id = user_settings.load_profile_settings()
+
+    user_settings.save_profile_settings(
+        profiles=profiles,
+        primary_profile_id=primary_profile_id,
+    )
+
+    raw = json.loads(settings_file.read_text(encoding="utf-8"))
+
+    assert raw["settings_schema_version"] == user_settings.SETTINGS_SCHEMA_VERSION
+    assert raw["primary_profile_id"] == DEFAULT_PRIMARY_PROFILE_ID
+    assert raw["profiles"][0]["travel_origin_label"] == "Marmelar"
+    assert raw["profiles"][0]["travel_distances_by_city"] == {
+        "Beja": 39.0,
+        "Cuba": 26.0,
+        "Vidigueira": 15.0,
+        "Mora": 25.0,
+    }
 
 
 def test_load_gui_settings_migrates_old_last_used_fields(tmp_path: Path, monkeypatch) -> None:

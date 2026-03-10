@@ -62,6 +62,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 8. Use Gmail intake when you want to start from one open Gmail message instead of choosing files manually.
 9. Open `File > New Window` or press `Ctrl+Shift+N` when you want a second independent workspace for another job.
 10. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when `Court Email` is available.
+11. Use the Job Log when you need an interpretation-only honorários document without a translation run.
 
 ## Using the Job Log
 1. Open `Tools > View Job Log` when you want to check or fix something you already saved.
@@ -72,6 +73,23 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 6. Drag column borders wider when names or values are cut off. If the table gets wider than the window, scroll sideways.
 7. The app remembers the widths you set for Job Log columns.
 8. In the Save to Job Log form, scroll inside the window on smaller screens. The lower detail sections start collapsed so the main fields stay easier to reach.
+9. Interpretation rows open a cleaner form: translation-only fields are hidden, the main date is the service date, and the visible KM field is one-way only.
+10. For interpretation work, `Service same as Case` is usually the default. The service city is treated as the travel city unless you change it manually.
+11. If a saved one-way distance already exists for that service city in the selected profile, the app fills it in automatically.
+12. `Autofill from PDF header` also works for interpretation edit rows that were not created from a saved PDF. The app asks you to choose the PDF file when needed.
+
+## Interpretation Honorarios
+1. Open `Tools > View Job Log`.
+2. Use `Add...` and choose the interpretation path you need:
+   - blank/manual entry
+   - `From notification PDF...`
+   - `From photo/screenshot...`
+3. Review the case and service details before saving. Interpretation mode focuses on service date, service location, and distance instead of translation metrics.
+4. Keep `Service same as Case` on when the hearing/service happened in the same place as the case. Turn it off only when the service entity or city is different.
+5. The visible KM field is the one-way distance only. The app reuses the saved value for that service city when one already exists.
+6. If you enter a new one-way distance for a service city and save the row, the app remembers it for future interpretation rows under the current profile.
+7. Use `Gerar Requerimento de Honorários...` from that row when you are ready to generate the interpretation document.
+8. Interpretation honorários stay local in this version. They do not offer Gmail draft creation.
 
 ## Multiple Windows
 1. Open another workspace from `File > New Window`, `Ctrl+Shift+N`, or the bottom `...` menu.
@@ -108,6 +126,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 7. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
 8. If you skip or fail honorários generation at the end of the batch, the app does not create the Gmail reply draft in this version.
 9. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
+10. Interpretation honorários are separate from the Gmail reply-draft workflow and stay local-doc only.
 
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.
@@ -151,3 +170,4 @@ Use this fix:
 7. Gmail intake live testing must happen on the same Windows host as the signed-in browser and Windows `gog`. A WSL-only smoke is not enough for the final check.
 8. In Gmail batches, if you accidentally choose the translated DOCX filename while saving honorários, the app now auto-renames the honorários file instead of overwriting the translation.
 9. If a Gmail batch reply draft still fails after translation finished, look for `gmail_batch_session.json` under your output folder’s `_gmail_batch_sessions` directory before retrying blindly.
+10. For interpretation rows, the saved distance is tied to the service city. If the KM value looks wrong, confirm the row's service city before saving or exporting honorários.

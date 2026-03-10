@@ -65,6 +65,9 @@ def test_migration_adds_v2_columns_and_backfills(tmp_path: Path) -> None:
     assert "service_entity" in columns
     assert "service_city" in columns
     assert "service_date" in columns
+    assert "travel_km_outbound" in columns
+    assert "travel_km_return" in columns
+    assert "use_service_location_in_honorarios" in columns
     assert "translation_date" in columns
     assert "run_id" in columns
     assert "target_lang" in columns
@@ -82,6 +85,7 @@ def test_migration_adds_v2_columns_and_backfills(tmp_path: Path) -> None:
         """
         SELECT case_entity, case_city, service_entity, service_city, service_date, translation_date,
                target_lang, court_email, estimated_api_cost, run_id, total_tokens, quality_risk_score,
+               travel_km_outbound, travel_km_return, use_service_location_in_honorarios,
                output_docx_path, partial_docx_path
         FROM job_runs
         LIMIT 1
@@ -104,6 +108,9 @@ def test_migration_adds_v2_columns_and_backfills(tmp_path: Path) -> None:
     assert row[11] is None
     assert row[12] is None
     assert row[13] is None
+    assert row[14] == 0
+    assert row[15] is None
+    assert row[16] is None
 
 
 def test_update_job_run_updates_only_selected_fields_and_preserves_paths(tmp_path: Path) -> None:
@@ -171,12 +178,16 @@ def test_update_job_run_updates_only_selected_fields_and_preserves_paths(tmp_pat
             values={
                 "job_type": "Interpretation",
                 "pages": 9,
+                "travel_km_outbound": 39.0,
+                "travel_km_return": 39.0,
+                "use_service_location_in_honorarios": 1,
                 "profit": 100.0,
             },
         )
         row = conn.execute(
             """
-            SELECT id, job_type, pages, profit, output_docx_path, partial_docx_path, case_number
+            SELECT id, job_type, pages, travel_km_outbound, travel_km_return,
+                   use_service_location_in_honorarios, profit, output_docx_path, partial_docx_path, case_number
             FROM job_runs
             WHERE id = ?
             """,
@@ -187,10 +198,13 @@ def test_update_job_run_updates_only_selected_fields_and_preserves_paths(tmp_pat
     assert int(row[0]) == int(row_id)
     assert row[1] == "Interpretation"
     assert int(row[2]) == 9
-    assert float(row[3]) == 100.0
-    assert row[4] == "C:/tmp/out.docx"
-    assert row[5] == "C:/tmp/out_partial.docx"
-    assert row[6] == "109/26.0PBBJA"
+    assert float(row[3]) == 39.0
+    assert float(row[4]) == 39.0
+    assert int(row[5]) == 1
+    assert float(row[6]) == 100.0
+    assert row[7] == "C:/tmp/out.docx"
+    assert row[8] == "C:/tmp/out_partial.docx"
+    assert row[9] == "109/26.0PBBJA"
 
 
 def test_delete_job_run_removes_only_selected_row(tmp_path: Path) -> None:

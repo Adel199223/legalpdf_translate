@@ -22,6 +22,7 @@ from .glossary import (
 )
 from .study_glossary import normalize_study_entries, serialize_study_entries, supported_learning_langs
 from .user_profile import (
+    backfill_legacy_default_primary_profile_travel_fields,
     default_primary_profile,
     normalize_profiles,
     primary_profile,
@@ -31,7 +32,7 @@ from .user_profile import (
 
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
-SETTINGS_SCHEMA_VERSION = 7
+SETTINGS_SCHEMA_VERSION = 9
 DEFAULT_VOCAB_CASE_ENTITIES = [
     "Ministério Público",
     "Tribunal Judicial",
@@ -406,6 +407,8 @@ def _coerce_joblog_column_widths(value: object) -> dict[str, int]:
         "service_entity",
         "service_city",
         "service_date",
+        "travel_km_outbound",
+        "travel_km_return",
         "lang",
         "target_lang",
         "pages",
@@ -581,6 +584,15 @@ def load_gui_settings() -> dict[str, Any]:
                 iva_text=first_profile.iva_text,
                 irs_text=first_profile.irs_text,
             )
+    settings_schema_version_raw = _coerce_int(
+        data.get("settings_schema_version"),
+        0,
+    )
+    if settings_schema_version_raw < 9:
+        normalized_profiles = [
+            backfill_legacy_default_primary_profile_travel_fields(profile)
+            for profile in normalized_profiles
+        ]
     merged["profiles"] = serialize_profiles(normalized_profiles)
     merged["primary_profile_id"] = primary_profile_id
     merged["gmail_intake_bridge_enabled"] = _coerce_bool(
@@ -720,10 +732,6 @@ def load_gui_settings() -> dict[str, Any]:
     )
     merged["perf_max_transport_retries"] = max(0, _coerce_int(merged.get("perf_max_transport_retries"), 4))
     merged["perf_backoff_cap_seconds"] = max(1.0, _coerce_float(merged.get("perf_backoff_cap_seconds"), 12.0))
-    settings_schema_version_raw = _coerce_int(
-        data.get("settings_schema_version"),
-        0,
-    )
     legacy_text_timeout = _coerce_int(
         data.get("perf_timeout_text_seconds"),
         DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
