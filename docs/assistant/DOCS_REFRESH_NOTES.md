@@ -1096,3 +1096,20 @@ Verification commands/results:
 - Superseding note:
   - the older historical Arabic writer-only refresh notes from `2026-02-13` should not be treated as the current supported mitigation for user-facing Arabic right alignment in Word
   - the current supported mitigation is the Arabic Word review gate plus manual-or-assisted save before continuation
+
+# 2026-03-10
+- Ran the first roadmap-wide Assistant Docs Sync for the completed interpretation honorarios feature branch.
+- Brought the broader docs surface into alignment with the shipped interpretation workflow, not just the roadmap packets:
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/INDEX.md`
+- Synced current-truth and user-facing guidance for:
+  - blank/manual interpretation Job Log entry
+  - interpretation import from local notification PDFs and local photos/screenshots
+  - interpretation edit-mode cleanup that hides translation-only fields and uses service-date-first editing
+  - one visible one-way distance field keyed by `service_city` with profile-backed reuse/persistence
+  - manual PDF picker fallback for interpretation header autofill
+  - responsive interpretation honorários export dialog
+  - local-only interpretation honorários generation with no Gmail draft flow

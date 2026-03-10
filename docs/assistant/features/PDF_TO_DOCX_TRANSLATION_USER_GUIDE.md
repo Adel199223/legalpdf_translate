@@ -157,6 +157,13 @@ For Arabic target runs, the app inserts an Arabic review step before `Save to Jo
 
 `Expected total` and `Profit` are recalculated from that translated-output word count.
 
+Interpretation rows use the same Job Log window but a different editing mode:
+- translation-only fields are hidden instead of shown as inactive
+- the main visible date becomes the service date
+- `Autofill from PDF header` can fall back to a manual PDF picker
+- the visible distance input is one one-way KM field tied to `service_city`
+- the saved one-way distance is reused automatically for that service city when the selected profile already has one recorded
+
 ## Job Log window
 Use `Tools > View Job Log` when you want to review or correct saved rows later.
 
@@ -167,6 +174,32 @@ Use `Tools > View Job Log` when you want to review or correct saved rows later.
 5. Drag a column divider to resize it. Double-click the divider if you want that column auto-fitted again.
 6. If the Job Log becomes wider than the window, use the horizontal scrollbar instead of squeezing the headers.
 7. The app remembers your manual Job Log column widths.
+
+## Interpretation Honorarios
+Use this flow when you need a `Requerimento de Honorários` for interpreting work rather than a translated document.
+
+### Start the row
+1. Open `Tools > View Job Log`.
+2. Use `Add...` and choose one of these interpretation entry paths:
+   - blank/manual interpretation row
+   - `From notification PDF...`
+   - `From photo/screenshot...`
+3. Confirm the case, service, and date fields before saving the row.
+
+### Service city and distance rules
+1. `Service same as Case` starts enabled for interpretation rows unless the imported data already proves a different service location.
+2. While that option stays on, the service entity and service city mirror the case values.
+3. The service city is the travel-distance city for interpretation honorários.
+4. The visible KM field is the one-way distance only.
+5. When the current profile already has a saved distance for that service city, the app fills it in automatically.
+6. If you type a new one-way distance and save the row, the app remembers that value for that service city in the current profile.
+
+### Generate the document
+1. Open the saved interpretation row or keep the edit dialog open.
+2. Click `Gerar Requerimento de Honorários...`.
+3. Use the profile selector if needed.
+4. On smaller screens, scroll inside the honorários dialog. The action buttons stay anchored at the bottom.
+5. Interpretation honorários stay local-doc only in this version. They do not offer Gmail draft creation.
 
 ## Honorarios + Gmail Drafts
 If you generate a `Requerimento de Honorários`, the app can also prepare a Gmail draft to the row's `Court Email`.
@@ -183,6 +216,8 @@ From `Job Log`, the app now tries this order for the translated attachment:
 
 If the app has to ask you once for a translated DOCX on a legacy row, it saves that path back into the row so the same row should not ask again next time.
 You can use the pen action first if a historical row needs case/court corrections before exporting honorários or creating the Gmail draft.
+
+This Gmail-draft branch applies to translation honorários only. Interpretation honorários do not offer Gmail draft creation.
 
 ## Gmail Intake Batch Replies
 Use this when the source files already arrived in Gmail and you want one reply draft back in the same thread.
@@ -258,19 +293,21 @@ Queue mode writes these sidecar files next to the manifest:
 13. If you click `Cancel and wait`, the app now waits only for the active request deadline instead of appearing indefinitely frozen.
 14. If a run stops partially, open `Generate Run Report` and the run folder before retrying. The stop dialog now includes suspected cause, halt reason, and request timing details when available.
 15. If a historical honorários Gmail draft still asks you to pick the translated DOCX, that means the row has no stored artifact path and exact `run_id` recovery did not find one unique valid match. After one successful manual selection, the row should be healed and stop asking again.
-16. If Gmail intake says the app is not listening, confirm the bridge is enabled in Settings and the app is still running on Windows with the same port shown in the extension.
-17. If the app shows `Gmail intake bridge unavailable`, treat that as a port/process conflict first. The listener on `127.0.0.1:<port>` must belong to `python.exe -m legalpdf_translate.qt_app`, not `pytest`.
-18. If Gmail intake says the token is invalid, re-copy the token from Settings into the extension options page.
-19. If Gmail intake cannot identify the open Gmail message, collapse extra messages and leave exactly one expanded message visible.
-20. If the Gmail review dialog shows no files, the email likely had no supported attachments or Gmail exposed only inline/signature/media parts.
-21. If you cancel `Save to Job Log` during a Gmail batch, the remaining attachments stop by design.
-22. If the Gmail batch warns that case/court metadata differ, split that email into separate batches instead of forcing one reply.
-23. If you skip or fail honorários generation at the end of a Gmail batch, the app does not create the Gmail reply draft in V1.
-24. A WSL-only `gog` smoke is not enough for final Gmail intake validation. The signed-in browser, Windows app, and Windows `gog` must be checked on the same host.
-25. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets.
-26. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
-27. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
-28. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
+16. If `Autofill from PDF header` is available on an interpretation row without an attached source PDF, that is expected. The app now asks you to choose the PDF manually for that autofill pass.
+17. If an interpretation row shows the wrong travel distance, check the `Service city` first. The saved KM value is keyed to that service city.
+18. If Gmail intake says the app is not listening, confirm the bridge is enabled in Settings and the app is still running on Windows with the same port shown in the extension.
+19. If the app shows `Gmail intake bridge unavailable`, treat that as a port/process conflict first. The listener on `127.0.0.1:<port>` must belong to `python.exe -m legalpdf_translate.qt_app`, not `pytest`.
+20. If Gmail intake says the token is invalid, re-copy the token from Settings into the extension options page.
+21. If Gmail intake cannot identify the open Gmail message, collapse extra messages and leave exactly one expanded message visible.
+22. If the Gmail review dialog shows no files, the email likely had no supported attachments or Gmail exposed only inline/signature/media parts.
+23. If you cancel `Save to Job Log` during a Gmail batch, the remaining attachments stop by design.
+24. If the Gmail batch warns that case/court metadata differ, split that email into separate batches instead of forcing one reply.
+25. If you skip or fail honorários generation at the end of a Gmail batch, the app does not create the Gmail reply draft in V1.
+26. A WSL-only `gog` smoke is not enough for final Gmail intake validation. The signed-in browser, Windows app, and Windows `gog` must be checked on the same host.
+27. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets.
+28. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
+29. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
+30. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.

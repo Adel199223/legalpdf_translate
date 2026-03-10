@@ -73,6 +73,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 11. Execute a queue manifest with checkpoint-aware resume and failed-only rerun behavior.
 12. Start from an open Gmail message in Edge/Chromium, review supported attachments from that exact email, translate them one by one with mandatory Save-to-Job-Log checkpoints, then optionally generate one honorarios DOCX and one threaded Gmail reply draft.
 13. Open multiple workspaces and translate different jobs in parallel without interrupting the current run.
+14. Create or edit interpretation Job Log rows manually, from a notification PDF, or from a photo/screenshot, then generate a local interpretation honorarios DOCX without any Gmail draft branch.
 
 ## Output and Run Artifacts
 Run artifacts live under:
@@ -146,8 +147,23 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - `expected_total` and `profit` in the Save-to-Job-Log flow are recalculated from that translated-output word count.
 - Existing Job Log rows can now be updated in place either through the full `Edit Job Log Entry` dialog or by double-clicking visible cells for row-scoped inline editing.
 - The Job Log window now uses a fixed `Actions` column with icon-based edit/delete controls; row deletion is confirmation-gated and only one row can be inline-edited at a time.
-- Historical Job Log editing no longer requires the original `pdf_path`. Missing source PDFs only disable `Autofill from PDF header`; `Open translated DOCX` still works when stored translated DOCX paths resolve.
+- Historical Job Log editing no longer requires the original `pdf_path`. Translation rows simply disable `Autofill from PDF header` when no source PDF is available, while interpretation rows can still use `Autofill from PDF header` through a manual PDF picker fallback; `Open translated DOCX` still works when stored translated DOCX paths resolve.
 - Job Log columns now auto-fit visible headers by default, remain user-resizable, persist their widths in settings, and overflow through a horizontal scrollbar instead of squeezing the table to the viewport.
+- The Job Log now supports additive interpretation fields and behavior on top of translation rows:
+  - `job_type == "Interpretation"` switches the full dialog to interpretation-first editing
+  - blank/manual interpretation rows can be opened from `Job Log > Add...`
+  - interpretation notification imports keep the local `pdf_path` when present
+  - interpretation photo imports stay image-only and do not create a PDF-backed row contract
+  - translation-only inputs are hidden in interpretation mode instead of shown as inactive clutter
+  - the primary visible date in interpretation mode is the service date
+  - interpretation distance is shown as one visible one-way value in the UI, keyed by `service_city`, and mirrored internally into outbound/return storage for compatibility
+  - `Service same as Case` defaults on for interpretation unless an explicit different service location already exists
+  - profile-backed distance defaults are reused automatically by service city, and newly entered one-way values are persisted back to that profile-city mapping on save
+- Interpretation honorarios now use a kind-aware document branch:
+  - manual interpretation rows can generate a local honorarios DOCX directly from the Job Log dialog
+  - notification PDF and photo/screenshot imports prefill interpretation case/service values before the user confirms the row
+  - interpretation honorarios exports use the responsive/scrollable profile-backed export dialog
+  - interpretation honorarios remain local-doc generation only and never offer Gmail draft creation
 - Gmail draft attachment reuse for honorarios now prefers known translated output artifacts in this order: final DOCX path, partial DOCX path, exact `run_id` recovery, then a manual `.docx` picker only as the final fallback.
 - If a legacy historical row needs one manual translated-DOCX selection, the app persists that choice back into the row so the picker should not appear again for that same row.
 - Gmail intake batch downloads and confirmed per-item results are kept in memory only for the active Gmail batch session. They are cleared on reset, failure paths, app shutdown, or successful finalization.
