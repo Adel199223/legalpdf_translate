@@ -31,7 +31,7 @@ from .user_profile import (
 
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
-SETTINGS_SCHEMA_VERSION = 7
+SETTINGS_SCHEMA_VERSION = 8
 DEFAULT_VOCAB_CASE_ENTITIES = [
     "Ministério Público",
     "Tribunal Judicial",
@@ -406,6 +406,8 @@ def _coerce_joblog_column_widths(value: object) -> dict[str, int]:
         "service_entity",
         "service_city",
         "service_date",
+        "travel_km_outbound",
+        "travel_km_return",
         "lang",
         "target_lang",
         "pages",

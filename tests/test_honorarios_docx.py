@@ -12,14 +12,17 @@ if os.name != "nt" and "DISPLAY" not in os.environ:
 import pytest
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QRect, QUrl
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 import legalpdf_translate.user_settings as user_settings
 from legalpdf_translate.honorarios_docx import (
     HonorariosDraft,
+    HonorariosKind,
     build_honorarios_draft,
+    build_interpretation_honorarios_draft,
     build_honorarios_paragraph_texts,
+    default_interpretation_recipient_block,
     default_honorarios_filename,
     format_portuguese_date,
     generate_honorarios_docx,
@@ -180,6 +183,75 @@ def test_default_honorarios_filename_sanitizes_case_number() -> None:
     )
 
 
+def test_default_honorarios_filename_adds_interpretation_suffix() -> None:
+    assert (
+        default_honorarios_filename(
+            "109/26.0PBBJA",
+            today=date(2026, 3, 6),
+            kind=HonorariosKind.INTERPRETATION,
+        )
+        == "Requerimento_Honorarios_Interpretacao_109_26.0PBBJA_20260306.docx"
+    )
+
+
+def test_build_interpretation_honorarios_paragraph_texts_uses_interpretation_template() -> None:
+    profile = _profile(travel_origin_label="Marmelar")
+    draft = build_interpretation_honorarios_draft(
+        case_number="000055/25.5GAFAL",
+        case_entity="Ministério Público de Beja",
+        case_city="Beja",
+        service_date="2025-04-09",
+        service_entity="GNR",
+        service_city="Vidigueira",
+        use_service_location_in_honorarios=True,
+        travel_km_outbound=50,
+        travel_km_return=50,
+        recipient_block=default_interpretation_recipient_block("Ministério Público de Beja"),
+        profile=profile,
+        today=date(2025, 4, 28),
+    )
+
+    paragraphs = build_honorarios_paragraph_texts(draft)
+
+    assert paragraphs[2] == ("Exmo. Senhor Procurador do Ministério Público de Beja", "address")
+    assert "intérprete" in paragraphs[7][0]
+    assert "no dia 09/04/2025, na GNR de Vidigueira" in paragraphs[7][0]
+    assert "entre Marmelar e Vidigueira" in paragraphs[7][0]
+    assert "50 km na ida e 50 km na volta" in paragraphs[7][0]
+    assert "não está sujeito a retenção de IRS" in paragraphs[8][0]
+    assert paragraphs[13] == ("Melhores cumprimentos,", "left")
+    assert paragraphs[14] == ("Pede deferimento.", "left")
+    assert paragraphs[16] == ("Beja, 28 de abril de 2025", "center")
+    assert paragraphs[18] == ("O Requerente,", "center")
+    assert paragraphs[20] == (profile.document_name, "center")
+
+
+def test_build_interpretation_honorarios_short_form_omits_service_location_phrase() -> None:
+    profile = _profile(travel_origin_label="Marmelar")
+    draft = build_interpretation_honorarios_draft(
+        case_number="000055/25.5GAFAL",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2025-04-09",
+        service_entity="Juízo Local Criminal",
+        service_city="Beja",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=39,
+        travel_km_return=39,
+        profile=profile,
+        today=date(2025, 4, 28),
+    )
+
+    body_text = next(
+        text
+        for text, _kind in build_honorarios_paragraph_texts(draft)
+        if "Venho, por este meio, requerer o pagamento dos honorários devidos" in text
+    )
+    assert "na GNR de" not in body_text
+    assert "na cidade de" not in body_text
+    assert "entre Marmelar e Beja" in body_text
+
+
 def test_honorarios_dialog_validates_required_fields(tmp_path: Path, monkeypatch) -> None:
     _patch_settings_file(monkeypatch, tmp_path)
     app = QApplication.instance()
@@ -310,6 +382,51 @@ def test_honorarios_dialog_defaults_to_primary_profile_and_secondary_override_is
         if second_dialog is not None:
             second_dialog.close()
             second_dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_small_screen_uses_scrollable_body_and_fixed_action_bar(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.window_adaptive.available_screen_geometry",
+        lambda _widget: QRect(0, 0, 820, 620),
+    )
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="Juízo Local Criminal de Beja",
+        service_city="Beja",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=0.0,
+        travel_km_return=0.0,
+        recipient_block=default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=_profile(),
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.width() <= 672
+        assert dialog.height() <= 545
+        assert dialog.form_scroll_area.widgetResizable() is True
+        assert dialog.cancel_btn.parentWidget() is dialog.action_bar
+        assert dialog.generate_btn.parentWidget() is dialog.action_bar
+        assert dialog.recipient_block_edit.minimumHeight() == 72
+    finally:
+        dialog.close()
+        dialog.deleteLater()
         if owns_app:
             app.quit()
 

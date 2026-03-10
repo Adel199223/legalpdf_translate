@@ -65,6 +65,8 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert loaded["primary_profile_id"] == DEFAULT_PRIMARY_PROFILE_ID
     assert loaded["profiles"][0]["id"] == DEFAULT_PRIMARY_PROFILE_ID
     assert loaded["profiles"][0]["phone_number"] == ""
+    assert loaded["profiles"][0]["travel_origin_label"] == "Marmelar"
+    assert loaded["profiles"][0]["travel_distances_by_city"]["Beja"] == 39.0
     assert loaded["gmail_intake_bridge_enabled"] is False
     assert loaded["gmail_intake_bridge_token"] == ""
     assert loaded["gmail_intake_port"] == 8765
@@ -138,6 +140,8 @@ def test_load_gui_settings_preserves_profile_email_when_profiles_exist(tmp_path:
                         "iban": "PT50003506490000832760029",
                         "iva_text": "23%",
                         "irs_text": "Sem retenção",
+                        "travel_origin_label": "Marmelar",
+                        "travel_distances_by_city": {"Beja": 39.0},
                     }
                 ],
                 "primary_profile_id": "alt",
@@ -150,6 +154,8 @@ def test_load_gui_settings_preserves_profile_email_when_profiles_exist(tmp_path:
 
     assert loaded["profiles"][0]["email"] == "custom@example.com"
     assert loaded["profiles"][0]["phone_number"] == "+351912345678"
+    assert loaded["profiles"][0]["travel_origin_label"] == "Marmelar"
+    assert loaded["profiles"][0]["travel_distances_by_city"]["Beja"] == 39.0
     assert loaded["primary_profile_id"] == "alt"
 
 
@@ -182,6 +188,8 @@ def test_load_gui_settings_backfills_blank_phone_when_profile_payload_is_legacy(
     loaded = user_settings.load_gui_settings()
 
     assert loaded["profiles"][0]["phone_number"] == ""
+    assert loaded["profiles"][0]["travel_origin_label"] == ""
+    assert loaded["profiles"][0]["travel_distances_by_city"] == {}
 
 
 def test_load_gui_settings_normalizes_missing_primary_profile_id(tmp_path: Path, monkeypatch) -> None:
@@ -203,6 +211,8 @@ def test_load_gui_settings_normalizes_missing_primary_profile_id(tmp_path: Path,
                         "iban": "PT50003506490000832760029",
                         "iva_text": "23%",
                         "irs_text": "Sem retenção",
+                        "travel_origin_label": "Marmelar",
+                        "travel_distances_by_city": {"Beja": 39.0},
                     }
                 ],
                 "primary_profile_id": "missing",
@@ -232,6 +242,8 @@ def test_save_profile_settings_persists_profiles_and_primary(tmp_path: Path, mon
         "iban": "PT50003506490000832760029",
         "iva_text": "23%",
         "irs_text": "Sem retenção",
+        "travel_origin_label": "Rua B",
+        "travel_distances_by_city": {"Cuba": 12.5},
     }
     normalized = user_settings.load_gui_settings()
     profile_objects, _ = user_settings.normalize_profiles(
@@ -249,6 +261,8 @@ def test_save_profile_settings_persists_profiles_and_primary(tmp_path: Path, mon
     assert reloaded["primary_profile_id"] == "secondary"
     assert len(reloaded["profiles"]) == 2
     assert reloaded["profiles"][1]["phone_number"] == "+351911111111"
+    assert reloaded["profiles"][1]["travel_origin_label"] == "Rua B"
+    assert reloaded["profiles"][1]["travel_distances_by_city"]["Cuba"] == 12.5
 
 
 def test_load_gui_settings_migrates_old_last_used_fields(tmp_path: Path, monkeypatch) -> None:

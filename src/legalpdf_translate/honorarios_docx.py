@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from enum import Enum
 import re
 from pathlib import Path
 
@@ -32,6 +33,11 @@ _PT_MONTHS = {
 _INVALID_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+class HonorariosKind(str, Enum):
+    TRANSLATION = "translation"
+    INTERPRETATION = "interpretation"
+
+
 @dataclass(slots=True)
 class HonorariosDraft:
     case_number: str
@@ -40,6 +46,14 @@ class HonorariosDraft:
     case_city: str
     date_pt: str
     profile: UserProfile
+    kind: HonorariosKind = HonorariosKind.TRANSLATION
+    service_date: str = ""
+    service_entity: str = ""
+    service_city: str = ""
+    use_service_location_in_honorarios: bool = False
+    travel_km_outbound: float = 0.0
+    travel_km_return: float = 0.0
+    recipient_block: str = ""
 
 
 def format_portuguese_date(value: date) -> str:
@@ -66,15 +80,56 @@ def build_honorarios_draft(
     )
 
 
+def build_interpretation_honorarios_draft(
+    *,
+    case_number: str,
+    case_entity: str,
+    case_city: str,
+    service_date: str,
+    profile: UserProfile,
+    service_entity: str = "",
+    service_city: str = "",
+    use_service_location_in_honorarios: bool = False,
+    travel_km_outbound: float = 0.0,
+    travel_km_return: float = 0.0,
+    recipient_block: str = "",
+    today: date | None = None,
+) -> HonorariosDraft:
+    current_date = today or date.today()
+    return HonorariosDraft(
+        case_number=case_number.strip(),
+        word_count=0,
+        case_entity=case_entity.strip(),
+        case_city=case_city.strip(),
+        date_pt=format_portuguese_date(current_date),
+        profile=profile,
+        kind=HonorariosKind.INTERPRETATION,
+        service_date=service_date.strip(),
+        service_entity=service_entity.strip(),
+        service_city=service_city.strip(),
+        use_service_location_in_honorarios=bool(use_service_location_in_honorarios),
+        travel_km_outbound=float(travel_km_outbound),
+        travel_km_return=float(travel_km_return),
+        recipient_block=recipient_block.strip(),
+    )
+
+
 def sanitize_case_number_for_filename(case_number: str) -> str:
     cleaned = _INVALID_FILENAME_RE.sub("_", case_number.strip())
     cleaned = cleaned.strip("._-")
     return cleaned or "sem_processo"
 
 
-def default_honorarios_filename(case_number: str, today: date | None = None) -> str:
+def default_honorarios_filename(
+    case_number: str,
+    today: date | None = None,
+    *,
+    kind: HonorariosKind = HonorariosKind.TRANSLATION,
+) -> str:
     current_date = today or date.today()
     slug = sanitize_case_number_for_filename(case_number)
+    if kind == HonorariosKind.INTERPRETATION:
+        return f"Requerimento_Honorarios_Interpretacao_{slug}_{current_date:%Y%m%d}.docx"
     return f"Requerimento_Honorarios_{slug}_{current_date:%Y%m%d}.docx"
 
 
@@ -85,7 +140,58 @@ def _irs_sentence_fragment(value: str) -> str:
     return cleaned
 
 
-def build_honorarios_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]]:
+def _irs_sentence_fragment_interpretation(value: str) -> str:
+    cleaned = value.strip().rstrip(".")
+    if cleaned.casefold() == "sem retenção":
+        return "não está sujeito a retenção de IRS"
+    return cleaned
+
+
+def _format_service_date(value: str) -> str:
+    cleaned = value.strip()
+    if cleaned == "":
+        return ""
+    try:
+        parsed = date.fromisoformat(cleaned)
+    except ValueError:
+        return cleaned
+    return f"{parsed.day:02d}/{parsed.month:02d}/{parsed.year:04d}"
+
+
+def _format_km_value(value: float) -> str:
+    numeric = float(value)
+    if numeric.is_integer():
+        return str(int(numeric))
+    return f"{numeric:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def default_interpretation_recipient_block(case_entity: str) -> str:
+    cleaned = case_entity.strip()
+    if cleaned.casefold().startswith("ministério público de ".casefold()):
+        return f"Exmo. Senhor Procurador do {cleaned}"
+    return f"Exmo. Senhor Procurador da República\ndo {cleaned}"
+
+
+def _interpretation_service_location_phrase(draft: HonorariosDraft) -> str:
+    if not draft.use_service_location_in_honorarios:
+        return ""
+    city = draft.service_city.strip()
+    if city == "":
+        return ""
+    entity = draft.service_entity.strip()
+    entity_norm = entity.casefold()
+    if entity_norm in {"gnr", "psp"}:
+        return f"na {entity} de {city}"
+    return f"na cidade de {city}"
+
+
+def _interpretation_travel_destination(draft: HonorariosDraft) -> str:
+    if draft.use_service_location_in_honorarios and draft.service_city.strip():
+        return draft.service_city.strip()
+    return draft.case_city.strip()
+
+
+def _translation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]]:
     profile = draft.profile
     return [
         (f"Número de processo: {draft.case_number}", "left"),
@@ -117,6 +223,61 @@ def build_honorarios_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, 
     ]
 
 
+def _interpretation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]]:
+    profile = draft.profile
+    recipient_block = draft.recipient_block.strip() or default_interpretation_recipient_block(draft.case_entity)
+    recipient_lines = [line.strip() for line in recipient_block.splitlines() if line.strip()]
+    location_phrase = _interpretation_service_location_phrase(draft)
+    travel_destination = _interpretation_travel_destination(draft)
+    date_phrase = f"no dia {_format_service_date(draft.service_date)}"
+    if location_phrase:
+        date_phrase = f"{date_phrase}, {location_phrase}"
+    body_text = (
+        "Venho, por este meio, requerer o pagamento dos honorários devidos, em virtude de ter sido nomeado "
+        f"intérprete no âmbito do processo acima identificado, {date_phrase}, bem como o pagamento das despesas de transporte entre "
+        f"{profile.travel_origin_label} e {travel_destination}, tendo percorrido "
+        f"{_format_km_value(draft.travel_km_outbound)} km na ida e {_format_km_value(draft.travel_km_return)} km na volta."
+    )
+    paragraphs: list[tuple[str, str]] = [
+        (f"Número de processo: {draft.case_number}", "left"),
+        ("", "left"),
+    ]
+    for line in recipient_lines:
+        paragraphs.append((line, "address"))
+    paragraphs.extend(
+        [
+            ("", "left"),
+            (f"Nome: {profile.document_name}", "left"),
+            (f"Morada: {profile.postal_address}", "left"),
+            ("", "left"),
+            (body_text, "left"),
+            (
+                f"Este serviço inclui a taxa de IVA de {profile.iva_text} e {_irs_sentence_fragment_interpretation(profile.irs_text)}.",
+                "left",
+            ),
+            ("", "left"),
+            ("O pagamento deverá ser efetuado para o seguinte IBAN:", "left"),
+            (profile.iban, "left"),
+            ("", "left"),
+            ("Melhores cumprimentos,", "left"),
+            ("Pede deferimento.", "left"),
+            ("", "left"),
+            (f"{draft.case_city}, {draft.date_pt}", "center"),
+            ("", "left"),
+            ("O Requerente,", "center"),
+            ("", "left"),
+            (profile.document_name, "center"),
+        ]
+    )
+    return paragraphs
+
+
+def build_honorarios_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]]:
+    if draft.kind == HonorariosKind.INTERPRETATION:
+        return _interpretation_paragraph_texts(draft)
+    return _translation_paragraph_texts(draft)
+
+
 def _set_default_font(document: Document) -> None:
     style = document.styles["Normal"]
     style.font.name = "Arial"
@@ -138,7 +299,10 @@ def generate_honorarios_docx(draft: HonorariosDraft, output_path: Path) -> Path:
     requested_output = output_path.expanduser().resolve()
     requested_output.parent.mkdir(parents=True, exist_ok=True)
     if requested_output.exists():
-        fallback_output = requested_output.parent / default_honorarios_filename(draft.case_number)
+        fallback_output = requested_output.parent / default_honorarios_filename(
+            draft.case_number,
+            kind=draft.kind,
+        )
         output = resolve_noncolliding_output_path(fallback_output)
     else:
         output = requested_output

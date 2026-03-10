@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
@@ -13,6 +13,13 @@ LEGACY_DEFAULT_LAST_NAME = "Belghali"
 LEGACY_DEFAULT_DOCUMENT_NAME = "Adel Belghali"
 LEGACY_DEFAULT_POSTAL_ADDRESS = "Rua Luís de Camões nº 6, 7960-011 Marmelar, Pedrógão, Vidigueira"
 LEGACY_DEFAULT_IBAN = "PT50003506490000832760029"
+LEGACY_DEFAULT_TRAVEL_ORIGIN_LABEL = "Marmelar"
+LEGACY_DEFAULT_TRAVEL_DISTANCES_BY_CITY = {
+    "Beja": 39.0,
+    "Cuba": 26.0,
+    "Vidigueira": 15.0,
+    "Mora": 25.0,
+}
 DEFAULT_PRIMARY_PROFILE_ID = "primary"
 PROFILE_REQUIRED_FIELDS = (
     "first_name",
@@ -36,6 +43,55 @@ def _clean(value: object) -> str:
     return str(value or "").strip()
 
 
+def _clean_distance_key(value: object) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _coerce_distance_value(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    cleaned = str(value or "").strip().replace(",", ".")
+    if cleaned == "":
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def normalize_travel_distances_by_city(raw_value: object) -> dict[str, float]:
+    if not isinstance(raw_value, Mapping):
+        return {}
+    normalized: dict[str, float] = {}
+    seen: set[str] = set()
+    for raw_city, raw_distance in raw_value.items():
+        city = _clean_distance_key(raw_city)
+        if city == "":
+            continue
+        distance = _coerce_distance_value(raw_distance)
+        if distance is None or distance < 0:
+            continue
+        key = city.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized[city] = float(distance)
+    return normalized
+
+
+def distance_for_city(profile: "UserProfile", city: str) -> float | None:
+    target = _clean_distance_key(city)
+    if target == "":
+        return None
+    target_key = target.casefold()
+    for known_city, distance in profile.travel_distances_by_city.items():
+        if _clean_distance_key(known_city).casefold() == target_key:
+            return float(distance)
+    return None
+
+
 def create_profile_id() -> str:
     return f"profile_{uuid4().hex[:12]}"
 
@@ -52,6 +108,8 @@ class UserProfile:
     iban: str = ""
     iva_text: str = DEFAULT_PROFILE_IVA_TEXT
     irs_text: str = DEFAULT_PROFILE_IRS_TEXT
+    travel_origin_label: str = ""
+    travel_distances_by_city: dict[str, float] = field(default_factory=dict)
 
     @property
     def document_name(self) -> str:
@@ -60,6 +118,10 @@ class UserProfile:
             return override
         combined = " ".join(part for part in (self.first_name.strip(), self.last_name.strip()) if part)
         return combined.strip()
+
+    def __post_init__(self) -> None:
+        self.travel_origin_label = _clean(self.travel_origin_label)
+        self.travel_distances_by_city = normalize_travel_distances_by_city(self.travel_distances_by_city)
 
 
 def default_primary_profile(*, email: str = "") -> UserProfile:
@@ -74,6 +136,8 @@ def default_primary_profile(*, email: str = "") -> UserProfile:
         iban=LEGACY_DEFAULT_IBAN,
         iva_text=DEFAULT_PROFILE_IVA_TEXT,
         irs_text=DEFAULT_PROFILE_IRS_TEXT,
+        travel_origin_label=LEGACY_DEFAULT_TRAVEL_ORIGIN_LABEL,
+        travel_distances_by_city=dict(LEGACY_DEFAULT_TRAVEL_DISTANCES_BY_CITY),
     )
 
 
@@ -89,6 +153,8 @@ def blank_profile(*, profile_id: str | None = None) -> UserProfile:
         iban="",
         iva_text=DEFAULT_PROFILE_IVA_TEXT,
         irs_text=DEFAULT_PROFILE_IRS_TEXT,
+        travel_origin_label="",
+        travel_distances_by_city={},
     )
 
 
@@ -105,18 +171,32 @@ def profile_from_mapping(value: Mapping[str, Any], *, fallback_id: str | None = 
         iban=_clean(value.get("iban")),
         iva_text=_clean(value.get("iva_text")) or DEFAULT_PROFILE_IVA_TEXT,
         irs_text=_clean(value.get("irs_text")) or DEFAULT_PROFILE_IRS_TEXT,
+        travel_origin_label=_clean(value.get("travel_origin_label")),
+        travel_distances_by_city=normalize_travel_distances_by_city(value.get("travel_distances_by_city")),
     )
 
 
-def serialize_profile(profile: UserProfile) -> dict[str, str]:
-    payload = asdict(profile)
+def serialize_profile(profile: UserProfile) -> dict[str, Any]:
     return {
-        key: _clean(value)
-        for key, value in payload.items()
+        "id": _clean(profile.id),
+        "first_name": _clean(profile.first_name),
+        "last_name": _clean(profile.last_name),
+        "document_name_override": _clean(profile.document_name_override),
+        "email": _clean(profile.email),
+        "phone_number": _clean(profile.phone_number),
+        "postal_address": _clean(profile.postal_address),
+        "iban": _clean(profile.iban),
+        "iva_text": _clean(profile.iva_text),
+        "irs_text": _clean(profile.irs_text),
+        "travel_origin_label": _clean(profile.travel_origin_label),
+        "travel_distances_by_city": {
+            city: float(distance)
+            for city, distance in normalize_travel_distances_by_city(profile.travel_distances_by_city).items()
+        },
     }
 
 
-def serialize_profiles(profiles: Sequence[UserProfile]) -> list[dict[str, str]]:
+def serialize_profiles(profiles: Sequence[UserProfile]) -> list[dict[str, Any]]:
     return [serialize_profile(profile) for profile in profiles]
 
 

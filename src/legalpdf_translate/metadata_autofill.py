@@ -18,19 +18,20 @@ from .config import DEFAULT_METADATA_AI_TIMEOUT_SECONDS, DEFAULT_OCR_API_TIMEOUT
 from .ocr_engine import OcrEngineConfig, OcrResult, build_ocr_engine
 from .ocr_engine import default_ocr_api_env_name, invoke_ocr_image, normalize_ocr_api_provider
 from .ocr_helpers import ocr_pdf_page_text
-from .pdf_text_order import extract_ordered_page_text
+from .pdf_text_order import extract_ordered_page_text, get_page_count
 from .secrets_store import get_ocr_key
 from .types import OcrApiProvider, OcrEnginePolicy, OcrMode
 
 GENERIC_CASE_ENTITIES = {"", "unknown", "desconhecido", "n/a", "na", "sem informação", "sem informacao"}
 
 CASE_NUMBER_PATTERNS = [
-    re.compile(r"processo\s*(?:n[.ºo]\s*)?[:\-]?\s*([0-9]{1,4}/[0-9]{2}\.[0-9A-Za-z.]{3,})", re.IGNORECASE),
-    re.compile(r"\b([0-9]{1,4}/[0-9]{2}\.[0-9A-Za-z.]{3,})\b"),
+    re.compile(r"processo\s*(?:n[.ºo]\s*)?[:\-]?\s*([0-9]{1,8}/[0-9]{2}\.[0-9A-Za-z.]{3,})", re.IGNORECASE),
+    re.compile(r"\b([0-9]{1,8}/[0-9]{2}\.[0-9A-Za-z.]{3,})\b"),
 ]
 
 COURT_PATTERNS = [
     re.compile(r"(Ju[ií]zo[ \t]+Local[ \t]+[A-Za-zÀ-ÿ \-]+?[ \t]+de[ \t]+[A-Za-zÀ-ÿ \-]+)", re.IGNORECASE),
+    re.compile(r"(Ju[ií]zo[ \t]+de[ \t]+[A-Za-zÀ-ÿ \-]+?[ \t]+de[ \t]+[A-Za-zÀ-ÿ \-]+(?:[ \t]+-[ \t]+Juiz[ \t]+\d+)?)", re.IGNORECASE),
     re.compile(r"(Minist[ée]rio[ \t]+P[úu]blico(?:[ \t]+de[ \t]+[A-Za-zÀ-ÿ \-]+)?)", re.IGNORECASE),
     re.compile(r"(Tribunal[ \t]+Judicial(?:[ \t]+da[ \t]+Comarca)?[ \t]+de[ \t]+[A-Za-zÀ-ÿ \-]+)", re.IGNORECASE),
     re.compile(r"(Tribunal[ \t]+do[ \t]+Trabalho[ \t]+de[ \t]+[A-Za-zÀ-ÿ \-]+)", re.IGNORECASE),
@@ -60,6 +61,47 @@ PHOTO_DATE_PATTERNS = [
     "%B %d, %Y",
     "%a, %B %d, %Y",
 ]
+NUMERIC_DATE_PATTERN = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b")
+INTERPRETATION_SERVICE_DATE_HINTS = (
+    "comparecer",
+    "presente",
+    "audiência",
+    "audiencia",
+    "diligência",
+    "diligencia",
+    "interrogatório",
+    "interrogatorio",
+    "inquirição",
+    "inquiricao",
+    "sessão",
+    "sessao",
+    "declarações",
+    "declaracoes",
+    "acareação",
+    "acareacao",
+    "ato",
+    "acto",
+)
+INTERPRETATION_NON_SERVICE_DATE_HINTS = (
+    "certificação citius",
+    "certificacao citius",
+    "referência deste documento",
+    "referencia deste documento",
+    "citius",
+    "documento",
+    "notificação",
+    "notificacao",
+    "elaborado",
+    "emitido",
+    "data:",
+)
+LAW_ENFORCEMENT_SERVICE_PATTERNS = (
+    re.compile(
+        r"\b(?:na|no|junto\s+(?:da|do|ao)|nas\s+instalações\s+da|nas\s+instalacoes\s+da|posto(?:\s+territorial)?\s+(?:da|do)|esquadra\s+(?:da|do))?\s*"
+        r"(GNR|PSP)\s+(?:de|da|do)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s\-]{1,60}?)(?=,|\.|;|\n|\s+no\s+dia\b|\s+às\b|\s+as\b|$)",
+        re.IGNORECASE,
+    ),
+)
 
 
 @dataclass(slots=True)
@@ -515,6 +557,123 @@ def _extract_photo_date(text: str) -> str | None:
     return None
 
 
+def _parse_numeric_date_token(token: str) -> str | None:
+    match = NUMERIC_DATE_PATTERN.search(token.strip())
+    if match is None:
+        return None
+    day = int(match.group(1))
+    month = int(match.group(2))
+    year = int(match.group(3))
+    try:
+        parsed = datetime(year=year, month=month, day=day)
+    except ValueError:
+        return None
+    return parsed.date().isoformat()
+
+
+def _context_contains_any(context: str, hints: tuple[str, ...]) -> bool:
+    normalized = normalize_for_match(context)
+    return any(hint in normalized for hint in hints)
+
+
+def _extract_interpretation_service_date(text: str) -> str | None:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    candidates: list[tuple[int, int, str]] = []
+    for index, line in enumerate(lines):
+        context_lines = lines[max(0, index - 1) : min(len(lines), index + 2)]
+        context = " ".join(context_lines)
+        for match in NUMERIC_DATE_PATTERN.finditer(line):
+            iso_value = _parse_numeric_date_token(match.group(0))
+            if iso_value is None:
+                continue
+            score = 0
+            if _context_contains_any(context, INTERPRETATION_SERVICE_DATE_HINTS):
+                score += 10
+            if " dia " in f" {normalize_for_match(context)} ":
+                score += 2
+            if (" às " in f" {normalize_for_match(context)} ") or (" as " in f" {normalize_for_match(context)} "):
+                score += 1
+            if _context_contains_any(context, INTERPRETATION_NON_SERVICE_DATE_HINTS):
+                score -= 10
+            if index >= 4:
+                score += 1
+            candidates.append((score, index, iso_value))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return candidates[0][2]
+
+
+def _canonicalize_city_candidate(candidate: str, vocab_cities: list[str]) -> str | None:
+    vocab_match = _first_city_match(candidate, vocab_cities)
+    if vocab_match is not None:
+        return vocab_match
+    cleaned = _sanitize_city(candidate)
+    if cleaned is None:
+        return None
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
+    return cleaned or None
+
+
+def _extract_interpretation_service_location(text: str, *, vocab_cities: list[str]) -> tuple[str | None, str | None]:
+    for pattern in LAW_ENFORCEMENT_SERVICE_PATTERNS:
+        for match in pattern.finditer(text):
+            service_entity = str(match.group(1) or "").strip().upper()
+            service_city = _canonicalize_city_candidate(str(match.group(2) or ""), vocab_cities)
+            if service_entity in {"GNR", "PSP"} and service_city:
+                return service_entity, service_city
+    return None, None
+
+
+def extract_interpretation_notification_metadata_from_text(
+    text: str,
+    *,
+    vocab_cities: list[str],
+    ai_enabled: bool,
+    ai_config: MetadataAutofillConfig | None = None,
+) -> MetadataSuggestion:
+    base = extract_from_header_text(
+        text,
+        vocab_cities=vocab_cities,
+        ai_enabled=ai_enabled,
+        ai_config=ai_config,
+    )
+    service_date = _extract_interpretation_service_date(text)
+    service_entity, service_city = _extract_interpretation_service_location(
+        text,
+        vocab_cities=vocab_cities,
+    )
+    suggestion = MetadataSuggestion(
+        case_entity=base.case_entity,
+        case_city=base.case_city,
+        case_number=base.case_number,
+        court_email=base.court_email,
+        service_entity=service_entity,
+        service_city=service_city,
+        service_date=service_date,
+        confidence=dict(base.confidence or {}),
+    )
+    if suggestion.case_number is None:
+        suggestion.case_number = _extract_case_number(text)
+    if suggestion.case_entity is None:
+        suggestion.case_entity = _extract_case_entity(text)
+    if suggestion.case_entity:
+        case_entity_city = _first_city_match(suggestion.case_entity, vocab_cities) or _extract_city_heuristic(suggestion.case_entity)
+        if case_entity_city:
+            suggestion.case_city = case_entity_city
+    if suggestion.case_city is None:
+        suggestion.case_city = _first_city_match(text, vocab_cities) or _extract_city_heuristic(text)
+    if suggestion.court_email is None:
+        related_email, first_email = _extract_court_email_candidates(text)
+        suggestion.court_email = related_email or first_email
+    if suggestion.confidence is not None:
+        if suggestion.service_date:
+            suggestion.confidence["service_date"] = 0.9
+        if suggestion.service_entity and suggestion.service_city:
+            suggestion.confidence["service_location"] = 0.9
+    return suggestion
+
+
 def extract_from_photo_ocr_text(
     ocr_text: str,
     *,
@@ -654,6 +813,39 @@ def extract_header_text_from_pdf_page_with_ocr_fallback(
     return ocr_result.text.strip()
 
 
+def extract_full_text_from_pdf_page_with_ocr_fallback(
+    pdf_path: Path,
+    *,
+    page_number: int = 1,
+    config: MetadataAutofillConfig | None = None,
+) -> str:
+    if page_number <= 0:
+        return ""
+    try:
+        ordered = extract_ordered_page_text(pdf_path, page_number - 1)
+    except Exception:
+        ordered = None
+    if ordered is not None and ordered.text.strip():
+        return ordered.text.strip()
+
+    effective = config or MetadataAutofillConfig()
+    if effective.ocr_mode == OcrMode.OFF:
+        return ""
+    try:
+        engine = _build_ocr_engine_from_config(effective)
+    except Exception:
+        return ""
+    ocr_result = ocr_pdf_page_text(
+        pdf_path=pdf_path,
+        page_number=page_number,
+        mode=effective.ocr_mode,
+        engine=engine,
+        prefer_header=False,
+        lang_hint="PT",
+    )
+    return ocr_result.text.strip()
+
+
 def extract_header_text_from_pdf_with_ocr_fallback(
     pdf_path: Path,
     *,
@@ -768,6 +960,51 @@ def extract_pdf_header_metadata_priority_pages(
     return merged
 
 
+def extract_interpretation_notification_metadata_from_pdf(
+    pdf_path: Path,
+    *,
+    vocab_cities: list[str],
+    config: MetadataAutofillConfig | None = None,
+    page_numbers: tuple[int, ...] = (1, 2),
+) -> MetadataSuggestion:
+    effective = config or MetadataAutofillConfig()
+    max_page_count = 0
+    try:
+        max_page_count = max(0, int(get_page_count(pdf_path)))
+    except Exception:
+        max_page_count = 0
+    ordered_pages: list[int] = []
+    seen: set[int] = set()
+    for page_number in page_numbers:
+        if page_number <= 0 or page_number in seen:
+            continue
+        if max_page_count and page_number > max_page_count:
+            continue
+        seen.add(page_number)
+        ordered_pages.append(page_number)
+    if not ordered_pages:
+        ordered_pages = [1]
+
+    combined_text_parts: list[str] = []
+    for page_number in ordered_pages:
+        page_text = extract_full_text_from_pdf_page_with_ocr_fallback(
+            pdf_path,
+            page_number=page_number,
+            config=effective,
+        )
+        if page_text.strip():
+            combined_text_parts.append(page_text.strip())
+    if not combined_text_parts:
+        return MetadataSuggestion()
+    combined_text = "\n\n".join(combined_text_parts)
+    return extract_interpretation_notification_metadata_from_text(
+        combined_text,
+        vocab_cities=vocab_cities,
+        ai_enabled=effective.metadata_ai_enabled,
+        ai_config=effective,
+    )
+
+
 def _read_exif_date(image_path: Path) -> str | None:
     try:
         image = Image.open(image_path)
@@ -827,3 +1064,60 @@ def extract_photo_metadata_from_image(
             suggestion.confidence = {}
         suggestion.confidence["service_date"] = 0.99
     return suggestion
+
+
+def default_interpretation_case_entity_for_city(case_city: str) -> str:
+    cleaned = _sanitize_city(case_city) or ""
+    if cleaned == "":
+        return ""
+    return f"Ministério Público de {cleaned}"
+
+
+def extract_interpretation_photo_metadata_from_suggestion(suggestion: MetadataSuggestion) -> MetadataSuggestion:
+    case_city = _sanitize_city(suggestion.service_city) or _sanitize_city(suggestion.case_city)
+    case_entity = default_interpretation_case_entity_for_city(case_city or "") if case_city else None
+    confidence = dict(suggestion.confidence or {})
+    if case_entity:
+        confidence["case_entity"] = 0.55
+    if case_city:
+        confidence["case_city"] = max(confidence.get("case_city", 0.0), confidence.get("service_city", 0.0))
+    return MetadataSuggestion(
+        case_entity=case_entity,
+        case_city=case_city,
+        case_number=_sanitize_entity(suggestion.case_number),
+        court_email=None,
+        service_entity=None,
+        service_city=None,
+        service_date=_sanitize_entity(suggestion.service_date),
+        confidence=confidence or None,
+    )
+
+
+def extract_interpretation_photo_metadata_from_ocr_text(
+    ocr_text: str,
+    *,
+    vocab_cities: list[str],
+    ai_enabled: bool,
+    ai_config: MetadataAutofillConfig | None = None,
+) -> MetadataSuggestion:
+    base = extract_from_photo_ocr_text(
+        ocr_text,
+        vocab_cities=vocab_cities,
+        ai_enabled=ai_enabled,
+        ai_config=ai_config,
+    )
+    return extract_interpretation_photo_metadata_from_suggestion(base)
+
+
+def extract_interpretation_photo_metadata_from_image(
+    image_path: Path,
+    *,
+    vocab_cities: list[str],
+    config: MetadataAutofillConfig | None = None,
+) -> MetadataSuggestion:
+    base = extract_photo_metadata_from_image(
+        image_path,
+        vocab_cities=vocab_cities,
+        config=config,
+    )
+    return extract_interpretation_photo_metadata_from_suggestion(base)

@@ -7,6 +7,8 @@ from legalpdf_translate.metadata_autofill import (
     MetadataAutofillConfig,
     choose_court_email_suggestion,
     extract_from_header_text,
+    extract_interpretation_notification_metadata_from_pdf,
+    extract_interpretation_notification_metadata_from_text,
     extract_pdf_header_metadata_priority_pages,
     rank_court_email_suggestions,
 )
@@ -177,3 +179,90 @@ def test_resolve_api_client_uses_bounded_retry_and_timeout(monkeypatch) -> None:
         "max_retries": 0,
         "timeout": 120.0,
     }
+
+
+def test_extract_interpretation_notification_metadata_prefers_hearing_date_over_issue_date() -> None:
+    notification_text = """
+    Tribunal Judicial da Comarca de Évora
+    Juízo de Competência Genérica de Montemor-o-Novo - Juiz 1
+    Processo: 182/25.9GCMMN
+    montnovo.judicial@tribunais.org.pt
+    Certificação Citius
+    06-06-2025
+
+    Fica notificado para comparecer neste Tribunal, no dia 12-06-2025, às 16:00 horas,
+    a fim de prestar serviço de interpretação.
+    """
+
+    suggestion = extract_interpretation_notification_metadata_from_text(
+        notification_text,
+        vocab_cities=["Évora", "Montemor-o-Novo", "Beja"],
+        ai_enabled=False,
+    )
+
+    assert suggestion.case_number == "182/25.9GCMMN"
+    assert suggestion.case_entity is not None
+    assert "Montemor-o-Novo" in suggestion.case_entity
+    assert suggestion.case_city == "Montemor-o-Novo"
+    assert suggestion.court_email == "montnovo.judicial@tribunais.org.pt"
+    assert suggestion.service_date == "2025-06-12"
+    assert suggestion.service_entity is None
+    assert suggestion.service_city is None
+
+
+def test_extract_interpretation_notification_metadata_detects_explicit_gnr_service_location() -> None:
+    notification_text = """
+    Ministério Público de Beja
+    Processo n.º 000055/25.5GAFAL
+    beja.ministeriopublico@tribunais.org.pt
+
+    Deve comparecer no dia 09-04-2025, na GNR de Vidigueira,
+    para diligência processual.
+    """
+
+    suggestion = extract_interpretation_notification_metadata_from_text(
+        notification_text,
+        vocab_cities=["Beja", "Vidigueira", "Cuba"],
+        ai_enabled=False,
+    )
+
+    assert suggestion.case_number == "000055/25.5GAFAL"
+    assert suggestion.service_date == "2025-04-09"
+    assert suggestion.service_entity == "GNR"
+    assert suggestion.service_city == "Vidigueira"
+
+
+def test_extract_interpretation_notification_metadata_from_pdf_uses_priority_pages(monkeypatch) -> None:
+    class _FakeOrderedText:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr("legalpdf_translate.metadata_autofill.get_page_count", lambda _pdf_path: 2)
+    monkeypatch.setattr(
+        "legalpdf_translate.metadata_autofill.extract_ordered_page_text",
+        lambda _pdf_path, page_index: (
+            _FakeOrderedText("Processo n.º 140/22.5JAFAR\nCertificação Citius\n06-06-2025")
+            if page_index == 0
+            else _FakeOrderedText(
+                """
+                Juízo Local Criminal de Beja
+                beja.judicial@tribunais.org.pt
+                Comparecer no dia 12-06-2025, às 10:00 horas, na PSP de Beja.
+                """
+            )
+        ),
+    )
+
+    suggestion = extract_interpretation_notification_metadata_from_pdf(
+        Path("sample.pdf"),
+        vocab_cities=["Beja", "Moura"],
+        config=MetadataAutofillConfig(metadata_ai_enabled=False),
+    )
+
+    assert suggestion.case_number == "140/22.5JAFAR"
+    assert suggestion.case_entity == "Juízo Local Criminal de Beja"
+    assert suggestion.case_city == "Beja"
+    assert suggestion.court_email == "beja.judicial@tribunais.org.pt"
+    assert suggestion.service_date == "2025-06-12"
+    assert suggestion.service_entity == "PSP"
+    assert suggestion.service_city == "Beja"
