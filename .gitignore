@@ -31,5 +31,6 @@ ui_*_search*.txt
 
 # Local Claude Code settings
 .claude/
+.vscode/settings.json.bak_*
 
 requirements_freeze.txt
