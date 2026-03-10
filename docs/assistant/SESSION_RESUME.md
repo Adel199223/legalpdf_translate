@@ -10,30 +10,26 @@ This file is the roadmap anchor file and the stable first resume stop for fresh 
 
 ## Authoritative Worktree
 - Worktree path: `/mnt/c/Users/FA507/.codex/legalpdf_translate`
-- Branch: `feat/interpretation-honorarios`
-- Live roadmap authority: this feature branch is the authoritative in-progress roadmap worktree for the interpretation honorarios feature
+- Branch: `main`
+- Live roadmap authority: `main` is the authoritative merged baseline for this worktree until a future roadmap-scoped task activates a new tracker and wave
 
 ## Roadmap State
-- Active roadmap state
-- Active roadmap tracker:
-  - `docs/assistant/exec_plans/active/2026-03-09_interpretation_honorarios_roadmap.md`
-- Active wave ExecPlan:
-  - `docs/assistant/exec_plans/active/2026-03-09_interpretation_honorarios_wave4.md`
+- Dormant roadmap state
+- No active roadmap currently open on this worktree.
+- No active roadmap tracker is currently linked from this file.
+- No active wave ExecPlan is currently linked from this file.
 
 ## Next Concrete Action
-- The interpretation honorarios roadmap is complete on `feat/interpretation-honorarios`.
-- Wave 4 is recorded as an explicit deferral packet because the remaining ideas are outside the v1 roadmap scope.
-- Exact next step:
-  - run the normal commit/publish workflow for this branch when ready
-  - after merge to `main`, return this file on `main` to an explicit dormant-roadmap state unless a new roadmap is opened
+- If the user explicitly asks for roadmap/master-plan work, create a new roadmap tracker and active wave ExecPlan on the active feature branch, then update this file.
+- Otherwise default to normal ExecPlan flow for the current task.
 
 ## Resume Order
 1. Read this file.
-2. Open the linked active roadmap tracker.
+2. If this file declares an active roadmap state, open the linked active roadmap tracker.
 3. Then open the linked active wave ExecPlan.
-4. Use those files as the live continuity source for this feature branch.
+4. If this file declares a dormant roadmap state, do not invent a roadmap; use normal ExecPlan flow unless the user explicitly asks for roadmap/master-plan work.
 
 ## Authority Notes
 - Issue memory is only for repeatable governance/workflow failures. It is not normal roadmap history.
-- During active roadmap work in a separate worktree or feature branch, that branch's `SESSION_RESUME.md`, active roadmap tracker, and active wave ExecPlan become authoritative for live roadmap state.
-- After this roadmap closes, return this file to an explicit dormant-roadmap state on `main` instead of leaving stale feature-branch artifacts behind.
+- During active roadmap work in a separate worktree, that worktree's `SESSION_RESUME.md`, active roadmap tracker, and active wave ExecPlan become authoritative for live roadmap state.
+- When roadmap work is dormant on `main`, this file must say so explicitly instead of pointing at stale feature-branch artifacts.
