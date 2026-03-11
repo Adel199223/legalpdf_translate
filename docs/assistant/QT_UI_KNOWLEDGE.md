@@ -71,27 +71,28 @@ QtMainWindow
                                 ├── QGridLayout [hero row]
                                 │   ├── QLabel#HeroTitleLabel
                                 │   └── QLabel#HeroStatusLabel
-                                ├── QFrame#DashboardFrame
-                                │   └── QVBoxLayout [dashboard_layout]
-                                │       └── QFrame [main_card]
-                                │           └── QVBoxLayout
-                                │               ├── QBoxLayout [body_layout]
-                                │               │   ├── QFrame#ShellPanel [setup_panel]
-                                │               │   │   ├── setup_grid
-                                │               │   │   ├── QToolButton#SectionToggleButton
-                                │               │   │   ├── adv_frame
-                                │               │   │   └── advisor_frame
-                                │               │   └── QFrame#ShellPanel [progress_panel]
-                                │               │       ├── QLabel#PanelHeading ("Conversion Output")
-                                │               │       ├── summary row
-                                │               │       ├── QProgressBar
-                                │               │       ├── current-task row
-                                │               │       ├── QFrame#MetricGridFrame
-                                │               │       └── output format label
-                                │               └── QFrame#ActionRail [footer_card]
-                                │                   ├── Start Translate
-                                │                   ├── Cancel
-                                │                   └── ...
+                                ├── QHBoxLayout [dashboard_row_layout]
+                                │   └── QFrame#DashboardFrame
+                                │       └── QVBoxLayout [dashboard_layout]
+                                │           └── QFrame [main_card]
+                                │               └── QVBoxLayout
+                                │                   ├── QBoxLayout [body_layout]
+                                │                   │   ├── QFrame#ShellPanel [setup_panel]
+                                │                   │   │   ├── setup_grid
+                                │                   │   │   ├── QToolButton#SectionToggleButton
+                                │                   │   │   ├── adv_frame
+                                │                   │   │   └── advisor_frame
+                                │                   │   └── QFrame#ShellPanel [progress_panel]
+                                │                   │       ├── QLabel#PanelHeading ("Conversion Output")
+                                │                   │       ├── summary row
+                                │                   │       ├── QProgressBar
+                                │                   │       ├── current-task row
+                                │                   │       ├── QFrame#MetricGridFrame
+                                │                   │       └── output format label
+                                │                   └── QFrame#ActionRail [footer_card]
+                                │                       ├── Start Translate
+                                │                       ├── Cancel
+                                │                       └── ...
                                 ├── footer meta row
                                 ├── details_card
                                 └── utility_panel (hidden compatibility controls)
@@ -145,6 +146,15 @@ QtMainWindow
 - **Where:** `_update_card_max_width()` sets `target_width = max(360, min(1760, available))` and `content_card.setFixedWidth(target_width)`.
 - **Verify:** large windows use most of the available width without horizontal scroll; shell remains centered.
 
+### 4d. Dashboard footprint is independently centered inside the content card
+- **What:** the outer `DashboardFrame` no longer always consumes the full `content_card` width. Desktop modes clamp it to a narrower centered shell; stacked compact expands it back to full width.
+- **Where:** `dashboard_row_layout` plus the dashboard-width path inside `_apply_responsive_layout()`.
+- **Contract:**
+  - `desktop_exact`: `DashboardFrame` width `1200`
+  - `desktop_compact`: `DashboardFrame` width `1100` unless available width is smaller
+  - `stacked_compact`: full-width dashboard shell
+- **Verify:** deterministic render-review metadata reports centered desktop `dashboard_frame_x`, narrower desktop `dashboard_frame_width`, and full-width stacked compact `dashboard_frame_x == 0`.
+
 ### 4a. Main-shell resize stability contract
 - **What:** The main shell should resize smoothly without clipped hero-status text or jittery full-layout recomputation on every tick.
 - **Where:** `QtMainWindow` uses `ResponsiveWindowController(..., role="shell", resize_callback=...)` plus the hero-status width reservation path (`hero_status_spacer` and `_sync_hero_status_width()`).
@@ -182,6 +192,12 @@ QtMainWindow
 - **Where:** `NoWheelComboBox` popup-label support in `qt_gui/guarded_inputs.py` and the embedded target-language field wiring in `qt_gui/app_window.py`.
 - **Behavior:** the closed field shows `EN`, `FR`, or `AR`; the popup shows `English`, `French`, and `Arabic`; popup width must fit those labels without `...`.
 - **Verify:** opening the target-language popup shows full names, and hovering/opening one dashboard combo does not visually activate a neighboring combo.
+
+### 7b. Source-file support cluster is state-driven
+- **What:** the source-file field should not reserve the page-count cluster when no source is selected.
+- **Where:** the source-file `FieldChrome` wiring and `_refresh_pdf_field_chrome()` in `qt_gui/app_window.py`.
+- **Behavior:** empty or invalid source state hides the page-count icon/divider cluster; a real source restores it. Placeholder copy also shortens in compact layouts to avoid overlap.
+- **Verify:** the empty desktop field shows only the placeholder plus browse button, while a selected source shows `Pages: <n>` without text collisions.
 
 ### 8. Small-window layout is intentionally different
 - **What:** `stacked_compact` is not a broken desktop shell; it is a deliberate mobile-like adaptation.
@@ -254,6 +270,11 @@ QtMainWindow
 ### Change desktop shell balance
 - Edit `progress_stretch` inside `_apply_responsive_layout()`.
 - `body_layout.addWidget(self.setup_panel, 7)` and `body_layout.addWidget(self.progress_panel, 6)` are the base stretch weights.
+
+### Change centered dashboard footprint
+- Edit the dashboard-width path inside `_apply_responsive_layout()`.
+- Keep `content_card` width logic in `_update_card_max_width()` separate from the narrower desktop `DashboardFrame` clamp.
+- Preserve `dashboard_row_layout` centering for desktop modes and full-width expansion for `stacked_compact`.
 
 ### Change output actions
 - Edit `_install_overflow_menu()` for `...` menu items.
