@@ -59,6 +59,10 @@ It does not silently overwrite your saved defaults.
 - `Job Setup`: source PDF, target language, output folder, and `Advanced Settings`.
 - `Conversion Output`: progress bar, current task text, and page/image/error summary.
 - Bottom action rail: `Start Translate`, `Cancel`, and `...`.
+- `Settings > Appearance` now gives you two real live themes:
+  - `dark_futuristic` for the brighter raised cyan-glass look
+  - `dark_simple` for a quieter darker look with the same layout and controls
+- The main dashboard plus the core dialogs now use the same elevated translucent panel style, so the interface should feel more layered and easier to read than the older flatter shell.
 - `...` opens:
   - `Open Output Folder`
   - `Export Partial DOCX`

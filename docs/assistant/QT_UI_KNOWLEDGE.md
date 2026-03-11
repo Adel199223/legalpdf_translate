@@ -9,7 +9,7 @@
 | `src/legalpdf_translate/qt_gui/window_controller.py` | `WorkspaceWindowController` (workspace registry, numbering, last-active tracking, Gmail intake routing, duplicate-target reservation map) |
 | `src/legalpdf_translate/qt_gui/app_window.py` | `_FuturisticCanvas` (background/frame paint), `QtMainWindow` (`_build_ui`, `_apply_responsive_layout`, `_update_card_max_width`, `_refresh_lang_badge`, `_configure_footer_layout`, `_install_overflow_menu`) |
 | `src/legalpdf_translate/qt_gui/window_adaptive.py` | `WINDOW_SIZING_PRESETS`, `ResponsiveWindowController`, `CollapsibleSection` |
-| `src/legalpdf_translate/qt_gui/styles.py` | `build_stylesheet()` (dashboard QSS), `PALETTE`, `apply_soft_shadow()`, `apply_primary_glow()` |
+| `src/legalpdf_translate/qt_gui/styles.py` | `build_stylesheet(theme=...)`, `normalize_ui_theme()`, `theme_palette()`, `apply_app_appearance()`, `apply_soft_shadow()`, `apply_primary_glow()` |
 | `src/legalpdf_translate/qt_gui/dialogs.py` | `QtSettingsDialog`, `QtJobLogWindow`, `QtReviewQueueDialog`, `QtSaveToJobLogDialog` |
 | `src/legalpdf_translate/qt_gui/tools_dialogs.py` | `QtGlossaryBuilderDialog`, `QtCalibrationAuditDialog` |
 
@@ -23,6 +23,9 @@
 | objectName | Widget Type | Purpose |
 |-----------|-------------|---------|
 | `RootWidget` | `_FuturisticCanvas` | painted dashboard scene/background |
+| `ShellScrollArea` | QScrollArea | main-shell scroll viewport with transparent chrome |
+| `ShellScrollContent` | QWidget | transparent main-shell scroll content root |
+| `ContentCard` | QWidget | centered dashboard content column |
 | `SidebarPanel` | QFrame | left navigation rail |
 | `SidebarNavButton` | QToolButton | sidebar nav item (`Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`) |
 | `HeroTitleLabel` | QLabel | centered `LegalPDF Translate` title |
@@ -40,6 +43,9 @@
 | `OverflowMenuButton` | QToolButton | `...` overflow menu trigger |
 | `ActionRail` | QFrame | bottom action rail |
 | `FooterMetaLabel` | QLabel | `Project v3.0 | LegalPDF` |
+| `DialogScrollArea` | QScrollArea | scrollable dialog body viewport |
+| `DialogScrollContent` | QWidget | transparent dialog scroll body |
+| `DialogActionBar` | QWidget | fixed bottom action row inside tall dialogs |
 
 ## C. Layout Tree
 
@@ -55,11 +61,11 @@ QtMainWindow
         │       ├── Recent Jobs nav
         │       ├── Settings nav
         │       └── Profile nav
-        └── QScrollArea [_scroll_area]
-            └── QWidget [scroll_content]
+        └── QScrollArea#ShellScrollArea [_scroll_area]
+            └── QWidget#ShellScrollContent [scroll_content]
                 └── QVBoxLayout [scroll_layout]
                     └── QHBoxLayout [content_row_layout]
-                        └── QWidget [content_card]
+                        └── QWidget#ContentCard [content_card]
                             └── QVBoxLayout [card_shell_layout]
                                 ├── QGridLayout [hero row]
                                 │   ├── QLabel#HeroTitleLabel
@@ -97,6 +103,14 @@ QtMainWindow
 - **Why:** `qt_app.py` owns `QApplication`, stylesheet setup, icon setup, and `QtMainWindow.show()`.
 - **Verify:** `python -m legalpdf_translate.qt_app`
 - **Breaks if:** docs or scripts keep pointing to `legalpdf_translate.qt_gui`.
+
+### 1b. Runtime theme contract
+- **What:** `ui_theme` is a real runtime setting, not dead persisted state.
+- **Where:** `qt_app.run()` loads GUI settings and calls `apply_app_appearance()`. Live changes propagate through `WorkspaceWindowController.apply_shared_settings()`.
+- **Choices:**
+  - `dark_futuristic` = elevated default with stronger depth and glow
+  - `dark_simple` = lower-noise darker variant built from the same shared selectors
+- **Verify:** changing `Settings > Appearance > Theme` immediately restyles the open app windows and dialogs without restarting.
 
 ### 1a. Multi-window workspace contract
 - **What:** The app now uses independent top-level workspaces under one `QApplication`, not tabs or an MDI shell.
@@ -186,7 +200,7 @@ QtMainWindow
 
 ### 12. Tall-form dialog contract
 - **What:** `QtSaveToJobLogDialog` must stay usable on smaller screens without pushing critical actions off-screen.
-- **Where:** `QtSaveToJobLogDialog` now uses `form_scroll_area` for the body, keeps the action bar outside the scrolling form body, and applies `ResponsiveWindowController(..., role="form")`.
+- **Where:** `QtSaveToJobLogDialog` now uses `DialogScrollArea` for the body, keeps a fixed `DialogActionBar` outside the scrolling form body, and applies `ResponsiveWindowController(..., role="form")`.
 - **Behavior:** the main editable case/service fields remain immediately visible; the body scrolls vertically when needed; `Save`, `Cancel`, `Open translated DOCX`, and the honorários action stay accessible.
 - **Verify:** on a smaller display, the dialog fits within the screen bounds, the body scrolls internally, and the action row remains visible.
 
@@ -195,6 +209,11 @@ QtMainWindow
 - **Where:** `QtSaveToJobLogDialog` uses `CollapsibleSection` for `metrics_section` and `finance_section`.
 - **Behavior:** `Run Metrics (auto-filled)` and `Amounts (EUR)` start collapsed in both create mode and historical edit mode; the user can expand them on demand.
 - **Verify:** a newly opened Save/Edit Job Log dialog shows those sections collapsed while the main case/service fields stay visible.
+
+### 13a. Shared core-dialog chrome contract
+- **What:** `Settings`, Gmail preview/review, Save/Edit Job Log, and honorários export should inherit the same elevated translucent styling language as the dashboard instead of relying on dialog-local one-off styles.
+- **Where:** centralized selectors in `qt_gui/styles.py`, especially `QDialog`, `QGroupBox`, `QTabWidget`, `DialogScrollArea`, and `DialogActionBar`.
+- **Verify:** those dialogs visibly inherit the same layered panel/field/button treatment while remaining screen-bounded and responsive.
 
 ### 14. Preview resize coalescing contract
 - **What:** Attachment preview scaling must be coalesced so drag-resizing does not trigger full rescale/reflow work on every viewport tick.

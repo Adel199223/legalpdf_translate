@@ -1129,3 +1129,17 @@ Verification commands/results:
   - native-host auto-launch of the current repo checkout on real Gmail toolbar clicks
   - diagnostics-first extension setup that no longer requires manual token/port copy for normal use
   - listener and launch-target troubleshooting for the new one-click startup path
+
+# 2026-03-11
+- Ran a final hardening-pass Assistant Docs Sync after the late-stage Qt audit and UI elevation work.
+- Synced current-truth and user-facing guidance for:
+  - real live `ui_theme` runtime behavior instead of a dead Settings dropdown
+  - `dark_futuristic` as the elevated default and `dark_simple` as the toned-down runtime variant
+  - centralized shared styling across the dashboard and the core dialogs instead of dialog-local visual drift
+  - the added `ShellScrollArea` / `DialogScrollArea` and `DialogActionBar` chrome contracts used by the main shell and tall dialogs
+  - the final Gmail preview wording (`Start from this page`) that matches the page-1-default translation-start contract
+- Validation for this pass:
+  - `python -m pytest -q` -> `864 passed`
+  - `python -m compileall src tests` -> `OK`
+  - `python tooling/qt_render_review.py --outdir tmp/qt_ui_review --preview reference_sample` -> `wide/medium/narrow` render set generated
+  - `dart run tooling/validate_agent_docs.dart` -> `PASS`

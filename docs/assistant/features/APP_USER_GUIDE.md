@@ -34,6 +34,8 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 - Conversion Output: where you watch progress, current task text, and page/image/error counts.
 - Advanced Settings: a fold-open section for Analyze, OCR options, queue manifest, and other expert controls.
 - More menu (`...`): extra actions such as opening the output folder, rebuilding DOCX, or generating a run report.
+- Theme: in `Settings > Appearance`, `dark_futuristic` is the brighter elevated default and `dark_simple` is the quieter darker variant. The change applies live without restarting the app.
+- The main dashboard and the most-used dialogs now share the same raised translucent panel style, so Settings, Gmail review/preview, Save/Edit Job Log, and honorários export should feel like part of the same interface instead of separate utility windows.
 
 ## Terms in Plain English
 - PDF: The document you want translated.
