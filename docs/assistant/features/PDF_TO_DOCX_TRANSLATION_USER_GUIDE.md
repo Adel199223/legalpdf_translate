@@ -224,13 +224,13 @@ Use this when the source files already arrived in Gmail and you want one reply d
 
 ### Setup
 1. In `Settings > Keys & Providers > Gmail Drafts (Windows)`, enable the Gmail intake bridge.
-2. Copy the bridge token and port into the unpacked `extensions/gmail_intake/` extension options page.
-3. Keep LegalPDF Translate running on the same Windows host as Gmail and Windows `gog`.
+2. Normal use no longer requires copying the bridge token and port into the unpacked extension options page. Use the options page for diagnostics only.
+3. Keep LegalPDF Translate and Gmail on the same Windows host as Windows `gog`.
 
 ### Run the batch
 1. Open Gmail in Edge or Chromium.
 2. Expand exactly one message in the target thread.
-3. Click the extension toolbar action.
+3. Click the extension toolbar action. If the app is closed but the Gmail bridge is configured, the extension can auto-start the current checkout and continue that same click.
 4. Choose the Gmail intake mode in the review dialog:
    - `Translation` for the existing translation batch flow
    - `Interpretation notice` for one selected court-notice attachment that should not be translated
@@ -302,19 +302,20 @@ Queue mode writes these sidecar files next to the manifest:
 15. If a historical honorários Gmail draft still asks you to pick the translated DOCX, that means the row has no stored artifact path and exact `run_id` recovery did not find one unique valid match. After one successful manual selection, the row should be healed and stop asking again.
 16. If `Autofill from PDF header` is available on an interpretation row without an attached source PDF, that is expected. The app now asks you to choose the PDF manually for that autofill pass.
 17. If an interpretation row shows the wrong travel distance, check the `Service city` first. The saved KM value is keyed to that service city.
-18. If Gmail intake says the app is not listening, confirm the bridge is enabled in Settings and the app is still running on Windows with the same port shown in the extension.
+18. If Gmail intake says the app is not listening, confirm the bridge is enabled in Settings. A normal toolbar click can auto-start the app, so repeated listener errors usually mean a bridge or launch-target problem instead of “app closed”.
 19. If the app shows `Gmail intake bridge unavailable`, treat that as a port/process conflict first. The listener on `127.0.0.1:<port>` must belong to `python.exe -m legalpdf_translate.qt_app`, not `pytest`.
-20. If Gmail intake says the token is invalid, re-copy the token from Settings into the extension options page.
-21. If Gmail intake cannot identify the open Gmail message, collapse extra messages and leave exactly one expanded message visible.
-22. If the Gmail review dialog shows no files, the email likely had no supported attachments or Gmail exposed only inline/signature/media parts.
-23. If you cancel `Save to Job Log` during a Gmail batch, the remaining attachments stop by design.
-24. If the Gmail batch warns that case/court metadata differ, split that email into separate batches instead of forcing one reply.
-25. If you skip or fail honorários generation at the end of a Gmail batch, the app does not create the Gmail reply draft in V1.
-26. A WSL-only `gog` smoke is not enough for final Gmail intake validation. The signed-in browser, Windows app, and Windows `gog` must be checked on the same host.
-27. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets.
-28. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
-29. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
-30. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
+20. If Gmail intake says auto-launch is unavailable from this checkout, refresh the extension diagnostics and verify the native host can still see this repo worktree.
+21. If Gmail intake says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
+22. If Gmail intake cannot identify the open Gmail message, collapse extra messages and leave exactly one expanded message visible.
+23. If the Gmail review dialog shows no files, the email likely had no supported attachments or Gmail exposed only inline/signature/media parts.
+24. If you cancel `Save to Job Log` during a Gmail batch, the remaining attachments stop by design.
+25. If the Gmail batch warns that case/court metadata differ, split that email into separate batches instead of forcing one reply.
+26. If you skip or fail honorários generation at the end of a Gmail batch, the app does not create the Gmail reply draft in V1.
+27. A WSL-only `gog` smoke is not enough for final Gmail intake validation. The signed-in browser, Windows app, and Windows `gog` must be checked on the same host.
+28. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets.
+29. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
+30. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
+31. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.

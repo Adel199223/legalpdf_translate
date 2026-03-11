@@ -1124,3 +1124,8 @@ Verification commands/results:
   - page `1` as the enforced default first page to translate across the main form and Gmail review
   - `Start from this page` as an explicit preview override, not a remembered default
   - later translation pages as per-run choices only, not a persisted global default
+- Ran a touched-scope Assistant Docs Sync for Gmail intake auto-launch from the extension.
+- Updated the Gmail extension README, user guides, and knowledge docs so they now describe:
+  - native-host auto-launch of the current repo checkout on real Gmail toolbar clicks
+  - diagnostics-first extension setup that no longer requires manual token/port copy for normal use
+  - listener and launch-target troubleshooting for the new one-click startup path

@@ -100,11 +100,11 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 6. Gmail intake reuses the last active blank idle workspace when possible. If that workspace is already busy or has job context, the app opens a new workspace for the intake automatically.
 
 ## Gmail Intake Batch Replies
-1. In `Settings > Keys & Providers > Gmail Drafts (Windows)`, turn on the Gmail intake bridge and keep the app running on Windows.
+1. In `Settings > Keys & Providers > Gmail Drafts (Windows)`, turn on the Gmail intake bridge.
 2. Load `extensions/gmail_intake/` as an unpacked extension in Edge or Chrome.
-3. Copy the bridge token and port from the app into the extension options page.
+3. Normal use no longer requires manually copying the bridge token and port into the extension options page. Use that page only for diagnostics.
 4. Open Gmail in that same Windows browser and expand exactly one message.
-5. Click the extension toolbar button. If Gmail cannot identify one exact message, the batch does not start.
+5. Click the extension toolbar button. If the app is closed but the Gmail bridge is configured, the extension can auto-start the current checkout and continue that same click. If Gmail still cannot identify one exact message, the batch does not start.
 6. In the app, choose the Gmail intake mode first:
    - `Translation` keeps the existing multi-attachment translation batch behavior and target-language review.
    - `Interpretation notice` is for one selected court-notice attachment that should not be translated.
@@ -123,16 +123,17 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 19. The app creates a draft only. It does not send the email automatically.
 
 ## If Gmail Intake Stops Early
-1. If the page says the app is not listening, confirm the bridge is enabled and the Windows app is still running.
+1. If the page says the app is not listening, confirm the bridge is enabled. A normal toolbar click can auto-start the app, so a manual launch should only be needed after an auto-start failure.
 2. If the app window says `Gmail intake bridge unavailable`, another process may already be using the bridge port.
 3. If Gmail shows `accepted` but the app stays idle, check that the listener on `127.0.0.1:<port>` belongs to the LegalPDF app and not to `pytest` or another stray process.
-4. If the page says the token is invalid, copy the token from Settings into the extension options again.
-5. If the page says the message is ambiguous, collapse extra Gmail messages and leave only one expanded.
-6. If the app shows no supported attachments, that email likely contains only inline or unsupported files.
-7. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
-8. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
-9. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
-10. Interpretation honorários stay local when you start from the Job Log manually, but Gmail-intake interpretation notice mode can create a threaded draft with the honorários DOCX only.
+4. If the page says auto-launch is unavailable from this checkout, open the extension options page and refresh diagnostics.
+5. If the page says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
+6. If the page says the message is ambiguous, collapse extra Gmail messages and leave only one expanded.
+7. If the app shows no supported attachments, that email likely contains only inline or unsupported files.
+8. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
+9. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
+10. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
+11. Interpretation honorários stay local when you start from the Job Log manually, but Gmail-intake interpretation notice mode can create a threaded draft with the honorários DOCX only.
 
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.

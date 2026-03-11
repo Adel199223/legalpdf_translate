@@ -71,7 +71,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 9. Save completed runs to the Job Log with prefilled run metrics.
 10. Review historical Job Log rows, edit them inline or through the full dialog, delete mistaken rows with confirmation, and resize the table for dense saved data.
 11. Execute a queue manifest with checkpoint-aware resume and failed-only rerun behavior.
-12. Start from an open Gmail message in Edge/Chromium, review supported attachments from that exact email, then either run the translation batch flow or handle one interpretation notice attachment, with mandatory Save-to-Job-Log confirmation before the related honorarios and Gmail draft finalization.
+12. Start from an open Gmail message in Edge/Chromium, let the native host auto-start the configured checkout when needed, review supported attachments from that exact email, then either run the translation batch flow or handle one interpretation notice attachment, with mandatory Save-to-Job-Log confirmation before the related honorarios and Gmail draft finalization.
 13. Open multiple workspaces and translate different jobs in parallel without interrupting the current run.
 14. Create or edit interpretation Job Log rows manually, from a notification PDF, from a photo/screenshot, or from a Gmail notice attachment, then generate the interpretation honorarios DOCX locally or create a threaded Gmail reply draft when the flow started from Gmail intake.
 
@@ -179,6 +179,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - This workflow is Windows-only and starts from Gmail web in Edge/Chromium, not from a second Gmail OAuth stack inside the app.
 - A Manifest V3 extension on `https://mail.google.com/*` posts exact Gmail message context to a token-protected localhost bridge bound only to `127.0.0.1`.
 - The extension now self-heals stale Gmail tabs by reinjecting its content script when needed and shows visible Gmail-page banner errors instead of failing silently.
+- On real toolbar clicks, the Edge native host now auto-starts the current repo checkout through `tooling/launch_qt_build.py` when the Gmail bridge is configured but not already running.
 - The intake contract is fail-closed: if the browser cannot identify exactly one open Gmail message, the app is not listening, or the bearer token is wrong, the handoff stops immediately.
 - If the app cannot bind the localhost bridge port, the UI now shows a visible `Gmail intake bridge unavailable` state instead of looking idle.
 - The app fetches only the exact intake message through Windows `gog`, resolves the Gmail account in this order, and no other order:
@@ -187,6 +188,9 @@ Queue manifests create sidecar artifacts beside the manifest file:
   3. single authenticated Gmail account from `gog`
   4. otherwise stop with a clear Settings/preflight error
 - The attachment review step shows only supported, non-inline attachments from that exact message. Inline/signature/media junk stays hidden.
+- The review dialog first selects the Gmail intake workflow kind:
+  - `Translation` keeps the existing multi-attachment translation batch flow
+  - `Interpretation notice` handles exactly one selected PDF/image court notice that should not be translated
 - The attachment review step also includes the target-language selector for the whole Gmail batch, and the selected language is pushed back into the main app UI before preparation starts.
 - The review dialog now also supports per-attachment start-page selection and an in-app attachment preview before preparation begins.
 - PDF previews use a lazy continuous-scroll viewer so the user can inspect the document. Page `1` is always the default first page to translate; use `Start from this page` only when the batch should begin later. Image attachments remain single-page and always start at page `1`.

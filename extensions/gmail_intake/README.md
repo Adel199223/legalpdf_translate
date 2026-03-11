@@ -23,13 +23,14 @@ Windows-only Gmail intake extension for the batch translation and threaded reply
 
 ## Configure
 1. In LegalPDF Translate, enable the Gmail intake bridge in `Settings > Keys & Providers > Gmail Drafts (Windows)`.
-2. Keep the app running on the same Windows host as Gmail and Windows `gog`.
-3. If you need diagnostics, open the extension options page and use `Refresh Diagnostics`.
+2. Keep Gmail and LegalPDF Translate on the same Windows host as Windows `gog`.
+3. The extension can auto-start the current repo checkout when the app is closed, as long as the Gmail bridge is configured and the native host can resolve this checkout.
+4. If you need diagnostics, open the extension options page and use `Refresh Diagnostics`.
 
 ## Use
 1. Open Gmail in Edge or Chromium on the same Windows host as the app.
 2. Open exactly one expanded message so the extension can identify it exactly.
-3. Click the extension toolbar action. The extension now asks the Edge native host for the live bridge port/token and foregrounds the app before posting to localhost.
+3. Click the extension toolbar action. The extension asks the Edge native host for the live bridge port/token and, when needed, auto-starts the current checkout before posting to localhost.
 4. If the handoff succeeds, the app fetches that exact message and opens the supported-attachment review dialog.
 5. Select the attachments you want to translate and set the batch target language there if needed.
 6. Save each translated file in `Save to Job Log` before the next file starts.
@@ -42,6 +43,8 @@ The extension does not write its own report file. For durable diagnostics, use t
 - App not listening on `127.0.0.1:<port>`
 - Invalid token
 - Gmail bridge disabled or not configured in LegalPDF Translate
+- Auto-launch target for the current checkout is missing or broken
+- The app started, but the Gmail bridge did not become ready in time
 - Edge native host unavailable; the extension may fall back to legacy stored config if one already exists
 - The open Gmail message is not expanded enough to identify exactly
 - More than one visible candidate message is open
