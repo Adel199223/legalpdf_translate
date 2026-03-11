@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import subprocess
 import struct
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from legalpdf_translate.build_identity import normalize_path_identity
+from legalpdf_translate.build_identity import normalize_path_identity, try_load_canonical_build_config
 from legalpdf_translate.gmail_focus import focus_bridge_owner, validate_bridge_owner
 from legalpdf_translate.user_settings import app_data_dir, load_gui_settings
 
@@ -22,6 +25,11 @@ EDGE_EXTENSION_ORIGIN = f"chrome-extension://{EDGE_EXTENSION_ID}/"
 _MAX_NATIVE_MESSAGE_BYTES = 1024 * 1024
 _EDGE_NATIVE_HOST_REGISTRY_SUBKEY = rf"Software\Microsoft\Edge\NativeMessagingHosts\{EDGE_NATIVE_HOST_NAME}"
 _EDGE_NATIVE_HOST_EXE = "LegalPDFGmailFocusHost.exe"
+_AUTO_LAUNCH_WAIT_SECONDS = 15.0
+_AUTO_LAUNCH_POLL_INTERVAL_SECONDS = 0.25
+_AUTO_LAUNCH_LABELS = ("gmail-intake", "auto-launch")
+_AUTO_LAUNCHABLE_BRIDGE_REASONS = {"runtime_metadata_missing", "bridge_not_running"}
+_WSL_MNT_RE = re.compile(r"^/mnt/([A-Za-z])/(.*)$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,12 +50,157 @@ class EdgeUnpackedExtensionRecord:
     enabled: bool
 
 
+@dataclass(frozen=True, slots=True)
+class AutoLaunchTarget:
+    ready: bool
+    worktree_path: str | None
+    python_executable: str | None
+    launcher_script: str | None
+    reason: str
+
+
 def _is_windows() -> bool:
     return os.name == "nt"
 
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _coerce_repo_path(path_text: str | Path) -> Path:
+    text = str(path_text).strip()
+    match = _WSL_MNT_RE.match(text)
+    if match:
+        drive = match.group(1).upper()
+        tail = match.group(2).replace("/", "\\")
+        return Path(f"{drive}:\\{tail}")
+    return Path(text).expanduser()
+
+
+def _looks_like_repo_worktree(path: Path) -> bool:
+    candidate = path.expanduser().resolve()
+    return (
+        (candidate / "tooling" / "launch_qt_build.py").exists()
+        and (candidate / "src" / "legalpdf_translate" / "qt_app.py").exists()
+    )
+
+
+def _python_executable_for_worktree(worktree: Path) -> Path | None:
+    resolved_worktree = worktree.expanduser().resolve()
+    roots: list[Path] = [resolved_worktree]
+    config = try_load_canonical_build_config(resolved_worktree)
+    if config is not None:
+        canonical_root = _coerce_repo_path(config.canonical_worktree_path).resolve()
+        if canonical_root not in roots:
+            roots.append(canonical_root)
+    candidates: list[Path] = []
+    for root in roots:
+        candidates.extend(
+            [
+                root / ".venv311" / "Scripts" / "python.exe",
+                root / ".venv" / "Scripts" / "python.exe",
+            ]
+        )
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved.exists():
+            return resolved
+    return None
+
+
+def _resolve_repo_worktree_for_auto_launch(*, runtime_path: Path | None = None) -> Path | None:
+    if runtime_path is None:
+        if getattr(sys, "frozen", False):
+            runtime_path = Path(sys.executable).resolve()
+        else:
+            runtime_path = _repo_root()
+    start = runtime_path.expanduser().resolve()
+    search_root = start if start.is_dir() else start.parent
+    for candidate in (search_root, *search_root.parents):
+        if _looks_like_repo_worktree(candidate):
+            return candidate
+    return None
+
+
+def _resolve_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaunchTarget:
+    worktree = _resolve_repo_worktree_for_auto_launch(runtime_path=runtime_path)
+    if worktree is None:
+        return AutoLaunchTarget(
+            ready=False,
+            worktree_path=None,
+            python_executable=None,
+            launcher_script=None,
+            reason="launch_target_missing",
+        )
+
+    launcher_script = (worktree / "tooling" / "launch_qt_build.py").expanduser().resolve()
+    if not launcher_script.exists():
+        return AutoLaunchTarget(
+            ready=False,
+            worktree_path=str(worktree),
+            python_executable=None,
+            launcher_script=None,
+            reason="launch_helper_missing",
+        )
+
+    python_executable = _python_executable_for_worktree(worktree)
+    if python_executable is None:
+        return AutoLaunchTarget(
+            ready=False,
+            worktree_path=str(worktree),
+            python_executable=None,
+            launcher_script=str(launcher_script),
+            reason="launch_python_missing",
+        )
+
+    return AutoLaunchTarget(
+        ready=True,
+        worktree_path=str(worktree),
+        python_executable=str(python_executable),
+        launcher_script=str(launcher_script),
+        reason="launch_target_ready",
+    )
+
+
+def _launch_repo_worktree(target: AutoLaunchTarget) -> str:
+    if not target.ready or not target.worktree_path or not target.python_executable or not target.launcher_script:
+        return target.reason or "launch_target_missing"
+    command = [
+        target.python_executable,
+        target.launcher_script,
+        "--worktree",
+        target.worktree_path,
+        "--allow-noncanonical",
+        "--labels",
+        ",".join(_AUTO_LAUNCH_LABELS),
+    ]
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=target.worktree_path,
+            timeout=20,
+        )
+    except Exception:
+        return "launch_command_failed"
+    return "launch_started"
+
+
+def _wait_for_bridge_owner_after_launch(*, bridge_port: int, base_dir: Path) -> str:
+    deadline = time.monotonic() + _AUTO_LAUNCH_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        validation = validate_bridge_owner(
+            bridge_port=bridge_port,
+            base_dir=base_dir,
+        )
+        if validation.ok:
+            return "launch_ready"
+        if validation.reason in {"bridge_port_owner_mismatch", "invalid_bridge_port", "unsupported_platform"}:
+            return validation.reason
+        time.sleep(_AUTO_LAUNCH_POLL_INTERVAL_SECONDS)
+    return "launch_timeout"
 
 
 def _edge_user_data_dir() -> Path | None:
@@ -352,12 +505,19 @@ def prepare_gmail_intake(
     settings_loader=None,
 ) -> dict[str, object]:
     settings = _read_gmail_bridge_settings(settings_loader=settings_loader)
+    base_dir = (base_dir or app_data_dir())
+    auto_launch_target = _resolve_auto_launch_target()
     response: dict[str, object] = {
         "ok": False,
         "focused": False,
         "flashed": False,
         "bridgeTokenPresent": bool(settings["bridgeTokenPresent"]),
+        "launched": False,
+        "autoLaunchReady": auto_launch_target.ready,
+        "launchTargetReason": auto_launch_target.reason,
     }
+    if auto_launch_target.worktree_path:
+        response["launchTarget"] = auto_launch_target.worktree_path
     bridge_port = settings.get("bridgePort")
     if isinstance(bridge_port, int):
         response["bridgePort"] = bridge_port
@@ -372,23 +532,43 @@ def prepare_gmail_intake(
         response["reason"] = "invalid_bridge_port"
         return response
 
+    validation = validate_bridge_owner(
+        bridge_port=bridge_port,
+        base_dir=base_dir,
+    )
+    response["reason"] = validation.reason
+
+    if not validation.ok and request_focus and validation.reason in _AUTO_LAUNCHABLE_BRIDGE_REASONS:
+        launch_reason = _launch_repo_worktree(auto_launch_target)
+        if launch_reason != "launch_started":
+            response["reason"] = launch_reason
+            return response
+        response["launched"] = True
+        wait_reason = _wait_for_bridge_owner_after_launch(
+            bridge_port=bridge_port,
+            base_dir=base_dir,
+        )
+        if wait_reason != "launch_ready":
+            response["reason"] = wait_reason
+            return response
+        validation = validate_bridge_owner(
+            bridge_port=bridge_port,
+            base_dir=base_dir,
+        )
+        response["reason"] = validation.reason
+
+    if not validation.ok:
+        return response
+
     if request_focus:
         focus_result = focus_bridge_owner(
             bridge_port=bridge_port,
-            base_dir=(base_dir or app_data_dir()),
+            base_dir=base_dir,
         )
         response["focused"] = focus_result.focused
         response["flashed"] = focus_result.flashed
         response["reason"] = focus_result.reason
         if not focus_result.ok:
-            return response
-    else:
-        validation = validate_bridge_owner(
-            bridge_port=bridge_port,
-            base_dir=(base_dir or app_data_dir()),
-        )
-        response["reason"] = validation.reason
-        if not validation.ok:
             return response
 
     response["ok"] = True

@@ -96,17 +96,26 @@ def build_interpretation_honorarios_draft(
     today: date | None = None,
 ) -> HonorariosDraft:
     current_date = today or date.today()
+    resolved_date = current_date
+    cleaned_service_date = service_date.strip()
+    cleaned_service_city = service_city.strip()
+    cleaned_case_city = case_city.strip() or cleaned_service_city
+    if cleaned_service_date:
+        try:
+            resolved_date = date.fromisoformat(cleaned_service_date)
+        except ValueError:
+            resolved_date = current_date
     return HonorariosDraft(
         case_number=case_number.strip(),
         word_count=0,
         case_entity=case_entity.strip(),
-        case_city=case_city.strip(),
-        date_pt=format_portuguese_date(current_date),
+        case_city=cleaned_case_city,
+        date_pt=format_portuguese_date(resolved_date),
         profile=profile,
         kind=HonorariosKind.INTERPRETATION,
-        service_date=service_date.strip(),
+        service_date=cleaned_service_date,
         service_entity=service_entity.strip(),
-        service_city=service_city.strip(),
+        service_city=cleaned_service_city,
         use_service_location_in_honorarios=bool(use_service_location_in_honorarios),
         travel_km_outbound=float(travel_km_outbound),
         travel_km_return=float(travel_km_return),
@@ -165,11 +174,20 @@ def _format_km_value(value: float) -> str:
     return f"{numeric:.2f}".rstrip("0").rstrip(".").replace(".", ",")
 
 
-def default_interpretation_recipient_block(case_entity: str) -> str:
+def default_interpretation_recipient_block(case_entity: str, case_city: str = "") -> str:
     cleaned = case_entity.strip()
+    cleaned_city = case_city.strip()
     if cleaned.casefold().startswith("ministério público de ".casefold()):
         return f"Exmo. Senhor Procurador do {cleaned}"
-    return f"Exmo. Senhor Procurador da República\ndo {cleaned}"
+    if cleaned.casefold() == "ministério público":
+        if cleaned_city:
+            return f"Exmo. Senhor Procurador do Ministério Público de {cleaned_city}"
+        return "Exmo. Senhor Procurador do Ministério Público"
+    if cleaned:
+        return f"Exmo. Senhor Procurador da República do {cleaned}"
+    if cleaned_city:
+        return f"Exmo. Senhor Procurador do Ministério Público de {cleaned_city}"
+    return "Exmo. Senhor Procurador da República"
 
 
 def _interpretation_service_location_phrase(draft: HonorariosDraft) -> str:
@@ -197,12 +215,22 @@ def _interpretation_one_way_distance(draft: HonorariosDraft) -> float:
     return float(draft.travel_km_return)
 
 
+def _translation_recipient_line(draft: HonorariosDraft) -> str:
+    entity = draft.case_entity.strip()
+    city = draft.case_city.strip()
+    if entity.casefold() == "ministério público":
+        if city:
+            return f"Exmo. Sr(a). Procurador(a) da república do Ministério Público de {city}"
+        return "Exmo. Sr(a). Procurador(a) da república do Ministério Público"
+    return "Exmo. Sr(a). Procurador(a) da república do " + entity
+
+
 def _translation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]]:
     profile = draft.profile
     return [
         (f"Número de processo: {draft.case_number}", "left"),
         ("", "left"),
-        ("Exmo. Sr(a). Procurador(a) da república do " + draft.case_entity, "address"),
+        (_translation_recipient_line(draft), "address"),
         ("", "left"),
         (f"Nome: {profile.document_name}", "left"),
         (f"Morada: {profile.postal_address}", "left"),
@@ -231,7 +259,10 @@ def _translation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]
 
 def _interpretation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]]:
     profile = draft.profile
-    recipient_block = draft.recipient_block.strip() or default_interpretation_recipient_block(draft.case_entity)
+    recipient_block = draft.recipient_block.strip() or default_interpretation_recipient_block(
+        draft.case_entity,
+        draft.case_city,
+    )
     recipient_lines = [line.strip() for line in recipient_block.splitlines() if line.strip()]
     location_phrase = _interpretation_service_location_phrase(draft)
     travel_destination = _interpretation_travel_destination(draft)

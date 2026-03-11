@@ -20,6 +20,7 @@ from legalpdf_translate.gmail_batch import (
     GmailAttachmentCandidate,
     GmailAttachmentSelection,
     GmailBatchConfirmedItem,
+    GmailInterpretationSession,
     GmailBatchSession,
     GmailMessageLoadResult,
 )
@@ -39,6 +40,7 @@ from legalpdf_translate.gmail_intake import InboundMailContext
 from legalpdf_translate.joblog_db import insert_job_run, open_job_log
 from legalpdf_translate.qt_gui.app_window import QtMainWindow
 from legalpdf_translate.qt_gui.dialogs import (
+    GMAIL_INTAKE_WORKFLOW_INTERPRETATION,
     GmailBatchReviewPreviewCacheTransfer,
     GmailBatchReviewResult,
     JobLogSeed,
@@ -264,6 +266,43 @@ def _build_gmail_batch_confirmed_item(
         case_entity=case_entity,
         case_city=case_city,
         court_email=court_email,
+    )
+
+
+def _build_gmail_interpretation_session(tmp_path: Path) -> GmailInterpretationSession:
+    notice_path = tmp_path / "notice.pdf"
+    notice_path.write_bytes(b"%PDF-1.4\n")
+    attachment = GmailAttachmentCandidate(
+        attachment_id="att-1",
+        filename="notice.pdf",
+        mime_type="application/pdf",
+        size_bytes=2048,
+        source_message_id="msg-100",
+    )
+    return GmailInterpretationSession(
+        intake_context=InboundMailContext(
+            message_id="msg-100",
+            thread_id="thread-200",
+            subject="Court reply needed",
+        ),
+        message=FetchedGmailMessage(
+            message_id="msg-100",
+            thread_id="thread-200",
+            subject="Court reply needed",
+            from_header="Tribunal <court@example.com>",
+            account_email="court@example.com",
+            attachments=(attachment,),
+        ),
+        gog_path=Path("C:/gog.exe"),
+        account_email="court@example.com",
+        downloaded_attachment=SimpleNamespace(
+            candidate=attachment,
+            saved_path=notice_path,
+            start_page=1,
+            page_count=4,
+        ),
+        download_dir=tmp_path,
+        effective_output_dir=tmp_path,
     )
 
 
@@ -611,6 +650,26 @@ def test_target_language_field_shows_single_code_and_flag() -> None:
         pixmap = window.flag_label.pixmap()
         assert pixmap is not None and not pixmap.isNull()
         assert window.lang_caret_btn.icon().isNull() is False
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_main_window_start_page_defaults_to_one_even_with_saved_legacy_values(monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    settings = _base_gui_settings(default_start_page=7, start_page=9)
+    monkeypatch.setattr(app_window_module, "load_gui_settings", lambda: dict(settings))
+    monkeypatch.setattr(app_window_module, "save_gui_settings", lambda _values: None)
+
+    window = QtMainWindow()
+    try:
+        assert window.start_edit.text() == "1"
     finally:
         window.close()
         window.deleteLater()
@@ -1173,6 +1232,30 @@ def test_settings_dialog_generates_bridge_token_when_enabled() -> None:
         assert isinstance(values["gmail_intake_bridge_token"], str)
         assert len(str(values["gmail_intake_bridge_token"])) >= 20
         assert settings_dialog.gmail_intake_token_edit.text() == values["gmail_intake_bridge_token"]
+    finally:
+        settings_dialog.close()
+        settings_dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_settings_dialog_normalizes_default_start_page_to_one() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    settings_dialog = QtSettingsDialog(
+        parent=None,
+        settings=_base_gui_settings(default_start_page=7),
+        apply_callback=lambda *_args, **_kwargs: None,
+        collect_debug_paths=lambda: [],
+        current_pdf_path=None,
+    )
+    try:
+        values = settings_dialog._collect_values()
+        assert not hasattr(settings_dialog, "default_start_edit")
+        assert values["default_start_page"] == 1
     finally:
         settings_dialog.close()
         settings_dialog.deleteLater()
@@ -1805,7 +1888,9 @@ def test_gmail_batch_review_dialog_returns_selected_attachments_and_target_lang(
     )
     try:
         assert dialog.target_lang_combo.currentText() == "FR"
-        assert dialog.table.item(0, 3).text() == "2"
+        assert dialog.table.horizontalHeaderItem(3).text() == "First page"
+        assert dialog.start_page_label.text() == "First page to translate"
+        assert dialog.table.item(0, 3).text() == "1"
         assert dialog.table.item(1, 3).text() == "1"
         dialog.target_lang_combo.setCurrentText("EN")
         dialog.table.selectAll()
@@ -1813,10 +1898,70 @@ def test_gmail_batch_review_dialog_returns_selected_attachments_and_target_lang(
         assert dialog.selected_attachments == attachments
         assert dialog.review_result == GmailBatchReviewResult(
             selections=(
-                GmailAttachmentSelection(candidate=attachments[0], start_page=2),
+                GmailAttachmentSelection(candidate=attachments[0], start_page=1),
                 GmailAttachmentSelection(candidate=attachments[1], start_page=1),
             ),
             target_lang="EN",
+        )
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_gmail_batch_review_dialog_interpretation_mode_hides_translation_controls_and_requires_one_attachment() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    attachments = (
+        GmailAttachmentCandidate(
+            attachment_id="att-1",
+            filename="notice.pdf",
+            mime_type="application/pdf",
+            size_bytes=2048,
+            source_message_id="msg-100",
+        ),
+        GmailAttachmentCandidate(
+            attachment_id="att-2",
+            filename="photo.jpg",
+            mime_type="image/jpeg",
+            size_bytes=1024,
+            source_message_id="msg-100",
+        ),
+    )
+    dialog = QtGmailBatchReviewDialog(
+        parent=None,
+        message=FetchedGmailMessage(
+            message_id="msg-100",
+            thread_id="thread-200",
+            subject="Court reply needed",
+            from_header="Tribunal <court@example.com>",
+            account_email="court@example.com",
+            attachments=attachments,
+        ),
+        gog_path=Path("C:/gog.exe"),
+        account_email="court@example.com",
+        target_lang="FR",
+        default_start_page=2,
+        output_dir_text="C:/out",
+    )
+    try:
+        dialog.workflow_combo.setCurrentIndex(
+            dialog.workflow_combo.findData(GMAIL_INTAKE_WORKFLOW_INTERPRETATION)
+        )
+        assert dialog.target_lang_combo.isHidden()
+        assert dialog.start_page_spin.isHidden()
+        assert dialog.table.isColumnHidden(3) is True
+        assert dialog.table.selectionMode() == dialog.table.SelectionMode.SingleSelection
+        dialog.table.selectRow(0)
+        dialog._accept_selection()
+        assert dialog.review_result == GmailBatchReviewResult(
+            selections=(GmailAttachmentSelection(candidate=attachments[0], start_page=1),),
+            target_lang="",
+            workflow_kind=GMAIL_INTAKE_WORKFLOW_INTERPRETATION,
         )
     finally:
         dialog.close()
@@ -1841,7 +1986,7 @@ def test_gmail_batch_review_dialog_preview_updates_start_page(monkeypatch, tmp_p
 
     class _FakePreviewDialog:
         def __init__(self, **kwargs) -> None:
-            assert kwargs["initial_start_page"] == 2
+            assert kwargs["initial_start_page"] == 1
             self.selected_start_page = 3
             self.resolved_page_count = 5
             self.resolved_local_path = tmp_path / "preview.pdf"
@@ -1962,7 +2107,7 @@ def test_gmail_attachment_preview_dialog_builds_scroll_cards_and_accepts_selecte
         gog_path=Path("C:/gog.exe"),
         account_email="court@example.com",
         preview_dir=tmp_path,
-        initial_start_page=2,
+        initial_start_page=1,
         cached_path=tmp_path / "preview.pdf",
         known_page_count=5,
     )
@@ -1980,8 +2125,10 @@ def test_gmail_attachment_preview_dialog_builds_scroll_cards_and_accepts_selecte
         app.processEvents()
         _wait_for_preview_refresh(dialog)
         assert len(dialog._page_cards) == 5
-        assert dialog.jump_spin.value() == 2
-        assert 2 in dialog.started_pages
+        assert dialog.jump_spin.value() == 1
+        assert "Page 1 is the default." in dialog.status_label.text()
+        assert dialog._page_cards[1].use_page_btn.text() == "Start from this page"
+        assert 1 in dialog.started_pages
         dialog._page_cards[4].use_page_btn.click()
         assert dialog.selected_start_page == 4
         assert dialog.result() == QDialog.DialogCode.Accepted
@@ -2445,6 +2592,76 @@ def test_gmail_message_load_finished_starts_prepare_after_review_selection() -> 
     )
 
 
+def test_gmail_message_load_finished_starts_interpretation_prepare_without_touching_target_lang() -> None:
+    attachment = GmailAttachmentCandidate(
+        attachment_id="att-1",
+        filename="notice.pdf",
+        mime_type="application/pdf",
+        size_bytes=2048,
+        source_message_id="msg-100",
+    )
+    load_result = GmailMessageLoadResult(
+        ok=True,
+        classification="ready",
+        status_message="ready",
+        intake_context=InboundMailContext(
+            message_id="msg-100",
+            thread_id="thread-200",
+            subject="Court reply needed",
+        ),
+        gog_path=Path("C:/gog.exe"),
+        account_email="court@example.com",
+        message=FetchedGmailMessage(
+            message_id="msg-100",
+            thread_id="thread-200",
+            subject="Court reply needed",
+            from_header="Tribunal <court@example.com>",
+            account_email="court@example.com",
+            attachments=(attachment,),
+        ),
+    )
+    calls: dict[str, object] = {}
+    resolved_outdir = str(Path("C:/Users/FA507/Downloads").resolve())
+    fake = SimpleNamespace(
+        _set_busy=lambda busy, translation=False: calls.__setitem__("set_busy", (busy, translation)),
+        _run_started_at=3.0,
+        _last_gmail_message_load_result=None,
+        status_label=_FakeLabel(),
+        header_status_label=_FakeLabel(),
+        lang_combo=_FakeCombo("AR"),
+        outdir_edit=_FakeEdit(""),
+        _dashboard_snapshot=SimpleNamespace(current_task=""),
+        _refresh_lang_badge=lambda: calls.__setitem__("badge_refreshed", True),
+        _append_log=lambda message: calls.setdefault("logs", []).append(message),
+        _resolve_effective_gmail_output_dir_text=lambda: resolved_outdir,
+        _open_gmail_batch_review_dialog=lambda result, *, output_dir_text: GmailBatchReviewResult(
+            selections=(GmailAttachmentSelection(candidate=attachment, start_page=1),),
+            workflow_kind=GMAIL_INTAKE_WORKFLOW_INTERPRETATION,
+        ),
+        _run_after_worker_cleanup=lambda callback: calls.__setitem__("after_cleanup", callback),
+        _start_gmail_interpretation_prepare=lambda result, selected, *, output_dir_text: calls.__setitem__(
+            "prepare",
+            (result, selected, output_dir_text),
+        ),
+    )
+
+    QtMainWindow._on_gmail_message_load_finished(fake, load_result)
+
+    assert fake.lang_combo.currentText() == "AR"
+    assert "badge_refreshed" not in calls
+    callback = calls["after_cleanup"]
+    assert callable(callback)
+    callback()
+    assert calls["prepare"] == (
+        load_result,
+        GmailBatchReviewResult(
+            selections=(GmailAttachmentSelection(candidate=attachment, start_page=1),),
+            workflow_kind=GMAIL_INTAKE_WORKFLOW_INTERPRETATION,
+        ),
+        resolved_outdir,
+    )
+
+
 def test_gmail_message_load_finished_cancel_keeps_current_target_language() -> None:
     attachment = GmailAttachmentCandidate(
         attachment_id="att-1",
@@ -2588,7 +2805,7 @@ def test_open_gmail_batch_review_dialog_takes_preview_cache_transfer(monkeypatch
 
     assert result == expected_result
     assert fake._gmail_batch_preview_cache_transfer is expected_transfer
-    assert captured["init_kwargs"]["default_start_page"] == 3
+    assert captured["init_kwargs"]["default_start_page"] == 1
     assert captured["init_kwargs"]["output_dir_text"] == "C:/out"
     assert attention_calls == [fake]
 
@@ -4113,6 +4330,188 @@ def test_offer_gmail_batch_reply_draft_builds_threaded_request_and_clears_batch(
     ]
 
 
+def test_offer_gmail_interpretation_reply_draft_builds_threaded_request(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session = _build_gmail_interpretation_session(tmp_path)
+    honorarios = tmp_path / "honorarios.docx"
+    honorarios.write_bytes(b"docx")
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        app_window_module,
+        "assess_gmail_draft_prereqs",
+        lambda **kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path(r"C:\gog.exe"),
+            account_email="adel.belghali@gmail.com",
+            accounts=("adel.belghali@gmail.com",),
+        ),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "build_interpretation_gmail_reply_request",
+        lambda **kwargs: calls.__setitem__("request_kwargs", kwargs)
+        or SimpleNamespace(
+            gog_path=kwargs["gog_path"],
+            account_email=kwargs["account_email"],
+            to_email=kwargs["to_email"],
+            subject=kwargs["subject"],
+            body="body",
+            attachments=(kwargs["honorarios_docx"],),
+            reply_to_message_id=kwargs["reply_to_message_id"],
+        ),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "create_gmail_draft_via_gog",
+        lambda request: SimpleNamespace(ok=True, message="ok", stdout="", stderr="", payload={"id": "draft-1"}),
+    )
+    monkeypatch.setattr(app_window_module.QMessageBox, "question", lambda *args, **kwargs: 65536)
+    opened: list[object] = []
+    monkeypatch.setattr(app_window_module.QDesktopServices, "openUrl", opened.append)
+
+    fake = SimpleNamespace(
+        _gmail_interpretation_session=session,
+        _defaults={"gmail_gog_path": "", "gmail_account_email": ""},
+    )
+
+    profile = default_primary_profile(email="adel@example.com")
+    profile.phone_number = "+351912345678"
+
+    assert QtMainWindow._offer_gmail_interpretation_reply_draft(
+        fake,
+        honorarios_docx=honorarios,
+        court_email="beja.judicial@tribunais.org.pt",
+        profile=profile,
+    ) is True
+
+    assert calls["request_kwargs"]["subject"] == "Court reply needed"
+    assert calls["request_kwargs"]["reply_to_message_id"] == "msg-100"
+    assert calls["request_kwargs"]["honorarios_docx"] == honorarios
+    assert calls["request_kwargs"]["profile"].phone_number == "+351912345678"
+    assert session.draft_created is True
+    assert session.final_attachment_basenames == ("honorarios.docx",)
+    assert opened == []
+
+
+def test_finalize_gmail_interpretation_session_builds_notice_seed_and_offers_reply(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session = _build_gmail_interpretation_session(tmp_path)
+    seed = build_blank_interpretation_seed()
+    seed.case_number = "109/26.0PBBJA"
+    seed.case_entity = "Juízo Local Criminal de Beja"
+    seed.case_city = "Beja"
+    seed.service_entity = "Juízo Local Criminal de Beja"
+    seed.service_city = "Beja"
+    seed.service_date = "2026-03-09"
+    seed.court_email = "court@example.pt"
+    saved_result = JobLogSavedResult(
+        row_id=42,
+        word_count=0,
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        court_email="court@example.pt",
+        run_id="",
+        translated_docx_path=None,
+        payload={
+            "case_number": "109/26.0PBBJA",
+            "case_entity": "Juízo Local Criminal de Beja",
+            "case_city": "Beja",
+            "court_email": "court@example.pt",
+            "service_date": "2026-03-09",
+            "service_entity": "Juízo Local Criminal de Beja",
+            "service_city": "Beja",
+            "travel_km_outbound": 39.0,
+            "travel_km_return": 39.0,
+            "use_service_location_in_honorarios": False,
+        },
+    )
+    calls: dict[str, object] = {}
+    draft = dialogs_module.build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="Juízo Local Criminal de Beja",
+        service_city="Beja",
+        travel_km_outbound=39,
+        travel_km_return=39,
+        recipient_block=dialogs_module.default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=default_primary_profile(),
+    )
+
+    class _FakeHonorariosDialog:
+        def __init__(self, *, parent, draft, default_directory, profile_save_callback=None) -> None:
+            calls["dialog_draft"] = draft
+            self.saved_path = tmp_path / "interpretation_honorarios.docx"
+            self.saved_path.write_bytes(b"docx")
+            self.requested_path = self.saved_path
+            self.auto_renamed = False
+            self.generated_draft = draft
+
+        def exec(self) -> int:
+            return QDialog.DialogCode.Accepted
+
+        def deleteLater(self) -> None:
+            calls["dialog_deleted"] = True
+
+    monkeypatch.setattr(
+        app_window_module,
+        "load_joblog_settings",
+        lambda: {"vocab_cities": ["Beja"], "vocab_court_emails": ["court@example.pt"]},
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "metadata_config_from_settings",
+        lambda _settings: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "extract_interpretation_notification_metadata_from_pdf",
+        lambda pdf_path, **kwargs: calls.__setitem__("source_pdf", pdf_path) or SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "build_interpretation_seed_from_notification_pdf",
+        lambda **kwargs: calls.__setitem__("seed_kwargs", kwargs) or seed,
+    )
+    monkeypatch.setattr(app_window_module, "QtHonorariosExportDialog", _FakeHonorariosDialog)
+
+    fake = SimpleNamespace(
+        _gmail_interpretation_session=session,
+        status_label=_FakeLabel(),
+        header_status_label=_FakeLabel(),
+        _dashboard_snapshot=SimpleNamespace(current_task=""),
+        _open_save_to_joblog_dialog_for_seed=lambda seed_value, allow_honorarios_export=False: calls.__setitem__(
+            "saved_seed",
+            seed_value,
+        )
+        or saved_result,
+        _build_gmail_interpretation_honorarios_draft=lambda result: calls.__setitem__("saved_result", result) or draft,
+        _gmail_interpretation_honorarios_default_directory=lambda: tmp_path,
+        _offer_gmail_interpretation_reply_draft=lambda **kwargs: calls.__setitem__("offered", kwargs) or True,
+        _append_log=lambda message: calls.setdefault("logs", []).append(message),
+        _clear_gmail_batch_session=lambda: calls.__setitem__("cleared", True),
+        _save_profile_settings_from_dialog=lambda profiles, primary_profile_id: None,
+    )
+
+    QtMainWindow._finalize_gmail_interpretation_session(fake)
+
+    assert calls["source_pdf"] == session.downloaded_attachment.saved_path.resolve()
+    assert calls["seed_kwargs"]["pdf_path"] == session.downloaded_attachment.saved_path.resolve()
+    assert calls["saved_seed"] is seed
+    assert calls["saved_result"] is saved_result
+    assert calls["offered"]["court_email"] == "court@example.pt"
+    assert calls["offered"]["honorarios_docx"] == (tmp_path / "interpretation_honorarios.docx").resolve()
+    assert calls["cleared"] is True
+
+
 def test_offer_gmail_batch_reply_draft_keeps_batch_when_prereqs_are_missing(
     tmp_path: Path,
     monkeypatch,
@@ -4901,7 +5300,6 @@ def test_apply_settings_from_dialog_keeps_workspace_draft_fields(monkeypatch, tm
                 "default_lang": "AR",
                 "default_effort": "xhigh",
                 "default_effort_policy": "fixed_high",
-                "default_start_page": 3,
                 "default_outdir": str(default_outdir),
             },
             False,
@@ -4911,6 +5309,7 @@ def test_apply_settings_from_dialog_keeps_workspace_draft_fields(monkeypatch, tm
         assert window.outdir_edit.text() == str(draft_outdir)
         assert window.start_edit.text() == "9"
         assert window._defaults["default_lang"] == "AR"
+        assert window._defaults["default_start_page"] == 1
         assert window._defaults["default_outdir"] == str(default_outdir)
     finally:
         window.close()
@@ -4985,7 +5384,7 @@ def test_workspace_draft_state_is_isolated_until_explicit_commit(monkeypatch, tm
         windows.append(third)
         assert third.lang_combo.currentText() == "FR"
         assert third.outdir_edit.text() == str(committed_outdir.resolve())
-        assert third.start_edit.text() == "7"
+        assert third.start_edit.text() == "1"
         assert second.lang_combo.currentText() == "EN"
         assert second.outdir_edit.text() == ""
         assert second.start_edit.text() == "1"
@@ -5511,11 +5910,119 @@ def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path
     assert captured_payload["api_cost"] == 2.5
     assert captured_payload["court_email"] == "court@example.pt"
     assert callback_state == {"called": True, "accepted": True}
-    assert saved_settings["ocr_mode"] == "auto"
-    assert saved_settings["vocab_court_emails"] == ["court@example.pt"]
+
+
+def test_save_to_joblog_dialog_interpretation_save_returns_saved_result_without_translated_docx(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured_payload: dict[str, object] = {}
+    callback_state = {"called": False, "accepted": False}
+
+    class _FakeConn:
+        def close(self) -> None:
+            return
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.open_job_log",
+        lambda _path: _FakeConn(),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.insert_job_run",
+        lambda _conn, payload: captured_payload.update(payload) or 77,
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.save_joblog_settings",
+        lambda _payload: None,
+    )
+
+    seed = build_blank_interpretation_seed()
+    seed.case_number = "109/26.0PBBJA"
+    seed.court_email = "court@example.pt"
+    seed.case_entity = "Juízo Local Criminal de Beja"
+    seed.case_city = "Beja"
+    seed.service_entity = "Juízo Local Criminal de Beja"
+    seed.service_city = "Beja"
+    seed.service_date = "2026-03-09"
+    seed.translation_date = "2026-03-09"
+    settings = {
+        "vocab_case_entities": [],
+        "vocab_service_entities": [],
+        "vocab_cities": [],
+        "vocab_job_types": [],
+        "vocab_court_emails": [],
+        "default_rate_per_word": {},
+        "joblog_visible_columns": [],
+        "metadata_ai_enabled": True,
+        "metadata_photo_enabled": True,
+        "service_equals_case_by_default": True,
+        "non_court_service_entities": [],
+        "ocr_mode": "auto",
+        "ocr_engine": "local_then_api",
+        "ocr_api_base_url": "",
+        "ocr_api_model": "",
+        "ocr_api_key_env_name": "DEEPSEEK_API_KEY",
+    }
+
+    fake = SimpleNamespace(
+        _seed=seed,
+        _db_path=tmp_path / "joblog.sqlite3",
+        _settings=settings,
+        _on_saved=lambda: callback_state.__setitem__("called", True),
+        _edit_row_id=None,
+        _saved=False,
+        _saved_result=None,
+        accept=lambda: callback_state.__setitem__("accepted", True),
+        _parse_float=None,
+        _parse_optional_int=None,
+        _parse_optional_float=None,
+        _collect_raw_values=None,
+        _normalized_payload=None,
+        _persist_interpretation_distance_for_current_city=lambda: None,
+        _resolved_seed_docx_path=lambda: None,
+        _refresh_vocab_widgets=lambda: None,
+        translation_date_edit=_FakeEdit("2026-03-09"),
+        lang_edit=_FakeEdit(""),
+        pages_edit=_FakeEdit(""),
+        word_count_edit=_FakeEdit(""),
+        rate_edit=_FakeEdit(""),
+        expected_total_edit=_FakeEdit(""),
+        amount_paid_edit=_FakeEdit("0"),
+        api_cost_edit=_FakeEdit("0"),
+        profit_edit=_FakeEdit("0"),
+        total_tokens_edit=_FakeEdit(""),
+        estimated_api_cost_edit=_FakeEdit(""),
+        quality_risk_score_edit=_FakeEdit(""),
+        service_date_edit=_FakeEdit("2026-03-09"),
+        travel_km_outbound_edit=_FakeEdit("39"),
+        travel_km_return_edit=_FakeEdit("39"),
+        case_entity_combo=_FakeCombo("Juízo Local Criminal de Beja"),
+        case_city_combo=_FakeCombo("Beja"),
+        service_entity_combo=_FakeCombo("Juízo Local Criminal de Beja"),
+        service_city_combo=_FakeCombo("Beja"),
+        service_same_check=_FakeCheck(True),
+        use_service_location_check=_FakeCheck(False),
+        job_type_combo=_FakeCombo("Interpretation"),
+        case_number_edit=_FakeEdit("109/26.0PBBJA"),
+        court_email_combo=_FakeCombo("court@example.pt"),
+        run_id_edit=_FakeEdit(""),
+        target_lang_edit=_FakeEdit(""),
+    )
+    fake._parse_float = QtSaveToJobLogDialog._parse_float.__get__(fake, QtSaveToJobLogDialog)
+    fake._parse_optional_int = QtSaveToJobLogDialog._parse_optional_int.__get__(fake, QtSaveToJobLogDialog)
+    fake._parse_optional_float = QtSaveToJobLogDialog._parse_optional_float.__get__(fake, QtSaveToJobLogDialog)
+    fake._collect_raw_values = QtSaveToJobLogDialog._collect_raw_values.__get__(fake, QtSaveToJobLogDialog)
+    fake._normalized_payload = QtSaveToJobLogDialog._normalized_payload.__get__(fake, QtSaveToJobLogDialog)
+
+    QtSaveToJobLogDialog._save(fake)
+
+    assert captured_payload["job_type"] == "Interpretation"
+    assert captured_payload["service_date"] == "2026-03-09"
     assert fake._saved_result is not None
-    assert fake._saved_result.row_id == 42
-    assert fake._saved_result.translated_docx_path == (tmp_path / "translated.docx").resolve()
+    assert fake._saved_result.row_id == 77
+    assert fake._saved_result.translated_docx_path is None
+    assert fake._saved_result.payload["service_city"] == "Beja"
+    assert callback_state == {"called": True, "accepted": True}
 
 
 def test_save_to_joblog_dialog_edit_mode_updates_existing_row(monkeypatch, tmp_path: Path) -> None:

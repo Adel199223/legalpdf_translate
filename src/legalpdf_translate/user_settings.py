@@ -639,7 +639,8 @@ def load_gui_settings() -> dict[str, Any]:
     merged["default_resume"] = _coerce_bool(merged.get("default_resume"), True)
     merged["default_keep_intermediates"] = _coerce_bool(merged.get("default_keep_intermediates"), True)
     merged["default_page_breaks"] = _coerce_bool(merged.get("default_page_breaks"), True)
-    merged["default_start_page"] = max(1, _coerce_int(merged.get("default_start_page"), 1))
+    # Default translation start page is fixed to page 1; later pages are explicit per-run overrides only.
+    merged["default_start_page"] = 1
     merged["default_end_page"] = _coerce_optional_int(merged.get("default_end_page"))
     merged["default_outdir"] = str(merged.get("default_outdir", "") or "")
     merged["ocr_api_provider_default"] = _coerce_choice(
@@ -841,6 +842,7 @@ def save_gui_settings(values: dict[str, Any]) -> None:
     for key in ALLOWED_GUI_KEYS:
         if key in values:
             data[key] = values[key]
+    data["default_start_page"] = 1
     save_settings(data)
 
 

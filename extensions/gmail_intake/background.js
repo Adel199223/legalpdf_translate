@@ -140,6 +140,14 @@ function buildPrepareFailureMessage(response) {
       return "Another process is using the Gmail bridge port configured for LegalPDF Translate.";
     case "window_not_found":
       return "LegalPDF Translate is running without a visible main window.";
+    case "launch_target_missing":
+    case "launch_helper_missing":
+    case "launch_python_missing":
+      return "LegalPDF Translate auto-launch is not available from this checkout.";
+    case "launch_command_failed":
+      return "LegalPDF Translate could not be started automatically.";
+    case "launch_timeout":
+      return "LegalPDF Translate was started, but the Gmail bridge did not become ready in time.";
     case "unsupported_platform":
       return "Foreground activation is only supported on Windows for this extension.";
     default:
@@ -160,7 +168,9 @@ function buildFocusNotice(nativeResponse, degradedMode) {
     return "";
   }
   if (nativeResponse.ok === true && nativeResponse.flashed === true) {
-    return "The app was flashed in the taskbar.";
+    return nativeResponse.launched === true
+      ? "The app was started and flashed in the taskbar."
+      : "The app was flashed in the taskbar.";
   }
   return `App focus helper could not foreground the app (${buildPrepareFailureMessage(nativeResponse)}).`;
 }

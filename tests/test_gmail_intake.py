@@ -210,6 +210,8 @@ def test_gmail_extension_scripts_keep_stage_one_contract_markers() -> None:
     assert "chrome.storage.local.get" in background_js
     assert "includeToken" in background_js
     assert "requestFocus" in background_js
+    assert "launch_timeout" in background_js
+    assert "auto-launch is not available from this checkout" in background_js
     assert "Gmail bridge is not configured in LegalPDF Translate." in background_js
     assert "Bridge token is missing in extension options." not in background_js
     assert background_js.index("chrome.runtime.sendNativeMessage") < background_js.index("await postContext")
@@ -230,6 +232,9 @@ def test_gmail_extension_options_page_is_diagnostics_first() -> None:
     assert "includeToken: false" in options_js
     assert "Auto-configured from LegalPDF Translate" in options_js
     assert "Native host unavailable" in options_js
+    assert "toolbar clicks can auto-start the app" in options_js
+    assert "Launch Target" in options_html
+    assert "Auto-launch" in options_html
     assert "Refresh Diagnostics" in options_html
     assert "Raw bridge tokens stay hidden here." in options_html
     assert "Legacy fallback" in options_html

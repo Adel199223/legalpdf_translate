@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from legalpdf_translate.build_identity import (  # noqa: E402
     current_head_sha,
     head_contains_floor,
     load_canonical_build_config,
+    try_load_canonical_build_config,
     normalize_path_identity,
     parse_build_labels,
 )
@@ -29,6 +31,9 @@ from legalpdf_translate.build_identity import (  # noqa: E402
 
 class LaunchError(RuntimeError):
     pass
+
+
+_WSL_MNT_RE = re.compile(r'^/mnt/([A-Za-z])/(.*)$')
 
 
 def _to_windows_path(path: Path) -> str:
@@ -42,19 +47,46 @@ def _to_windows_path(path: Path) -> str:
     return text.replace('/', '\\')
 
 
+def _coerce_repo_path(path_text: str | Path) -> Path:
+    text = str(path_text).strip()
+    match = _WSL_MNT_RE.match(text)
+    if match:
+        drive = match.group(1).upper()
+        tail = match.group(2).replace('/', '\\')
+        return Path(f'{drive}:\\{tail}')
+    return Path(text).expanduser()
+
+
+def _python_candidates_for(worktree: Path) -> list[Path]:
+    resolved_worktree = worktree.expanduser().resolve()
+    roots: list[Path] = [resolved_worktree]
+    config = try_load_canonical_build_config(resolved_worktree)
+    if config is not None:
+        canonical_root = _coerce_repo_path(config.canonical_worktree_path).resolve()
+        if canonical_root not in roots:
+            roots.append(canonical_root)
+    candidates: list[Path] = []
+    for root in roots:
+        candidates.extend(
+            [
+                root / '.venv311' / 'Scripts' / 'pythonw.exe',
+                root / '.venv311' / 'Scripts' / 'python.exe',
+                root / '.venv' / 'Scripts' / 'pythonw.exe',
+                root / '.venv' / 'Scripts' / 'python.exe',
+            ]
+        )
+    return candidates
+
+
 def _python_executable_for(worktree: Path) -> Path:
-    candidates = [
-        worktree / '.venv311' / 'Scripts' / 'pythonw.exe',
-        worktree / '.venv311' / 'Scripts' / 'python.exe',
-        worktree / '.venv' / 'Scripts' / 'pythonw.exe',
-        worktree / '.venv' / 'Scripts' / 'python.exe',
-    ]
+    candidates = _python_candidates_for(worktree)
     for candidate in candidates:
         if candidate.exists():
             return candidate
     raise LaunchError(
-        f'No Windows Python launcher found in worktree: {worktree}. '
-        'Expected .venv311/Scripts/pythonw.exe or python.exe.'
+        f'No Windows Python launcher found for worktree: {worktree}. '
+        'Expected .venv311/Scripts/pythonw.exe or python.exe in the target worktree '
+        'or its canonical worktree.'
     )
 
 
@@ -62,7 +94,7 @@ def _python_executable_or_placeholder(worktree: Path) -> str:
     try:
         return str(_python_executable_for(worktree))
     except LaunchError:
-        placeholder = worktree / '.venv311' / 'Scripts' / 'pythonw.exe'
+        placeholder = _python_candidates_for(worktree)[0]
         return str(placeholder)
 
 
@@ -145,9 +177,11 @@ def _launch_windows(packet: dict[str, object]) -> None:
         raise LaunchError('Windows GUI launch requires powershell.exe.')
     worktree = Path(str(packet['worktree_path']))
     python_exe = Path(str(packet['python_executable']))
+    pythonpath = str((worktree / 'src').resolve())
     labels = ','.join(str(item) for item in packet['labels'])
     config_path = canonical_build_config_path(REPO_ROOT)
     ps_command = (
+        f"$env:PYTHONPATH={json.dumps(_to_windows_path(pythonpath))}; "
         f"$env:LEGALPDF_BUILD_LABELS={json.dumps(labels)}; "
         f"$env:LEGALPDF_CANONICAL_BUILD_CONFIG={json.dumps(_to_windows_path(config_path))}; "
         f"Start-Process -FilePath {json.dumps(_to_windows_path(python_exe))} "

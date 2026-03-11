@@ -71,6 +71,7 @@ from legalpdf_translate.gmail_draft import (
     GMAIL_DRAFTS_URL,
     assess_gmail_draft_prereqs,
     build_gmail_batch_reply_request,
+    build_interpretation_gmail_reply_request,
     create_gmail_draft_via_gog,
     validate_translated_docx_artifacts_for_gmail_draft,
 )
@@ -78,6 +79,7 @@ from legalpdf_translate.gmail_batch import (
     DownloadedGmailAttachment,
     GmailAttachmentCandidate,
     GmailBatchConfirmedItem,
+    GmailInterpretationSession,
     GmailBatchSession,
     GmailMessageLoadResult,
     stage_gmail_batch_translated_docx,
@@ -91,9 +93,15 @@ from legalpdf_translate.gmail_focus import (
 from legalpdf_translate.gmail_focus_host import ensure_edge_native_host_registered
 from legalpdf_translate.gmail_intake import InboundMailContext, LocalGmailIntakeBridge
 from legalpdf_translate.joblog_db import job_log_db_path
-from legalpdf_translate.honorarios_docx import build_honorarios_draft
+from legalpdf_translate.honorarios_docx import (
+    build_honorarios_draft,
+    build_interpretation_honorarios_draft,
+    default_interpretation_recipient_block,
+)
 from legalpdf_translate.metadata_autofill import (
     choose_court_email_suggestion,
+    extract_interpretation_notification_metadata_from_pdf,
+    extract_interpretation_photo_metadata_from_image,
     extract_pdf_header_metadata_priority_pages,
     metadata_config_from_settings,
 )
@@ -113,11 +121,13 @@ from legalpdf_translate.source_document import (
     SOURCE_FILE_DIALOG_FILTER,
     extract_ordered_source_text as extract_ordered_page_text,
     get_source_page_count as get_page_count,
+    is_pdf_source,
     is_supported_source_file,
 )
 from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
 from legalpdf_translate.queue_runner import QueueRunSummary, parse_queue_manifest
 from legalpdf_translate.qt_gui.dialogs import (
+    GMAIL_INTAKE_WORKFLOW_INTERPRETATION,
     QtArabicDocxReviewDialog,
     GmailBatchReviewPreviewCacheTransfer,
     GmailBatchReviewResult,
@@ -130,6 +140,8 @@ from legalpdf_translate.qt_gui.dialogs import (
     QtReviewQueueDialog,
     QtSaveToJobLogDialog,
     QtSettingsDialog,
+    build_interpretation_seed_from_notification_pdf,
+    build_interpretation_seed_from_photo_screenshot,
     build_seed_from_run,
     normalize_review_queue_entries,
 )
@@ -139,6 +151,7 @@ from legalpdf_translate.qt_gui.styles import apply_primary_glow, apply_soft_shad
 from legalpdf_translate.qt_gui.worker import (
     AnalyzeWorker,
     GmailBatchPrepareWorker,
+    GmailInterpretationPrepareWorker,
     GmailMessageLoadWorker,
     QueueRunWorker,
     RebuildDocxWorker,
@@ -731,6 +744,7 @@ class QtMainWindow(QMainWindow):
         self._transient_safe_profile_active = False
         self._transient_safe_profile_backup: dict[str, object] | None = None
         self._gmail_batch_session: GmailBatchSession | None = None
+        self._gmail_interpretation_session: GmailInterpretationSession | None = None
         self._gmail_batch_preview_cache_transfer: GmailBatchReviewPreviewCacheTransfer | None = None
         self._gmail_batch_in_progress = False
         self._gmail_batch_current_index: int | None = None
@@ -1056,7 +1070,7 @@ class QtMainWindow(QMainWindow):
         adv.addRow("Image mode", self.images_combo)
         adv.addRow("OCR mode", self.ocr_mode_combo)
         adv.addRow("OCR engine", self.ocr_engine_combo)
-        adv.addRow("Start page", self.start_edit)
+        adv.addRow("First page to translate", self.start_edit)
         adv.addRow("End page", self.end_edit)
         adv.addRow("Max pages", self.max_edit)
         adv.addRow("Parallel workers", self.workers_spin)
@@ -1639,6 +1653,8 @@ class QtMainWindow(QMainWindow):
             return False
         if self._gmail_batch_session is not None:
             return False
+        if self._gmail_interpretation_session is not None:
+            return False
         review_dialog = self._gmail_batch_review_dialog
         if review_dialog is not None and review_dialog.isVisible():
             return False
@@ -1929,10 +1945,9 @@ class QtMainWindow(QMainWindow):
             str(defaults.get("ocr_engine", defaults.get("ocr_engine_default", "local_then_api")) or "local_then_api")
         )
 
-        start_page = defaults.get("start_page", defaults.get("default_start_page", 1))
         end_page = defaults.get("end_page", defaults.get("default_end_page", None))
         max_pages = defaults.get("max_pages", None)
-        self.start_edit.setText(str(start_page if isinstance(start_page, int) and start_page > 0 else 1))
+        self.start_edit.setText("1")
         self.end_edit.setText("" if end_page in (None, "") else str(end_page))
         self.max_edit.setText("" if max_pages in (None, "") else str(max_pages))
 
@@ -2324,10 +2339,14 @@ class QtMainWindow(QMainWindow):
         self._gmail_batch_preview_cache_transfer = None
         if preview_cache_transfer is not None:
             preview_cache_transfer.cleanup()
+        interpretation_session = self._gmail_interpretation_session
+        self._gmail_interpretation_session = None
         session = self._gmail_batch_session
         self._gmail_batch_session = None
         self._gmail_batch_in_progress = False
         self._gmail_batch_current_index = None
+        if interpretation_session is not None:
+            interpretation_session.cleanup()
         if session is None:
             return
         session.cleanup()
@@ -2720,6 +2739,214 @@ class QtMainWindow(QMainWindow):
         self._clear_gmail_batch_session()
         return True
 
+    def _gmail_interpretation_honorarios_default_directory(self) -> Path:
+        session = self._gmail_interpretation_session
+        if session is not None and isinstance(session.effective_output_dir, Path):
+            return session.effective_output_dir.expanduser().resolve()
+        if session is not None:
+            candidate = session.downloaded_attachment.saved_path.expanduser().resolve()
+            if candidate.exists():
+                return candidate.parent
+        return (Path.home() / "Documents").expanduser().resolve()
+
+    def _build_gmail_interpretation_honorarios_draft(self, saved_result: JobLogSavedResult):
+        payload = dict(saved_result.payload or {})
+        case_number = str(payload.get("case_number", "") or saved_result.case_number or "").strip()
+        case_entity = str(payload.get("case_entity", "") or saved_result.case_entity or "").strip()
+        case_city = str(payload.get("case_city", "") or saved_result.case_city or "").strip()
+        service_date = str(payload.get("service_date", "") or "").strip()
+        service_entity = str(payload.get("service_entity", "") or "").strip()
+        service_city = str(payload.get("service_city", "") or "").strip()
+        use_service_location = bool(payload.get("use_service_location_in_honorarios", False))
+        travel_km_outbound = _coerce_float_or_none(payload.get("travel_km_outbound")) or 0.0
+        travel_km_return = _coerce_float_or_none(payload.get("travel_km_return")) or travel_km_outbound
+        profiles, primary_profile_id = load_profile_settings()
+        selected_profile = primary_profile(profiles, primary_profile_id)
+        return build_interpretation_honorarios_draft(
+            case_number=case_number,
+            case_entity=case_entity,
+            case_city=case_city,
+            service_date=service_date,
+            service_entity=service_entity,
+            service_city=service_city,
+            use_service_location_in_honorarios=use_service_location,
+            travel_km_outbound=travel_km_outbound,
+            travel_km_return=travel_km_return,
+            recipient_block=default_interpretation_recipient_block(case_entity, case_city),
+            profile=selected_profile,
+        )
+
+    def _offer_gmail_interpretation_reply_draft(
+        self,
+        *,
+        honorarios_docx: Path,
+        court_email: str,
+        profile: UserProfile,
+    ) -> bool:
+        session = self._gmail_interpretation_session
+        if session is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                "No prepared interpretation Gmail session is available for draft creation.",
+            )
+            return False
+        prereqs = assess_gmail_draft_prereqs(
+            configured_gog_path=str(self._defaults.get("gmail_gog_path", "") or ""),
+            configured_account_email=str(self._defaults.get("gmail_account_email", "") or ""),
+        )
+        if not prereqs.ready or prereqs.gog_path is None or prereqs.account_email is None:
+            session.draft_created = False
+            session.draft_failure_reason = prereqs.message
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                f"{prereqs.message}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return False
+        try:
+            request = build_interpretation_gmail_reply_request(
+                gog_path=prereqs.gog_path,
+                account_email=prereqs.account_email,
+                to_email=court_email,
+                subject=session.message.subject,
+                reply_to_message_id=session.intake_context.message_id or session.message.message_id,
+                honorarios_docx=honorarios_docx,
+                profile=profile,
+            )
+            session.final_attachment_basenames = tuple(path.name for path in request.attachments)
+        except ValueError as exc:
+            session.draft_created = False
+            session.draft_failure_reason = str(exc)
+            QMessageBox.critical(self, "Gmail draft", str(exc))
+            return False
+        result = create_gmail_draft_via_gog(request)
+        if not result.ok:
+            details = result.stderr or result.stdout or result.message
+            session.draft_created = False
+            session.draft_failure_reason = details
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Failed to create Gmail draft.\n\n"
+                f"{details}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return False
+        session.draft_created = True
+        session.draft_failure_reason = ""
+        open_gmail = QMessageBox.question(
+            self,
+            "Gmail draft",
+            "Gmail draft created successfully. Abrir Gmail?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if open_gmail == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
+        return True
+
+    def _finalize_gmail_interpretation_session(self) -> None:
+        session = self._gmail_interpretation_session
+        if session is None:
+            return
+        source_path = session.downloaded_attachment.saved_path.expanduser().resolve()
+        settings = load_joblog_settings()
+        metadata_config = metadata_config_from_settings(settings)
+        vocab_cities = list(settings.get("vocab_cities", []))
+        vocab_court_emails = list(settings.get("vocab_court_emails", []))
+        if is_pdf_source(source_path):
+            suggestion = extract_interpretation_notification_metadata_from_pdf(
+                source_path,
+                vocab_cities=vocab_cities,
+                config=metadata_config,
+            )
+            seed = build_interpretation_seed_from_notification_pdf(
+                pdf_path=source_path,
+                suggestion=suggestion,
+                vocab_court_emails=vocab_court_emails,
+            )
+        else:
+            suggestion = extract_interpretation_photo_metadata_from_image(
+                source_path,
+                vocab_cities=vocab_cities,
+                config=metadata_config,
+            )
+            seed = build_interpretation_seed_from_photo_screenshot(
+                suggestion=suggestion,
+                vocab_court_emails=vocab_court_emails,
+            )
+        saved_result = self._open_save_to_joblog_dialog_for_seed(seed, allow_honorarios_export=False)
+        if saved_result is None:
+            self.status_label.setText("Gmail interpretation canceled")
+            self.header_status_label.setText("Gmail interpretation canceled")
+            self._dashboard_snapshot.current_task = "Gmail interpretation canceled"
+            self._append_log("Gmail interpretation flow stopped because Save to Job Log was cancelled.")
+            self._clear_gmail_batch_session()
+            return
+        try:
+            draft = self._build_gmail_interpretation_honorarios_draft(saved_result)
+        except ValueError as exc:
+            self.status_label.setText("Gmail interpretation failed")
+            self.header_status_label.setText("Gmail interpretation failed")
+            self._dashboard_snapshot.current_task = "Gmail interpretation failed"
+            self._append_log(f"Gmail interpretation draft preparation failed: {exc}")
+            QMessageBox.warning(self, "Gmail interpretation", str(exc))
+            self._clear_gmail_batch_session()
+            return
+        profile_save_callback = getattr(self, "_save_profile_settings_from_dialog", None)
+        dialog_kwargs = {
+            "parent": self,
+            "draft": draft,
+            "default_directory": self._gmail_interpretation_honorarios_default_directory(),
+        }
+        if callable(profile_save_callback):
+            dialog_kwargs["profile_save_callback"] = profile_save_callback
+        dialog = QtHonorariosExportDialog(**dialog_kwargs)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.saved_path is None:
+            self.status_label.setText("Gmail interpretation canceled")
+            self.header_status_label.setText("Gmail interpretation canceled")
+            self._dashboard_snapshot.current_task = "Gmail interpretation canceled"
+            self._append_log("Gmail interpretation flow stopped because honorários generation was cancelled.")
+            dialog.deleteLater()
+            self._clear_gmail_batch_session()
+            return
+        honorarios_docx = dialog.saved_path.expanduser().resolve()
+        session.requested_honorarios_path = dialog.requested_path
+        session.actual_honorarios_path = honorarios_docx
+        session.honorarios_auto_renamed = bool(dialog.auto_renamed)
+        generated_draft = getattr(dialog, "generated_draft", None)
+        selected_profile = generated_draft.profile if generated_draft is not None else draft.profile
+        final_payload = dict(saved_result.payload or {})
+        court_email = str(final_payload.get("court_email", "") or saved_result.court_email or "").strip()
+        dialog.deleteLater()
+        created = self._offer_gmail_interpretation_reply_draft(
+            honorarios_docx=honorarios_docx,
+            court_email=court_email,
+            profile=selected_profile,
+        )
+        if created:
+            self.status_label.setText("Gmail interpretation draft ready")
+            self.header_status_label.setText("Gmail draft ready")
+            self._dashboard_snapshot.current_task = "Gmail interpretation draft ready"
+            self._append_log(
+                "Gmail interpretation finalization complete: "
+                f"reply draft created with {session.downloaded_attachment.saved_path.name} "
+                f"and honorários {honorarios_docx}."
+            )
+        else:
+            self.status_label.setText("Interpretation honorários ready locally")
+            self.header_status_label.setText("Gmail draft unavailable")
+            self._dashboard_snapshot.current_task = "Interpretation honorários ready locally"
+            self._append_log(
+                "Gmail interpretation draft was not created, but the local honorários DOCX is ready: "
+                f"{honorarios_docx}."
+            )
+        self._clear_gmail_batch_session()
+
     def _finalize_completed_gmail_batch(self) -> None:
         session = self._gmail_batch_session
         persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
@@ -2797,6 +3024,8 @@ class QtMainWindow(QMainWindow):
         if session is None or attachment is None:
             return False
         persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
+        if saved_result.translated_docx_path is None:
+            raise ValueError("Translated DOCX is required to stage Gmail batch draft attachments.")
         original_translated_docx = saved_result.translated_docx_path.expanduser().resolve()
         # Gmail drafts attach the staged copy so later honorários export cannot overwrite it.
         staged_translated_docx = stage_gmail_batch_translated_docx(
@@ -2940,18 +3169,13 @@ class QtMainWindow(QMainWindow):
             build_identity=getattr(self, "_build_identity", None),
             append_log=getattr(self, "_append_log", None),
         )
-        start_text = self.start_edit.text().strip() or str(self._defaults.get("default_start_page", 1) or 1)
-        try:
-            default_start_page = max(1, int(start_text))
-        except ValueError:
-            default_start_page = 1
         dialog = QtGmailBatchReviewDialog(
             parent=self,
             message=message,
             gog_path=load_result.gog_path,
             account_email=load_result.account_email,
             target_lang=self.lang_combo.currentText().strip().upper(),
-            default_start_page=default_start_page,
+            default_start_page=1,
             output_dir_text=output_dir_text,
         )
         if hasattr(dialog, "raise_") and hasattr(dialog, "activateWindow"):
@@ -3014,6 +3238,68 @@ class QtMainWindow(QMainWindow):
         worker.log.connect(self._append_log)
         worker.finished.connect(self._on_gmail_batch_prepare_finished)
         worker.error.connect(self._on_gmail_batch_prepare_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(self._cleanup_worker)
+        self._worker_thread = thread
+        self._worker = worker
+        self._run_started_at = time.perf_counter()
+        self._set_busy(True, translation=False)
+        thread.start()
+
+    def _start_gmail_interpretation_prepare(
+        self,
+        load_result: GmailMessageLoadResult,
+        review_result: GmailBatchReviewResult,
+        *,
+        output_dir_text: str,
+    ) -> None:
+        if (
+            load_result.message is None
+            or load_result.gog_path is None
+            or load_result.account_email is None
+        ):
+            QMessageBox.warning(
+                self,
+                "Gmail intake",
+                "The interpretation Gmail session could not be prepared because the fetch result is incomplete.",
+            )
+            return
+        if len(review_result.selections) != 1:
+            QMessageBox.warning(
+                self,
+                "Gmail intake",
+                "Interpretation notices require exactly one selected attachment.",
+            )
+            return
+        self.status_label.setText("Preparing interpretation notice...")
+        self.header_status_label.setText("Preparing interpretation notice...")
+        self._dashboard_snapshot.current_task = "Preparing interpretation notice..."
+        preview_cache_transfer = self._gmail_batch_preview_cache_transfer
+        thread = QThread(self)
+        worker = GmailInterpretationPrepareWorker(
+            context=load_result.intake_context,
+            message=load_result.message,
+            gog_path=load_result.gog_path,
+            account_email=load_result.account_email,
+            selected_attachment=review_result.selections[0],
+            effective_output_dir=Path(output_dir_text).expanduser().resolve(),
+            cached_preview_paths=(
+                dict(preview_cache_transfer.cached_paths)
+                if preview_cache_transfer is not None
+                else None
+            ),
+            cached_preview_page_counts=(
+                dict(preview_cache_transfer.cached_page_counts)
+                if preview_cache_transfer is not None
+                else None
+            ),
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.log.connect(self._append_log)
+        worker.finished.connect(self._on_gmail_interpretation_prepare_finished)
+        worker.error.connect(self._on_gmail_interpretation_prepare_error)
         worker.finished.connect(thread.quit)
         worker.error.connect(thread.quit)
         thread.finished.connect(self._cleanup_worker)
@@ -3207,6 +3493,20 @@ class QtMainWindow(QMainWindow):
                 self.status_label.setText("No supported Gmail attachments found")
                 self.header_status_label.setText("No Gmail attachments")
             return
+        if review_result.workflow_kind == GMAIL_INTAKE_WORKFLOW_INTERPRETATION:
+            attachment_name = review_result.selections[0].candidate.filename
+            self._append_log(
+                "Gmail interpretation review confirmed: "
+                f"attachment={attachment_name}"
+            )
+            self._run_after_worker_cleanup(
+                lambda: self._start_gmail_interpretation_prepare(
+                    result,
+                    review_result,
+                    output_dir_text=output_dir_text,
+                )
+            )
+            return
         selected_target_lang = review_result.target_lang.strip().upper()
         if selected_target_lang:
             self.lang_combo.setCurrentText(selected_target_lang)
@@ -3263,6 +3563,40 @@ class QtMainWindow(QMainWindow):
         self.header_status_label.setText("Gmail prepare failed")
         self._dashboard_snapshot.current_task = "Gmail prepare failed"
         self._append_log(f"Gmail batch prepare failed: {message}")
+        QMessageBox.warning(self, "Gmail intake", message)
+
+    def _on_gmail_interpretation_prepare_finished(self, session_obj: object) -> None:
+        self._set_busy(False, translation=False)
+        self._run_started_at = None
+        if not isinstance(session_obj, GmailInterpretationSession):
+            self.status_label.setText("Gmail prepare failed")
+            self.header_status_label.setText("Gmail prepare failed")
+            QMessageBox.warning(
+                self,
+                "Gmail intake",
+                "Interpretation preparation returned an invalid session.",
+            )
+            return
+        self._clear_gmail_batch_session()
+        self._gmail_interpretation_session = session_obj
+        self._append_log(
+            "Gmail interpretation notice prepared: "
+            f"{session_obj.downloaded_attachment.candidate.filename} "
+            f"in {session_obj.download_dir}"
+        )
+        self.status_label.setText("Interpretation notice ready")
+        self.header_status_label.setText("Interpretation notice ready")
+        self._dashboard_snapshot.current_task = "Interpretation notice ready"
+        self._run_after_worker_cleanup(self._finalize_gmail_interpretation_session)
+
+    def _on_gmail_interpretation_prepare_error(self, message: str) -> None:
+        self._set_busy(False, translation=False)
+        self._run_started_at = None
+        self._clear_gmail_batch_session()
+        self.status_label.setText("Gmail prepare failed")
+        self.header_status_label.setText("Gmail prepare failed")
+        self._dashboard_snapshot.current_task = "Gmail prepare failed"
+        self._append_log(f"Gmail interpretation prepare failed: {message}")
         QMessageBox.warning(self, "Gmail intake", message)
 
     def apply_settings_from_dialog(self, values: dict[str, object], persist: bool) -> None:
@@ -5127,12 +5461,13 @@ class QtMainWindow(QMainWindow):
 
         self._last_joblog_seed = seed
 
-    def _open_save_to_joblog_dialog(
+    def _open_save_to_joblog_dialog_for_seed(
         self,
+        seed: JobLogSeed,
         *,
         allow_honorarios_export: bool = True,
     ) -> JobLogSavedResult | None:
-        if self._last_joblog_seed is None:
+        if seed is None:
             QMessageBox.information(self, "Job Log", "No completed run available to save.")
             return None
 
@@ -5143,12 +5478,25 @@ class QtMainWindow(QMainWindow):
         dialog = QtSaveToJobLogDialog(
             parent=self,
             db_path=self._joblog_db_path,
-            seed=self._last_joblog_seed,
+            seed=seed,
             on_saved=_refresh_after_save,
             allow_honorarios_export=allow_honorarios_export,
         )
         dialog.exec()
         return dialog.saved_result
+
+    def _open_save_to_joblog_dialog(
+        self,
+        *,
+        allow_honorarios_export: bool = True,
+    ) -> JobLogSavedResult | None:
+        if self._last_joblog_seed is None:
+            QMessageBox.information(self, "Job Log", "No completed run available to save.")
+            return None
+        return self._open_save_to_joblog_dialog_for_seed(
+            self._last_joblog_seed,
+            allow_honorarios_export=allow_honorarios_export,
+        )
 
     def _open_joblog_window(self) -> None:
         if self._joblog_window is not None and self._joblog_window.isVisible():

@@ -61,8 +61,8 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 7. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
 8. Use Gmail intake when you want to start from one open Gmail message instead of choosing files manually.
 9. Open `File > New Window` or press `Ctrl+Shift+N` when you want a second independent workspace for another job.
-10. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when `Court Email` is available.
-11. Use the Job Log when you need an interpretation-only honorários document without a translation run.
+10. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when that flow supports it and `Court Email` is available.
+11. Use the Job Log when you need an interpretation-only honorários document without a translation run, or start from Gmail intake when the court notice already arrived by email.
 
 ## Using the Job Log
 1. Open `Tools > View Job Log` when you want to check or fix something you already saved.
@@ -89,7 +89,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 5. The visible KM field is the one-way distance only. The app reuses the saved value for that service city when one already exists.
 6. If you enter a new one-way distance for a service city and save the row, the app remembers it for future interpretation rows under the current profile.
 7. Use `Gerar Requerimento de Honorários...` from that row when you are ready to generate the interpretation document.
-8. Interpretation honorários stay local in this version. They do not offer Gmail draft creation.
+8. Manual/local interpretation honorários stay local. If you start from Gmail intake in `Interpretation notice` mode, the app can create a threaded Gmail draft with the generated honorários DOCX only.
 
 ## Multiple Windows
 1. Open another workspace from `File > New Window`, `Ctrl+Shift+N`, or the bottom `...` menu.
@@ -100,33 +100,40 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 6. Gmail intake reuses the last active blank idle workspace when possible. If that workspace is already busy or has job context, the app opens a new workspace for the intake automatically.
 
 ## Gmail Intake Batch Replies
-1. In `Settings > Keys & Providers > Gmail Drafts (Windows)`, turn on the Gmail intake bridge and keep the app running on Windows.
+1. In `Settings > Keys & Providers > Gmail Drafts (Windows)`, turn on the Gmail intake bridge.
 2. Load `extensions/gmail_intake/` as an unpacked extension in Edge or Chrome.
-3. Copy the bridge token and port from the app into the extension options page.
+3. Normal use no longer requires manually copying the bridge token and port into the extension options page. Use that page only for diagnostics.
 4. Open Gmail in that same Windows browser and expand exactly one message.
-5. Click the extension toolbar button. If Gmail cannot identify one exact message, the batch does not start.
-6. In the app, review the supported attachments from that email, choose which ones to translate, and correct the target language there if needed.
-7. Use `Preview selected attachment` when you need to inspect a file before preparing it.
-8. In preview, scroll the PDF and click `Use this page as start` if the first page is only a cover sheet or otherwise should not be translated.
-9. When you click `Prepare selected attachments`, already previewed files are reused when possible instead of being downloaded again.
-10. The app translates the selected files one by one.
-11. Arabic files pause in a Word review step before `Save to Job Log`. Save the DOCX there and the app continues automatically; if save detection misses, use `Continue now` after saving.
-12. Save each file before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
-13. If one file resolves to a different case or court, stop and split the work into separate batches.
-14. After the last file, you can generate one honorários DOCX and one Gmail reply draft in the original thread.
-15. The app creates a draft only. It does not send the email automatically.
+5. Click the extension toolbar button. If the app is closed but the Gmail bridge is configured, the extension can auto-start the current checkout and continue that same click. If Gmail still cannot identify one exact message, the batch does not start.
+6. In the app, choose the Gmail intake mode first:
+   - `Translation` keeps the existing multi-attachment translation batch behavior and target-language review.
+   - `Interpretation notice` is for one selected court-notice attachment that should not be translated.
+7. In `Translation` mode, choose which files to translate and correct the target language if needed.
+8. In `Interpretation notice` mode, select exactly one supported PDF or image attachment. The app hides translation-only review inputs in that mode.
+9. Use `Preview selected attachment` when you need to inspect a file before preparing it.
+10. In preview, page `1` is the default. Scroll the PDF and click `Start from this page` only for translation batches when the file should begin later, such as after a cover sheet.
+11. When you click `Prepare selected attachments`, already previewed files are reused when possible instead of being downloaded again.
+12. Translation mode then translates the selected files one by one.
+13. Interpretation-notice mode stages the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
+14. Arabic translation files pause in a Word review step before `Save to Job Log`. Save the DOCX there and the app continues automatically; if save detection misses, use `Continue now` after saving.
+15. Translation mode requires each file to be saved before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
+16. If one translation file resolves to a different case or court, stop and split the work into separate batches.
+17. After the last translation file, or after the interpretation honorários DOCX is generated, the app can create one Gmail reply draft in the original thread.
+18. Interpretation Gmail drafts attach only the generated honorários DOCX. They do not attach the original notice or any translated DOCX.
+19. The app creates a draft only. It does not send the email automatically.
 
 ## If Gmail Intake Stops Early
-1. If the page says the app is not listening, confirm the bridge is enabled and the Windows app is still running.
+1. If the page says the app is not listening, confirm the bridge is enabled. A normal toolbar click can auto-start the app, so a manual launch should only be needed after an auto-start failure.
 2. If the app window says `Gmail intake bridge unavailable`, another process may already be using the bridge port.
 3. If Gmail shows `accepted` but the app stays idle, check that the listener on `127.0.0.1:<port>` belongs to the LegalPDF app and not to `pytest` or another stray process.
-4. If the page says the token is invalid, copy the token from Settings into the extension options again.
-5. If the page says the message is ambiguous, collapse extra Gmail messages and leave only one expanded.
-6. If the app shows no supported attachments, that email likely contains only inline or unsupported files.
-7. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
-8. If you skip or fail honorários generation at the end of the batch, the app does not create the Gmail reply draft in this version.
-9. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
-10. Interpretation honorários are separate from the Gmail reply-draft workflow and stay local-doc only.
+4. If the page says auto-launch is unavailable from this checkout, open the extension options page and refresh diagnostics.
+5. If the page says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
+6. If the page says the message is ambiguous, collapse extra Gmail messages and leave only one expanded.
+7. If the app shows no supported attachments, that email likely contains only inline or unsupported files.
+8. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
+9. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
+10. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
+11. Interpretation honorários stay local when you start from the Job Log manually, but Gmail-intake interpretation notice mode can create a threaded draft with the honorários DOCX only.
 
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.

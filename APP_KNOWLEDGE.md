@@ -71,9 +71,9 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 9. Save completed runs to the Job Log with prefilled run metrics.
 10. Review historical Job Log rows, edit them inline or through the full dialog, delete mistaken rows with confirmation, and resize the table for dense saved data.
 11. Execute a queue manifest with checkpoint-aware resume and failed-only rerun behavior.
-12. Start from an open Gmail message in Edge/Chromium, review supported attachments from that exact email, translate them one by one with mandatory Save-to-Job-Log checkpoints, then optionally generate one honorarios DOCX and one threaded Gmail reply draft.
+12. Start from an open Gmail message in Edge/Chromium, let the native host auto-start the configured checkout when needed, review supported attachments from that exact email, then either run the translation batch flow or handle one interpretation notice attachment, with mandatory Save-to-Job-Log confirmation before the related honorarios and Gmail draft finalization.
 13. Open multiple workspaces and translate different jobs in parallel without interrupting the current run.
-14. Create or edit interpretation Job Log rows manually, from a notification PDF, or from a photo/screenshot, then generate a local interpretation honorarios DOCX without any Gmail draft branch.
+14. Create or edit interpretation Job Log rows manually, from a notification PDF, from a photo/screenshot, or from a Gmail notice attachment, then generate the interpretation honorarios DOCX locally or create a threaded Gmail reply draft when the flow started from Gmail intake.
 
 ## Output and Run Artifacts
 Run artifacts live under:
@@ -106,7 +106,7 @@ When a run comes from Gmail intake, the effective output directory also gains a 
 - `failure_context`
 - `gmail_batch_context`
 
-When present, `gmail_batch_context` records the selected Gmail attachment filename/count, the batch target language, the selected start page for that run, and the durable Gmail batch session report path.
+When present, `gmail_batch_context` records the selected Gmail attachment filename/count, the Gmail intake workflow kind, the translation target language when that workflow is `translation`, the selected start page for that run, and the durable Gmail batch session report path.
 
 `failure_context` is used for bounded OCR/runtime failure reporting and includes:
 - `request_type`
@@ -163,10 +163,12 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - manual interpretation rows can generate a local honorarios DOCX directly from the Job Log dialog
   - notification PDF and photo/screenshot imports prefill interpretation case/service values before the user confirms the row
   - interpretation honorarios exports use the responsive/scrollable profile-backed export dialog
-  - interpretation honorarios remain local-doc generation only and never offer Gmail draft creation
+  - interpretation honorarios close with `service_date` when it is a valid ISO date, even if the DOCX is generated before or after the hearing day
+  - manual/local interpretation exports still stay local-doc only
+  - Gmail-started interpretation notice intake can create one threaded Gmail reply draft with the generated honorarios DOCX only
 - Gmail draft attachment reuse for honorarios now prefers known translated output artifacts in this order: final DOCX path, partial DOCX path, exact `run_id` recovery, then a manual `.docx` picker only as the final fallback.
 - If a legacy historical row needs one manual translated-DOCX selection, the app persists that choice back into the row so the picker should not appear again for that same row.
-- Gmail intake batch downloads and confirmed per-item results are kept in memory only for the active Gmail batch session. They are cleared on reset, failure paths, app shutdown, or successful finalization.
+- Gmail intake batch downloads, interpretation-notice staging data, and confirmed per-item results are kept in memory only for the active Gmail intake session. They are cleared on reset, failure paths, app shutdown, or successful finalization.
 - Gmail batch draft finalization uses an immutable staged copy of each translated DOCX rather than trusting the mutable user-facing output path directly.
 
 ## Queue Behavior Notes
@@ -177,6 +179,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - This workflow is Windows-only and starts from Gmail web in Edge/Chromium, not from a second Gmail OAuth stack inside the app.
 - A Manifest V3 extension on `https://mail.google.com/*` posts exact Gmail message context to a token-protected localhost bridge bound only to `127.0.0.1`.
 - The extension now self-heals stale Gmail tabs by reinjecting its content script when needed and shows visible Gmail-page banner errors instead of failing silently.
+- On real toolbar clicks, the Edge native host now auto-starts the current repo checkout through `tooling/launch_qt_build.py` when the Gmail bridge is configured but not already running.
 - The intake contract is fail-closed: if the browser cannot identify exactly one open Gmail message, the app is not listening, or the bearer token is wrong, the handoff stops immediately.
 - If the app cannot bind the localhost bridge port, the UI now shows a visible `Gmail intake bridge unavailable` state instead of looking idle.
 - The app fetches only the exact intake message through Windows `gog`, resolves the Gmail account in this order, and no other order:
@@ -185,9 +188,12 @@ Queue manifests create sidecar artifacts beside the manifest file:
   3. single authenticated Gmail account from `gog`
   4. otherwise stop with a clear Settings/preflight error
 - The attachment review step shows only supported, non-inline attachments from that exact message. Inline/signature/media junk stays hidden.
+- The review dialog first selects the Gmail intake workflow kind:
+  - `Translation` keeps the existing multi-attachment translation batch flow
+  - `Interpretation notice` handles exactly one selected PDF/image court notice that should not be translated
 - The attachment review step also includes the target-language selector for the whole Gmail batch, and the selected language is pushed back into the main app UI before preparation starts.
 - The review dialog now also supports per-attachment start-page selection and an in-app attachment preview before preparation begins.
-- PDF previews use a lazy continuous-scroll viewer so the user can inspect the document and apply `Use this page as start` on the correct page; image attachments remain single-page and always start at page `1`.
+- PDF previews use a lazy continuous-scroll viewer so the user can inspect the document. Page `1` is always the default first page to translate; use `Start from this page` only when the batch should begin later. Image attachments remain single-page and always start at page `1`.
 - The Gmail attachment preview now coalesces resize-driven rescaling instead of recomputing scaled preview geometry on every live resize tick, which reduces visible jitter while dragging the window.
 - Previewed attachments are cached temporarily and reused during `Prepare selected attachments` when still valid so the batch does not redownload the same file unnecessarily.
 - If the current output folder is stale or missing, Gmail batch startup recovers automatically in this order: current valid output folder, valid `default_outdir`, then `Downloads`.

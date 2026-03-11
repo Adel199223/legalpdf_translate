@@ -12,12 +12,14 @@ from legalpdf_translate.gmail_batch import (
     GmailAttachmentCandidate,
     GmailAttachmentSelection,
     GmailBatchConfirmedItem,
+    GmailInterpretationSession,
     GmailBatchSession,
     GmailMessageLoadResult,
     build_gmail_batch_session_payload,
     gmail_batch_consistency_signature,
     load_gmail_message_from_intake,
     prepare_gmail_batch_session,
+    prepare_gmail_interpretation_session,
     stage_gmail_batch_translated_docx,
     write_gmail_batch_session_report,
 )
@@ -526,6 +528,67 @@ def test_prepare_gmail_batch_session_reuses_preview_cache_without_redownloading(
         assert downloaded.page_count == 5
         assert any("reusing preview cache" in entry for entry in logs)
         assert any("page-count mismatch" in entry for entry in logs)
+    finally:
+        session.cleanup()
+
+
+def test_prepare_gmail_interpretation_session_reuses_preview_cache_for_single_notice(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cached_preview = tmp_path / "notice-preview.pdf"
+    cached_preview.write_text("cached-preview", encoding="utf-8")
+    download_calls: list[object] = []
+    logs: list[str] = []
+
+    def _fail_download(request):
+        download_calls.append(request)
+        raise AssertionError("fresh Gmail download should not be used for cached preview reuse")
+
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_batch.download_gmail_attachment_via_gog",
+        _fail_download,
+    )
+    monkeypatch.setattr("legalpdf_translate.gmail_batch.get_source_page_count", lambda _path: 7)
+
+    attachment = GmailAttachmentCandidate(
+        attachment_id="att-1",
+        filename="notice.pdf",
+        mime_type="application/pdf",
+        size_bytes=1024,
+        source_message_id="msg-123",
+    )
+    message = FetchedGmailMessage(
+        message_id="msg-123",
+        thread_id="thread-456",
+        subject="Urgent filing",
+        from_header="Tribunal <court@example.com>",
+        account_email="only@example.com",
+        attachments=(attachment,),
+    )
+
+    session = prepare_gmail_interpretation_session(
+        intake_context=InboundMailContext(
+            message_id="msg-123",
+            thread_id="thread-456",
+            subject="Urgent filing",
+        ),
+        message=message,
+        gog_path=tmp_path / "gog.exe",
+        account_email="only@example.com",
+        selected_attachment=GmailAttachmentSelection(candidate=attachment, start_page=1),
+        effective_output_dir=tmp_path / "output",
+        cached_preview_paths={attachment.attachment_id: cached_preview},
+        cached_preview_page_counts={attachment.attachment_id: 7},
+        log_callback=logs.append,
+    )
+    try:
+        assert isinstance(session, GmailInterpretationSession)
+        assert download_calls == []
+        assert session.downloaded_attachment.saved_path.exists()
+        assert session.downloaded_attachment.saved_path.read_text(encoding="utf-8") == "cached-preview"
+        assert session.downloaded_attachment.page_count == 7
+        assert any("reusing preview cache" in entry for entry in logs)
     finally:
         session.cleanup()
 

@@ -54,6 +54,21 @@ function describeRuntimeReason(reason) {
   }
 }
 
+function describeLaunchReason(reason) {
+  switch (normalizeToken(reason)) {
+    case "launch_target_ready":
+      return "Ready from current checkout";
+    case "launch_target_missing":
+      return "Current checkout not found";
+    case "launch_helper_missing":
+      return "Launch helper missing";
+    case "launch_python_missing":
+      return "Checkout Python missing";
+    default:
+      return "Unavailable";
+  }
+}
+
 async function loadDiagnostics() {
   setStatus("Refreshing diagnostics...", "info");
   setText("extensionId", chrome.runtime.id);
@@ -82,10 +97,24 @@ async function loadDiagnostics() {
     setText("resolvedPort", resolvedPort === null ? "Unavailable" : String(resolvedPort));
     setText("tokenPresence", tokenPresent ? "Yes" : "No");
     setText("runtimeStatus", describeRuntimeReason(response && response.reason));
+    setText(
+      "autoLaunchReady",
+      response && response.autoLaunchReady === true
+        ? "Ready from current checkout"
+        : describeLaunchReason(response && response.launchTargetReason)
+    );
+    setText(
+      "launchTarget",
+      response && typeof response.launchTarget === "string" && response.launchTarget.trim() !== ""
+        ? response.launchTarget.trim()
+        : "Unavailable"
+    );
     setStatus(
       response && response.ok === true
         ? "Live Gmail bridge diagnostics loaded from LegalPDF Translate."
-        : "LegalPDF Translate responded, but the Gmail bridge is not ready yet.",
+        : response && response.autoLaunchReady === true
+          ? "LegalPDF Translate responded. The Gmail bridge is not running right now, but toolbar clicks can auto-start the app."
+          : "LegalPDF Translate responded, but the Gmail bridge is not ready yet.",
       response && response.ok === true ? "success" : "warning"
     );
   } catch (_error) {
@@ -94,6 +123,8 @@ async function loadDiagnostics() {
     setText("resolvedPort", fallbackPort === null ? "Unknown" : String(fallbackPort));
     setText("tokenPresence", fallbackTokenPresent ? "Yes (legacy fallback)" : "No");
     setText("runtimeStatus", "Native host unavailable");
+    setText("autoLaunchReady", "Unavailable");
+    setText("launchTarget", "Unavailable");
     setStatus(
       fallbackTokenPresent
         ? "Native messaging is unavailable, so only the stored legacy fallback can be used."

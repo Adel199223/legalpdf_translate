@@ -13,6 +13,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "tooling" / "launch_qt_build.py"
 
 
+def _to_wsl_repo_path(path: Path) -> str:
+    text = str(path.resolve())
+    if len(text) >= 3 and text[1:3] == ":\\":
+        drive = text[0].lower()
+        tail = text[3:].replace("\\", "/")
+        return f"/mnt/{drive}/{tail}" if tail else f"/mnt/{drive}"
+    return text.replace("\\", "/")
+
+
 def _init_git_repo(repo: Path, branch: str, *, marker: str = "") -> str:
     (repo / "src" / "legalpdf_translate").mkdir(parents=True)
     (repo / "src" / "legalpdf_translate" / "qt_app.py").write_text(
@@ -174,6 +183,68 @@ def test_launch_qt_build_allows_noncanonical_with_override(tmp_path: Path) -> No
     assert payload["approved_base_head_floor"] == head_sha
     assert payload["is_lineage_valid"] is True
     assert any("does not match canonical branch" in item for item in payload["noncanonical_reasons"])
+
+
+def test_launch_qt_build_dry_run_uses_canonical_worktree_python_when_local_worktree_missing(
+    tmp_path: Path,
+) -> None:
+    canonical_repo = tmp_path / "canonical_repo"
+    canonical_repo.mkdir()
+    head_sha = _init_git_repo(canonical_repo, branch="main")
+    (canonical_repo / ".venv311" / "Scripts").mkdir(parents=True)
+    python_exe = canonical_repo / ".venv311" / "Scripts" / "pythonw.exe"
+    python_exe.write_text("", encoding="utf-8")
+
+    worktree = tmp_path / "worktree"
+    subprocess.run(
+        ["git", "clone", str(canonical_repo), str(worktree)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-b", "feature-branch"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    config_path = tmp_path / "CANONICAL_BUILD.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "canonical_worktree_path": _to_wsl_repo_path(canonical_repo),
+                "canonical_branch": "main",
+                "approved_base_branch": "main",
+                "approved_base_head_floor": head_sha,
+                "canonical_head_floor": head_sha,
+                "allow_noncanonical_by_flag": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["LEGALPDF_CANONICAL_BUILD_CONFIG"] = str(config_path)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--worktree",
+            str(worktree),
+            "--allow-noncanonical",
+            "--dry-run",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["python_executable"] == str(python_exe)
+    assert payload["launch_command"][0] == str(python_exe)
 
 
 def test_launch_qt_build_rejects_branch_missing_approved_base_floor_even_with_override(

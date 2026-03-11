@@ -6,6 +6,62 @@ from pathlib import Path
 import legalpdf_translate.gmail_focus_host as host_module
 
 
+def _to_wsl_repo_path(path: Path) -> str:
+    text = str(path.resolve())
+    if len(text) >= 3 and text[1:3] == ":\\":
+        drive = text[0].lower()
+        tail = text[3:].replace("\\", "/")
+        return f"/mnt/{drive}/{tail}" if tail else f"/mnt/{drive}"
+    return text.replace("\\", "/")
+
+
+def _ready_auto_launch_target(tmp_path: Path) -> host_module.AutoLaunchTarget:
+    return host_module.AutoLaunchTarget(
+        ready=True,
+        worktree_path=str(tmp_path),
+        python_executable=str(tmp_path / ".venv311" / "Scripts" / "python.exe"),
+        launcher_script=str(tmp_path / "tooling" / "launch_qt_build.py"),
+        reason="launch_target_ready",
+    )
+
+
+def test_resolve_auto_launch_target_uses_canonical_worktree_python_when_local_worktree_lacks_venv(
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "worktree"
+    canonical = tmp_path / "canonical"
+    (worktree / "tooling").mkdir(parents=True)
+    (worktree / "src" / "legalpdf_translate").mkdir(parents=True)
+    (worktree / "docs" / "assistant" / "runtime").mkdir(parents=True)
+    (canonical / ".venv311" / "Scripts").mkdir(parents=True)
+    (worktree / "tooling" / "launch_qt_build.py").write_text("print('ok')\n", encoding="utf-8")
+    (worktree / "src" / "legalpdf_translate" / "qt_app.py").write_text("print('qt')\n", encoding="utf-8")
+    python_exe = canonical / ".venv311" / "Scripts" / "python.exe"
+    python_exe.write_text("", encoding="utf-8")
+    (worktree / "docs" / "assistant" / "runtime" / "CANONICAL_BUILD.json").write_text(
+        host_module.json.dumps(
+            {
+                "canonical_worktree_path": _to_wsl_repo_path(canonical),
+                "canonical_branch": "main",
+                "approved_base_branch": "main",
+                "approved_base_head_floor": "abc1234",
+                "canonical_head_floor": "abc1234",
+                "allow_noncanonical_by_flag": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    target = host_module._resolve_auto_launch_target(
+        runtime_path=worktree / "dist" / "legalpdf_translate" / "LegalPDFGmailFocusHost.exe"
+    )
+
+    assert target.ready is True
+    assert target.worktree_path == str(worktree.resolve())
+    assert target.python_executable == str(python_exe.resolve())
+    assert target.reason == "launch_target_ready"
+
+
 def test_build_edge_native_host_manifest_uses_stable_origin(tmp_path: Path) -> None:
     payload = host_module.build_edge_native_host_manifest(
         tmp_path / "LegalPDFGmailFocusHost.exe",
@@ -190,12 +246,31 @@ def test_native_message_round_trip() -> None:
 def test_prepare_gmail_intake_returns_config_and_focus_diagnostics(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         host_module,
+        "_resolve_auto_launch_target",
+        lambda: _ready_auto_launch_target(tmp_path),
+    )
+    monkeypatch.setattr(
+        host_module,
         "load_gui_settings",
         lambda: {
             "gmail_intake_bridge_enabled": True,
             "gmail_intake_bridge_token": "shared-token",
             "gmail_intake_port": 9011,
         },
+    )
+    monkeypatch.setattr(
+        host_module,
+        "validate_bridge_owner",
+        lambda *, bridge_port, base_dir: type(
+            "Result",
+            (),
+            {
+                "ok": bridge_port == 9011 and base_dir == tmp_path,
+                "pid": 4321,
+                "hwnd": 101,
+                "reason": "bridge_owner_ready",
+            },
+        )(),
     )
     monkeypatch.setattr(
         host_module,
@@ -219,6 +294,10 @@ def test_prepare_gmail_intake_returns_config_and_focus_diagnostics(monkeypatch, 
         "focused": False,
         "flashed": True,
         "bridgeTokenPresent": True,
+        "launched": False,
+        "autoLaunchReady": True,
+        "launchTarget": str(tmp_path),
+        "launchTargetReason": "launch_target_ready",
         "bridgePort": 9011,
         "bridgeToken": "shared-token",
         "reason": "foreground_blocked",
@@ -226,6 +305,11 @@ def test_prepare_gmail_intake_returns_config_and_focus_diagnostics(monkeypatch, 
 
 
 def test_prepare_gmail_intake_rejects_disabled_bridge(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        host_module,
+        "_resolve_auto_launch_target",
+        lambda: _ready_auto_launch_target(tmp_path),
+    )
     monkeypatch.setattr(
         host_module,
         "load_gui_settings",
@@ -248,12 +332,21 @@ def test_prepare_gmail_intake_rejects_disabled_bridge(monkeypatch, tmp_path: Pat
         "focused": False,
         "flashed": False,
         "bridgeTokenPresent": True,
+        "launched": False,
+        "autoLaunchReady": True,
+        "launchTarget": str(tmp_path),
+        "launchTargetReason": "launch_target_ready",
         "bridgePort": 9011,
         "reason": "bridge_disabled",
     }
 
 
 def test_prepare_gmail_intake_rejects_blank_token(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        host_module,
+        "_resolve_auto_launch_target",
+        lambda: _ready_auto_launch_target(tmp_path),
+    )
     monkeypatch.setattr(
         host_module,
         "load_gui_settings",
@@ -271,12 +364,21 @@ def test_prepare_gmail_intake_rejects_blank_token(monkeypatch, tmp_path: Path) -
         "focused": False,
         "flashed": False,
         "bridgeTokenPresent": False,
+        "launched": False,
+        "autoLaunchReady": True,
+        "launchTarget": str(tmp_path),
+        "launchTargetReason": "launch_target_ready",
         "bridgePort": 9011,
         "reason": "bridge_token_missing",
     }
 
 
 def test_prepare_gmail_intake_without_focus_uses_runtime_validation_and_hides_token(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        host_module,
+        "_resolve_auto_launch_target",
+        lambda: _ready_auto_launch_target(tmp_path),
+    )
     monkeypatch.setattr(
         host_module,
         "load_gui_settings",
@@ -317,12 +419,21 @@ def test_prepare_gmail_intake_without_focus_uses_runtime_validation_and_hides_to
         "focused": False,
         "flashed": False,
         "bridgeTokenPresent": True,
+        "launched": False,
+        "autoLaunchReady": True,
+        "launchTarget": str(tmp_path),
+        "launchTargetReason": "launch_target_ready",
         "bridgePort": 9011,
         "reason": "bridge_owner_ready",
     }
 
 
 def test_prepare_gmail_intake_returns_runtime_failure_without_token(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        host_module,
+        "_resolve_auto_launch_target",
+        lambda: _ready_auto_launch_target(tmp_path),
+    )
     monkeypatch.setattr(
         host_module,
         "load_gui_settings",
@@ -346,6 +457,11 @@ def test_prepare_gmail_intake_returns_runtime_failure_without_token(monkeypatch,
             },
         )(),
     )
+    monkeypatch.setattr(
+        host_module,
+        "_launch_repo_worktree",
+        lambda _target: (_ for _ in ()).throw(AssertionError("launch should not run when request_focus is false")),
+    )
 
     payload = host_module.prepare_gmail_intake(
         base_dir=tmp_path,
@@ -358,8 +474,219 @@ def test_prepare_gmail_intake_returns_runtime_failure_without_token(monkeypatch,
         "focused": False,
         "flashed": False,
         "bridgeTokenPresent": True,
+        "launched": False,
+        "autoLaunchReady": True,
+        "launchTarget": str(tmp_path),
+        "launchTargetReason": "launch_target_ready",
         "bridgePort": 9011,
         "reason": "runtime_metadata_missing",
+    }
+
+
+def test_prepare_gmail_intake_launches_app_when_bridge_missing(monkeypatch, tmp_path: Path) -> None:
+    ready_target = _ready_auto_launch_target(tmp_path)
+    monkeypatch.setattr(host_module, "_resolve_auto_launch_target", lambda: ready_target)
+    monkeypatch.setattr(
+        host_module,
+        "load_gui_settings",
+        lambda: {
+            "gmail_intake_bridge_enabled": True,
+            "gmail_intake_bridge_token": "shared-token",
+            "gmail_intake_port": 9011,
+        },
+    )
+
+    validate_calls = {"count": 0}
+
+    def fake_validate_bridge_owner(*, bridge_port, base_dir):
+        validate_calls["count"] += 1
+        if validate_calls["count"] == 1:
+            return type(
+                "Result",
+                (),
+                {"ok": False, "pid": None, "hwnd": None, "reason": "runtime_metadata_missing"},
+            )()
+        return type(
+            "Result",
+            (),
+            {"ok": True, "pid": 4321, "hwnd": 101, "reason": "bridge_owner_ready"},
+        )()
+
+    launch_calls: list[str] = []
+    wait_calls: list[int] = []
+    monkeypatch.setattr(host_module, "validate_bridge_owner", fake_validate_bridge_owner)
+    monkeypatch.setattr(
+        host_module,
+        "_launch_repo_worktree",
+        lambda target: launch_calls.append(str(target.worktree_path)) or "launch_started",
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_wait_for_bridge_owner_after_launch",
+        lambda *, bridge_port, base_dir: wait_calls.append(bridge_port) or "launch_ready",
+    )
+    monkeypatch.setattr(
+        host_module,
+        "focus_bridge_owner",
+        lambda *, bridge_port, base_dir: type(
+            "Result",
+            (),
+            {"ok": True, "focused": True, "flashed": False, "reason": "foreground_set"},
+        )(),
+    )
+
+    payload = host_module.prepare_gmail_intake(base_dir=tmp_path)
+
+    assert payload == {
+        "ok": True,
+        "focused": True,
+        "flashed": False,
+        "bridgeTokenPresent": True,
+        "launched": True,
+        "autoLaunchReady": True,
+        "launchTarget": str(tmp_path),
+        "launchTargetReason": "launch_target_ready",
+        "bridgePort": 9011,
+        "bridgeToken": "shared-token",
+        "reason": "foreground_set",
+    }
+    assert launch_calls == [str(tmp_path)]
+    assert wait_calls == [9011]
+
+
+def test_prepare_gmail_intake_returns_launch_target_missing_when_autostart_is_unavailable(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        host_module,
+        "_resolve_auto_launch_target",
+        lambda: host_module.AutoLaunchTarget(
+            ready=False,
+            worktree_path=None,
+            python_executable=None,
+            launcher_script=None,
+            reason="launch_target_missing",
+        ),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "load_gui_settings",
+        lambda: {
+            "gmail_intake_bridge_enabled": True,
+            "gmail_intake_bridge_token": "shared-token",
+            "gmail_intake_port": 9011,
+        },
+    )
+    monkeypatch.setattr(
+        host_module,
+        "validate_bridge_owner",
+        lambda *, bridge_port, base_dir: type(
+            "Result",
+            (),
+            {"ok": False, "pid": None, "hwnd": None, "reason": "runtime_metadata_missing"},
+        )(),
+    )
+
+    payload = host_module.prepare_gmail_intake(base_dir=tmp_path)
+
+    assert payload == {
+        "ok": False,
+        "focused": False,
+        "flashed": False,
+        "bridgeTokenPresent": True,
+        "launched": False,
+        "autoLaunchReady": False,
+        "launchTargetReason": "launch_target_missing",
+        "bridgePort": 9011,
+        "reason": "launch_target_missing",
+    }
+
+
+def test_prepare_gmail_intake_returns_launch_timeout_after_spawn(monkeypatch, tmp_path: Path) -> None:
+    ready_target = _ready_auto_launch_target(tmp_path)
+    monkeypatch.setattr(host_module, "_resolve_auto_launch_target", lambda: ready_target)
+    monkeypatch.setattr(
+        host_module,
+        "load_gui_settings",
+        lambda: {
+            "gmail_intake_bridge_enabled": True,
+            "gmail_intake_bridge_token": "shared-token",
+            "gmail_intake_port": 9011,
+        },
+    )
+    monkeypatch.setattr(
+        host_module,
+        "validate_bridge_owner",
+        lambda *, bridge_port, base_dir: type(
+            "Result",
+            (),
+            {"ok": False, "pid": None, "hwnd": None, "reason": "bridge_not_running"},
+        )(),
+    )
+    monkeypatch.setattr(host_module, "_launch_repo_worktree", lambda _target: "launch_started")
+    monkeypatch.setattr(
+        host_module,
+        "_wait_for_bridge_owner_after_launch",
+        lambda *, bridge_port, base_dir: "launch_timeout",
+    )
+
+    payload = host_module.prepare_gmail_intake(base_dir=tmp_path)
+
+    assert payload == {
+        "ok": False,
+        "focused": False,
+        "flashed": False,
+        "bridgeTokenPresent": True,
+        "launched": True,
+        "autoLaunchReady": True,
+        "launchTarget": str(tmp_path),
+        "launchTargetReason": "launch_target_ready",
+        "bridgePort": 9011,
+        "reason": "launch_timeout",
+    }
+
+
+def test_prepare_gmail_intake_does_not_launch_when_bridge_port_owner_mismatches(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        host_module,
+        "_resolve_auto_launch_target",
+        lambda: _ready_auto_launch_target(tmp_path),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "load_gui_settings",
+        lambda: {
+            "gmail_intake_bridge_enabled": True,
+            "gmail_intake_bridge_token": "shared-token",
+            "gmail_intake_port": 9011,
+        },
+    )
+    monkeypatch.setattr(
+        host_module,
+        "validate_bridge_owner",
+        lambda *, bridge_port, base_dir: type(
+            "Result",
+            (),
+            {"ok": False, "pid": 777, "hwnd": None, "reason": "bridge_port_owner_mismatch"},
+        )(),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_launch_repo_worktree",
+        lambda _target: (_ for _ in ()).throw(AssertionError("launch should not run for owner mismatch")),
+    )
+
+    payload = host_module.prepare_gmail_intake(base_dir=tmp_path)
+
+    assert payload == {
+        "ok": False,
+        "focused": False,
+        "flashed": False,
+        "bridgeTokenPresent": True,
+        "launched": False,
+        "autoLaunchReady": True,
+        "launchTarget": str(tmp_path),
+        "launchTargetReason": "launch_target_ready",
+        "bridgePort": 9011,
+        "reason": "bridge_port_owner_mismatch",
     }
 
 
