@@ -12,6 +12,8 @@ from legalpdf_translate.gmail_draft import (
     build_honorarios_gmail_body,
     build_honorarios_gmail_request,
     build_honorarios_gmail_subject,
+    build_interpretation_gmail_reply_request,
+    build_interpretation_honorarios_gmail_body,
     create_gmail_draft_via_gog,
     assess_gmail_draft_prereqs,
     validate_translated_docx_artifacts_for_gmail_draft,
@@ -142,6 +144,41 @@ def test_build_gmail_batch_reply_request_reuses_subject_reply_id_and_all_attachm
         translated_two.resolve(),
         honorarios.resolve(),
     )
+
+
+def test_build_interpretation_gmail_reply_request_attaches_only_honorarios(tmp_path: Path) -> None:
+    honorarios = tmp_path / "honorarios.docx"
+    honorarios.write_bytes(b"docx")
+    profile = _profile(phone_number="+351912345678")
+
+    request = build_interpretation_gmail_reply_request(
+        gog_path=tmp_path / "gog.exe",
+        account_email="adel.belghali@gmail.com",
+        to_email="beja.judicial@tribunais.org.pt",
+        subject="Original Gmail subject",
+        reply_to_message_id="msg-123",
+        honorarios_docx=honorarios,
+        profile=profile,
+    )
+
+    assert request.subject == "Original Gmail subject"
+    assert request.reply_to_message_id == "msg-123"
+    assert request.body == build_interpretation_honorarios_gmail_body(profile)
+    assert request.attachments == (honorarios.resolve(),)
+    assert "notificação" not in request.body.casefold()
+
+def test_build_interpretation_gmail_reply_request_requires_honorarios_docx(tmp_path: Path) -> None:
+    missing = tmp_path / "honorarios.docx"
+    with pytest.raises(ValueError, match="Honorários DOCX not found"):
+        build_interpretation_gmail_reply_request(
+            gog_path=tmp_path / "gog.exe",
+            account_email="adel.belghali@gmail.com",
+            to_email="beja.judicial@tribunais.org.pt",
+            subject="Original Gmail subject",
+            reply_to_message_id="msg-123",
+            honorarios_docx=missing,
+            profile=_profile(),
+        )
 
 
 def test_build_gmail_batch_reply_request_requires_reply_id_and_translations(tmp_path: Path) -> None:

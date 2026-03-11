@@ -598,23 +598,29 @@ class JobLogSeed:
 @dataclass(frozen=True, slots=True)
 class JobLogSavedResult:
     row_id: int
-    translated_docx_path: Path
     word_count: int
     case_number: str
     case_entity: str
     case_city: str
     court_email: str
     run_id: str
+    translated_docx_path: Path | None = None
+    payload: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class GmailBatchReviewResult:
     selections: tuple[GmailAttachmentSelection, ...]
-    target_lang: str
+    target_lang: str = ""
+    workflow_kind: str = "translation"
 
     @property
     def attachments(self) -> tuple[GmailAttachmentCandidate, ...]:
         return tuple(selection.candidate for selection in self.selections)
+
+
+GMAIL_INTAKE_WORKFLOW_TRANSLATION = "translation"
+GMAIL_INTAKE_WORKFLOW_INTERPRETATION = "interpretation"
 
 
 @dataclass(slots=True)
@@ -1381,7 +1387,11 @@ class QtHonorariosExportDialog(QDialog):
             self.recipient_block_edit.setMinimumHeight(72)
             self.recipient_block_edit.setMaximumHeight(140)
             self._set_recipient_block_text(
-                self._initial_draft.recipient_block or default_interpretation_recipient_block(self._initial_draft.case_entity)
+                self._initial_draft.recipient_block
+                or default_interpretation_recipient_block(
+                    self._initial_draft.case_entity,
+                    self._initial_draft.case_city,
+                )
             )
             form.addRow("Service date", self.service_date_edit)
             form.addRow("", self.service_same_check)
@@ -1418,6 +1428,7 @@ class QtHonorariosExportDialog(QDialog):
         if self._initial_draft.kind == HonorariosKind.INTERPRETATION:
             self.case_entity_edit.textChanged.connect(self._sync_interpretation_recipient_block_if_auto)
             self.case_entity_edit.textChanged.connect(self._on_interpretation_case_fields_changed)
+            self.case_city_edit.textChanged.connect(self._sync_interpretation_recipient_block_if_auto)
             self.case_city_edit.textChanged.connect(self._on_interpretation_case_fields_changed)
             self.service_same_check.toggled.connect(self._on_interpretation_service_same_toggled)
             self.service_entity_edit.textChanged.connect(self._on_interpretation_service_fields_changed)
@@ -1459,7 +1470,10 @@ class QtHonorariosExportDialog(QDialog):
         self._setting_recipient_block = False
 
     def _default_interpretation_recipient_block(self) -> str:
-        return default_interpretation_recipient_block(self.case_entity_edit.text().strip())
+        return default_interpretation_recipient_block(
+            self.case_entity_edit.text().strip(),
+            self.case_city_edit.text().strip(),
+        )
 
     def _refresh_date_preview(self, *_args: object) -> None:
         city = self.case_city_edit.text().strip() or self._initial_draft.case_city.strip()
@@ -2397,7 +2411,7 @@ class QtSaveToJobLogDialog(QDialog):
                 use_service_location_in_honorarios=self.use_service_location_check.isChecked(),
                 travel_km_outbound=one_way_distance,
                 travel_km_return=one_way_distance,
-                recipient_block=default_interpretation_recipient_block(case_entity),
+                recipient_block=default_interpretation_recipient_block(case_entity, case_city),
                 profile=profile,
             )
         return build_honorarios_draft(
@@ -2847,17 +2861,17 @@ class QtSaveToJobLogDialog(QDialog):
             service_equals_case_by_default=bool(self.service_same_check.isChecked()),
         )
         translated_docx_path = self._resolved_seed_docx_path()
-        if translated_docx_path is not None:
-            self._saved_result = JobLogSavedResult(
-                row_id=int(row_id),
-                translated_docx_path=translated_docx_path,
-                word_count=int(payload["word_count"]),
-                case_number=str(payload["case_number"] or ""),
-                case_entity=str(payload["case_entity"] or ""),
-                case_city=str(payload["case_city"] or ""),
-                court_email=str(payload["court_email"] or ""),
-                run_id=str(payload["run_id"] or ""),
-            )
+        self._saved_result = JobLogSavedResult(
+            row_id=int(row_id),
+            word_count=int(payload["word_count"]),
+            case_number=str(payload["case_number"] or ""),
+            case_entity=str(payload["case_entity"] or ""),
+            case_city=str(payload["case_city"] or ""),
+            court_email=str(payload["court_email"] or ""),
+            run_id=str(payload["run_id"] or ""),
+            translated_docx_path=translated_docx_path,
+            payload=dict(payload),
+        )
         self._saved = True
         if self._on_saved is not None:
             self._on_saved()
@@ -3594,7 +3608,10 @@ class QtJobLogWindow(QDialog):
                 use_service_location_in_honorarios=bool(int(row.get("use_service_location_in_honorarios", 0) or 0)),
                 travel_km_outbound=_coerce_joblog_float(row.get("travel_km_outbound")),
                 travel_km_return=_coerce_joblog_float(row.get("travel_km_return")),
-                recipient_block=default_interpretation_recipient_block(str(row.get("case_entity", "") or "").strip()),
+                recipient_block=default_interpretation_recipient_block(
+                    str(row.get("case_entity", "") or "").strip(),
+                    str(row.get("case_city", "") or "").strip(),
+                ),
                 profile=profile,
             )
         else:
@@ -3970,7 +3987,7 @@ class _GmailPreviewPageCard(QFrame):
         header = QHBoxLayout()
         header.setSpacing(8)
         self.title_label = QLabel(f"Page {page_number}")
-        self.use_page_btn = QPushButton("Use this page as start")
+        self.use_page_btn = QPushButton("Start from this page")
         header.addWidget(self.title_label)
         header.addStretch(1)
         header.addWidget(self.use_page_btn)
@@ -4308,7 +4325,8 @@ class QtGmailAttachmentPreviewDialog(QDialog):
             self._start_next_page_workers()
         else:
             self.status_label.setText(
-                f"Scroll to inspect {self._page_count} page(s). Click 'Use this page as start' on the page you need."
+                f"Page 1 is the default. Scroll to inspect {self._page_count} page(s) and click "
+                f"'Start from this page' only when you want to skip earlier pages."
             )
             self._build_pdf_page_cards()
             QTimer.singleShot(0, self._scroll_to_initial_page)
@@ -4580,7 +4598,8 @@ class QtGmailBatchReviewDialog(QDialog):
         self._gog_path = gog_path.expanduser().resolve()
         self._account_email = account_email.strip()
         self._target_lang = target_lang.strip().upper() or "-"
-        self._default_start_page = max(1, int(default_start_page))
+        self._workflow_kind = GMAIL_INTAKE_WORKFLOW_TRANSLATION
+        self._default_start_page = 1
         self._output_dir_text = output_dir_text.strip()
         self._page_counts: list[int | None] = [
             1 if _is_image_attachment(attachment) else None
@@ -4596,6 +4615,7 @@ class QtGmailBatchReviewDialog(QDialog):
         self.review_result: GmailBatchReviewResult | None = None
         self._build_ui()
         self._populate_table()
+        self._on_workflow_changed()
         self._refresh_actions()
         self._refresh_detail_panel()
         self._responsive_window = ResponsiveWindowController(
@@ -4632,6 +4652,10 @@ class QtGmailBatchReviewDialog(QDialog):
 
         context_row = QHBoxLayout()
         context_row.setSpacing(8)
+        self.workflow_label = QLabel("Workflow")
+        self.workflow_combo = NoWheelComboBox()
+        self.workflow_combo.addItem("Translation", GMAIL_INTAKE_WORKFLOW_TRANSLATION)
+        self.workflow_combo.addItem("Interpretation notice", GMAIL_INTAKE_WORKFLOW_INTERPRETATION)
         self.target_lang_label = QLabel("Target language")
         self.target_lang_combo = NoWheelComboBox()
         supported_langs = [str(lang).strip().upper() for lang in supported_target_langs()]
@@ -4640,6 +4664,9 @@ class QtGmailBatchReviewDialog(QDialog):
             self.target_lang_combo.setCurrentText(self._target_lang)
         self.output_dir_label = QLabel("")
         self.output_dir_label.setWordWrap(True)
+        context_row.addWidget(self.workflow_label)
+        context_row.addWidget(self.workflow_combo, 0)
+        context_row.addSpacing(12)
         context_row.addWidget(self.target_lang_label)
         context_row.addWidget(self.target_lang_combo, 0)
         context_row.addSpacing(12)
@@ -4647,7 +4674,7 @@ class QtGmailBatchReviewDialog(QDialog):
         root.addLayout(context_row)
 
         self.table = QTableWidget(0, 4, self)
-        self.table.setHorizontalHeaderLabels(["Filename", "Type", "Size", "Start page"])
+        self.table.setHorizontalHeaderLabels(["Filename", "Type", "Size", "First page"])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.MultiSelection)
@@ -4663,7 +4690,7 @@ class QtGmailBatchReviewDialog(QDialog):
         self.detail_attachment_label = QLabel("Selected attachment: -")
         self.detail_attachment_label.setWordWrap(True)
         self.pages_value_label = QLabel("Pages: -")
-        self.start_page_label = QLabel("Start translating from page")
+        self.start_page_label = QLabel("First page to translate")
         self.start_page_spin = NoWheelSpinBox()
         self.start_page_spin.setMinimum(1)
         self.start_page_spin.setMaximum(9999)
@@ -4688,8 +4715,15 @@ class QtGmailBatchReviewDialog(QDialog):
         self.table.itemDoubleClicked.connect(lambda _item: self._open_preview_for_current_row())
         self.start_page_spin.valueChanged.connect(self._update_current_row_start_page)
         self.preview_btn.clicked.connect(self._open_preview_for_current_row)
+        self.workflow_combo.currentIndexChanged.connect(self._on_workflow_changed)
         self.cancel_btn.clicked.connect(self.reject)
         self.prepare_btn.clicked.connect(self._accept_selection)
+
+    def _current_workflow_kind(self) -> str:
+        return str(self.workflow_combo.currentData() or GMAIL_INTAKE_WORKFLOW_TRANSLATION).strip()
+
+    def _is_interpretation_workflow(self) -> bool:
+        return self._current_workflow_kind() == GMAIL_INTAKE_WORKFLOW_INTERPRETATION
 
     def _populate_table(self) -> None:
         sender_summary = self._message.from_header or "(unknown sender)"
@@ -4763,10 +4797,11 @@ class QtGmailBatchReviewDialog(QDialog):
         for row in rows:
             if row < 0 or row >= len(self._message.attachments):
                 continue
+            start_page = 1 if self._is_interpretation_workflow() else int(self._start_pages[row])
             selected.append(
                 GmailAttachmentSelection(
                     candidate=self._message.attachments[row],
-                    start_page=int(self._start_pages[row]),
+                    start_page=start_page,
                 )
             )
         return tuple(selected)
@@ -4777,6 +4812,8 @@ class QtGmailBatchReviewDialog(QDialog):
         self.prepare_btn.setEnabled(has_rows and len(selected_rows) > 0)
         if not has_rows:
             self.prepare_btn.setText("No supported attachments found")
+        elif self._is_interpretation_workflow():
+            self.prepare_btn.setText("Prepare interpretation notice")
         else:
             self.prepare_btn.setText("Prepare selected attachments")
         self._refresh_detail_panel()
@@ -4802,16 +4839,39 @@ class QtGmailBatchReviewDialog(QDialog):
         )
         self.start_page_spin.setValue(int(self._start_pages[row]))
         self.start_page_spin.blockSignals(False)
-        editable = not _is_image_attachment(attachment)
+        editable = (not self._is_interpretation_workflow()) and (not _is_image_attachment(attachment))
         self.start_page_spin.setEnabled(editable)
         self.preview_btn.setEnabled(True)
 
     def _update_current_row_start_page(self, value: int) -> None:
+        if self._is_interpretation_workflow():
+            return
         row = self._current_row()
         if row is None:
             return
         self._set_row_start_page(row, int(value))
         self._refresh_detail_panel()
+
+    def _on_workflow_changed(self, *_args: object) -> None:
+        self._workflow_kind = self._current_workflow_kind()
+        is_interpretation = self._is_interpretation_workflow()
+        self.target_lang_label.setVisible(not is_interpretation)
+        self.target_lang_combo.setVisible(not is_interpretation)
+        self.start_page_label.setVisible(not is_interpretation)
+        self.start_page_spin.setVisible(not is_interpretation)
+        self.table.setColumnHidden(3, is_interpretation)
+        self.table.setSelectionMode(
+            QTableWidget.SelectionMode.SingleSelection
+            if is_interpretation
+            else QTableWidget.SelectionMode.MultiSelection
+        )
+        if is_interpretation:
+            selected_rows = self._selected_rows()
+            keep_row = selected_rows[0] if selected_rows else self._current_row()
+            self.table.clearSelection()
+            if keep_row is not None and keep_row >= 0:
+                self.table.selectRow(keep_row)
+        self._refresh_actions()
 
     def _open_preview_for_current_row(self) -> None:
         row = self._current_row()
@@ -4875,10 +4935,22 @@ class QtGmailBatchReviewDialog(QDialog):
                 "Select at least one supported attachment first.",
             )
             return
+        if self._is_interpretation_workflow() and len(selected) != 1:
+            QMessageBox.information(
+                self,
+                "Gmail Attachment Review",
+                "Interpretation notices require exactly one selected attachment.",
+            )
+            return
         self.selected_attachments = tuple(selection.candidate for selection in selected)
         self.review_result = GmailBatchReviewResult(
             selections=selected,
-            target_lang=self.target_lang_combo.currentText().strip().upper() or self._target_lang,
+            target_lang=(
+                self.target_lang_combo.currentText().strip().upper() or self._target_lang
+                if not self._is_interpretation_workflow()
+                else ""
+            ),
+            workflow_kind=self._current_workflow_kind(),
         )
         self.accept()
 
@@ -5572,7 +5644,6 @@ class QtSettingsDialog(QDialog):
         self.lemma_effort_combo = NoWheelComboBox(); self.lemma_effort_combo.addItems(["medium", "high", "xhigh"])
         self.default_images_combo = NoWheelComboBox(); self.default_images_combo.addItems(["off", "auto", "always"])
         self.default_workers_combo = NoWheelComboBox(); self.default_workers_combo.addItems(["1", "2", "3", "4", "5", "6"])
-        self.default_start_edit = QLineEdit()
         self.default_end_edit = QLineEdit()
         self.default_outdir_edit = QLineEdit()
         self.default_outdir_btn = QPushButton("Browse")
@@ -5596,7 +5667,6 @@ class QtSettingsDialog(QDialog):
         grid.addWidget(QLabel("Lemma / utility effort"), row, 0); grid.addWidget(self.lemma_effort_combo, row, 1); row += 1
         grid.addWidget(QLabel("Default images mode"), row, 0); grid.addWidget(self.default_images_combo, row, 1); row += 1
         grid.addWidget(QLabel("Default workers"), row, 0); grid.addWidget(self.default_workers_combo, row, 1); row += 1
-        grid.addWidget(QLabel("Default start page"), row, 0); grid.addWidget(self.default_start_edit, row, 1); row += 1
         grid.addWidget(QLabel("Default end page"), row, 0); grid.addWidget(self.default_end_edit, row, 1); row += 1
 
         outdir_row = QHBoxLayout()
@@ -7264,7 +7334,6 @@ class QtSettingsDialog(QDialog):
         self.default_resume_check.setChecked(bool(settings.get("default_resume", True)))
         self.default_keep_check.setChecked(bool(settings.get("default_keep_intermediates", True)))
         self.default_breaks_check.setChecked(bool(settings.get("default_page_breaks", True)))
-        self.default_start_edit.setText(str(settings.get("default_start_page", 1)))
         default_end = settings.get("default_end_page")
         self.default_end_edit.setText("" if default_end in (None, "") else str(default_end))
         self.default_outdir_edit.setText(str(settings.get("default_outdir", "")))
@@ -7740,9 +7809,7 @@ class QtSettingsDialog(QDialog):
             default_end = None
         else:
             default_end = _to_int(default_end_text, field="Default end page", min_value=1, max_value=100000)
-        default_start = _to_int(self.default_start_edit.text(), field="Default start page", min_value=1, max_value=100000)
-        if default_end is not None and default_start > default_end:
-            raise ValueError("Default start page must be <= default end page.")
+        default_start = 1
 
         ui_scale = _to_float(self.ui_scale_combo.currentText(), field="UI scale", min_value=1.0, max_value=1.25)
         if ui_scale not in (1.0, 1.1, 1.25):

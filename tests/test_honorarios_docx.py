@@ -207,6 +207,25 @@ def test_build_honorarios_paragraph_texts_keeps_case_city_only_in_closing_date()
     assert paragraphs[16] == ("Moura, 07 de março de 2026", "center")
 
 
+def test_build_honorarios_paragraph_texts_uses_case_city_for_plain_ministerio_publico() -> None:
+    draft = build_honorarios_draft(
+        case_number="1117/25.4T8BJA",
+        word_count=120,
+        case_entity="Ministério Público",
+        case_city="Beja",
+        profile=_profile(),
+        today=date(2026, 3, 10),
+    )
+
+    paragraphs = build_honorarios_paragraph_texts(draft)
+
+    assert paragraphs[2] == (
+        "Exmo. Sr(a). Procurador(a) da república do Ministério Público de Beja",
+        "address",
+    )
+    assert "\n" not in paragraphs[2][0]
+
+
 def test_default_honorarios_filename_sanitizes_case_number() -> None:
     assert (
         default_honorarios_filename("109/26.0PBBJA", today=date(2026, 3, 6))
@@ -252,9 +271,51 @@ def test_build_interpretation_honorarios_paragraph_texts_uses_interpretation_tem
     assert "não está sujeito a retenção de IRS" in paragraphs[8][0]
     assert paragraphs[13] == ("Melhores cumprimentos,", "left")
     assert paragraphs[14] == ("Pede deferimento.", "left")
-    assert paragraphs[16] == ("Beja, 28 de abril de 2025", "center")
+    assert paragraphs[16] == ("Beja, 09 de abril de 2025", "center")
     assert paragraphs[18] == ("O Requerente,", "center")
     assert paragraphs[20] == (profile.document_name, "center")
+
+
+def test_default_interpretation_recipient_block_uses_case_city_for_plain_ministerio_publico() -> None:
+    recipient = default_interpretation_recipient_block("Ministério Público", "Beja")
+
+    assert recipient == "Exmo. Senhor Procurador do Ministério Público de Beja"
+    assert "\n" not in recipient
+
+
+def test_build_interpretation_honorarios_draft_falls_back_to_service_city_for_case_city() -> None:
+    draft = build_interpretation_honorarios_draft(
+        case_number="1117/25.4TBJA",
+        case_entity="Ministério Público",
+        case_city="",
+        service_date="2026-03-26",
+        service_entity="Ministério Público",
+        service_city="Beja",
+        profile=_profile(travel_origin_label="Marmelar"),
+    )
+
+    paragraphs = build_honorarios_paragraph_texts(draft)
+
+    assert draft.case_city == "Beja"
+    assert paragraphs[2] == ("Exmo. Senhor Procurador do Ministério Público de Beja", "address")
+    assert paragraphs[16] == ("Beja, 26 de março de 2026", "center")
+
+
+def test_build_interpretation_honorarios_draft_uses_service_date_for_footer_when_valid() -> None:
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="Juízo Local Criminal de Beja",
+        service_city="Beja",
+        travel_km_outbound=39,
+        travel_km_return=39,
+        profile=_profile(),
+        today=date(2026, 3, 10),
+    )
+
+    assert draft.date_pt == "09 de março de 2026"
 
 
 def test_build_interpretation_honorarios_short_form_omits_service_location_phrase() -> None:
@@ -500,6 +561,46 @@ def test_honorarios_dialog_interpretation_defaults_service_same_and_one_way_dist
         assert dialog.service_city_edit.isEnabled() is False
         assert dialog.travel_km_outbound_edit.text() == "39"
         assert dialog.travel_km_return_edit is dialog.travel_km_outbound_edit
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_recipient_default_tracks_case_city(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    user_settings.save_profile_settings(profiles=[_profile()], primary_profile_id="primary")
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="1117/25.4TBJA",
+        case_entity="Ministério Público",
+        case_city="Beja",
+        service_date="2026-03-26",
+        service_entity="Ministério Público",
+        service_city="Beja",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=39.0,
+        travel_km_return=39.0,
+        recipient_block="",
+        profile=_profile(),
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.recipient_block_edit.toPlainText() == "Exmo. Senhor Procurador do Ministério Público de Beja"
+        dialog.case_city_edit.setText("Serpa")
+        app.processEvents()
+        assert dialog.recipient_block_edit.toPlainText() == "Exmo. Senhor Procurador do Ministério Público de Serpa"
     finally:
         dialog.close()
         dialog.deleteLater()

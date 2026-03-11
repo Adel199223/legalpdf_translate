@@ -30,6 +30,13 @@ Segue em anexo as traduções conforme solicitadas, bem como o requerimento de h
 Estou à disposição para quaisquer esclarecimentos adicionais que se façam necessários.
 
 """
+_INTERPRETATION_HONORARIOS_GMAIL_BODY_PREFIX = """Bom dia,
+
+Segue em anexo o requerimento de honorários referente ao serviço de interpretação.
+
+Estou à disposição para quaisquer esclarecimentos adicionais que se façam necessários.
+
+"""
 
 
 @dataclass(slots=True)
@@ -71,6 +78,14 @@ def build_honorarios_gmail_body(profile: UserProfile) -> str:
     if phone_number:
         signature_lines.append(phone_number)
     return _HONORARIOS_GMAIL_BODY_PREFIX + "\n".join(signature_lines) + "\n"
+
+
+def build_interpretation_honorarios_gmail_body(profile: UserProfile) -> str:
+    signature_lines = ["Atenciosamente,", profile.document_name.strip()]
+    phone_number = profile.phone_number.strip()
+    if phone_number:
+        signature_lines.append(phone_number)
+    return _INTERPRETATION_HONORARIOS_GMAIL_BODY_PREFIX + "\n".join(signature_lines) + "\n"
 
 
 def build_honorarios_gmail_request(
@@ -155,6 +170,45 @@ def build_gmail_batch_reply_request(
         subject=original_subject,
         body=build_honorarios_gmail_body(profile),
         attachments=resolved_translations + (resolved_honorarios,),
+        reply_to_message_id=reply_message_id,
+    )
+
+
+def build_interpretation_gmail_reply_request(
+    *,
+    gog_path: Path,
+    account_email: str,
+    to_email: str,
+    subject: str,
+    reply_to_message_id: str,
+    honorarios_docx: Path,
+    profile: UserProfile,
+) -> GmailDraftRequest:
+    sender_account = account_email.strip()
+    recipient = to_email.strip()
+    original_subject = subject.strip()
+    reply_message_id = reply_to_message_id.strip()
+    if not sender_account:
+        raise ValueError("A Gmail account is required to create the draft.")
+    if not recipient:
+        raise ValueError("Court Email is required to create the Gmail draft.")
+    if not original_subject:
+        raise ValueError("The original Gmail subject is required to create the reply draft.")
+    if not reply_message_id:
+        raise ValueError("The original Gmail message ID is required to create the reply draft.")
+    resolved_honorarios = honorarios_docx.expanduser().resolve()
+    missing: list[str] = []
+    if not resolved_honorarios.exists():
+        missing.append(f"Honorários DOCX not found: {resolved_honorarios}")
+    if missing:
+        raise ValueError("\n".join(missing))
+    return GmailDraftRequest(
+        gog_path=gog_path.expanduser().resolve(),
+        account_email=sender_account,
+        to_email=recipient,
+        subject=original_subject,
+        body=build_interpretation_honorarios_gmail_body(profile),
+        attachments=(resolved_honorarios,),
         reply_to_message_id=reply_message_id,
     )
 

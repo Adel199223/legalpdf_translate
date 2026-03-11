@@ -170,7 +170,7 @@ Use `Tools > View Job Log` when you want to review or correct saved rows later.
 1. Use the pen button in `Actions` to open the full `Edit Job Log Entry` form for that row. That form now scrolls internally on smaller screens instead of opening off-screen.
 2. Double-click a visible value when you want a quicker inline edit. That row switches to `Save` / `Cancel`, and the rest of the table waits until you finish that edit.
 3. Use the trash button only when you want to remove a saved row completely. The app asks for confirmation first.
-4. Historical rows can still open the full edit dialog even if the original source PDF is no longer available. In that case `Autofill from PDF header` stays disabled, but `Open translated DOCX` still works when the saved translated DOCX path still resolves.
+4. Historical rows can still open the full edit dialog even if the original source PDF is no longer available. Translation rows disable `Autofill from PDF header` in that case, while interpretation rows can still use that action through a manual PDF picker fallback. `Open translated DOCX` still works when the saved translated DOCX path still resolves.
 5. Drag a column divider to resize it. Double-click the divider if you want that column auto-fitted again.
 6. If the Job Log becomes wider than the window, use the horizontal scrollbar instead of squeezing the headers.
 7. The app remembers your manual Job Log column widths.
@@ -199,7 +199,7 @@ Use this flow when you need a `Requerimento de Honorários` for interpreting wor
 2. Click `Gerar Requerimento de Honorários...`.
 3. Use the profile selector if needed.
 4. On smaller screens, scroll inside the honorários dialog. The action buttons stay anchored at the bottom.
-5. Interpretation honorários stay local-doc only in this version. They do not offer Gmail draft creation.
+5. Manual/local interpretation honorários stay local-doc only. If the flow started from Gmail intake in `Interpretation notice` mode, the app can also create a threaded Gmail draft with the honorários DOCX only.
 
 ## Honorarios + Gmail Drafts
 If you generate a `Requerimento de Honorários`, the app can also prepare a Gmail draft to the row's `Court Email`.
@@ -217,7 +217,7 @@ From `Job Log`, the app now tries this order for the translated attachment:
 If the app has to ask you once for a translated DOCX on a legacy row, it saves that path back into the row so the same row should not ask again next time.
 You can use the pen action first if a historical row needs case/court corrections before exporting honorários or creating the Gmail draft.
 
-This Gmail-draft branch applies to translation honorários only. Interpretation honorários do not offer Gmail draft creation.
+This Gmail-draft branch always applies to translation honorários. Interpretation honorários can also produce a Gmail reply draft, but only when they start from Gmail intake in `Interpretation notice` mode.
 
 ## Gmail Intake Batch Replies
 Use this when the source files already arrived in Gmail and you want one reply draft back in the same thread.
@@ -231,15 +231,21 @@ Use this when the source files already arrived in Gmail and you want one reply d
 1. Open Gmail in Edge or Chromium.
 2. Expand exactly one message in the target thread.
 3. Click the extension toolbar action.
-4. Review the supported attachments from that exact message, select one or more files, and set the Gmail batch target language in that dialog before preparation starts.
-5. Open the attachment preview when you need to inspect a file before translating it.
-6. For PDFs, scroll through the preview and click `Use this page as start` if the first page should be skipped; image attachments stay fixed to page `1`.
-7. `Prepare selected attachments` stages the files for the batch, and already previewed files are reused when possible instead of being downloaded again.
-8. The app then translates those files one by one.
-9. After each successful translation, Arabic items first pause in the Word review gate. The dialog auto-opens the DOCX in Word, offers `Align Right + Save`, and auto-continues after a detected save; if automation fails, you can save manually and use `Continue now` or `Continue without changes`.
-10. The app then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
-11. When all selected files are confirmed, the app can generate one honorários DOCX using the combined translated word count for the batch.
-12. If that honorários step succeeds, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários DOCX.
+4. Choose the Gmail intake mode in the review dialog:
+   - `Translation` for the existing translation batch flow
+   - `Interpretation notice` for one selected court-notice attachment that should not be translated
+5. In `Translation` mode, review the supported attachments from that exact message, select one or more files, and set the Gmail batch target language before preparation starts.
+6. In `Interpretation notice` mode, select exactly one supported PDF or image attachment. Translation-only controls stay hidden in that mode.
+7. Open the attachment preview when you need to inspect a file before proceeding.
+8. For translation PDFs, page `1` is the default. Scroll through the preview and click `Start from this page` only if translation should begin later. Interpretation notice imports do not use start-page semantics.
+9. `Prepare selected attachments` stages the files, and already previewed files are reused when possible instead of being downloaded again.
+10. Translation mode then translates the selected files one by one.
+11. Interpretation-notice mode downloads the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
+12. After each successful translation, Arabic items first pause in the Word review gate. The dialog auto-opens the DOCX in Word, offers `Align Right + Save`, and auto-continues after a detected save; if automation fails, you can save manually and use `Continue now` or `Continue without changes`.
+13. Translation mode then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
+14. When all selected translation files are confirmed, the app can generate one honorários DOCX using the combined translated word count for the batch.
+15. If the translation honorários step succeeds, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários DOCX.
+16. If the interpretation honorários step succeeds, the app creates one Gmail reply draft in the original thread with the generated honorários DOCX only.
 
 ### Batch rules
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
@@ -253,6 +259,7 @@ Use this when the source files already arrived in Gmail and you want one reply d
 - The final Gmail result is always a draft only. The app does not auto-send.
 - If you accidentally choose an existing translated DOCX filename while saving honorários, the app auto-renames the honorários file instead of overwriting the translation.
 - Gmail draft creation blocks duplicate attachment paths and translated artifacts that are actually honorários content.
+- Interpretation honorários close with the saved `service_date` when that date parses as ISO, so you can generate the DOCX or draft in advance and still keep the hearing/service day in the footer.
 
 ## Queue Runs
 Use queue mode when you want several PDFs to run in order.

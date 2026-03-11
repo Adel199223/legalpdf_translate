@@ -318,7 +318,7 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
   - docs/assistant/workflows/TRANSLATION_WORKFLOW.md::gmail_batch_context
 - User-visible behavior:
   - Gmail attachment review now supports per-attachment start-page selection with an in-app preview before preparation begins.
-  - PDF preview now uses a lazy continuous-scroll viewer with `Use this page as start`, while image attachments remain fixed to page `1`.
+  - PDF preview now uses a lazy continuous-scroll viewer with an explicit later-page override, while image attachments remain fixed to page `1`.
   - `Prepare selected attachments` now reuses previously previewed files when possible instead of redownloading them.
   - Gmail run/report context now documents the selected start page for each translated attachment.
 - Tests:
@@ -1113,3 +1113,14 @@ Verification commands/results:
   - manual PDF picker fallback for interpretation header autofill
   - responsive interpretation honorários export dialog
   - local-only interpretation honorários generation with no Gmail draft flow
+- Ran a touched-scope Assistant Docs Sync for Gmail-started interpretation honorários drafts.
+- Updated the canonical knowledge docs and user guides so they now describe:
+  - the Gmail intake mode split between translation batches and `Interpretation notice`
+  - interpretation Gmail reply drafts that attach only the honorários DOCX
+  - interpretation honorários footer dates derived from `service_date`
+  - the interpretation historical-edit manual PDF picker fallback, which remains available even when translation rows cannot autofill from a missing source PDF
+- Ran a touched-scope Assistant Docs Sync for the page-`1` translation-start cleanup.
+- Updated the canonical knowledge docs and user guides so they now describe:
+  - page `1` as the enforced default first page to translate across the main form and Gmail review
+  - `Start from this page` as an explicit preview override, not a remembered default
+  - later translation pages as per-run choices only, not a persisted global default
