@@ -187,3 +187,13 @@ def test_build_stylesheet_supports_runtime_theme_variants() -> None:
     assert futuristic != simple
     assert "QFrame#DashboardFrame" in futuristic
     assert "QDialog, QMessageBox" in simple
+    assert '"Segoe UI Variable", "Segoe UI", "Corbel", "Calibri", "DejaVu Sans", "Arial"' in futuristic
+    assert '"Candara", "Segoe UI Variable", "Segoe UI Semibold", "Corbel", "Segoe UI", "DejaVu Sans", "Arial"' in futuristic
+    assert '"Segoe UI Variable", "Candara", "Segoe UI Semibold", "Corbel", "Segoe UI", "DejaVu Sans", "Arial"' in futuristic
+    assert 'QComboBox[sharedChromeCombo="true"][embeddedField="true"][hovered="true"]' in futuristic
+    assert 'QFrame#FieldChrome[sharedChromeDate="true"][hovered="true"]' in futuristic
+    assert "QFrame#CalendarPopup" in futuristic
+    assert "QPushButton#PrimaryButton:default" in futuristic
+    assert "Bahnschrift" not in futuristic
+    assert "Aptos" not in futuristic
+    assert "letter-spacing: 0.82px;" in futuristic

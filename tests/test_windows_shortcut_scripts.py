@@ -7,6 +7,17 @@ def _read_script(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
+def test_repo_launcher_batch_supports_canonical_venv_fallback_for_worktree_testing() -> None:
+    text = _read_script("Launch LegalPDF Translate.bat")
+    assert ".venv311\\Scripts\\python.exe" in text
+    assert "tooling\\launch_qt_build.py" in text
+    assert "CANONICAL_BUILD.json" in text
+    assert "ConvertFrom-Json" in text
+    assert "--allow-noncanonical" in text
+    assert "legalpdf_translate.qt_app" not in text
+    assert "PYTHONPATH" not in text
+
+
 def test_create_shortcut_script_uses_ico_and_public_desktop_cleanup() -> None:
     text = _read_script("scripts/create_desktop_shortcut.ps1")
     assert "CommonDesktopDirectory" in text

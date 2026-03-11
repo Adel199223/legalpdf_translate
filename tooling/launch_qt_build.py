@@ -36,8 +36,9 @@ class LaunchError(RuntimeError):
 _WSL_MNT_RE = re.compile(r'^/mnt/([A-Za-z])/(.*)$')
 
 
-def _to_windows_path(path: Path) -> str:
-    text = str(path.resolve())
+def _to_windows_path(path: str | Path) -> str:
+    resolved = Path(path).expanduser()
+    text = str(resolved.resolve()) if resolved.exists() else str(resolved)
     if len(text) >= 3 and text[1:3] == ':\\':
         return text
     if text.startswith('/mnt/') and len(text) > 6:

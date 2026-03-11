@@ -13,7 +13,7 @@ if os.name != "nt" and "DISPLAY" not in os.environ:
 import pytest
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from PySide6.QtCore import QRect, QUrl
+from PySide6.QtCore import QDate, QRect, Qt, QUrl
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 import legalpdf_translate.user_settings as user_settings
@@ -38,6 +38,7 @@ from legalpdf_translate.qt_gui.dialogs import (
     QtSaveToJobLogDialog,
     _default_documents_dir,
 )
+from legalpdf_translate.qt_gui.guarded_inputs import CALENDAR_WEEKEND_COLOR, GuardedDateEdit
 
 
 def _write_docx_with_paragraphs(path: Path, *paragraphs: str) -> None:
@@ -554,6 +555,18 @@ def test_honorarios_dialog_interpretation_defaults_service_same_and_one_way_dist
     try:
         dialog.show()
         app.processEvents()
+        assert isinstance(dialog.service_date_edit, GuardedDateEdit)
+        dialog.service_date_edit.setCalendarDate(QDate(2026, 3, 11))
+        assert dialog.service_date_edit.text() == "2026-03-11"
+        calendar = dialog.service_date_edit.calendarWidget()
+        assert calendar.firstDayOfWeek() == Qt.DayOfWeek.Monday
+        assert calendar.minimumWidth() >= 336
+        calendar.setCurrentPage(2026, 3)
+        app.processEvents()
+        assert (
+            calendar.dateTextFormat(QDate(2026, 2, 28)).foreground().color().name().lower()
+            == CALENDAR_WEEKEND_COLOR.lower()
+        )
         assert dialog.service_same_check.isChecked() is True
         assert dialog.service_entity_edit.text() == "Juízo Local Criminal de Beja"
         assert dialog.service_city_edit.text() == "Beja"
@@ -731,11 +744,13 @@ def test_honorarios_dialog_interpretation_service_city_change_updates_distance_a
         dialog.show()
         app.processEvents()
         dialog.service_same_check.setChecked(False)
+        dialog.service_date_edit.setCalendarDate(QDate(2026, 3, 10))
         dialog.service_city_edit.setText("Cuba")
         app.processEvents()
         assert dialog.travel_km_outbound_edit.text() == "26"
         dialog.travel_km_outbound_edit.setText("27")
         rebuilt = dialog._build_draft()
+        assert rebuilt.service_date == "2026-03-10"
         assert rebuilt.travel_km_outbound == 27.0
         assert rebuilt.travel_km_return == 27.0
         profiles, primary_profile_id = user_settings.load_profile_settings()
@@ -908,7 +923,9 @@ def test_save_to_joblog_dialog_opens_honorarios_dialog_with_current_values(tmp_p
     dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
     try:
         dialog.case_number_edit.setText("109/26.0PBBJA")
+        dialog.case_entity_combo.addItem("Juízo Local Criminal de Beja")
         dialog.case_entity_combo.setCurrentText("Juízo Local Criminal de Beja")
+        dialog.case_city_combo.addItem("Beja")
         dialog.case_city_combo.setCurrentText("Beja")
         dialog._open_honorarios_dialog()
     finally:

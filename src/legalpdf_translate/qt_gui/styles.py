@@ -74,6 +74,10 @@ _THEME_OVERRIDES = {
     },
 }
 
+_BODY_FONT_STACK = '"Segoe UI Variable", "Segoe UI", "Corbel", "Calibri", "DejaVu Sans", "Arial"'
+_HEADING_FONT_STACK = '"Candara", "Segoe UI Variable", "Segoe UI Semibold", "Corbel", "Segoe UI", "DejaVu Sans", "Arial"'
+_SECTION_HEADING_FONT_STACK = '"Segoe UI Variable", "Candara", "Segoe UI Semibold", "Corbel", "Segoe UI", "DejaVu Sans", "Arial"'
+
 
 def normalize_ui_theme(theme: str | None) -> str:
     value = str(theme or "").strip().lower()
@@ -92,7 +96,7 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     return f"""
     QWidget {{
         color: {PALETTE['text']};
-        font-family: "Segoe UI", "DejaVu Sans", "Arial";
+        font-family: {_BODY_FONT_STACK};
         font-size: 12pt;
     }}
 
@@ -205,17 +209,18 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
 
     QLabel#HeroTitleLabel {{
         color: {PALETTE['accent_soft']};
-        font-family: "Bahnschrift", "Segoe UI", "DejaVu Sans";
-        font-size: 31pt;
-        font-weight: 700;
-        letter-spacing: 0.9px;
+        font-family: {_HEADING_FONT_STACK};
+        font-size: 30pt;
+        font-weight: 600;
+        letter-spacing: 0.82px;
     }}
 
     QLabel#HeroStatusLabel {{
         color: rgba(182, 239, 255, 228);
-        font-family: "Bahnschrift", "Segoe UI", "DejaVu Sans";
-        font-size: 13pt;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 12.6pt;
         font-weight: 500;
+        letter-spacing: 0.24px;
     }}
 
     QFrame#DashboardFrame {{
@@ -243,15 +248,18 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
 
     QLabel#PanelHeading {{
         color: {PALETTE['accent_soft']};
-        font-family: "Bahnschrift", "Segoe UI";
-        font-size: 19.5pt;
-        font-weight: 500;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 18.9pt;
+        font-weight: 600;
+        letter-spacing: 0.28px;
     }}
 
     QLabel#FieldLabel {{
         color: rgba(236, 249, 255, 224);
-        font-size: 12.2pt;
-        font-weight: 500;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 12pt;
+        font-weight: 600;
+        letter-spacing: 0.16px;
     }}
 
     QFrame#FieldChrome {{
@@ -278,6 +286,10 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
         border: none;
         padding: 8px 0;
         color: {PALETTE['text']};
+        font-family: {_BODY_FONT_STACK};
+        font-size: 12.15pt;
+        font-weight: 520;
+        letter-spacing: 0.08px;
         selection-background-color: rgba(35, 138, 185, 220);
     }}
 
@@ -298,11 +310,28 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QComboBox[langField=\"true\"] {{
-        padding: 8px 0;
+        padding: 8px 2px;
         min-width: 46px;
         color: rgba(238, 251, 255, 236);
-        font-size: 11.5pt;
-        font-weight: 500;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 11.4pt;
+        font-weight: 600;
+        letter-spacing: 0.12px;
+    }}
+
+    QFrame#FieldChrome[sharedChromeCombo=\"true\"][hovered=\"true\"],
+    QFrame#FieldChrome[sharedChromeCombo=\"true\"][focused=\"true\"],
+    QFrame#FieldChrome[sharedChromeCombo=\"true\"][popupOpen=\"true\"],
+    QFrame#FieldChrome[sharedChromeDate=\"true\"][hovered=\"true\"],
+    QFrame#FieldChrome[sharedChromeDate=\"true\"][focused=\"true\"],
+    QFrame#FieldChrome[sharedChromeDate=\"true\"][popupOpen=\"true\"] {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 18),
+            stop:0.16 rgba(8, 31, 62, 198),
+            stop:1 rgba(4, 16, 31, 238)
+        );
+        border: 1px solid {PALETTE['field_focus_border']};
     }}
 
     QLabel#FlagLabel {{
@@ -312,14 +341,18 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
 
     QLabel#FieldSupportLabel {{
         color: rgba(216, 240, 248, 214);
+        font-family: {_BODY_FONT_STACK};
         font-size: 10.7pt;
-        font-weight: 500;
+        font-weight: 520;
+        letter-spacing: 0.06px;
     }}
 
     QLabel#FieldValueLabel {{
         color: rgba(238, 251, 255, 236);
+        font-family: {_BODY_FONT_STACK};
         font-size: 11.3pt;
-        font-weight: 500;
+        font-weight: 560;
+        letter-spacing: 0.08px;
     }}
 
     QLabel#FieldValueLabel[accent=\"true\"] {{
@@ -353,6 +386,25 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
         background: transparent;
     }}
 
+    QToolButton#LangCaretButton[hovered=\"true\"],
+    QToolButton#LangCaretButton[focused=\"true\"],
+    QToolButton#LangCaretButton[popupOpen=\"true\"] {{
+        color: {PALETTE['accent_soft']};
+    }}
+
+    QToolButton#DatePickerButton {{
+        background: transparent;
+        border: none;
+        min-width: 18px;
+        padding: 0 2px;
+        color: rgba(226, 249, 255, 218);
+    }}
+
+    QToolButton#DatePickerButton:hover {{
+        background: transparent;
+        color: {PALETTE['accent_soft']};
+    }}
+
     QToolButton#SectionToggleButton {{
         color: rgba(229, 247, 255, 228);
         background: qlineargradient(
@@ -364,8 +416,10 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
         border: 1px solid rgba(116, 231, 255, 128);
         border-radius: 16px;
         padding: 12px 15px;
-        font-size: 12pt;
-        font-weight: 500;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 11.8pt;
+        font-weight: 600;
+        letter-spacing: 0.18px;
     }}
 
     QToolButton#SectionToggleButton:hover {{
@@ -375,13 +429,18 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
 
     QLabel#ProgressSummaryLabel {{
         color: rgba(238, 251, 255, 230);
-        font-size: 13.5pt;
-        font-weight: 500;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 13.2pt;
+        font-weight: 600;
+        letter-spacing: 0.18px;
     }}
 
     QLabel#CurrentTaskLabel {{
         color: rgba(235, 247, 255, 214);
+        font-family: {_BODY_FONT_STACK};
         font-size: 10.8pt;
+        font-weight: 520;
+        letter-spacing: 0.06px;
     }}
 
     QFrame#MetricGridFrame {{
@@ -402,20 +461,26 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
 
     QLabel#MetricTitle {{
         color: rgba(227, 244, 252, 214);
-        font-size: 11.2pt;
-        font-weight: 500;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 11pt;
+        font-weight: 600;
+        letter-spacing: 0.14px;
     }}
 
     QLabel#MetricValue {{
         color: rgba(240, 250, 255, 236);
-        font-size: 13.2pt;
-        font-weight: 500;
+        font-family: {_BODY_FONT_STACK};
+        font-size: 13pt;
+        font-weight: 560;
+        letter-spacing: 0.06px;
     }}
 
     QLabel#MetricRetryValue {{
         color: rgba(222, 242, 250, 216);
+        font-family: {_BODY_FONT_STACK};
         font-size: 12pt;
-        font-weight: 500;
+        font-weight: 540;
+        letter-spacing: 0.05px;
     }}
 
     QFrame#RetryBadge {{
@@ -425,14 +490,18 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
 
     QLabel#OutputFormatLabel {{
         color: rgba(219, 241, 251, 218);
+        font-family: {_SECTION_HEADING_FONT_STACK};
         font-size: 12pt;
-        font-weight: 500;
+        font-weight: 600;
+        letter-spacing: 0.12px;
     }}
 
     QLabel#FooterMetaLabel {{
         color: rgba(191, 224, 238, 186);
+        font-family: {_BODY_FONT_STACK};
         font-size: 10.5pt;
-        font-weight: 500;
+        font-weight: 520;
+        letter-spacing: 0.04px;
     }}
 
     QFrame#ActionRail {{
@@ -542,6 +611,90 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
         background-color: {PALETTE['field_focus']};
     }}
 
+    QComboBox[sharedChromeCombo=\"true\"][hovered=\"true\"],
+    QComboBox[sharedChromeCombo=\"true\"][focused=\"true\"],
+    QComboBox[sharedChromeCombo=\"true\"][popupOpen=\"true\"] {{
+        border: 1px solid {PALETTE['field_focus_border']};
+        background-color: {PALETTE['field_focus']};
+    }}
+
+    QComboBox[sharedChromeCombo=\"true\"][embeddedField=\"true\"][hovered=\"true\"],
+    QComboBox[sharedChromeCombo=\"true\"][embeddedField=\"true\"][focused=\"true\"],
+    QComboBox[sharedChromeCombo=\"true\"][embeddedField=\"true\"][popupOpen=\"true\"] {{
+        border: none;
+        background: transparent;
+    }}
+
+    QFrame#CalendarPopup {{
+        background: {PALETTE['dialog_bg']};
+        border: 1px solid {PALETTE['dialog_border']};
+        border-radius: 16px;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget {{
+        background: transparent;
+        color: {PALETTE['text']};
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QWidget#qt_calendar_navigationbar {{
+        background: transparent;
+        border: none;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QToolButton {{
+        background-color: {PALETTE['button_bg']};
+        color: {PALETTE['text']};
+        border: 1px solid {PALETTE['button_border']};
+        border-radius: 10px;
+        padding: 4px 10px;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-weight: 600;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QToolButton:hover {{
+        background-color: {PALETTE['button_hover']};
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QMenu {{
+        background-color: rgba(4, 14, 29, 248);
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QSpinBox {{
+        min-width: 72px;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QAbstractItemView:enabled {{
+        background: {PALETTE['dialog_bg']};
+        color: {PALETTE['text']};
+        selection-background-color: {PALETTE['selection']};
+        selection-color: {PALETTE['accent_hot']};
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QWidget {{
+        alternate-background-color: transparent;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QTableView {{
+        background: transparent;
+        border: none;
+        outline: none;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QTableView::item {{
+        border-radius: 8px;
+        padding: 4px;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QTableView::item:hover {{
+        background: rgba(20, 83, 121, 212);
+        color: {PALETTE['accent_hot']};
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QTableView::item:selected {{
+        background: {PALETTE['selection']};
+        color: {PALETTE['accent_hot']};
+    }}
+
     QComboBox#GlossaryTableCombo {{
         padding: 2px 6px;
         border-radius: 4px;
@@ -564,6 +717,22 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
         outline: none;
         border-radius: 12px;
         padding: 6px;
+    }}
+
+    QComboBox QAbstractItemView::item {{
+        padding: 8px 12px;
+        border-radius: 8px;
+        margin: 2px;
+    }}
+
+    QComboBox QAbstractItemView::item:hover {{
+        background: rgba(20, 83, 121, 212);
+        color: {PALETTE['accent_hot']};
+    }}
+
+    QComboBox QAbstractItemView::item:selected {{
+        background: {PALETTE['selection']};
+        color: {PALETTE['accent_hot']};
     }}
 
     QCheckBox {{
@@ -589,7 +758,9 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
         border: 1px solid {PALETTE['button_border']};
         border-radius: 12px;
         padding: 0 16px;
+        font-family: {_SECTION_HEADING_FONT_STACK};
         font-weight: 600;
+        letter-spacing: 0.18px;
     }}
 
     QPushButton:hover {{
@@ -610,14 +781,31 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
         background-color: rgba(110, 236, 255, 230);
         color: #0A1C27;
         border: 1px solid rgba(199, 249, 255, 250);
+        font-family: {_SECTION_HEADING_FONT_STACK};
         font-weight: 700;
         border-radius: 14px;
         padding: 0 28px;
-        font-size: 12.2pt;
+        font-size: 12pt;
+        letter-spacing: 0.2px;
+    }}
+
+    QPushButton#PrimaryButton:default {{
+        background-color: rgba(110, 236, 255, 230);
+        color: #0A1C27;
+        border: 1px solid rgba(199, 249, 255, 250);
+        border-radius: 14px;
     }}
 
     QPushButton#PrimaryButton:hover {{
         background-color: rgba(140, 242, 255, 236);
+    }}
+
+    QPushButton#PrimaryButton:default:hover {{
+        background-color: rgba(140, 242, 255, 236);
+    }}
+
+    QPushButton#PrimaryButton:default:pressed {{
+        background-color: rgba(102, 220, 240, 232);
     }}
 
     QPushButton#DangerButton {{
@@ -626,7 +814,9 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
         color: #321115;
         border-radius: 14px;
         padding: 0 24px;
-        font-size: 11.7pt;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 11.5pt;
+        letter-spacing: 0.16px;
     }}
 
     QPushButton#PrimaryButton:disabled {{
@@ -693,8 +883,10 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
         left: 14px;
         padding: 0 6px;
         color: {PALETTE['group_title']};
-        font-family: "Bahnschrift", "Segoe UI";
-        font-size: 12.5pt;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 12.3pt;
+        font-weight: 600;
+        letter-spacing: 0.18px;
     }}
 
     QTabWidget::pane {{

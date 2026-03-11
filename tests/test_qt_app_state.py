@@ -10,10 +10,10 @@ from types import SimpleNamespace
 if os.name != "nt" and "DISPLAY" not in os.environ:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QBuffer, QIODevice, QRect
+from PySide6.QtCore import QBuffer, QDate, QEvent, QIODevice, QRect, Qt
 from PySide6.QtGui import QCloseEvent, QColor, QImage, QPainter, QPen
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QBoxLayout, QComboBox, QDialog, QLineEdit, QToolButton
+from PySide6.QtWidgets import QApplication, QBoxLayout, QCalendarWidget, QComboBox, QDialog, QLineEdit, QToolButton
 
 from legalpdf_translate.gmail_batch import (
     FetchedGmailMessage,
@@ -56,7 +56,13 @@ from legalpdf_translate.qt_gui.dialogs import (
     count_words_from_docx,
     count_words_from_output_artifacts,
 )
-from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
+from legalpdf_translate.qt_gui.guarded_inputs import (
+    CALENDAR_WEEKEND_COLOR,
+    GuardedDateEdit,
+    NoWheelComboBox,
+    NoWheelSpinBox,
+    POPUP_LABEL_ROLE,
+)
 from legalpdf_translate.qt_gui.window_controller import WorkspaceWindowController
 from legalpdf_translate.qt_gui.worker import (
     GmailAttachmentPreviewBootstrapResult,
@@ -648,10 +654,65 @@ def test_target_language_field_shows_single_code_and_flag() -> None:
         window._refresh_lang_badge()
         app.processEvents()
         assert window.lang_combo.currentText() == "FR"
+        assert window.lang_combo.itemData(
+            window.lang_combo.currentIndex(),
+            Qt.ItemDataRole.TextAlignmentRole,
+        ) == int(Qt.AlignmentFlag.AlignCenter)
         assert window.flag_label.text() == ""
         pixmap = window.flag_label.pixmap()
         assert pixmap is not None and not pixmap.isNull()
         assert window.lang_caret_btn.icon().isNull() is False
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_target_language_popup_uses_full_names_and_content_width() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        assert window.lang_combo.itemData(0, POPUP_LABEL_ROLE) == "English"
+        assert window.lang_combo.itemData(1, POPUP_LABEL_ROLE) == "French"
+        assert window.lang_combo.itemData(2, POPUP_LABEL_ROLE) == "Arabic"
+        assert window.lang_combo.currentText() == "EN"
+        assert window.lang_combo.popupContentWidth() > window.lang_combo.maximumWidth()
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_target_language_wrapper_click_opens_shared_popup_state() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window.show()
+        app.processEvents()
+        QTest.mouseClick(
+            window.lang_field,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            window.lang_field.rect().center(),
+        )
+        app.processEvents()
+
+        assert bool(window.lang_combo.property("popupOpen")) is True
+        assert bool(window.lang_field.property("popupOpen")) is True
+        assert window.lang_combo.view().minimumWidth() >= window.lang_combo.popupContentWidth()
+
+        window.lang_combo.hidePopup()
+        app.processEvents()
     finally:
         window.close()
         window.deleteLater()
@@ -1173,6 +1234,36 @@ def test_main_window_uses_guarded_run_critical_controls() -> None:
         assert isinstance(window.ocr_mode_combo, NoWheelComboBox)
         assert isinstance(window.ocr_engine_combo, NoWheelComboBox)
         assert isinstance(window.workers_spin, NoWheelSpinBox)
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_advanced_settings_hover_and_open_state_stays_local_to_active_combo() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window.show()
+        window._set_adv_visible(True)
+        app.processEvents()
+
+        QApplication.sendEvent(window.effort_policy_combo, QEvent(QEvent.Type.Enter))
+        app.processEvents()
+        assert bool(window.effort_policy_combo.property("hovered")) is True
+        assert bool(window.images_combo.property("hovered")) is False
+
+        window.effort_policy_combo.showPopup()
+        app.processEvents()
+        assert bool(window.effort_policy_combo.property("popupOpen")) is True
+        assert bool(window.images_combo.property("popupOpen")) is False
+        window.effort_policy_combo.hidePopup()
+        app.processEvents()
     finally:
         window.close()
         window.deleteLater()
@@ -4983,7 +5074,70 @@ def test_joblog_combo_boxes_remain_plain_editable_inputs(tmp_path: Path) -> None
     )
     joblog_dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
     try:
-        assert isinstance(joblog_dialog.court_email_combo, NoWheelComboBox) is False
+        joblog_dialog.show()
+        app.processEvents()
+        assert isinstance(joblog_dialog.translation_date_edit, GuardedDateEdit)
+        assert isinstance(joblog_dialog.service_date_edit, GuardedDateEdit)
+        joblog_dialog.translation_date_edit.setCalendarDate(QDate(2026, 3, 11))
+        joblog_dialog.service_date_edit.setCalendarDate(QDate(2026, 3, 12))
+        assert joblog_dialog.translation_date_edit.text() == "2026-03-11"
+        assert joblog_dialog.service_date_edit.text() == "2026-03-12"
+        translation_calendar = joblog_dialog.translation_date_edit.calendarWidget()
+        service_calendar = joblog_dialog.service_date_edit.calendarWidget()
+        assert translation_calendar.firstDayOfWeek() == Qt.DayOfWeek.Monday
+        assert service_calendar.firstDayOfWeek() == Qt.DayOfWeek.Monday
+        assert translation_calendar.horizontalHeaderFormat() == QCalendarWidget.HorizontalHeaderFormat.ShortDayNames
+        assert translation_calendar.minimumWidth() >= 336
+        translation_calendar.setCurrentPage(2026, 3)
+        app.processEvents()
+        assert (
+            translation_calendar.dateTextFormat(QDate(2026, 2, 28)).foreground().color().name().lower()
+            == CALENDAR_WEEKEND_COLOR.lower()
+        )
+        assert (
+            translation_calendar.dateTextFormat(QDate(2026, 3, 1)).foreground().color().name().lower()
+            == CALENDAR_WEEKEND_COLOR.lower()
+        )
+        assert isinstance(joblog_dialog.lang_edit, NoWheelComboBox)
+        assert joblog_dialog.lang_edit.isEditable() is False
+        assert [joblog_dialog.lang_edit.itemText(i) for i in range(joblog_dialog.lang_edit.count())] == ["EN", "FR", "AR"]
+        assert joblog_dialog.pages_edit.isReadOnly() is True
+        assert joblog_dialog.service_group.isVisible() is False
+        assert isinstance(joblog_dialog.job_type_combo, NoWheelComboBox)
+        assert isinstance(joblog_dialog.case_entity_combo, NoWheelComboBox)
+        assert isinstance(joblog_dialog.case_city_combo, NoWheelComboBox)
+        assert isinstance(joblog_dialog.service_entity_combo, NoWheelComboBox)
+        assert isinstance(joblog_dialog.service_city_combo, NoWheelComboBox)
+        assert isinstance(joblog_dialog.court_email_combo, NoWheelComboBox)
+        assert joblog_dialog.job_type_combo.isEditable() is False
+        assert joblog_dialog.case_entity_combo.isEditable() is False
+        assert joblog_dialog.case_city_combo.isEditable() is False
+        assert joblog_dialog.service_entity_combo.isEditable() is False
+        assert joblog_dialog.service_city_combo.isEditable() is False
+        assert joblog_dialog.court_email_combo.isEditable() is True
+        assert joblog_dialog.save_btn.objectName() == "PrimaryButton"
+        assert joblog_dialog.save_btn.isDefault() is False
+        assert joblog_dialog.save_btn.autoDefault() is False
+        joblog_dialog.job_type_combo.setCurrentText("Interpretation")
+        app.processEvents()
+        assert joblog_dialog.service_group.isVisible() is True
+        joblog_dialog.job_type_combo.setCurrentText("Translation")
+        app.processEvents()
+        assert joblog_dialog.service_group.isVisible() is False
+        joblog_dialog.case_entity_combo.addItem("Case Entity")
+        joblog_dialog.case_entity_combo.setCurrentText("Case Entity")
+        joblog_dialog.case_city_combo.addItem("Beja")
+        joblog_dialog.case_city_combo.setCurrentText("Beja")
+        joblog_dialog.service_entity_combo.addItem("Different Entity")
+        joblog_dialog.service_entity_combo.setCurrentText("Different Entity")
+        joblog_dialog.service_city_combo.addItem("Serpa")
+        joblog_dialog.service_city_combo.setCurrentText("Serpa")
+        joblog_dialog.translation_date_edit.setText("2026-03-13")
+        joblog_dialog.service_date_edit.setText("2026-03-14")
+        payload = joblog_dialog._normalized_payload()
+        assert payload["service_entity"] == "Case Entity"
+        assert payload["service_city"] == "Beja"
+        assert payload["service_date"] == "2026-03-13"
     finally:
         joblog_dialog.close()
         joblog_dialog.deleteLater()
@@ -6290,7 +6444,10 @@ def test_edit_joblog_dialog_interpretation_mode_hides_translation_only_fields(tm
     try:
         dialog.show()
         app.processEvents()
+        assert isinstance(dialog.translation_date_edit, GuardedDateEdit)
         assert dialog.primary_date_label.text() == "Service date"
+        dialog.translation_date_edit.setCalendarDate(QDate(2026, 3, 8))
+        assert dialog.translation_date_edit.text() == "2026-03-08"
         assert dialog.lang_edit.isVisible() is False
         assert dialog.pages_edit.isVisible() is False
         assert dialog.word_count_edit.isVisible() is False
@@ -6299,6 +6456,64 @@ def test_edit_joblog_dialog_interpretation_mode_hides_translation_only_fields(tm
         assert dialog.finance_section.isVisible() is False
         assert dialog.photo_translation_check.isVisible() is False
         assert dialog.photo_hint.text() == "Photo autofill ready."
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_save_to_joblog_dialog_return_key_saves_without_default_button(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    seed = JobLogSeed(
+        completed_at="2026-03-05T10:00:00",
+        translation_date="2026-03-05",
+        job_type="Translation",
+        case_number="ABC-1",
+        court_email="court@example.pt",
+        case_entity="Case Entity",
+        case_city="Beja",
+        service_entity="Case Entity",
+        service_city="Beja",
+        service_date="2026-03-05",
+        lang="FR",
+        pages=3,
+        word_count=1000,
+        rate_per_word=0.08,
+        expected_total=80.0,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="run-1",
+        target_lang="FR",
+        total_tokens=5000,
+        estimated_api_cost=2.5,
+        quality_risk_score=0.2,
+        profit=77.5,
+        pdf_path=None,
+        output_docx=tmp_path / "translated.docx",
+    )
+    captured: dict[str, object] = {}
+    def _fake_insert_job_run(_conn, payload):
+        captured["payload"] = payload
+        return 1
+
+    monkeypatch.setattr(dialogs_module, "insert_job_run", _fake_insert_job_run)
+    monkeypatch.setattr(dialogs_module, "_save_joblog_settings_bundle", lambda *args, **kwargs: None)
+
+    dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
+    try:
+        dialog.show()
+        dialog.case_number_edit.setFocus()
+        app.processEvents()
+        QTest.keyClick(dialog.case_number_edit, Qt.Key.Key_Return)
+        app.processEvents()
+        assert "payload" in captured
+        assert dialog.result() == QDialog.DialogCode.Accepted
+        assert dialog.save_btn.isDefault() is False
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -6744,16 +6959,35 @@ def test_joblog_window_inline_edit_uses_combo_and_text_editors_and_saves(tmp_pat
 
     window = QtJobLogWindow(parent=None, db_path=db_path)
     try:
+        window._visible_columns = ["translation_date", "service_date", "job_type", "pages", "case_number"]
+        window._apply_visible_columns()
         window._on_table_cell_double_clicked(0, window._table_column_index("job_type"))
         job_type_widget = window.table.cellWidget(0, window._table_column_index("job_type"))
+        translation_date_widget = window.table.cellWidget(0, window._table_column_index("translation_date"))
+        service_date_widget = window.table.cellWidget(0, window._table_column_index("service_date"))
         pages_widget = window.table.cellWidget(0, window._table_column_index("pages"))
-        assert isinstance(job_type_widget, QComboBox)
+        assert isinstance(job_type_widget, NoWheelComboBox)
+        assert job_type_widget.isEditable() is False
+        assert isinstance(translation_date_widget, GuardedDateEdit)
+        assert isinstance(service_date_widget, GuardedDateEdit)
+        inline_translation_calendar = translation_date_widget.calendarWidget()
+        inline_service_calendar = service_date_widget.calendarWidget()
+        assert inline_translation_calendar.firstDayOfWeek() == Qt.DayOfWeek.Monday
+        assert inline_service_calendar.firstDayOfWeek() == Qt.DayOfWeek.Monday
+        assert inline_translation_calendar.horizontalHeaderFormat() == QCalendarWidget.HorizontalHeaderFormat.ShortDayNames
+        inline_translation_calendar.setCurrentPage(2026, 3)
+        app.processEvents()
+        assert (
+            inline_translation_calendar.dateTextFormat(QDate(2026, 2, 28)).foreground().color().name().lower()
+            == CALENDAR_WEEKEND_COLOR.lower()
+        )
         assert isinstance(pages_widget, QLineEdit)
         assert window.refresh_btn.isEnabled() is False
         assert window.columns_btn.isEnabled() is False
 
-        assert isinstance(job_type_widget, QComboBox)
         job_type_widget.setCurrentText("Interpretation")
+        translation_date_widget.setCalendarDate(QDate(2026, 3, 11))
+        service_date_widget.setCalendarDate(QDate(2026, 3, 12))
         assert isinstance(pages_widget, QLineEdit)
         pages_widget.setText("9")
 
@@ -6765,12 +6999,14 @@ def test_joblog_window_inline_edit_uses_combo_and_text_editors_and_saves(tmp_pat
 
         with open_job_log(db_path) as conn:
             row = conn.execute(
-                "SELECT job_type, pages, case_number FROM job_runs WHERE id = 1"
+                "SELECT job_type, pages, case_number, translation_date, service_date FROM job_runs WHERE id = 1"
             ).fetchone()
         assert row is not None
         assert row[0] == "Interpretation"
         assert int(row[1]) == 9
         assert row[2] == "updated-case"
+        assert row[3] == "2026-03-11"
+        assert row[4] == "2026-03-12"
     finally:
         window.close()
         window.deleteLater()
