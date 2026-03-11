@@ -178,6 +178,8 @@ Use `Tools > View Job Log` when you want to review or correct saved rows later.
 5. Drag a column divider to resize it. Double-click the divider if you want that column auto-fitted again.
 6. If the Job Log becomes wider than the window, use the horizontal scrollbar instead of squeezing the headers.
 7. The app remembers your manual Job Log column widths.
+8. In the full edit dialog, fixed-choice fields such as `Job type`, `Lang`, and saved entity/city lists are picked from dropdowns instead of being typed directly. Use `Add...` when you need a new saved entity or city.
+9. Editable dates still accept `YYYY-MM-DD`, but the app now also gives you a calendar popup. The calendar starts on Monday.
 
 ## Interpretation Honorarios
 Use this flow when you need a `Requerimento de Honorários` for interpreting work rather than a translated document.
@@ -289,37 +291,38 @@ Queue mode writes these sidecar files next to the manifest:
 - `<manifest_stem>.queue_summary.json`
 
 ## Troubleshooting
-1. If the desktop app does not open from terminal, use the real GUI entrypoint: `.\.venv311\Scripts\python.exe -m legalpdf_translate.qt_app`.
-2. If setup commands fail with `html.entities` or `idna` import errors, run `powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate`, then activate `. .\.venv311\Scripts\Activate.ps1`.
-3. If output is missing pages, check if run stopped early and use resume.
-4. If run is slow, lower worker count and retry.
-5. If text quality is poor, run Analyze first and inspect OCR routing or advisor recommendations before translating again.
-6. If terminology is inconsistent, review glossary settings and rerun affected pages.
-7. If no advisor appears after Analyze, the app may have found no strong signal for a better OCR/image setting.
-8. If queue mode will not start, confirm the manifest file exists and each job has valid PDF/output information.
-9. If a queue was interrupted, rerun it with the same manifest; completed jobs should be skipped automatically.
-10. If the Review Queue is empty, that means no pages crossed the app's current risk threshold.
-11. OCR can improve difficult scans, but it still depends on source quality and cannot fully repair a badly scanned page.
-12. For OCR-heavy runs, start with pages `1-2`, then `3-4`, then `5-7`.
-13. If you click `Cancel and wait`, the app now waits only for the active request deadline instead of appearing indefinitely frozen.
-14. If a run stops partially, open `Generate Run Report` and the run folder before retrying. The stop dialog now includes suspected cause, halt reason, and request timing details when available.
-15. If a historical honorários Gmail draft still asks you to pick the translated DOCX, that means the row has no stored artifact path and exact `run_id` recovery did not find one unique valid match. After one successful manual selection, the row should be healed and stop asking again.
-16. If `Autofill from PDF header` is available on an interpretation row without an attached source PDF, that is expected. The app now asks you to choose the PDF manually for that autofill pass.
-17. If an interpretation row shows the wrong travel distance, check the `Service city` first. The saved KM value is keyed to that service city.
-18. If Gmail intake says the app is not listening, confirm the bridge is enabled in Settings. A normal toolbar click can auto-start the app, so repeated listener errors usually mean a bridge or launch-target problem instead of “app closed”.
-19. If the app shows `Gmail intake bridge unavailable`, treat that as a port/process conflict first. The listener on `127.0.0.1:<port>` must belong to `python.exe -m legalpdf_translate.qt_app`, not `pytest`.
-20. If Gmail intake says auto-launch is unavailable from this checkout, refresh the extension diagnostics and verify the native host can still see this repo worktree.
-21. If Gmail intake says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
-22. If Gmail intake cannot identify the open Gmail message, collapse extra messages and leave exactly one expanded message visible.
-23. If the Gmail review dialog shows no files, the email likely had no supported attachments or Gmail exposed only inline/signature/media parts.
-24. If you cancel `Save to Job Log` during a Gmail batch, the remaining attachments stop by design.
-25. If the Gmail batch warns that case/court metadata differ, split that email into separate batches instead of forcing one reply.
-26. If you skip or fail honorários generation at the end of a Gmail batch, the app does not create the Gmail reply draft in V1.
-27. A WSL-only `gog` smoke is not enough for final Gmail intake validation. The signed-in browser, Windows app, and Windows `gog` must be checked on the same host.
-28. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets.
-29. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
-30. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
-31. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
+1. Easiest manual launch on Windows: double-click `Launch LegalPDF Translate.bat` in the repo root.
+2. If the desktop app does not open from terminal, use the real GUI entrypoint: `.\.venv311\Scripts\python.exe -m legalpdf_translate.qt_app`.
+3. If setup commands fail with `html.entities` or `idna` import errors, run `powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate`, then activate `. .\.venv311\Scripts\Activate.ps1`.
+4. If output is missing pages, check if run stopped early and use resume.
+5. If run is slow, lower worker count and retry.
+6. If text quality is poor, run Analyze first and inspect OCR routing or advisor recommendations before translating again.
+7. If terminology is inconsistent, review glossary settings and rerun affected pages.
+8. If no advisor appears after Analyze, the app may have found no strong signal for a better OCR/image setting.
+9. If queue mode will not start, confirm the manifest file exists and each job has valid PDF/output information.
+10. If a queue was interrupted, rerun it with the same manifest; completed jobs should be skipped automatically.
+11. If the Review Queue is empty, that means no pages crossed the app's current risk threshold.
+12. OCR can improve difficult scans, but it still depends on source quality and cannot fully repair a badly scanned page.
+13. For OCR-heavy runs, start with pages `1-2`, then `3-4`, then `5-7`.
+14. If you click `Cancel and wait`, the app now waits only for the active request deadline instead of appearing indefinitely frozen.
+15. If a run stops partially, open `Generate Run Report` and the run folder before retrying. The stop dialog now includes suspected cause, halt reason, and request timing details when available.
+16. If a historical honorários Gmail draft still asks you to pick the translated DOCX, that means the row has no stored artifact path and exact `run_id` recovery did not find one unique valid match. After one successful manual selection, the row should be healed and stop asking again.
+17. If `Autofill from PDF header` is available on an interpretation row without an attached source PDF, that is expected. The app now asks you to choose the PDF manually for that autofill pass.
+18. If an interpretation row shows the wrong travel distance, check the `Service city` first. The saved KM value is keyed to that service city.
+19. If Gmail intake says the app is not listening, confirm the bridge is enabled in Settings. A normal toolbar click can auto-start the app, so repeated listener errors usually mean a bridge or launch-target problem instead of “app closed”.
+20. If the app shows `Gmail intake bridge unavailable`, treat that as a port/process conflict first. The listener on `127.0.0.1:<port>` must belong to `python.exe -m legalpdf_translate.qt_app`, not `pytest`.
+21. If Gmail intake says auto-launch is unavailable from this checkout, refresh the extension diagnostics and verify the native host can still see this repo worktree.
+22. If Gmail intake says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
+23. If Gmail intake cannot identify the open Gmail message, collapse extra messages and leave exactly one expanded message visible.
+24. If the Gmail review dialog shows no files, the email likely had no supported attachments or Gmail exposed only inline/signature/media parts.
+25. If you cancel `Save to Job Log` during a Gmail batch, the remaining attachments stop by design.
+26. If the Gmail batch warns that case/court metadata differ, split that email into separate batches instead of forcing one reply.
+27. If you skip or fail honorários generation at the end of a Gmail batch, the app does not create the Gmail reply draft in V1.
+28. A WSL-only `gog` smoke is not enough for final Gmail intake validation. The signed-in browser, Windows app, and Windows `gog` must be checked on the same host.
+29. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets.
+30. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
+31. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
+32. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.

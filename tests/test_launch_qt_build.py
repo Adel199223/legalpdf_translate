@@ -290,3 +290,9 @@ def test_launch_qt_build_rejects_branch_missing_approved_base_floor_even_with_ov
     )
     assert proc.returncode == 1
     assert "does not contain the approved base floor" in proc.stderr
+
+
+def test_to_windows_path_accepts_plain_string_paths() -> None:
+    from tooling.launch_qt_build import _to_windows_path
+
+    assert _to_windows_path(r"C:\repo\src") == r"C:\repo\src"

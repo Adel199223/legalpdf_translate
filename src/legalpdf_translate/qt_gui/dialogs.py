@@ -128,7 +128,7 @@ from legalpdf_translate.ocr_engine import (
     test_ocr_provider_connection,
 )
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
-from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
+from legalpdf_translate.qt_gui.guarded_inputs import GuardedDateEdit, NoWheelComboBox, NoWheelSpinBox
 from legalpdf_translate.qt_gui.window_adaptive import CollapsibleSection, ResponsiveWindowController
 from legalpdf_translate.qt_gui.worker import (
     GmailAttachmentPreviewBootstrapResult,
@@ -258,6 +258,7 @@ JOBLOG_INLINE_COMBO_COLUMNS = {
     "lang",
     "target_lang",
 }
+JOBLOG_INLINE_DATE_COLUMNS = {"translation_date", "service_date"}
 JOBLOG_INLINE_INTEGER_COLUMNS = {"pages", "word_count", "total_tokens"}
 JOBLOG_INLINE_FLOAT_COLUMNS = {
     "travel_km_outbound",
@@ -441,6 +442,14 @@ def _validate_joblog_date(value: str, label: str) -> str:
     return cleaned
 
 
+def _widget_text_value(widget: Any) -> str:
+    if hasattr(widget, "currentText"):
+        return str(widget.currentText())
+    if hasattr(widget, "text"):
+        return str(widget.text())
+    return ""
+
+
 def _normalize_joblog_payload(
     *,
     seed: JobLogSeed,
@@ -478,9 +487,13 @@ def _normalize_joblog_payload(
     case_city = raw_values["case_city"].strip()
     service_entity = raw_values["service_entity"].strip()
     service_city = raw_values["service_city"].strip()
-    if service_same_checked:
+    if is_interpretation and service_same_checked:
         service_entity = case_entity
         service_city = case_city
+    if not is_interpretation:
+        service_entity = case_entity
+        service_city = case_city
+        service_date = translation_date
 
     if expected_total == 0.0 and rate > 0:
         expected_total = round(rate * float(word_count), 2)
@@ -1373,7 +1386,8 @@ class QtHonorariosExportDialog(QDialog):
             )
             self.service_same_check = QCheckBox("Service same as Case")
             self.service_same_check.setChecked(not has_explicit_different_service)
-            self.service_date_edit = QLineEdit(self._initial_draft.service_date)
+            self.service_date_edit = GuardedDateEdit(self._initial_draft.service_date)
+            self.service_date_edit.setPlaceholderText("YYYY-MM-DD")
             self.service_entity_edit = QLineEdit(self._initial_draft.service_entity)
             self.service_city_edit = QLineEdit(self._initial_draft.service_city)
             self.use_service_location_check = QCheckBox("Mention explicit service location in body text")
@@ -2003,13 +2017,55 @@ class QtSaveToJobLogDialog(QDialog):
     def saved_result(self) -> JobLogSavedResult | None:
         return self._saved_result
 
+    def _field_label(self, text: str) -> QLabel:
+        return QLabel(text, objectName="FieldLabel")
+
+    def _normalized_combo_values(self, values: list[str], current: str) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            cleaned = str(value).strip()
+            if cleaned and cleaned not in seen:
+                normalized.append(cleaned)
+                seen.add(cleaned)
+        current_cleaned = current.strip()
+        if current_cleaned and current_cleaned not in seen:
+            normalized.append(current_cleaned)
+        return normalized
+
     def _fill_combo(self, combo: QComboBox, values: list[str]) -> None:
         current = combo.currentText().strip()
         combo.blockSignals(True)
         combo.clear()
-        combo.addItems(values)
-        combo.setCurrentText(current)
+        combo.addItems(self._normalized_combo_values(values, current))
+        if current:
+            index = combo.findText(current)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+            elif combo.isEditable():
+                combo.setCurrentText(current)
+        else:
+            combo.setCurrentIndex(-1)
         combo.blockSignals(False)
+
+    def _selection_combo(self, values: list[str], current: str) -> NoWheelComboBox:
+        combo = NoWheelComboBox()
+        combo.setEditable(False)
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow)
+        combo.addItems(self._normalized_combo_values(values, current))
+        if current.strip():
+            combo.setCurrentText(current.strip())
+        else:
+            combo.setCurrentIndex(-1)
+        return combo
+
+    def _editable_vocab_combo(self, values: list[str], current: str) -> NoWheelComboBox:
+        combo = NoWheelComboBox()
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        combo.addItems(self._normalized_combo_values(values, current))
+        combo.setCurrentText(current.strip())
+        return combo
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -2028,28 +2084,35 @@ class QtSaveToJobLogDialog(QDialog):
         scroll_root.setSpacing(10)
 
         top = QFrame(scroll_content)
+        top.setObjectName("ShellPanel")
         top_grid = QGridLayout(top)
-        top_grid.addWidget(QLabel("Job type"), 0, 0)
-        self.job_type_combo = QComboBox()
-        self.job_type_combo.setEditable(True)
-        self.job_type_combo.addItems(list(self._settings["vocab_job_types"]))
-        self.job_type_combo.setCurrentText(self._seed.job_type or "Translation")
+        top_grid.setContentsMargins(16, 16, 16, 16)
+        top_grid.setHorizontalSpacing(10)
+        top_grid.setVerticalSpacing(10)
+        top_grid.addWidget(self._field_label("Job type"), 0, 0)
+        self.job_type_combo = self._selection_combo(
+            list(self._settings["vocab_job_types"]),
+            self._seed.job_type or "Translation",
+        )
         top_grid.addWidget(self.job_type_combo, 0, 1)
-        self.primary_date_label = QLabel("Translation date")
+        self.primary_date_label = self._field_label("Translation date")
         top_grid.addWidget(self.primary_date_label, 0, 2)
-        self.translation_date_edit = QLineEdit(
+        self.translation_date_edit = GuardedDateEdit(
             self._seed.service_date if _is_interpretation_job_type(self._seed.job_type) else self._seed.translation_date
         )
+        self.translation_date_edit.setPlaceholderText("YYYY-MM-DD")
         top_grid.addWidget(self.translation_date_edit, 0, 3)
-        self.lang_label = QLabel("Lang")
+        self.lang_label = self._field_label("Lang")
         top_grid.addWidget(self.lang_label, 1, 0)
-        self.lang_edit = QLineEdit(self._seed.lang)
+        supported_langs = [str(lang).strip().upper() for lang in supported_target_langs()]
+        self.lang_edit = self._selection_combo(supported_langs, self._seed.lang)
         top_grid.addWidget(self.lang_edit, 1, 1)
-        self.pages_label = QLabel("Pages")
+        self.pages_label = self._field_label("Pages")
         top_grid.addWidget(self.pages_label, 1, 2)
         self.pages_edit = QLineEdit(str(int(self._seed.pages)))
+        self.pages_edit.setReadOnly(True)
         top_grid.addWidget(self.pages_edit, 1, 3)
-        self.words_label = QLabel("Words")
+        self.words_label = self._field_label("Words")
         top_grid.addWidget(self.words_label, 1, 4)
         self.word_count_edit = QLineEdit(str(int(self._seed.word_count)))
         top_grid.addWidget(self.word_count_edit, 1, 5)
@@ -2060,38 +2123,39 @@ class QtSaveToJobLogDialog(QDialog):
 
         case_group = QGroupBox("CASE (belongs to)", scroll_content)
         case_form = QGridLayout(case_group)
-        case_form.addWidget(QLabel("Case entity"), 0, 0)
-        self.case_entity_combo = QComboBox()
-        self.case_entity_combo.setEditable(True)
-        self.case_entity_combo.addItems(list(self._settings["vocab_case_entities"]))
-        self.case_entity_combo.setCurrentText(self._seed.case_entity)
+        case_form.addWidget(self._field_label("Case entity"), 0, 0)
+        self.case_entity_combo = self._selection_combo(
+            list(self._settings["vocab_case_entities"]),
+            self._seed.case_entity,
+        )
         case_form.addWidget(self.case_entity_combo, 0, 1)
         self.add_case_entity_btn = QPushButton("Add...")
         case_form.addWidget(self.add_case_entity_btn, 0, 2)
 
-        case_form.addWidget(QLabel("Case city"), 0, 3)
-        self.case_city_combo = QComboBox()
-        self.case_city_combo.setEditable(True)
-        self.case_city_combo.addItems(list(self._settings["vocab_cities"]))
-        self.case_city_combo.setCurrentText(self._seed.case_city)
+        case_form.addWidget(self._field_label("Case city"), 0, 3)
+        self.case_city_combo = self._selection_combo(
+            list(self._settings["vocab_cities"]),
+            self._seed.case_city,
+        )
         case_form.addWidget(self.case_city_combo, 0, 4)
         self.add_case_city_btn = QPushButton("Add...")
         case_form.addWidget(self.add_case_city_btn, 0, 5)
 
-        case_form.addWidget(QLabel("Case number"), 1, 0)
+        case_form.addWidget(self._field_label("Case number"), 1, 0)
         self.case_number_edit = QLineEdit(self._seed.case_number)
         case_form.addWidget(self.case_number_edit, 1, 1, 1, 2)
-        case_form.addWidget(QLabel("Court Email"), 1, 3)
-        self.court_email_combo = QComboBox()
-        self.court_email_combo.setEditable(True)
-        self.court_email_combo.addItems(list(self._settings["vocab_court_emails"]))
-        self.court_email_combo.setCurrentText(self._seed.court_email)
+        case_form.addWidget(self._field_label("Court Email"), 1, 3)
+        self.court_email_combo = self._editable_vocab_combo(
+            list(self._settings["vocab_court_emails"]),
+            self._seed.court_email,
+        )
         case_form.addWidget(self.court_email_combo, 1, 4, 1, 2)
         case_form.setColumnStretch(1, 1)
         case_form.setColumnStretch(4, 1)
         scroll_root.addWidget(case_group)
 
         service_group = QGroupBox("SERVICE (provided to)", scroll_content)
+        self.service_group = service_group
         service_grid = QGridLayout(service_group)
         self.service_same_check = QCheckBox("Service same as Case")
         has_seed_service_values = any(
@@ -2113,27 +2177,28 @@ class QtSaveToJobLogDialog(QDialog):
             )
         service_grid.addWidget(self.service_same_check, 0, 0, 1, 2)
 
-        service_grid.addWidget(QLabel("Service entity"), 1, 0)
-        self.service_entity_combo = QComboBox()
-        self.service_entity_combo.setEditable(True)
-        self.service_entity_combo.addItems(list(self._settings["vocab_service_entities"]))
-        self.service_entity_combo.setCurrentText(self._seed.service_entity)
+        service_grid.addWidget(self._field_label("Service entity"), 1, 0)
+        self.service_entity_combo = self._selection_combo(
+            list(self._settings["vocab_service_entities"]),
+            self._seed.service_entity,
+        )
         service_grid.addWidget(self.service_entity_combo, 1, 1)
         self.add_service_entity_btn = QPushButton("Add...")
         service_grid.addWidget(self.add_service_entity_btn, 1, 2)
 
-        service_grid.addWidget(QLabel("Service city"), 1, 3)
-        self.service_city_combo = QComboBox()
-        self.service_city_combo.setEditable(True)
-        self.service_city_combo.addItems(list(self._settings["vocab_cities"]))
-        self.service_city_combo.setCurrentText(self._seed.service_city)
+        service_grid.addWidget(self._field_label("Service city"), 1, 3)
+        self.service_city_combo = self._selection_combo(
+            list(self._settings["vocab_cities"]),
+            self._seed.service_city,
+        )
         service_grid.addWidget(self.service_city_combo, 1, 4)
         self.add_service_city_btn = QPushButton("Add...")
         service_grid.addWidget(self.add_service_city_btn, 1, 5)
 
-        self.service_date_label = QLabel("Service date (YYYY-MM-DD)")
+        self.service_date_label = self._field_label("Service date (YYYY-MM-DD)")
         service_grid.addWidget(self.service_date_label, 2, 0)
-        self.service_date_edit = QLineEdit(self._seed.service_date)
+        self.service_date_edit = GuardedDateEdit(self._seed.service_date)
+        self.service_date_edit.setPlaceholderText("YYYY-MM-DD")
         service_grid.addWidget(self.service_date_edit, 2, 1)
         service_grid.setColumnStretch(1, 1)
         service_grid.setColumnStretch(4, 1)
@@ -2180,23 +2245,23 @@ class QtSaveToJobLogDialog(QDialog):
         metrics_panel.setObjectName("ShellPanel")
         metrics_form = QGridLayout(metrics_panel)
         metrics_form.setContentsMargins(12, 12, 12, 12)
-        metrics_form.addWidget(QLabel("Run ID"), 0, 0)
+        metrics_form.addWidget(self._field_label("Run ID"), 0, 0)
         self.run_id_edit = QLineEdit(self._seed.run_id)
         metrics_form.addWidget(self.run_id_edit, 0, 1)
-        metrics_form.addWidget(QLabel("Target lang"), 0, 2)
+        metrics_form.addWidget(self._field_label("Target lang"), 0, 2)
         self.target_lang_edit = QLineEdit(self._seed.target_lang)
         metrics_form.addWidget(self.target_lang_edit, 0, 3)
-        metrics_form.addWidget(QLabel("Total tokens"), 1, 0)
+        metrics_form.addWidget(self._field_label("Total tokens"), 1, 0)
         self.total_tokens_edit = QLineEdit(
             "" if self._seed.total_tokens is None else str(int(self._seed.total_tokens))
         )
         metrics_form.addWidget(self.total_tokens_edit, 1, 1)
-        metrics_form.addWidget(QLabel("Est. API cost"), 1, 2)
+        metrics_form.addWidget(self._field_label("Est. API cost"), 1, 2)
         self.estimated_api_cost_edit = QLineEdit(
             "" if self._seed.estimated_api_cost is None else f"{float(self._seed.estimated_api_cost):.2f}"
         )
         metrics_form.addWidget(self.estimated_api_cost_edit, 1, 3)
-        metrics_form.addWidget(QLabel("Quality risk score"), 2, 0)
+        metrics_form.addWidget(self._field_label("Quality risk score"), 2, 0)
         self.quality_risk_score_edit = QLineEdit(
             "" if self._seed.quality_risk_score is None else f"{float(self._seed.quality_risk_score):.4f}"
         )
@@ -2211,19 +2276,19 @@ class QtSaveToJobLogDialog(QDialog):
         finance_panel.setObjectName("ShellPanel")
         finance_form = QGridLayout(finance_panel)
         finance_form.setContentsMargins(12, 12, 12, 12)
-        finance_form.addWidget(QLabel("Rate/word"), 0, 0)
+        finance_form.addWidget(self._field_label("Rate/word"), 0, 0)
         self.rate_edit = QLineEdit(f"{self._seed.rate_per_word:.4f}")
         finance_form.addWidget(self.rate_edit, 0, 1)
-        finance_form.addWidget(QLabel("Expected total"), 0, 2)
+        finance_form.addWidget(self._field_label("Expected total"), 0, 2)
         self.expected_total_edit = QLineEdit(f"{self._seed.expected_total:.2f}")
         finance_form.addWidget(self.expected_total_edit, 0, 3)
-        finance_form.addWidget(QLabel("Amount paid"), 1, 0)
+        finance_form.addWidget(self._field_label("Amount paid"), 1, 0)
         self.amount_paid_edit = QLineEdit(f"{self._seed.amount_paid:.2f}")
         finance_form.addWidget(self.amount_paid_edit, 1, 1)
-        finance_form.addWidget(QLabel("API cost"), 1, 2)
+        finance_form.addWidget(self._field_label("API cost"), 1, 2)
         self.api_cost_edit = QLineEdit(f"{self._seed.api_cost:.2f}")
         finance_form.addWidget(self.api_cost_edit, 1, 3)
-        finance_form.addWidget(QLabel("Profit"), 2, 0)
+        finance_form.addWidget(self._field_label("Profit"), 2, 0)
         self.profit_edit = QLineEdit(f"{self._seed.profit:.2f}")
         finance_form.addWidget(self.profit_edit, 2, 1)
         finance_form.setColumnStretch(1, 1)
@@ -2250,6 +2315,9 @@ class QtSaveToJobLogDialog(QDialog):
         actions.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
         self.save_btn = QPushButton("Update" if self._edit_row_id is not None else "Save")
+        self.save_btn.setObjectName("PrimaryButton")
+        self.save_btn.setDefault(False)
+        self.save_btn.setAutoDefault(False)
         actions.addWidget(self.cancel_btn)
         actions.addWidget(self.save_btn)
         root.addWidget(self.action_bar)
@@ -2257,6 +2325,11 @@ class QtSaveToJobLogDialog(QDialog):
         self.open_translation_btn.clicked.connect(self._open_translation_docx)
         self.cancel_btn.clicked.connect(self.reject)
         self.save_btn.clicked.connect(self._save)
+        self._save_return_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Return), self)
+        self._save_enter_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Enter), self)
+        for shortcut in (self._save_return_shortcut, self._save_enter_shortcut):
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(self._trigger_save_shortcut)
         self.honorarios_btn.clicked.connect(self._open_honorarios_dialog)
         self.job_type_combo.currentTextChanged.connect(self._refresh_photo_controls)
         self.job_type_combo.currentTextChanged.connect(self._refresh_interpretation_mode_state)
@@ -2363,6 +2436,7 @@ class QtSaveToJobLogDialog(QDialog):
     def _refresh_interpretation_mode_state(self) -> None:
         is_interpretation = _is_interpretation_job_type(self.job_type_combo.currentText().strip())
         self.interpretation_group.setVisible(is_interpretation)
+        self.service_group.setVisible(is_interpretation)
         self.primary_date_label.setText("Service date" if is_interpretation else "Translation date")
         self.lang_label.setVisible(not is_interpretation)
         self.lang_edit.setVisible(not is_interpretation)
@@ -2388,6 +2462,16 @@ class QtSaveToJobLogDialog(QDialog):
         if is_interpretation:
             self.service_date_edit.setText(self.translation_date_edit.text().strip())
         self._apply_interpretation_distance_defaults(prompt_if_missing=False)
+
+    def _trigger_save_shortcut(self) -> None:
+        popup = QApplication.activePopupWidget()
+        if popup is not None and popup is not self:
+            return
+        focus_widget = QApplication.focusWidget()
+        if isinstance(focus_widget, QPlainTextEdit):
+            return
+        if self.save_btn.isEnabled():
+            self._save()
 
     def _can_autofill_from_pdf_header(self) -> bool:
         if self._seed.pdf_path is None:
@@ -2793,8 +2877,8 @@ class QtSaveToJobLogDialog(QDialog):
             "service_date": primary_date if is_interpretation else self.service_date_edit.text(),
             "travel_km_outbound": self.travel_km_outbound_edit.text(),
             "travel_km_return": self.travel_km_outbound_edit.text(),
-            "lang": self.lang_edit.text(),
-            "target_lang": self.target_lang_edit.text(),
+            "lang": _widget_text_value(self.lang_edit),
+            "target_lang": _widget_text_value(self.target_lang_edit),
             "run_id": self.run_id_edit.text(),
             "pages": self.pages_edit.text(),
             "word_count": self.word_count_edit.text(),
@@ -3104,10 +3188,19 @@ class QtJobLogWindow(QDialog):
 
     def _build_inline_editor(self, column_name: str, row_data: Mapping[str, object]) -> QWidget:
         value = "" if row_data.get(column_name) is None else str(row_data.get(column_name))
+        if column_name in JOBLOG_INLINE_DATE_COLUMNS:
+            edit = GuardedDateEdit(value, self.table)
+            edit.setPlaceholderText("YYYY-MM-DD")
+            return edit
         if column_name in JOBLOG_INLINE_COMBO_COLUMNS:
-            combo = QComboBox(self.table)
-            combo.setEditable(True)
+            combo = NoWheelComboBox(self.table)
             combo.addItems(self._combo_values_for_column(column_name))
+            is_editable = column_name == "court_email"
+            combo.setEditable(is_editable)
+            if is_editable:
+                combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+            elif value and combo.findText(value) == -1:
+                combo.addItem(value)
             combo.setCurrentText(value)
             return combo
         edit = QLineEdit(value, self.table)
@@ -3154,10 +3247,7 @@ class QtJobLogWindow(QDialog):
             for column_name in JOBLOG_COLUMNS
         }
         for column_name, widget in self._inline_edit_widgets.items():
-            if isinstance(widget, QComboBox):
-                raw_values[column_name] = widget.currentText()
-            elif isinstance(widget, QLineEdit):
-                raw_values[column_name] = widget.text()
+            raw_values[column_name] = _widget_text_value(widget)
         return raw_values
 
     def _save_inline_edit(self, row_id: int) -> None:

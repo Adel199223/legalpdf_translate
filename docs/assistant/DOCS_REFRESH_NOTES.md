@@ -1143,3 +1143,13 @@ Verification commands/results:
   - `python -m compileall src tests` -> `OK`
   - `python tooling/qt_render_review.py --outdir tmp/qt_ui_review --preview reference_sample` -> `wide/medium/narrow` render set generated
   - `dart run tooling/validate_agent_docs.dart` -> `PASS`
+- Ran a touched-scope Assistant Docs Sync for the launcher and dashboard/job-log polish publish branch.
+- Synced current-truth and user-facing guidance for:
+  - the repo-root beginner launcher `Launch LegalPDF Translate.bat`
+  - shared dashboard combo-popup polish, including compact `EN/FR/AR` closed fields and readable full-name popups
+  - selection-only fixed-vocabulary fields in `Edit Job Log Entry`
+  - shared Monday-first date pickers across Save/Edit Job Log, Job Log inline date editing, and interpretation honorários export
+  - translation-row Job Log cleanup that hides the separate service section in full edit mode
+- Validation for this pass:
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests/test_qt_app_state.py tests/test_honorarios_docx.py tests/test_qt_main_smoke.py tests/test_launch_qt_build.py tests/test_windows_shortcut_scripts.py` -> `208 passed`
+  - `dart run tooling/validate_agent_docs.dart` -> `PASS`

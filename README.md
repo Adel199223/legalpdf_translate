@@ -53,6 +53,8 @@ python -m pytest -q
 python -m legalpdf_translate.qt_app
 ```
 
+Or, on Windows, double-click `Launch LegalPDF Translate.bat` in the repo root for the same canonical launch path without typing the command manually.
+
 ## Run CLI
 ```powershell
 legalpdf-translate --pdf input.pdf --lang EN --outdir out --effort high --effort-policy adaptive --images off --max-pages 5 --resume true --page-breaks true --keep-intermediates true --context-file ""

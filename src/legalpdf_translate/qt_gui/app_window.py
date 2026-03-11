@@ -998,11 +998,19 @@ class QtMainWindow(QMainWindow):
         setup_grid.addWidget(pdf_field, 0, 1)
 
         self.lang_combo = NoWheelComboBox()
-        self.lang_combo.addItems(["EN", "FR", "AR"])
+        for code, popup_label in [("EN", "English"), ("FR", "French"), ("AR", "Arabic")]:
+            self.lang_combo.addItem(code)
+            self.lang_combo.setItemData(
+                self.lang_combo.count() - 1,
+                int(Qt.AlignmentFlag.AlignCenter),
+                Qt.ItemDataRole.TextAlignmentRole,
+            )
+            self.lang_combo.setPopupLabel(self.lang_combo.count() - 1, popup_label)
         self.lang_combo.setProperty("embeddedField", True)
         self.lang_combo.setProperty("langField", True)
         self.lang_combo.setMinimumWidth(64)
         self.lang_combo.setMaximumWidth(72)
+        self.lang_icon_label = self._make_icon_label("resources/icons/dashboard/globe.svg", 20)
         self.flag_label = QLabel(objectName="FlagLabel")
         self.flag_label.setFixedSize(30, 20)
         self.flag_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1014,18 +1022,22 @@ class QtMainWindow(QMainWindow):
         self.lang_caret_btn.setIcon(self._icon("resources/icons/dashboard/caret_down.svg"))
         self.lang_caret_btn.setIconSize(QSize(12, 12))
         self.lang_caret_btn.setAutoRaise(False)
-        lang_field = QFrame(objectName="FieldChrome")
-        lang_field_layout = QHBoxLayout(lang_field)
+        self.lang_field = QFrame(objectName="FieldChrome")
+        lang_field_layout = QHBoxLayout(self.lang_field)
         lang_field_layout.setContentsMargins(14, 8, 12, 8)
         lang_field_layout.setSpacing(12)
-        lang_field_layout.addWidget(self._make_icon_label("resources/icons/dashboard/globe.svg", 20))
+        lang_field_layout.addWidget(self.lang_icon_label)
         lang_field_layout.addWidget(self.lang_combo, 0)
         lang_field_layout.addWidget(self.flag_label, 0)
         lang_field_layout.addStretch(1)
         lang_field_layout.addWidget(lang_divider, 0)
         lang_field_layout.addWidget(self.lang_caret_btn, 0)
+        self.lang_combo.register_state_mirror(self.lang_field, popup_on_click=True)
+        self.lang_combo.register_state_mirror(self.lang_icon_label, popup_on_click=True)
+        self.lang_combo.register_state_mirror(self.flag_label, popup_on_click=True)
+        self.lang_combo.register_state_mirror(self.lang_caret_btn)
         setup_grid.addWidget(QLabel("Target Language", objectName="FieldLabel"), 1, 0)
-        setup_grid.addWidget(lang_field, 1, 1)
+        setup_grid.addWidget(self.lang_field, 1, 1)
 
         self.outdir_edit = QLineEdit(placeholderText="Select output folder...")
         self.outdir_edit.setProperty("embeddedField", True)

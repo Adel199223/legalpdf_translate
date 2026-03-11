@@ -30,7 +30,7 @@ def run(argv: list[str] | None = None) -> int:
     app = QApplication(sys.argv if argv is None else argv)
     app.setApplicationName("LegalPDF Translate")
     app.setOrganizationName("LegalPDFTranslate")
-    app.setFont(QFont("Segoe UI", 12))
+    app.setFont(QFont("Segoe UI Variable", 12))
     app.setStyle("Fusion")
     settings = load_gui_settings()
     apply_app_appearance(app, theme=str(settings.get("ui_theme", "dark_futuristic")))
