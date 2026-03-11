@@ -506,6 +506,37 @@ def test_dashboard_card_can_expand_wider_than_stage_two_cap() -> None:
             app.quit()
 
 
+def test_wide_dashboard_frame_matches_centered_gemini_footprint() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window.show()
+        app.processEvents()
+        window.resize(1800, 1000)
+        app.processEvents()
+        window._update_card_max_width(viewport_width=1800)
+        app.processEvents()
+
+        assert window._layout_mode == "desktop_exact"
+        assert window.body_layout.direction() == QBoxLayout.Direction.LeftToRight
+        assert window.dashboard_frame.width() == 1200
+        assert window.dashboard_frame.width() < window.content_card.width()
+        assert window.dashboard_frame.x() == (window.content_card.width() - window.dashboard_frame.width()) // 2
+        assert window.hero_row_layout.contentsMargins().bottom() == 14
+        assert window.setup_panel.width() > window.progress_panel.width()
+        assert window.setup_panel.width() < int(window.progress_panel.width() * 1.3)
+        assert window.footer_card.width() < window.dashboard_frame.width()
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
 def test_dashboard_reflows_for_compact_width() -> None:
     app = QApplication.instance()
     owns_app = app is None
@@ -546,6 +577,8 @@ def test_dashboard_keeps_two_column_layout_for_medium_width() -> None:
         assert window._layout_mode == "desktop_compact"
         assert window.sidebar_frame.width() >= 118
         assert window.body_layout.direction() == QBoxLayout.Direction.LeftToRight
+        assert window.dashboard_frame.width() == 1100
+        assert window.dashboard_frame.x() == (window.content_card.width() - window.dashboard_frame.width()) // 2
     finally:
         window.close()
         window.deleteLater()
@@ -750,6 +783,55 @@ def test_source_pdf_pages_cluster_stays_readable() -> None:
     try:
         assert window.pages_label.text() == "Pages: -"
         assert window.pages_label.minimumWidth() >= 74
+        assert window.pdf_support_cluster.isHidden() is True
+        assert window.pdf_pages_divider.isHidden() is True
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_source_pdf_pages_cluster_returns_when_source_is_selected(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    pdf_path = tmp_path / "sample.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    try:
+        monkeypatch.setattr(app_window_module, "is_supported_source_file", lambda _path: True)
+        monkeypatch.setattr(app_window_module, "get_page_count", lambda _path: 25)
+        window.pdf_edit.setText(str(pdf_path))
+        app.processEvents()
+        assert window.pages_label.text() == "Pages: 25"
+        assert window.pdf_support_cluster.isHidden() is False
+        assert window.pdf_pages_divider.isHidden() is False
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_source_pdf_placeholder_shortens_in_compact_layouts() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        window.show()
+        app.processEvents()
+        window._update_card_max_width(viewport_width=1360)
+        app.processEvents()
+        assert window.pdf_edit.placeholderText() == "Select PDF or image..."
+        window._update_card_max_width(viewport_width=920)
+        app.processEvents()
+        assert window.pdf_edit.placeholderText() == "Select source..."
     finally:
         window.close()
         window.deleteLater()

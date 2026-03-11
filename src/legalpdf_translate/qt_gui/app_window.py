@@ -785,6 +785,7 @@ class QtMainWindow(QMainWindow):
         self._layout_mode = _LAYOUT_DESKTOP_EXACT
         self._applied_layout_mode: str | None = None
         self._last_content_card_width: int | None = None
+        self._last_dashboard_frame_width: int | None = None
         self._click_debug_enabled = _is_truthy_env(os.getenv("LEGALPDF_QT_CLICK_DEBUG"))
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
@@ -912,6 +913,7 @@ class QtMainWindow(QMainWindow):
         card_shell.setSpacing(16)
 
         hero_row = QGridLayout()
+        self.hero_row_layout = hero_row
         hero_row.setContentsMargins(0, 0, 0, 6)
         hero_row.setHorizontalSpacing(0)
         hero_row.setVerticalSpacing(0)
@@ -972,6 +974,7 @@ class QtMainWindow(QMainWindow):
         self.pages_label.setMinimumWidth(74)
         self.pages_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         pdf_support_cluster = QWidget()
+        self.pdf_support_cluster = pdf_support_cluster
         pdf_support_layout = QHBoxLayout(pdf_support_cluster)
         pdf_support_layout.setContentsMargins(0, 0, 0, 0)
         pdf_support_layout.setSpacing(8)
@@ -979,9 +982,11 @@ class QtMainWindow(QMainWindow):
         pdf_support_layout.addWidget(self.pdf_pages_icon_label, 0)
         pdf_support_layout.addWidget(self.pages_label, 0)
         pdf_divider = QFrame(objectName="InlineDivider")
+        self.pdf_pages_divider = pdf_divider
         pdf_divider.setFrameShape(QFrame.Shape.VLine)
         pdf_divider.setFixedHeight(28)
         pdf_btn_divider = QFrame(objectName="InlineDivider")
+        self.pdf_btn_divider = pdf_btn_divider
         pdf_btn_divider.setFrameShape(QFrame.Shape.VLine)
         pdf_btn_divider.setFixedHeight(28)
         pdf_field = QFrame(objectName="FieldChrome")
@@ -1257,7 +1262,14 @@ class QtMainWindow(QMainWindow):
         apply_primary_glow(self.footer_card, blur_radius=22)
         main_layout.addWidget(self.footer_card)
         dashboard_layout.addWidget(self.main_card)
-        card_shell.addWidget(self.dashboard_frame)
+        dashboard_row = QHBoxLayout()
+        self.dashboard_row_layout = dashboard_row
+        dashboard_row.setContentsMargins(0, 0, 0, 0)
+        dashboard_row.setSpacing(0)
+        dashboard_row.addStretch(1)
+        dashboard_row.addWidget(self.dashboard_frame, 0)
+        dashboard_row.addStretch(1)
+        card_shell.addLayout(dashboard_row)
 
         footer_meta_row = QHBoxLayout()
         footer_meta_row.setContentsMargins(8, 4, 0, 0)
@@ -1463,12 +1475,14 @@ class QtMainWindow(QMainWindow):
             dashboard_spacing = 22
             setup_panel_margins = (30, 24, 30, 24)
             progress_panel_margins = (28, 24, 28, 24)
-            field_label_width = 176
-            field_min_width = (260, 280)
-            body_spacing = 24
+            field_label_width = 154
+            field_min_width = (220, 230)
+            body_spacing = 18
             title_status_min_width = 148
-            progress_stretch = (10, 9)
-            progress_panel_min_width = 580
+            progress_stretch = (7, 6)
+            progress_panel_min_width = 500
+            hero_dashboard_gap = 30
+            dashboard_frame_width = 1200
         elif mode == _LAYOUT_DESKTOP_COMPACT:
             sidebar_width = 118
             nav_width = 100
@@ -1488,6 +1502,8 @@ class QtMainWindow(QMainWindow):
             title_status_min_width = 132
             progress_stretch = (9, 8)
             progress_panel_min_width = 500
+            hero_dashboard_gap = 22
+            dashboard_frame_width = 1100
         else:
             sidebar_width = 74
             nav_width = 58
@@ -1507,6 +1523,12 @@ class QtMainWindow(QMainWindow):
             title_status_min_width = 112
             progress_stretch = (0, 0)
             progress_panel_min_width = 0
+            hero_dashboard_gap = 16
+            dashboard_frame_width = 0
+
+        available_content_width = max(360, min(1760, width - scroll_margins[0] - scroll_margins[2]))
+        resolved_dashboard_width = min(dashboard_frame_width, available_content_width) if dashboard_frame_width > 0 else 0
+        hero_bottom_margin = max(0, hero_dashboard_gap - self.card_shell_layout.spacing())
 
         if self._applied_layout_mode != mode:
             self.sidebar_frame.setFixedWidth(sidebar_width)
@@ -1542,7 +1564,27 @@ class QtMainWindow(QMainWindow):
             self._configure_footer_layout(compact=mode == _LAYOUT_STACKED_COMPACT)
             self._applied_layout_mode = mode
 
+        self.hero_row_layout.setContentsMargins(0, 0, 0, hero_bottom_margin)
+        if mode == _LAYOUT_STACKED_COMPACT:
+            self.dashboard_row_layout.setStretch(0, 0)
+            self.dashboard_row_layout.setStretch(1, 1)
+            self.dashboard_row_layout.setStretch(2, 0)
+            self.dashboard_frame.setMinimumWidth(0)
+            self.dashboard_frame.setMaximumWidth(16777215)
+            self.dashboard_frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            self._last_dashboard_frame_width = None
+        else:
+            self.dashboard_row_layout.setStretch(0, 1)
+            self.dashboard_row_layout.setStretch(1, 0)
+            self.dashboard_row_layout.setStretch(2, 1)
+            if self._last_dashboard_frame_width != resolved_dashboard_width:
+                self.dashboard_frame.setMinimumWidth(resolved_dashboard_width)
+                self.dashboard_frame.setMaximumWidth(resolved_dashboard_width)
+                self.dashboard_frame.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+                self._last_dashboard_frame_width = resolved_dashboard_width
+
         self._sync_hero_status_width(title_status_min_width)
+        self._refresh_pdf_field_chrome()
         self.progress_panel_title.setVisible(mode != _LAYOUT_STACKED_COMPACT or self.width() > 900)
 
     def _sync_hero_status_width(self, minimum_width: int) -> None:
@@ -1826,6 +1868,20 @@ class QtMainWindow(QMainWindow):
         if not pages_text.startswith("Pages:"):
             return None
         return _coerce_int_or_none(pages_text.split(":", 1)[1].strip())
+
+    def _refresh_pdf_field_chrome(self) -> None:
+        pages_text = self.pages_label.text().strip()
+        show_page_support = pages_text not in {"", "Pages: -"}
+        self.pdf_support_cluster.setVisible(show_page_support)
+        self.pdf_pages_divider.setVisible(show_page_support)
+        if self._layout_mode == _LAYOUT_STACKED_COMPACT:
+            placeholder = "Select source..."
+        elif self._layout_mode == _LAYOUT_DESKTOP_COMPACT:
+            placeholder = "Select PDF or image..."
+        else:
+            placeholder = "Select PDF or image file..."
+        if self.pdf_edit.placeholderText() != placeholder:
+            self.pdf_edit.setPlaceholderText(placeholder)
 
     def _apply_dashboard_snapshot(self) -> None:
         snapshot = self._dashboard_snapshot
@@ -3877,20 +3933,23 @@ class QtMainWindow(QMainWindow):
         self._last_page_path = pdf_text
         if not pdf_text:
             self.pages_label.setText("Pages: -")
+            self._refresh_pdf_field_chrome()
             self._refresh_dashboard_counters()
             return
         pdf_path = Path(pdf_text).expanduser().resolve()
         if not pdf_path.exists() or not pdf_path.is_file():
             self.pages_label.setText("Pages: -")
+            self._refresh_pdf_field_chrome()
             self._refresh_dashboard_counters()
             return
         try:
             if not is_supported_source_file(pdf_path):
                 self.pages_label.setText("Pages: ?")
             else:
-                self.pages_label.setText(f"Pages: {get_source_page_count(pdf_path)}")
+                self.pages_label.setText(f"Pages: {get_page_count(pdf_path)}")
         except Exception:
             self.pages_label.setText("Pages: ?")
+        self._refresh_pdf_field_chrome()
         self._refresh_dashboard_counters()
     def _pick_pdf(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select source file", "", SOURCE_FILE_DIALOG_FILTER)
