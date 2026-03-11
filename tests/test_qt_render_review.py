@@ -63,6 +63,11 @@ def test_render_profiles_writes_png_and_metadata(tmp_path: Path) -> None:
     assert meta_path.exists()
     assert result["profile"] == "wide"
     assert result["layout_mode"] == "desktop_exact"
+    assert result["dashboard_frame_width"] == 1200
+    assert result["dashboard_frame_x"] == (result["content_card_width"] - result["dashboard_frame_width"]) // 2
+    assert result["dashboard_frame_y"] > 0
+    assert result["setup_panel_width"] > result["progress_panel_width"]
+    assert result["footer_card_width"] < result["dashboard_frame_width"]
 
 
 def test_render_profiles_ignore_live_screen_geometry(tmp_path: Path) -> None:
@@ -103,6 +108,8 @@ print(json.dumps(result))
 
     assert metadata["profile"] == "wide"
     assert metadata["layout_mode"] == "desktop_exact"
+    assert metadata["dashboard_frame_width"] == 1200
+    assert metadata["dashboard_frame_x"] == (metadata["content_card_width"] - metadata["dashboard_frame_width"]) // 2
 
 
 def test_build_arg_parser_defaults_to_ignored_tmp_dir() -> None:

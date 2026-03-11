@@ -331,8 +331,12 @@ def render_profiles(
                         "layout_mode": getattr(window, "_layout_mode", ""),
                         "sidebar_width": int(window.sidebar_frame.width()),
                         "content_card_width": int(window.content_card.width()),
+                        "dashboard_frame_width": int(window.dashboard_frame.width()),
+                        "dashboard_frame_x": int(window.dashboard_frame.geometry().x()),
+                        "dashboard_frame_y": int(window.dashboard_frame.geometry().y()),
                         "setup_panel_width": int(window.setup_panel.width()),
                         "progress_panel_width": int(window.progress_panel.width()),
+                        "footer_card_width": int(window.footer_card.width()),
                         "image_path": str(image_path),
                     }
                     meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
