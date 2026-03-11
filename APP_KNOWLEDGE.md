@@ -38,7 +38,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - `Settings > Appearance > Theme` is now a real live runtime choice:
   - `dark_futuristic`: the elevated default with stronger translucent depth and cyan-accent glow
   - `dark_simple`: a toned-down darker variant built from the same shared style system
-- The dashboard plus the main working dialogs (`Settings`, Gmail review/preview, Save/Edit Job Log, and honorários export) now share one centralized elevated/translucent visual language from `src/legalpdf_translate/qt_gui/styles.py` instead of drifting through local widget styling.
+- The dashboard plus the shared dialog/tool surfaces (`Settings` appearance/glossary/study/diagnostics tabs, Gmail review/preview, glossary editor, glossary builder, calibration audit, Save/Edit Job Log, and honorários export) now share one centralized elevated/translucent visual language from `src/legalpdf_translate/qt_gui/styles.py` instead of drifting through local widget styling.
 - Top-level windows and major dialogs now use shared screen-bounded sizing via `src/legalpdf_translate/qt_gui/window_adaptive.py`.
 - Main-shell resize work is deferred/coalesced so live resizing stays stable; the hero row also reserves width for the status label so short states such as `Idle` are not clipped during narrow-width transitions.
 
@@ -237,7 +237,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - `Cancel and wait` is still cooperative, but it is bounded by the active request deadline and persists clearer halt reasons instead of looking indefinitely hung.
 - OCR-success pages stay text-first; page images remain off unless a concrete layout/quality reason justifies them.
 - The GUI can show an OCR-heavy warning with an optional per-run `Apply safe OCR profile` action. It updates the current form only and does not overwrite saved defaults.
-- Run-critical selectors ignore accidental mouse-wheel changes when their combo popup is closed.
+- Mouse-wheel guards now cover the main run controls, Gmail review workflow/target-language selectors, settings defaults/provider selectors, and fixed-vocabulary Job Log combos; glossary/study/tool selectors and dense table editors still keep their local plain-combo behavior.
 - OCR-heavy runtime triage routes to `docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md`.
 - Host-bound workflows that add localhost listeners, browser/app bridges, or separate handoff/run/finalization failure surfaces should also route through `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`.
 - Gmail intake live validation must use the same Windows host for the signed-in Edge/Chromium Gmail tab, the Qt app, and Windows `gog`; a WSL-only smoke does not satisfy the final host-bound check.

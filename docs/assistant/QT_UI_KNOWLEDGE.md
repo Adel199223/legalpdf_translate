@@ -10,7 +10,7 @@
 | `src/legalpdf_translate/qt_gui/app_window.py` | `_FuturisticCanvas` (background/frame paint), `QtMainWindow` (`_build_ui`, `_apply_responsive_layout`, `_update_card_max_width`, `_refresh_lang_badge`, `_configure_footer_layout`, `_install_overflow_menu`) |
 | `src/legalpdf_translate/qt_gui/window_adaptive.py` | `WINDOW_SIZING_PRESETS`, `ResponsiveWindowController`, `CollapsibleSection` |
 | `src/legalpdf_translate/qt_gui/styles.py` | `build_stylesheet(theme=...)`, `normalize_ui_theme()`, `theme_palette()`, `apply_app_appearance()`, `apply_soft_shadow()`, `apply_primary_glow()` |
-| `src/legalpdf_translate/qt_gui/dialogs.py` | `QtSettingsDialog`, `QtJobLogWindow`, `QtReviewQueueDialog`, `QtSaveToJobLogDialog` |
+| `src/legalpdf_translate/qt_gui/dialogs.py` | `QtSettingsDialog` (appearance/glossary/study/diagnostics tabs), `QtGlossaryEditorDialog`, `QtJobLogWindow`, `QtReviewQueueDialog`, `QtSaveToJobLogDialog` |
 | `src/legalpdf_translate/qt_gui/tools_dialogs.py` | `QtGlossaryBuilderDialog`, `QtCalibrationAuditDialog` |
 
 ### Runtime launch contract
@@ -38,14 +38,15 @@
 | `LangCaretButton` | QToolButton | explicit dropdown caret in target-language field |
 | `SectionToggleButton` | QToolButton | `Advanced Settings` collapsible bar |
 | `MetricGridFrame` | QFrame | output metrics grid container |
-| `PrimaryButton` | QPushButton | `Start Translate` CTA |
-| `DangerButton` | QPushButton | `Cancel` CTA |
+| `PrimaryButton` | QPushButton | shared primary-action styling, currently used by `Start Translate` and Save/Edit Job Log `Save` / `Update` |
+| `DangerButton` | QPushButton | shared interruptive/destructive styling, currently used by the main-shell `Cancel` action |
 | `OverflowMenuButton` | QToolButton | `...` overflow menu trigger |
 | `ActionRail` | QFrame | bottom action rail |
 | `FooterMetaLabel` | QLabel | `Project v3.0 | LegalPDF` |
 | `DialogScrollArea` | QScrollArea | scrollable dialog body viewport |
 | `DialogScrollContent` | QWidget | transparent dialog scroll body |
 | `DialogActionBar` | QWidget | fixed bottom action row inside tall dialogs |
+| `GlossaryTableCombo` | QComboBox | plain in-table glossary editor combo with local size/padding polish; intentionally not converted to `NoWheelComboBox` |
 
 ## C. Layout Tree
 
@@ -187,10 +188,11 @@ QtMainWindow
 - **Where:** `_apply_responsive_layout()` changes `body_layout` direction to `TopToBottom` and calls `_configure_footer_layout(compact=True)`.
 - **Verify:** setup panel above output panel; `Start Translate` on row 1; `Cancel` and `...` on row 2.
 
-### 9. Run-critical selectors use no-wheel guards
-- **What:** Translation-critical combo boxes ignore mouse-wheel changes when closed, and the workers spin box ignores wheel changes entirely.
-- **Where:** `qt_gui/guarded_inputs.py`, `QtMainWindow` run controls, and matching settings-dialog controls.
-- **Verify:** scrolling over a closed target-language, effort, OCR, image, or workers control does not silently change the value; opening the combo popup still allows intentional list scrolling.
+### 9. Guarded selector coverage contract
+- **What:** No-wheel guards are used where accidental scroll changes can silently alter active run or save behavior: the main shell run controls, Gmail batch review workflow/target-language selectors, settings provider/default selectors, Save/Edit Job Log fixed-vocabulary combos, and Job Log inline combo editors. The workers spin box ignores wheel changes entirely.
+- **Where:** `qt_gui/guarded_inputs.py`, `QtMainWindow` in `qt_gui/app_window.py`, Gmail review plus Settings/Job Log helpers in `qt_gui/dialogs.py`.
+- **Exception:** the Settings glossary/study tabs, `QtGlossaryBuilderDialog`, `QtCalibrationAuditDialog`, and table-embedded editors such as `GlossaryTableCombo` or suggestion-scope cells still use plain `QComboBox`.
+- **Verify:** scrolling over a closed guarded selector does not silently change the value, while glossary/study/tool selectors and dense table editors still keep normal Qt combo behavior.
 
 ### 10. Warning dialog contract
 - **What:** There are two important runtime warning actions:
@@ -229,7 +231,7 @@ QtMainWindow
 - **Verify:** a newly opened Save/Edit Job Log dialog shows those sections collapsed while the main case/service fields stay visible.
 
 ### 13a. Shared core-dialog chrome contract
-- **What:** `Settings`, Gmail preview/review, Save/Edit Job Log, and honorários export should inherit the same elevated translucent styling language as the dashboard instead of relying on dialog-local one-off styles.
+- **What:** `Settings` (including glossary/study/diagnostics tabs), Gmail preview/review, `QtGlossaryEditorDialog`, `QtGlossaryBuilderDialog`, `QtCalibrationAuditDialog`, Save/Edit Job Log, and honorários export should inherit the same elevated translucent styling language as the dashboard instead of relying on dialog-local one-off styles.
 - **Where:** centralized selectors in `qt_gui/styles.py`, especially `QDialog`, `QGroupBox`, `QTabWidget`, `DialogScrollArea`, and `DialogActionBar`.
 - **Verify:** those dialogs visibly inherit the same layered panel/field/button treatment while remaining screen-bounded and responsive.
 
