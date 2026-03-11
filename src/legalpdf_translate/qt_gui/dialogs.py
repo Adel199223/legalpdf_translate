@@ -1333,10 +1333,12 @@ class QtHonorariosExportDialog(QDialog):
         root.setSpacing(8)
 
         self.form_scroll_area = QScrollArea(self)
+        self.form_scroll_area.setObjectName("DialogScrollArea")
         self.form_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self.form_scroll_area.setWidgetResizable(True)
         self.form_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_content = QWidget(self.form_scroll_area)
+        scroll_content.setObjectName("DialogScrollContent")
         scroll_root = QVBoxLayout(scroll_content)
         scroll_root.setContentsMargins(0, 0, 0, 0)
         scroll_root.setSpacing(0)
@@ -1410,6 +1412,7 @@ class QtHonorariosExportDialog(QDialog):
         root.addWidget(self.form_scroll_area, 1)
 
         self.action_bar = QWidget(self)
+        self.action_bar.setObjectName("DialogActionBar")
         actions = QHBoxLayout(self.action_bar)
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(8)
@@ -2014,10 +2017,12 @@ class QtSaveToJobLogDialog(QDialog):
         root.setSpacing(8)
 
         self.form_scroll_area = QScrollArea(self)
+        self.form_scroll_area.setObjectName("DialogScrollArea")
         self.form_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self.form_scroll_area.setWidgetResizable(True)
         self.form_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_content = QWidget(self.form_scroll_area)
+        scroll_content.setObjectName("DialogScrollContent")
         scroll_root = QVBoxLayout(scroll_content)
         scroll_root.setContentsMargins(0, 0, 0, 0)
         scroll_root.setSpacing(10)
@@ -2232,6 +2237,7 @@ class QtSaveToJobLogDialog(QDialog):
         root.addWidget(self.form_scroll_area, 1)
 
         self.action_bar = QWidget(self)
+        self.action_bar.setObjectName("DialogActionBar")
         actions = QHBoxLayout(self.action_bar)
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(8)
@@ -4179,9 +4185,11 @@ class QtGmailAttachmentPreviewDialog(QDialog):
         root.addWidget(self.jump_widget)
 
         self.scroll_area = QScrollArea(self)
+        self.scroll_area.setObjectName("DialogScrollArea")
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.preview_content = QWidget(self.scroll_area)
+        self.preview_content.setObjectName("DialogScrollContent")
         self.preview_layout = QVBoxLayout(self.preview_content)
         self.preview_layout.setContentsMargins(0, 0, 0, 0)
         self.preview_layout.setSpacing(12)
@@ -4194,7 +4202,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
         root.addWidget(self.scroll_area, 1)
 
         actions = QHBoxLayout()
-        self.use_page_btn = QPushButton("Use current page as start")
+        self.use_page_btn = QPushButton("Start from this page")
         self.close_btn = QPushButton("Close")
         actions.addStretch(1)
         actions.addWidget(self.use_page_btn)
@@ -5457,9 +5465,11 @@ class QtSettingsDialog(QDialog):
         root.setContentsMargins(0, 0, 0, 0)
 
         _scroll_area = QScrollArea()
+        _scroll_area.setObjectName("DialogScrollArea")
         _scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         _scroll_area.setWidgetResizable(True)
         _scroll_content = QWidget()
+        _scroll_content.setObjectName("DialogScrollContent")
         scroll_layout = QVBoxLayout(_scroll_content)
         scroll_layout.setContentsMargins(12, 12, 12, 12)
 
@@ -5626,9 +5636,9 @@ class QtSettingsDialog(QDialog):
 
     def _build_tab_appearance(self) -> None:
         form = QFormLayout(self.tab_appearance)
-        self.ui_theme_combo = QComboBox()
+        self.ui_theme_combo = NoWheelComboBox()
         self.ui_theme_combo.addItems(["dark_futuristic", "dark_simple"])
-        self.ui_scale_combo = QComboBox()
+        self.ui_scale_combo = NoWheelComboBox()
         self.ui_scale_combo.addItems(["1.00", "1.10", "1.25"])
         form.addRow("Theme", self.ui_theme_combo)
         form.addRow("UI scale", self.ui_scale_combo)

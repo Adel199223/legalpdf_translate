@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, Signal
 from legalpdf_translate.build_identity import RuntimeBuildIdentity, normalize_path_identity
 from legalpdf_translate.gmail_focus import clear_bridge_runtime_metadata
 from legalpdf_translate.gmail_intake import InboundMailContext, LocalGmailIntakeBridge
+from legalpdf_translate.qt_gui.styles import apply_app_appearance
 from legalpdf_translate.user_settings import app_data_dir, load_gui_settings
 
 if TYPE_CHECKING:
@@ -273,6 +274,9 @@ class WorkspaceWindowController:
             }
         else:
             shared_settings = dict(values)
+        theme_value = shared_settings.get("ui_theme")
+        if theme_value is not None:
+            apply_app_appearance(self._app, theme=str(theme_value))
         for window in self.windows():
             refresh_shared_settings = getattr(window, "reload_shared_settings", None)
             if callable(refresh_shared_settings):

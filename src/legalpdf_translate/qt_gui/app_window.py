@@ -147,7 +147,12 @@ from legalpdf_translate.qt_gui.dialogs import (
 )
 from legalpdf_translate.qt_gui.tools_dialogs import QtCalibrationAuditDialog, QtGlossaryBuilderDialog
 from legalpdf_translate.qt_gui.window_adaptive import ResponsiveWindowController
-from legalpdf_translate.qt_gui.styles import apply_primary_glow, apply_soft_shadow
+from legalpdf_translate.qt_gui.styles import (
+    apply_app_appearance,
+    apply_primary_glow,
+    apply_soft_shadow,
+    normalize_ui_theme,
+)
 from legalpdf_translate.qt_gui.worker import (
     AnalyzeWorker,
     GmailBatchPrepareWorker,
@@ -566,16 +571,44 @@ class _FuturisticCanvas(QWidget):
         if rect.width() <= 1 or rect.height() <= 1:
             return
 
+        window = self.window()
+        defaults = getattr(window, "_defaults", None)
+        theme = normalize_ui_theme(defaults.get("ui_theme") if isinstance(defaults, dict) else "dark_futuristic")
+        if theme == "dark_simple":
+            base_start = QColor(8, 12, 20)
+            base_mid = QColor(14, 22, 32)
+            base_end = QColor(9, 13, 21)
+            left_glow_inner = QColor(84, 146, 176, 18)
+            left_glow_mid = QColor(58, 107, 136, 10)
+            right_glow_inner = QColor(86, 154, 182, 8)
+            top_bar_mid = QColor(174, 214, 230, 10)
+            circuit_grid = QColor(124, 162, 178, 10)
+            circuit_line = QColor(139, 183, 201, 18)
+            sidebar_line = QColor(121, 162, 178, 28)
+            hero_divider = QColor(145, 184, 200, 22)
+        else:
+            base_start = QColor(1, 9, 24)
+            base_mid = QColor(3, 20, 46)
+            base_end = QColor(2, 10, 28)
+            left_glow_inner = QColor(38, 190, 232, 42)
+            left_glow_mid = QColor(26, 162, 214, 22)
+            right_glow_inner = QColor(18, 196, 255, 14)
+            top_bar_mid = QColor(36, 220, 255, 12)
+            circuit_grid = QColor(90, 218, 255, 12)
+            circuit_line = QColor(97, 228, 255, 24)
+            sidebar_line = QColor(89, 232, 255, 38)
+            hero_divider = QColor(110, 235, 255, 30)
+
         base_gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
-        base_gradient.setColorAt(0.0, QColor(1, 9, 24))
-        base_gradient.setColorAt(0.45, QColor(3, 20, 46))
-        base_gradient.setColorAt(1.0, QColor(2, 10, 28))
+        base_gradient.setColorAt(0.0, base_start)
+        base_gradient.setColorAt(0.45, base_mid)
+        base_gradient.setColorAt(1.0, base_end)
         painter.fillRect(rect, base_gradient)
 
         painter.setPen(Qt.PenStyle.NoPen)
         left_glow = QRadialGradient(rect.width() * 0.18, rect.height() * 0.30, rect.width() * 0.34)
-        left_glow.setColorAt(0.0, QColor(38, 190, 232, 42))
-        left_glow.setColorAt(0.32, QColor(26, 162, 214, 22))
+        left_glow.setColorAt(0.0, left_glow_inner)
+        left_glow.setColorAt(0.32, left_glow_mid)
         left_glow.setColorAt(1.0, QColor(20, 158, 214, 0))
         painter.setBrush(left_glow)
         painter.drawEllipse(
@@ -586,7 +619,7 @@ class _FuturisticCanvas(QWidget):
         )
 
         right_glow = QRadialGradient(rect.width() * 0.84, rect.height() * 0.86, rect.width() * 0.18)
-        right_glow.setColorAt(0.0, QColor(18, 196, 255, 14))
+        right_glow.setColorAt(0.0, right_glow_inner)
         right_glow.setColorAt(1.0, QColor(18, 196, 255, 0))
         painter.setBrush(right_glow)
         painter.drawEllipse(
@@ -598,20 +631,20 @@ class _FuturisticCanvas(QWidget):
 
         top_bar = QLinearGradient(0.0, 0.0, float(rect.width()), 0.0)
         top_bar.setColorAt(0.0, QColor(20, 154, 204, 0))
-        top_bar.setColorAt(0.5, QColor(36, 220, 255, 12))
+        top_bar.setColorAt(0.5, top_bar_mid)
         top_bar.setColorAt(1.0, QColor(20, 154, 204, 0))
         painter.fillRect(0, 56, rect.width(), 4, top_bar)
 
         def _draw_circuit_block(x_start: int, x_end: int, y_start: int, y_end: int, *, mirrored: bool = False) -> None:
             painter.save()
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(QColor(90, 218, 255, 12), 1.0))
+            painter.setPen(QPen(circuit_grid, 1.0))
             for x in range(x_start, x_end, 52):
                 painter.drawLine(x, y_start, x, y_end)
             for y in range(y_start, y_end, 50):
                 painter.drawLine(x_start, y, x_end, y)
 
-            painter.setPen(QPen(QColor(97, 228, 255, 24), 1.15))
+            painter.setPen(QPen(circuit_line, 1.15))
             anchor_x = x_start + 54 if not mirrored else x_end - 54
             mid_y = y_start + ((y_end - y_start) // 3)
             lower_y = y_start + ((y_end - y_start) * 2 // 3)
@@ -628,7 +661,6 @@ class _FuturisticCanvas(QWidget):
                 painter.drawLine(anchor_x + (elbow * 2), lower_y, anchor_x + (elbow * 2), lower_y + 34)
             painter.restore()
 
-        window = self.window()
         sidebar = getattr(window, "sidebar_frame", None)
         sidebar_line_x = 108
         if sidebar is not None and sidebar.width() > 0:
@@ -647,10 +679,10 @@ class _FuturisticCanvas(QWidget):
             mirrored=True,
         )
 
-        painter.setPen(QPen(QColor(89, 232, 255, 38), 1.0))
+        painter.setPen(QPen(sidebar_line, 1.0))
         painter.drawLine(sidebar_line_x, 68, sidebar_line_x, rect.height() - 36)
 
-        painter.setPen(QPen(QColor(110, 235, 255, 30), 1.4))
+        painter.setPen(QPen(hero_divider, 1.4))
         painter.drawLine(sidebar_line_x + 76, 156, rect.width() - 138, 156)
         painter.end()
         super().paintEvent(event)
@@ -845,24 +877,21 @@ class QtMainWindow(QMainWindow):
         sidebar_layout.addWidget(self.profile_nav_btn)
         outer.addWidget(self.sidebar_frame)
 
-        self._scroll_area = QScrollArea()
+        self._scroll_area = QScrollArea(objectName="ShellScrollArea")
         self._scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll_area.setWidgetResizable(True)
         self._scroll_area.viewport().setAutoFillBackground(False)
-        self._scroll_area.setStyleSheet("QScrollArea{background:transparent;}")
         self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        scroll_content = QWidget()
-        scroll_content.setStyleSheet("background:transparent;")
+        scroll_content = QWidget(objectName="ShellScrollContent")
         scroll_layout = QVBoxLayout(scroll_content)
         self.scroll_layout = scroll_layout
         scroll_layout.setContentsMargins(18, 16, 18, 12)
         scroll_layout.setSpacing(0)
         scroll_layout.addStretch(1)
 
-        self.content_card = QWidget()
+        self.content_card = QWidget(objectName="ContentCard")
         self.content_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.content_card.setStyleSheet("background:transparent;")
         self.content_card.setFixedWidth(1500)
         self.content_card.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
         content_row = QHBoxLayout()
@@ -919,6 +948,7 @@ class QtMainWindow(QMainWindow):
         self.setup_panel = QFrame(objectName="ShellPanel")
         self.setup_panel.setMinimumWidth(0)
         self.setup_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        apply_soft_shadow(self.setup_panel, blur_radius=46, offset_y=10)
         setup_layout = QVBoxLayout(self.setup_panel)
         self.setup_layout = setup_layout
         setup_layout.setContentsMargins(28, 22, 28, 22)
@@ -1085,6 +1115,7 @@ class QtMainWindow(QMainWindow):
         setup_layout.addWidget(self.adv_frame)
 
         self.advisor_frame = QFrame(objectName="ShellPanel")
+        apply_soft_shadow(self.advisor_frame, blur_radius=36, offset_y=8)
         advisor_layout = QHBoxLayout(self.advisor_frame)
         advisor_layout.setContentsMargins(12, 10, 12, 10)
         advisor_layout.setSpacing(10)
@@ -1104,6 +1135,7 @@ class QtMainWindow(QMainWindow):
         self.progress_panel = QFrame(objectName="ShellPanel")
         self.progress_panel.setMinimumWidth(0)
         self.progress_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        apply_soft_shadow(self.progress_panel, blur_radius=46, offset_y=10)
         progress_layout = QVBoxLayout(self.progress_panel)
         self.progress_layout = progress_layout
         progress_layout.setContentsMargins(28, 22, 28, 22)
@@ -1224,6 +1256,7 @@ class QtMainWindow(QMainWindow):
         card_shell.addLayout(footer_meta_row)
 
         self.details_card = QFrame(objectName="ShellPanel")
+        apply_soft_shadow(self.details_card, blur_radius=34, offset_y=8)
         details_layout = QVBoxLayout(self.details_card)
         details_layout.setContentsMargins(12, 10, 12, 10)
         self.details_btn = QToolButton(objectName="DisclosureButton")
@@ -1682,6 +1715,7 @@ class QtMainWindow(QMainWindow):
     def reload_shared_settings(self, values: dict[str, object]) -> None:
         self._defaults.update(values)
         self._update_controls()
+        self._refresh_canvas()
 
     def _open_new_window(self) -> None:
         controller = self._controller
@@ -3614,8 +3648,13 @@ class QtMainWindow(QMainWindow):
                     values=dict(values),
                 )
         else:
+            if "ui_theme" in values:
+                app = QApplication.instance()
+                if app is not None:
+                    apply_app_appearance(app, theme=str(values.get("ui_theme", "dark_futuristic")))
             self._sync_gmail_intake_bridge()
         self._update_controls()
+        self._refresh_canvas()
 
     def _open_settings_dialog(self) -> None:
         if self._settings_dialog is not None and self._settings_dialog.isVisible():

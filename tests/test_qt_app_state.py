@@ -395,6 +395,8 @@ def test_stage_two_shell_smoke() -> None:
         assert window.title_label.text() == "LegalPDF Translate"
         assert window.header_status_label.text() == "Idle"
         assert window.dashboard_nav_btn.text() == "Dashboard"
+        assert window._scroll_area.objectName() == "ShellScrollArea"
+        assert window.content_card.objectName() == "ContentCard"
         assert window.translate_btn.text() == "Start Translate"
         assert window.show_adv.text() == "Advanced Settings"
         assert window.progress_panel_title.text() == "Conversion Output"
@@ -1199,6 +1201,8 @@ def test_settings_dialog_uses_guarded_run_critical_controls(tmp_path: Path) -> N
         assert isinstance(settings_dialog.default_workers_combo, NoWheelComboBox)
         assert isinstance(settings_dialog.ocr_mode_default_combo, NoWheelComboBox)
         assert isinstance(settings_dialog.ocr_engine_default_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.ui_theme_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.ui_scale_combo, NoWheelComboBox)
         assert isinstance(settings_dialog.gmail_intake_port_spin, NoWheelSpinBox)
     finally:
         settings_dialog.close()
@@ -2241,6 +2245,7 @@ def test_gmail_attachment_preview_dialog_image_preview_uses_page_one(tmp_path: P
         assert dialog._current_page == 1
         assert dialog.jump_widget.isHidden()
         assert dialog.use_page_btn.isVisible()
+        assert dialog.use_page_btn.text() == "Start from this page"
         dialog.use_page_btn.click()
         assert dialog.selected_start_page == 1
         assert dialog.result() == QDialog.DialogCode.Accepted
@@ -4725,6 +4730,42 @@ def test_workspace_controller_assigns_titles_and_tracks_last_active_window() -> 
         assert controller.last_active_window() is second
     finally:
         _close_qt_windows(app, [first, second])
+        if owns_app:
+            app.quit()
+
+
+def test_workspace_controller_apply_shared_settings_updates_runtime_theme(monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    controller = WorkspaceWindowController(app=app, build_identity=None)
+    applied_themes: list[str] = []
+    refreshed_payloads: list[dict[str, object]] = []
+
+    class _FakeWindow:
+        def reload_shared_settings(self, values: dict[str, object]) -> None:
+            refreshed_payloads.append(dict(values))
+
+    fake_window = _FakeWindow()
+    controller._windows[id(fake_window)] = fake_window  # type: ignore[assignment]
+    monkeypatch.setattr(
+        window_controller_module,
+        "apply_app_appearance",
+        lambda _app, *, theme: applied_themes.append(theme) or "",
+    )
+    monkeypatch.setattr(controller, "sync_gmail_intake_bridge", lambda **_kwargs: None)
+    try:
+        controller.apply_shared_settings(
+            source_window=None,
+            persist=False,
+            values={"ui_theme": "dark_simple"},
+        )
+        assert applied_themes == ["dark_simple"]
+        assert refreshed_payloads == [{"ui_theme": "dark_simple"}]
+    finally:
+        controller._windows.clear()
         if owns_app:
             app.quit()
 
