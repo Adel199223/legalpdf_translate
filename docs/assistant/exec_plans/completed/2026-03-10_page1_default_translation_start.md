@@ -84,3 +84,9 @@
 - Page `1` is the only acceptable automatic default.
 - Persisted non-`1` defaults are legacy noise, not desired user intent.
 - Explicit later-page choices in a given run remain fully supported.
+
+## Completion evidence
+- Integrated on publish branch `codex/gmail-intake-publish`.
+- Combined validation on the final publish branch:
+  - `.\.venv311\Scripts\python.exe -m pytest tests\test_gmail_batch.py tests\test_gmail_draft.py tests\test_honorarios_docx.py tests\test_qt_app_state.py tests\test_user_settings_schema.py tests\test_gmail_focus_host.py tests\test_gmail_intake.py tests\test_launch_qt_build.py -q` -> `277 passed`
+  - `dart run tooling/validate_agent_docs.dart` -> `PASS`

@@ -81,6 +81,9 @@
 - Validation run:
   - `.\.venv311\Scripts\python.exe -m pytest tests\test_gmail_focus_host.py tests\test_gmail_intake.py tests\test_launch_qt_build.py -q` -> `35 passed`
   - `dart run tooling/validate_agent_docs.dart` -> `PASS`
+- Final integrated publish-branch validation:
+  - `.\.venv311\Scripts\python.exe -m pytest tests\test_gmail_batch.py tests\test_gmail_draft.py tests\test_honorarios_docx.py tests\test_qt_app_state.py tests\test_user_settings_schema.py tests\test_gmail_focus_host.py tests\test_gmail_intake.py tests\test_launch_qt_build.py -q` -> `277 passed`
+  - `dart run tooling/validate_agent_docs.dart` -> `PASS`
 - Local runtime refresh completed:
   - rebuilt `dist\legalpdf_translate\LegalPDFGmailFocusHost.exe` from this worktree with PyInstaller
   - re-registered the Edge native host manifest to point at the rebuilt EXE
