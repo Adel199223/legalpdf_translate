@@ -1153,3 +1153,19 @@ Verification commands/results:
 - Validation for this pass:
   - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests/test_qt_app_state.py tests/test_honorarios_docx.py tests/test_qt_main_smoke.py tests/test_launch_qt_build.py tests/test_windows_shortcut_scripts.py` -> `208 passed`
   - `dart run tooling/validate_agent_docs.dart` -> `PASS`
+
+# 2026-03-11
+- Ran a touched-scope Assistant Docs Sync for the shipped Stage 3 Qt settings/admin/tool rollout on `main` (`codex/core-ui-rollout` resolves to the same local SHA on this machine).
+- Updated only the assistant knowledge surfaces:
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/QT_UI_KNOWLEDGE.md`
+  - `docs/assistant/DOCS_REFRESH_NOTES.md`
+- Synced current-truth guidance for:
+  - shared Stage 3 Qt chrome now covering the settings glossary/study/diagnostics tabs, glossary editor, glossary builder, and calibration audit in addition to the previously documented core dialogs
+  - the audited button-style contract: `PrimaryButton` remains the shared primary-action style currently used by `Start Translate` and Save/Edit Job Log `Save` / `Update`, while `DangerButton` remains limited to the main-shell `Cancel` action
+  - the audited guarded-selector contract: main-shell, Gmail review, settings defaults/provider, and fixed-vocabulary Job Log controls use guarded inputs, while glossary/study/tool selectors and dense table editors keep their plain `QComboBox` behavior
+  - the explicit dense-editor exception for `GlossaryTableCombo` and suggestion-scope combos
+- Validation for this pass:
+  - `dart run tooling/validate_agent_docs.dart` -> `PASS`
+  - `dart run tooling/validate_workspace_hygiene.dart` -> `PASS`

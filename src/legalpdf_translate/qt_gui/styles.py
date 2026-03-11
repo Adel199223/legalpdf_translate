@@ -808,6 +808,19 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
         background-color: rgba(102, 220, 240, 232);
     }}
 
+    QWidget#DialogActionBar QPushButton {{
+        min-height: 34px;
+    }}
+
+    QWidget#DialogActionBar QPushButton#PrimaryButton {{
+        border-radius: 18px;
+        padding: 0 30px;
+    }}
+
+    QWidget#DialogActionBar QPushButton#PrimaryButton:default {{
+        border-radius: 18px;
+    }}
+
     QPushButton#DangerButton {{
         background-color: rgba(226, 145, 150, 232);
         border-color: rgba(255, 202, 208, 180);

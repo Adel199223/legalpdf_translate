@@ -194,6 +194,7 @@ def test_build_stylesheet_supports_runtime_theme_variants() -> None:
     assert 'QFrame#FieldChrome[sharedChromeDate="true"][hovered="true"]' in futuristic
     assert "QFrame#CalendarPopup" in futuristic
     assert "QPushButton#PrimaryButton:default" in futuristic
+    assert "QWidget#DialogActionBar QPushButton#PrimaryButton" in futuristic
     assert "Bahnschrift" not in futuristic
     assert "Aptos" not in futuristic
     assert "letter-spacing: 0.82px;" in futuristic

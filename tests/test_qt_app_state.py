@@ -6902,6 +6902,12 @@ def test_save_to_joblog_dialog_small_screen_uses_scrollable_body_and_collapsed_s
         assert dialog.finance_section.is_expanded() is False
         assert dialog.save_btn.parentWidget() is dialog.action_bar
         assert dialog.cancel_btn.parentWidget() is dialog.action_bar
+        action_margins = dialog.action_bar.layout().contentsMargins()
+        assert action_margins.left() == 10
+        assert action_margins.top() == 8
+        assert action_margins.right() == 10
+        assert action_margins.bottom() == 8
+        assert dialog.save_btn.height() < dialog.action_bar.height()
     finally:
         dialog.close()
         dialog.deleteLater()
