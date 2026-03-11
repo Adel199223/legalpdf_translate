@@ -79,6 +79,8 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 10. For interpretation work, `Service same as Case` is usually the default. The service city is treated as the travel city unless you change it manually.
 11. If a saved one-way distance already exists for that service city in the selected profile, the app fills it in automatically.
 12. `Autofill from PDF header` also works for interpretation edit rows that were not created from a saved PDF. The app asks you to choose the PDF file when needed.
+13. Fixed-choice fields such as `Job type`, `Lang`, and saved entity/city lists are chosen from dropdowns instead of typed manually. Use `Add...` when you need a new saved entity or city.
+14. Date fields can still be typed as `YYYY-MM-DD`, but you can now also pick them from a calendar popup. The calendar starts on Monday.
 
 ## Interpretation Honorarios
 1. Open `Tools > View Job Log`.
@@ -150,7 +152,12 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 - These warning actions are temporary for the current run only. They do not silently overwrite your saved defaults.
 
 ## If The App Does Not Open
-Use the real GUI module entrypoint:
+Quickest beginner option:
+1. Open the repo folder in File Explorer.
+2. Double-click `Launch LegalPDF Translate.bat`.
+3. That batch file uses the same canonical Qt launcher helper as the supported manual startup path.
+
+Terminal option:
 1. Open PowerShell in the project folder.
 2. Run: `.\.venv311\Scripts\python.exe -m legalpdf_translate.qt_app`
 3. If you want it detached from the terminal, run: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`

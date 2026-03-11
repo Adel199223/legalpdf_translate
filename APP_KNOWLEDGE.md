@@ -13,6 +13,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 ## Entrypoints
 - GUI: `python -m legalpdf_translate.qt_app`
 - GUI compatibility shim: `python -m legalpdf_translate.qt_main`
+- Beginner Windows launcher: double-click `Launch LegalPDF Translate.bat` in the repo root. It delegates to `tooling/launch_qt_build.py --worktree <repo-root>`.
 - CLI: `legalpdf-translate --pdf <file> --lang EN|FR|AR --outdir <dir>`
   - Cost guardrails (optional): `--budget-cap-usd <float> --cost-profile-id <string> --budget-on-exceed warn|block`
   - Queue mode (optional): `legalpdf-translate --queue-manifest <manifest.jsonl> --rerun-failed-only true --lang EN --outdir <dir>`
@@ -153,6 +154,8 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - The Job Log window now uses a fixed `Actions` column with icon-based edit/delete controls; row deletion is confirmation-gated and only one row can be inline-edited at a time.
 - Historical Job Log editing no longer requires the original `pdf_path`. Translation rows simply disable `Autofill from PDF header` when no source PDF is available, while interpretation rows can still use `Autofill from PDF header` through a manual PDF picker fallback; `Open translated DOCX` still works when stored translated DOCX paths resolve.
 - Job Log columns now auto-fit visible headers by default, remain user-resizable, persist their widths in settings, and overflow through a horizontal scrollbar instead of squeezing the table to the viewport.
+- Save/Edit Job Log now uses selection-only guarded combos for fixed vocab fields such as `Job type`, `Lang`, and case/service entity or city; `Court Email` stays editable.
+- Editable Job Log and honorários dates now use one shared Monday-first calendar picker while still accepting manual `YYYY-MM-DD` typing. The same shared control also backs inline Job Log date editing.
 - The Job Log now supports additive interpretation fields and behavior on top of translation rows:
   - `job_type == "Interpretation"` switches the full dialog to interpretation-first editing
   - blank/manual interpretation rows can be opened from `Job Log > Add...`
@@ -216,6 +219,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - attached launch: `python -m legalpdf_translate.qt_app`
   - detached Windows launch: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`
 - `python -m legalpdf_translate.qt_gui` remains a valid GUI compatibility entrypoint, but `qt_app` is the canonical docs command.
+- On Windows, the beginner-friendly manual launch path is `Launch LegalPDF Translate.bat` in the repo root. It uses the same canonical Qt launcher helper instead of duplicating startup logic.
 - Open another workspace from `File > New Window`, `Ctrl+Shift+N`, or the `...` overflow action. `New Window` stays available even while another workspace is busy.
 - The main dashboard shell should stay horizontally adaptive without a shell-level horizontal scrollbar; dense secondary tables such as Job Log may still overflow horizontally inside their own window or table viewport.
 - Major dialogs and dense secondary windows should remain screen-bounded and user-resizable instead of relying on fixed geometries that can open off-screen on smaller displays.

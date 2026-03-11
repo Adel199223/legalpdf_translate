@@ -176,6 +176,12 @@ QtMainWindow
 - **Behavior:** if a flag asset is missing, hide the flag widget instead of duplicating text.
 - **Verify:** switching `EN`, `FR`, `AR` shows one code, one flag, and no repeated fallback text.
 
+### 7a. Target-language popup contract
+- **What:** Keep the closed target-language field compact, but make the popup readable.
+- **Where:** `NoWheelComboBox` popup-label support in `qt_gui/guarded_inputs.py` and the embedded target-language field wiring in `qt_gui/app_window.py`.
+- **Behavior:** the closed field shows `EN`, `FR`, or `AR`; the popup shows `English`, `French`, and `Arabic`; popup width must fit those labels without `...`.
+- **Verify:** opening the target-language popup shows full names, and hovering/opening one dashboard combo does not visually activate a neighboring combo.
+
 ### 8. Small-window layout is intentionally different
 - **What:** `stacked_compact` is not a broken desktop shell; it is a deliberate mobile-like adaptation.
 - **Where:** `_apply_responsive_layout()` changes `body_layout` direction to `TopToBottom` and calls `_configure_footer_layout(compact=True)`.
@@ -203,6 +209,18 @@ QtMainWindow
 - **Where:** `QtSaveToJobLogDialog` now uses `DialogScrollArea` for the body, keeps a fixed `DialogActionBar` outside the scrolling form body, and applies `ResponsiveWindowController(..., role="form")`.
 - **Behavior:** the main editable case/service fields remain immediately visible; the body scrolls vertically when needed; `Save`, `Cancel`, `Open translated DOCX`, and the honorários action stay accessible.
 - **Verify:** on a smaller display, the dialog fits within the screen bounds, the body scrolls internally, and the action row remains visible.
+
+### 12a. Shared date-picker contract
+- **What:** editable app dates use one shared guarded date field instead of plain line edits.
+- **Where:** `GuardedDateEdit` in `qt_gui/guarded_inputs.py`, used by Save/Edit Job Log, Job Log inline date editing, and interpretation honorários export.
+- **Behavior:** manual `YYYY-MM-DD` typing remains valid, the popup calendar starts on Monday, and the popup styling stays inside the shared translucent chrome instead of falling back to a clashing native widget.
+- **Verify:** date fields accept typed ISO text, open the themed calendar popup, and the popup week header starts on Monday in every current usage site.
+
+### 12b. Translation Job Log form contract
+- **What:** translation editing should not waste space on interpretation-only service controls.
+- **Where:** `QtSaveToJobLogDialog` in `qt_gui/dialogs.py`.
+- **Behavior:** translation rows hide the `SERVICE (provided to)` section, keep fixed-vocabulary fields as selection-only combos, and retain a rounded primary action button even when Enter/Return submits the dialog.
+- **Verify:** switching `Job type` between translation and interpretation toggles the service section live, `Lang` remains selection-only, and the bottom-right action keeps the shared rounded primary-button styling.
 
 ### 13. Save-to-Job-Log collapse defaults
 - **What:** Lower-detail Job Log sections are collapsed by default on every open.
