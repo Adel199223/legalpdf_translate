@@ -39,8 +39,8 @@
 | `LangCaretButton` | QToolButton | explicit dropdown caret in target-language field |
 | `SectionToggleButton` | QToolButton | `Advanced Settings` collapsible bar |
 | `MetricGridFrame` | QFrame | output metrics grid container |
-| `PrimaryButton` | QPushButton | shared primary-action styling, currently used by `Start Translate` and Save/Edit Job Log `Save` / `Update` |
-| `DangerButton` | QPushButton | shared interruptive/destructive styling, currently used by the main-shell `Cancel` action |
+| `PrimaryButton` | QPushButton | shared primary commit/run/apply action across shell/dialog/tool surfaces |
+| `DangerButton` | QPushButton | shared destructive or reset action across shell/dialog/tool surfaces |
 | `OverflowMenuButton` | QToolButton | `...` overflow menu trigger |
 | `ActionRail` | QFrame | bottom action rail |
 | `FooterMetaLabel` | QLabel | `Project v3.0 | LegalPDF` |
@@ -212,10 +212,10 @@ QtMainWindow
 - **Verify:** setup panel above output panel; `Start Translate` on row 1; `Cancel` and `...` on row 2.
 
 ### 9. Guarded selector coverage contract
-- **What:** No-wheel guards are used where accidental scroll changes can silently alter active run or save behavior: the main shell run controls, Gmail batch review workflow/target-language selectors, settings provider/default selectors, Save/Edit Job Log fixed-vocabulary combos, and Job Log inline combo editors. The workers spin box ignores wheel changes entirely.
-- **Where:** `qt_gui/guarded_inputs.py`, `QtMainWindow` in `qt_gui/app_window.py`, Gmail review plus Settings/Job Log helpers in `qt_gui/dialogs.py`.
-- **Exception:** the Settings glossary/study tabs, `QtGlossaryBuilderDialog`, `QtCalibrationAuditDialog`, and table-embedded editors such as `GlossaryTableCombo` or suggestion-scope cells still use plain `QComboBox`.
-- **Verify:** scrolling over a closed guarded selector does not silently change the value, while glossary/study/tool selectors and dense table editors still keep normal Qt combo behavior.
+- **What:** No-wheel guards are used where accidental scroll changes can silently alter active run or fixed-vocabulary admin state: the main shell run controls, Gmail batch review workflow/target-language selectors, settings provider/default plus glossary/study/diagnostics selectors, glossary-builder/calibration top-level selectors, Save/Edit Job Log fixed-vocabulary combos, and Job Log inline combo editors. Guarded spin boxes ignore wheel changes entirely.
+- **Where:** `qt_gui/guarded_inputs.py`, `QtMainWindow` in `qt_gui/app_window.py`, Gmail review plus Settings/Job Log helpers in `qt_gui/dialogs.py`, and admin/tool wiring in `qt_gui/tools_dialogs.py`.
+- **Exception:** dense table-cell editors keep their local combo contract; `GlossaryTableCombo` and glossary/calibration suggestion scope selectors remain plain `QComboBox`.
+- **Verify:** scrolling over a closed guarded selector does not silently change the value, while dense table editors still keep normal Qt combo behavior and guarded combo popups still allow intentional list scrolling.
 
 ### 10. Warning dialog contract
 - **What:** There are two important runtime warning actions:
@@ -254,7 +254,7 @@ QtMainWindow
 - **Verify:** a newly opened Save/Edit Job Log dialog shows those sections collapsed while the main case/service fields stay visible.
 
 ### 13a. Shared core-dialog chrome contract
-- **What:** `Settings` (including glossary/study/diagnostics tabs), Gmail preview/review, `QtGlossaryEditorDialog`, `QtGlossaryBuilderDialog`, `QtCalibrationAuditDialog`, Save/Edit Job Log, and honorários export should inherit the same elevated translucent styling language as the dashboard instead of relying on dialog-local one-off styles.
+- **What:** `Settings`, `Glossary Editor`, `Glossary Builder`, `Calibration Audit`, Gmail preview/review, Save/Edit Job Log, and honorários export should inherit the same elevated translucent styling language as the dashboard instead of relying on dialog-local one-off styles.
 - **Where:** centralized selectors in `qt_gui/styles.py`, especially `QDialog`, `QGroupBox`, `QTabWidget`, `DialogScrollArea`, and `DialogActionBar`.
 - **Verify:** those dialogs visibly inherit the same layered panel/field/button treatment while remaining screen-bounded and responsive.
 
