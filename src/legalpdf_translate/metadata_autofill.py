@@ -15,6 +15,13 @@ from openai import OpenAI
 from PIL import Image
 
 from .config import DEFAULT_METADATA_AI_TIMEOUT_SECONDS, DEFAULT_OCR_API_TIMEOUT_SECONDS
+from .court_email import (
+    COURT_EMAIL_SOURCE_DOCUMENT_EXACT,
+    COURT_EMAIL_SOURCE_DOCUMENT_FIRST,
+    choose_court_email_suggestion as choose_court_email_suggestion_internal,
+    rank_court_email_suggestions as rank_court_email_suggestions_internal,
+    sanitize_court_email,
+)
 from .ocr_engine import OcrEngineConfig, OcrResult, build_ocr_engine
 from .ocr_engine import default_ocr_api_env_name, invoke_ocr_image, normalize_ocr_api_provider
 from .ocr_helpers import ocr_pdf_page_text
@@ -50,11 +57,6 @@ EMAIL_PATTERN = re.compile(
     r"(?<![\w@])([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})(?![\w@])",
     re.IGNORECASE,
 )
-COURT_EMAIL_DOMAIN = "tribunais.org.pt"
-COURT_EMAIL_CITY_ALIASES = {
-    "reguengos de monsaraz": "rmonsaraz",
-    "foro alentejo": "falentejo",
-}
 
 PHOTO_DATE_PATTERNS = [
     "%A, %B %d, %Y",
@@ -110,6 +112,7 @@ class MetadataSuggestion:
     case_city: str | None = None
     case_number: str | None = None
     court_email: str | None = None
+    court_email_source: str | None = None
     service_entity: str | None = None
     service_city: str | None = None
     service_date: str | None = None
@@ -232,13 +235,7 @@ def _extract_city_heuristic(text: str) -> str | None:
 
 
 def _sanitize_email(value: str | None) -> str | None:
-    if value is None:
-        return None
-    cleaned = value.strip().strip("<>[](){}\"'`")
-    cleaned = re.sub(r"[.,;:]+$", "", cleaned)
-    if cleaned == "":
-        return None
-    return cleaned
+    return sanitize_court_email(value)
 
 
 def _extract_court_email_candidates(text: str) -> tuple[str | None, str | None]:
@@ -275,53 +272,6 @@ def _extract_court_email_candidates(text: str) -> tuple[str | None, str | None]:
     return None, first_email
 
 
-def _court_email_local_part(email: str) -> str:
-    local, _, _domain = email.partition("@")
-    return local.casefold()
-
-
-def _court_email_city_slug(case_city: str | None, case_entity: str | None) -> str | None:
-    city_source = _sanitize_city(case_city)
-    if city_source is None and case_entity:
-        city_source = _extract_city_heuristic(case_entity)
-    normalized = normalize_for_match(city_source or "").strip()
-    if normalized == "":
-        return None
-    if normalized in COURT_EMAIL_CITY_ALIASES:
-        return COURT_EMAIL_CITY_ALIASES[normalized]
-    compact = re.sub(r"[^a-z0-9]+", "", normalized)
-    return compact or None
-
-
-def _infer_court_email_candidates(
-    *,
-    case_entity: str | None,
-    case_city: str | None,
-) -> list[str]:
-    city_slug = _court_email_city_slug(case_city, case_entity)
-    if city_slug is None:
-        return []
-
-    entity_norm = normalize_for_match(case_entity or "")
-    local_parts: list[str] = []
-
-    def _add_local(local_part: str) -> None:
-        if local_part in local_parts:
-            return
-        local_parts.append(local_part)
-
-    if "ministerio publico" in entity_norm:
-        if "trabalho" in entity_norm:
-            _add_local(f"{city_slug}.trabalho.ministeriopublico")
-        if ("familia" in entity_norm) or ("menores" in entity_norm):
-            _add_local(f"{city_slug}.familia.ministeriopublico")
-        _add_local(f"{city_slug}.ministeriopublico")
-    elif any(token in entity_norm for token in ("tribunal", "juizo", "juízo")):
-        _add_local(f"{city_slug}.judicial")
-
-    return [f"{local_part}@{COURT_EMAIL_DOMAIN}" for local_part in local_parts]
-
-
 def rank_court_email_suggestions(
     *,
     exact_email: str | None,
@@ -329,46 +279,12 @@ def rank_court_email_suggestions(
     case_city: str | None,
     vocab_court_emails: list[str],
 ) -> list[str]:
-    ranked: list[str] = []
-    seen: set[str] = set()
-
-    def _add(email: str | None) -> None:
-        cleaned = _sanitize_email(email)
-        if cleaned is None:
-            return
-        key = cleaned.casefold()
-        if key in seen:
-            return
-        seen.add(key)
-        ranked.append(cleaned)
-
-    curated = [_sanitize_email(email) for email in vocab_court_emails]
-    curated = [email for email in curated if email is not None]
-    inferred = _infer_court_email_candidates(case_entity=case_entity, case_city=case_city)
-    city_slug = _court_email_city_slug(case_city, case_entity)
-
-    _add(exact_email)
-
-    curated_by_local = {_court_email_local_part(email): email for email in curated}
-    for inferred_email in inferred:
-        matched_curated = curated_by_local.get(_court_email_local_part(inferred_email))
-        if matched_curated is not None:
-            _add(matched_curated)
-
-    for email in inferred:
-        _add(email)
-
-    if city_slug is not None:
-        city_prefix = f"{city_slug}."
-        for email in curated:
-            local_part = _court_email_local_part(email)
-            if local_part == city_slug or local_part.startswith(city_prefix):
-                _add(email)
-
-    for email in curated:
-        _add(email)
-
-    return ranked
+    return rank_court_email_suggestions_internal(
+        exact_email=exact_email,
+        case_entity=case_entity,
+        case_city=case_city,
+        vocab_court_emails=vocab_court_emails,
+    )
 
 
 def choose_court_email_suggestion(
@@ -378,13 +294,12 @@ def choose_court_email_suggestion(
     case_city: str | None,
     vocab_court_emails: list[str],
 ) -> str | None:
-    ranked = rank_court_email_suggestions(
+    return choose_court_email_suggestion_internal(
         exact_email=exact_email,
         case_entity=case_entity,
         case_city=case_city,
         vocab_court_emails=vocab_court_emails,
     )
-    return ranked[0] if ranked else None
 
 
 def _parse_json_object(raw: str) -> dict[str, Any] | None:
@@ -479,6 +394,11 @@ def extract_from_header_text(
     case_no_conf = 0.95 if case_number else 0.0
     court_email_near, first_email = _extract_court_email_candidates(text)
     court_email = court_email_near or first_email
+    court_email_source = (
+        COURT_EMAIL_SOURCE_DOCUMENT_EXACT
+        if court_email_near
+        else (COURT_EMAIL_SOURCE_DOCUMENT_FIRST if first_email else None)
+    )
     email_conf = 0.9 if court_email_near else (0.6 if first_email else 0.0)
 
     config = ai_config or MetadataAutofillConfig(metadata_ai_enabled=ai_enabled)
@@ -506,6 +426,7 @@ def extract_from_header_text(
         case_city=case_city,
         case_number=case_number,
         court_email=court_email,
+        court_email_source=court_email_source,
         service_entity=case_entity,
         service_city=case_city,
         confidence={
@@ -648,6 +569,7 @@ def extract_interpretation_notification_metadata_from_text(
         case_city=base.case_city,
         case_number=base.case_number,
         court_email=base.court_email,
+        court_email_source=base.court_email_source,
         service_entity=service_entity,
         service_city=service_city,
         service_date=service_date,
@@ -666,6 +588,11 @@ def extract_interpretation_notification_metadata_from_text(
     if suggestion.court_email is None:
         related_email, first_email = _extract_court_email_candidates(text)
         suggestion.court_email = related_email or first_email
+        suggestion.court_email_source = (
+            COURT_EMAIL_SOURCE_DOCUMENT_EXACT
+            if related_email
+            else (COURT_EMAIL_SOURCE_DOCUMENT_FIRST if first_email else None)
+        )
     if suggestion.confidence is not None:
         if suggestion.service_date:
             suggestion.confidence["service_date"] = 0.9
@@ -829,8 +756,9 @@ def extract_full_text_from_pdf_page_with_ocr_fallback(
         return ordered.text.strip()
 
     effective = config or MetadataAutofillConfig()
-    if effective.ocr_mode == OcrMode.OFF:
+    if effective.ocr_mode == OcrMode.OFF and not effective.metadata_allow_header_ocr_even_if_ocr_off:
         return ""
+    ocr_mode = OcrMode.ALWAYS if effective.metadata_allow_header_ocr_even_if_ocr_off else effective.ocr_mode
     try:
         engine = _build_ocr_engine_from_config(effective)
     except Exception:
@@ -838,12 +766,40 @@ def extract_full_text_from_pdf_page_with_ocr_fallback(
     ocr_result = ocr_pdf_page_text(
         pdf_path=pdf_path,
         page_number=page_number,
-        mode=effective.ocr_mode,
+        mode=ocr_mode,
         engine=engine,
         prefer_header=False,
         lang_hint="PT",
     )
     return ocr_result.text.strip()
+
+
+def _extract_pdf_page_email_candidates_with_text_fallback(
+    pdf_path: Path,
+    *,
+    page_number: int,
+    config: MetadataAutofillConfig | None,
+) -> tuple[str, str | None, str | None]:
+    header_text = extract_header_text_from_pdf_page_with_ocr_fallback(
+        pdf_path,
+        page_number=page_number,
+        config=config,
+    )
+    related_email, first_email = _extract_court_email_candidates(header_text)
+    if header_text.strip() and (related_email or first_email):
+        return header_text, related_email, first_email
+
+    full_text = extract_full_text_from_pdf_page_with_ocr_fallback(
+        pdf_path,
+        page_number=page_number,
+        config=config,
+    )
+    if full_text.strip():
+        fallback_related, fallback_first = _extract_court_email_candidates(full_text)
+        if fallback_related or fallback_first:
+            parse_text = header_text if header_text.strip() else full_text
+            return parse_text, fallback_related, fallback_first
+    return header_text, related_email, first_email
 
 
 def extract_header_text_from_pdf_with_ocr_fallback(
@@ -866,19 +822,26 @@ def extract_pdf_header_metadata(
     page_number: int = 1,
 ) -> MetadataSuggestion:
     effective = config or MetadataAutofillConfig()
-    header_text = extract_header_text_from_pdf_page_with_ocr_fallback(
+    parse_text, related_email, first_email = _extract_pdf_page_email_candidates_with_text_fallback(
         pdf_path,
         page_number=page_number,
         config=effective,
     )
-    if not header_text.strip():
+    if not parse_text.strip():
         return MetadataSuggestion()
-    return extract_from_header_text(
-        header_text,
+    suggestion = extract_from_header_text(
+        parse_text,
         vocab_cities=vocab_cities,
         ai_enabled=effective.metadata_ai_enabled,
         ai_config=effective,
     )
+    suggestion.court_email = related_email or first_email
+    suggestion.court_email_source = (
+        COURT_EMAIL_SOURCE_DOCUMENT_EXACT
+        if related_email
+        else (COURT_EMAIL_SOURCE_DOCUMENT_FIRST if first_email else None)
+    )
+    return suggestion
 
 
 def extract_pdf_header_metadata_priority_pages(
@@ -903,19 +866,18 @@ def extract_pdf_header_metadata_priority_pages(
     related_emails_by_page: dict[int, str | None] = {}
     first_emails_by_page: dict[int, str | None] = {}
     for page_number in ordered_pages:
-        header_text = extract_header_text_from_pdf_page_with_ocr_fallback(
+        parse_text, related_email, first_email = _extract_pdf_page_email_candidates_with_text_fallback(
             pdf_path,
             page_number=page_number,
             config=effective,
         )
-        if not header_text.strip():
+        if not parse_text.strip():
             suggestions.append(MetadataSuggestion())
             related_emails_by_page[page_number] = None
             first_emails_by_page[page_number] = None
             continue
-        related_email, first_email = _extract_court_email_candidates(header_text)
         suggestion = extract_from_header_text(
-            header_text,
+            parse_text,
             vocab_cities=vocab_cities,
             ai_enabled=effective.metadata_ai_enabled,
             ai_config=effective,
@@ -944,16 +906,20 @@ def extract_pdf_header_metadata_priority_pages(
                 merged_confidence.setdefault(key, float(value))
 
     selected_email: str | None = None
+    selected_source: str | None = None
     for page_number in ordered_pages:
         if related_emails_by_page.get(page_number):
             selected_email = related_emails_by_page[page_number]
+            selected_source = COURT_EMAIL_SOURCE_DOCUMENT_EXACT
             break
     if selected_email is None:
         for page_number in ordered_pages:
             if first_emails_by_page.get(page_number):
                 selected_email = first_emails_by_page[page_number]
+                selected_source = COURT_EMAIL_SOURCE_DOCUMENT_FIRST
                 break
     merged.court_email = selected_email
+    merged.court_email_source = selected_source
     if selected_email is not None:
         merged_confidence["court_email"] = 0.9 if selected_email in related_emails_by_page.values() else 0.6
     merged.confidence = merged_confidence or None

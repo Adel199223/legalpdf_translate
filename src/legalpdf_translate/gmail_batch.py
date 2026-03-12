@@ -11,6 +11,7 @@ from shutil import copy2
 from typing import Any, Callable, Mapping, Sequence
 from uuid import uuid4
 
+from legalpdf_translate.court_email import CourtEmailResolution
 from legalpdf_translate.docx_writer import resolve_noncolliding_output_path
 from legalpdf_translate.gmail_draft import (
     _extract_gmail_accounts,
@@ -107,6 +108,7 @@ class GmailBatchConfirmedItem:
     case_entity: str
     case_city: str
     court_email: str
+    court_email_resolution: CourtEmailResolution | None = None
 
     @property
     def consistency_signature(self) -> GmailBatchConsistencySignature:

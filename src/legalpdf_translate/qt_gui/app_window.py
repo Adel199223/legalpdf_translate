@@ -67,6 +67,11 @@ from legalpdf_translate.checkpoint import (
     parse_ocr_mode,
 )
 from legalpdf_translate.config import OPENAI_MODEL
+from legalpdf_translate.court_email import (
+    CourtEmailResolution,
+    gmail_draft_block_warning,
+    resolve_court_email_selection,
+)
 from legalpdf_translate.gmail_draft import (
     GMAIL_DRAFTS_URL,
     assess_gmail_draft_prereqs,
@@ -99,7 +104,6 @@ from legalpdf_translate.honorarios_docx import (
     default_interpretation_recipient_block,
 )
 from legalpdf_translate.metadata_autofill import (
-    choose_court_email_suggestion,
     extract_interpretation_notification_metadata_from_pdf,
     extract_interpretation_photo_metadata_from_image,
     extract_pdf_header_metadata_priority_pages,
@@ -2754,6 +2758,39 @@ class QtMainWindow(QMainWindow):
             self._append_log(log_message)
         self._update_controls()
 
+    def _guard_court_email_for_gmail_draft(
+        self,
+        resolution: CourtEmailResolution | None,
+        *,
+        session: GmailBatchSession | GmailInterpretationSession | None = None,
+        persist_report: Callable[..., object] | None = None,
+        batch_status_text: str | None = None,
+        batch_header_status_text: str | None = None,
+        batch_log_message: str | None = None,
+    ) -> bool:
+        warning = gmail_draft_block_warning(resolution)
+        if warning is None:
+            return True
+        if session is not None:
+            session.draft_created = False
+            session.draft_failure_reason = warning
+        if isinstance(session, GmailBatchSession):
+            session.draft_preflight_result = "failed"
+            if callable(persist_report):
+                persist_report(
+                    session=session,
+                    status="draft_unavailable",
+                    halt_reason="court_email_confirmation_required",
+                )
+            if batch_status_text and batch_header_status_text and batch_log_message:
+                self._set_gmail_batch_finalization_state(
+                    status_text=batch_status_text,
+                    header_status_text=batch_header_status_text,
+                    log_message=batch_log_message,
+                )
+        QMessageBox.warning(self, "Gmail draft", warning)
+        return False
+
     def _offer_gmail_batch_reply_draft(self, honorarios_docx: Path, profile: UserProfile) -> bool:
         session = self._gmail_batch_session
         persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
@@ -2763,6 +2800,29 @@ class QtMainWindow(QMainWindow):
                 "Gmail draft",
                 "No confirmed Gmail batch is available to create the reply draft.",
             )
+            return False
+        first_item = session.confirmed_items[0]
+        first_resolution = first_item.court_email_resolution or resolve_court_email_selection(
+            document_email=None,
+            document_source=None,
+            case_entity=first_item.case_entity,
+            case_city=first_item.case_city,
+            vocab_court_emails=[],
+            selected_email=first_item.court_email,
+            selected_email_is_manual=True,
+        )
+        if not QtMainWindow._guard_court_email_for_gmail_draft(
+            self,
+            first_resolution,
+            session=session,
+            persist_report=persist_report if callable(persist_report) else None,
+            batch_status_text="Gmail draft blocked",
+            batch_header_status_text="Gmail draft blocked",
+            batch_log_message=(
+                "Gmail batch finalization stopped because Court Email was inferred or unresolved. "
+                "Confirm Court Email in Save to Job Log and try again."
+            ),
+        ):
             return False
         prereqs = assess_gmail_draft_prereqs(
             configured_gog_path=str(self._defaults.get("gmail_gog_path", "") or ""),
@@ -2792,7 +2852,6 @@ class QtMainWindow(QMainWindow):
                 log_message="Gmail batch finalization stopped because Gmail draft prerequisites are unavailable.",
             )
             return False
-        first_item = session.confirmed_items[0]
         try:
             translated_docxs = validate_translated_docx_artifacts_for_gmail_draft(
                 translated_docxs=tuple(item.translated_docx_path for item in session.confirmed_items),
@@ -2808,7 +2867,7 @@ class QtMainWindow(QMainWindow):
             request = build_gmail_batch_reply_request(
                 gog_path=prereqs.gog_path,
                 account_email=prereqs.account_email,
-                to_email=first_item.court_email,
+                to_email=first_resolution.selected_email or first_item.court_email,
                 subject=session.message.subject,
                 reply_to_message_id=session.intake_context.message_id or session.message.message_id,
                 translated_docxs=translated_docxs,
@@ -2925,6 +2984,7 @@ class QtMainWindow(QMainWindow):
         *,
         honorarios_docx: Path,
         court_email: str,
+        court_email_resolution: CourtEmailResolution | None = None,
         profile: UserProfile,
     ) -> bool:
         session = self._gmail_interpretation_session
@@ -2934,6 +2994,17 @@ class QtMainWindow(QMainWindow):
                 "Gmail draft",
                 "No prepared interpretation Gmail session is available for draft creation.",
             )
+            return False
+        resolution = court_email_resolution or resolve_court_email_selection(
+            document_email=None,
+            document_source=None,
+            case_entity="",
+            case_city="",
+            vocab_court_emails=[],
+            selected_email=court_email,
+            selected_email_is_manual=True,
+        )
+        if not QtMainWindow._guard_court_email_for_gmail_draft(self, resolution, session=session):
             return False
         prereqs = assess_gmail_draft_prereqs(
             configured_gog_path=str(self._defaults.get("gmail_gog_path", "") or ""),
@@ -2954,7 +3025,7 @@ class QtMainWindow(QMainWindow):
             request = build_interpretation_gmail_reply_request(
                 gog_path=prereqs.gog_path,
                 account_email=prereqs.account_email,
-                to_email=court_email,
+                to_email=resolution.selected_email or court_email,
                 subject=session.message.subject,
                 reply_to_message_id=session.intake_context.message_id or session.message.message_id,
                 honorarios_docx=honorarios_docx,
@@ -3070,6 +3141,7 @@ class QtMainWindow(QMainWindow):
         created = self._offer_gmail_interpretation_reply_draft(
             honorarios_docx=honorarios_docx,
             court_email=court_email,
+            court_email_resolution=saved_result.court_email_resolution,
             profile=selected_profile,
         )
         if created:
@@ -3187,6 +3259,7 @@ class QtMainWindow(QMainWindow):
             case_entity=saved_result.case_entity.strip(),
             case_city=saved_result.case_city.strip(),
             court_email=saved_result.court_email.strip(),
+            court_email_resolution=saved_result.court_email_resolution,
         )
         session.confirmed_items.append(confirmed_item)
         if callable(persist_report):
@@ -5629,12 +5702,15 @@ class QtMainWindow(QMainWindow):
             seed.service_city = suggestion.case_city
         if suggestion.case_number:
             seed.case_number = suggestion.case_number
-        seed.court_email = choose_court_email_suggestion(
-            exact_email=suggestion.court_email,
+        resolution = resolve_court_email_selection(
+            document_email=suggestion.court_email,
+            document_source=getattr(suggestion, "court_email_source", None),
             case_entity=seed.case_entity,
             case_city=seed.case_city,
             vocab_court_emails=list(settings.get("vocab_court_emails", [])),
-        ) or ""
+        )
+        seed.court_email = resolution.selected_email or ""
+        seed.court_email_resolution = resolution
 
         self._last_joblog_seed = seed
 

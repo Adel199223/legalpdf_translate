@@ -253,6 +253,12 @@ QtMainWindow
 - **Behavior:** `Run Metrics (auto-filled)` and `Amounts (EUR)` start collapsed in both create mode and historical edit mode; the user can expand them on demand.
 - **Verify:** a newly opened Save/Edit Job Log dialog shows those sections collapsed while the main case/service fields stay visible.
 
+### 13b. Court-email confirmation contract
+- **What:** `Court Email` stays editable, but Save/Edit Job Log must show its provenance and stop Gmail draft actions when the address was inferred or unresolved.
+- **Where:** `QtSaveToJobLogDialog` in `qt_gui/dialogs.py`, shared resolver state from `src/legalpdf_translate/court_email.py`, and Gmail draft guards in `qt_gui/app_window.py`.
+- **Behavior:** the hint label under `Court Email` reflects whether the address came from the document, broader document text, manual confirmation, or saved-suggestion inference. User edits or explicit combo selection promote the current address to manual confirmation. Inferred or ambiguous saved-suggestion states block Gmail draft creation with a warning until the user confirms or corrects the field.
+- **Verify:** a row with a document-found email shows a non-warning hint and allows Gmail draft creation, while a row populated only from conflicting saved suggestions shows the inferred warning and the draft is not created until `Court Email` is manually confirmed.
+
 ### 13a. Shared core-dialog chrome contract
 - **What:** `Settings`, `Glossary Editor`, `Glossary Builder`, `Calibration Audit`, Gmail preview/review, Save/Edit Job Log, and honorários export should inherit the same elevated translucent styling language as the dashboard instead of relying on dialog-local one-off styles.
 - **Where:** centralized selectors in `qt_gui/styles.py`, especially `QDialog`, `QGroupBox`, `QTabWidget`, `DialogScrollArea`, and `DialogActionBar`.
@@ -346,11 +352,12 @@ python -m compileall src tests
 10. Open `Tools > Save to Job Log...` and confirm the dialog fits on-screen, scrolls internally on smaller sizes, and starts with `Run Metrics` and `Amounts` collapsed
 11. Open `Tools > View Job Log` and confirm the table uses icon row actions, resizable headers, and horizontal scrolling only when the table is wider than the window
 12. Open Gmail attachment preview and confirm drag-resizing does not visibly shake from repeated rescale/reflow work
-13. Scroll over the closed run-critical selectors and confirm they do not change by accident
-14. Trigger the EN/FR xhigh warning and confirm `Switch to fixed high` changes the current effort policy
-15. Trigger the OCR-heavy warning and confirm `Apply safe OCR profile` changes the current run only
-16. Open `File > New Window` or press `Ctrl+Shift+N` and confirm a second top-level window appears with the next `Workspace N` title
-17. Start a run in one workspace and confirm another workspace stays usable while it is busy
-18. Configure the same source file, target language, and output folder in two workspaces and confirm the second start is blocked as duplicate run-folder reuse
-19. If Gmail intake is enabled, confirm intake reuses an idle blank workspace first and opens a new workspace when the last active one is busy or already has job context
-20. In `dark_futuristic`, confirm the top menu bar reads as a warm smoky band, the left background glow is visibly stronger than the nearby cold field chrome, the dashboard/footer shells carry cyan bloom, the primary button reads cyan, and the cancel button reads salmon rather than disabled maroon
+13. In `Save to Job Log`, check the hint under `Court Email`: document-found addresses should read as safe, while inferred/ambiguous addresses should warn and block Gmail draft creation until you confirm the field manually
+14. Scroll over the closed run-critical selectors and confirm they do not change by accident
+15. Trigger the EN/FR xhigh warning and confirm `Switch to fixed high` changes the current effort policy
+16. Trigger the OCR-heavy warning and confirm `Apply safe OCR profile` changes the current run only
+17. Open `File > New Window` or press `Ctrl+Shift+N` and confirm a second top-level window appears with the next `Workspace N` title
+18. Start a run in one workspace and confirm another workspace stays usable while it is busy
+19. Configure the same source file, target language, and output folder in two workspaces and confirm the second start is blocked as duplicate run-folder reuse
+20. If Gmail intake is enabled, confirm intake reuses an idle blank workspace first and opens a new workspace when the last active one is busy or already has job context
+21. In `dark_futuristic`, confirm the top menu bar reads as a warm smoky band, the left background glow is visibly stronger than the nearby cold field chrome, the dashboard/footer shells carry cyan bloom, the primary button reads cyan, and the cancel button reads salmon rather than disabled maroon

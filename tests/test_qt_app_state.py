@@ -15,6 +15,11 @@ from PySide6.QtGui import QCloseEvent, QColor, QImage, QPainter, QPen
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QBoxLayout, QCalendarWidget, QComboBox, QDialog, QLineEdit, QToolButton
 
+from legalpdf_translate.court_email import (
+    COURT_EMAIL_SOURCE_INFERRED,
+    COURT_EMAIL_SOURCE_MANUAL,
+    CourtEmailResolution,
+)
 from legalpdf_translate.gmail_batch import (
     FetchedGmailMessage,
     GmailAttachmentCandidate,
@@ -256,6 +261,7 @@ def _build_gmail_batch_confirmed_item(
     case_entity: str = "Tribunal",
     case_city: str = "Beja",
     court_email: str = "court@example.com",
+    court_email_resolution: CourtEmailResolution | None = None,
     run_id: str | None = None,
     joblog_row_id: int | None = None,
     run_dir: Path | None = None,
@@ -273,6 +279,7 @@ def _build_gmail_batch_confirmed_item(
         case_entity=case_entity,
         case_city=case_city,
         court_email=court_email,
+        court_email_resolution=court_email_resolution,
     )
 
 
@@ -3909,6 +3916,12 @@ def test_record_gmail_batch_saved_result_stages_translated_docx_copy(tmp_path: P
             case_city="Beja",
             court_email="falentejo.judicial@tribunais.org.pt",
             run_id="run-42",
+            court_email_resolution=CourtEmailResolution(
+                selected_email="falentejo.judicial@tribunais.org.pt",
+                source=COURT_EMAIL_SOURCE_MANUAL,
+                ambiguous=False,
+                ranked_candidates=("falentejo.judicial@tribunais.org.pt",),
+            ),
         ),
         run_dir=tmp_path / "21-25_AR_run",
     )
@@ -3921,6 +3934,8 @@ def test_record_gmail_batch_saved_result_stages_translated_docx_copy(tmp_path: P
     assert item.translated_docx_path.name == original.name
     assert item.translated_docx_path.read_bytes() == b"translated-bytes"
     assert item.run_dir == (tmp_path / "21-25_AR_run").resolve()
+    assert item.court_email_resolution is not None
+    assert item.court_email_resolution.source == COURT_EMAIL_SOURCE_MANUAL
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["status"] == "joblog_saved"
     assert payload["runs"][0]["run_id"] == "run-42"
@@ -4588,6 +4603,70 @@ def test_offer_gmail_batch_reply_draft_builds_threaded_request_and_clears_batch(
     ]
 
 
+def test_offer_gmail_batch_reply_draft_blocks_inferred_or_ambiguous_court_email(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session = _build_gmail_batch_session(tmp_path, count=1)
+    translated = tmp_path / "staged-translated-1.docx"
+    translated.write_bytes(b"one")
+    honorarios = tmp_path / "honorarios.docx"
+    honorarios.write_bytes(b"two")
+    session.confirmed_items = [
+        _build_gmail_batch_confirmed_item(
+            session,
+            index=0,
+            translated_docx_path=translated,
+            translated_word_count=125,
+            court_email="beja.ministeriopublico@tribunais.org.pt",
+            court_email_resolution=CourtEmailResolution(
+                selected_email="beja.ministeriopublico@tribunais.org.pt",
+                source=COURT_EMAIL_SOURCE_INFERRED,
+                ambiguous=True,
+                ranked_candidates=(
+                    "beja.ministeriopublico@tribunais.org.pt",
+                    "beja.ministeriopublico@tribunais.gov.pt",
+                ),
+            ),
+        )
+    ]
+    calls: dict[str, object] = {}
+    monkeypatch.setattr(
+        app_window_module,
+        "assess_gmail_draft_prereqs",
+        lambda **kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path(r"C:\gog.exe"),
+            account_email="adel.belghali@gmail.com",
+            accounts=("adel.belghali@gmail.com",),
+        ),
+    )
+    monkeypatch.setattr(
+        app_window_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: calls.__setitem__("warning", args[2] if len(args) > 2 else kwargs.get("text")),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "build_gmail_batch_reply_request",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("draft request should not be built when court email is inferred")),
+    )
+    fake = SimpleNamespace(
+        _gmail_batch_session=session,
+        _defaults={"gmail_gog_path": "", "gmail_account_email": ""},
+        _set_gmail_batch_finalization_state=lambda **kwargs: calls.__setitem__("state", kwargs),
+        _clear_gmail_batch_session=lambda: calls.__setitem__("cleared", True),
+    )
+
+    assert QtMainWindow._offer_gmail_batch_reply_draft(fake, honorarios, default_primary_profile()) is False
+    assert "inferred from saved suggestions" in calls["warning"]
+    assert session.draft_preflight_result == "failed"
+    assert session.draft_created is False
+    assert calls["state"]["status_text"] == "Gmail draft blocked"
+    assert "cleared" not in calls
+
+
 def test_offer_gmail_interpretation_reply_draft_builds_threaded_request(
     tmp_path: Path,
     monkeypatch,
@@ -4653,6 +4732,63 @@ def test_offer_gmail_interpretation_reply_draft_builds_threaded_request(
     assert session.draft_created is True
     assert session.final_attachment_basenames == ("honorarios.docx",)
     assert opened == []
+
+
+def test_offer_gmail_interpretation_reply_draft_blocks_inferred_court_email(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session = _build_gmail_interpretation_session(tmp_path)
+    honorarios = tmp_path / "honorarios.docx"
+    honorarios.write_bytes(b"docx")
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        app_window_module,
+        "assess_gmail_draft_prereqs",
+        lambda **kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path(r"C:\gog.exe"),
+            account_email="adel.belghali@gmail.com",
+            accounts=("adel.belghali@gmail.com",),
+        ),
+    )
+    monkeypatch.setattr(
+        app_window_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: calls.__setitem__("warning", args[2] if len(args) > 2 else kwargs.get("text")),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "build_interpretation_gmail_reply_request",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("draft request should not be built when court email is inferred")),
+    )
+    fake = SimpleNamespace(
+        _gmail_interpretation_session=session,
+        _defaults={"gmail_gog_path": "", "gmail_account_email": ""},
+    )
+
+    assert (
+        QtMainWindow._offer_gmail_interpretation_reply_draft(
+            fake,
+            honorarios_docx=honorarios,
+            court_email="beja.ministeriopublico@tribunais.org.pt",
+            court_email_resolution=CourtEmailResolution(
+                selected_email="beja.ministeriopublico@tribunais.org.pt",
+                source=COURT_EMAIL_SOURCE_INFERRED,
+                ambiguous=True,
+                ranked_candidates=(
+                    "beja.ministeriopublico@tribunais.org.pt",
+                    "beja.ministeriopublico@tribunais.gov.pt",
+                ),
+            ),
+            profile=default_primary_profile(),
+        )
+        is False
+    )
+    assert "inferred from saved suggestions" in calls["warning"]
+    assert session.draft_created is False
 
 
 def test_finalize_gmail_interpretation_session_builds_notice_seed_and_offers_reply(
@@ -6155,6 +6291,87 @@ def test_prepare_joblog_seed_uses_ranked_court_email_suggestion_when_no_exact_em
     assert fake._last_joblog_seed.court_email == "beja.ministeriopublico@tribunais.org.pt"
 
 
+def test_prepare_joblog_seed_prefers_org_domain_and_marks_conflicting_vocab_as_inferred(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    pdf_path = tmp_path / "sample.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    run_dir = tmp_path / "run"
+    (run_dir / "pages").mkdir(parents=True)
+
+    def _fake_seed_from_run(**_: object) -> JobLogSeed:
+        return JobLogSeed(
+            completed_at=datetime.now().isoformat(timespec="seconds"),
+            translation_date="2026-03-05",
+            job_type="Translation",
+            case_number="",
+            court_email="",
+            case_entity="",
+            case_city="",
+            service_entity="",
+            service_city="",
+            service_date="2026-03-05",
+            lang="FR",
+            pages=1,
+            word_count=2,
+            rate_per_word=0.08,
+            expected_total=0.16,
+            amount_paid=0.0,
+            api_cost=0.0,
+            run_id="",
+            target_lang="FR",
+            total_tokens=None,
+            estimated_api_cost=None,
+            quality_risk_score=None,
+            profit=0.16,
+            pdf_path=pdf_path,
+        )
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.app_window.load_joblog_settings",
+        lambda: {
+            "default_rate_per_word": {"FR": 0.08},
+            "vocab_cities": ["Beja"],
+            "vocab_court_emails": [
+                "beja.ministeriopublico@tribunais.gov.pt",
+                "beja.ministeriopublico@tribunais.org.pt",
+            ],
+        },
+    )
+    monkeypatch.setattr("legalpdf_translate.qt_gui.app_window.build_seed_from_run", _fake_seed_from_run)
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.app_window.extract_pdf_header_metadata_priority_pages",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            case_entity="Ministério Público",
+            case_city="Beja",
+            case_number="36262052",
+            court_email=None,
+            court_email_source=None,
+        ),
+    )
+    fake = SimpleNamespace(
+        _last_run_config=SimpleNamespace(target_lang=SimpleNamespace(value="FR"), pdf_path=pdf_path),
+        _append_log=lambda _msg: None,
+        _last_joblog_seed=None,
+    )
+    summary = SimpleNamespace(
+        run_dir=run_dir,
+        completed_pages=1,
+        run_summary_path=None,
+        output_docx=None,
+        partial_docx=None,
+    )
+
+    QtMainWindow._prepare_joblog_seed(fake, summary)
+
+    assert fake._last_joblog_seed is not None
+    assert fake._last_joblog_seed.court_email == "beja.ministeriopublico@tribunais.org.pt"
+    assert fake._last_joblog_seed.court_email_resolution is not None
+    assert fake._last_joblog_seed.court_email_resolution.source == COURT_EMAIL_SOURCE_INFERRED
+    assert fake._last_joblog_seed.court_email_resolution.ambiguous is True
+
+
 def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path: Path) -> None:
     captured_payload: dict[str, object] = {}
     saved_settings: dict[str, object] = {}
@@ -6251,6 +6468,13 @@ def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path
         _normalized_payload=None,
         _persist_interpretation_distance_for_current_city=None,
         _resolved_seed_docx_path=None,
+        _refresh_court_email_resolution=lambda: None,
+        _court_email_resolution=CourtEmailResolution(
+            selected_email="court@example.pt",
+            source=COURT_EMAIL_SOURCE_MANUAL,
+            ambiguous=False,
+            ranked_candidates=("court@example.pt",),
+        ),
         _refresh_vocab_widgets=lambda: None,
         translation_date_edit=_FakeEdit("2026-03-05"),
         lang_edit=_FakeEdit("FR"),
@@ -6369,6 +6593,13 @@ def test_save_to_joblog_dialog_interpretation_save_returns_saved_result_without_
         _normalized_payload=None,
         _persist_interpretation_distance_for_current_city=lambda: None,
         _resolved_seed_docx_path=lambda: None,
+        _refresh_court_email_resolution=lambda: None,
+        _court_email_resolution=CourtEmailResolution(
+            selected_email="court@example.pt",
+            source=COURT_EMAIL_SOURCE_MANUAL,
+            ambiguous=False,
+            ranked_candidates=("court@example.pt",),
+        ),
         _refresh_vocab_widgets=lambda: None,
         translation_date_edit=_FakeEdit("2026-03-09"),
         lang_edit=_FakeEdit(""),
@@ -6499,6 +6730,13 @@ def test_save_to_joblog_dialog_edit_mode_updates_existing_row(monkeypatch, tmp_p
         _normalized_payload=None,
         _persist_interpretation_distance_for_current_city=None,
         _resolved_seed_docx_path=None,
+        _refresh_court_email_resolution=lambda: None,
+        _court_email_resolution=CourtEmailResolution(
+            selected_email="history@example.pt",
+            source=COURT_EMAIL_SOURCE_MANUAL,
+            ambiguous=False,
+            ranked_candidates=("history@example.pt",),
+        ),
         _refresh_vocab_widgets=lambda: None,
         translation_date_edit=_FakeEdit("2026-03-06"),
         lang_edit=_FakeEdit("AR"),
@@ -6755,6 +6993,98 @@ def test_edit_joblog_dialog_interpretation_defaults_service_same_and_one_way_dis
         assert dialog.service_city_combo.currentText() == "Beja"
         assert dialog.travel_km_outbound_edit.text() == "39"
         assert dialog.travel_km_return_edit is dialog.travel_km_outbound_edit
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_save_to_joblog_dialog_surfaces_inferred_court_email_and_manual_confirmation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        dialogs_module,
+        "load_joblog_settings",
+        lambda: {
+            **user_settings.DEFAULT_JOBLOG_SETTINGS,
+            "vocab_case_entities": list(user_settings.DEFAULT_JOBLOG_SETTINGS["vocab_case_entities"]),
+            "vocab_service_entities": list(user_settings.DEFAULT_JOBLOG_SETTINGS["vocab_service_entities"]),
+            "vocab_cities": ["Beja"],
+            "vocab_job_types": list(user_settings.DEFAULT_JOBLOG_SETTINGS["vocab_job_types"]),
+            "vocab_court_emails": [
+                "beja.ministeriopublico@tribunais.org.pt",
+                "beja.ministeriopublico@tribunais.gov.pt",
+            ],
+            "default_rate_per_word": dict(user_settings.DEFAULT_JOBLOG_SETTINGS["default_rate_per_word"]),
+            "joblog_visible_columns": list(user_settings.DEFAULT_JOBLOG_SETTINGS["joblog_visible_columns"]),
+            "joblog_column_widths": {},
+            "metadata_ai_enabled": False,
+            "metadata_photo_enabled": True,
+            "service_equals_case_by_default": True,
+            "non_court_service_entities": ["GNR", "PSP"],
+            "ocr_mode": "auto",
+            "ocr_engine": "local_then_api",
+            "ocr_api_provider": "openai",
+            "ocr_api_base_url": "",
+            "ocr_api_model": "",
+            "ocr_api_key_env_name": "DEEPSEEK_API_KEY",
+            "vocab_entities": list(user_settings.DEFAULT_JOBLOG_SETTINGS["vocab_entities"]),
+        },
+    )
+
+    seed = JobLogSeed(
+        completed_at="2026-03-05T10:00:00",
+        translation_date="2026-03-05",
+        job_type="Translation",
+        case_number="36262052",
+        court_email="beja.ministeriopublico@tribunais.org.pt",
+        case_entity="Ministério Público",
+        case_city="Beja",
+        service_entity="Ministério Público",
+        service_city="Beja",
+        service_date="2026-03-05",
+        lang="FR",
+        pages=1,
+        word_count=100,
+        rate_per_word=0.08,
+        expected_total=8.0,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="run-1",
+        target_lang="FR",
+        total_tokens=None,
+        estimated_api_cost=None,
+        quality_risk_score=None,
+        profit=8.0,
+        court_email_resolution=CourtEmailResolution(
+            selected_email="beja.ministeriopublico@tribunais.org.pt",
+            source=COURT_EMAIL_SOURCE_INFERRED,
+            ambiguous=True,
+            ranked_candidates=(
+                "beja.ministeriopublico@tribunais.org.pt",
+                "beja.ministeriopublico@tribunais.gov.pt",
+            ),
+        ),
+    )
+
+    dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert "inferred from saved suggestions" in dialog.court_email_hint_label.text()
+
+        dialog._on_court_email_user_confirmed()
+
+        assert dialog._court_email_resolution is not None
+        assert dialog._court_email_resolution.source == COURT_EMAIL_SOURCE_MANUAL
+        assert dialog.court_email_hint_label.text() == "Court Email manually confirmed."
     finally:
         dialog.close()
         dialog.deleteLater()

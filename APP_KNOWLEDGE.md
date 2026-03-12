@@ -51,6 +51,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - `src/legalpdf_translate/gmail_intake.py`: localhost Gmail message intake bridge for exact-message handoff.
 - `src/legalpdf_translate/gmail_batch.py`: exact-message Gmail fetch, attachment filtering/download, and batch-state orchestration helpers.
 - `src/legalpdf_translate/gmail_draft.py`: Windows `gog` Gmail prerequisite checks and draft creation helpers.
+- `src/legalpdf_translate/court_email.py`: shared court-email ranking, normalization, provenance, and Gmail-draft safety guards.
 - `src/legalpdf_translate/workflow_components/contracts.py`: typed workflow internal contracts.
 - `src/legalpdf_translate/workflow_components/evaluation.py`: output-evaluation and retry-reason delegation.
 - `src/legalpdf_translate/workflow_components/quality_risk.py`: deterministic quality risk scoring and review queue construction.
@@ -156,6 +157,11 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Historical Job Log editing no longer requires the original `pdf_path`. Translation rows simply disable `Autofill from PDF header` when no source PDF is available, while interpretation rows can still use `Autofill from PDF header` through a manual PDF picker fallback; `Open translated DOCX` still works when stored translated DOCX paths resolve.
 - Job Log columns now auto-fit visible headers by default, remain user-resizable, persist their widths in settings, and overflow through a horizontal scrollbar instead of squeezing the table to the viewport.
 - Save/Edit Job Log now uses selection-only guarded combos for fixed vocab fields such as `Job type`, `Lang`, and case/service entity or city; `Court Email` stays editable.
+- Court-email resolution is now shared across metadata autofill, Save/Edit Job Log, and Gmail draft flows:
+  - exact document emails always win
+  - priority-page header extraction retries the same page's full text when no usable email is found
+  - same-local-part saved variants are normalized with canonical `tribunais.org.pt` preference ahead of alternates such as `.gov.pt`
+  - inferred or ambiguous recipients stay visible in the Job Log dialog and block Gmail draft creation until `Court Email` is manually confirmed
 - Editable Job Log and honorários dates now use one shared Monday-first calendar picker while still accepting manual `YYYY-MM-DD` typing. The same shared control also backs inline Job Log date editing.
 - The Job Log now supports additive interpretation fields and behavior on top of translation rows:
   - `job_type == "Interpretation"` switches the full dialog to interpretation-first editing
@@ -210,6 +216,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Selected attachments are translated one at a time. After each successful translation, the app opens Save to Job Log and requires a confirmed save before continuing.
 - For Arabic Gmail batch items, the DOCX saved after that review gate is the reviewed artifact later used by the downstream batch item flow.
 - A Gmail batch remains valid only while every confirmed item resolves to the same `case_number`, `case_entity`, `case_city`, and `court_email`. Any mismatch stops the batch and tells the user to split it into separate replies.
+- Save-to-Job-Log and Gmail batch finalization now share the same court-email resolver. Exact document emails win; if the address is only inferred from saved suggestions or conflicting saved variants exist, the dialog shows that state and Gmail draft creation stops until `Court Email` is corrected or manually confirmed.
 - After all selected attachments are translated and confirmed, the user may generate one honorarios DOCX for the batch and one Gmail reply draft in the original thread. The app attaches all translated DOCXs plus that single honorarios DOCX and never auto-sends.
 - If the user picks an existing translated filename when saving honorários, the app auto-renames the honorários file instead of overwriting the translation.
 - Gmail draft creation now blocks duplicate attachment paths and contaminated translated artifacts (for example, a translated DOCX path that actually contains honorários content).

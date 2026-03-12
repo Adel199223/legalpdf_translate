@@ -16,6 +16,30 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-12 — codex/court-email-recipient-hardening (71ca675)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/QT_UI_KNOWLEDGE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::Persistence Notes
+  - APP_KNOWLEDGE.md::Gmail Intake Batch Workflow
+  - docs/assistant/APP_KNOWLEDGE.md::Current-Truth Note
+  - docs/assistant/QT_UI_KNOWLEDGE.md::Court-email confirmation contract
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md::Save to Job Log
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md::Honorarios + Gmail Drafts
+  - docs/assistant/features/APP_USER_GUIDE.md::Using the Job Log
+- User-visible behavior:
+  - Docs now describe the new court-email resolver that keeps exact document addresses ahead of saved suggestions and retries full-page extraction when header-only OCR misses the address.
+  - User-facing guidance now explains that `.org.pt` beats `.gov.pt` for same-local-part saved variants, but Gmail drafts are still blocked until the user confirms `Court Email`.
+  - Save to Job Log, honorários drafts, and Gmail batch finalization docs now all reflect the same fail-closed recipient rule: inferred or ambiguous court emails warn visibly and do not produce a Gmail draft until corrected or manually confirmed.
+- Tests:
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests/test_metadata_autofill_header.py tests/test_column_visibility_persistence.py tests/test_qt_app_state.py tests/test_honorarios_docx.py tests/test_gmail_batch.py` -> `243 passed`
+  - `dart run tooling/validate_agent_docs.dart` -> `PASS`
+
 ## 2026-03-09 — main (working tree)
 - Files changed:
   - agent.md

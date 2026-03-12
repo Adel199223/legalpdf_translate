@@ -148,6 +148,10 @@ After a successful run, the app can prefill the Job Log dialog using the latest 
 5. Use `Open translated DOCX` if you want to reopen the current run's final or partial DOCX from inside the dialog.
 6. On smaller screens, scroll inside the dialog instead of expecting the whole form to stay visible at once.
 7. `Run Metrics` and `Amounts` start collapsed by default so the main case and service fields stay easier to reach first.
+8. Watch the message under `Court Email`:
+   - `found in the document` or `pulled from document text` means the app found an address in the source
+   - `manually confirmed` means you explicitly chose or edited that address
+   - `inferred from saved suggestions` means the app guessed from your saved court-email list and Gmail draft creation will stay blocked until you confirm or correct it
 
 The prefill helps, but you still stay in control of the saved row.
 
@@ -222,6 +226,11 @@ From `Job Log`, the app now tries this order for the translated attachment:
 
 If the app has to ask you once for a translated DOCX on a legacy row, it saves that path back into the row so the same row should not ask again next time.
 You can use the pen action first if a historical row needs case/court corrections before exporting honorários or creating the Gmail draft.
+- The recipient address now follows the same safety rule in both current-run and historical flows:
+  1. exact document email always wins
+  2. if the document email is missing, the app may suggest a saved court email
+  3. if that suggestion was inferred or conflicting saved variants exist, the Gmail draft is blocked until you confirm `Court Email`
+- When saved suggestions contain both `.org.pt` and `.gov.pt` variants for the same local part, the app prefers `tribunais.org.pt` first, but it still asks you to confirm before any Gmail draft is created.
 
 This Gmail-draft branch always applies to translation honorários. Interpretation honorários can also produce a Gmail reply draft, but only when they start from Gmail intake in `Interpretation notice` mode.
 
@@ -250,8 +259,9 @@ Use this when the source files already arrived in Gmail and you want one reply d
 12. After each successful translation, Arabic items first pause in the Word review gate. The dialog auto-opens the DOCX in Word, offers `Align Right + Save`, and auto-continues after a detected save; if automation fails, you can save manually and use `Continue now` or `Continue without changes`.
 13. Translation mode then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
 14. When all selected translation files are confirmed, the app can generate one honorários DOCX using the combined translated word count for the batch.
-15. If the translation honorários step succeeds, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários DOCX.
-16. If the interpretation honorários step succeeds, the app creates one Gmail reply draft in the original thread with the generated honorários DOCX only.
+15. If `Save to Job Log` shows `Court Email` as inferred from saved suggestions or unresolved, correct or confirm that field before trying to finish the Gmail reply. The app will not draft to an unconfirmed address.
+16. If the translation honorários step succeeds and `Court Email` is confirmed, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários DOCX.
+17. If the interpretation honorários step succeeds and `Court Email` is confirmed, the app creates one Gmail reply draft in the original thread with the generated honorários DOCX only.
 
 ### Batch rules
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
@@ -263,6 +273,7 @@ Use this when the source files already arrived in Gmail and you want one reply d
 - Every confirmed item in the batch must end with the same `case_number`, `case_entity`, `case_city`, and `court_email`.
 - If any confirmed item differs, stop and split the email into separate reply batches.
 - The final Gmail result is always a draft only. The app does not auto-send.
+- Gmail draft creation also stops if `Court Email` is missing, inferred from saved suggestions, or ambiguous because conflicting saved variants exist for the same recipient.
 - If you accidentally choose an existing translated DOCX filename while saving honorários, the app auto-renames the honorários file instead of overwriting the translation.
 - Gmail draft creation blocks duplicate attachment paths and translated artifacts that are actually honorários content.
 - Interpretation honorários close with the saved `service_date` when that date parses as ISO, so you can generate the DOCX or draft in advance and still keep the hearing/service day in the footer.
@@ -317,12 +328,13 @@ Queue mode writes these sidecar files next to the manifest:
 24. If the Gmail review dialog shows no files, the email likely had no supported attachments or Gmail exposed only inline/signature/media parts.
 25. If you cancel `Save to Job Log` during a Gmail batch, the remaining attachments stop by design.
 26. If the Gmail batch warns that case/court metadata differ, split that email into separate batches instead of forcing one reply.
-27. If you skip or fail honorários generation at the end of a Gmail batch, the app does not create the Gmail reply draft in V1.
-28. A WSL-only `gog` smoke is not enough for final Gmail intake validation. The signed-in browser, Windows app, and Windows `gog` must be checked on the same host.
-29. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets.
-30. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
-31. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
-32. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
+27. If Gmail finalization says `Court Email` was inferred, unresolved, or conflicting, go back to `Save to Job Log`, confirm or correct the address, then retry the draft.
+28. If you skip or fail honorários generation at the end of a Gmail batch, the app does not create the Gmail reply draft in V1.
+29. A WSL-only `gog` smoke is not enough for final Gmail intake validation. The signed-in browser, Windows app, and Windows `gog` must be checked on the same host.
+30. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets.
+31. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
+32. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
+33. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.

@@ -17,6 +17,11 @@ from PySide6.QtCore import QDate, QRect, Qt, QUrl
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 import legalpdf_translate.user_settings as user_settings
+from legalpdf_translate.court_email import (
+    COURT_EMAIL_SOURCE_INFERRED,
+    COURT_EMAIL_SOURCE_MANUAL,
+    CourtEmailResolution,
+)
 from legalpdf_translate.honorarios_docx import (
     HonorariosDraft,
     HonorariosKind,
@@ -393,9 +398,10 @@ def test_honorarios_dialog_reports_auto_renamed_save_path(tmp_path: Path, monkey
         "legalpdf_translate.qt_gui.dialogs.QMessageBox.information",
         lambda *args, **kwargs: infos.append(args[2] if len(args) > 2 else kwargs.get("text", "")),
     )
+    answers = iter([16384, 65536])
     monkeypatch.setattr(
         "legalpdf_translate.qt_gui.dialogs.QMessageBox.question",
-        lambda *args, **kwargs: 65536,
+        lambda *args, **kwargs: next(answers),
     )
 
     dialog = QtHonorariosExportDialog(
@@ -1054,6 +1060,12 @@ def test_save_to_joblog_dialog_offers_gmail_draft_for_current_run_export(
         profit=149.38,
         pdf_path=tmp_path / "sample.pdf",
         output_docx=translated,
+        court_email_resolution=CourtEmailResolution(
+            selected_email="beja.judicial@tribunais.org.pt",
+            source=COURT_EMAIL_SOURCE_MANUAL,
+            ambiguous=False,
+            ranked_candidates=("beja.judicial@tribunais.org.pt",),
+        ),
     )
 
     captured: dict[str, object] = {}
@@ -1176,6 +1188,12 @@ def test_save_to_joblog_dialog_uses_partial_docx_for_gmail_when_final_output_mis
         pdf_path=tmp_path / "sample.pdf",
         output_docx=tmp_path / "out" / "missing_final.docx",
         partial_docx=partial,
+        court_email_resolution=CourtEmailResolution(
+            selected_email="beja.judicial@tribunais.org.pt",
+            source=COURT_EMAIL_SOURCE_MANUAL,
+            ambiguous=False,
+            ranked_candidates=("beja.judicial@tribunais.org.pt",),
+        ),
     )
 
     captured: dict[str, object] = {}
@@ -2352,6 +2370,13 @@ def test_save_to_joblog_gmail_draft_blocks_contaminated_translation_docx(tmp_pat
     )
 
     fake = SimpleNamespace(
+        _refresh_court_email_resolution=lambda: None,
+        _court_email_resolution=CourtEmailResolution(
+            selected_email="beja.judicial@tribunais.org.pt",
+            source=COURT_EMAIL_SOURCE_MANUAL,
+            ambiguous=False,
+            ranked_candidates=("beja.judicial@tribunais.org.pt",),
+        ),
         _gui_settings={"gmail_gog_path": "", "gmail_account_email": ""},
         court_email_combo=SimpleNamespace(currentText=lambda: "beja.judicial@tribunais.org.pt"),
         case_number_edit=SimpleNamespace(text=lambda: "21/25.0FBPTM"),
@@ -2405,6 +2430,7 @@ def test_joblog_gmail_draft_blocks_contaminated_historical_translation_docx(
     )
 
     fake = SimpleNamespace(
+        _settings={"vocab_court_emails": ["beja.judicial@tribunais.org.pt"]},
         _gui_settings={"gmail_gog_path": "", "gmail_account_email": ""},
         _historical_translation_docx_path=lambda row, honorarios_docx=None: translated.resolve(),
         _persist_historical_translation_docx=lambda row, path: None,
@@ -2418,3 +2444,108 @@ def test_joblog_gmail_draft_blocks_contaminated_historical_translation_docx(
 
     assert "contaminated with honorários content" in captured["critical"]
     assert str(translated.resolve()) in captured["critical"]
+
+
+def test_save_dialog_gmail_draft_blocks_inferred_court_email_until_confirmed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    translated = tmp_path / "translated.docx"
+    honorarios = tmp_path / "honorarios.docx"
+    _write_docx_with_paragraphs(translated, "Documento traduzido limpo.")
+    _write_docx_with_paragraphs(honorarios, "Honorários.")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.assess_gmail_draft_prereqs",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("prereqs should not run before court email confirmation")),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.warning",
+        lambda *args, **kwargs: captured.setdefault(
+            "warning",
+            args[2] if len(args) > 2 else kwargs.get("text"),
+        ),
+    )
+
+    fake = SimpleNamespace(
+        _refresh_court_email_resolution=lambda: None,
+        _court_email_resolution=CourtEmailResolution(
+            selected_email="beja.ministeriopublico@tribunais.org.pt",
+            source=COURT_EMAIL_SOURCE_INFERRED,
+            ambiguous=True,
+            ranked_candidates=(
+                "beja.ministeriopublico@tribunais.org.pt",
+                "beja.ministeriopublico@tribunais.gov.pt",
+            ),
+        ),
+        _gui_settings={"gmail_gog_path": "", "gmail_account_email": ""},
+        court_email_combo=SimpleNamespace(currentText=lambda: "beja.ministeriopublico@tribunais.org.pt"),
+        case_number_edit=SimpleNamespace(text=lambda: "21/25.0FBPTM"),
+        _current_translation_docx_path=lambda: translated.resolve(),
+    )
+
+    QtSaveToJobLogDialog._offer_gmail_draft_for_honorarios(fake, honorarios.resolve(), default_primary_profile())
+
+    assert "inferred from saved suggestions" in captured["warning"]
+    assert "not created" in captured["warning"]
+
+
+def test_joblog_gmail_draft_treats_existing_row_recipient_as_confirmed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    translated = tmp_path / "translated.docx"
+    honorarios = tmp_path / "honorarios.docx"
+    _write_docx_with_paragraphs(translated, "Documento traduzido limpo.")
+    _write_docx_with_paragraphs(honorarios, "Honorários.")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.assess_gmail_draft_prereqs",
+        lambda **kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path(r"C:\gog.exe"),
+            account_email="adel.belghali@gmail.com",
+            accounts=("adel.belghali@gmail.com",),
+        ),
+    )
+    answers = iter([16384, 65536])
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.question",
+        lambda *args, **kwargs: next(answers),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.build_honorarios_gmail_request",
+        lambda **kwargs: captured.setdefault("request", kwargs)
+        or SimpleNamespace(
+            gog_path=kwargs["gog_path"],
+            account_email=kwargs["account_email"],
+            to_email=kwargs["to_email"],
+            subject="subject",
+            body="body",
+            attachments=(kwargs["translation_docx"], kwargs["honorarios_docx"]),
+        ),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.create_gmail_draft_via_gog",
+        lambda request: SimpleNamespace(ok=True, message="ok", stdout="", stderr="", payload={"id": "draft-1"}),
+    )
+
+    fake = SimpleNamespace(
+        _settings={"vocab_court_emails": ["beja.ministeriopublico@tribunais.org.pt"]},
+        _gui_settings={"gmail_gog_path": "", "gmail_account_email": ""},
+        _historical_translation_docx_path=lambda row, honorarios_docx=None: translated.resolve(),
+        _persist_historical_translation_docx=lambda row, path: None,
+    )
+    row = {
+        "court_email": "beja.ministeriopublico@tribunais.org.pt",
+        "case_number": "21/25.0FBPTM",
+        "case_entity": "Ministério Público",
+        "case_city": "Beja",
+    }
+
+    QtJobLogWindow._offer_gmail_draft_for_honorarios(fake, row, honorarios.resolve(), default_primary_profile())
+
+    assert captured["request"]["to_email"] == "beja.ministeriopublico@tribunais.org.pt"
