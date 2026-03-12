@@ -178,10 +178,12 @@ def test_qt_app_module_main_guard_invokes_run() -> None:
 
 
 def test_build_stylesheet_supports_runtime_theme_variants() -> None:
-    from legalpdf_translate.qt_gui.styles import build_stylesheet, normalize_ui_theme
+    from legalpdf_translate.qt_gui.styles import build_stylesheet, normalize_ui_theme, theme_effect_colors
 
     futuristic = build_stylesheet("dark_futuristic")
     simple = build_stylesheet("dark_simple")
+    futuristic_effects = theme_effect_colors("dark_futuristic")
+    simple_effects = theme_effect_colors("dark_simple")
 
     assert normalize_ui_theme("unknown") == "dark_futuristic"
     assert futuristic != simple
@@ -198,3 +200,5 @@ def test_build_stylesheet_supports_runtime_theme_variants() -> None:
     assert "Bahnschrift" not in futuristic
     assert "Aptos" not in futuristic
     assert "letter-spacing: 0.82px;" in futuristic
+    assert futuristic_effects["title_glow"].getRgb() != simple_effects["title_glow"].getRgb()
+    assert futuristic_effects["footer_glow"].getRgb() != simple_effects["footer_glow"].getRgb()

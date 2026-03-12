@@ -2,42 +2,63 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsDropShadowEffect, QWidget
 
 _BASE_PALETTE = {
-    "text": "#EAF9FF",
-    "text_soft": "#D6EEF8",
-    "muted": "#9AB9CE",
-    "muted_soft": "#7CA4B7",
-    "accent": "#59E8FF",
-    "accent_strong": "#2DD4F0",
-    "accent_soft": "#8CF6FF",
-    "accent_hot": "#C7FBFF",
-    "danger": "#E98E98",
-    "danger_strong": "#F39CA7",
-    "line": "rgba(124, 232, 255, 140)",
-    "card": "rgba(5, 18, 38, 176)",
-    "surface_alt": "rgba(6, 21, 43, 182)",
-    "surface_panel": "rgba(6, 19, 36, 142)",
-    "field": "rgba(3, 12, 27, 226)",
-    "field_focus": "rgba(8, 31, 62, 236)",
-    "sidebar": "rgba(4, 12, 24, 202)",
+    "text": "#EFFCFF",
+    "text_soft": "#DFF4FB",
+    "muted": "#A7C9D7",
+    "muted_soft": "#86AEBD",
+    "accent": "#70F1FF",
+    "accent_strong": "#47DCF4",
+    "accent_soft": "#9EFBFF",
+    "accent_hot": "#D9FFFF",
+    "danger": "#F1A1A7",
+    "danger_strong": "#F7B0B6",
+    "line": "rgba(142, 239, 255, 166)",
+    "card": "rgba(8, 30, 60, 168)",
+    "surface_alt": "rgba(10, 35, 66, 182)",
+    "surface_panel": "rgba(10, 33, 60, 148)",
+    "field": "rgba(5, 20, 42, 220)",
+    "field_focus": "rgba(14, 48, 82, 238)",
+    "sidebar": "rgba(6, 20, 38, 188)",
     "dialog_bg": "rgba(5, 15, 31, 234)",
-    "dialog_border": "rgba(121, 232, 255, 104)",
-    "field_border": "rgba(103, 181, 215, 130)",
-    "field_focus_border": "#59E8FF",
+    "dialog_border": "rgba(136, 238, 255, 118)",
+    "field_border": "rgba(118, 220, 242, 156)",
+    "field_focus_border": "#8CFBFF",
     "scroll_track": "rgba(4, 14, 29, 200)",
-    "scroll_handle": "rgba(114, 193, 227, 120)",
-    "scroll_handle_hover": "rgba(114, 193, 227, 180)",
-    "button_bg": "rgba(8, 31, 57, 228)",
-    "button_hover": "rgba(13, 45, 80, 236)",
-    "button_pressed": "rgba(14, 44, 76, 236)",
-    "button_border": "rgba(113, 185, 216, 145)",
-    "group_title": "#8CF6FF",
-    "table_header_bg": "rgba(13, 39, 66, 214)",
-    "table_header_border": "rgba(110, 214, 240, 112)",
-    "selection": "rgba(35, 138, 185, 220)",
+    "scroll_handle": "rgba(138, 214, 235, 138)",
+    "scroll_handle_hover": "rgba(155, 228, 245, 194)",
+    "button_bg": "rgba(9, 40, 72, 220)",
+    "button_hover": "rgba(18, 64, 101, 232)",
+    "button_pressed": "rgba(12, 51, 86, 236)",
+    "button_border": "rgba(133, 228, 244, 164)",
+    "group_title": "#9EFBFF",
+    "table_header_bg": "rgba(16, 48, 78, 214)",
+    "table_header_border": "rgba(128, 225, 245, 126)",
+    "selection": "rgba(55, 173, 210, 220)",
+    "menubar_bg": "rgba(66, 48, 34, 154)",
+    "menubar_hover": "rgba(106, 79, 54, 196)",
+    "menu_bg": "rgba(7, 22, 42, 244)",
+    "menu_hover": "rgba(24, 98, 126, 214)",
+    "menu_separator": "rgba(141, 234, 248, 112)",
+    "shell_border": "rgba(138, 245, 255, 188)",
+    "panel_border": "rgba(124, 234, 255, 136)",
+    "field_shell_border": "rgba(124, 234, 255, 148)",
+    "metric_border": "rgba(121, 228, 250, 128)",
+    "action_rail_border": "rgba(137, 244, 255, 172)",
+    "primary_fill": "rgba(130, 240, 255, 238)",
+    "primary_fill_hover": "rgba(160, 245, 255, 244)",
+    "primary_fill_pressed": "rgba(114, 228, 244, 236)",
+    "primary_text": "#08212B",
+    "primary_border": "rgba(214, 252, 255, 248)",
+    "danger_fill": "rgba(236, 154, 160, 238)",
+    "danger_fill_hover": "rgba(244, 175, 180, 244)",
+    "danger_fill_disabled": "rgba(92, 50, 56, 124)",
+    "danger_border": "rgba(255, 210, 214, 188)",
 }
 
 _THEME_OVERRIDES = {
@@ -71,6 +92,47 @@ _THEME_OVERRIDES = {
         "table_header_bg": "rgba(20, 29, 40, 220)",
         "table_header_border": "rgba(114, 146, 161, 100)",
         "selection": "rgba(88, 146, 169, 194)",
+        "menubar_bg": "rgba(35, 34, 35, 170)",
+        "menubar_hover": "rgba(54, 57, 60, 208)",
+        "menu_bg": "rgba(10, 15, 24, 242)",
+        "menu_hover": "rgba(38, 67, 86, 214)",
+        "menu_separator": "rgba(132, 170, 186, 94)",
+        "shell_border": "rgba(148, 188, 204, 132)",
+        "panel_border": "rgba(126, 167, 184, 108)",
+        "field_shell_border": "rgba(120, 161, 178, 118)",
+        "metric_border": "rgba(120, 160, 178, 104)",
+        "action_rail_border": "rgba(130, 172, 188, 128)",
+        "primary_fill": "rgba(170, 219, 230, 218)",
+        "primary_fill_hover": "rgba(188, 231, 240, 226)",
+        "primary_fill_pressed": "rgba(153, 205, 218, 220)",
+        "primary_text": "#10222B",
+        "primary_border": "rgba(221, 241, 247, 220)",
+        "danger_fill": "rgba(196, 136, 142, 218)",
+        "danger_fill_hover": "rgba(206, 150, 155, 224)",
+        "danger_fill_disabled": "rgba(82, 54, 58, 118)",
+        "danger_border": "rgba(222, 189, 194, 160)",
+    },
+}
+
+_BASE_EFFECT_TOKENS: dict[str, tuple[int, int, int, int]] = {
+    "title_glow": (120, 246, 255, 214),
+    "dashboard_shadow": (18, 98, 134, 186),
+    "panel_shadow": (7, 48, 80, 176),
+    "advisor_shadow": (10, 58, 92, 166),
+    "details_shadow": (8, 42, 70, 160),
+    "footer_glow": (112, 236, 255, 196),
+    "primary_glow": (132, 242, 255, 216),
+}
+
+_THEME_EFFECT_OVERRIDES: dict[str, Mapping[str, tuple[int, int, int, int]]] = {
+    "dark_simple": {
+        "title_glow": (164, 218, 228, 124),
+        "dashboard_shadow": (24, 42, 56, 168),
+        "panel_shadow": (18, 32, 44, 156),
+        "advisor_shadow": (20, 34, 46, 148),
+        "details_shadow": (18, 30, 42, 146),
+        "footer_glow": (120, 168, 182, 142),
+        "primary_glow": (164, 214, 226, 154),
     },
 }
 
@@ -89,6 +151,18 @@ def theme_palette(theme: str | None) -> dict[str, str]:
     palette = dict(_BASE_PALETTE)
     palette.update(_THEME_OVERRIDES.get(normalized, {}))
     return palette
+
+
+def _rgba_to_qcolor(value: tuple[int, int, int, int]) -> QColor:
+    red, green, blue, alpha = value
+    return QColor(int(red), int(green), int(blue), int(alpha))
+
+
+def theme_effect_colors(theme: str | None) -> dict[str, QColor]:
+    normalized = normalize_ui_theme(theme)
+    tokens = dict(_BASE_EFFECT_TOKENS)
+    tokens.update(_THEME_EFFECT_OVERRIDES.get(normalized, {}))
+    return {key: _rgba_to_qcolor(value) for key, value in tokens.items()}
 
 
 def build_stylesheet(theme: str = "dark_futuristic") -> str:
@@ -124,7 +198,7 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QMenuBar {{
-        background: rgba(4, 10, 20, 148);
+        background: {PALETTE['menubar_bg']};
         color: {PALETTE['text']};
         padding: 2px 10px;
     }}
@@ -136,11 +210,11 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QMenuBar::item:selected {{
-        background: rgba(18, 61, 90, 180);
+        background: {PALETTE['menubar_hover']};
     }}
 
     QMenu {{
-        background-color: rgba(4, 14, 29, 248);
+        background-color: {PALETTE['menu_bg']};
         color: {PALETTE['text']};
         border: 1px solid {PALETTE['dialog_border']};
         border-radius: 18px;
@@ -154,18 +228,18 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QMenu::item:selected {{
-        background: rgba(20, 83, 121, 212);
+        background: {PALETTE['menu_hover']};
     }}
 
     QMenu::separator {{
         height: 1px;
         margin: 6px 10px;
-        background: rgba(116, 211, 237, 90);
+        background: {PALETTE['menu_separator']};
     }}
 
     QFrame#SidebarPanel {{
         background-color: {PALETTE['sidebar']};
-        border-right: 1px solid rgba(112, 235, 255, 72);
+        border-right: 1px solid rgba(132, 241, 255, 102);
     }}
 
     QLabel#SidebarLogoLabel {{
@@ -192,13 +266,13 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QToolButton#SidebarNavButton:hover {{
-        background: rgba(14, 56, 83, 158);
-        border-color: rgba(89, 232, 255, 92);
+        background: rgba(20, 83, 116, 164);
+        border-color: rgba(117, 240, 255, 118);
     }}
 
     QToolButton#SidebarNavButton[navRole=\"active\"] {{
-        background: rgba(17, 89, 121, 172);
-        border-color: rgba(112, 240, 255, 138);
+        background: rgba(24, 110, 138, 190);
+        border-color: rgba(142, 245, 255, 172);
         border-left: 4px solid {PALETTE['accent']};
         color: {PALETTE['accent_hot']};
     }}
@@ -226,23 +300,23 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     QFrame#DashboardFrame {{
         background: qlineargradient(
             x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(255, 255, 255, 10),
+            stop:0 rgba(255, 255, 255, 16),
             stop:0.10 {PALETTE['card']},
-            stop:0.68 {PALETTE['surface_alt']},
-            stop:1 rgba(2, 12, 28, 230)
+            stop:0.72 {PALETTE['surface_alt']},
+            stop:1 rgba(5, 22, 46, 228)
         );
-        border: 1px solid rgba(118, 243, 255, 188);
+        border: 1px solid {PALETTE['shell_border']};
         border-radius: 28px;
     }}
 
     QFrame#ShellPanel {{
         background: qlineargradient(
             x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(255, 255, 255, 14),
+            stop:0 rgba(255, 255, 255, 18),
             stop:0.14 {PALETTE['surface_panel']},
-            stop:1 rgba(3, 16, 31, 226)
+            stop:1 rgba(6, 24, 46, 226)
         );
-        border: 1px solid rgba(116, 231, 255, 110);
+        border: 1px solid {PALETTE['panel_border']};
         border-radius: 20px;
     }}
 
@@ -265,16 +339,16 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     QFrame#FieldChrome {{
         background: qlineargradient(
             x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(255, 255, 255, 14),
-            stop:0.16 rgba(8, 19, 34, 188),
-            stop:1 rgba(3, 12, 24, 232)
+            stop:0 rgba(255, 255, 255, 18),
+            stop:0.16 rgba(10, 29, 51, 192),
+            stop:1 rgba(5, 20, 40, 228)
         );
-        border: 1px solid rgba(120, 232, 255, 128);
+        border: 1px solid {PALETTE['field_shell_border']};
         border-radius: 16px;
     }}
 
     QFrame#InlineDivider {{
-        background: rgba(120, 232, 255, 52);
+        background: rgba(136, 241, 255, 62);
         border: none;
         min-width: 1px;
         max-width: 1px;
@@ -362,11 +436,11 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     QToolButton#FieldBrowseButton {{
         background: qlineargradient(
             x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(255, 255, 255, 18),
+            stop:0 rgba(255, 255, 255, 22),
             stop:0.22 {PALETTE['button_bg']},
-            stop:1 rgba(6, 26, 46, 244)
+            stop:1 rgba(9, 36, 62, 244)
         );
-        border: 1px solid rgba(116, 231, 255, 142);
+        border: 1px solid rgba(132, 239, 255, 166);
         border-radius: 12px;
         padding: 8px;
     }}
@@ -446,11 +520,11 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     QFrame#MetricGridFrame {{
         background: qlineargradient(
             x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(255, 255, 255, 10),
-            stop:0.14 rgba(6, 16, 30, 160),
-            stop:1 rgba(4, 14, 27, 214)
+            stop:0 rgba(255, 255, 255, 12),
+            stop:0.14 rgba(9, 26, 46, 164),
+            stop:1 rgba(5, 20, 39, 216)
         );
-        border: 1px solid rgba(110, 230, 255, 112);
+        border: 1px solid {PALETTE['metric_border']};
         border-radius: 18px;
     }}
 
@@ -507,11 +581,11 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     QFrame#ActionRail {{
         background: qlineargradient(
             x1:0, y1:0, x2:1, y2:1,
-            stop:0 rgba(255, 255, 255, 12),
-            stop:0.15 rgba(7, 22, 40, 156),
-            stop:1 rgba(4, 15, 29, 224)
+            stop:0 rgba(255, 255, 255, 14),
+            stop:0.15 rgba(9, 30, 52, 162),
+            stop:1 rgba(6, 22, 40, 226)
         );
-        border: 1px solid rgba(106, 236, 255, 132);
+        border: 1px solid {PALETTE['action_rail_border']};
         border-radius: 20px;
     }}
 
@@ -527,9 +601,9 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QToolButton#OverflowMenuButton {{
-        background-color: rgba(7, 26, 46, 232);
+        background-color: rgba(8, 30, 55, 228);
         color: {PALETTE['text']};
-        border: 1px solid rgba(116, 231, 255, 146);
+        border: 1px solid rgba(136, 239, 255, 166);
         border-radius: 14px;
         padding: 0 14px 4px 14px;
         font-size: 17pt;
@@ -538,7 +612,7 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QToolButton#OverflowMenuButton:hover {{
-        background-color: rgba(11, 41, 68, 242);
+        background-color: rgba(16, 53, 84, 242);
     }}
 
     QFrame#HiddenUtilityPanel {{
@@ -778,9 +852,9 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QPushButton#PrimaryButton {{
-        background-color: rgba(110, 236, 255, 230);
-        color: #0A1C27;
-        border: 1px solid rgba(199, 249, 255, 250);
+        background-color: {PALETTE['primary_fill']};
+        color: {PALETTE['primary_text']};
+        border: 1px solid {PALETTE['primary_border']};
         font-family: {_SECTION_HEADING_FONT_STACK};
         font-weight: 700;
         border-radius: 14px;
@@ -790,22 +864,22 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QPushButton#PrimaryButton:default {{
-        background-color: rgba(110, 236, 255, 230);
-        color: #0A1C27;
-        border: 1px solid rgba(199, 249, 255, 250);
+        background-color: {PALETTE['primary_fill']};
+        color: {PALETTE['primary_text']};
+        border: 1px solid {PALETTE['primary_border']};
         border-radius: 14px;
     }}
 
     QPushButton#PrimaryButton:hover {{
-        background-color: rgba(140, 242, 255, 236);
+        background-color: {PALETTE['primary_fill_hover']};
     }}
 
     QPushButton#PrimaryButton:default:hover {{
-        background-color: rgba(140, 242, 255, 236);
+        background-color: {PALETTE['primary_fill_hover']};
     }}
 
     QPushButton#PrimaryButton:default:pressed {{
-        background-color: rgba(102, 220, 240, 232);
+        background-color: {PALETTE['primary_fill_pressed']};
     }}
 
     QWidget#DialogActionBar QPushButton {{
@@ -822,8 +896,8 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QPushButton#DangerButton {{
-        background-color: rgba(226, 145, 150, 232);
-        border-color: rgba(255, 202, 208, 180);
+        background-color: {PALETTE['danger_fill']};
+        border-color: {PALETTE['danger_border']};
         color: #321115;
         border-radius: 14px;
         padding: 0 24px;
@@ -839,9 +913,13 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QPushButton#DangerButton:disabled {{
-        background-color: rgba(88, 46, 52, 122);
+        background-color: {PALETTE['danger_fill_disabled']};
         border-color: rgba(172, 112, 121, 110);
         color: rgba(228, 199, 205, 150);
+    }}
+
+    QPushButton#DangerButton:hover {{
+        background-color: {PALETTE['danger_fill_hover']};
     }}
 
     QToolButton#OverflowMenuButton:disabled {{
@@ -851,8 +929,8 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QProgressBar {{
-        background-color: rgba(7, 22, 39, 220);
-        border: 1px solid rgba(121, 236, 255, 126);
+        background-color: rgba(7, 24, 44, 220);
+        border: 1px solid rgba(134, 240, 255, 136);
         border-radius: 15px;
         min-height: 26px;
         padding: 2px;
@@ -1010,17 +1088,36 @@ def make_blur_effect(parent: QWidget, *, radius: int = 24) -> QGraphicsBlurEffec
     return effect
 
 
-def apply_soft_shadow(widget: QWidget, *, blur_radius: int = 48, offset_y: int = 12) -> None:
+def _coerce_effect_color(color: QColor | tuple[int, int, int, int] | None, *, fallback: tuple[int, int, int, int]) -> QColor:
+    if isinstance(color, QColor):
+        return QColor(color)
+    if isinstance(color, tuple):
+        return _rgba_to_qcolor(color)
+    return _rgba_to_qcolor(fallback)
+
+
+def apply_soft_shadow(
+    widget: QWidget,
+    *,
+    blur_radius: int = 48,
+    offset_y: int = 12,
+    color: QColor | tuple[int, int, int, int] | None = None,
+) -> None:
     effect = QGraphicsDropShadowEffect(widget)
     effect.setBlurRadius(float(blur_radius))
     effect.setOffset(0.0, float(offset_y))
-    effect.setColor(QColor(7, 26, 54, 146))
+    effect.setColor(_coerce_effect_color(color, fallback=(7, 26, 54, 146)))
     widget.setGraphicsEffect(effect)
 
 
-def apply_primary_glow(widget: QWidget, *, blur_radius: int = 30) -> None:
+def apply_primary_glow(
+    widget: QWidget,
+    *,
+    blur_radius: int = 30,
+    color: QColor | tuple[int, int, int, int] | None = None,
+) -> None:
     effect = QGraphicsDropShadowEffect(widget)
     effect.setBlurRadius(float(blur_radius))
     effect.setOffset(0.0, 0.0)
-    effect.setColor(QColor(89, 232, 255, 146))
+    effect.setColor(_coerce_effect_color(color, fallback=(89, 232, 255, 146)))
     widget.setGraphicsEffect(effect)

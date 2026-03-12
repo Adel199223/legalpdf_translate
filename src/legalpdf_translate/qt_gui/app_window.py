@@ -15,7 +15,7 @@ from shutil import which
 from typing import TYPE_CHECKING, Any, Callable
 
 from openai import OpenAI
-from PySide6.QtCore import QEvent, QSize, QStandardPaths, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QStandardPaths, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -152,6 +152,7 @@ from legalpdf_translate.qt_gui.styles import (
     apply_primary_glow,
     apply_soft_shadow,
     normalize_ui_theme,
+    theme_effect_colors,
 )
 from legalpdf_translate.qt_gui.worker import (
     AnalyzeWorker,
@@ -576,28 +577,40 @@ class _FuturisticCanvas(QWidget):
         theme = normalize_ui_theme(defaults.get("ui_theme") if isinstance(defaults, dict) else "dark_futuristic")
         if theme == "dark_simple":
             base_start = QColor(8, 12, 20)
-            base_mid = QColor(14, 22, 32)
-            base_end = QColor(9, 13, 21)
-            left_glow_inner = QColor(84, 146, 176, 18)
-            left_glow_mid = QColor(58, 107, 136, 10)
-            right_glow_inner = QColor(86, 154, 182, 8)
-            top_bar_mid = QColor(174, 214, 230, 10)
-            circuit_grid = QColor(124, 162, 178, 10)
-            circuit_line = QColor(139, 183, 201, 18)
-            sidebar_line = QColor(121, 162, 178, 28)
-            hero_divider = QColor(145, 184, 200, 22)
+            base_mid = QColor(14, 24, 36)
+            base_end = QColor(9, 14, 22)
+            left_glow_inner = QColor(96, 160, 184, 30)
+            left_glow_mid = QColor(68, 122, 146, 16)
+            right_glow_inner = QColor(94, 162, 188, 12)
+            right_glow_mid = QColor(74, 132, 156, 8)
+            top_band_left = QColor(118, 92, 62, 22)
+            top_band_mid = QColor(164, 140, 102, 28)
+            top_band_right = QColor(116, 88, 60, 20)
+            top_bar_mid = QColor(174, 214, 230, 12)
+            circuit_grid = QColor(128, 168, 184, 12)
+            circuit_line = QColor(146, 190, 206, 22)
+            sidebar_line = QColor(128, 172, 188, 34)
+            hero_divider = QColor(150, 192, 208, 28)
+            dashboard_halo = QColor(130, 190, 206, 16)
+            footer_halo = QColor(136, 194, 210, 18)
         else:
-            base_start = QColor(1, 9, 24)
-            base_mid = QColor(3, 20, 46)
-            base_end = QColor(2, 10, 28)
-            left_glow_inner = QColor(38, 190, 232, 42)
-            left_glow_mid = QColor(26, 162, 214, 22)
-            right_glow_inner = QColor(18, 196, 255, 14)
-            top_bar_mid = QColor(36, 220, 255, 12)
-            circuit_grid = QColor(90, 218, 255, 12)
-            circuit_line = QColor(97, 228, 255, 24)
-            sidebar_line = QColor(89, 232, 255, 38)
-            hero_divider = QColor(110, 235, 255, 30)
+            base_start = QColor(4, 16, 39)
+            base_mid = QColor(9, 42, 79)
+            base_end = QColor(3, 18, 45)
+            left_glow_inner = QColor(110, 233, 244, 112)
+            left_glow_mid = QColor(66, 199, 228, 64)
+            right_glow_inner = QColor(62, 198, 236, 34)
+            right_glow_mid = QColor(39, 148, 188, 18)
+            top_band_left = QColor(145, 92, 42, 36)
+            top_band_mid = QColor(186, 126, 64, 48)
+            top_band_right = QColor(138, 86, 40, 34)
+            top_bar_mid = QColor(114, 237, 255, 22)
+            circuit_grid = QColor(106, 224, 255, 18)
+            circuit_line = QColor(146, 245, 255, 40)
+            sidebar_line = QColor(122, 236, 255, 54)
+            hero_divider = QColor(138, 245, 255, 58)
+            dashboard_halo = QColor(92, 232, 250, 28)
+            footer_halo = QColor(118, 238, 255, 34)
 
         base_gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
         base_gradient.setColorAt(0.0, base_start)
@@ -606,27 +619,40 @@ class _FuturisticCanvas(QWidget):
         painter.fillRect(rect, base_gradient)
 
         painter.setPen(Qt.PenStyle.NoPen)
-        left_glow = QRadialGradient(rect.width() * 0.18, rect.height() * 0.30, rect.width() * 0.34)
+        top_smoke = QLinearGradient(0.0, 0.0, float(rect.width()), 0.0)
+        top_smoke.setColorAt(0.0, top_band_left)
+        top_smoke.setColorAt(0.5, top_band_mid)
+        top_smoke.setColorAt(1.0, top_band_right)
+        painter.fillRect(0, 0, rect.width(), 56, top_smoke)
+
+        top_fade = QLinearGradient(0.0, 0.0, 0.0, 110.0)
+        top_fade.setColorAt(0.0, QColor(255, 255, 255, 12 if theme == "dark_futuristic" else 8))
+        top_fade.setColorAt(0.28, QColor(24, 52, 78, 18 if theme == "dark_futuristic" else 8))
+        top_fade.setColorAt(1.0, QColor(8, 20, 36, 0))
+        painter.fillRect(0, 0, rect.width(), 112, top_fade)
+
+        left_glow = QRadialGradient(rect.width() * 0.16, rect.height() * 0.30, rect.width() * 0.47)
         left_glow.setColorAt(0.0, left_glow_inner)
         left_glow.setColorAt(0.32, left_glow_mid)
         left_glow.setColorAt(1.0, QColor(20, 158, 214, 0))
         painter.setBrush(left_glow)
         painter.drawEllipse(
-            int(rect.width() * -0.03),
-            int(rect.height() * 0.05),
-            int(rect.width() * 0.44),
-            int(rect.width() * 0.44),
+            int(rect.width() * -0.09),
+            int(rect.height() * 0.03),
+            int(rect.width() * 0.60),
+            int(rect.width() * 0.60),
         )
 
-        right_glow = QRadialGradient(rect.width() * 0.84, rect.height() * 0.86, rect.width() * 0.18)
+        right_glow = QRadialGradient(rect.width() * 0.86, rect.height() * 0.82, rect.width() * 0.24)
         right_glow.setColorAt(0.0, right_glow_inner)
+        right_glow.setColorAt(0.44, right_glow_mid)
         right_glow.setColorAt(1.0, QColor(18, 196, 255, 0))
         painter.setBrush(right_glow)
         painter.drawEllipse(
             int(rect.width() * 0.70),
-            int(rect.height() * 0.72),
-            int(rect.width() * 0.24),
-            int(rect.width() * 0.24),
+            int(rect.height() * 0.66),
+            int(rect.width() * 0.34),
+            int(rect.width() * 0.34),
         )
 
         top_bar = QLinearGradient(0.0, 0.0, float(rect.width()), 0.0)
@@ -634,6 +660,26 @@ class _FuturisticCanvas(QWidget):
         top_bar.setColorAt(0.5, top_bar_mid)
         top_bar.setColorAt(1.0, QColor(20, 154, 204, 0))
         painter.fillRect(0, 56, rect.width(), 4, top_bar)
+
+        def _widget_geometry(widget: QWidget | None) -> QRect | None:
+            if widget is None or not widget.isVisible() or widget.width() <= 0 or widget.height() <= 0:
+                return None
+            top_left = widget.mapTo(self, QPoint(0, 0))
+            return QRect(top_left, widget.size())
+
+        dashboard_frame = getattr(window, "dashboard_frame", None)
+        dashboard_geom = _widget_geometry(dashboard_frame)
+        if dashboard_geom is not None:
+            dashboard_backlight = dashboard_geom.adjusted(-24, -18, 24, 26)
+            painter.setBrush(dashboard_halo)
+            painter.drawRoundedRect(dashboard_backlight, 34, 34)
+
+        footer_card = getattr(window, "footer_card", None)
+        footer_geom = _widget_geometry(footer_card)
+        if footer_geom is not None:
+            footer_backlight = footer_geom.adjusted(-18, -14, 18, 18)
+            painter.setBrush(footer_halo)
+            painter.drawRoundedRect(footer_backlight, 28, 28)
 
         def _draw_circuit_block(x_start: int, x_end: int, y_start: int, y_end: int, *, mirrored: bool = False) -> None:
             painter.save()
@@ -786,6 +832,7 @@ class QtMainWindow(QMainWindow):
         self._applied_layout_mode: str | None = None
         self._last_content_card_width: int | None = None
         self._last_dashboard_frame_width: int | None = None
+        self._applied_effect_theme = ""
         self._click_debug_enabled = _is_truthy_env(os.getenv("LEGALPDF_QT_CLICK_DEBUG"))
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
@@ -813,6 +860,7 @@ class QtMainWindow(QMainWindow):
         if self._controller is None:
             self._sync_gmail_intake_bridge()
         self._update_controls()
+        self._apply_theme_effects()
         self._refresh_canvas()
         self.refresh_workspace_title()
         self._capture_workspace_pristine_job_context()
@@ -924,14 +972,12 @@ class QtMainWindow(QMainWindow):
         self.header_status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.header_status_label.setMinimumWidth(120)
         self.header_status_label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
-        apply_primary_glow(self.title_label, blur_radius=34)
         hero_row.addWidget(self.hero_status_spacer, 0, 0)
         hero_row.addWidget(self.title_label, 0, 1, Qt.AlignmentFlag.AlignCenter)
         hero_row.addWidget(self.header_status_label, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         card_shell.addLayout(hero_row)
 
         self.dashboard_frame = QFrame(objectName="DashboardFrame")
-        apply_soft_shadow(self.dashboard_frame, blur_radius=56, offset_y=14)
         dashboard_layout = QVBoxLayout(self.dashboard_frame)
         self.dashboard_layout = dashboard_layout
         dashboard_layout.setContentsMargins(34, 24, 34, 20)
@@ -950,7 +996,6 @@ class QtMainWindow(QMainWindow):
         self.setup_panel = QFrame(objectName="ShellPanel")
         self.setup_panel.setMinimumWidth(0)
         self.setup_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        apply_soft_shadow(self.setup_panel, blur_radius=46, offset_y=10)
         setup_layout = QVBoxLayout(self.setup_panel)
         self.setup_layout = setup_layout
         setup_layout.setContentsMargins(28, 22, 28, 22)
@@ -1132,7 +1177,6 @@ class QtMainWindow(QMainWindow):
         setup_layout.addWidget(self.adv_frame)
 
         self.advisor_frame = QFrame(objectName="ShellPanel")
-        apply_soft_shadow(self.advisor_frame, blur_radius=36, offset_y=8)
         advisor_layout = QHBoxLayout(self.advisor_frame)
         advisor_layout.setContentsMargins(12, 10, 12, 10)
         advisor_layout.setSpacing(10)
@@ -1152,7 +1196,6 @@ class QtMainWindow(QMainWindow):
         self.progress_panel = QFrame(objectName="ShellPanel")
         self.progress_panel.setMinimumWidth(0)
         self.progress_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        apply_soft_shadow(self.progress_panel, blur_radius=46, offset_y=10)
         progress_layout = QVBoxLayout(self.progress_panel)
         self.progress_layout = progress_layout
         progress_layout.setContentsMargins(28, 22, 28, 22)
@@ -1258,8 +1301,6 @@ class QtMainWindow(QMainWindow):
         self.more_menu = QMenu(self.more_btn)
         self.more_btn.setMenu(self.more_menu)
         self._configure_footer_layout(compact=False)
-        apply_primary_glow(self.translate_btn, blur_radius=24)
-        apply_primary_glow(self.footer_card, blur_radius=22)
         main_layout.addWidget(self.footer_card)
         dashboard_layout.addWidget(self.main_card)
         dashboard_row = QHBoxLayout()
@@ -1280,7 +1321,6 @@ class QtMainWindow(QMainWindow):
         card_shell.addLayout(footer_meta_row)
 
         self.details_card = QFrame(objectName="ShellPanel")
-        apply_soft_shadow(self.details_card, blur_radius=34, offset_y=8)
         details_layout = QVBoxLayout(self.details_card)
         details_layout.setContentsMargins(12, 10, 12, 10)
         self.details_btn = QToolButton(objectName="DisclosureButton")
@@ -1339,6 +1379,7 @@ class QtMainWindow(QMainWindow):
         card_shell.addWidget(self.utility_panel)
 
         self._install_overflow_menu()
+        self._apply_theme_effects()
 
         self.pdf_btn.clicked.connect(self._pick_pdf)
         self.outdir_btn.clicked.connect(self._pick_outdir)
@@ -1769,6 +1810,7 @@ class QtMainWindow(QMainWindow):
     def reload_shared_settings(self, values: dict[str, object]) -> None:
         self._defaults.update(values)
         self._update_controls()
+        self._apply_theme_effects()
         self._refresh_canvas()
 
     def _open_new_window(self) -> None:
@@ -3722,6 +3764,7 @@ class QtMainWindow(QMainWindow):
                     apply_app_appearance(app, theme=str(values.get("ui_theme", "dark_futuristic")))
             self._sync_gmail_intake_bridge()
         self._update_controls()
+        self._apply_theme_effects()
         self._refresh_canvas()
 
     def _open_settings_dialog(self) -> None:
@@ -3827,6 +3870,17 @@ class QtMainWindow(QMainWindow):
         self.show_adv.setArrowType(Qt.ArrowType.DownArrow if visible else Qt.ArrowType.RightArrow)
         self.show_adv.setChecked(visible)
         self.adv_frame.setVisible(visible)
+        if visible:
+            for widget in (
+                self.effort_policy_combo,
+                self.effort_combo,
+                self.images_combo,
+                self.ocr_mode_combo,
+                self.ocr_engine_combo,
+            ):
+                reset_visual_state = getattr(widget, "resetVisualState", None)
+                if callable(reset_visual_state):
+                    reset_visual_state()
         self._refresh_canvas()
 
     def _set_advisor_recommendation(self, recommendation: dict[str, Any] | None) -> None:
@@ -3925,6 +3979,19 @@ class QtMainWindow(QMainWindow):
         central = self.centralWidget()
         if central is not None:
             central.update()
+
+    def _apply_theme_effects(self) -> None:
+        theme = normalize_ui_theme(self._defaults.get("ui_theme") if isinstance(self._defaults, dict) else "dark_futuristic")
+        colors = theme_effect_colors(theme)
+        apply_primary_glow(self.title_label, blur_radius=48, color=colors["title_glow"])
+        apply_soft_shadow(self.dashboard_frame, blur_radius=64, offset_y=10, color=colors["dashboard_shadow"])
+        apply_soft_shadow(self.setup_panel, blur_radius=50, offset_y=10, color=colors["panel_shadow"])
+        apply_soft_shadow(self.progress_panel, blur_radius=50, offset_y=10, color=colors["panel_shadow"])
+        apply_soft_shadow(self.advisor_frame, blur_radius=40, offset_y=8, color=colors["advisor_shadow"])
+        apply_primary_glow(self.footer_card, blur_radius=30, color=colors["footer_glow"])
+        apply_primary_glow(self.translate_btn, blur_radius=34, color=colors["primary_glow"])
+        apply_soft_shadow(self.details_card, blur_radius=38, offset_y=8, color=colors["details_shadow"])
+        self._applied_effect_theme = theme
 
     def _refresh_page_count(self) -> None:
         pdf_text = self.pdf_edit.text().strip()
