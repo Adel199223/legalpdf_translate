@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from legalpdf_translate.joblog_db import delete_job_run, open_job_log, update_job_run
+from legalpdf_translate.joblog_db import delete_job_run, delete_job_runs, open_job_log, update_job_run
 
 
 def _column_names(conn: sqlite3.Connection) -> set[str]:
@@ -272,3 +272,47 @@ def test_delete_job_run_removes_only_selected_row(tmp_path: Path) -> None:
         ).fetchall()
 
     assert [tuple(row) for row in rows] == [(int(second_id), "case-2", "FR")]
+
+
+def test_delete_job_runs_removes_only_selected_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "job_log.sqlite3"
+    with open_job_log(db_path) as conn:
+        row_ids: list[int] = []
+        for case_number in ("case-1", "case-2", "case-3"):
+            row_ids.append(
+                int(
+                    conn.execute(
+                        """
+                        INSERT INTO job_runs (
+                            completed_at,
+                            translation_date,
+                            case_number,
+                            case_entity,
+                            case_city,
+                            service_entity,
+                            service_city,
+                            service_date,
+                            lang,
+                            target_lang
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "2026-03-06T10:00:00",
+                            "2026-03-06",
+                            case_number,
+                            "Entity",
+                            "Beja",
+                            "Entity",
+                            "Beja",
+                            "2026-03-06",
+                            "EN",
+                            "EN",
+                        ),
+                    ).lastrowid
+                )
+            )
+        deleted_count = delete_job_runs(conn, row_ids=[row_ids[0], row_ids[2], row_ids[0]])
+        rows = conn.execute("SELECT id, case_number FROM job_runs ORDER BY id").fetchall()
+
+    assert deleted_count == 2
+    assert [tuple(row) for row in rows] == [(int(row_ids[1]), "case-2")]

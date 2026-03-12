@@ -511,6 +511,8 @@ def test_honorarios_dialog_small_screen_uses_scrollable_body_and_fixed_action_ba
     try:
         dialog.show()
         app.processEvents()
+        assert dialog.profile_combo.isEditable() is False
+        assert dialog.generate_btn.objectName() == "PrimaryButton"
         assert dialog.width() <= 672
         assert dialog.height() <= 545
         assert dialog.form_scroll_area.widgetResizable() is True
@@ -843,6 +845,9 @@ def test_profile_manager_can_set_primary_and_prevents_last_profile_delete(tmp_pa
         ),
     )
     try:
+        assert dialog.save_btn.objectName() == "PrimaryButton"
+        assert dialog.delete_profile_btn.objectName() == "DangerButton"
+        assert dialog.delete_distance_btn.objectName() == "DangerButton"
         dialog.profile_list.setCurrentRow(1)
         dialog._set_primary()
         dialog._save()

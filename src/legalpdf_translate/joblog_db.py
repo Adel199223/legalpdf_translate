@@ -349,6 +349,26 @@ def delete_job_run(conn: sqlite3.Connection, *, row_id: int) -> None:
     conn.commit()
 
 
+def delete_job_runs(conn: sqlite3.Connection, *, row_ids: Iterable[int]) -> int:
+    unique_ids: list[int] = []
+    seen: set[int] = set()
+    for raw in row_ids:
+        resolved = int(raw)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique_ids.append(resolved)
+    if not unique_ids:
+        return 0
+    placeholders = ", ".join("?" for _ in unique_ids)
+    cursor = conn.execute(
+        f"DELETE FROM job_runs WHERE id IN ({placeholders})",
+        unique_ids,
+    )
+    conn.commit()
+    return int(cursor.rowcount or 0)
+
+
 def update_joblog_visible_columns(
     visible_columns: Iterable[str],
 ) -> list[str]:
