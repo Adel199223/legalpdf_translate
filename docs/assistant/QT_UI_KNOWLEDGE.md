@@ -7,9 +7,10 @@
 | `src/legalpdf_translate/qt_app.py` | `run()` creates `QApplication`, applies stylesheet, shows `QtMainWindow`; real GUI module entrypoint |
 | `src/legalpdf_translate/qt_main.py` | compatibility shim that delegates to `qt_app.run()` |
 | `src/legalpdf_translate/qt_gui/window_controller.py` | `WorkspaceWindowController` (workspace registry, numbering, last-active tracking, Gmail intake routing, duplicate-target reservation map) |
-| `src/legalpdf_translate/qt_gui/app_window.py` | `_FuturisticCanvas` (background/frame paint), `QtMainWindow` (`_build_ui`, `_apply_responsive_layout`, `_update_card_max_width`, `_refresh_lang_badge`, `_configure_footer_layout`, `_install_overflow_menu`) |
+| `src/legalpdf_translate/qt_gui/app_window.py` | `_FuturisticCanvas` (background/frame paint), `QtMainWindow` (`_build_ui`, `_apply_responsive_layout`, `_update_card_max_width`, `_refresh_lang_badge`, `_refresh_pdf_field_chrome`, `_configure_footer_layout`, `_install_overflow_menu`, `_apply_theme_effects`) |
 | `src/legalpdf_translate/qt_gui/window_adaptive.py` | `WINDOW_SIZING_PRESETS`, `ResponsiveWindowController`, `CollapsibleSection` |
-| `src/legalpdf_translate/qt_gui/styles.py` | `build_stylesheet(theme=...)`, `normalize_ui_theme()`, `theme_palette()`, `apply_app_appearance()`, `apply_soft_shadow()`, `apply_primary_glow()` |
+| `src/legalpdf_translate/qt_gui/styles.py` | `build_stylesheet(theme=...)`, `normalize_ui_theme()`, `theme_palette()`, `theme_effect_colors()`, `apply_app_appearance()`, `apply_soft_shadow()`, `apply_primary_glow()` |
+| `src/legalpdf_translate/qt_gui/guarded_inputs.py` | `NoWheelComboBox`, `GuardedDateEdit`, local hover/popup ownership helpers for guarded shell selectors |
 | `src/legalpdf_translate/qt_gui/dialogs.py` | `QtSettingsDialog` (appearance/glossary/study/diagnostics tabs), `QtGlossaryEditorDialog`, `QtJobLogWindow`, `QtReviewQueueDialog`, `QtSaveToJobLogDialog` |
 | `src/legalpdf_translate/qt_gui/tools_dialogs.py` | `QtGlossaryBuilderDialog`, `QtCalibrationAuditDialog` |
 
@@ -110,9 +111,10 @@ QtMainWindow
 - **What:** `ui_theme` is a real runtime setting, not dead persisted state.
 - **Where:** `qt_app.run()` loads GUI settings and calls `apply_app_appearance()`. Live changes propagate through `WorkspaceWindowController.apply_shared_settings()`.
 - **Choices:**
-  - `dark_futuristic` = elevated default with stronger depth and glow
-  - `dark_simple` = lower-noise darker variant built from the same shared selectors
-- **Verify:** changing `Settings > Appearance > Theme` immediately restyles the open app windows and dialogs without restarting.
+  - `dark_futuristic` = Gemini-locked elevated default with a warm smoked menu band, brighter cyan-glass shell borders, stronger aqua title/sidebar accents, and richer cyan/salmon action fills
+  - `dark_simple` = lower-noise darker variant built from the same shared selectors with softer effect tokens
+- **Mechanics:** shell effect colors are derived from `theme_effect_colors()` and reapplied through `QtMainWindow._apply_theme_effects()` after UI construction and on shared-theme reload, so title/dashboard/footer/button glow does not go stale when the theme changes live.
+- **Verify:** changing `Settings > Appearance > Theme` immediately restyles the open app windows and dialogs without restarting, and switching between `dark_futuristic` and `dark_simple` visibly changes the title/footer glow colors.
 
 ### 1a. Multi-window workspace contract
 - **What:** The app now uses independent top-level workspaces under one `QApplication`, not tabs or an MDI shell.
@@ -175,6 +177,11 @@ QtMainWindow
 - **What:** `_FuturisticCanvas.paintEvent()` must derive sidebar separator placement from the actual sidebar width, not stale constants.
 - **Where:** `sidebar = getattr(window, "sidebar_frame", None)` then `sidebar_line_x = sidebar.width()`.
 - **Verify:** painted sidebar divider stays aligned while resizing across layout modes.
+
+### 5a. Main-shell atmosphere is geometry-aware and probe-locked
+- **What:** the futuristic shell lighting is not just stylesheet chrome; `_FuturisticCanvas.paintEvent()` paints a warm top smoke band, a large left teal dome glow, brighter circuit/divider lines, and geometry-aware cyan backlights behind the live `DashboardFrame` and `ActionRail`.
+- **Where:** `_FuturisticCanvas.paintEvent()` plus `QtMainWindow._apply_theme_effects()` and the `theme_effect_colors()` tokens in `qt_gui/styles.py`.
+- **Verify:** deterministic render-review output shows a warm menu probe, brighter dashboard border than dashboard fill, and a brighter footer halo than footer fill. The live shell should read as one continuous glass/neon scene rather than separate flat cards.
 
 ### 6. Desktop metrics grid contract
 - **What:** Desktop grid shows `Pages`, `Images`, `Errors`, and a `Retries` heading only.
@@ -276,6 +283,11 @@ QtMainWindow
 - Keep `content_card` width logic in `_update_card_max_width()` separate from the narrower desktop `DashboardFrame` clamp.
 - Preserve `dashboard_row_layout` centering for desktop modes and full-width expansion for `stacked_compact`.
 
+### Change shell palette or glow
+- Edit palette tokens in `qt_gui/styles.py` first, especially `theme_palette()` and `theme_effect_colors()`.
+- Reapply shell graphics effects through `_apply_theme_effects()` instead of adding one-off widget glow calls in `_build_ui()`.
+- Use `_FuturisticCanvas.paintEvent()` for scene-level haze, dome glow, dividers, and geometry-aware backlights behind `DashboardFrame` / `ActionRail`.
+
 ### Change output actions
 - Edit `_install_overflow_menu()` for `...` menu items.
 - Review Queue and Save to Job Log remain top-menu actions in `_install_menu()`.
@@ -307,9 +319,13 @@ QtMainWindow
 ### Automated
 
 ```bash
+python -m pytest -q tests/test_qt_main_smoke.py tests/test_qt_app_state.py tests/test_qt_render_review.py
+python tooling/qt_render_review.py --outdir tmp/qt_ui_review --preview reference_sample --profiles wide medium narrow
 python -m pytest -q
 python -m compileall src tests
 ```
+
+- `tooling/qt_render_review.py` now emits shell color probes for `menu_bar_mid_rgb`, `left_glow_rgb`, `dashboard_border_rgb`, `footer_halo_rgb`, `primary_button_rgb`, `danger_button_rgb`, and sidebar active/inactive comparison so visual regressions can be asserted relationally instead of by brittle screenshot hashes.
 
 ### Manual smoke check
 
@@ -337,3 +353,4 @@ python -m compileall src tests
 17. Start a run in one workspace and confirm another workspace stays usable while it is busy
 18. Configure the same source file, target language, and output folder in two workspaces and confirm the second start is blocked as duplicate run-folder reuse
 19. If Gmail intake is enabled, confirm intake reuses an idle blank workspace first and opens a new workspace when the last active one is busy or already has job context
+20. In `dark_futuristic`, confirm the top menu bar reads as a warm smoky band, the left background glow is visibly stronger than the nearby cold field chrome, the dashboard/footer shells carry cyan bloom, the primary button reads cyan, and the cancel button reads salmon rather than disabled maroon
