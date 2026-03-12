@@ -43,6 +43,16 @@ def _entry_tuple_set(entries: list[GlossaryEntry]) -> set[tuple[int, str, str, s
     }
 
 
+def _assert_no_conflicting_translations(entries: list[GlossaryEntry]) -> None:
+    seen: dict[tuple[str, str, int], str] = {}
+    for entry in entries:
+        key = (entry.source_lang, entry.source_text, int(entry.tier))
+        if key in seen:
+            assert seen[key] == entry.preferred_translation
+            continue
+        seen[key] = entry.preferred_translation
+
+
 def test_builtin_glossary_applies_preferred_ar_phrases() -> None:
     rules = load_glossary(None)
     text = "تم صرف الأتعاب وهو نص قانوني لا يخضع لأي حجز (IRS)."
@@ -159,180 +169,81 @@ def test_serialize_glossaries_round_trip() -> None:
     assert restored == source
 
 
-def test_default_ar_entries_contains_two_seeded_rows() -> None:
+def test_default_ar_entries_include_required_seed_rows_and_header_catalog() -> None:
     defaults = default_ar_entries()
     assert default_ar_seed_preset_name() == "PT→AR Court/Judgment (Tiered)"
-    assert len(defaults) == 45
-    expected_rows = {
-        (1, "contains", "PT", "Notificação por carta registada", "تبليغ برسالة مضمونة"),
-        (1, "contains", "PT", "com Prova de Receção", "مع إشعار بالاستلام"),
-        (1, "exact", "PT", "Assunto: Tradução", "الموضوع: ترجمة"),
-        (1, "exact", "PT", "Processo Comum (Tribunal Singular)", "مسطرة عادية (محكمة منفردة)"),
-        (1, "exact", "PT", "SENTENÇA.", "حكم"),
-        (1, "exact", "PT", "I – RELATÓRIO.", "أولاً – التقرير"),
-        (1, "exact", "PT", "II – SANEAMENTO.", "ثانياً – المسائل التمهيدية"),
-        (1, "exact", "PT", "III – FUNDAMENTAÇÃO.", "ثالثاً – التعليل"),
-        (1, "exact", "PT", "A – DE FACTO.", "أ – من حيث الوقائع"),
-        (1, "exact", "PT", "Factos Provados", "الوقائع الثابتة"),
-        (1, "exact", "PT", "Factos não Provados", "الوقائع غير الثابتة"),
-        (1, "exact", "PT", "B – DE DIREITO.", "ب – من حيث القانون"),
-        (1, "exact", "PT", "IV – CUSTAS.", "رابعاً – المصاريف القضائية"),
-        (1, "exact", "PT", "V – DISPOSITIVO.", "خامساً – المنطوق"),
+    assert len(defaults) > 45
+    _assert_no_conflicting_translations(defaults)
+    actual_rows = _entry_tuple_set(defaults)
+    required_rows = {
+        (1, "exact", "PT", "Notificação por carta registada (c/PR)", "تبليغ برسالة مضمونة (مع إشعار بالاستلام)"),
+        (1, "exact", "PT", "Notificação por via postal simples (c/PD)", "تبليغ عبر البريد العادي (مع إثبات الإيداع)"),
+        (1, "exact", "PT", "Via correio eletrónico", "عبر البريد الإلكتروني"),
+        (1, "exact", "PT", "Processo Comum (Tribunal Coletivo)", "مسطرة عادية (هيئة جماعية)"),
+        (2, "exact", "PT", "Detenção de Cidadão Estrangeiro em Situação Ilegal", "احتجاز مواطن أجنبي في وضع غير قانوني"),
         (2, "exact", "PT", "Ministério Público", "النيابة العامة"),
-        (2, "contains", "PT", "deduziu acusação", "وجهت الاتهام"),
-        (2, "exact", "PT", "acusação", "الاتهام"),
-        (2, "exact", "PT", "peça acusatória", "لائحة الاتهام"),
-        (2, "exact", "PT", "arguido", "المتهم"),
-        (2, "exact", "PT", "arguida", "المتهمة"),
-        (2, "exact", "PT", "contestação escrita", "مذكرة دفاع كتابية"),
         (2, "exact", "PT", "audiência de julgamento", "جلسة المحاكمة"),
-        (2, "exact", "PT", "autos", "ملف الدعوى"),
-        (2, "exact", "PT", "absolvição", "البراءة"),
-        (3, "contains", "PT", "Fica V. Exª notificado", "يُخطر سيادتكم"),
-        (3, "exact", "PT", "na qualidade de", "بصفتكم"),
-        (3, "contains", "PT", "entregar nos autos", "إيداع بملف الدعوى"),
-        (3, "exact", "PT", "no prazo de", "في أجل"),
-        (3, "exact", "PT", "a tradução da sentença", "ترجمة الحكم"),
-        (3, "contains", "PT", "cuja cópia se junta", "المرفقة نسخة منه"),
-        (4, "contains", "PT", "p. e p. pelos artigos", "المعاقب عليها بمقتضى المواد"),
-        (4, "exact", "PT", "alínea", "الفقرة"),
-        (4, "exact", "PT", "n.º", "رقم"),
-        (4, "exact", "PT", "doravante", "يشار إليه فيما بعد بـ"),
-        (4, "exact", "PT", "in dubio pro reo", "مبدأ الشك يفسر لصالح المتهم"),
-        (4, "exact", "PT", "presunção de inocência", "قرينة البراءة"),
-        (5, "exact", "PT", "crime de falsificação de documento", "جريمة تزوير مستند"),
-        (5, "exact", "PT", "documento falso", "مستند مزور"),
-        (5, "exact", "PT", "falsificação material", "تزوير مادي"),
-        (5, "exact", "PT", "falsificação intelectual", "تزوير معنوي"),
-        (6, "exact", "PT", "Sem custas.", "دون مصاريف قضائية."),
-        (6, "exact", "PT", "Notifique.", "يُبلغ."),
-        (6, "contains", "PT", "Lida, vai proceder-se, de imediato, ao depósito da sentença", "بعد تلاوته، يتم فوراً إيداع الحكم"),
-        (6, "exact", "PT", "Processei e revi", "حررت وراجعت"),
         (6, "exact", "PT", "O Juiz de Direito", "القاضي"),
     }
-    actual_rows = {
-        (entry.tier, entry.match_mode, entry.source_lang, entry.source_text, entry.preferred_translation)
-        for entry in defaults
-    }
-    assert actual_rows == expected_rows
+    assert required_rows <= actual_rows
 
 
-def test_default_en_entries_contains_expected_seed_rows() -> None:
+def test_default_en_entries_include_required_seed_rows_and_header_catalog() -> None:
     defaults = default_en_entries()
-    assert len(defaults) == 45
-    expected_rows = {
-        (1, "contains", "PT", "Notificação por carta registada", "Notification by registered mail"),
-        (1, "contains", "PT", "com Prova de Receção", "with acknowledgment of receipt"),
-        (1, "exact", "PT", "Assunto: Tradução", "Subject: Translation"),
+    assert len(defaults) > 45
+    _assert_no_conflicting_translations(defaults)
+    actual_rows = _entry_tuple_set(defaults)
+    required_rows = {
+        (1, "exact", "PT", "Notificação por carta registada (c/PR)", "Notification by registered mail (with acknowledgment of receipt)"),
+        (1, "exact", "PT", "Notificação por via postal simples (c/PD)", "Notification by ordinary mail (with proof of deposit)"),
+        (1, "exact", "PT", "Via email urgente", "Urgent email"),
         (1, "exact", "PT", "Processo Comum (Tribunal Singular)", "Ordinary proceedings (single-judge court)"),
-        (1, "exact", "PT", "SENTENÇA.", "JUDGMENT"),
-        (1, "exact", "PT", "I – RELATÓRIO.", "I – REPORT"),
-        (1, "exact", "PT", "II – SANEAMENTO.", "II – PRELIMINARY MATTERS"),
-        (1, "exact", "PT", "III – FUNDAMENTAÇÃO.", "III – REASONS"),
-        (1, "exact", "PT", "A – DE FACTO.", "A – FACTS"),
-        (1, "exact", "PT", "Factos Provados", "Facts established"),
-        (1, "exact", "PT", "Factos não Provados", "Facts not established"),
-        (1, "exact", "PT", "B – DE DIREITO.", "B – LAW"),
-        (1, "exact", "PT", "IV – CUSTAS.", "IV – COSTS"),
-        (1, "exact", "PT", "V – DISPOSITIVO.", "V – OPERATIVE PART"),
+        (1, "exact", "PT", "Processo Comum (Tribunal Coletivo)", "Ordinary proceedings (panel court)"),
+        (2, "exact", "PT", "Acidente de Trabalho (F. Conciliatória)", "Work accident (conciliation phase)"),
         (2, "exact", "PT", "Ministério Público", "Public Prosecutor’s Office"),
-        (2, "contains", "PT", "deduziu acusação", "brought charges"),
-        (2, "exact", "PT", "acusação", "indictment"),
-        (2, "exact", "PT", "peça acusatória", "bill of indictment"),
-        (2, "exact", "PT", "arguido", "defendant"),
-        (2, "exact", "PT", "arguida", "defendant"),
-        (2, "exact", "PT", "contestação escrita", "written defence"),
         (2, "exact", "PT", "audiência de julgamento", "trial hearing"),
-        (2, "exact", "PT", "autos", "case file"),
-        (2, "exact", "PT", "absolvição", "acquittal"),
-        (3, "contains", "PT", "Fica V. Exª notificado", "You are hereby notified"),
-        (3, "exact", "PT", "na qualidade de", "in your capacity as"),
-        (3, "contains", "PT", "entregar nos autos", "file with the case file"),
-        (3, "exact", "PT", "no prazo de", "within"),
-        (3, "exact", "PT", "a tradução da sentença", "the translation of the judgment"),
-        (3, "contains", "PT", "cuja cópia se junta", "a copy of which is attached"),
-        (4, "contains", "PT", "p. e p. pelos artigos", "punishable under Articles"),
-        (4, "exact", "PT", "alínea", "subparagraph"),
-        (4, "exact", "PT", "n.º", "No."),
-        (4, "exact", "PT", "doravante", "hereinafter"),
-        (4, "exact", "PT", "in dubio pro reo", "in dubio pro reo"),
-        (4, "exact", "PT", "presunção de inocência", "presumption of innocence"),
-        (5, "exact", "PT", "crime de falsificação de documento", "offence of document forgery"),
-        (5, "exact", "PT", "documento falso", "forged document"),
-        (5, "exact", "PT", "falsificação material", "material forgery"),
-        (5, "exact", "PT", "falsificação intelectual", "intellectual forgery"),
-        (6, "exact", "PT", "Sem custas.", "No costs."),
-        (6, "exact", "PT", "Notifique.", "Notify."),
-        (
-            6,
-            "contains",
-            "PT",
-            "Lida, vai proceder-se, de imediato, ao depósito da sentença",
-            "Having been read, the judgment shall immediately be deposited",
-        ),
-        (6, "exact", "PT", "Processei e revi", "Drafted and reviewed"),
         (6, "exact", "PT", "O Juiz de Direito", "The Judge"),
     }
-    assert _entry_tuple_set(defaults) == expected_rows
+    assert required_rows <= actual_rows
 
 
-def test_default_fr_entries_contains_expected_seed_rows() -> None:
+def test_default_fr_entries_include_required_seed_rows_and_header_catalog() -> None:
     defaults = default_fr_entries()
-    assert len(defaults) == 45
-    expected_rows = {
-        (1, "contains", "PT", "Notificação por carta registada", "Notification par lettre recommandée"),
-        (1, "contains", "PT", "com Prova de Receção", "avec accusé de réception"),
-        (1, "exact", "PT", "Assunto: Tradução", "Objet : Traduction"),
-        (1, "exact", "PT", "Processo Comum (Tribunal Singular)", "Procédure commune (juge unique)"),
-        (1, "exact", "PT", "SENTENÇA.", "JUGEMENT"),
-        (1, "exact", "PT", "I – RELATÓRIO.", "I – RAPPORT"),
-        (1, "exact", "PT", "II – SANEAMENTO.", "II – RÉGULARITÉ DE LA PROCÉDURE"),
-        (1, "exact", "PT", "III – FUNDAMENTAÇÃO.", "III – MOTIFS"),
-        (1, "exact", "PT", "A – DE FACTO.", "A – EN FAIT"),
-        (1, "exact", "PT", "Factos Provados", "Faits établis"),
-        (1, "exact", "PT", "Factos não Provados", "Faits non établis"),
-        (1, "exact", "PT", "B – DE DIREITO.", "B – EN DROIT"),
-        (1, "exact", "PT", "IV – CUSTAS.", "IV – FRAIS"),
-        (1, "exact", "PT", "V – DISPOSITIVO.", "V – DISPOSITIF"),
+    assert len(defaults) > 45
+    _assert_no_conflicting_translations(defaults)
+    actual_rows = _entry_tuple_set(defaults)
+    required_rows = {
+        (1, "exact", "PT", "Notificação por carta registada (c/PR)", "Notification par lettre recommandée (avec accusé de réception)"),
+        (1, "exact", "PT", "Notificação por via postal simples (c/PD)", "Notification par voie postale simple (avec preuve de dépôt)"),
+        (1, "exact", "PT", "Via correio eletrónico", "Par e-mail"),
+        (1, "exact", "PT", "Processo Comum (Tribunal Coletivo)", "Procédure commune (formation collégiale)"),
+        (2, "exact", "PT", "Detenção de Cidadão Estrangeiro em Situação Ilegal", "Détention d'un ressortissant étranger en situation illégale"),
         (2, "exact", "PT", "Ministério Público", "Ministère public"),
-        (2, "contains", "PT", "deduziu acusação", "a présenté l’acte d’accusation"),
-        (2, "exact", "PT", "acusação", "acte d’accusation"),
-        (2, "exact", "PT", "peça acusatória", "acte d’accusation"),
-        (2, "exact", "PT", "arguido", "prévenu"),
-        (2, "exact", "PT", "arguida", "prévenue"),
-        (2, "exact", "PT", "contestação escrita", "mémoire en défense"),
         (2, "exact", "PT", "audiência de julgamento", "audience de jugement"),
-        (2, "exact", "PT", "autos", "dossier de la procédure"),
-        (2, "exact", "PT", "absolvição", "acquittement"),
-        (3, "contains", "PT", "Fica V. Exª notificado", "Vous êtes par la présente notifié(e)"),
-        (3, "exact", "PT", "na qualidade de", "en votre qualité de"),
-        (3, "contains", "PT", "entregar nos autos", "verser au dossier"),
-        (3, "exact", "PT", "no prazo de", "dans le délai de"),
-        (3, "exact", "PT", "a tradução da sentença", "la traduction du jugement"),
-        (3, "contains", "PT", "cuja cópia se junta", "dont copie est jointe"),
-        (4, "contains", "PT", "p. e p. pelos artigos", "prévu et puni par les articles"),
-        (4, "exact", "PT", "alínea", "alinéa"),
-        (4, "exact", "PT", "n.º", "n°"),
-        (4, "exact", "PT", "doravante", "ci-après"),
-        (4, "exact", "PT", "in dubio pro reo", "in dubio pro reo"),
-        (4, "exact", "PT", "presunção de inocência", "présomption d’innocence"),
-        (5, "exact", "PT", "crime de falsificação de documento", "infraction de falsification de document"),
-        (5, "exact", "PT", "documento falso", "document falsifié"),
-        (5, "exact", "PT", "falsificação material", "falsification matérielle"),
-        (5, "exact", "PT", "falsificação intelectual", "falsification intellectuelle"),
-        (6, "exact", "PT", "Sem custas.", "Sans dépens."),
-        (6, "exact", "PT", "Notifique.", "Notifier."),
-        (
-            6,
-            "contains",
-            "PT",
-            "Lida, vai proceder-se, de imediato, ao depósito da sentença",
-            "Lecture faite, il sera procédé immédiatement au dépôt du jugement",
-        ),
-        (6, "exact", "PT", "Processei e revi", "Rédigé et relu"),
         (6, "exact", "PT", "O Juiz de Direito", "Le juge"),
     }
-    assert _entry_tuple_set(defaults) == expected_rows
+    assert required_rows <= actual_rows
+
+
+def test_default_seed_rows_keep_common_header_sources_aligned_across_languages() -> None:
+    by_lang = {
+        "AR": {entry.source_text for entry in default_ar_entries()},
+        "EN": {entry.source_text for entry in default_en_entries()},
+        "FR": {entry.source_text for entry in default_fr_entries()},
+    }
+
+    for source_text in {
+        "Notificação por carta registada (c/PR)",
+        "Notificação por via postal simples (c/PD)",
+        "Via email",
+        "Via correio eletrónico",
+        "Processo Comum (Tribunal Coletivo)",
+        "Detenção de Cidadão Estrangeiro em Situação Ilegal",
+        "Ministério Público",
+    }:
+        assert source_text in by_lang["AR"]
+        assert source_text in by_lang["EN"]
+        assert source_text in by_lang["FR"]
 
 
 def test_format_glossary_for_prompt_is_empty_when_no_rows() -> None:

@@ -1152,6 +1152,15 @@ Verification commands/results:
   - pytest/live Gmail bridge cross-contamination through real `%APPDATA%` and port `8765`
   - fragmented Gmail-intake diagnostics across extension/app/run/finalization surfaces
 
+# 2026-03-12
+- Ran a touched-scope Assistant Docs Sync for the legal-header glossary hardening branch.
+- Synced current-truth and user-facing guidance for:
+  - the new shared `legal_header_glossary.py` catalog used by both glossary seeding/prompt injection and metadata header extraction
+  - phrase-level priority matching for recurring Portuguese institutional headers so court/prosecution titles are injected before generic glossary rows
+  - OCR-tolerant institutional-header normalization across EN/FR/AR for variants like `c/PR`, `c/PD`, `correio eletrónico`, section ordinals, and judge suffixes
+  - the case-entity extraction change that now prefers the most specific matched institutional line from the header instead of looser regex fallbacks
+  - the review-first shortlist for ambiguous prosecution-office header families instead of silently promoting them as broad word-level glossary rules
+
 # 2026-03-08
 - Ran a scoped Assistant Docs Sync for the shipped Arabic DOCX review-gate feature and its durable issue-memory follow-up.
 - Synced current-truth and user-facing docs for:

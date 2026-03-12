@@ -15,6 +15,7 @@ from openai import OpenAI
 from PIL import Image
 
 from .config import DEFAULT_METADATA_AI_TIMEOUT_SECONDS, DEFAULT_OCR_API_TIMEOUT_SECONDS
+from .legal_header_glossary import extract_best_case_entity_match
 from .ocr_engine import OcrEngineConfig, OcrResult, build_ocr_engine
 from .ocr_engine import default_ocr_api_env_name, invoke_ocr_image, normalize_ocr_api_provider
 from .ocr_helpers import ocr_pdf_page_text
@@ -209,6 +210,9 @@ def _extract_case_number(text: str) -> str | None:
 
 
 def _extract_case_entity(text: str) -> str | None:
+    matched = extract_best_case_entity_match(text)
+    if matched is not None:
+        return _sanitize_entity(matched.source_text)
     for pattern in COURT_PATTERNS:
         match = pattern.search(text)
         if match:
@@ -249,7 +253,7 @@ def _extract_court_email_candidates(text: str) -> tuple[str | None, str | None]:
     court_line_indexes = [
         idx
         for idx, line in enumerate(lines)
-        if any(pattern.search(line) for pattern in COURT_PATTERNS)
+        if extract_best_case_entity_match(line) is not None or any(pattern.search(line) for pattern in COURT_PATTERNS)
     ]
     first_email: str | None = None
     related_candidates: list[tuple[int, int, int, int, str]] = []
@@ -467,15 +471,19 @@ def extract_from_header_text(
     ai_config: MetadataAutofillConfig | None = None,
 ) -> MetadataSuggestion:
     text = header_text.strip()
+    matched_entity = extract_best_case_entity_match(text)
     case_entity = _extract_case_entity(text)
     case_number = _extract_case_number(text)
     case_city = _first_city_match(text, vocab_cities)
     city_conf = 0.9 if case_city else 0.0
+    if matched_entity is not None and matched_entity.case_city:
+        case_city = matched_entity.case_city
+        city_conf = max(city_conf, 0.95)
     if case_city is None:
         case_city = _extract_city_heuristic(text)
         city_conf = 0.55 if case_city else 0.0
 
-    entity_conf = 0.9 if case_entity else 0.0
+    entity_conf = 0.95 if matched_entity is not None else (0.9 if case_entity else 0.0)
     case_no_conf = 0.95 if case_number else 0.0
     court_email_near, first_email = _extract_court_email_candidates(text)
     court_email = court_email_near or first_email
