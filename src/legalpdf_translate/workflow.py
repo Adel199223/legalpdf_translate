@@ -68,6 +68,7 @@ from .glossary import (
     supported_target_langs,
 )
 from .image_io import should_include_image
+from .legal_header_glossary import match_legal_header_phrases
 from .ocr_engine import (
     OCREngine,
     OcrResult,
@@ -2209,18 +2210,54 @@ class TranslationWorkflow:
         self, prompt_text: str, lang: TargetLang, *, source_text: str, page_index: int | None = None,
     ) -> str:
         entries = self._prompt_glossaries_by_lang.get(lang.value, [])
-        if not entries:
+        header_entries = [
+            GlossaryEntry(
+                source_text=match.source_text,
+                preferred_translation=match.preferred_translation,
+                match_mode="exact",
+                source_lang="PT",
+                tier=match.tier,
+            )
+            for match in match_legal_header_phrases(source_text, lang.value)
+        ]
+        if not entries and not header_entries:
             return prompt_text
         detected_source_lang = detect_source_lang_for_glossary(source_text)
+        if header_entries and detected_source_lang == "AUTO":
+            detected_source_lang = "PT"
         enabled_tiers = self._enabled_glossary_tiers_by_lang.get(lang.value, [1, 2])
+        allowed_tiers = set(enabled_tiers)
+        header_entries = [entry for entry in header_entries if int(entry.tier) in allowed_tiers]
         matching_entries = filter_entries_for_prompt(
             entries,
             detected_source_lang=detected_source_lang,
             enabled_tiers=enabled_tiers,
         )
-        if not matching_entries:
+        if header_entries:
+            seen_surface_keys = {
+                (
+                    entry.source_text.casefold(),
+                    entry.preferred_translation.casefold(),
+                    entry.source_lang,
+                    int(entry.tier),
+                )
+                for entry in header_entries
+            }
+            matching_entries = [
+                entry
+                for entry in matching_entries
+                if (
+                    entry.source_text.casefold(),
+                    entry.preferred_translation.casefold(),
+                    entry.source_lang,
+                    int(entry.tier),
+                )
+                not in seen_surface_keys
+            ]
+        combined_entries = header_entries + matching_entries
+        if not combined_entries:
             return prompt_text
-        sorted_entries = sort_entries_for_prompt(matching_entries)
+        sorted_entries = header_entries + sort_entries_for_prompt(matching_entries)
         capped_entries = cap_entries_for_prompt(
             sorted_entries,
             target_lang=lang.value,

@@ -266,3 +266,58 @@ def test_extract_interpretation_notification_metadata_from_pdf_uses_priority_pag
     assert suggestion.service_date == "2025-06-12"
     assert suggestion.service_entity == "PSP"
     assert suggestion.service_city == "Beja"
+
+
+def test_extract_header_metadata_prefers_local_criminal_prosecution_section_over_generic_public_prosecution_header() -> None:
+    header = """
+    Ministério Público - Procuradoria da República da Comarca de Beja
+    Procuradoria do Juízo Local Criminal - 1ª Sec
+    Inquéritos de Beja
+    Processo n.º 6/26.0PFBJA
+    """
+
+    suggestion = extract_from_header_text(
+        header,
+        vocab_cities=["Beja", "Cuba"],
+        ai_enabled=False,
+    )
+
+    assert suggestion.case_entity == "Procuradoria do Juízo Local Criminal - 1ª Sec"
+    assert suggestion.case_city == "Beja"
+    assert suggestion.case_number == "6/26.0PFBJA"
+
+
+def test_extract_header_metadata_supports_general_jurisdiction_unit_from_screenshot_family() -> None:
+    header = """
+    Tribunal Judicial da Comarca de Beja
+    Juízo de Competência Genérica de Ferreira do Alentejo
+    Processo n.º 19/25.9FBPTM
+    """
+
+    suggestion = extract_from_header_text(
+        header,
+        vocab_cities=["Beja", "Ferreira do Alentejo", "Cuba"],
+        ai_enabled=False,
+    )
+
+    assert suggestion.case_entity == "Juízo de Competência Genérica de Ferreira do Alentejo"
+    assert suggestion.case_city == "Ferreira do Alentejo"
+    assert suggestion.case_number == "19/25.9FBPTM"
+
+
+def test_extract_header_metadata_supports_central_civil_criminal_unit_from_screenshot_family() -> None:
+    header = """
+    Tribunal Judicial da Comarca de Beja
+    Juízo Central Cível e Criminal de Beja - Juiz 2
+    Processo n.º 39/22.5GACUB
+    """
+
+    suggestion = extract_from_header_text(
+        header,
+        vocab_cities=["Beja", "Cuba"],
+        ai_enabled=False,
+    )
+
+    assert suggestion.case_entity == "Juízo Central Cível e Criminal de Beja - Juiz 2"
+    assert suggestion.case_city == "Beja"
+    assert suggestion.case_number == "39/22.5GACUB"

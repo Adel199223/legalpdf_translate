@@ -304,7 +304,7 @@ Queue mode writes these sidecar files next to the manifest:
 4. If output is missing pages, check if run stopped early and use resume.
 5. If run is slow, lower worker count and retry.
 6. If text quality is poor, run Analyze first and inspect OCR routing or advisor recommendations before translating again.
-7. If terminology is inconsistent, review glossary settings and rerun affected pages.
+7. If terminology is inconsistent, review glossary settings and rerun affected pages. Recurring Portuguese court/prosecution headers are now matched as phrase-level institutional entries, so if a header is still wrong, capture the exact header lines instead of only the case-specific body text.
 8. If no advisor appears after Analyze, the app may have found no strong signal for a better OCR/image setting.
 9. If queue mode will not start, confirm the manifest file exists and each job has valid PDF/output information.
 10. If a queue was interrupted, rerun it with the same manifest; completed jobs should be skipped automatically.

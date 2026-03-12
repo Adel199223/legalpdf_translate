@@ -45,6 +45,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 
 ## Core Runtime Modules
 - `src/legalpdf_translate/workflow.py`: translation pipeline orchestration.
+- `src/legalpdf_translate/legal_header_glossary.py`: shared Portuguese legal-header catalog, normalization, and institutional phrase matching for EN/FR/AR glossary injection plus metadata extraction.
 - `src/legalpdf_translate/cost_guardrails.py`: deterministic pre-run/post-run cost estimation and budget decisions.
 - `src/legalpdf_translate/queue_runner.py`: sequential queue execution, checkpointing, and queue summaries.
 - `src/legalpdf_translate/review_export.py`: review queue export to CSV and Markdown.
@@ -80,6 +81,8 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 12. Start from an open Gmail message in Edge/Chromium, let the native host auto-start the configured checkout when needed, review supported attachments from that exact email, then either run the translation batch flow or handle one interpretation notice attachment, with mandatory Save-to-Job-Log confirmation before the related honorarios and Gmail draft finalization.
 13. Open multiple workspaces and translate different jobs in parallel without interrupting the current run.
 14. Create or edit interpretation Job Log rows manually, from a notification PDF, from a photo/screenshot, or from a Gmail notice attachment, then generate the interpretation honorarios DOCX plus sibling PDF locally, create a fresh Gmail draft from the saved row, or create a threaded Gmail reply draft when the flow started from Gmail intake.
+
+Recurring Portuguese court/prosecution headers now use a shared phrase-level institutional catalog across EN, FR, and AR. The translation workflow injects matched header phrases ahead of generic glossary rows, and metadata/header extraction reuses the same matcher so `case_entity` prefers the most specific institutional line instead of falling back to looser regex hits or contact-block noise.
 
 ## Output and Run Artifacts
 Run artifacts live under:
