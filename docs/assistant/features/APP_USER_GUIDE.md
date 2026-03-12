@@ -63,7 +63,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 7. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
 8. Use Gmail intake when you want to start from one open Gmail message instead of choosing files manually.
 9. Open `File > New Window` or press `Ctrl+Shift+N` when you want a second independent workspace for another job.
-10. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when that flow supports it and `Court Email` is available.
+10. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when that flow supports it, but confirm `Court Email` first if the dialog says the address was only inferred from saved suggestions.
 11. Use the Job Log when you need an interpretation-only honorários document without a translation run, or start from Gmail intake when the court notice already arrived by email.
 
 ## Using the Job Log
@@ -81,6 +81,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 12. `Autofill from PDF header` also works for interpretation edit rows that were not created from a saved PDF. The app asks you to choose the PDF file when needed.
 13. Fixed-choice fields such as `Job type`, `Lang`, and saved entity/city lists are chosen from dropdowns instead of typed manually. Use `Add...` when you need a new saved entity or city.
 14. Date fields can still be typed as `YYYY-MM-DD`, but you can now also pick them from a calendar popup. The calendar starts on Monday.
+15. Read the message under `Court Email` before asking the app to create a Gmail draft. If it says the address was inferred from saved suggestions or is unresolved, correct or confirm it first.
 
 ## Interpretation Honorarios
 1. Open `Tools > View Job Log`.
@@ -122,9 +123,10 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 14. Arabic translation files pause in a Word review step before `Save to Job Log`. Save the DOCX there and the app continues automatically; if save detection misses, use `Continue now` after saving.
 15. Translation mode requires each file to be saved before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
 16. If one translation file resolves to a different case or court, stop and split the work into separate batches.
-17. After the last translation file, or after the interpretation honorários DOCX is generated, the app can create one Gmail reply draft in the original thread.
-18. Interpretation Gmail drafts attach only the generated honorários DOCX. They do not attach the original notice or any translated DOCX.
-19. The app creates a draft only. It does not send the email automatically.
+17. If `Save to Job Log` says `Court Email` was inferred from saved suggestions or is unresolved, confirm or correct it there first. The app will not create the Gmail draft until that address is confirmed.
+18. After the last translation file, or after the interpretation honorários DOCX is generated, the app can create one Gmail reply draft in the original thread.
+19. Interpretation Gmail drafts attach only the generated honorários DOCX. They do not attach the original notice or any translated DOCX.
+20. The app creates a draft only. It does not send the email automatically.
 
 ## If Gmail Intake Stops Early
 1. If the page says the app is not listening, confirm the bridge is enabled. A normal toolbar click can auto-start the app, so a manual launch should only be needed after an auto-start failure.
@@ -135,9 +137,10 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 6. If the page says the message is ambiguous, collapse extra Gmail messages and leave only one expanded.
 7. If the app shows no supported attachments, that email likely contains only inline or unsupported files.
 8. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
-9. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
-10. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
-11. Interpretation honorários stay local when you start from the Job Log manually, but Gmail-intake interpretation notice mode can create a threaded draft with the honorários DOCX only.
+9. If the app says `Court Email` was inferred, unresolved, or conflicting, it is protecting you from drafting to an unconfirmed recipient. Confirm the address in `Save to Job Log`, then retry.
+10. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
+11. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
+12. Interpretation honorários stay local when you start from the Job Log manually, but Gmail-intake interpretation notice mode can create a threaded draft with the honorários DOCX only.
 
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.
