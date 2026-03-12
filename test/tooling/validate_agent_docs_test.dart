@@ -355,13 +355,44 @@ void main() {
     _replaceInFile(
       root,
       'AGENTS.md',
-      'Ask it only when relevant touched-scope docs still remain unsynced.',
+      'Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary.',
       'Ask it whenever the change is significant.',
     );
     final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
       rootPath: root,
     );
     _expect(_hasRule(issues, 'AD020'), 'Expected AD020');
+  }, failures);
+
+  _runCase('fails when AGENTS omits docs-sync deferral wording', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'AGENTS.md',
+      'If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass.',
+      'If immediate same-task synchronization is not necessary, do it now.',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD020'), 'Expected AD020');
+  }, failures);
+
+  _runCase('fails when manifest docs-sync contract omits deferred default', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> manifest = _readJson(
+      root,
+      'docs/assistant/manifest.json',
+    );
+    final Map<String, dynamic> contracts =
+        manifest['contracts'] as Map<String, dynamic>;
+    contracts['docs_sync_prompt_policy'] =
+        'After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced.';
+    _writeJson(root, 'docs/assistant/manifest.json', manifest);
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD017'), 'Expected AD017');
   }, failures);
 
   _runCase('fails when GOLDEN_PRINCIPLES missing', () {

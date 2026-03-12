@@ -188,7 +188,8 @@ When cloud evaluation is activated:
 
 ## Docs Sync Rule
 Generated repos must keep docs-sync policy explicit:
-- significant implementation change -> ask the exact docs-sync prompt only when relevant touched-scope docs still remain unsynced
+- significant implementation change -> ask the exact docs-sync prompt only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary
+- if immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass
 - if the relevant docs sync already ran during the same task/pass, do not ask the prompt again
 - if approved, update only relevant docs for touched scope
 

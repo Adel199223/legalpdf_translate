@@ -52,6 +52,8 @@ Create or update these core artifacts in every bootstrapped repo:
 - Parallel work should prefer isolated `git worktree` usage.
 - After significant implementation changes, generated repos must keep the exact docs-sync prompt:
   - `Would you like me to run Assistant Docs Sync for this change now?`
+- Generated repos should ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary.
+- If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass.
 
 ## Commit and Push Defaults
 ### Bare `commit`

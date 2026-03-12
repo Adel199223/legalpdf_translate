@@ -7,13 +7,20 @@ It is policy guidance (not a running history). Use Git history + `DOCS_REFRESH_N
 ## Default rule (user-controlled)
 - Do NOT perform blanket docs rewrites automatically.
 - Use scoped docs updates when the user approves docs sync or when governance contracts require same-task synchronization.
+- Do not force Assistant Docs Sync after every major change; when immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass.
 
-## Significant-change docs sync gate
+## Significant-change docs sync decision
 After significant implementation changes, ask exactly:
 - "Would you like me to run Assistant Docs Sync for this change now?"
 
-Only ask it when relevant touched-scope docs still remain unsynced.
+Only ask it when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary.
+If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass instead of prompting automatically during implementation flow.
 If the relevant docs sync already ran during the same task/pass, do not ask again.
+
+Immediate same-task synchronization is usually reserved for:
+- governance/workflow/manifest contract changes that would leave routing wrong if deferred
+- task closeout or handoff points where stale assistant docs would break continuity
+- explicit user requests to make docs current now
 
 If approved:
 1. Update only touched-scope docs.
@@ -33,8 +40,8 @@ If approved:
   - project-local harness application
   - global bootstrap/template maintenance
 
-## Deferred docs workflow (when docs sync not approved)
-If a task changes `src/` or `tests/` and docs sync is not approved:
+## Deferred docs workflow (when docs sync is postponed)
+If a task changes `src/` or `tests/` and immediate docs sync is not required or approved:
 1. Append a short entry to `docs/assistant/DOCS_REFRESH_NOTES.md`.
 2. Avoid unrelated `docs/assistant/*` rewrites.
 3. If merge/cleanup drift leaves stale continuity state behind, do not pretend the repo is clean; record the gap and fix it in the next approved docs-maintenance pass.

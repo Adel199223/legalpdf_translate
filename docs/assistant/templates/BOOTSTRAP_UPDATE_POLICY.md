@@ -122,5 +122,6 @@ Bootstrap-generated repos must preserve the exact docs-sync prompt:
 - `Would you like me to run Assistant Docs Sync for this change now?`
 
 But the prompt is conditional:
-- ask it only when relevant touched-scope docs still remain unsynced
+- ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary
+- if immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass
 - do not ask it again if the relevant docs sync already ran during the same task/pass

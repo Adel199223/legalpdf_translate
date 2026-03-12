@@ -237,6 +237,9 @@ const String _docsSyncPrompt =
     'Would you like me to run Assistant Docs Sync for this change now?';
 const String _docsSyncPromptCondition =
     'relevant touched-scope docs still remain unsynced';
+const String _docsSyncPromptImmediateNeed =
+    'immediate same-task synchronization is necessary';
+const String _docsSyncPromptDeferredPass = 'later docs-maintenance pass';
 const String _docsSyncPromptNoRepeat = 'already ran during the same task/pass';
 
 const Map<String, List<String>>
@@ -277,6 +280,8 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'scratch artifact source control noise',
     'openai-specific behavior is temporally unstable',
     'docs-sync prompt',
+    'immediate same-task synchronization is necessary',
+    'later docs-maintenance pass',
   ],
   'docs/assistant/templates/BOOTSTRAP_ISSUE_MEMORY_SYSTEM.md': <String>[
     'required output',
@@ -316,6 +321,8 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'reference discovery rules',
     'browser automation rules',
     'harness isolation + diagnostics rules',
+    'immediate same-task synchronization is necessary',
+    'later docs-maintenance pass',
   ],
   'docs/assistant/templates/BOOTSTRAP_PROJECT_HARNESS_SYNC_POLICY.md': <String>[
     'implement the template files',
@@ -396,6 +403,8 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'dart run tooling/validate_agent_docs.dart',
     'docs sync prompt rule',
     'relevant touched-scope docs still remain unsynced',
+    'immediate same-task synchronization is necessary',
+    'later docs-maintenance pass',
     'already ran during the same task/pass',
   ],
 };
@@ -1279,6 +1288,26 @@ void _validateCoreContracts(
     );
   }
 
+  for (final String contractKey in <String>[
+    'post_change_docs_sync_prompt_policy',
+    'docs_sync_prompt_policy',
+  ]) {
+    final String value = (contracts[contractKey] ?? '').toString();
+    final String lower = value.toLowerCase();
+    if (!value.contains(_docsSyncPrompt) ||
+        !lower.contains(_docsSyncPromptCondition) ||
+        !lower.contains(_docsSyncPromptImmediateNeed) ||
+        !lower.contains(_docsSyncPromptDeferredPass) ||
+        !lower.contains(_docsSyncPromptNoRepeat)) {
+      issues.add(
+        ValidationIssue(
+          'AD017',
+          'Manifest $contractKey must preserve the exact docs-sync prompt plus the deferred-default/immediate-need conditions.',
+        ),
+      );
+    }
+  }
+
   final List<String> requiredUserGuideContracts = <String>[
     'user_guides_support_usage_policy',
     'user_guides_canonical_deference_policy',
@@ -1343,6 +1372,8 @@ void _validateRunbookPolicies(
     }
     if (!text.contains(_docsSyncPrompt) ||
         !text.toLowerCase().contains(_docsSyncPromptCondition) ||
+        !text.toLowerCase().contains(_docsSyncPromptImmediateNeed) ||
+        !text.toLowerCase().contains(_docsSyncPromptDeferredPass) ||
         !text.toLowerCase().contains(_docsSyncPromptNoRepeat) ||
         !text.contains('REFERENCE_DISCOVERY_WORKFLOW.md')) {
       missingSections.add('$docName -> docs-sync/reference policy text');
@@ -1494,11 +1525,13 @@ void _validateDocsMaintenance(
     );
   }
   if (!text.contains(_docsSyncPromptCondition) ||
+      !text.contains(_docsSyncPromptImmediateNeed) ||
+      !text.contains(_docsSyncPromptDeferredPass) ||
       !text.contains(_docsSyncPromptNoRepeat)) {
     issues.add(
       ValidationIssue(
         'AD041',
-        'Docs maintenance workflow must state that the docs-sync prompt is only asked when relevant docs remain unsynced and not repeated after same-pass sync.',
+        'Docs maintenance workflow must state the deferred-default docs-sync rule plus the immediate-need and no-repeat conditions.',
       ),
     );
   }
