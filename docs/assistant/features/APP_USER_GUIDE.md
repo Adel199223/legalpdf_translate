@@ -83,17 +83,21 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 14. Date fields can still be typed as `YYYY-MM-DD`, but you can now also pick them from a calendar popup. The calendar starts on Monday.
 
 ## Interpretation Honorarios
-1. Open `Tools > View Job Log`.
-2. Use `Add...` and choose the interpretation path you need:
-   - blank/manual entry
+1. Use `Tools > New Interpretation Honorários...` for the direct save-first path, or open `Tools > View Job Log`.
+2. In `Job Log`, use `Add...` and choose the interpretation path you need:
+   - `Blank/manual interpretation entry`
    - `From notification PDF...`
    - `From photo/screenshot...`
 3. Review the case and service details before saving. Interpretation mode focuses on service date, service location, and distance instead of translation metrics.
 4. Keep `Service same as Case` on when the hearing/service happened in the same place as the case. Turn it off only when the service entity or city is different.
 5. The visible KM field is the one-way distance only. The app reuses the saved value for that service city when one already exists.
 6. If you enter a new one-way distance for a service city and save the row, the app remembers it for future interpretation rows under the current profile.
-7. Use `Gerar Requerimento de Honorários...` from that row when you are ready to generate the interpretation document.
-8. Manual/local interpretation honorários stay local. If you start from Gmail intake in `Interpretation notice` mode, the app can create a threaded Gmail draft with the generated honorários DOCX only.
+7. If you used `Tools > New Interpretation Honorários...`, the export dialog opens right after save. Otherwise, use `Gerar Requerimento de Honorários...` from that row when you are ready.
+8. The export saves the DOCX first and then attempts a sibling PDF with the same basename.
+9. Leave `Include transport/distance sentence in honorários text` on in the normal case. Turn it off only when transport is being handled separately and you want that sentence omitted from the document.
+10. The body still uses the service day, but the footer date before your signature always uses the day you generate the document.
+11. If automatic PDF generation fails, the dialog keeps the DOCX, stays responsive, and lets you retry, choose an existing PDF, or continue local-only.
+12. Manual/local interpretation exports can create a fresh Gmail draft when `Court Email`, Gmail draft prerequisites, and the honorários PDF are all available. Those drafts attach the honorários PDF only.
 
 ## Multiple Windows
 1. Open another workspace from `File > New Window`, `Ctrl+Shift+N`, or the bottom `...` menu.
@@ -122,9 +126,10 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 14. Arabic translation files pause in a Word review step before `Save to Job Log`. Save the DOCX there and the app continues automatically; if save detection misses, use `Continue now` after saving.
 15. Translation mode requires each file to be saved before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
 16. If one translation file resolves to a different case or court, stop and split the work into separate batches.
-17. After the last translation file, or after the interpretation honorários DOCX is generated, the app can create one Gmail reply draft in the original thread.
-18. Interpretation Gmail drafts attach only the generated honorários DOCX. They do not attach the original notice or any translated DOCX.
-19. The app creates a draft only. It does not send the email automatically.
+17. After the last translation file, or after the interpretation honorários export generates its PDF, the app can create one Gmail reply draft in the original thread.
+18. Translation Gmail drafts attach the translated DOCX files plus the generated honorários PDF.
+19. Interpretation Gmail drafts attach only the generated honorários PDF. They do not attach the original notice or any translated DOCX.
+20. The app creates a draft only. It does not send the email automatically.
 
 ## If Gmail Intake Stops Early
 1. If the page says the app is not listening, confirm the bridge is enabled. A normal toolbar click can auto-start the app, so a manual launch should only be needed after an auto-start failure.
@@ -137,7 +142,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 8. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
 9. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
 10. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
-11. Interpretation honorários stay local when you start from the Job Log manually, but Gmail-intake interpretation notice mode can create a threaded draft with the honorários DOCX only.
+11. If the honorários PDF cannot be generated, the export still keeps the local DOCX but Gmail draft creation stays blocked for that export.
 
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.

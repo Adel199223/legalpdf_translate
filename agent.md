@@ -118,6 +118,7 @@ For risk-triggered complex work:
 After significant implementation changes, ask exactly:
 "Would you like me to run Assistant Docs Sync for this change now?"
 
-Ask it only when relevant touched-scope docs still remain unsynced.
+Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary.
+If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass.
 If the relevant docs sync already ran during the same task/pass, do not ask again.
 If approved, update only the relevant docs for touched scope.

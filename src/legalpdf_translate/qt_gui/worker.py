@@ -37,6 +37,11 @@ from legalpdf_translate.source_document import (
     render_source_page_image_data_url,
 )
 from legalpdf_translate.types import RunConfig
+from legalpdf_translate.word_automation import (
+    WordAutomationResult,
+    export_docx_to_pdf_in_word,
+    probe_word_pdf_export_support,
+)
 from legalpdf_translate.workflow import TranslationWorkflow
 
 _PAGE_LOG_RE = re.compile(
@@ -46,6 +51,43 @@ _PAGE_STATUS_RE = re.compile(r"Page\s+(?P<page>\d+)\s+(?P<status>finished|failed
 _PREVIEW_RENDER_START_DPI = 110
 _PREVIEW_RENDER_MAX_DPI = 144
 _PREVIEW_RENDER_MAX_BYTES = 900_000
+
+
+@dataclass(frozen=True, slots=True)
+class HonorariosPdfExportResult:
+    docx_path: Path
+    pdf_path: Path | None
+    automation: WordAutomationResult
+
+
+class HonorariosPdfExportWorker(QObject):
+    finished = Signal(object)
+
+    def __init__(self, *, docx_path: Path, pdf_path: Path) -> None:
+        super().__init__()
+        self._docx_path = docx_path.expanduser().resolve()
+        self._pdf_path = pdf_path.expanduser().resolve()
+
+    @Slot()
+    def run(self) -> None:
+        preflight = probe_word_pdf_export_support()
+        if not preflight.ok:
+            self.finished.emit(
+                HonorariosPdfExportResult(
+                    docx_path=self._docx_path,
+                    pdf_path=None,
+                    automation=preflight,
+                )
+            )
+            return
+        result = export_docx_to_pdf_in_word(self._docx_path, self._pdf_path)
+        self.finished.emit(
+            HonorariosPdfExportResult(
+                docx_path=self._docx_path,
+                pdf_path=self._pdf_path if result.ok else None,
+                automation=result,
+            )
+        )
 
 
 class TranslationRunWorker(QObject):

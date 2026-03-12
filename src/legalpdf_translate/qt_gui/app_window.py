@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import time
+from contextlib import closing
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -72,6 +73,7 @@ from legalpdf_translate.gmail_draft import (
     assess_gmail_draft_prereqs,
     build_gmail_batch_reply_request,
     build_interpretation_gmail_reply_request,
+    build_manual_interpretation_gmail_request,
     create_gmail_draft_via_gog,
     validate_translated_docx_artifacts_for_gmail_draft,
 )
@@ -84,6 +86,7 @@ from legalpdf_translate.gmail_batch import (
     GmailMessageLoadResult,
     stage_gmail_batch_translated_docx,
     write_gmail_batch_session_report,
+    write_gmail_interpretation_session_report,
 )
 from legalpdf_translate.gmail_focus import (
     clear_bridge_runtime_metadata,
@@ -92,7 +95,7 @@ from legalpdf_translate.gmail_focus import (
 )
 from legalpdf_translate.gmail_focus_host import ensure_edge_native_host_registered
 from legalpdf_translate.gmail_intake import InboundMailContext, LocalGmailIntakeBridge
-from legalpdf_translate.joblog_db import job_log_db_path
+from legalpdf_translate.joblog_db import job_log_db_path, open_job_log, update_job_run
 from legalpdf_translate.honorarios_docx import (
     build_honorarios_draft,
     build_interpretation_honorarios_draft,
@@ -140,6 +143,7 @@ from legalpdf_translate.qt_gui.dialogs import (
     QtReviewQueueDialog,
     QtSaveToJobLogDialog,
     QtSettingsDialog,
+    build_blank_interpretation_seed,
     build_interpretation_seed_from_notification_pdf,
     build_interpretation_seed_from_photo_screenshot,
     build_seed_from_run,
@@ -152,7 +156,7 @@ from legalpdf_translate.qt_gui.styles import (
     apply_primary_glow,
     apply_soft_shadow,
     normalize_ui_theme,
-    theme_effect_colors,
+    theme_effect_specs,
 )
 from legalpdf_translate.qt_gui.worker import (
     AnalyzeWorker,
@@ -1692,6 +1696,10 @@ class QtMainWindow(QMainWindow):
             "export_partial": menu.addAction(self._icon("resources/icons/dashboard/export.svg"), "Export Partial DOCX"),
             "rebuild_docx": menu.addAction(self._icon("resources/icons/dashboard/rebuild.svg"), "Rebuild DOCX"),
             "run_report": menu.addAction(self._icon("resources/icons/dashboard/report.svg"), "Generate Run Report"),
+            "new_interpretation_honorarios": menu.addAction(
+                self._icon("resources/icons/dashboard/new_job.svg"),
+                "New Interpretation Honorários...",
+            ),
             "job_log": menu.addAction(self._icon("resources/icons/dashboard/joblog.svg"), "View Job Log"),
         }
         actions["new_window"].triggered.connect(self._open_new_window)
@@ -1699,6 +1707,7 @@ class QtMainWindow(QMainWindow):
         actions["export_partial"].triggered.connect(self._export_partial)
         actions["rebuild_docx"].triggered.connect(self._start_rebuild_docx)
         actions["run_report"].triggered.connect(self._open_run_report)
+        actions["new_interpretation_honorarios"].triggered.connect(self._open_new_interpretation_honorarios)
         actions["job_log"].triggered.connect(self._open_joblog_window)
         self._overflow_menu_actions = actions
 
@@ -2190,6 +2199,8 @@ class QtMainWindow(QMainWindow):
         tools_review_queue.triggered.connect(self._open_review_queue_dialog)
         tools_save_joblog = tools_menu.addAction("Save to Job Log...")
         tools_save_joblog.triggered.connect(self._open_save_to_joblog_dialog)
+        tools_new_interpretation_honorarios = tools_menu.addAction("New Interpretation Honorários...")
+        tools_new_interpretation_honorarios.triggered.connect(self._open_new_interpretation_honorarios)
         tools_joblog = tools_menu.addAction("View Job Log")
         tools_joblog.triggered.connect(self._open_joblog_window)
         if not self._simple_mode:
@@ -2228,6 +2239,7 @@ class QtMainWindow(QMainWindow):
             "settings": tools_settings,
             "review_queue": tools_review_queue,
             "save_joblog": tools_save_joblog,
+            "new_interpretation_honorarios": tools_new_interpretation_honorarios,
             "job_log": tools_joblog,
             "test_api_keys": tools_test,
             "about": help_about,
@@ -2515,12 +2527,16 @@ class QtMainWindow(QMainWindow):
 
     def _persist_gmail_batch_session_report(
         self,
-        session: GmailBatchSession | None = None,
+        session: GmailBatchSession | GmailInterpretationSession | None = None,
         *,
         status: str | None = None,
         halt_reason: str | None = None,
     ) -> Path | None:
-        active_session = session if isinstance(session, GmailBatchSession) else self._gmail_batch_session
+        active_session = session
+        if not isinstance(active_session, (GmailBatchSession, GmailInterpretationSession)):
+            active_session = self._gmail_batch_session
+        if not isinstance(active_session, (GmailBatchSession, GmailInterpretationSession)):
+            active_session = self._gmail_interpretation_session
         if active_session is None:
             return None
         if status is not None:
@@ -2528,9 +2544,11 @@ class QtMainWindow(QMainWindow):
         if halt_reason is not None:
             active_session.halt_reason = halt_reason
         try:
-            return write_gmail_batch_session_report(active_session)
+            if isinstance(active_session, GmailBatchSession):
+                return write_gmail_batch_session_report(active_session)
+            return write_gmail_interpretation_session_report(active_session)
         except OSError as exc:
-            self._append_log(f"Gmail batch diagnostics write failed: {exc}")
+            self._append_log(f"Gmail session diagnostics write failed: {exc}")
             return None
 
     def _resolve_translation_config(
@@ -2754,7 +2772,7 @@ class QtMainWindow(QMainWindow):
             self._append_log(log_message)
         self._update_controls()
 
-    def _offer_gmail_batch_reply_draft(self, honorarios_docx: Path, profile: UserProfile) -> bool:
+    def _offer_gmail_batch_reply_draft(self, honorarios_pdf: Path, profile: UserProfile) -> bool:
         session = self._gmail_batch_session
         persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
         if session is None or not session.confirmed_items:
@@ -2796,12 +2814,12 @@ class QtMainWindow(QMainWindow):
         try:
             translated_docxs = validate_translated_docx_artifacts_for_gmail_draft(
                 translated_docxs=tuple(item.translated_docx_path for item in session.confirmed_items),
-                honorarios_docx=honorarios_docx,
+                honorarios_pdf=honorarios_pdf,
             )
             session.draft_preflight_result = "passed"
             session.draft_failure_reason = ""
             session.final_attachment_basenames = tuple(
-                path.name for path in (*translated_docxs, honorarios_docx)
+                path.name for path in (*translated_docxs, honorarios_pdf)
             )
             if callable(persist_report):
                 persist_report(session=session, status="draft_preflight_passed", halt_reason="")
@@ -2812,7 +2830,7 @@ class QtMainWindow(QMainWindow):
                 subject=session.message.subject,
                 reply_to_message_id=session.intake_context.message_id or session.message.message_id,
                 translated_docxs=translated_docxs,
-                honorarios_docx=honorarios_docx,
+                honorarios_pdf=honorarios_pdf,
                 profile=profile,
             )
         except ValueError as exc:
@@ -2868,7 +2886,7 @@ class QtMainWindow(QMainWindow):
             log_message=(
                 "Gmail batch Stage 4 complete: "
                 f"reply draft created for {count} translated DOCX file(s) "
-                f"and honorários {honorarios_docx.expanduser().resolve()}."
+                f"and honorários PDF {honorarios_pdf.expanduser().resolve()}."
             ),
         )
         open_gmail = QMessageBox.question(
@@ -2893,7 +2911,7 @@ class QtMainWindow(QMainWindow):
                 return candidate.parent
         return (Path.home() / "Documents").expanduser().resolve()
 
-    def _build_gmail_interpretation_honorarios_draft(self, saved_result: JobLogSavedResult):
+    def _build_saved_interpretation_honorarios_draft(self, saved_result: JobLogSavedResult):
         payload = dict(saved_result.payload or {})
         case_number = str(payload.get("case_number", "") or saved_result.case_number or "").strip()
         case_entity = str(payload.get("case_entity", "") or saved_result.case_entity or "").strip()
@@ -2902,6 +2920,11 @@ class QtMainWindow(QMainWindow):
         service_entity = str(payload.get("service_entity", "") or "").strip()
         service_city = str(payload.get("service_city", "") or "").strip()
         use_service_location = bool(payload.get("use_service_location_in_honorarios", False))
+        include_transport_sentence = _coerce_bool_or_none(
+            payload.get("include_transport_sentence_in_honorarios")
+        )
+        if include_transport_sentence is None:
+            include_transport_sentence = True
         travel_km_outbound = _coerce_float_or_none(payload.get("travel_km_outbound")) or 0.0
         travel_km_return = _coerce_float_or_none(payload.get("travel_km_return")) or travel_km_outbound
         profiles, primary_profile_id = load_profile_settings()
@@ -2914,16 +2937,110 @@ class QtMainWindow(QMainWindow):
             service_entity=service_entity,
             service_city=service_city,
             use_service_location_in_honorarios=use_service_location,
+            include_transport_sentence_in_honorarios=include_transport_sentence,
             travel_km_outbound=travel_km_outbound,
             travel_km_return=travel_km_return,
             recipient_block=default_interpretation_recipient_block(case_entity, case_city),
             profile=selected_profile,
         )
 
+    def _persist_saved_interpretation_honorarios_toggle(
+        self,
+        *,
+        saved_result: JobLogSavedResult,
+        include_transport_sentence_in_honorarios: bool,
+    ) -> JobLogSavedResult:
+        payload = dict(saved_result.payload or {})
+        current_value = _coerce_bool_or_none(payload.get("include_transport_sentence_in_honorarios"))
+        if current_value is None:
+            current_value = True
+        if current_value == include_transport_sentence_in_honorarios:
+            if saved_result.payload is None:
+                payload["include_transport_sentence_in_honorarios"] = (
+                    1 if include_transport_sentence_in_honorarios else 0
+                )
+                return replace(saved_result, payload=payload)
+            return saved_result
+        with closing(open_job_log(job_log_db_path())) as conn:
+            update_job_run(
+                conn,
+                row_id=int(saved_result.row_id),
+                values={
+                    "include_transport_sentence_in_honorarios": 1
+                    if include_transport_sentence_in_honorarios
+                    else 0,
+                },
+            )
+        payload["include_transport_sentence_in_honorarios"] = (
+            1 if include_transport_sentence_in_honorarios else 0
+        )
+        return replace(saved_result, payload=payload)
+
+    def _build_gmail_interpretation_honorarios_draft(self, saved_result: JobLogSavedResult):
+        return self._build_saved_interpretation_honorarios_draft(saved_result)
+
+    def _manual_interpretation_honorarios_default_directory(self) -> Path:
+        current_outdir = self._existing_output_dir_text(self.outdir_edit.text().strip())
+        if current_outdir:
+            return Path(current_outdir).expanduser().resolve()
+        default_outdir = self._existing_output_dir_text(str(self._defaults.get("default_outdir", "") or "").strip())
+        if default_outdir:
+            return Path(default_outdir).expanduser().resolve()
+        return (Path.home() / "Documents").expanduser().resolve()
+
+    def _open_new_interpretation_honorarios(self) -> None:
+        saved_result = self._open_save_to_joblog_dialog_for_seed(
+            build_blank_interpretation_seed(),
+            allow_honorarios_export=False,
+        )
+        if saved_result is None:
+            return
+        try:
+            draft = self._build_saved_interpretation_honorarios_draft(saved_result)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(
+                self,
+                "Requerimento de Honorários",
+                "The Job Log row was saved, but the interpretation honorários draft could not be prepared.\n\n"
+                f"{exc}",
+            )
+            return
+        profile_save_callback = getattr(self, "_save_profile_settings_from_dialog", None)
+        dialog_kwargs = {
+            "parent": self,
+            "draft": draft,
+            "default_directory": self._manual_interpretation_honorarios_default_directory(),
+        }
+        if callable(profile_save_callback):
+            dialog_kwargs["profile_save_callback"] = profile_save_callback
+        dialog = QtHonorariosExportDialog(**dialog_kwargs)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_path is not None:
+            generated_draft = getattr(dialog, "generated_draft", None)
+            selected_profile = (
+                generated_draft.profile if generated_draft is not None else _current_primary_profile()
+            )
+            final_draft = generated_draft or draft
+            saved_result = QtMainWindow._persist_saved_interpretation_honorarios_toggle(
+                self,
+                saved_result=saved_result,
+                include_transport_sentence_in_honorarios=bool(
+                    final_draft.include_transport_sentence_in_honorarios
+                ),
+            )
+            saved_pdf_path = getattr(dialog, "saved_pdf_path", None)
+            pdf_unavailable_explained = bool(getattr(dialog, "pdf_unavailable_explained", False))
+            if saved_pdf_path is not None or not pdf_unavailable_explained:
+                self._offer_manual_interpretation_gmail_draft(
+                    saved_result=saved_result,
+                    honorarios_pdf=saved_pdf_path,
+                    profile=selected_profile,
+                )
+        dialog.deleteLater()
+
     def _offer_gmail_interpretation_reply_draft(
         self,
         *,
-        honorarios_docx: Path,
+        honorarios_pdf: Path,
         court_email: str,
         profile: UserProfile,
     ) -> bool:
@@ -2957,7 +3074,7 @@ class QtMainWindow(QMainWindow):
                 to_email=court_email,
                 subject=session.message.subject,
                 reply_to_message_id=session.intake_context.message_id or session.message.message_id,
-                honorarios_docx=honorarios_docx,
+                honorarios_pdf=honorarios_pdf,
                 profile=profile,
             )
             session.final_attachment_basenames = tuple(path.name for path in request.attachments)
@@ -2993,10 +3110,95 @@ class QtMainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
         return True
 
+    def _offer_manual_interpretation_gmail_draft(
+        self,
+        *,
+        saved_result: JobLogSavedResult,
+        honorarios_pdf: Path | None,
+        profile: UserProfile,
+    ) -> bool:
+        court_email = str(saved_result.court_email or "").strip()
+        if not court_email and saved_result.payload is not None:
+            court_email = str(saved_result.payload.get("court_email", "") or "").strip()
+        if not court_email:
+            QMessageBox.information(
+                self,
+                "Gmail draft",
+                "Court Email is missing for this interpretation entry. The Gmail draft was not created.",
+            )
+            return False
+        if honorarios_pdf is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                "The honorários PDF is unavailable for this export. Gmail draft creation requires the PDF.",
+            )
+            return False
+        prereqs = assess_gmail_draft_prereqs(
+            configured_gog_path=str(self._defaults.get("gmail_gog_path", "") or ""),
+            configured_account_email=str(self._defaults.get("gmail_account_email", "") or ""),
+        )
+        if not prereqs.ready or prereqs.gog_path is None or prereqs.account_email is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                f"{prereqs.message}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return False
+        confirm = QMessageBox.question(
+            self,
+            "Gmail draft",
+            f"Criar rascunho no Gmail para {court_email}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return False
+        case_number = str(saved_result.case_number or "").strip()
+        if not case_number and saved_result.payload is not None:
+            case_number = str(saved_result.payload.get("case_number", "") or "").strip()
+        try:
+            request = build_manual_interpretation_gmail_request(
+                gog_path=prereqs.gog_path,
+                account_email=prereqs.account_email,
+                to_email=court_email,
+                case_number=case_number,
+                honorarios_pdf=honorarios_pdf,
+                profile=profile,
+            )
+        except ValueError as exc:
+            QMessageBox.critical(self, "Gmail draft", str(exc))
+            return False
+        result = create_gmail_draft_via_gog(request)
+        if not result.ok:
+            details = result.stderr or result.stdout or result.message
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Failed to create Gmail draft.\n\n"
+                f"{details}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return False
+        open_gmail = QMessageBox.question(
+            self,
+            "Gmail draft",
+            "Gmail draft created successfully. Abrir Gmail?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if open_gmail == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
+        return True
+
     def _finalize_gmail_interpretation_session(self) -> None:
         session = self._gmail_interpretation_session
         if session is None:
             return
+        persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
         source_path = session.downloaded_attachment.saved_path.expanduser().resolve()
         settings = load_joblog_settings()
         metadata_config = metadata_config_from_settings(settings)
@@ -3025,6 +3227,12 @@ class QtMainWindow(QMainWindow):
             )
         saved_result = self._open_save_to_joblog_dialog_for_seed(seed, allow_honorarios_export=False)
         if saved_result is None:
+            if callable(persist_report):
+                persist_report(
+                    session=session,
+                    status="stopped",
+                    halt_reason="joblog_save_cancelled",
+                )
             self.status_label.setText("Gmail interpretation canceled")
             self.header_status_label.setText("Gmail interpretation canceled")
             self._dashboard_snapshot.current_task = "Gmail interpretation canceled"
@@ -3034,6 +3242,12 @@ class QtMainWindow(QMainWindow):
         try:
             draft = self._build_gmail_interpretation_honorarios_draft(saved_result)
         except ValueError as exc:
+            if callable(persist_report):
+                persist_report(
+                    session=session,
+                    status="failed",
+                    halt_reason="interpretation_honorarios_draft_failed",
+                )
             self.status_label.setText("Gmail interpretation failed")
             self.header_status_label.setText("Gmail interpretation failed")
             self._dashboard_snapshot.current_task = "Gmail interpretation failed"
@@ -3051,6 +3265,12 @@ class QtMainWindow(QMainWindow):
             dialog_kwargs["profile_save_callback"] = profile_save_callback
         dialog = QtHonorariosExportDialog(**dialog_kwargs)
         if dialog.exec() != QDialog.DialogCode.Accepted or dialog.saved_path is None:
+            if callable(persist_report):
+                persist_report(
+                    session=session,
+                    status="finalization_skipped",
+                    halt_reason="honorarios_generation_cancelled",
+                )
             self.status_label.setText("Gmail interpretation canceled")
             self.header_status_label.setText("Gmail interpretation canceled")
             self._dashboard_snapshot.current_task = "Gmail interpretation canceled"
@@ -3059,29 +3279,74 @@ class QtMainWindow(QMainWindow):
             self._clear_gmail_batch_session()
             return
         honorarios_docx = dialog.saved_path.expanduser().resolve()
+        honorarios_pdf = getattr(dialog, "saved_pdf_path", None)
+        pdf_export_error = str(getattr(dialog, "pdf_export_error", "") or "").strip()
+        session.honorarios_requested = True
         session.requested_honorarios_path = dialog.requested_path
+        if isinstance(dialog.requested_path, Path):
+            session.requested_honorarios_pdf_path = dialog.requested_path.with_suffix(".pdf")
         session.actual_honorarios_path = honorarios_docx
+        session.actual_honorarios_pdf_path = honorarios_pdf
         session.honorarios_auto_renamed = bool(dialog.auto_renamed)
         generated_draft = getattr(dialog, "generated_draft", None)
         selected_profile = generated_draft.profile if generated_draft is not None else draft.profile
+        final_draft = generated_draft or draft
+        saved_result = QtMainWindow._persist_saved_interpretation_honorarios_toggle(
+            self,
+            saved_result=saved_result,
+            include_transport_sentence_in_honorarios=bool(
+                final_draft.include_transport_sentence_in_honorarios
+            ),
+        )
         final_payload = dict(saved_result.payload or {})
         court_email = str(final_payload.get("court_email", "") or saved_result.court_email or "").strip()
         dialog.deleteLater()
+        if honorarios_pdf is None:
+            session.draft_created = False
+            session.draft_failure_reason = (
+                f"Honorários PDF generation failed: {pdf_export_error}"
+                if pdf_export_error
+                else "Honorários PDF generation failed."
+            )
+            if callable(persist_report):
+                persist_report(
+                    session=session,
+                    status="draft_unavailable",
+                    halt_reason="honorarios_pdf_generation_failed",
+                )
+            self.status_label.setText("Interpretation honorários ready locally")
+            self.header_status_label.setText("Gmail draft unavailable")
+            self._dashboard_snapshot.current_task = "Interpretation honorários ready locally"
+            self._append_log(
+                "Gmail interpretation draft was not created because the honorários PDF could not be generated. "
+                f"Local DOCX: {honorarios_docx}. "
+                f"PDF export error: {pdf_export_error or 'unknown Word export failure.'}"
+            )
+            self._clear_gmail_batch_session()
+            return
         created = self._offer_gmail_interpretation_reply_draft(
-            honorarios_docx=honorarios_docx,
+            honorarios_pdf=honorarios_pdf,
             court_email=court_email,
             profile=selected_profile,
         )
         if created:
+            if callable(persist_report):
+                persist_report(session=session, status="draft_ready", halt_reason="")
             self.status_label.setText("Gmail interpretation draft ready")
             self.header_status_label.setText("Gmail draft ready")
             self._dashboard_snapshot.current_task = "Gmail interpretation draft ready"
             self._append_log(
                 "Gmail interpretation finalization complete: "
                 f"reply draft created with {session.downloaded_attachment.saved_path.name} "
-                f"and honorários {honorarios_docx}."
+                f"and honorários PDF {honorarios_pdf}."
             )
         else:
+            if callable(persist_report):
+                persist_report(
+                    session=session,
+                    status="draft_unavailable",
+                    halt_reason="gmail_draft_unavailable",
+                )
             self.status_label.setText("Interpretation honorários ready locally")
             self.header_status_label.setText("Gmail draft unavailable")
             self._dashboard_snapshot.current_task = "Interpretation honorários ready locally"
@@ -3153,14 +3418,42 @@ class QtMainWindow(QMainWindow):
             dialog.deleteLater()
             return
         honorarios_docx = dialog.saved_path.expanduser().resolve()
+        honorarios_pdf = getattr(dialog, "saved_pdf_path", None)
+        pdf_export_error = str(getattr(dialog, "pdf_export_error", "") or "").strip()
         selected_profile = dialog.generated_draft.profile if getattr(dialog, "generated_draft", None) is not None else draft.profile
         session.requested_honorarios_path = dialog.requested_path
+        if isinstance(dialog.requested_path, Path):
+            session.requested_honorarios_pdf_path = dialog.requested_path.with_suffix(".pdf")
         session.actual_honorarios_path = honorarios_docx
+        session.actual_honorarios_pdf_path = honorarios_pdf
         session.honorarios_auto_renamed = bool(dialog.auto_renamed)
+        if honorarios_pdf is None:
+            session.draft_created = False
+            session.draft_failure_reason = (
+                f"Honorários PDF generation failed: {pdf_export_error}"
+                if pdf_export_error
+                else "Honorários PDF generation failed."
+            )
+            if callable(persist_report):
+                persist_report(
+                    session=session,
+                    status="draft_unavailable",
+                    halt_reason="honorarios_pdf_generation_failed",
+                )
+            self._set_gmail_batch_finalization_state(
+                status_text="Gmail draft unavailable",
+                header_status_text="Gmail draft unavailable",
+                log_message=(
+                    "Honorários DOCX is ready locally, but Gmail draft creation stayed blocked because "
+                    "the sibling PDF could not be generated."
+                ),
+            )
+            dialog.deleteLater()
+            return
         if callable(persist_report):
             persist_report(session=session, status="honorarios_ready", halt_reason="")
         dialog.deleteLater()
-        self._offer_gmail_batch_reply_draft(honorarios_docx, selected_profile)
+        self._offer_gmail_batch_reply_draft(honorarios_pdf, selected_profile)
 
     def _record_gmail_batch_saved_result(self, saved_result: JobLogSavedResult, *, run_dir: Path) -> bool:
         session = self._gmail_batch_session
@@ -3728,6 +4021,9 @@ class QtMainWindow(QMainWindow):
             f"{session_obj.downloaded_attachment.candidate.filename} "
             f"in {session_obj.download_dir}"
         )
+        persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
+        if callable(persist_report):
+            persist_report(session=session_obj, status="notice_ready", halt_reason="")
         self.status_label.setText("Interpretation notice ready")
         self.header_status_label.setText("Interpretation notice ready")
         self._dashboard_snapshot.current_task = "Interpretation notice ready"
@@ -3982,15 +4278,60 @@ class QtMainWindow(QMainWindow):
 
     def _apply_theme_effects(self) -> None:
         theme = normalize_ui_theme(self._defaults.get("ui_theme") if isinstance(self._defaults, dict) else "dark_futuristic")
-        colors = theme_effect_colors(theme)
-        apply_primary_glow(self.title_label, blur_radius=48, color=colors["title_glow"])
-        apply_soft_shadow(self.dashboard_frame, blur_radius=64, offset_y=10, color=colors["dashboard_shadow"])
-        apply_soft_shadow(self.setup_panel, blur_radius=50, offset_y=10, color=colors["panel_shadow"])
-        apply_soft_shadow(self.progress_panel, blur_radius=50, offset_y=10, color=colors["panel_shadow"])
-        apply_soft_shadow(self.advisor_frame, blur_radius=40, offset_y=8, color=colors["advisor_shadow"])
-        apply_primary_glow(self.footer_card, blur_radius=30, color=colors["footer_glow"])
-        apply_primary_glow(self.translate_btn, blur_radius=34, color=colors["primary_glow"])
-        apply_soft_shadow(self.details_card, blur_radius=38, offset_y=8, color=colors["details_shadow"])
+        specs = theme_effect_specs(theme)
+        apply_primary_glow(
+            self.title_label,
+            role="title_glow",
+            blur_radius=int(specs["title_glow"]["blur_radius"]),
+            color=specs["title_glow"]["color"],
+        )
+        apply_soft_shadow(
+            self.dashboard_frame,
+            role="dashboard_shadow",
+            blur_radius=int(specs["dashboard_shadow"]["blur_radius"]),
+            offset_y=int(specs["dashboard_shadow"]["offset_y"]),
+            color=specs["dashboard_shadow"]["color"],
+        )
+        apply_soft_shadow(
+            self.setup_panel,
+            role="setup_panel_shadow",
+            blur_radius=int(specs["panel_shadow"]["blur_radius"]),
+            offset_y=int(specs["panel_shadow"]["offset_y"]),
+            color=specs["panel_shadow"]["color"],
+        )
+        apply_soft_shadow(
+            self.progress_panel,
+            role="progress_panel_shadow",
+            blur_radius=int(specs["panel_shadow"]["blur_radius"]),
+            offset_y=int(specs["panel_shadow"]["offset_y"]),
+            color=specs["panel_shadow"]["color"],
+        )
+        apply_soft_shadow(
+            self.advisor_frame,
+            role="advisor_shadow",
+            blur_radius=int(specs["advisor_shadow"]["blur_radius"]),
+            offset_y=int(specs["advisor_shadow"]["offset_y"]),
+            color=specs["advisor_shadow"]["color"],
+        )
+        apply_primary_glow(
+            self.footer_card,
+            role="footer_glow",
+            blur_radius=int(specs["footer_glow"]["blur_radius"]),
+            color=specs["footer_glow"]["color"],
+        )
+        apply_primary_glow(
+            self.translate_btn,
+            role="translate_primary_glow",
+            blur_radius=int(specs["primary_glow"]["blur_radius"]),
+            color=specs["primary_glow"]["color"],
+        )
+        apply_soft_shadow(
+            self.details_card,
+            role="details_shadow",
+            blur_radius=int(specs["details_shadow"]["blur_radius"]),
+            offset_y=int(specs["details_shadow"]["offset_y"]),
+            color=specs["details_shadow"]["color"],
+        )
         self._applied_effect_theme = theme
 
     def _refresh_page_count(self) -> None:
@@ -4449,6 +4790,7 @@ class QtMainWindow(QMainWindow):
         self._set_menu_enabled("export_partial", (not self._busy) and self._can_export_partial)
         self._set_menu_enabled("review_queue", can_review_queue)
         self._set_menu_enabled("save_joblog", (not self._busy) and (self._last_joblog_seed is not None))
+        self._set_menu_enabled("new_interpretation_honorarios", not self._busy)
         self._set_menu_enabled("job_log", not self._busy)
         if not self._simple_mode:
             self._set_menu_enabled("glossary_builder", not self._busy)
@@ -4461,6 +4803,7 @@ class QtMainWindow(QMainWindow):
             overflow_actions["export_partial"].setEnabled((not self._busy) and self._can_export_partial)
             overflow_actions["rebuild_docx"].setEnabled((not self._busy) and self._has_rebuildable_pages())
             overflow_actions["run_report"].setEnabled(can_report)
+            overflow_actions["new_interpretation_honorarios"].setEnabled(not self._busy)
             overflow_actions["job_log"].setEnabled(not self._busy)
         refresh_advisor = getattr(self, "_refresh_advisor_banner", None)
         if callable(refresh_advisor):

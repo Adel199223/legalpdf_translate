@@ -16,6 +16,75 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-12 — codex/honorarios-pdf-stage1 (batched March 12 docs sync)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md
+  - docs/assistant/ISSUE_MEMORY.md
+  - docs/assistant/ISSUE_MEMORY.json
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/exec_plans/completed/2026-03-12_honorarios_pdf_stage_rollout.md
+  - docs/assistant/exec_plans/completed/2026-03-12_honorarios_addressee_case_city_fix.md
+  - docs/assistant/exec_plans/completed/2026-03-12_interpretation_honorarios_closing_structure.md
+  - docs/assistant/exec_plans/completed/2026-03-12_interpretation_transport_sentence_toggle.md
+  - docs/assistant/exec_plans/completed/2026-03-12_desktop_stability_honorarios_qt.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::Interpretation honorarios now use a kind-aware document branch
+  - docs/assistant/APP_KNOWLEDGE.md::Current-Truth Note
+  - docs/assistant/features/APP_USER_GUIDE.md::Interpretation Honorarios
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md::Interpretation Honorarios
+  - docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md::Default Test Isolation Rules
+  - docs/assistant/ISSUE_MEMORY.md::desktop-qt-honorarios-export-reliability
+- User-visible behavior:
+  - Assistant docs now describe the full March 12 interpretation honorários path: direct `Tools > New Interpretation Honorários...`, DOCX plus sibling PDF export, PDF-only Gmail drafts, addressee case-city completion, revised closing block, transport-sentence toggle, and footer dates that use the document generation day while the body keeps the service day.
+  - Assistant docs now describe the calmer honorários PDF failure flow: the app stays responsive, keeps the DOCX, offers retry/select-existing-PDF/local-only recovery, and blocks Gmail drafts until a valid PDF exists without stacking duplicate warnings.
+- The docs sync widened because of the new issue-memory entry `desktop-qt-honorarios-export-reliability`, which records the reusable lesson about non-blocking host automation plus explicit Qt popup/focus cleanup.
+- Tests:
+  - `.\.venv311\Scripts\python.exe -m pytest -q` -> `925 passed`
+  - `.\.venv311\Scripts\python.exe -m compileall src tests tooling` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run test/tooling/validate_agent_docs_test.dart` -> PASS (`67 cases`)
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
+## 2026-03-12 — codex/deferred-docs-sync-policy (working tree)
+- Files changed:
+  - AGENTS.md
+  - agent.md
+  - docs/assistant/GOLDEN_PRINCIPLES.md
+  - docs/assistant/PROJECT_INSTRUCTIONS.txt
+  - docs/assistant/UPDATE_POLICY.md
+  - docs/assistant/manifest.json
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md
+  - docs/assistant/templates/BOOTSTRAP_CORE_CONTRACT.md
+  - docs/assistant/templates/BOOTSTRAP_MODULES_AND_TRIGGERS.md
+  - docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md
+  - tooling/validate_agent_docs.dart
+  - test/tooling/validate_agent_docs_test.dart
+  - docs/assistant/exec_plans/completed/2026-03-12_deferred_docs_sync_policy.md
+- Key symbols / entrypoints changed:
+  - AGENTS.md::Docs Sync Policy
+  - agent.md::Docs Sync Policy
+  - docs/assistant/UPDATE_POLICY.md::Significant-change docs sync decision
+  - docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md::Handoff Checklist
+  - docs/assistant/workflows/TRANSLATION_WORKFLOW.md::Handoff Checklist
+  - docs/assistant/manifest.json::contracts.docs_sync_prompt_policy
+  - tooling/validate_agent_docs.dart::_docsSyncPromptImmediateNeed
+- User-visible behavior:
+  - Assistant Docs Sync is no longer treated as mandatory immediate follow-up after every major change.
+  - The exact docs-sync prompt remains available, but it should be used only when immediate same-task synchronization is necessary.
+  - When immediate synchronization is not necessary, docs sync can be deferred and batched into a later docs-maintenance pass.
+- Tests:
+  - .\.venv311\Scripts\python.exe -m pytest -q -> 882 passed
+  - python -m compileall src tests -> OK
+  - dart run tooling/validate_agent_docs.dart -> PASS
+  - dart run tooling/validate_workspace_hygiene.dart -> PASS
+  - dart run test/tooling/validate_agent_docs_test.dart -> PASS
+
 ## 2026-03-09 — main (working tree)
 - Files changed:
   - agent.md
@@ -1040,7 +1109,7 @@ Verification commands/results:
 - git status --short -> pending
 # 2026-03-07
 - Hardened docs-sync prompt semantics across project governance and bootstrap templates.
-- The exact prompt remains unchanged, but it is now conditional: ask it only when relevant touched-scope docs still remain unsynced.
+- The exact prompt remains unchanged, but it is conditional: ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary.
 - If the relevant docs sync already ran during the same task/pass, the prompt should not be asked again.
 
 # 2026-03-07

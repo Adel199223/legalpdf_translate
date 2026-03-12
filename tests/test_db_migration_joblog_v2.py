@@ -68,6 +68,7 @@ def test_migration_adds_v2_columns_and_backfills(tmp_path: Path) -> None:
     assert "travel_km_outbound" in columns
     assert "travel_km_return" in columns
     assert "use_service_location_in_honorarios" in columns
+    assert "include_transport_sentence_in_honorarios" in columns
     assert "translation_date" in columns
     assert "run_id" in columns
     assert "target_lang" in columns
@@ -86,7 +87,7 @@ def test_migration_adds_v2_columns_and_backfills(tmp_path: Path) -> None:
         SELECT case_entity, case_city, service_entity, service_city, service_date, translation_date,
                target_lang, court_email, estimated_api_cost, run_id, total_tokens, quality_risk_score,
                travel_km_outbound, travel_km_return, use_service_location_in_honorarios,
-               output_docx_path, partial_docx_path
+               include_transport_sentence_in_honorarios, output_docx_path, partial_docx_path
         FROM job_runs
         LIMIT 1
         """
@@ -109,8 +110,9 @@ def test_migration_adds_v2_columns_and_backfills(tmp_path: Path) -> None:
     assert row[12] is None
     assert row[13] is None
     assert row[14] == 0
-    assert row[15] is None
+    assert row[15] == 1
     assert row[16] is None
+    assert row[17] is None
 
 
 def test_update_job_run_updates_only_selected_fields_and_preserves_paths(tmp_path: Path) -> None:
@@ -181,13 +183,15 @@ def test_update_job_run_updates_only_selected_fields_and_preserves_paths(tmp_pat
                 "travel_km_outbound": 39.0,
                 "travel_km_return": 39.0,
                 "use_service_location_in_honorarios": 1,
+                "include_transport_sentence_in_honorarios": 0,
                 "profit": 100.0,
             },
         )
         row = conn.execute(
             """
             SELECT id, job_type, pages, travel_km_outbound, travel_km_return,
-                   use_service_location_in_honorarios, profit, output_docx_path, partial_docx_path, case_number
+                   use_service_location_in_honorarios, include_transport_sentence_in_honorarios,
+                   profit, output_docx_path, partial_docx_path, case_number
             FROM job_runs
             WHERE id = ?
             """,
@@ -201,10 +205,11 @@ def test_update_job_run_updates_only_selected_fields_and_preserves_paths(tmp_pat
     assert float(row[3]) == 39.0
     assert float(row[4]) == 39.0
     assert int(row[5]) == 1
-    assert float(row[6]) == 100.0
-    assert row[7] == "C:/tmp/out.docx"
-    assert row[8] == "C:/tmp/out_partial.docx"
-    assert row[9] == "109/26.0PBBJA"
+    assert int(row[6]) == 0
+    assert float(row[7]) == 100.0
+    assert row[8] == "C:/tmp/out.docx"
+    assert row[9] == "C:/tmp/out_partial.docx"
+    assert row[10] == "109/26.0PBBJA"
 
 
 def test_delete_job_run_removes_only_selected_row(tmp_path: Path) -> None:

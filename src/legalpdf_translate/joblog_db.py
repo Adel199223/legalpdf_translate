@@ -25,6 +25,7 @@ JOB_RUN_COLUMNS = [
     "travel_km_outbound",
     "travel_km_return",
     "use_service_location_in_honorarios",
+    "include_transport_sentence_in_honorarios",
     "lang",
     "target_lang",
     "run_id",
@@ -74,6 +75,7 @@ def ensure_joblog_schema(conn: sqlite3.Connection) -> None:
             travel_km_outbound REAL,
             travel_km_return REAL,
             use_service_location_in_honorarios INTEGER DEFAULT 0,
+            include_transport_sentence_in_honorarios INTEGER DEFAULT 1,
             lang TEXT,
             target_lang TEXT,
             run_id TEXT,
@@ -177,6 +179,7 @@ def migrate_joblog_v2(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, columns, "travel_km_outbound", "REAL")
     _add_column_if_missing(conn, columns, "travel_km_return", "REAL")
     _add_column_if_missing(conn, columns, "use_service_location_in_honorarios", "INTEGER DEFAULT 0")
+    _add_column_if_missing(conn, columns, "include_transport_sentence_in_honorarios", "INTEGER DEFAULT 1")
     _add_column_if_missing(conn, columns, "target_lang", "TEXT")
     _add_column_if_missing(conn, columns, "run_id", "TEXT")
     _add_column_if_missing(conn, columns, "total_tokens", "INTEGER")
@@ -240,6 +243,8 @@ def migrate_joblog_v2(conn: sqlite3.Connection) -> None:
 
 def insert_job_run(conn: sqlite3.Connection, values: Mapping[str, Any]) -> int:
     payload = {column: values.get(column) for column in JOB_RUN_COLUMNS}
+    if payload["include_transport_sentence_in_honorarios"] is None:
+        payload["include_transport_sentence_in_honorarios"] = 1
     placeholders = ", ".join("?" for _ in JOB_RUN_COLUMNS)
     columns_sql = ", ".join(JOB_RUN_COLUMNS)
     cursor = conn.execute(
@@ -268,6 +273,7 @@ def list_job_runs(conn: sqlite3.Connection, *, limit: int = 500) -> list[sqlite3
             travel_km_outbound,
             travel_km_return,
             COALESCE(use_service_location_in_honorarios, 0) AS use_service_location_in_honorarios,
+            COALESCE(include_transport_sentence_in_honorarios, 1) AS include_transport_sentence_in_honorarios,
             lang,
             COALESCE(NULLIF(trim(target_lang), ''), NULLIF(trim(lang), '')) AS target_lang,
             run_id,

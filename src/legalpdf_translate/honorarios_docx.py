@@ -7,6 +7,7 @@ from datetime import date
 from enum import Enum
 import re
 from pathlib import Path
+import unicodedata
 
 from docx import Document
 from docx.enum.section import WD_SECTION_START
@@ -31,6 +32,31 @@ _PT_MONTHS = {
     12: "dezembro",
 }
 _INVALID_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_TRAILING_PREPOSITION_RE = re.compile(r"\b(?:de|do|da|dos|das)\s*$", re.IGNORECASE)
+_PREPOSITION_TOKENS = {"de", "do", "da", "dos", "das"}
+_INCOMPLETE_LOCATION_TOKENS = {
+    "audiencia",
+    "central",
+    "civel",
+    "civil",
+    "comarca",
+    "comercio",
+    "competencia",
+    "criminal",
+    "execucao",
+    "familia",
+    "generica",
+    "instrucao",
+    "juizo",
+    "local",
+    "menores",
+    "ministerio",
+    "publico",
+    "republica",
+    "secao",
+    "trabalho",
+    "tribunal",
+}
 
 
 class HonorariosKind(str, Enum):
@@ -51,6 +77,7 @@ class HonorariosDraft:
     service_entity: str = ""
     service_city: str = ""
     use_service_location_in_honorarios: bool = False
+    include_transport_sentence_in_honorarios: bool = True
     travel_km_outbound: float = 0.0
     travel_km_return: float = 0.0
     recipient_block: str = ""
@@ -90,33 +117,29 @@ def build_interpretation_honorarios_draft(
     service_entity: str = "",
     service_city: str = "",
     use_service_location_in_honorarios: bool = False,
+    include_transport_sentence_in_honorarios: bool = True,
     travel_km_outbound: float = 0.0,
     travel_km_return: float = 0.0,
     recipient_block: str = "",
     today: date | None = None,
 ) -> HonorariosDraft:
     current_date = today or date.today()
-    resolved_date = current_date
     cleaned_service_date = service_date.strip()
     cleaned_service_city = service_city.strip()
     cleaned_case_city = case_city.strip() or cleaned_service_city
-    if cleaned_service_date:
-        try:
-            resolved_date = date.fromisoformat(cleaned_service_date)
-        except ValueError:
-            resolved_date = current_date
     return HonorariosDraft(
         case_number=case_number.strip(),
         word_count=0,
         case_entity=case_entity.strip(),
         case_city=cleaned_case_city,
-        date_pt=format_portuguese_date(resolved_date),
+        date_pt=format_portuguese_date(current_date),
         profile=profile,
         kind=HonorariosKind.INTERPRETATION,
         service_date=cleaned_service_date,
         service_entity=service_entity.strip(),
         service_city=cleaned_service_city,
         use_service_location_in_honorarios=bool(use_service_location_in_honorarios),
+        include_transport_sentence_in_honorarios=bool(include_transport_sentence_in_honorarios),
         travel_km_outbound=float(travel_km_outbound),
         travel_km_return=float(travel_km_return),
         recipient_block=recipient_block.strip(),
@@ -174,8 +197,49 @@ def _format_km_value(value: float) -> str:
     return f"{numeric:.2f}".rstrip("0").rstrip(".").replace(".", ",")
 
 
+def _normalize_text_for_match(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
+    return " ".join(without_accents.split()).casefold()
+
+
+def _entity_mentions_case_city(case_entity: str, case_city: str) -> bool:
+    normalized_entity = _normalize_text_for_match(case_entity)
+    normalized_city = _normalize_text_for_match(case_city)
+    if not normalized_entity or not normalized_city:
+        return False
+    city_tokens = [re.escape(token) for token in normalized_city.split()]
+    if not city_tokens:
+        return False
+    city_pattern = re.compile(r"\b" + r"\s+".join(city_tokens) + r"\b")
+    return bool(city_pattern.search(normalized_entity))
+
+
+def _entity_has_explicit_location_suffix(case_entity: str) -> bool:
+    normalized_tokens = _normalize_text_for_match(case_entity).split()
+    if len(normalized_tokens) < 2:
+        return False
+    if normalized_tokens[-1] in _INCOMPLETE_LOCATION_TOKENS:
+        return False
+    trailing_context = normalized_tokens[-4:-1]
+    return any(token in _PREPOSITION_TOKENS for token in trailing_context)
+
+
+def _complete_case_entity_with_city(case_entity: str, case_city: str) -> str:
+    cleaned_entity = " ".join(case_entity.split())
+    cleaned_city = " ".join(case_city.split())
+    if not cleaned_entity or not cleaned_city:
+        return cleaned_entity
+    if _entity_mentions_case_city(cleaned_entity, cleaned_city):
+        return cleaned_entity
+    if _entity_has_explicit_location_suffix(cleaned_entity):
+        return cleaned_entity
+    separator = " " if _TRAILING_PREPOSITION_RE.search(cleaned_entity) else " de "
+    return f"{cleaned_entity}{separator}{cleaned_city}"
+
+
 def default_interpretation_recipient_block(case_entity: str, case_city: str = "") -> str:
-    cleaned = case_entity.strip()
+    cleaned = _complete_case_entity_with_city(case_entity, case_city)
     cleaned_city = case_city.strip()
     if cleaned.casefold().startswith("ministério público de ".casefold()):
         return f"Exmo. Senhor Procurador do {cleaned}"
@@ -216,11 +280,8 @@ def _interpretation_one_way_distance(draft: HonorariosDraft) -> float:
 
 
 def _translation_recipient_line(draft: HonorariosDraft) -> str:
-    entity = draft.case_entity.strip()
-    city = draft.case_city.strip()
+    entity = _complete_case_entity_with_city(draft.case_entity, draft.case_city)
     if entity.casefold() == "ministério público":
-        if city:
-            return f"Exmo. Sr(a). Procurador(a) da república do Ministério Público de {city}"
         return "Exmo. Sr(a). Procurador(a) da república do Ministério Público"
     return "Exmo. Sr(a). Procurador(a) da república do " + entity
 
@@ -265,16 +326,21 @@ def _interpretation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, s
     )
     recipient_lines = [line.strip() for line in recipient_block.splitlines() if line.strip()]
     location_phrase = _interpretation_service_location_phrase(draft)
-    travel_destination = _interpretation_travel_destination(draft)
     date_phrase = f"no dia {_format_service_date(draft.service_date)}"
     if location_phrase:
         date_phrase = f"{date_phrase}, {location_phrase}"
     body_text = (
         "Venho, por este meio, requerer o pagamento dos honorários devidos, em virtude de ter sido nomeado "
-        f"intérprete no âmbito do processo acima identificado, {date_phrase}, bem como o pagamento das despesas de transporte entre "
-        f"{profile.travel_origin_label} e {travel_destination}, tendo percorrido "
-        f"{_format_km_value(_interpretation_one_way_distance(draft))} km em cada sentido."
+        f"intérprete no âmbito do processo acima identificado, {date_phrase}."
     )
+    if draft.include_transport_sentence_in_honorarios:
+        travel_destination = _interpretation_travel_destination(draft)
+        body_text = (
+            body_text[:-1]
+            + ", bem como o pagamento das despesas de transporte entre "
+            f"{profile.travel_origin_label} e {travel_destination}, tendo percorrido "
+            f"{_format_km_value(_interpretation_one_way_distance(draft))} km em cada sentido."
+        )
     paragraphs: list[tuple[str, str]] = [
         (f"Número de processo: {draft.case_number}", "left"),
         ("", "left"),
@@ -293,11 +359,11 @@ def _interpretation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, s
                 "left",
             ),
             ("", "left"),
-            ("O pagamento deverá ser efetuado para o seguinte IBAN:", "left"),
-            (profile.iban, "left"),
+            (f"O Pagamento deverá ser efetuado para o seguinte IBAN: {profile.iban}", "left"),
             ("", "left"),
             ("Melhores cumprimentos,", "left"),
-            ("Pede deferimento.", "left"),
+            ("", "left"),
+            ("Espera deferimento,", "center"),
             ("", "left"),
             (f"{draft.case_city}, {draft.date_pt}", "center"),
             ("", "left"),

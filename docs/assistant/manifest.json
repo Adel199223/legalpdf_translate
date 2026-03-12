@@ -406,7 +406,7 @@
     "localization_glossary_source_of_truth": "docs/assistant/LOCALIZATION_GLOSSARY.md",
     "workspace_performance_source_of_truth": "docs/assistant/PERFORMANCE_BASELINES.md",
     "environment_outside_workspace_default_policy": "Keep heavyweight environments/artifacts outside workspace root when feasible.",
-    "post_change_docs_sync_prompt_policy": "After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced, and do not ask again after the same-pass sync already happened.",
+    "post_change_docs_sync_prompt_policy": "After significant implementation changes keep the exact prompt available: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary. If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass. If the relevant docs sync already ran during the same task/pass, do not ask again.",
     "inspiration_reference_discovery_policy": "Named parity/inspiration requests must run REFERENCE_DISCOVERY_WORKFLOW before implementation decisions.",
     "golden_principles_source_of_truth": "docs/assistant/GOLDEN_PRINCIPLES.md",
     "execplan_policy": "Major/multi-file work requires ExecPlans in docs/assistant/exec_plans/active/.",
@@ -431,7 +431,7 @@
     "test_live_state_isolation_policy": "Tests must default to temporary filesystem/environment state, explicit opt-in live machine state, and non-live or ephemeral ports for host-bound features.",
     "multi_surface_diagnostics_packet_policy": "For multi-surface workflows keep per-run artifacts primary, add workflow_context when a run belongs to a larger session, and use one durable app-owned session artifact instead of separate browser-only report files.",
     "canonical_precedence_policy": "Source code is final truth; APP_KNOWLEDGE.md is canonical; bridge/user guides defer to canonical.",
-    "docs_sync_prompt_policy": "After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced, and do not ask again after the same-pass sync already happened.",
+    "docs_sync_prompt_policy": "After significant implementation changes keep the exact prompt available: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary. If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass. If the relevant docs sync already ran during the same task/pass, do not ask again.",
     "stage_gate_policy": "For risk-triggered complex work stop at each stage and require exact continuation token format NEXT_STAGE_X.",
     "reference_discovery_policy": "Parity/inspiration requests against named products/sites/apps require REFERENCE_DISCOVERY_WORKFLOW first.",
     "openai_docs_citation_freshness_policy": "OpenAI/external unstable claims must use official primary sources with explicit verification date in EXTERNAL_SOURCE_REGISTRY.md.",
@@ -448,5 +448,5 @@
     "cloud_scoring_failure_recovery_policy": "Cloud failure semantics use unavailable|failed and recovery order is cloud-fix-rerun before local-heavy fallback.",
     "cloud_local_apply_separation_policy": "Cloud evaluation outputs must not auto-apply runtime config/state; local manual acceptance gate is required before final apply."
   },
-  "last_updated": "2026-03-09"
+  "last_updated": "2026-03-12"
 }

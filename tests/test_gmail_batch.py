@@ -14,6 +14,7 @@ from legalpdf_translate.gmail_batch import (
     GmailBatchConfirmedItem,
     GmailInterpretationSession,
     GmailBatchSession,
+    build_gmail_interpretation_session_payload,
     GmailMessageLoadResult,
     build_gmail_batch_session_payload,
     gmail_batch_consistency_signature,
@@ -22,6 +23,7 @@ from legalpdf_translate.gmail_batch import (
     prepare_gmail_interpretation_session,
     stage_gmail_batch_translated_docx,
     write_gmail_batch_session_report,
+    write_gmail_interpretation_session_report,
 )
 from legalpdf_translate.gmail_intake import InboundMailContext
 
@@ -888,13 +890,15 @@ def test_build_gmail_batch_session_payload_includes_run_linkage_and_finalization
     )
     session.honorarios_requested = True
     session.requested_honorarios_path = tmp_path / "21-25_AR_20260308.docx"
+    session.requested_honorarios_pdf_path = tmp_path / "21-25_AR_20260308.pdf"
     session.actual_honorarios_path = tmp_path / "Requerimento_Honorarios_21-25.docx"
+    session.actual_honorarios_pdf_path = tmp_path / "Requerimento_Honorarios_21-25.pdf"
     session.honorarios_auto_renamed = True
     session.draft_preflight_result = "passed"
     session.draft_created = True
     session.final_attachment_basenames = (
         "21-25_AR_20260308.docx",
-        "Requerimento_Honorarios_21-25.docx",
+        "Requerimento_Honorarios_21-25.pdf",
     )
 
     payload = build_gmail_batch_session_payload(session)
@@ -906,12 +910,14 @@ def test_build_gmail_batch_session_payload_includes_run_linkage_and_finalization
     ]
     assert payload["runs"][0]["run_id"] == "run-77"
     assert payload["runs"][0]["joblog_row_id"] == 77
+    assert payload["finalization"]["requested_pdf_save_path"].endswith("21-25_AR_20260308.pdf")
     assert payload["finalization"]["actual_saved_path"].endswith("Requerimento_Honorarios_21-25.docx")
+    assert payload["finalization"]["actual_pdf_saved_path"].endswith("Requerimento_Honorarios_21-25.pdf")
     assert payload["finalization"]["auto_renamed"] is True
     assert payload["finalization"]["draft_created"] is True
     assert payload["finalization"]["final_attachment_basenames"] == [
         "21-25_AR_20260308.docx",
-        "Requerimento_Honorarios_21-25.docx",
+        "Requerimento_Honorarios_21-25.pdf",
     ]
 
 
@@ -942,3 +948,154 @@ def test_write_gmail_batch_session_report_persists_json(tmp_path: Path) -> None:
     assert report_path == tmp_path / "gmail_batch_session.json"
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["session_id"] == session.session_id
+
+
+def test_prepare_gmail_interpretation_session_creates_initial_report(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cached_preview = tmp_path / "notice-preview.pdf"
+    cached_preview.write_text("cached-preview", encoding="utf-8")
+    attachment = GmailAttachmentCandidate(
+        attachment_id="att-1",
+        filename="notice.pdf",
+        mime_type="application/pdf",
+        size_bytes=1024,
+        source_message_id="msg-123",
+    )
+    message = FetchedGmailMessage(
+        message_id="msg-123",
+        thread_id="thread-456",
+        subject="Urgent filing",
+        from_header="Tribunal <court@example.com>",
+        account_email="only@example.com",
+        attachments=(attachment,),
+    )
+
+    monkeypatch.setattr("legalpdf_translate.gmail_batch.get_source_page_count", lambda _path: 7)
+
+    session = prepare_gmail_interpretation_session(
+        intake_context=InboundMailContext(
+            message_id="msg-123",
+            thread_id="thread-456",
+            subject="Urgent filing",
+        ),
+        message=message,
+        gog_path=tmp_path / "gog.exe",
+        account_email="only@example.com",
+        selected_attachment=GmailAttachmentSelection(candidate=attachment, start_page=1),
+        effective_output_dir=tmp_path / "output",
+        cached_preview_paths={attachment.attachment_id: cached_preview},
+        cached_preview_page_counts={attachment.attachment_id: 7},
+    )
+    try:
+        assert session.session_report_path is not None
+        assert session.session_report_path.exists()
+        payload = json.loads(session.session_report_path.read_text(encoding="utf-8"))
+        assert payload["status"] == "prepared"
+        assert payload["intake_context"]["selected_attachment_filename"] == "notice.pdf"
+        assert payload["downloaded_notice"]["saved_path"].endswith("notice.pdf")
+    finally:
+        session.cleanup()
+
+
+def test_build_gmail_interpretation_session_payload_includes_pdf_paths(tmp_path: Path) -> None:
+    notice_path = tmp_path / "notice.pdf"
+    notice_path.write_bytes(b"%PDF-1.4\n")
+    attachment = GmailAttachmentCandidate(
+        attachment_id="att-1",
+        filename="notice.pdf",
+        mime_type="application/pdf",
+        size_bytes=2048,
+        source_message_id="msg-100",
+    )
+    session = GmailInterpretationSession(
+        intake_context=InboundMailContext(
+            message_id="msg-100",
+            thread_id="thread-200",
+            subject="Court reply needed",
+        ),
+        message=FetchedGmailMessage(
+            message_id="msg-100",
+            thread_id="thread-200",
+            subject="Court reply needed",
+            from_header="Tribunal <court@example.com>",
+            account_email="court@example.com",
+            attachments=(attachment,),
+        ),
+        gog_path=Path("C:/gog.exe"),
+        account_email="court@example.com",
+        downloaded_attachment=DownloadedGmailAttachment(
+            candidate=attachment,
+            saved_path=notice_path,
+            start_page=1,
+            page_count=4,
+        ),
+        download_dir=tmp_path / "downloads",
+        effective_output_dir=tmp_path / "output",
+        session_report_path=tmp_path / "gmail_interpretation_session.json",
+    )
+    session.status = "draft_ready"
+    session.honorarios_requested = True
+    session.requested_honorarios_path = tmp_path / "interpretation_honorarios.docx"
+    session.requested_honorarios_pdf_path = tmp_path / "interpretation_honorarios.pdf"
+    session.actual_honorarios_path = tmp_path / "Requerimento_Honorarios_109-26.docx"
+    session.actual_honorarios_pdf_path = tmp_path / "Requerimento_Honorarios_109-26.pdf"
+    session.honorarios_auto_renamed = True
+    session.draft_created = True
+    session.final_attachment_basenames = ("Requerimento_Honorarios_109-26.pdf",)
+
+    payload = build_gmail_interpretation_session_payload(session)
+
+    assert payload["status"] == "draft_ready"
+    assert payload["intake_context"]["selected_attachment"]["page_count"] == 4
+    assert payload["downloaded_notice"]["saved_path"].endswith("notice.pdf")
+    assert payload["finalization"]["requested_save_path"].endswith("interpretation_honorarios.docx")
+    assert payload["finalization"]["requested_pdf_save_path"].endswith("interpretation_honorarios.pdf")
+    assert payload["finalization"]["actual_saved_path"].endswith("Requerimento_Honorarios_109-26.docx")
+    assert payload["finalization"]["actual_pdf_saved_path"].endswith("Requerimento_Honorarios_109-26.pdf")
+    assert payload["finalization"]["final_attachment_basenames"] == ["Requerimento_Honorarios_109-26.pdf"]
+
+
+def test_write_gmail_interpretation_session_report_persists_json(tmp_path: Path) -> None:
+    notice_path = tmp_path / "notice.pdf"
+    notice_path.write_bytes(b"%PDF-1.4\n")
+    attachment = GmailAttachmentCandidate(
+        attachment_id="att-1",
+        filename="notice.pdf",
+        mime_type="application/pdf",
+        size_bytes=2048,
+        source_message_id="msg-100",
+    )
+    session = GmailInterpretationSession(
+        intake_context=InboundMailContext(
+            message_id="msg-100",
+            thread_id="thread-200",
+            subject="Court reply needed",
+        ),
+        message=FetchedGmailMessage(
+            message_id="msg-100",
+            thread_id="thread-200",
+            subject="Court reply needed",
+            from_header="Tribunal <court@example.com>",
+            account_email="court@example.com",
+            attachments=(attachment,),
+        ),
+        gog_path=Path("C:/gog.exe"),
+        account_email="court@example.com",
+        downloaded_attachment=DownloadedGmailAttachment(
+            candidate=attachment,
+            saved_path=notice_path,
+            start_page=1,
+            page_count=4,
+        ),
+        download_dir=tmp_path / "downloads",
+        session_report_path=tmp_path / "gmail_interpretation_session.json",
+    )
+
+    report_path = write_gmail_interpretation_session_report(session)
+
+    assert report_path == tmp_path / "gmail_interpretation_session.json"
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["session_id"] == session.session_id
+    assert payload["downloaded_notice"]["filename"] == "notice.pdf"
