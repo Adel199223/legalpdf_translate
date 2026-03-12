@@ -39,6 +39,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
   - `dark_futuristic`: the elevated default with stronger translucent depth and cyan-accent glow
   - `dark_simple`: a toned-down darker variant built from the same shared style system
 - The dashboard plus the shared dialog/tool surfaces (`Settings` appearance/glossary/study/diagnostics tabs, Gmail review/preview, glossary editor, glossary builder, calibration audit, Save/Edit Job Log, and honorários export) now share one centralized elevated/translucent visual language from `src/legalpdf_translate/qt_gui/styles.py` instead of drifting through local widget styling.
+- Top-level fixed-vocabulary selectors in the shell, settings/admin tabs, and glossary/calibration tool dialogs now use guarded non-editable combos/spins; dense table-local editors keep their existing local combo contract.
 - Top-level windows and major dialogs now use shared screen-bounded sizing via `src/legalpdf_translate/qt_gui/window_adaptive.py`.
 - Main-shell resize work is deferred/coalesced so live resizing stays stable; the hero row also reserves width for the status label so short states such as `Idle` are not clipped during narrow-width transitions.
 

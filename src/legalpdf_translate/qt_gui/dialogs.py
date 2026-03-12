@@ -98,7 +98,7 @@ from legalpdf_translate.honorarios_docx import (
     generate_honorarios_docx,
 )
 from legalpdf_translate.joblog_db import (
-    delete_job_run,
+    delete_job_runs,
     insert_job_run,
     list_job_runs,
     open_job_log,
@@ -1014,6 +1014,7 @@ class QtProfileManagerDialog(QDialog):
         self.new_profile_btn = QPushButton("New Profile")
         self.set_primary_btn = QPushButton("Set as Primary")
         self.delete_profile_btn = QPushButton("Delete Profile")
+        self.delete_profile_btn.setObjectName("DangerButton")
         left_actions.addWidget(self.new_profile_btn)
         left_actions.addWidget(self.set_primary_btn)
         left_actions.addWidget(self.delete_profile_btn)
@@ -1059,6 +1060,7 @@ class QtProfileManagerDialog(QDialog):
         distance_actions = QHBoxLayout()
         self.add_distance_btn = QPushButton("Add/Update Distance")
         self.delete_distance_btn = QPushButton("Delete Distance")
+        self.delete_distance_btn.setObjectName("DangerButton")
         distance_actions.addWidget(self.add_distance_btn)
         distance_actions.addWidget(self.delete_distance_btn)
         distance_actions.addStretch(1)
@@ -1076,6 +1078,7 @@ class QtProfileManagerDialog(QDialog):
         actions = QHBoxLayout()
         actions.addStretch(1)
         self.save_btn = QPushButton("Save")
+        self.save_btn.setObjectName("PrimaryButton")
         self.close_btn = QPushButton("Close")
         actions.addWidget(self.save_btn)
         actions.addWidget(self.close_btn)
@@ -1362,6 +1365,7 @@ class QtHonorariosExportDialog(QDialog):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         profile_row = QHBoxLayout()
         self.profile_combo = NoWheelComboBox()
+        self.profile_combo.setEditable(False)
         self.profile_edit_btn = QPushButton("Edit Profiles...")
         profile_row.addWidget(self.profile_combo, 1)
         profile_row.addWidget(self.profile_edit_btn)
@@ -1433,6 +1437,7 @@ class QtHonorariosExportDialog(QDialog):
         actions.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
         self.generate_btn = QPushButton("Gerar DOCX")
+        self.generate_btn.setObjectName("PrimaryButton")
         actions.addWidget(self.cancel_btn)
         actions.addWidget(self.generate_btn)
         root.addWidget(self.action_bar)
@@ -2999,6 +3004,8 @@ class QtJobLogWindow(QDialog):
         self.add_btn = QPushButton("Add...")
         self.refresh_btn = QPushButton("Refresh")
         self.columns_btn = QPushButton("Columns...")
+        self.delete_selected_btn = QPushButton("Delete selected...", objectName="DangerButton")
+        self.delete_selected_btn.setEnabled(False)
         self.honorarios_btn = QPushButton("Gerar Requerimento de Honorários...")
         self.honorarios_btn.setEnabled(False)
         self.add_menu = QMenu(self.add_btn)
@@ -3009,6 +3016,7 @@ class QtJobLogWindow(QDialog):
         controls.addWidget(self.add_btn)
         controls.addWidget(self.refresh_btn)
         controls.addWidget(self.columns_btn)
+        controls.addWidget(self.delete_selected_btn)
         controls.addWidget(self.honorarios_btn)
         controls.addStretch(1)
         root.addLayout(controls)
@@ -3017,7 +3025,7 @@ class QtJobLogWindow(QDialog):
         self.table.setHorizontalHeaderLabels([JOBLOG_ACTIONS_COLUMN_LABEL] + [JOBLOG_COLUMN_LABELS[col] for col in JOBLOG_COLUMNS])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setWordWrap(False)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -3037,6 +3045,7 @@ class QtJobLogWindow(QDialog):
         self.add_photo_interpretation_action.triggered.connect(self._open_photo_interpretation_dialog)
         self.refresh_btn.clicked.connect(self.refresh_rows)
         self.columns_btn.clicked.connect(self._open_columns_dialog)
+        self.delete_selected_btn.clicked.connect(self._confirm_delete_selected_rows)
         self.honorarios_btn.clicked.connect(self._open_honorarios_dialog)
         self.table.itemSelectionChanged.connect(self._refresh_action_state)
         self.table.cellDoubleClicked.connect(self._on_table_cell_double_clicked)
@@ -3128,6 +3137,37 @@ class QtJobLogWindow(QDialog):
             if int(row.get("id", 0) or 0) == int(row_id):
                 return index
         return None
+
+    def _selected_row_indices(self) -> list[int]:
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            row = self.table.currentRow()
+            return [row] if 0 <= row < len(self._rows_data) else []
+        selected = sorted({int(index.row()) for index in selection_model.selectedRows()})
+        if selected:
+            return [row for row in selected if 0 <= row < len(self._rows_data)]
+        row = self.table.currentRow()
+        return [row] if 0 <= row < len(self._rows_data) else []
+
+    def _selected_row_ids(self) -> list[int]:
+        selected_ids: list[int] = []
+        for row_index in self._selected_row_indices():
+            row_data = self._rows_data[row_index]
+            selected_ids.append(int(row_data.get("id", 0) or 0))
+        return selected_ids
+
+    def _delete_confirmation_message(self, rows: list[dict[str, object]]) -> str:
+        case_numbers = [str(row.get("case_number", "") or "").strip() for row in rows]
+        case_numbers = [value for value in case_numbers if value]
+        if len(rows) == 1:
+            suffix = f" ({case_numbers[0]})" if case_numbers else ""
+            return f"Delete this Job Log row{suffix}?"
+        preview = ", ".join(case_numbers[:3])
+        extra_count = max(0, len(case_numbers) - 3)
+        if preview and extra_count > 0:
+            preview = f"{preview}, +{extra_count} more"
+        suffix = f" ({preview})" if preview else ""
+        return f"Delete {len(rows)} Job Log rows{suffix}?"
 
     def _render_display_row(self, row_index: int, row_data: Mapping[str, object]) -> None:
         for col in JOBLOG_COLUMNS:
@@ -3297,6 +3337,12 @@ class QtJobLogWindow(QDialog):
                 return
             QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
             return
+        selected_rows = self._selected_row_indices()
+        if len(selected_rows) > 1:
+            QMessageBox.information(self, "Job Log", "Select one Job Log row first.")
+            return
+        if selected_rows != [row_index]:
+            self.table.selectRow(row_index)
         self._begin_inline_edit(row_index, row_data)
 
     def _open_edit_dialog(self, row_id: int) -> None:
@@ -3441,21 +3487,35 @@ class QtJobLogWindow(QDialog):
         row_index = self._row_index_for_row_id(int(row_id))
         if row_index is None:
             return
-        row_data = self._rows_data[row_index]
-        case_number = str(row_data.get("case_number", "") or "").strip()
-        title_suffix = f" ({case_number})" if case_number else ""
+        self._confirm_delete_rows([row_index])
+
+    def _confirm_delete_selected_rows(self) -> bool:
+        if self._inline_edit_row_id is not None:
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return False
+        row_indices = self._selected_row_indices()
+        if not row_indices:
+            return False
+        self._confirm_delete_rows(row_indices)
+        return True
+
+    def _confirm_delete_rows(self, row_indices: list[int]) -> None:
+        normalized_indices = sorted({int(row_index) for row_index in row_indices if 0 <= int(row_index) < len(self._rows_data)})
+        if not normalized_indices:
+            return
+        rows = [self._rows_data[row_index] for row_index in normalized_indices]
         confirmed = QMessageBox.question(
             self,
-            "Delete Job Log Row",
-            f"Delete this Job Log row{title_suffix}?",
+            "Delete Job Log Row" if len(rows) == 1 else "Delete Job Log Rows",
+            self._delete_confirmation_message(rows),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if confirmed != QMessageBox.StandardButton.Yes:
             return
         with closing(open_job_log(self._db_path)) as conn:
-            delete_job_run(conn, row_id=int(row_id))
-        self.refresh_rows(selected_row_index=row_index, force=True)
+            delete_job_runs(conn, row_ids=[int(row.get("id", 0) or 0) for row in rows])
+        self.refresh_rows(selected_row_index=normalized_indices[0], force=True)
 
     def refresh_rows(
         self,
@@ -3493,27 +3553,36 @@ class QtJobLogWindow(QDialog):
     def _refresh_action_state(self) -> None:
         if self._inline_edit_row_id is not None and not self._selection_guard_active:
             edit_row_index = self._row_index_for_row_id(self._inline_edit_row_id)
-            if edit_row_index is not None and self.table.currentRow() != edit_row_index:
+            if edit_row_index is not None and self._selected_row_indices() != [edit_row_index]:
                 self._selection_guard_active = True
+                self.table.clearSelection()
                 self.table.selectRow(edit_row_index)
                 self._selection_guard_active = False
         is_editing = self._inline_edit_row_id is not None
+        selection_count = len(self._selected_row_indices())
         self.add_btn.setEnabled(not is_editing)
         self.refresh_btn.setEnabled(not is_editing)
         self.columns_btn.setEnabled(not is_editing)
-        self.honorarios_btn.setEnabled(not is_editing and self._selected_row_data() is not None)
+        self.delete_selected_btn.setEnabled(not is_editing and selection_count > 0)
+        self.honorarios_btn.setEnabled(not is_editing and selection_count == 1 and self._selected_row_data() is not None)
 
     def _selected_row_data(self) -> dict[str, object] | None:
-        row = self.table.currentRow()
-        if row < 0:
-            selection_model = self.table.selectionModel()
-            if selection_model is not None:
-                selected_rows = selection_model.selectedRows()
-                if selected_rows:
-                    row = int(selected_rows[0].row())
-        if row < 0 or row >= len(self._rows_data):
+        selected_rows = self._selected_row_indices()
+        if len(selected_rows) != 1:
             return None
+        row = selected_rows[0]
         return self._rows_data[row]
+
+    def keyPressEvent(self, event) -> None:  # type: ignore[override]
+        if (
+            event.key() == Qt.Key.Key_Delete
+            and self._inline_edit_row_id is None
+            and QApplication.focusWidget() in {self.table, self.table.viewport()}
+            and self._confirm_delete_selected_rows()
+        ):
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _offer_gmail_draft_for_honorarios(
         self,
@@ -3939,6 +4008,7 @@ class QtReviewQueueDialog(QDialog):
         self.export_btn = QPushButton("Export...")
         self.copy_btn = QPushButton("Copy list")
         self.open_page_btn = QPushButton("Open page file")
+        self.open_page_btn.setObjectName("PrimaryButton")
         self.close_btn = QPushButton("Close")
         actions.addWidget(self.export_btn)
         actions.addWidget(self.copy_btn)
@@ -4084,6 +4154,7 @@ class _GmailPreviewPageCard(QFrame):
         header.setSpacing(8)
         self.title_label = QLabel(f"Page {page_number}")
         self.use_page_btn = QPushButton("Start from this page")
+        self.use_page_btn.setObjectName("PrimaryButton")
         header.addWidget(self.title_label)
         header.addStretch(1)
         header.addWidget(self.use_page_btn)
@@ -4293,6 +4364,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
 
         actions = QHBoxLayout()
         self.use_page_btn = QPushButton("Start from this page")
+        self.use_page_btn.setObjectName("PrimaryButton")
         self.close_btn = QPushButton("Close")
         actions.addStretch(1)
         actions.addWidget(self.use_page_btn)
@@ -4752,10 +4824,12 @@ class QtGmailBatchReviewDialog(QDialog):
         context_row.setSpacing(8)
         self.workflow_label = QLabel("Workflow")
         self.workflow_combo = NoWheelComboBox()
+        self.workflow_combo.setEditable(False)
         self.workflow_combo.addItem("Translation", GMAIL_INTAKE_WORKFLOW_TRANSLATION)
         self.workflow_combo.addItem("Interpretation notice", GMAIL_INTAKE_WORKFLOW_INTERPRETATION)
         self.target_lang_label = QLabel("Target language")
         self.target_lang_combo = NoWheelComboBox()
+        self.target_lang_combo.setEditable(False)
         supported_langs = [str(lang).strip().upper() for lang in supported_target_langs()]
         self.target_lang_combo.addItems(supported_langs)
         if self._target_lang in supported_langs:
@@ -4803,6 +4877,7 @@ class QtGmailBatchReviewDialog(QDialog):
         actions = QHBoxLayout()
         self.cancel_btn = QPushButton("Cancel")
         self.prepare_btn = QPushButton("Prepare selected attachments")
+        self.prepare_btn.setObjectName("PrimaryButton")
         actions.addStretch(1)
         actions.addWidget(self.cancel_btn)
         actions.addWidget(self.prepare_btn)
@@ -5126,6 +5201,7 @@ class QtGlossaryEditorDialog(QDialog):
         buttons.addStretch(1)
         self.validate_btn = QPushButton("Validate")
         self.save_btn = QPushButton("Save")
+        self.save_btn.setObjectName("PrimaryButton")
         self.save_as_btn = QPushButton("Save As...")
         self.cancel_btn = QPushButton("Cancel")
         buttons.addWidget(self.validate_btn)
@@ -5593,6 +5669,7 @@ class QtSettingsDialog(QDialog):
         buttons.addStretch(1)
         self.apply_btn = QPushButton("Apply")
         self.save_btn = QPushButton("Save")
+        self.save_btn.setObjectName("PrimaryButton")
         self.cancel_btn = QPushButton("Cancel")
         buttons.addWidget(self.apply_btn)
         buttons.addWidget(self.save_btn)
@@ -5617,6 +5694,7 @@ class QtSettingsDialog(QDialog):
         self.openai_toggle_btn = QPushButton("Show")
         self.openai_save_btn = QPushButton("Save")
         self.openai_clear_btn = QPushButton("Clear")
+        self.openai_clear_btn.setObjectName("DangerButton")
         self.openai_test_btn = QPushButton("Test")
         openai_layout.addWidget(self.openai_toggle_btn, 0, 2)
         openai_layout.addWidget(self.openai_save_btn, 0, 3)
@@ -5636,6 +5714,7 @@ class QtSettingsDialog(QDialog):
         self.ocr_toggle_btn = QPushButton("Show")
         self.ocr_save_btn = QPushButton("Save")
         self.ocr_clear_btn = QPushButton("Clear")
+        self.ocr_clear_btn.setObjectName("DangerButton")
         self.ocr_test_btn = QPushButton("Test")
         ocr_layout.addWidget(self.ocr_toggle_btn, 0, 2)
         ocr_layout.addWidget(self.ocr_save_btn, 0, 3)
@@ -5650,6 +5729,7 @@ class QtSettingsDialog(QDialog):
         provider_form = QFormLayout(provider_group)
         self.ocr_provider_combo = NoWheelComboBox()
         self.ocr_provider_combo.addItems(["openai", "gemini"])
+        self.ocr_provider_combo.setEditable(False)
         self.ocr_base_url_edit = QLineEdit()
         self.ocr_model_edit = QLineEdit()
         self.ocr_env_edit = QLineEdit()
@@ -5714,10 +5794,13 @@ class QtSettingsDialog(QDialog):
         form = QFormLayout(self.tab_ocr)
         self.ocr_provider_default_combo = NoWheelComboBox()
         self.ocr_provider_default_combo.addItems(["openai", "gemini"])
+        self.ocr_provider_default_combo.setEditable(False)
         self.ocr_mode_default_combo = NoWheelComboBox()
         self.ocr_mode_default_combo.addItems(["off", "auto", "always"])
+        self.ocr_mode_default_combo.setEditable(False)
         self.ocr_engine_default_combo = NoWheelComboBox()
         self.ocr_engine_default_combo.addItems(["local", "local_then_api", "api"])
+        self.ocr_engine_default_combo.setEditable(False)
         self.min_chars_edit = QLineEdit()
         form.addRow("Default OCR provider", self.ocr_provider_default_combo)
         form.addRow("Default OCR mode", self.ocr_mode_default_combo)
@@ -5728,8 +5811,10 @@ class QtSettingsDialog(QDialog):
         form = QFormLayout(self.tab_appearance)
         self.ui_theme_combo = NoWheelComboBox()
         self.ui_theme_combo.addItems(["dark_futuristic", "dark_simple"])
+        self.ui_theme_combo.setEditable(False)
         self.ui_scale_combo = NoWheelComboBox()
         self.ui_scale_combo.addItems(["1.00", "1.10", "1.25"])
+        self.ui_scale_combo.setEditable(False)
         form.addRow("Theme", self.ui_theme_combo)
         form.addRow("UI scale", self.ui_scale_combo)
 
@@ -5751,6 +5836,7 @@ class QtSettingsDialog(QDialog):
         self.glossary_file_btn = QPushButton("Browse")
         self.glossary_edit_btn = QPushButton("View/Edit...")
         self.glossary_builtin_btn = QPushButton("Use built-in")
+        self.glossary_builtin_btn.setObjectName("DangerButton")
         self.default_resume_check = QCheckBox("Default resume ON")
         self.default_keep_check = QCheckBox("Default keep intermediates ON")
         self.default_breaks_check = QCheckBox("Default page breaks ON")
@@ -5760,6 +5846,7 @@ class QtSettingsDialog(QDialog):
         self.timeout_image_edit = QLineEdit()
         self.allow_xhigh_check = QCheckBox("Allow xhigh escalation (adaptive, image + short text only)")
         self.restore_defaults_btn = QPushButton("Restore defaults")
+        self.restore_defaults_btn.setObjectName("DangerButton")
 
         grid.addWidget(QLabel("Default language"), row, 0); grid.addWidget(self.default_lang_combo, row, 1); row += 1
         grid.addWidget(QLabel("Translation effort"), row, 0); grid.addWidget(self.default_effort_combo, row, 1); row += 1
@@ -5820,14 +5907,16 @@ class QtSettingsDialog(QDialog):
         layout = QVBoxLayout(self.tab_glossary)
         top = QHBoxLayout()
         top.addWidget(QLabel("Target language"))
-        self.glossary_lang_combo = QComboBox()
+        self.glossary_lang_combo = NoWheelComboBox()
         self.glossary_lang_combo.addItems(supported_target_langs())
+        self.glossary_lang_combo.setEditable(False)
         top.addWidget(self.glossary_lang_combo)
         top.addWidget(QLabel("View tier"))
-        self.glossary_tier_combo = QComboBox()
+        self.glossary_tier_combo = NoWheelComboBox()
         for tier in valid_glossary_tiers():
             self.glossary_tier_combo.addItem(f"Tier {tier}", tier)
         self.glossary_tier_combo.setCurrentIndex(0)
+        self.glossary_tier_combo.setEditable(False)
         top.addWidget(self.glossary_tier_combo)
         self.glossary_tier_counts_label = QLabel("")
         top.addWidget(self.glossary_tier_counts_label, 1)
@@ -5885,6 +5974,7 @@ class QtSettingsDialog(QDialog):
 
         actions = QHBoxLayout()
         self.glossary_remove_rows_btn = QPushButton("Remove selected")
+        self.glossary_remove_rows_btn.setObjectName("DangerButton")
         self.glossary_export_btn = QPushButton("Export...")
         actions.addWidget(self.glossary_remove_rows_btn)
         actions.addWidget(self.glossary_export_btn)
@@ -6356,18 +6446,21 @@ class QtSettingsDialog(QDialog):
 
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel("Category"))
-        self.study_category_filter_combo = QComboBox()
+        self.study_category_filter_combo = NoWheelComboBox()
         self.study_category_filter_combo.addItems(
             ["all", "headers", "roles", "procedure", "evidence", "reasoning", "decision_costs", "other"]
         )
+        self.study_category_filter_combo.setEditable(False)
         filter_row.addWidget(self.study_category_filter_combo)
         filter_row.addWidget(QLabel("Status"))
-        self.study_status_filter_combo = QComboBox()
+        self.study_status_filter_combo = NoWheelComboBox()
         self.study_status_filter_combo.addItems(["all", "new", "learning", "known", "hard"])
+        self.study_status_filter_combo.setEditable(False)
         filter_row.addWidget(self.study_status_filter_combo)
         filter_row.addWidget(QLabel("Coverage tier"))
-        self.study_coverage_filter_combo = QComboBox()
+        self.study_coverage_filter_combo = NoWheelComboBox()
         self.study_coverage_filter_combo.addItems(["all", "core80", "next15", "long_tail"])
+        self.study_coverage_filter_combo.setEditable(False)
         filter_row.addWidget(self.study_coverage_filter_combo)
         filter_row.addStretch(1)
         layout.addLayout(filter_row)
@@ -6375,11 +6468,12 @@ class QtSettingsDialog(QDialog):
         builder = QGroupBox("Builder")
         builder_layout = QGridLayout(builder)
         builder_layout.addWidget(QLabel("Corpus source"), 0, 0)
-        self.study_corpus_source_combo = QComboBox()
+        self.study_corpus_source_combo = NoWheelComboBox()
         self.study_corpus_source_combo.addItem("Run folders (recommended for large corpora)", "run_folders")
         self.study_corpus_source_combo.addItem("Current PDF only", "current_pdf")
         self.study_corpus_source_combo.addItem("Select PDFs...", "select_pdfs")
         self.study_corpus_source_combo.addItem("From Job Log runs (unavailable in this version)", "joblog_runs")
+        self.study_corpus_source_combo.setEditable(False)
         self.study_corpus_source_combo.setToolTip(
             "Job Log source is intentionally unavailable in this version (no run/pdf path tracking migration)."
         )
@@ -6395,7 +6489,9 @@ class QtSettingsDialog(QDialog):
         run_btns = QVBoxLayout()
         self.study_add_run_dir_btn = QPushButton("Add run folder")
         self.study_remove_run_dir_btn = QPushButton("Remove selected")
+        self.study_remove_run_dir_btn.setObjectName("DangerButton")
         self.study_clear_run_dirs_btn = QPushButton("Clear")
+        self.study_clear_run_dirs_btn.setObjectName("DangerButton")
         run_btns.addWidget(self.study_add_run_dir_btn)
         run_btns.addWidget(self.study_remove_run_dir_btn)
         run_btns.addWidget(self.study_clear_run_dirs_btn)
@@ -6411,7 +6507,9 @@ class QtSettingsDialog(QDialog):
         pdf_btns = QVBoxLayout()
         self.study_add_pdf_btn = QPushButton("Add PDF(s)")
         self.study_remove_pdf_btn = QPushButton("Remove selected")
+        self.study_remove_pdf_btn.setObjectName("DangerButton")
         self.study_clear_pdf_btn = QPushButton("Clear")
+        self.study_clear_pdf_btn.setObjectName("DangerButton")
         pdf_btns.addWidget(self.study_add_pdf_btn)
         pdf_btns.addWidget(self.study_remove_pdf_btn)
         pdf_btns.addWidget(self.study_clear_pdf_btn)
@@ -6421,13 +6519,14 @@ class QtSettingsDialog(QDialog):
         builder_layout.addWidget(pdf_btn_wrap, 7, 1, 3, 1)
 
         builder_layout.addWidget(QLabel("Mode"), 1, 2)
-        self.study_mode_combo = QComboBox()
+        self.study_mode_combo = NoWheelComboBox()
         self.study_mode_combo.addItem("Full text", "full_text")
         self.study_mode_combo.addItem("Headers only", "headers_only")
+        self.study_mode_combo.setEditable(False)
         builder_layout.addWidget(self.study_mode_combo, 1, 3)
 
         builder_layout.addWidget(QLabel("Coverage target (%)"), 2, 2)
-        self.study_coverage_spin = QSpinBox()
+        self.study_coverage_spin = NoWheelSpinBox()
         self.study_coverage_spin.setRange(50, 95)
         self.study_coverage_spin.setValue(80)
         builder_layout.addWidget(self.study_coverage_spin, 2, 3)
@@ -6436,12 +6535,13 @@ class QtSettingsDialog(QDialog):
         builder_layout.addWidget(self.study_include_snippets_check, 3, 2, 1, 2)
 
         builder_layout.addWidget(QLabel("Snippet max chars"), 4, 2)
-        self.study_snippet_chars_spin = QSpinBox()
+        self.study_snippet_chars_spin = NoWheelSpinBox()
         self.study_snippet_chars_spin.setRange(40, 300)
         self.study_snippet_chars_spin.setValue(120)
         builder_layout.addWidget(self.study_snippet_chars_spin, 4, 3)
 
         self.study_generate_btn = QPushButton("Generate")
+        self.study_generate_btn.setObjectName("PrimaryButton")
         self.study_cancel_generate_btn = QPushButton("Cancel")
         self.study_cancel_generate_btn.setEnabled(False)
         self.study_progress = QProgressBar()
@@ -6472,6 +6572,7 @@ class QtSettingsDialog(QDialog):
         self.study_candidates_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         suggestions_layout.addWidget(self.study_candidates_table, 1)
         self.study_add_selected_btn = QPushButton("Add selected to Study Glossary")
+        self.study_add_selected_btn.setObjectName("PrimaryButton")
         suggestions_layout.addWidget(self.study_add_selected_btn)
         layout.addWidget(suggestions_group)
 
@@ -6487,6 +6588,7 @@ class QtSettingsDialog(QDialog):
         self.study_refresh_translations_btn = QPushButton("Refresh translations")
         self.study_export_btn = QPushButton("Export...")
         self.study_copy_to_ai_btn = QPushButton("Copy selected to AI Glossary...")
+        self.study_copy_to_ai_btn.setObjectName("PrimaryButton")
         self.study_quiz_btn = QPushButton("Quiz me")
         self.study_stats_label = QLabel("")
         entries_actions.addWidget(self.study_refresh_translations_btn)
@@ -7411,6 +7513,7 @@ class QtSettingsDialog(QDialog):
         self.diag_admin_mode_check = QCheckBox("Admin diagnostics mode")
         self.diag_snippets_check = QCheckBox("Include small sanitized snippets (first 200 chars per page)")
         self.create_bundle_btn = QPushButton("Create debug bundle")
+        self.create_bundle_btn.setObjectName("PrimaryButton")
         hint = QLabel("Bundle excludes page text files and all credentials.")
         layout.addWidget(self.diag_cost_summary_check)
         layout.addWidget(self.diag_verbose_meta_check)

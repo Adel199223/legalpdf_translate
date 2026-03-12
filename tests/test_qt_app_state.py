@@ -10,7 +10,7 @@ from types import SimpleNamespace
 if os.name != "nt" and "DISPLAY" not in os.environ:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QBuffer, QDate, QEvent, QIODevice, QRect, Qt
+from PySide6.QtCore import QBuffer, QDate, QEvent, QIODevice, QRect, QItemSelectionModel, Qt
 from PySide6.QtGui import QCloseEvent, QColor, QImage, QPainter, QPen
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QBoxLayout, QCalendarWidget, QComboBox, QDialog, QLineEdit, QToolButton
@@ -49,6 +49,7 @@ from legalpdf_translate.qt_gui.dialogs import (
     QtGmailAttachmentPreviewDialog,
     QtGmailBatchReviewDialog,
     QtJobLogWindow,
+    QtReviewQueueDialog,
     QtSaveToJobLogDialog,
     QtSettingsDialog,
     build_blank_interpretation_seed,
@@ -506,11 +507,17 @@ def test_dashboard_card_can_expand_wider_than_stage_two_cap() -> None:
             app.quit()
 
 
-def test_wide_dashboard_frame_matches_centered_gemini_footprint() -> None:
+def test_wide_dashboard_frame_matches_centered_gemini_footprint(monkeypatch) -> None:
     app = QApplication.instance()
     owns_app = app is None
     if app is None:
         app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        window_adaptive_module,
+        "available_screen_geometry",
+        lambda _widget: QRect(0, 0, 1800, 1000),
+    )
 
     window = QtMainWindow()
     try:
@@ -1366,6 +1373,7 @@ def test_settings_dialog_uses_guarded_run_critical_controls(tmp_path: Path) -> N
         current_pdf_path=None,
     )
     try:
+        assert isinstance(settings_dialog.ocr_provider_combo, NoWheelComboBox)
         assert isinstance(settings_dialog.default_lang_combo, NoWheelComboBox)
         assert isinstance(settings_dialog.default_effort_combo, NoWheelComboBox)
         assert isinstance(settings_dialog.default_effort_policy_combo, NoWheelComboBox)
@@ -1373,8 +1381,48 @@ def test_settings_dialog_uses_guarded_run_critical_controls(tmp_path: Path) -> N
         assert isinstance(settings_dialog.default_workers_combo, NoWheelComboBox)
         assert isinstance(settings_dialog.ocr_mode_default_combo, NoWheelComboBox)
         assert isinstance(settings_dialog.ocr_engine_default_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.glossary_lang_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.glossary_tier_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.study_category_filter_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.study_status_filter_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.study_coverage_filter_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.study_corpus_source_combo, NoWheelComboBox)
+        assert isinstance(settings_dialog.study_mode_combo, NoWheelComboBox)
         assert isinstance(settings_dialog.ui_theme_combo, NoWheelComboBox)
         assert isinstance(settings_dialog.ui_scale_combo, NoWheelComboBox)
+        assert settings_dialog.ocr_provider_combo.isEditable() is False
+        assert settings_dialog.default_lang_combo.isEditable() is False
+        assert settings_dialog.default_effort_combo.isEditable() is False
+        assert settings_dialog.default_effort_policy_combo.isEditable() is False
+        assert settings_dialog.default_images_combo.isEditable() is False
+        assert settings_dialog.default_workers_combo.isEditable() is False
+        assert settings_dialog.ocr_mode_default_combo.isEditable() is False
+        assert settings_dialog.ocr_engine_default_combo.isEditable() is False
+        assert settings_dialog.glossary_lang_combo.isEditable() is False
+        assert settings_dialog.glossary_tier_combo.isEditable() is False
+        assert settings_dialog.study_category_filter_combo.isEditable() is False
+        assert settings_dialog.study_status_filter_combo.isEditable() is False
+        assert settings_dialog.study_coverage_filter_combo.isEditable() is False
+        assert settings_dialog.study_corpus_source_combo.isEditable() is False
+        assert settings_dialog.study_mode_combo.isEditable() is False
+        assert settings_dialog.ui_theme_combo.isEditable() is False
+        assert settings_dialog.ui_scale_combo.isEditable() is False
+        assert isinstance(settings_dialog.study_coverage_spin, NoWheelSpinBox)
+        assert isinstance(settings_dialog.study_snippet_chars_spin, NoWheelSpinBox)
+        assert settings_dialog.save_btn.objectName() == "PrimaryButton"
+        assert settings_dialog.openai_clear_btn.objectName() == "DangerButton"
+        assert settings_dialog.ocr_clear_btn.objectName() == "DangerButton"
+        assert settings_dialog.glossary_builtin_btn.objectName() == "DangerButton"
+        assert settings_dialog.restore_defaults_btn.objectName() == "DangerButton"
+        assert settings_dialog.glossary_remove_rows_btn.objectName() == "DangerButton"
+        assert settings_dialog.study_remove_run_dir_btn.objectName() == "DangerButton"
+        assert settings_dialog.study_clear_run_dirs_btn.objectName() == "DangerButton"
+        assert settings_dialog.study_remove_pdf_btn.objectName() == "DangerButton"
+        assert settings_dialog.study_clear_pdf_btn.objectName() == "DangerButton"
+        assert settings_dialog.study_generate_btn.objectName() == "PrimaryButton"
+        assert settings_dialog.study_add_selected_btn.objectName() == "PrimaryButton"
+        assert settings_dialog.study_copy_to_ai_btn.objectName() == "PrimaryButton"
+        assert settings_dialog.create_bundle_btn.objectName() == "PrimaryButton"
         assert isinstance(settings_dialog.gmail_intake_port_spin, NoWheelSpinBox)
     finally:
         settings_dialog.close()
@@ -2063,6 +2111,11 @@ def test_gmail_batch_review_dialog_returns_selected_attachments_and_target_lang(
         output_dir_text="C:/out",
     )
     try:
+        assert isinstance(dialog.workflow_combo, NoWheelComboBox)
+        assert dialog.workflow_combo.isEditable() is False
+        assert isinstance(dialog.target_lang_combo, NoWheelComboBox)
+        assert dialog.target_lang_combo.isEditable() is False
+        assert dialog.prepare_btn.objectName() == "PrimaryButton"
         assert dialog.target_lang_combo.currentText() == "FR"
         assert dialog.table.horizontalHeaderItem(3).text() == "First page"
         assert dialog.start_page_label.text() == "First page to translate"
@@ -2290,6 +2343,7 @@ def test_gmail_attachment_preview_dialog_builds_scroll_cards_and_accepts_selecte
     try:
         dialog.show()
         app.processEvents()
+        assert dialog.use_page_btn.objectName() == "PrimaryButton"
         dialog._on_bootstrap_loaded(
             GmailAttachmentPreviewBootstrapResult(
                 attachment=attachment,
@@ -2304,6 +2358,7 @@ def test_gmail_attachment_preview_dialog_builds_scroll_cards_and_accepts_selecte
         assert dialog.jump_spin.value() == 1
         assert "Page 1 is the default." in dialog.status_label.text()
         assert dialog._page_cards[1].use_page_btn.text() == "Start from this page"
+        assert dialog._page_cards[1].use_page_btn.objectName() == "PrimaryButton"
         assert 1 in dialog.started_pages
         dialog._page_cards[4].use_page_btn.click()
         assert dialog.selected_start_page == 4
@@ -2406,6 +2461,7 @@ def test_gmail_attachment_preview_dialog_image_preview_uses_page_one(tmp_path: P
     try:
         dialog.show()
         app.processEvents()
+        assert dialog.use_page_btn.objectName() == "PrimaryButton"
         dialog._on_bootstrap_loaded(
             GmailAttachmentPreviewBootstrapResult(
                 attachment=attachment,
@@ -2421,6 +2477,31 @@ def test_gmail_attachment_preview_dialog_image_preview_uses_page_one(tmp_path: P
         dialog.use_page_btn.click()
         assert dialog.selected_start_page == 1
         assert dialog.result() == QDialog.DialogCode.Accepted
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_review_queue_dialog_keeps_single_select_and_primary_open_action(tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    dialog = QtReviewQueueDialog(
+        parent=None,
+        review_queue=[
+            {"page_number": 2, "score": 0.8, "status": "failed", "reasons": ["validator_failed"]},
+            {"page_number": 1, "score": 0.6, "status": "done", "reasons": ["spot_check"]},
+        ],
+        run_dir=tmp_path,
+        run_summary_path=tmp_path / "summary.json",
+    )
+    try:
+        assert dialog.table.selectionMode() == dialog.table.SelectionMode.SingleSelection
+        assert dialog.open_page_btn.objectName() == "PrimaryButton"
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -7576,6 +7657,7 @@ def test_joblog_window_action_cell_uses_icon_buttons_and_delete_removes_row(tmp_
 
     window = QtJobLogWindow(parent=None, db_path=db_path)
     try:
+        assert window.table.selectionMode() == window.table.SelectionMode.ExtendedSelection
         action_widget = window.table.cellWidget(0, 0)
         assert action_widget is not None
         buttons = action_widget.findChildren(QToolButton)
@@ -7592,6 +7674,92 @@ def test_joblog_window_action_cell_uses_icon_buttons_and_delete_removes_row(tmp_
         assert prompts == ["Delete this Job Log row (case-1)?"]
         assert window.table.currentRow() == 0
         assert int(window._rows_data[0]["id"]) == 1
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_joblog_window_honorarios_requires_exactly_one_selected_row(tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        for index in range(3):
+            insert_job_run(conn, _joblog_row_payload(index=index))
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        assert window.honorarios_btn.isEnabled() is False
+        window.table.selectRow(0)
+        QApplication.processEvents()
+        assert window.honorarios_btn.isEnabled() is True
+
+        selection_model = window.table.selectionModel()
+        assert selection_model is not None
+        selection_model.select(
+            window.table.model().index(2, window._table_column_index("case_number")),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+        QApplication.processEvents()
+
+        assert len(window._selected_row_indices()) == 2
+        assert window.delete_selected_btn.isEnabled() is True
+        assert window.honorarios_btn.isEnabled() is False
+        assert window._selected_row_data() is None
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_joblog_window_bulk_delete_selected_rows_removes_all_selected_rows(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        for index in range(3):
+            insert_job_run(conn, _joblog_row_payload(index=index))
+
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        dialogs_module.QMessageBox,
+        "question",
+        lambda _parent, _title, message, *_args, **_kwargs: (
+            prompts.append(message),
+            dialogs_module.QMessageBox.StandardButton.Yes,
+        )[1],
+    )
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        selection_model = window.table.selectionModel()
+        assert selection_model is not None
+        window.table.selectRow(0)
+        selection_model.select(
+            window.table.model().index(2, window._table_column_index("case_number")),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+        QApplication.processEvents()
+
+        assert len(window._selected_row_ids()) == 2
+        assert window.delete_selected_btn.isEnabled() is True
+
+        window._confirm_delete_selected_rows()
+
+        with open_job_log(db_path) as conn:
+            rows = conn.execute("SELECT case_number FROM job_runs ORDER BY completed_at DESC, id DESC").fetchall()
+        remaining = [str(row[0]) for row in rows]
+        assert len(remaining) == 1
+        assert prompts and prompts[0].startswith("Delete 2 Job Log rows")
     finally:
         window.close()
         window.deleteLater()
@@ -7622,6 +7790,8 @@ def test_joblog_window_delete_is_blocked_during_inline_edit_and_other_row_action
     window = QtJobLogWindow(parent=None, db_path=db_path)
     try:
         window._on_table_cell_double_clicked(0, window._table_column_index("case_number"))
+        assert window.delete_selected_btn.isEnabled() is False
+        assert window.honorarios_btn.isEnabled() is False
         second_row_actions = window.table.cellWidget(1, 0)
         assert second_row_actions is not None
         buttons = second_row_actions.findChildren(QToolButton)
@@ -7635,6 +7805,49 @@ def test_joblog_window_delete_is_blocked_during_inline_edit_and_other_row_action
             count = conn.execute("SELECT COUNT(*) FROM job_runs").fetchone()
         assert count is not None
         assert int(count[0]) == 2
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_joblog_window_delete_key_removes_selected_rows_when_table_has_focus(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        for index in range(3):
+            insert_job_run(conn, _joblog_row_payload(index=index))
+
+    monkeypatch.setattr(
+        dialogs_module.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: dialogs_module.QMessageBox.StandardButton.Yes,
+    )
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        selection_model = window.table.selectionModel()
+        assert selection_model is not None
+        window.show()
+        window.table.setFocus()
+        window.table.selectRow(0)
+        selection_model.select(
+            window.table.model().index(1, window._table_column_index("case_number")),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+        QApplication.processEvents()
+
+        QTest.keyClick(window.table, Qt.Key.Key_Delete)
+
+        with open_job_log(db_path) as conn:
+            count = conn.execute("SELECT COUNT(*) FROM job_runs").fetchone()
+        assert count is not None
+        assert int(count[0]) == 1
     finally:
         window.close()
         window.deleteLater()
