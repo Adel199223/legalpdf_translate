@@ -11,6 +11,7 @@ from .config import (
     DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
     DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
 )
+from .court_email import normalize_court_email_vocab
 from .glossary import (
     default_ar_entries,
     entries_from_legacy_rules,
@@ -393,6 +394,10 @@ def _coerce_str_list(value: object, *, fallback: list[str]) -> list[str]:
     if not output:
         return list(fallback)
     return output
+
+
+def _coerce_court_email_list(value: object, *, fallback: list[str]) -> list[str]:
+    return normalize_court_email_vocab(_coerce_str_list(value, fallback=fallback))
 
 
 def _coerce_joblog_column_widths(value: object) -> dict[str, int]:
@@ -897,7 +902,7 @@ def load_joblog_settings() -> dict[str, Any]:
         merged.get("vocab_job_types"),
         fallback=DEFAULT_VOCAB_JOB_TYPES,
     )
-    merged["vocab_court_emails"] = _coerce_str_list(
+    merged["vocab_court_emails"] = _coerce_court_email_list(
         merged.get("vocab_court_emails"),
         fallback=DEFAULT_VOCAB_COURT_EMAILS,
     )
@@ -959,7 +964,10 @@ def save_joblog_settings(values: dict[str, Any]) -> None:
     data["settings_schema_version"] = SETTINGS_SCHEMA_VERSION
     for key in ALLOWED_JOBLOG_KEYS:
         if key in values:
-            data[key] = values[key]
+            if key == "vocab_court_emails":
+                data[key] = normalize_court_email_vocab(_coerce_str_list(values[key], fallback=[]))
+            else:
+                data[key] = values[key]
     save_settings(data)
 
 

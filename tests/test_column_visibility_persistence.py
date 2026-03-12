@@ -57,6 +57,27 @@ def test_joblog_settings_persist_court_email_vocab(tmp_path: Path, monkeypatch) 
     ]
 
 
+def test_joblog_settings_normalize_same_local_domain_conflicts_with_org_first(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+
+    save_joblog_settings(
+        {
+            "vocab_court_emails": [
+                "beja.ministeriopublico@tribunais.gov.pt",
+                "beja.ministeriopublico@tribunais.org.pt",
+                "BEJA.MINISTERIOPUBLICO@tribunais.gov.pt",
+            ]
+        }
+    )
+
+    loaded = load_joblog_settings()
+    assert loaded["vocab_court_emails"] == [
+        "beja.ministeriopublico@tribunais.org.pt",
+        "beja.ministeriopublico@tribunais.gov.pt",
+    ]
+
+
 def test_joblog_column_widths_persist_and_sanitize(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     settings_file = tmp_path / "settings.json"
     monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)

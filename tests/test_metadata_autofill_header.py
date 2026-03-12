@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import legalpdf_translate.metadata_autofill as metadata_autofill
+from legalpdf_translate.court_email import resolve_court_email_selection
 from legalpdf_translate.metadata_autofill import (
     MetadataAutofillConfig,
     choose_court_email_suggestion,
@@ -144,6 +145,38 @@ def test_choose_court_email_suggestion_prefers_exact_email_when_present() -> Non
     assert selected == "header.found@example.org"
 
 
+def test_rank_court_email_suggestions_prefers_canonical_org_domain_for_same_local_conflicts() -> None:
+    ranked = rank_court_email_suggestions(
+        exact_email=None,
+        case_entity="Ministério Público",
+        case_city="Beja",
+        vocab_court_emails=[
+            "beja.ministeriopublico@tribunais.gov.pt",
+            "beja.ministeriopublico@tribunais.org.pt",
+        ],
+    )
+
+    assert ranked[0] == "beja.ministeriopublico@tribunais.org.pt"
+    assert ranked[1] == "beja.ministeriopublico@tribunais.gov.pt"
+
+
+def test_resolve_court_email_selection_flags_same_local_domain_conflicts_as_ambiguous() -> None:
+    resolution = resolve_court_email_selection(
+        document_email=None,
+        document_source=None,
+        case_entity="Ministério Público",
+        case_city="Beja",
+        vocab_court_emails=[
+            "beja.ministeriopublico@tribunais.gov.pt",
+            "beja.ministeriopublico@tribunais.org.pt",
+        ],
+    )
+
+    assert resolution.selected_email == "beja.ministeriopublico@tribunais.org.pt"
+    assert resolution.ambiguous is True
+    assert resolution.requires_manual_confirmation is True
+
+
 def test_resolve_api_client_uses_bounded_retry_and_timeout(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -266,3 +299,31 @@ def test_extract_interpretation_notification_metadata_from_pdf_uses_priority_pag
     assert suggestion.service_date == "2025-06-12"
     assert suggestion.service_entity == "PSP"
     assert suggestion.service_city == "Beja"
+
+
+def test_priority_page_metadata_uses_full_text_fallback_when_header_has_no_email(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "legalpdf_translate.metadata_autofill.extract_header_text_from_pdf_page_with_ocr_fallback",
+        lambda _pdf_path, *, page_number, config=None: (
+            "Tribunal Judicial da Comarca de Beja\nJuízo Local Criminal de Beja\nProcesso n.º 140/22.5JAFAR"
+            if page_number == 1
+            else ""
+        ),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.metadata_autofill.extract_full_text_from_pdf_page_with_ocr_fallback",
+        lambda _pdf_path, *, page_number, config=None: (
+            "Para mais informações contacte beja.ministeriopublico@tribunais.org.pt" if page_number == 1 else ""
+        ),
+    )
+
+    suggestion = extract_pdf_header_metadata_priority_pages(
+        Path("sample.pdf"),
+        vocab_cities=["Beja"],
+        config=MetadataAutofillConfig(metadata_ai_enabled=False),
+    )
+
+    assert suggestion.case_number == "140/22.5JAFAR"
+    assert suggestion.case_city == "Beja"
+    assert suggestion.court_email == "beja.ministeriopublico@tribunais.org.pt"
+    assert suggestion.court_email_source == "document_first_email"

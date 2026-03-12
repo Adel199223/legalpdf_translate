@@ -60,6 +60,14 @@ from legalpdf_translate.config import (
     DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
     OPENAI_MODEL,
 )
+from legalpdf_translate.court_email import (
+    COURT_EMAIL_SOURCE_MANUAL,
+    CourtEmailResolution,
+    describe_court_email_resolution,
+    gmail_draft_block_warning,
+    normalize_court_email_vocab,
+    resolve_court_email_selection,
+)
 from legalpdf_translate.glossary import (
     GlossaryEntry,
     build_consistency_glossary_markdown,
@@ -110,13 +118,11 @@ from legalpdf_translate.metadata_autofill import (
     MetadataAutofillConfig,
     MetadataSuggestion,
     apply_service_case_default_rule,
-    choose_court_email_suggestion,
     extract_interpretation_notification_metadata_from_pdf,
     extract_interpretation_photo_metadata_from_image,
     extract_pdf_header_metadata_priority_pages,
     extract_photo_metadata_from_image,
     metadata_config_from_settings,
-    rank_court_email_suggestions,
 )
 from legalpdf_translate.openai_client import OpenAIResponsesClient
 from legalpdf_translate.ocr_engine import (
@@ -338,12 +344,24 @@ def build_seed_from_joblog_row(row: Mapping[str, object]) -> JobLogSeed:
     service_date = str(row.get("service_date", "") or "").strip()
     if service_date == "" and completed_at:
         service_date = _date_from_completed_at(completed_at)
+    court_email = str(row.get("court_email", "") or "").strip()
+    resolution = None
+    if court_email:
+        resolution = resolve_court_email_selection(
+            document_email=None,
+            document_source=None,
+            case_entity=str(row.get("case_entity", "") or "").strip(),
+            case_city=str(row.get("case_city", "") or "").strip(),
+            vocab_court_emails=[],
+            selected_email=court_email,
+            selected_email_is_manual=True,
+        )
     return JobLogSeed(
         completed_at=completed_at or f"{translation_date}T00:00:00",
         translation_date=translation_date,
         job_type=str(row.get("job_type", "") or "Translation").strip() or "Translation",
         case_number=str(row.get("case_number", "") or "").strip(),
-        court_email=str(row.get("court_email", "") or "").strip(),
+        court_email=court_email,
         case_entity=str(row.get("case_entity", "") or "").strip(),
         case_city=str(row.get("case_city", "") or "").strip(),
         service_entity=str(row.get("service_entity", "") or "").strip(),
@@ -388,6 +406,7 @@ def build_seed_from_joblog_row(row: Mapping[str, object]) -> JobLogSeed:
         pdf_path=None,
         output_docx=_coerce_joblog_path(row.get("output_docx_path")),
         partial_docx=_coerce_joblog_path(row.get("partial_docx_path")),
+        court_email_resolution=resolution,
     )
 
 
@@ -541,6 +560,8 @@ def _ensure_value_in_joblog_settings(settings: dict[str, Any], key: str, value: 
     if cleaned.casefold() in lowered:
         return
     bucket.append(cleaned)
+    if key == "vocab_court_emails":
+        bucket = normalize_court_email_vocab(bucket)
     settings[key] = bucket
 
 
@@ -606,6 +627,7 @@ class JobLogSeed:
     pdf_path: Path | None = None
     output_docx: Path | None = None
     partial_docx: Path | None = None
+    court_email_resolution: CourtEmailResolution | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -619,6 +641,7 @@ class JobLogSavedResult:
     run_id: str
     translated_docx_path: Path | None = None
     payload: Mapping[str, Any] | None = None
+    court_email_resolution: CourtEmailResolution | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -821,20 +844,19 @@ def build_interpretation_seed_from_notification_pdf(
     service_date = str(suggestion.service_date or "").strip() or now.date().isoformat()
     case_entity = str(suggestion.case_entity or "").strip()
     case_city = str(suggestion.case_city or "").strip()
+    resolution = resolve_court_email_selection(
+        document_email=suggestion.court_email,
+        document_source=getattr(suggestion, "court_email_source", None),
+        case_entity=case_entity,
+        case_city=case_city,
+        vocab_court_emails=vocab_court_emails,
+    )
     return JobLogSeed(
         completed_at=now.replace(microsecond=0).isoformat(),
         translation_date=service_date,
         job_type="Interpretation",
         case_number=str(suggestion.case_number or "").strip(),
-        court_email=(
-            choose_court_email_suggestion(
-                exact_email=suggestion.court_email,
-                case_entity=case_entity,
-                case_city=case_city,
-                vocab_court_emails=vocab_court_emails,
-            )
-            or ""
-        ),
+        court_email=resolution.selected_email or "",
         case_entity=case_entity,
         case_city=case_city,
         service_entity=str(suggestion.service_entity or "").strip(),
@@ -859,6 +881,7 @@ def build_interpretation_seed_from_notification_pdf(
         pdf_path=pdf_path,
         output_docx=None,
         partial_docx=None,
+        court_email_resolution=resolution,
     )
 
 
@@ -871,20 +894,19 @@ def build_interpretation_seed_from_photo_screenshot(
     service_date = str(suggestion.service_date or "").strip() or now.date().isoformat()
     case_entity = str(suggestion.case_entity or "").strip()
     case_city = str(suggestion.case_city or "").strip()
+    resolution = resolve_court_email_selection(
+        document_email=suggestion.court_email,
+        document_source=getattr(suggestion, "court_email_source", None),
+        case_entity=case_entity,
+        case_city=case_city,
+        vocab_court_emails=vocab_court_emails,
+    )
     return JobLogSeed(
         completed_at=now.replace(microsecond=0).isoformat(),
         translation_date=service_date,
         job_type="Interpretation",
         case_number=str(suggestion.case_number or "").strip(),
-        court_email=(
-            choose_court_email_suggestion(
-                exact_email=suggestion.court_email,
-                case_entity=case_entity,
-                case_city=case_city,
-                vocab_court_emails=vocab_court_emails,
-            )
-            or ""
-        ),
+        court_email=resolution.selected_email or "",
         case_entity=case_entity,
         case_city=case_city,
         service_entity=str(suggestion.service_entity or "").strip(),
@@ -909,6 +931,7 @@ def build_interpretation_seed_from_photo_screenshot(
         pdf_path=None,
         output_docx=None,
         partial_docx=None,
+        court_email_resolution=resolution,
     )
 
 
@@ -2004,6 +2027,18 @@ class QtSaveToJobLogDialog(QDialog):
         self._distance_sync_in_progress = False
         self._distance_value_city_key = ""
         self._distance_value_is_manual = False
+        self._court_email_programmatic_update = False
+        self._court_email_manual_override = (
+            seed.court_email_resolution is not None
+            and seed.court_email_resolution.source == COURT_EMAIL_SOURCE_MANUAL
+        )
+        self._court_email_resolution = seed.court_email_resolution
+        self._court_email_document_email = (
+            seed.court_email_resolution.document_email if seed.court_email_resolution is not None else None
+        )
+        self._court_email_document_source = (
+            seed.court_email_resolution.document_source if seed.court_email_resolution is not None else None
+        )
 
         self._build_ui()
         self._responsive_window = ResponsiveWindowController(
@@ -2155,6 +2190,9 @@ class QtSaveToJobLogDialog(QDialog):
             self._seed.court_email,
         )
         case_form.addWidget(self.court_email_combo, 1, 4, 1, 2)
+        self.court_email_hint_label = QLabel("")
+        self.court_email_hint_label.setWordWrap(True)
+        case_form.addWidget(self.court_email_hint_label, 2, 3, 1, 3)
         case_form.setColumnStretch(1, 1)
         case_form.setColumnStretch(4, 1)
         scroll_root.addWidget(case_group)
@@ -2341,6 +2379,10 @@ class QtSaveToJobLogDialog(QDialog):
         self.photo_translation_check.toggled.connect(self._refresh_photo_controls)
         self.case_entity_combo.currentTextChanged.connect(self._on_case_fields_changed)
         self.case_city_combo.currentTextChanged.connect(self._on_case_fields_changed)
+        self.court_email_combo.activated.connect(self._on_court_email_user_confirmed)
+        court_email_line_edit = self.court_email_combo.lineEdit()
+        if court_email_line_edit is not None:
+            court_email_line_edit.textEdited.connect(self._on_court_email_user_confirmed)
         self.service_entity_combo.currentTextChanged.connect(self._on_service_fields_changed)
         self.service_city_combo.currentTextChanged.connect(self._on_service_fields_changed)
         self.translation_date_edit.textChanged.connect(self._on_primary_date_changed)
@@ -2353,6 +2395,7 @@ class QtSaveToJobLogDialog(QDialog):
         self.add_case_city_btn.clicked.connect(lambda: self._add_value("City", "vocab_cities", self.case_city_combo))
         self.add_service_city_btn.clicked.connect(lambda: self._add_value("City", "vocab_cities", self.service_city_combo))
         self._refresh_interpretation_mode_state()
+        self._refresh_court_email_resolution()
 
     def _add_value(self, title: str, key: str, combo: QComboBox) -> None:
         value, ok = QInputDialog.getText(self, f"Add {title}", f"{title}:")
@@ -2363,6 +2406,39 @@ class QtSaveToJobLogDialog(QDialog):
             return
         self._ensure_in_vocab(key, cleaned)
         combo.setCurrentText(cleaned)
+
+    def _resolve_current_court_email(self) -> CourtEmailResolution:
+        return resolve_court_email_selection(
+            document_email=self._court_email_document_email,
+            document_source=self._court_email_document_source,
+            case_entity=self.case_entity_combo.currentText().strip(),
+            case_city=self.case_city_combo.currentText().strip(),
+            vocab_court_emails=list(self._settings["vocab_court_emails"]),
+            selected_email=self.court_email_combo.currentText().strip(),
+            selected_email_is_manual=self._court_email_manual_override,
+        )
+
+    def _set_court_email_combo_text(self, value: str) -> None:
+        self._court_email_programmatic_update = True
+        try:
+            self.court_email_combo.setCurrentText(value)
+        finally:
+            self._court_email_programmatic_update = False
+
+    def _refresh_court_email_resolution(self) -> None:
+        resolution = self._resolve_current_court_email()
+        self._court_email_resolution = resolution
+        if not self._court_email_manual_override and resolution.selected_email:
+            current = self.court_email_combo.currentText().strip()
+            if current != resolution.selected_email:
+                self._set_court_email_combo_text(resolution.selected_email)
+        self.court_email_hint_label.setText(describe_court_email_resolution(resolution))
+
+    def _on_court_email_user_confirmed(self, *_args: object) -> None:
+        if self._court_email_programmatic_update:
+            return
+        self._court_email_manual_override = True
+        self._refresh_court_email_resolution()
 
     def _ensure_in_vocab(self, key: str, value: str) -> None:
         _ensure_value_in_joblog_settings(self._settings, key, value)
@@ -2375,25 +2451,27 @@ class QtSaveToJobLogDialog(QDialog):
         self._fill_combo(self.service_city_combo, list(self._settings["vocab_cities"]))
         self._fill_combo(self.job_type_combo, list(self._settings["vocab_job_types"]))
         self._fill_combo(self.court_email_combo, list(self._settings["vocab_court_emails"]))
+        self._refresh_court_email_resolution()
 
-    def _set_court_email_from_context(self, *, exact_email: str | None = None, force: bool = False) -> None:
-        if not force and exact_email is None and self.court_email_combo.currentText().strip():
-            return
-        suggestion = choose_court_email_suggestion(
-            exact_email=exact_email,
-            case_entity=self.case_entity_combo.currentText().strip(),
-            case_city=self.case_city_combo.currentText().strip(),
-            vocab_court_emails=list(self._settings["vocab_court_emails"]),
-        )
-        if suggestion:
-            self.court_email_combo.setCurrentText(suggestion)
+    def _set_court_email_from_context(
+        self,
+        *,
+        exact_email: str | None = None,
+        document_source: str | None = None,
+        force: bool = False,
+    ) -> None:
+        if exact_email is not None or force:
+            self._court_email_document_email = exact_email
+            self._court_email_document_source = document_source
+            self._court_email_manual_override = False
+        self._refresh_court_email_resolution()
 
     def _on_case_fields_changed(self) -> None:
         self._case_entity_user_set = True
         self._case_city_user_set = True
         if self.service_same_check.isChecked():
             self._sync_service_with_case()
-        self._set_court_email_from_context()
+        self._refresh_court_email_resolution()
         self._apply_interpretation_distance_defaults(prompt_if_missing=False)
 
     def _on_service_fields_changed(self) -> None:
@@ -2534,9 +2612,13 @@ class QtSaveToJobLogDialog(QDialog):
         return None
 
     def _offer_gmail_draft_for_honorarios(self, honorarios_docx: Path, profile: UserProfile) -> None:
-        court_email = self.court_email_combo.currentText().strip()
-        if not court_email:
+        self._refresh_court_email_resolution()
+        resolution = self._court_email_resolution
+        warning = gmail_draft_block_warning(resolution)
+        if warning is not None:
+            QMessageBox.warning(self, "Gmail draft", warning)
             return
+        court_email = resolution.selected_email if resolution is not None else self.court_email_combo.currentText().strip()
         prereqs = assess_gmail_draft_prereqs(
             configured_gog_path=str(self._gui_settings.get("gmail_gog_path", "") or ""),
             configured_account_email=str(self._gui_settings.get("gmail_account_email", "") or ""),
@@ -2634,14 +2716,13 @@ class QtSaveToJobLogDialog(QDialog):
                 self._ensure_in_vocab("vocab_cities", suggestion.service_city)
                 self.service_city_combo.setCurrentText(suggestion.service_city)
         self._apply_non_court_default_rule()
-        ranked = rank_court_email_suggestions(
+        if suggestion.court_email:
+            self._ensure_in_vocab("vocab_court_emails", suggestion.court_email)
+        self._set_court_email_from_context(
             exact_email=suggestion.court_email,
-            case_entity=self.case_entity_combo.currentText().strip(),
-            case_city=self.case_city_combo.currentText().strip(),
-            vocab_court_emails=list(self._settings["vocab_court_emails"]),
+            document_source=getattr(suggestion, "court_email_source", None),
+            force=True,
         )
-        if ranked:
-            self.court_email_combo.setCurrentText(ranked[0])
 
     def _autofill_from_pdf_header(self) -> None:
         pdf_path = self._seed.pdf_path.expanduser().resolve() if self._seed.pdf_path is not None else None
@@ -2830,7 +2911,11 @@ class QtSaveToJobLogDialog(QDialog):
             self.case_city_combo.setCurrentText(suggestion.case_city)
         if suggestion.court_email:
             self._ensure_in_vocab("vocab_court_emails", suggestion.court_email)
-            self.court_email_combo.setCurrentText(suggestion.court_email)
+        self._set_court_email_from_context(
+            exact_email=suggestion.court_email,
+            document_source=getattr(suggestion, "court_email_source", None),
+            force=bool(suggestion.court_email),
+        )
         self._apply_non_court_default_rule()
         if prompt_for_distance:
             self._prompt_interpretation_distance_for_imported_city()
@@ -2917,6 +3002,8 @@ class QtSaveToJobLogDialog(QDialog):
         _open_path_in_system(self, resolved)
 
     def _save(self) -> None:
+        self._refresh_court_email_resolution()
+        resolution = self._court_email_resolution
         try:
             payload = self._normalized_payload()
         except ValueError as exc:
@@ -2966,6 +3053,7 @@ class QtSaveToJobLogDialog(QDialog):
             run_id=str(payload["run_id"] or ""),
             translated_docx_path=translated_docx_path,
             payload=dict(payload),
+            court_email_resolution=resolution,
         )
         self._saved = True
         if self._on_saved is not None:
@@ -3590,14 +3678,28 @@ class QtJobLogWindow(QDialog):
         honorarios_docx: Path,
         profile: UserProfile,
     ) -> None:
-        court_email = str(row.get("court_email", "") or "").strip()
-        if not court_email:
+        selected_email = str(row.get("court_email", "") or "").strip()
+        if not selected_email:
             QMessageBox.information(
                 self,
                 "Gmail draft",
                 "Court Email is missing for this Job Log entry. The Gmail draft was not created.",
             )
             return
+        resolution = resolve_court_email_selection(
+            document_email=None,
+            document_source=None,
+            case_entity=str(row.get("case_entity", "") or "").strip(),
+            case_city=str(row.get("case_city", "") or "").strip(),
+            vocab_court_emails=list(self._settings.get("vocab_court_emails", [])),
+            selected_email=selected_email,
+            selected_email_is_manual=True,
+        )
+        warning = gmail_draft_block_warning(resolution)
+        if warning is not None:
+            QMessageBox.information(self, "Gmail draft", warning)
+            return
+        court_email = resolution.selected_email or ""
         prereqs = assess_gmail_draft_prereqs(
             configured_gog_path=str(self._gui_settings.get("gmail_gog_path", "") or ""),
             configured_account_email=str(self._gui_settings.get("gmail_account_email", "") or ""),
