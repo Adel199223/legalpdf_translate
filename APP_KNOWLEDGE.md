@@ -79,7 +79,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 11. Execute a queue manifest with checkpoint-aware resume and failed-only rerun behavior.
 12. Start from an open Gmail message in Edge/Chromium, let the native host auto-start the configured checkout when needed, review supported attachments from that exact email, then either run the translation batch flow or handle one interpretation notice attachment, with mandatory Save-to-Job-Log confirmation before the related honorarios and Gmail draft finalization.
 13. Open multiple workspaces and translate different jobs in parallel without interrupting the current run.
-14. Create or edit interpretation Job Log rows manually, from a notification PDF, from a photo/screenshot, or from a Gmail notice attachment, then generate the interpretation honorarios DOCX locally or create a threaded Gmail reply draft when the flow started from Gmail intake.
+14. Create or edit interpretation Job Log rows manually, from a notification PDF, from a photo/screenshot, or from a Gmail notice attachment, then generate the interpretation honorarios DOCX plus sibling PDF locally, create a fresh Gmail draft from the saved row, or create a threaded Gmail reply draft when the flow started from Gmail intake.
 
 ## Output and Run Artifacts
 Run artifacts live under:
@@ -93,8 +93,9 @@ Typical files:
 - `run_events.jsonl`
 - `analyze_report.json` (analyze-only)
 
-When a run comes from Gmail intake, the effective output directory also gains a durable batch-level diagnostics folder:
+When a run comes from Gmail intake, the effective output directory also gains durable Gmail session diagnostics:
 - `<outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`
+- `<outdir>/_gmail_interpretation_sessions/<session_id>/gmail_interpretation_session.json`
 
 `run_summary.json` keeps existing totals and now also supports additive cost/risk/advisor fields:
 - `cost_estimation_status`
@@ -141,8 +142,9 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Gmail intake bridge settings persist in GUI settings as `gmail_intake_bridge_enabled`, `gmail_intake_bridge_token`, and `gmail_intake_port`.
 - In normal app launches, the Gmail intake bridge is app-level. It reuses the last active workspace only when that workspace is idle and pristine; otherwise it opens a new blank workspace for the intake automatically.
 - Multi-window runs share a controller-owned reservation map keyed by the resolved run directory. A second workspace cannot start `translate`, `analyze`, `rebuild`, or `queue` if it would reuse the same run folder as an active workspace.
-- Gmail intake batches now write one durable app-owned session report at `<effective_outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`.
-  - This is the main cross-run/debug bridge between browser handoff, per-item translation runs, and Gmail draft finalization.
+- Gmail intake translation batches now write one durable app-owned session report at `<effective_outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`.
+- Gmail intake interpretation notice runs now write one durable app-owned session report at `<effective_outdir>/_gmail_interpretation_sessions/<session_id>/gmail_interpretation_session.json`.
+  - These reports are the main cross-run/debug bridge between browser handoff, Save-to-Job-Log confirmation, honorários export, and Gmail draft finalization.
   - The browser extension does not write its own report file.
 - Save-to-Job-Log pre-fills those values from `run_summary.json` when available, while preserving user edit control before save.
 - Save-to-Job-Log now also exposes `Open translated DOCX`, which reopens the resolved final or partial DOCX for the current run without leaving the dialog.
@@ -159,7 +161,8 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Editable Job Log and honorários dates now use one shared Monday-first calendar picker while still accepting manual `YYYY-MM-DD` typing. The same shared control also backs inline Job Log date editing.
 - The Job Log now supports additive interpretation fields and behavior on top of translation rows:
   - `job_type == "Interpretation"` switches the full dialog to interpretation-first editing
-  - blank/manual interpretation rows can be opened from `Job Log > Add...`
+  - blank/manual interpretation rows can be opened from `Job Log > Add... > Blank/manual interpretation entry`
+  - the main window also exposes `Tools > New Interpretation Honorários...` and the same footer-overflow action for the save-first no-document path
   - interpretation notification imports keep the local `pdf_path` when present
   - interpretation photo imports stay image-only and do not create a PDF-backed row contract
   - translation-only inputs are hidden in interpretation mode instead of shown as inactive clutter
@@ -168,16 +171,26 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - `Service same as Case` defaults on for interpretation unless an explicit different service location already exists
   - profile-backed distance defaults are reused automatically by service city, and newly entered one-way values are persisted back to that profile-city mapping on save
 - Interpretation honorarios now use a kind-aware document branch:
-  - manual interpretation rows can generate a local honorarios DOCX directly from the Job Log dialog
+  - manual interpretation rows can generate honorários from the Job Log dialog or from the save-first `Tools > New Interpretation Honorários...` quick action
   - notification PDF and photo/screenshot imports prefill interpretation case/service values before the user confirms the row
-  - interpretation honorarios exports use the responsive/scrollable profile-backed export dialog
-  - interpretation honorarios close with `service_date` when it is a valid ISO date, even if the DOCX is generated before or after the hearing day
-  - manual/local interpretation exports still stay local-doc only
-  - Gmail-started interpretation notice intake can create one threaded Gmail reply draft with the generated honorarios DOCX only
+  - interpretation honorarios exports use the responsive/scrollable profile-backed export dialog, save a DOCX first, then attempt a sibling PDF immediately without blocking the main UI
+  - the export dialog keeps `Include transport/distance sentence in honorários text` on by default, but you can turn it off when transport is being handled separately and the generated text should omit that clause
+  - generated interpretation honorários now auto-complete a missing case city in generic court addressees, use the revised one-line-IBAN / centered `Espera deferimento,` closing block, keep `service_date` in the body, and use the document creation day in the footer date line before the signature
+  - when automatic PDF export fails, the dialog keeps the saved DOCX usable locally and offers retry/select-existing-PDF/open-folder recovery before any Gmail draft path is allowed to continue
+  - manual/local interpretation exports can offer a fresh non-threaded Gmail draft when `Court Email`, Gmail prerequisites, and the generated honorários PDF are all available
+  - Gmail-started interpretation notice intake can create one threaded Gmail reply draft with the generated honorários PDF only
 - Gmail draft attachment reuse for honorarios now prefers known translated output artifacts in this order: final DOCX path, partial DOCX path, exact `run_id` recovery, then a manual `.docx` picker only as the final fallback.
 - If a legacy historical row needs one manual translated-DOCX selection, the app persists that choice back into the row so the picker should not appear again for that same row.
 - Gmail intake batch downloads, interpretation-notice staging data, and confirmed per-item results are kept in memory only for the active Gmail intake session. They are cleared on reset, failure paths, app shutdown, or successful finalization.
 - Gmail batch draft finalization uses an immutable staged copy of each translated DOCX rather than trusting the mutable user-facing output path directly.
+- Gmail honorários drafts now require the generated honorários PDF:
+  - translation reply drafts attach the translated DOCX files plus the honorários PDF
+  - Gmail-intake interpretation reply drafts attach the honorários PDF only
+  - manual/local interpretation drafts attach the honorários PDF only
+- Honorários PDF export now uses a dedicated worker/result flow:
+  - Word PDF export runs off the GUI thread, so long-running Word startup or timeout paths do not freeze the visible Qt shell
+  - PDF failures show a concise warning with expandable technical details instead of a raw inline PowerShell/COM dump
+  - partial-success exports keep one calm recovery flow instead of stacking duplicate Gmail missing-PDF warnings
 
 ## Queue Behavior Notes
 - Queue execution is sequential and checkpoint-aware.
@@ -210,7 +223,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Selected attachments are translated one at a time. After each successful translation, the app opens Save to Job Log and requires a confirmed save before continuing.
 - For Arabic Gmail batch items, the DOCX saved after that review gate is the reviewed artifact later used by the downstream batch item flow.
 - A Gmail batch remains valid only while every confirmed item resolves to the same `case_number`, `case_entity`, `case_city`, and `court_email`. Any mismatch stops the batch and tells the user to split it into separate replies.
-- After all selected attachments are translated and confirmed, the user may generate one honorarios DOCX for the batch and one Gmail reply draft in the original thread. The app attaches all translated DOCXs plus that single honorarios DOCX and never auto-sends.
+- After all selected attachments are translated and confirmed, the user may generate one honorários export for the batch and one Gmail reply draft in the original thread. The app saves the honorários DOCX locally, attempts a sibling PDF immediately, and attaches all translated DOCXs plus that single honorários PDF when draft creation succeeds. Interpretation-notice replies attach only the honorários PDF. The app never auto-sends.
 - If the user picks an existing translated filename when saving honorários, the app auto-renames the honorários file instead of overwriting the translation.
 - Gmail draft creation now blocks duplicate attachment paths and contaminated translated artifacts (for example, a translated DOCX path that actually contains honorários content).
 - Arabic failures now surface additive diagnostics such as `validator_defect_reason`, `ar_violation_kind`, and limited sampled offending snippets in run artifacts and the stop dialog.

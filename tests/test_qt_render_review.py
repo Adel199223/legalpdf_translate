@@ -31,6 +31,15 @@ def test_resolve_profiles_rejects_unknown_name() -> None:
         raise AssertionError("Expected unknown profile rejection.")
 
 
+def test_resolve_themes_rejects_unknown_name() -> None:
+    try:
+        render_tool.resolve_themes(["dark_futuristic", "unknown"])
+    except ValueError as exc:
+        assert "unknown" in str(exc).lower()
+    else:
+        raise AssertionError("Expected unknown theme rejection.")
+
+
 def test_apply_reference_sample_sets_preview_values() -> None:
     app = QApplication.instance()
     owns_app = app is None
@@ -69,6 +78,7 @@ def test_render_profiles_writes_png_and_metadata(tmp_path: Path) -> None:
     assert png_path.stat().st_size > 0
     assert meta_path.exists()
     assert result["profile"] == "wide"
+    assert result["theme"] == "dark_futuristic"
     assert result["layout_mode"] == "desktop_exact"
     assert result["dashboard_frame_width"] == 1200
     assert result["dashboard_frame_x"] == (result["content_card_width"] - result["dashboard_frame_width"]) // 2
@@ -144,6 +154,7 @@ def test_render_gmail_review_dialog_sample_writes_png_and_metadata(tmp_path: Pat
     assert png_path.stat().st_size > 0
     assert meta_path.exists()
     assert result["sample"] == "gmail_review"
+    assert result["theme"] == "dark_futuristic"
     assert result["row_count"] == 2
 
 
@@ -155,4 +166,42 @@ def test_render_gmail_preview_dialog_sample_writes_png_and_metadata(tmp_path: Pa
     assert png_path.stat().st_size > 0
     assert meta_path.exists()
     assert result["sample"] == "gmail_preview"
+    assert result["theme"] == "dark_futuristic"
     assert result["page_count"] == 6
+
+
+def test_render_honorarios_export_dialog_sample_writes_png_and_metadata(tmp_path: Path) -> None:
+    result = render_tool.render_honorarios_export_dialog_sample(outdir=tmp_path, theme="dark_simple")
+    png_path = tmp_path / "honorarios_export_dialog.png"
+    meta_path = tmp_path / "honorarios_export_dialog.json"
+    assert png_path.exists()
+    assert png_path.stat().st_size > 0
+    assert meta_path.exists()
+    assert result["sample"] == "honorarios_export_dialog"
+    assert result["theme"] == "dark_simple"
+    assert result["generate_button_rgb"][1] > result["generate_button_rgb"][0]
+    assert result["dialog_border_rgb"][1] >= result["dialog_fill_rgb"][1]
+
+
+def test_render_honorarios_pdf_failure_sample_writes_png_and_metadata(tmp_path: Path) -> None:
+    result = render_tool.render_honorarios_pdf_failure_sample(outdir=tmp_path, theme="dark_futuristic")
+    png_path = tmp_path / "honorarios_pdf_failure.png"
+    meta_path = tmp_path / "honorarios_pdf_failure.json"
+    assert png_path.exists()
+    assert png_path.stat().st_size > 0
+    assert meta_path.exists()
+    assert result["sample"] == "honorarios_pdf_failure"
+    assert result["theme"] == "dark_futuristic"
+    assert _brightness(result["dialog_border_rgb"]) >= _brightness(result["dialog_fill_rgb"])
+
+
+def test_render_gmail_pdf_unavailable_sample_writes_png_and_metadata(tmp_path: Path) -> None:
+    result = render_tool.render_gmail_pdf_unavailable_sample(outdir=tmp_path, theme="dark_simple")
+    png_path = tmp_path / "gmail_pdf_unavailable.png"
+    meta_path = tmp_path / "gmail_pdf_unavailable.json"
+    assert png_path.exists()
+    assert png_path.stat().st_size > 0
+    assert meta_path.exists()
+    assert result["sample"] == "gmail_pdf_unavailable"
+    assert result["theme"] == "dark_simple"
+    assert _brightness(result["button_rgb"]) >= _brightness(result["dialog_fill_rgb"])

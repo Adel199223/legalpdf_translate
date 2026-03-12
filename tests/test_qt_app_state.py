@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ if os.name != "nt" and "DISPLAY" not in os.environ:
 from PySide6.QtCore import QBuffer, QDate, QEvent, QIODevice, QRect, QItemSelectionModel, Qt
 from PySide6.QtGui import QCloseEvent, QColor, QImage, QPainter, QPen
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QBoxLayout, QCalendarWidget, QComboBox, QDialog, QLineEdit, QToolButton
+from PySide6.QtWidgets import QApplication, QBoxLayout, QCalendarWidget, QComboBox, QDialog, QLineEdit, QToolButton, QWidget
 
 from legalpdf_translate.gmail_batch import (
     FetchedGmailMessage,
@@ -319,7 +320,52 @@ def _close_qt_windows(app: QApplication, windows: list[QtMainWindow]) -> None:
         window._running = False
         window.close()
         window.deleteLater()
-    app.processEvents()
+    _close_qt_transients(app)
+
+
+def _drain_qt_events(app: QApplication, *, cycles: int = 3, wait_ms: int = 0) -> None:
+    for _ in range(max(1, cycles)):
+        app.processEvents()
+        if wait_ms > 0:
+            QTest.qWait(wait_ms)
+
+
+def _close_qt_transients(app: QApplication, *, keep: tuple[QWidget | None, ...] = ()) -> None:
+    keep_ids = {id(widget) for widget in keep if widget is not None}
+    seen: set[int] = set()
+    candidates: list[QWidget] = []
+    for widget in (QApplication.activePopupWidget(), QApplication.activeModalWidget(), *app.topLevelWidgets()):
+        if widget is None:
+            continue
+        widget_id = id(widget)
+        if widget_id in keep_ids or widget_id in seen:
+            continue
+        seen.add(widget_id)
+        candidates.append(widget)
+    for widget in candidates:
+        try:
+            widget.close()
+        except RuntimeError:
+            continue
+        try:
+            widget.deleteLater()
+        except RuntimeError:
+            continue
+    _drain_qt_events(app, cycles=3, wait_ms=1)
+
+
+def _activate_dialog_and_focus(app: QApplication, dialog: QDialog, widget: QWidget) -> None:
+    dialog.show()
+    dialog.raise_()
+    dialog.activateWindow()
+    for _ in range(8):
+        widget.setFocus(Qt.FocusReason.OtherFocusReason)
+        _drain_qt_events(app, cycles=2, wait_ms=5)
+        if QApplication.focusWidget() is widget:
+            return
+        dialog.raise_()
+        dialog.activateWindow()
+    assert QApplication.focusWidget() is widget
 
 
 def _make_restore_settings_fake(defaults: dict[str, object]) -> SimpleNamespace:
@@ -416,8 +462,12 @@ def test_stage_two_shell_smoke() -> None:
         assert "new_window" in window._menu_actions
         assert "review_queue" in window._menu_actions
         assert "save_joblog" in window._menu_actions
+        assert "new_interpretation_honorarios" in window._menu_actions
         assert "job_log" in window._menu_actions
         assert "new_window" in window._overflow_menu_actions
+        assert "new_interpretation_honorarios" in window._overflow_menu_actions
+        assert window._menu_actions["new_interpretation_honorarios"].text() == "New Interpretation Honorários..."
+        assert window._overflow_menu_actions["new_interpretation_honorarios"].text() == "New Interpretation Honorários..."
     finally:
         window.close()
         window.deleteLater()
@@ -4407,9 +4457,9 @@ def test_finalize_completed_gmail_batch_stops_when_honorarios_dialog_is_cancelle
         ),
         _gmail_batch_honorarios_default_directory=lambda: translated.parent,
         _set_gmail_batch_finalization_state=lambda **kwargs: calls.__setitem__("state", kwargs),
-        _offer_gmail_batch_reply_draft=lambda honorarios_docx, profile: calls.__setitem__(
+        _offer_gmail_batch_reply_draft=lambda honorarios_pdf, profile: calls.__setitem__(
             "offered",
-            (honorarios_docx, profile.document_name),
+            (honorarios_pdf, profile.document_name),
         ),
     )
 
@@ -4444,6 +4494,8 @@ def test_finalize_completed_gmail_batch_records_honorarios_paths_in_session_repo
     class _FakeHonorariosDialog:
         def __init__(self, *, parent, draft, default_directory) -> None:
             self.saved_path = saved_path
+            self.saved_pdf_path = saved_path.with_suffix(".pdf")
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
             self.requested_path = requested_path
             self.auto_renamed = True
             self.generated_draft = draft
@@ -4463,9 +4515,9 @@ def test_finalize_completed_gmail_batch_records_honorarios_paths_in_session_repo
         ),
         _gmail_batch_honorarios_default_directory=lambda: translated.parent,
         _set_gmail_batch_finalization_state=lambda **kwargs: calls.__setitem__("state", kwargs),
-        _offer_gmail_batch_reply_draft=lambda honorarios_docx, profile: calls.__setitem__(
+        _offer_gmail_batch_reply_draft=lambda honorarios_pdf, profile: calls.__setitem__(
             "offered",
-            (honorarios_docx, profile.document_name),
+            (honorarios_pdf, profile.document_name),
         )
         or True,
         _persist_gmail_batch_session_report=lambda **kwargs: app_window_module.QtMainWindow._persist_gmail_batch_session_report(
@@ -4480,9 +4532,76 @@ def test_finalize_completed_gmail_batch_records_honorarios_paths_in_session_repo
     assert payload["status"] == "honorarios_ready"
     assert payload["finalization"]["honorarios_requested"] is True
     assert payload["finalization"]["requested_save_path"].endswith("translated-1.docx")
+    assert payload["finalization"]["requested_pdf_save_path"].endswith("translated-1.pdf")
     assert payload["finalization"]["actual_saved_path"].endswith("Requerimento_Honorarios_123-26.docx")
+    assert payload["finalization"]["actual_pdf_saved_path"].endswith("Requerimento_Honorarios_123-26.pdf")
     assert payload["finalization"]["auto_renamed"] is True
-    assert calls["offered"] == (saved_path, "Adel Belghali")
+    assert calls["offered"] == (saved_path.with_suffix(".pdf"), "Adel Belghali")
+    assert calls["deleted"] is True
+
+
+def test_finalize_completed_gmail_batch_blocks_draft_when_honorarios_pdf_is_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session = _build_gmail_batch_session(tmp_path, count=1)
+    session.session_report_path = tmp_path / "gmail_batch_session.json"
+    translated = tmp_path / "translated-1.docx"
+    translated.write_bytes(b"docx")
+    session.confirmed_items = [
+        _build_gmail_batch_confirmed_item(
+            session,
+            index=0,
+            translated_docx_path=translated,
+            translated_word_count=125,
+        )
+    ]
+    saved_path = tmp_path / "Requerimento_Honorarios_123-26.docx"
+    calls: dict[str, object] = {}
+
+    class _FakeHonorariosDialog:
+        def __init__(self, *, parent, draft, default_directory) -> None:
+            self.saved_path = saved_path
+            self.requested_path = saved_path
+            self.saved_pdf_path = None
+            self.pdf_export_error = "Word PDF export failed."
+            self.auto_renamed = False
+            self.generated_draft = draft
+
+        def exec(self) -> int:
+            return 1
+
+        def deleteLater(self) -> None:
+            calls["deleted"] = True
+
+    monkeypatch.setattr(app_window_module.QMessageBox, "question", lambda *args, **kwargs: 16384)
+    monkeypatch.setattr(app_window_module, "QtHonorariosExportDialog", _FakeHonorariosDialog)
+    fake = SimpleNamespace(
+        _gmail_batch_session=session,
+        _build_gmail_batch_honorarios_draft=lambda: QtMainWindow._build_gmail_batch_honorarios_draft(
+            SimpleNamespace(_gmail_batch_session=session)
+        ),
+        _gmail_batch_honorarios_default_directory=lambda: translated.parent,
+        _set_gmail_batch_finalization_state=lambda **kwargs: calls.__setitem__("state", kwargs),
+        _offer_gmail_batch_reply_draft=lambda *args, **kwargs: calls.__setitem__("offered", True),
+        _persist_gmail_batch_session_report=lambda **kwargs: app_window_module.QtMainWindow._persist_gmail_batch_session_report(
+            SimpleNamespace(_gmail_batch_session=session, _append_log=lambda *_args, **_kwargs: None),
+            **kwargs,
+        ),
+    )
+
+    QtMainWindow._finalize_completed_gmail_batch(fake)
+
+    payload = json.loads(session.session_report_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "draft_unavailable"
+    assert payload["halt_reason"] == "honorarios_pdf_generation_failed"
+    assert payload["finalization"]["requested_pdf_save_path"].endswith("Requerimento_Honorarios_123-26.pdf")
+    assert payload["finalization"]["actual_pdf_saved_path"] == ""
+    assert payload["finalization"]["draft_created"] is False
+    assert "PDF generation failed" in payload["finalization"]["draft_failure_reason"]
+    assert calls["state"]["status_text"] == "Gmail draft unavailable"
+    assert "sibling PDF could not be generated" in calls["state"]["log_message"]
+    assert "offered" not in calls
     assert calls["deleted"] is True
 
 
@@ -4495,10 +4614,10 @@ def test_offer_gmail_batch_reply_draft_builds_threaded_request_and_clears_batch(
     session.session_report_path = report_path
     translated_one = tmp_path / "staged-translated-1.docx"
     translated_two = tmp_path / "staged-translated-2.docx"
-    honorarios = tmp_path / "honorarios.docx"
+    honorarios = tmp_path / "honorarios.pdf"
     translated_one.write_bytes(b"one")
     translated_two.write_bytes(b"two")
-    honorarios.write_bytes(b"three")
+    honorarios.write_bytes(b"%PDF-1.7")
     session.confirmed_items = [
         _build_gmail_batch_confirmed_item(
             session,
@@ -4536,7 +4655,7 @@ def test_offer_gmail_batch_reply_draft_builds_threaded_request_and_clears_batch(
             to_email=kwargs["to_email"],
             subject=kwargs["subject"],
             body="body",
-            attachments=tuple(kwargs["translated_docxs"]) + (kwargs["honorarios_docx"],),
+            attachments=tuple(kwargs["translated_docxs"]) + (kwargs["honorarios_pdf"],),
             reply_to_message_id=kwargs["reply_to_message_id"],
         ),
     )
@@ -4573,7 +4692,7 @@ def test_offer_gmail_batch_reply_draft_builds_threaded_request_and_clears_batch(
     assert calls["request_kwargs"]["subject"] == "Court reply needed"
     assert calls["request_kwargs"]["reply_to_message_id"] == "msg-100"
     assert calls["request_kwargs"]["translated_docxs"] == (translated_one, translated_two)
-    assert calls["request_kwargs"]["honorarios_docx"] == honorarios
+    assert calls["request_kwargs"]["honorarios_pdf"] == honorarios
     assert calls["request_kwargs"]["profile"].phone_number == "+351912345678"
     assert calls["state"]["status_text"] == "Gmail reply draft ready"
     assert calls["cleared"] is True
@@ -4584,7 +4703,7 @@ def test_offer_gmail_batch_reply_draft_builds_threaded_request_and_clears_batch(
     assert payload["finalization"]["final_attachment_basenames"] == [
         "staged-translated-1.docx",
         "staged-translated-2.docx",
-        "honorarios.docx",
+        "honorarios.pdf",
     ]
 
 
@@ -4593,8 +4712,8 @@ def test_offer_gmail_interpretation_reply_draft_builds_threaded_request(
     monkeypatch,
 ) -> None:
     session = _build_gmail_interpretation_session(tmp_path)
-    honorarios = tmp_path / "honorarios.docx"
-    honorarios.write_bytes(b"docx")
+    honorarios = tmp_path / "honorarios.pdf"
+    honorarios.write_bytes(b"%PDF-1.7")
     calls: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -4618,7 +4737,7 @@ def test_offer_gmail_interpretation_reply_draft_builds_threaded_request(
             to_email=kwargs["to_email"],
             subject=kwargs["subject"],
             body="body",
-            attachments=(kwargs["honorarios_docx"],),
+            attachments=(kwargs["honorarios_pdf"],),
             reply_to_message_id=kwargs["reply_to_message_id"],
         ),
     )
@@ -4641,17 +4760,17 @@ def test_offer_gmail_interpretation_reply_draft_builds_threaded_request(
 
     assert QtMainWindow._offer_gmail_interpretation_reply_draft(
         fake,
-        honorarios_docx=honorarios,
+        honorarios_pdf=honorarios,
         court_email="beja.judicial@tribunais.org.pt",
         profile=profile,
     ) is True
 
     assert calls["request_kwargs"]["subject"] == "Court reply needed"
     assert calls["request_kwargs"]["reply_to_message_id"] == "msg-100"
-    assert calls["request_kwargs"]["honorarios_docx"] == honorarios
+    assert calls["request_kwargs"]["honorarios_pdf"] == honorarios
     assert calls["request_kwargs"]["profile"].phone_number == "+351912345678"
     assert session.draft_created is True
-    assert session.final_attachment_basenames == ("honorarios.docx",)
+    assert session.final_attachment_basenames == ("honorarios.pdf",)
     assert opened == []
 
 
@@ -4660,6 +4779,7 @@ def test_finalize_gmail_interpretation_session_builds_notice_seed_and_offers_rep
     monkeypatch,
 ) -> None:
     session = _build_gmail_interpretation_session(tmp_path)
+    session.session_report_path = tmp_path / "gmail_interpretation_session.json"
     seed = build_blank_interpretation_seed()
     seed.case_number = "109/26.0PBBJA"
     seed.case_entity = "Juízo Local Criminal de Beja"
@@ -4709,6 +4829,8 @@ def test_finalize_gmail_interpretation_session_builds_notice_seed_and_offers_rep
             calls["dialog_draft"] = draft
             self.saved_path = tmp_path / "interpretation_honorarios.docx"
             self.saved_path.write_bytes(b"docx")
+            self.saved_pdf_path = tmp_path / "interpretation_honorarios.pdf"
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
             self.requested_path = self.saved_path
             self.auto_renamed = False
             self.generated_draft = draft
@@ -4757,17 +4879,436 @@ def test_finalize_gmail_interpretation_session_builds_notice_seed_and_offers_rep
         _append_log=lambda message: calls.setdefault("logs", []).append(message),
         _clear_gmail_batch_session=lambda: calls.__setitem__("cleared", True),
         _save_profile_settings_from_dialog=lambda profiles, primary_profile_id: None,
+        _persist_gmail_batch_session_report=lambda **kwargs: app_window_module.QtMainWindow._persist_gmail_batch_session_report(
+            SimpleNamespace(_gmail_interpretation_session=session, _append_log=lambda *_args, **_kwargs: None),
+            **kwargs,
+        ),
     )
 
     QtMainWindow._finalize_gmail_interpretation_session(fake)
 
+    payload = json.loads(session.session_report_path.read_text(encoding="utf-8"))
     assert calls["source_pdf"] == session.downloaded_attachment.saved_path.resolve()
     assert calls["seed_kwargs"]["pdf_path"] == session.downloaded_attachment.saved_path.resolve()
     assert calls["saved_seed"] is seed
     assert calls["saved_result"] is saved_result
     assert calls["offered"]["court_email"] == "court@example.pt"
-    assert calls["offered"]["honorarios_docx"] == (tmp_path / "interpretation_honorarios.docx").resolve()
+    assert calls["offered"]["honorarios_pdf"] == (tmp_path / "interpretation_honorarios.pdf").resolve()
+    assert payload["status"] == "draft_ready"
+    assert payload["finalization"]["honorarios_requested"] is True
+    assert payload["finalization"]["requested_save_path"].endswith("interpretation_honorarios.docx")
+    assert payload["finalization"]["requested_pdf_save_path"].endswith("interpretation_honorarios.pdf")
+    assert payload["finalization"]["actual_saved_path"].endswith("interpretation_honorarios.docx")
+    assert payload["finalization"]["actual_pdf_saved_path"].endswith("interpretation_honorarios.pdf")
     assert calls["cleared"] is True
+
+
+def test_finalize_gmail_interpretation_session_blocks_draft_when_honorarios_pdf_is_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session = _build_gmail_interpretation_session(tmp_path)
+    session.session_report_path = tmp_path / "gmail_interpretation_session.json"
+    seed = build_blank_interpretation_seed()
+    seed.case_number = "109/26.0PBBJA"
+    seed.case_entity = "Juízo Local Criminal de Beja"
+    seed.case_city = "Beja"
+    seed.service_entity = "Juízo Local Criminal de Beja"
+    seed.service_city = "Beja"
+    seed.service_date = "2026-03-09"
+    seed.court_email = "court@example.pt"
+    saved_result = JobLogSavedResult(
+        row_id=42,
+        word_count=0,
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        court_email="court@example.pt",
+        run_id="",
+        translated_docx_path=None,
+        payload={
+            "case_number": "109/26.0PBBJA",
+            "case_entity": "Juízo Local Criminal de Beja",
+            "case_city": "Beja",
+            "court_email": "court@example.pt",
+            "service_date": "2026-03-09",
+            "service_entity": "Juízo Local Criminal de Beja",
+            "service_city": "Beja",
+            "travel_km_outbound": 39.0,
+            "travel_km_return": 39.0,
+            "use_service_location_in_honorarios": False,
+        },
+    )
+    calls: dict[str, object] = {}
+    draft = dialogs_module.build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="Juízo Local Criminal de Beja",
+        service_city="Beja",
+        travel_km_outbound=39,
+        travel_km_return=39,
+        recipient_block=dialogs_module.default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=default_primary_profile(),
+    )
+
+    class _FakeHonorariosDialog:
+        def __init__(self, *, parent, draft, default_directory, profile_save_callback=None) -> None:
+            self.saved_path = tmp_path / "interpretation_honorarios.docx"
+            self.saved_path.write_bytes(b"docx")
+            self.saved_pdf_path = None
+            self.pdf_export_error = "Word PDF export failed."
+            self.requested_path = self.saved_path
+            self.auto_renamed = False
+            self.generated_draft = draft
+
+        def exec(self) -> int:
+            return QDialog.DialogCode.Accepted
+
+        def deleteLater(self) -> None:
+            calls["dialog_deleted"] = True
+
+    monkeypatch.setattr(
+        app_window_module,
+        "load_joblog_settings",
+        lambda: {"vocab_cities": ["Beja"], "vocab_court_emails": ["court@example.pt"]},
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "metadata_config_from_settings",
+        lambda _settings: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "extract_interpretation_notification_metadata_from_pdf",
+        lambda pdf_path, **kwargs: calls.__setitem__("source_pdf", pdf_path) or SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "build_interpretation_seed_from_notification_pdf",
+        lambda **kwargs: calls.__setitem__("seed_kwargs", kwargs) or seed,
+    )
+    monkeypatch.setattr(app_window_module, "QtHonorariosExportDialog", _FakeHonorariosDialog)
+
+    fake = SimpleNamespace(
+        _gmail_interpretation_session=session,
+        status_label=_FakeLabel(),
+        header_status_label=_FakeLabel(),
+        _dashboard_snapshot=SimpleNamespace(current_task=""),
+        _open_save_to_joblog_dialog_for_seed=lambda seed_value, allow_honorarios_export=False: calls.__setitem__(
+            "saved_seed",
+            seed_value,
+        )
+        or saved_result,
+        _build_gmail_interpretation_honorarios_draft=lambda result: calls.__setitem__("saved_result", result) or draft,
+        _gmail_interpretation_honorarios_default_directory=lambda: tmp_path,
+        _offer_gmail_interpretation_reply_draft=lambda **kwargs: calls.__setitem__("offered", kwargs) or True,
+        _append_log=lambda message: calls.setdefault("logs", []).append(message),
+        _clear_gmail_batch_session=lambda: calls.__setitem__("cleared", True),
+        _save_profile_settings_from_dialog=lambda profiles, primary_profile_id: None,
+        _persist_gmail_batch_session_report=lambda **kwargs: app_window_module.QtMainWindow._persist_gmail_batch_session_report(
+            SimpleNamespace(_gmail_interpretation_session=session, _append_log=lambda *_args, **_kwargs: None),
+            **kwargs,
+        ),
+    )
+
+    QtMainWindow._finalize_gmail_interpretation_session(fake)
+
+    payload = json.loads(session.session_report_path.read_text(encoding="utf-8"))
+    assert fake.status_label.text == "Interpretation honorários ready locally"
+    assert fake.header_status_label.text == "Gmail draft unavailable"
+    assert fake._dashboard_snapshot.current_task == "Interpretation honorários ready locally"
+    assert payload["status"] == "draft_unavailable"
+    assert payload["halt_reason"] == "honorarios_pdf_generation_failed"
+    assert payload["finalization"]["requested_pdf_save_path"].endswith("interpretation_honorarios.pdf")
+    assert payload["finalization"]["actual_pdf_saved_path"] == ""
+    assert "PDF generation failed" in payload["finalization"]["draft_failure_reason"]
+    assert any("PDF could not be generated" in message for message in calls["logs"])
+    assert "offered" not in calls
+    assert calls["dialog_deleted"] is True
+    assert calls["cleared"] is True
+
+
+def test_open_new_interpretation_honorarios_uses_save_first_flow_and_opens_export(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    seed = build_blank_interpretation_seed()
+    saved_result = JobLogSavedResult(
+        row_id=42,
+        word_count=0,
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        court_email="court@example.pt",
+        run_id="",
+        translated_docx_path=None,
+        payload={},
+    )
+    draft = object()
+    calls: dict[str, object] = {}
+
+    class _FakeHonorariosDialog:
+        def __init__(self, *, parent, draft, default_directory, profile_save_callback=None) -> None:
+            calls["dialog_parent"] = parent
+            calls["dialog_draft"] = draft
+            calls["default_directory"] = default_directory
+            calls["profile_save_callback"] = profile_save_callback
+            self.saved_path = tmp_path / "interpretation_honorarios.docx"
+            self.saved_path.write_bytes(b"docx")
+            self.saved_pdf_path = tmp_path / "interpretation_honorarios.pdf"
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
+            self.generated_draft = SimpleNamespace(
+                profile=default_primary_profile(),
+                include_transport_sentence_in_honorarios=False,
+            )
+
+        def exec(self) -> int:
+            calls["exec"] = True
+            return QDialog.DialogCode.Accepted
+
+        def deleteLater(self) -> None:
+            calls["deleted"] = True
+
+    monkeypatch.setattr(app_window_module, "build_blank_interpretation_seed", lambda: seed)
+    monkeypatch.setattr(app_window_module, "QtHonorariosExportDialog", _FakeHonorariosDialog)
+    monkeypatch.setattr(
+        app_window_module.QtMainWindow,
+        "_persist_saved_interpretation_honorarios_toggle",
+        lambda _self, *, saved_result, include_transport_sentence_in_honorarios: calls.__setitem__(
+            "persist_toggle",
+            include_transport_sentence_in_honorarios,
+        )
+        or replace(
+            saved_result,
+            payload={"include_transport_sentence_in_honorarios": 0},
+        ),
+    )
+    fake = SimpleNamespace()
+    fake._open_save_to_joblog_dialog_for_seed = (
+        lambda seed_value, allow_honorarios_export=False: calls.__setitem__("seed", seed_value)
+        or calls.__setitem__("allow_honorarios_export", allow_honorarios_export)
+        or saved_result
+    )
+    fake._build_saved_interpretation_honorarios_draft = (
+        lambda saved_value: calls.__setitem__("saved_result", saved_value) or draft
+    )
+    fake._manual_interpretation_honorarios_default_directory = lambda: tmp_path
+    fake._save_profile_settings_from_dialog = lambda profiles, primary_profile_id: None
+    fake._offer_manual_interpretation_gmail_draft = lambda **kwargs: calls.__setitem__("manual_offer", kwargs) or True
+
+    QtMainWindow._open_new_interpretation_honorarios(fake)
+
+    assert calls["seed"] is seed
+    assert calls["allow_honorarios_export"] is False
+    assert calls["saved_result"] is saved_result
+    assert calls["dialog_parent"] is fake
+    assert calls["dialog_draft"] is draft
+    assert calls["default_directory"] == tmp_path
+    assert calls["profile_save_callback"] is fake._save_profile_settings_from_dialog
+    assert calls["exec"] is True
+    assert calls["persist_toggle"] is False
+    assert calls["manual_offer"]["saved_result"] is not saved_result
+    assert calls["manual_offer"]["saved_result"].payload["include_transport_sentence_in_honorarios"] == 0
+    assert calls["manual_offer"]["honorarios_pdf"] == tmp_path / "interpretation_honorarios.pdf"
+    assert calls["deleted"] is True
+
+
+def test_open_new_interpretation_honorarios_stops_when_save_is_cancelled(
+    monkeypatch,
+) -> None:
+    seed = build_blank_interpretation_seed()
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(app_window_module, "build_blank_interpretation_seed", lambda: seed)
+    monkeypatch.setattr(
+        app_window_module,
+        "QtHonorariosExportDialog",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("export dialog should not open after cancel")),
+    )
+    fake = SimpleNamespace()
+    fake._open_save_to_joblog_dialog_for_seed = (
+        lambda seed_value, allow_honorarios_export=False: calls.__setitem__("seed", seed_value)
+        or calls.__setitem__("allow_honorarios_export", allow_honorarios_export)
+        or None
+    )
+
+    QtMainWindow._open_new_interpretation_honorarios(fake)
+
+    assert calls["seed"] is seed
+    assert calls["allow_honorarios_export"] is False
+    assert "saved_result" not in calls
+
+
+def test_open_new_interpretation_honorarios_skips_duplicate_missing_pdf_warning_after_export_dialog(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    seed = build_blank_interpretation_seed()
+    saved_result = JobLogSavedResult(
+        row_id=42,
+        word_count=0,
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        court_email="court@example.pt",
+        run_id="",
+        translated_docx_path=None,
+        payload={},
+    )
+    draft = object()
+    calls: dict[str, object] = {}
+
+    class _FakeHonorariosDialog:
+        def __init__(self, *, parent, draft, default_directory, profile_save_callback=None) -> None:
+            self.saved_path = tmp_path / "interpretation_honorarios.docx"
+            self.saved_path.write_bytes(b"docx")
+            self.saved_pdf_path = None
+            self.pdf_unavailable_explained = True
+            self.generated_draft = SimpleNamespace(
+                profile=default_primary_profile(),
+                include_transport_sentence_in_honorarios=True,
+            )
+
+        def exec(self) -> int:
+            return QDialog.DialogCode.Accepted
+
+        def deleteLater(self) -> None:
+            calls["deleted"] = True
+
+    monkeypatch.setattr(app_window_module, "build_blank_interpretation_seed", lambda: seed)
+    monkeypatch.setattr(app_window_module, "QtHonorariosExportDialog", _FakeHonorariosDialog)
+    monkeypatch.setattr(
+        app_window_module.QtMainWindow,
+        "_persist_saved_interpretation_honorarios_toggle",
+        lambda _self, *, saved_result, include_transport_sentence_in_honorarios: saved_result,
+    )
+    fake = SimpleNamespace()
+    fake._open_save_to_joblog_dialog_for_seed = lambda *_args, **_kwargs: saved_result
+    fake._build_saved_interpretation_honorarios_draft = lambda _saved_value: draft
+    fake._manual_interpretation_honorarios_default_directory = lambda: tmp_path
+    fake._save_profile_settings_from_dialog = lambda profiles, primary_profile_id: None
+    fake._offer_manual_interpretation_gmail_draft = lambda **kwargs: calls.__setitem__("manual_offer", kwargs) or True
+
+    QtMainWindow._open_new_interpretation_honorarios(fake)
+
+    assert "manual_offer" not in calls
+    assert calls["deleted"] is True
+
+
+def test_offer_manual_interpretation_gmail_draft_builds_non_threaded_request(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    honorarios_pdf = tmp_path / "interpretation_honorarios.pdf"
+    honorarios_pdf.write_bytes(b"%PDF-1.7")
+    saved_result = JobLogSavedResult(
+        row_id=42,
+        word_count=0,
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        court_email="court@example.pt",
+        run_id="",
+        translated_docx_path=None,
+        payload={"court_email": "court@example.pt", "case_number": "109/26.0PBBJA"},
+    )
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        app_window_module,
+        "assess_gmail_draft_prereqs",
+        lambda **kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path(r"C:\gog.exe"),
+            account_email="adel.belghali@gmail.com",
+            accounts=("adel.belghali@gmail.com",),
+        ),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "build_manual_interpretation_gmail_request",
+        lambda **kwargs: calls.__setitem__("request_kwargs", kwargs)
+        or SimpleNamespace(
+            gog_path=kwargs["gog_path"],
+            account_email=kwargs["account_email"],
+            to_email=kwargs["to_email"],
+            subject="subject",
+            body="body",
+            attachments=(kwargs["honorarios_pdf"],),
+            reply_to_message_id=None,
+        ),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "create_gmail_draft_via_gog",
+        lambda request: SimpleNamespace(ok=True, message="ok", stdout="", stderr="", payload={"id": "draft-1"}),
+    )
+    answers = iter([16384, 65536])
+    monkeypatch.setattr(app_window_module.QMessageBox, "question", lambda *args, **kwargs: next(answers))
+    opened: list[object] = []
+    monkeypatch.setattr(app_window_module.QDesktopServices, "openUrl", opened.append)
+
+    fake = SimpleNamespace(
+        _defaults={"gmail_gog_path": "", "gmail_account_email": ""},
+    )
+
+    profile = default_primary_profile(email="adel@example.com")
+    profile.phone_number = "+351912345678"
+
+    assert QtMainWindow._offer_manual_interpretation_gmail_draft(
+        fake,
+        saved_result=saved_result,
+        honorarios_pdf=honorarios_pdf,
+        profile=profile,
+    ) is True
+
+    assert calls["request_kwargs"]["to_email"] == "court@example.pt"
+    assert calls["request_kwargs"]["case_number"] == "109/26.0PBBJA"
+    assert calls["request_kwargs"]["honorarios_pdf"] == honorarios_pdf
+    assert calls["request_kwargs"]["profile"].phone_number == "+351912345678"
+    assert opened == []
+
+
+def test_offer_manual_interpretation_gmail_draft_blocks_when_pdf_is_missing(
+    monkeypatch,
+) -> None:
+    saved_result = JobLogSavedResult(
+        row_id=42,
+        word_count=0,
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        court_email="court@example.pt",
+        run_id="",
+        translated_docx_path=None,
+        payload={"court_email": "court@example.pt", "case_number": "109/26.0PBBJA"},
+    )
+    calls: dict[str, object] = {}
+    monkeypatch.setattr(
+        app_window_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: calls.__setitem__("warning", args[2] if len(args) > 2 else kwargs.get("text")),
+    )
+    monkeypatch.setattr(
+        app_window_module,
+        "build_manual_interpretation_gmail_request",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("request builder should not run without a PDF")),
+    )
+
+    fake = SimpleNamespace(
+        _defaults={"gmail_gog_path": "", "gmail_account_email": ""},
+    )
+
+    assert QtMainWindow._offer_manual_interpretation_gmail_draft(
+        fake,
+        saved_result=saved_result,
+        honorarios_pdf=None,
+        profile=default_primary_profile(),
+    ) is False
+    assert "requires the PDF" in calls["warning"]
 
 
 def test_offer_gmail_batch_reply_draft_keeps_batch_when_prereqs_are_missing(
@@ -4777,8 +5318,8 @@ def test_offer_gmail_batch_reply_draft_keeps_batch_when_prereqs_are_missing(
     session = _build_gmail_batch_session(tmp_path, count=1)
     translated = tmp_path / "translated-1.docx"
     translated.write_bytes(b"one")
-    honorarios = tmp_path / "honorarios.docx"
-    honorarios.write_bytes(b"two")
+    honorarios = tmp_path / "honorarios.pdf"
+    honorarios.write_bytes(b"%PDF-1.7")
     session.confirmed_items = [
         _build_gmail_batch_confirmed_item(
             session,
@@ -4851,7 +5392,7 @@ def test_offer_gmail_batch_reply_draft_rejects_duplicate_attachment_paths(
     monkeypatch.setattr(
         app_window_module,
         "validate_translated_docx_artifacts_for_gmail_draft",
-        lambda **kwargs: tuple(kwargs["translated_docxs"]),
+        lambda **kwargs: (translated, translated),
     )
     monkeypatch.setattr(
         app_window_module,
@@ -4865,7 +5406,10 @@ def test_offer_gmail_batch_reply_draft_rejects_duplicate_attachment_paths(
         _clear_gmail_batch_session=lambda: calls.__setitem__("cleared", True),
     )
 
-    assert QtMainWindow._offer_gmail_batch_reply_draft(fake, translated, default_primary_profile()) is False
+    honorarios = tmp_path / "honorarios.pdf"
+    honorarios.write_bytes(b"%PDF-1.7")
+
+    assert QtMainWindow._offer_gmail_batch_reply_draft(fake, honorarios, default_primary_profile()) is False
 
     assert "Duplicate Gmail draft attachment paths" in calls["critical"]
     assert calls["state"]["status_text"] == "Gmail draft failed"
@@ -4881,8 +5425,8 @@ def test_offer_gmail_batch_reply_draft_blocks_contaminated_translated_attachment
     session = _build_gmail_batch_session(tmp_path, count=1)
     translated = tmp_path / "staged-translated-1.docx"
     translated.write_bytes(b"one")
-    honorarios = tmp_path / "honorarios.docx"
-    honorarios.write_bytes(b"three")
+    honorarios = tmp_path / "honorarios.pdf"
+    honorarios.write_bytes(b"%PDF-1.7")
     session.confirmed_items = [
         _build_gmail_batch_confirmed_item(
             session,
@@ -5024,7 +5568,7 @@ def test_workspace_controller_apply_shared_settings_updates_runtime_theme(monkey
 
 
 def test_main_window_reapplies_shell_effect_colors_on_theme_reload() -> None:
-    from legalpdf_translate.qt_gui.styles import theme_effect_colors
+    from legalpdf_translate.qt_gui.styles import theme_effect_specs
 
     app = QApplication.instance()
     owns_app = app is None
@@ -5033,21 +5577,35 @@ def test_main_window_reapplies_shell_effect_colors_on_theme_reload() -> None:
 
     window = QtMainWindow()
     try:
-        futuristic = theme_effect_colors("dark_futuristic")
-        simple = theme_effect_colors("dark_simple")
+        futuristic = theme_effect_specs("dark_futuristic")
+        simple = theme_effect_specs("dark_simple")
+        initial_title_effect = window.title_label.graphicsEffect()
+        initial_footer_effect = window.footer_card.graphicsEffect()
 
-        assert window.title_label.graphicsEffect().color().getRgb() == futuristic["title_glow"].getRgb()
-        assert window.footer_card.graphicsEffect().color().getRgb() == futuristic["footer_glow"].getRgb()
+        assert window.title_label.graphicsEffect() is initial_title_effect
+        assert window.footer_card.graphicsEffect() is initial_footer_effect
+        assert window.title_label.graphicsEffect().color().getRgb() == futuristic["title_glow"]["color"].getRgb()
+        assert window.footer_card.graphicsEffect().color().getRgb() == futuristic["footer_glow"]["color"].getRgb()
+        assert int(window.title_label.graphicsEffect().blurRadius()) == int(futuristic["title_glow"]["blur_radius"])
+
+        window.reload_shared_settings({"ui_theme": "dark_futuristic"})
+        assert window.title_label.graphicsEffect() is initial_title_effect
+        assert window.footer_card.graphicsEffect() is initial_footer_effect
 
         window.reload_shared_settings({"ui_theme": "dark_simple"})
         assert window._applied_effect_theme == "dark_simple"
-        assert window.title_label.graphicsEffect().color().getRgb() == simple["title_glow"].getRgb()
-        assert window.footer_card.graphicsEffect().color().getRgb() == simple["footer_glow"].getRgb()
+        assert window.title_label.graphicsEffect() is initial_title_effect
+        assert window.footer_card.graphicsEffect() is initial_footer_effect
+        assert window.title_label.graphicsEffect().color().getRgb() == simple["title_glow"]["color"].getRgb()
+        assert window.footer_card.graphicsEffect().color().getRgb() == simple["footer_glow"]["color"].getRgb()
+        assert int(window.title_label.graphicsEffect().blurRadius()) == int(simple["title_glow"]["blur_radius"])
 
         window.reload_shared_settings({"ui_theme": "dark_futuristic"})
         assert window._applied_effect_theme == "dark_futuristic"
-        assert window.title_label.graphicsEffect().color().getRgb() == futuristic["title_glow"].getRgb()
-        assert window.footer_card.graphicsEffect().color().getRgb() == futuristic["footer_glow"].getRgb()
+        assert window.title_label.graphicsEffect() is initial_title_effect
+        assert window.footer_card.graphicsEffect() is initial_footer_effect
+        assert window.title_label.graphicsEffect().color().getRgb() == futuristic["title_glow"]["color"].getRgb()
+        assert window.footer_card.graphicsEffect().color().getRgb() == futuristic["footer_glow"]["color"].getRgb()
     finally:
         window.close()
         window.deleteLater()
@@ -6700,17 +7258,93 @@ def test_save_to_joblog_dialog_return_key_saves_without_default_button(tmp_path:
 
     dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
     try:
-        dialog.show()
-        dialog.case_number_edit.setFocus()
-        app.processEvents()
+        accepted = {"count": 0}
+        dialog.accepted.connect(lambda accepted=accepted: accepted.__setitem__("count", accepted["count"] + 1))
+        _close_qt_transients(app, keep=(dialog,))
+        _activate_dialog_and_focus(app, dialog, dialog.case_number_edit)
         QTest.keyClick(dialog.case_number_edit, Qt.Key.Key_Return)
-        app.processEvents()
+        _drain_qt_events(app, cycles=4, wait_ms=5)
         assert "payload" in captured
+        assert accepted["count"] == 1
         assert dialog.result() == QDialog.DialogCode.Accepted
         assert dialog.save_btn.isDefault() is False
     finally:
         dialog.close()
         dialog.deleteLater()
+        _close_qt_transients(app)
+        if owns_app:
+            app.quit()
+
+
+def test_save_to_joblog_dialog_return_key_save_shortcut_is_stable_across_repeated_runs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    def _make_seed(index: int) -> JobLogSeed:
+        return JobLogSeed(
+            completed_at="2026-03-05T10:00:00",
+            translation_date="2026-03-05",
+            job_type="Translation",
+            case_number=f"ABC-{index}",
+            court_email="court@example.pt",
+            case_entity="Case Entity",
+            case_city="Beja",
+            service_entity="Case Entity",
+            service_city="Beja",
+            service_date="2026-03-05",
+            lang="FR",
+            pages=3,
+            word_count=1000,
+            rate_per_word=0.08,
+            expected_total=80.0,
+            amount_paid=0.0,
+            api_cost=0.0,
+            run_id=f"run-{index}",
+            target_lang="FR",
+            total_tokens=5000,
+            estimated_api_cost=2.5,
+            quality_risk_score=0.2,
+            profit=77.5,
+            pdf_path=None,
+            output_docx=tmp_path / f"translated-{index}.docx",
+        )
+
+    captured_payloads: list[dict[str, object]] = []
+
+    def _fake_insert_job_run(_conn, payload):
+        captured_payloads.append(dict(payload))
+        return len(captured_payloads)
+
+    monkeypatch.setattr(dialogs_module, "insert_job_run", _fake_insert_job_run)
+    monkeypatch.setattr(dialogs_module, "_save_joblog_settings_bundle", lambda *args, **kwargs: None)
+
+    try:
+        for attempt in range(6):
+            dialog = QtSaveToJobLogDialog(
+                parent=None,
+                db_path=tmp_path / f"joblog-{attempt}.sqlite3",
+                seed=_make_seed(attempt),
+            )
+            accepted = {"count": 0}
+            dialog.accepted.connect(lambda accepted=accepted: accepted.__setitem__("count", accepted["count"] + 1))
+            try:
+                _close_qt_transients(app, keep=(dialog,))
+                _activate_dialog_and_focus(app, dialog, dialog.case_number_edit)
+                QTest.keyClick(dialog.case_number_edit, Qt.Key.Key_Return)
+                _drain_qt_events(app, cycles=4, wait_ms=5)
+                assert accepted["count"] == 1
+                assert dialog.result() == QDialog.DialogCode.Accepted
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+                _close_qt_transients(app)
+        assert len(captured_payloads) == 6
+    finally:
         if owns_app:
             app.quit()
 
@@ -6753,8 +7387,10 @@ def test_edit_joblog_dialog_interpretation_defaults_service_same_and_one_way_dis
         app.processEvents()
         assert dialog.service_same_check.isChecked() is True
         assert dialog.service_city_combo.currentText() == "Beja"
+        assert dialog.include_transport_sentence_check.isChecked() is True
         assert dialog.travel_km_outbound_edit.text() == "39"
         assert dialog.travel_km_return_edit is dialog.travel_km_outbound_edit
+        assert dialog.travel_km_outbound_edit.isEnabled() is True
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -7326,6 +7962,7 @@ def test_joblog_window_add_blank_interpretation_entry_opens_dialog_with_interpre
 
     window = QtJobLogWindow(parent=None, db_path=db_path)
     try:
+        assert window.add_blank_interpretation_action.text() == "Blank/manual interpretation entry"
         window._open_blank_interpretation_dialog()
     finally:
         window.close()
@@ -7342,6 +7979,7 @@ def test_joblog_window_add_blank_interpretation_entry_opens_dialog_with_interpre
     assert seed.job_type == "Interpretation"
     assert seed.service_city == ""
     assert seed.use_service_location_in_honorarios is False
+    assert seed.include_transport_sentence_in_honorarios is True
 
 
 def test_joblog_window_add_interpretation_from_notification_pdf_opens_prefilled_dialog(
@@ -7415,6 +8053,8 @@ def test_joblog_window_add_interpretation_from_notification_pdf_opens_prefilled_
     assert seed.service_entity == "GNR"
     assert seed.service_city == "Vidigueira"
     assert seed.use_service_location_in_honorarios is False
+    assert seed.include_transport_sentence_in_honorarios is True
+    assert seed.include_transport_sentence_in_honorarios is True
 
 
 def test_joblog_window_add_interpretation_from_photo_opens_prefilled_dialog_and_prompts_distance(
@@ -7604,6 +8244,8 @@ def test_joblog_window_interpretation_honorarios_skips_gmail_offer(tmp_path: Pat
     class _FakeHonorariosDialog:
         def __init__(self, *, parent, draft, default_directory) -> None:
             self.saved_path = tmp_path / "interpretation_honorarios.docx"
+            self.saved_pdf_path = tmp_path / "interpretation_honorarios.pdf"
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
             self.generated_draft = draft
             captured["draft"] = draft
 
@@ -7615,6 +8257,11 @@ def test_joblog_window_interpretation_honorarios_skips_gmail_offer(tmp_path: Pat
         dialogs_module.QtJobLogWindow,
         "_offer_gmail_draft_for_honorarios",
         lambda *args, **kwargs: captured.__setitem__("gmail_called", True),
+    )
+    monkeypatch.setattr(
+        dialogs_module.QtJobLogWindow,
+        "_offer_gmail_draft_for_interpretation_honorarios",
+        lambda *args, **kwargs: captured.__setitem__("interpretation_gmail_called", True),
     )
 
     window = QtJobLogWindow(parent=None, db_path=db_path)
@@ -7632,6 +8279,81 @@ def test_joblog_window_interpretation_honorarios_skips_gmail_offer(tmp_path: Pat
     assert draft.kind.value == "interpretation"
     assert draft.service_city == "Vidigueira"
     assert captured.get("gmail_called") is not True
+    assert captured.get("interpretation_gmail_called") is True
+
+
+def test_joblog_window_interpretation_honorarios_skips_duplicate_missing_pdf_warning_after_export_dialog(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        insert_job_run(
+            conn,
+            {
+                "completed_at": "2026-03-09T10:00:00",
+                "translation_date": "2026-03-09",
+                "job_type": "Interpretation",
+                "case_number": "000055/25.5GAFAL",
+                "court_email": "beja.ministeriopublico@tribunais.org.pt",
+                "case_entity": "Ministério Público de Beja",
+                "case_city": "Beja",
+                "service_entity": "GNR",
+                "service_city": "Vidigueira",
+                "service_date": "2026-03-09",
+                "travel_km_outbound": 50.0,
+                "travel_km_return": 50.0,
+                "use_service_location_in_honorarios": 1,
+                "lang": "",
+                "target_lang": "",
+                "run_id": "",
+                "pages": 0,
+                "word_count": 0,
+                "rate_per_word": 0.0,
+                "expected_total": 0.0,
+                "amount_paid": 0.0,
+                "api_cost": 0.0,
+                "profit": 0.0,
+            },
+        )
+
+    captured: dict[str, object] = {}
+
+    class _FakeHonorariosDialog:
+        def __init__(self, *, parent, draft, default_directory) -> None:
+            self.saved_path = tmp_path / "interpretation_honorarios.docx"
+            self.saved_path.write_bytes(b"docx")
+            self.saved_pdf_path = None
+            self.pdf_unavailable_explained = True
+            self.generated_draft = draft
+
+        def exec(self) -> int:
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr("legalpdf_translate.qt_gui.dialogs.QtHonorariosExportDialog", _FakeHonorariosDialog)
+    monkeypatch.setattr(
+        dialogs_module.QtJobLogWindow,
+        "_offer_gmail_draft_for_interpretation_honorarios",
+        lambda *args, **kwargs: captured.__setitem__("interpretation_gmail_called", True),
+    )
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        window.table.selectRow(0)
+        QApplication.processEvents()
+        window._open_honorarios_dialog()
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+    assert captured.get("interpretation_gmail_called") is not True
 
 
 def test_joblog_window_action_cell_uses_icon_buttons_and_delete_removes_row(tmp_path: Path, monkeypatch) -> None:
@@ -7833,16 +8555,17 @@ def test_joblog_window_delete_key_removes_selected_rows_when_table_has_focus(tmp
     try:
         selection_model = window.table.selectionModel()
         assert selection_model is not None
-        window.show()
-        window.table.setFocus()
+        _activate_dialog_and_focus(app, window, window.table)
         window.table.selectRow(0)
         selection_model.select(
             window.table.model().index(1, window._table_column_index("case_number")),
             QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
         )
-        QApplication.processEvents()
+        _drain_qt_events(app, cycles=3, wait_ms=5)
+        assert QApplication.focusWidget() in {window.table, window.table.viewport()}
 
         QTest.keyClick(window.table, Qt.Key.Key_Delete)
+        _drain_qt_events(app, cycles=3, wait_ms=5)
 
         with open_job_log(db_path) as conn:
             count = conn.execute("SELECT COUNT(*) FROM job_runs").fetchone()
@@ -7851,6 +8574,7 @@ def test_joblog_window_delete_key_removes_selected_rows_when_table_has_focus(tmp
     finally:
         window.close()
         window.deleteLater()
+        _close_qt_transients(app)
         if owns_app:
             app.quit()
 
@@ -7935,6 +8659,7 @@ def test_normalize_joblog_payload_allows_interpretation_without_translation_fiel
         },
         service_same_checked=False,
         use_service_location_in_honorarios_checked=True,
+        include_transport_sentence_in_honorarios_checked=True,
     )
 
     assert payload["job_type"] == "Interpretation"
@@ -7943,6 +8668,49 @@ def test_normalize_joblog_payload_allows_interpretation_without_translation_fiel
     assert payload["travel_km_outbound"] == 50.0
     assert payload["travel_km_return"] == 50.0
     assert payload["use_service_location_in_honorarios"] == 1
+    assert payload["include_transport_sentence_in_honorarios"] == 1
+
+
+def test_normalize_joblog_payload_interpretation_ignores_invalid_distance_when_transport_clause_disabled() -> None:
+    seed = build_blank_interpretation_seed()
+    seed.travel_km_outbound = 39.0
+    seed.travel_km_return = 39.0
+    payload = dialogs_module._normalize_joblog_payload(
+        seed=seed,
+        raw_values={
+            "translation_date": "2026-03-09",
+            "job_type": "Interpretation",
+            "case_number": "000055/25.5GAFAL",
+            "court_email": "",
+            "case_entity": "Ministério Público de Beja",
+            "case_city": "Beja",
+            "service_entity": "GNR",
+            "service_city": "Vidigueira",
+            "service_date": "2026-03-09",
+            "travel_km_outbound": "not-a-number",
+            "travel_km_return": "still-bad",
+            "lang": "",
+            "target_lang": "",
+            "run_id": "",
+            "pages": "",
+            "word_count": "",
+            "total_tokens": "",
+            "rate_per_word": "",
+            "expected_total": "",
+            "amount_paid": "0",
+            "api_cost": "0",
+            "estimated_api_cost": "",
+            "quality_risk_score": "",
+            "profit": "",
+        },
+        service_same_checked=False,
+        use_service_location_in_honorarios_checked=False,
+        include_transport_sentence_in_honorarios_checked=False,
+    )
+
+    assert payload["travel_km_outbound"] == 39.0
+    assert payload["travel_km_return"] == 39.0
+    assert payload["include_transport_sentence_in_honorarios"] == 0
 
 
 def test_joblog_window_small_screen_is_bounded(tmp_path: Path, monkeypatch) -> None:

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-03-09T23:30:00Z",
+  "last_updated": "2026-03-12T18:05:00Z",
   "issues": [
     {
       "id": "workflow-wrong-build-under-test",
@@ -433,6 +433,86 @@
         {
           "type": "branch",
           "ref": "main"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        }
+      ]
+    },
+    {
+      "id": "desktop-qt-honorarios-export-reliability",
+      "title": "Honorários PDF export and focus-sensitive Qt dialogs felt unstable because host-bound work blocked the UI and modal state leaked across paths",
+      "first_seen_timestamp": "2026-03-12T00:00:00Z",
+      "last_seen_timestamp": "2026-03-12T18:05:00Z",
+      "repeat_count": 2,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "The visible LegalPDF window could show No responde while Word PDF export tried to launch or timed out.",
+        "PDF failure warnings dumped raw PowerShell or COM text inline and could cascade into an extra Gmail missing-PDF warning.",
+        "Focus-sensitive Qt tests around Return or Delete shortcuts could fail intermittently because leaked dialogs or stale focus changed the active target."
+      ],
+      "likely_root_cause": "Host-bound Word PDF export originally ran on the GUI thread and failure handling spanned too many modal layers, while the Qt harness did not yet enforce deterministic popup cleanup, activation, and shortcut targeting for focus-sensitive dialog tests.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-12T00:00:00Z",
+          "summary": "Added synchronous honorários DOCX-to-PDF export through Word automation.",
+          "outcome": "insufficient"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-12T18:05:00Z",
+        "summary": "Moved honorários PDF export to a worker thread, replaced raw command dumps with concise warnings plus expandable details, added one retry/select-existing-PDF/local-only recovery flow, reduced duplicate warning cascades, and hardened Qt popup cleanup plus explicit activation for focus-sensitive dialog tests.",
+        "expected_result": "Honorários export should stay responsive during host-bound PDF work, failures should be understandable without raw command text in the main warning body, and focus-sensitive Qt dialog tests should no longer depend on inherited modal state."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/ISSUE_MEMORY.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "non-blocking host automation for user-facing desktop flows",
+          "concise user-facing failure text with expandable diagnostics",
+          "single recovery flow for partial-success exports",
+          "explicit activation and leaked-popup cleanup for focus-sensitive Qt tests"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-12_desktop_stability_honorarios_qt.md"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/qt_gui/dialogs.py"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/qt_gui/worker.py"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/word_automation.py"
+        },
+        {
+          "type": "file",
+          "ref": "tests/conftest.py"
+        },
+        {
+          "type": "file",
+          "ref": "tests/test_qt_app_state.py"
         },
         {
           "type": "worktree",

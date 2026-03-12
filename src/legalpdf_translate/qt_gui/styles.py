@@ -25,8 +25,8 @@ _BASE_PALETTE = {
     "field": "rgba(5, 20, 42, 220)",
     "field_focus": "rgba(14, 48, 82, 238)",
     "sidebar": "rgba(6, 20, 38, 188)",
-    "dialog_bg": "rgba(5, 15, 31, 234)",
-    "dialog_border": "rgba(136, 238, 255, 118)",
+    "dialog_bg": "rgba(5, 15, 31, 244)",
+    "dialog_border": "rgba(136, 238, 255, 144)",
     "field_border": "rgba(118, 220, 242, 156)",
     "field_focus_border": "#8CFBFF",
     "scroll_track": "rgba(4, 14, 29, 200)",
@@ -57,7 +57,7 @@ _BASE_PALETTE = {
     "primary_border": "rgba(214, 252, 255, 248)",
     "danger_fill": "rgba(236, 154, 160, 238)",
     "danger_fill_hover": "rgba(244, 175, 180, 244)",
-    "danger_fill_disabled": "rgba(92, 50, 56, 124)",
+    "danger_fill_disabled": "rgba(92, 50, 56, 148)",
     "danger_border": "rgba(255, 210, 214, 188)",
 }
 
@@ -78,7 +78,7 @@ _THEME_OVERRIDES = {
         "field_focus": "rgba(14, 24, 35, 244)",
         "sidebar": "rgba(11, 15, 22, 224)",
         "dialog_bg": "rgba(10, 15, 24, 242)",
-        "dialog_border": "rgba(142, 176, 194, 92)",
+        "dialog_border": "rgba(142, 176, 194, 118)",
         "field_border": "rgba(108, 148, 164, 132)",
         "field_focus_border": "#C3E9F5",
         "scroll_track": "rgba(10, 15, 23, 212)",
@@ -109,30 +109,52 @@ _THEME_OVERRIDES = {
         "primary_border": "rgba(221, 241, 247, 220)",
         "danger_fill": "rgba(196, 136, 142, 218)",
         "danger_fill_hover": "rgba(206, 150, 155, 224)",
-        "danger_fill_disabled": "rgba(82, 54, 58, 118)",
+        "danger_fill_disabled": "rgba(82, 54, 58, 138)",
         "danger_border": "rgba(222, 189, 194, 160)",
     },
 }
 
 _BASE_EFFECT_TOKENS: dict[str, tuple[int, int, int, int]] = {
-    "title_glow": (120, 246, 255, 214),
-    "dashboard_shadow": (18, 98, 134, 186),
-    "panel_shadow": (7, 48, 80, 176),
-    "advisor_shadow": (10, 58, 92, 166),
-    "details_shadow": (8, 42, 70, 160),
-    "footer_glow": (112, 236, 255, 196),
-    "primary_glow": (132, 242, 255, 216),
+    "title_glow": (120, 246, 255, 164),
+    "dashboard_shadow": (18, 98, 134, 142),
+    "panel_shadow": (7, 48, 80, 128),
+    "advisor_shadow": (10, 58, 92, 120),
+    "details_shadow": (8, 42, 70, 112),
+    "footer_glow": (112, 236, 255, 148),
+    "primary_glow": (132, 242, 255, 164),
 }
 
 _THEME_EFFECT_OVERRIDES: dict[str, Mapping[str, tuple[int, int, int, int]]] = {
     "dark_simple": {
-        "title_glow": (164, 218, 228, 124),
-        "dashboard_shadow": (24, 42, 56, 168),
-        "panel_shadow": (18, 32, 44, 156),
-        "advisor_shadow": (20, 34, 46, 148),
-        "details_shadow": (18, 30, 42, 146),
-        "footer_glow": (120, 168, 182, 142),
-        "primary_glow": (164, 214, 226, 154),
+        "title_glow": (164, 218, 228, 98),
+        "dashboard_shadow": (24, 42, 56, 136),
+        "panel_shadow": (18, 32, 44, 124),
+        "advisor_shadow": (20, 34, 46, 118),
+        "details_shadow": (18, 30, 42, 116),
+        "footer_glow": (120, 168, 182, 110),
+        "primary_glow": (164, 214, 226, 122),
+    },
+}
+
+_BASE_EFFECT_LAYOUT: dict[str, Mapping[str, int]] = {
+    "title_glow": {"blur_radius": 38, "offset_y": 0},
+    "dashboard_shadow": {"blur_radius": 52, "offset_y": 8},
+    "panel_shadow": {"blur_radius": 38, "offset_y": 8},
+    "advisor_shadow": {"blur_radius": 28, "offset_y": 6},
+    "details_shadow": {"blur_radius": 28, "offset_y": 6},
+    "footer_glow": {"blur_radius": 22, "offset_y": 0},
+    "primary_glow": {"blur_radius": 24, "offset_y": 0},
+}
+
+_THEME_EFFECT_LAYOUT_OVERRIDES: dict[str, Mapping[str, Mapping[str, int]]] = {
+    "dark_simple": {
+        "title_glow": {"blur_radius": 30},
+        "dashboard_shadow": {"blur_radius": 42, "offset_y": 6},
+        "panel_shadow": {"blur_radius": 30, "offset_y": 6},
+        "advisor_shadow": {"blur_radius": 24, "offset_y": 4},
+        "details_shadow": {"blur_radius": 24, "offset_y": 4},
+        "footer_glow": {"blur_radius": 18},
+        "primary_glow": {"blur_radius": 20},
     },
 }
 
@@ -163,6 +185,21 @@ def theme_effect_colors(theme: str | None) -> dict[str, QColor]:
     tokens = dict(_BASE_EFFECT_TOKENS)
     tokens.update(_THEME_EFFECT_OVERRIDES.get(normalized, {}))
     return {key: _rgba_to_qcolor(value) for key, value in tokens.items()}
+
+
+def theme_effect_specs(theme: str | None) -> dict[str, dict[str, object]]:
+    normalized = normalize_ui_theme(theme)
+    colors = theme_effect_colors(normalized)
+    specs: dict[str, dict[str, object]] = {
+        key: dict(values) for key, values in _BASE_EFFECT_LAYOUT.items()
+    }
+    for key, overrides in _THEME_EFFECT_LAYOUT_OVERRIDES.get(normalized, {}).items():
+        merged = specs.setdefault(key, {})
+        merged.update(overrides)
+    for key, color in colors.items():
+        merged = specs.setdefault(key, {})
+        merged["color"] = color
+    return specs
 
 
 def build_stylesheet(theme: str = "dark_futuristic") -> str:
@@ -847,6 +884,7 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QPushButton:disabled {{
+        background-color: rgba(18, 38, 60, 196);
         color: rgba(151, 182, 206, 120);
         border-color: rgba(72, 104, 128, 110);
     }}
@@ -907,9 +945,9 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QPushButton#PrimaryButton:disabled {{
-        background-color: rgba(58, 88, 105, 112);
-        border-color: rgba(146, 193, 207, 96);
-        color: rgba(225, 242, 248, 146);
+        background-color: rgba(72, 108, 124, 154);
+        border-color: rgba(164, 211, 224, 132);
+        color: rgba(225, 242, 248, 174);
     }}
 
     QPushButton#DangerButton:disabled {{
@@ -923,9 +961,9 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
     }}
 
     QToolButton#OverflowMenuButton:disabled {{
-        background-color: rgba(25, 37, 51, 168);
-        border-color: rgba(106, 145, 162, 96);
-        color: rgba(208, 226, 236, 150);
+        background-color: rgba(25, 37, 51, 196);
+        border-color: rgba(106, 145, 162, 122);
+        color: rgba(208, 226, 236, 172);
     }}
 
     QProgressBar {{
@@ -1096,28 +1134,38 @@ def _coerce_effect_color(color: QColor | tuple[int, int, int, int] | None, *, fa
     return _rgba_to_qcolor(fallback)
 
 
+def _reuse_or_create_shadow_effect(widget: QWidget, *, role: str) -> QGraphicsDropShadowEffect:
+    current = widget.graphicsEffect()
+    if isinstance(current, QGraphicsDropShadowEffect) and str(current.property("effectRole") or "") == role:
+        return current
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setProperty("effectRole", role)
+    widget.setGraphicsEffect(effect)
+    return effect
+
+
 def apply_soft_shadow(
     widget: QWidget,
     *,
+    role: str = "soft_shadow",
     blur_radius: int = 48,
     offset_y: int = 12,
     color: QColor | tuple[int, int, int, int] | None = None,
 ) -> None:
-    effect = QGraphicsDropShadowEffect(widget)
+    effect = _reuse_or_create_shadow_effect(widget, role=role)
     effect.setBlurRadius(float(blur_radius))
     effect.setOffset(0.0, float(offset_y))
     effect.setColor(_coerce_effect_color(color, fallback=(7, 26, 54, 146)))
-    widget.setGraphicsEffect(effect)
 
 
 def apply_primary_glow(
     widget: QWidget,
     *,
+    role: str = "primary_glow",
     blur_radius: int = 30,
     color: QColor | tuple[int, int, int, int] | None = None,
 ) -> None:
-    effect = QGraphicsDropShadowEffect(widget)
+    effect = _reuse_or_create_shadow_effect(widget, role=role)
     effect.setBlurRadius(float(blur_radius))
     effect.setOffset(0.0, 0.0)
     effect.setColor(_coerce_effect_color(color, fallback=(89, 232, 255, 146)))
-    widget.setGraphicsEffect(effect)

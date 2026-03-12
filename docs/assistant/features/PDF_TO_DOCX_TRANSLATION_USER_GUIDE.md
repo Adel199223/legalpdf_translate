@@ -185,9 +185,9 @@ Use `Tools > View Job Log` when you want to review or correct saved rows later.
 Use this flow when you need a `Requerimento de Honorários` for interpreting work rather than a translated document.
 
 ### Start the row
-1. Open `Tools > View Job Log`.
-2. Use `Add...` and choose one of these interpretation entry paths:
-   - blank/manual interpretation row
+1. Use either `Tools > New Interpretation Honorários...` for the direct save-first path, or open `Tools > View Job Log`.
+2. In `Job Log`, use `Add...` and choose one of these interpretation entry paths:
+   - `Blank/manual interpretation entry`
    - `From notification PDF...`
    - `From photo/screenshot...`
 3. Confirm the case, service, and date fields before saving the row.
@@ -201,11 +201,15 @@ Use this flow when you need a `Requerimento de Honorários` for interpreting wor
 6. If you type a new one-way distance and save the row, the app remembers that value for that service city in the current profile.
 
 ### Generate the document
-1. Open the saved interpretation row or keep the edit dialog open.
-2. Click `Gerar Requerimento de Honorários...`.
+1. If you used `Tools > New Interpretation Honorários...`, save the row first and the export dialog opens automatically. Otherwise, open the saved interpretation row or keep the edit dialog open.
+2. Click `Gerar Requerimento de Honorários...` when you are using the Job Log path.
 3. Use the profile selector if needed.
 4. On smaller screens, scroll inside the honorários dialog. The action buttons stay anchored at the bottom.
-5. Manual/local interpretation honorários stay local-doc only. If the flow started from Gmail intake in `Interpretation notice` mode, the app can also create a threaded Gmail draft with the honorários DOCX only.
+5. The export saves the honorários DOCX first and then attempts a sibling PDF with the same basename.
+6. `Include transport/distance sentence in honorários text` starts enabled. Leave it on in the normal case, and turn it off only when the court is handling transport separately and that sentence should be omitted.
+7. The addressee auto-completes the case city for generic court entities. The body keeps the saved `service_date`, but the footer date before the signature always uses the day you generate the document.
+8. If automatic PDF export fails, the dialog keeps the saved DOCX usable locally and offers one recovery flow: retry PDF export, choose an existing PDF, open the DOCX/folder, or continue local-only.
+9. Manual/local interpretation exports can offer a fresh Gmail draft when the saved row has `Court Email`, Gmail draft prerequisites are ready, and the honorários PDF was generated successfully.
 
 ## Honorarios + Gmail Drafts
 If you generate a `Requerimento de Honorários`, the app can also prepare a Gmail draft to the row's `Court Email`.
@@ -223,7 +227,9 @@ From `Job Log`, the app now tries this order for the translated attachment:
 If the app has to ask you once for a translated DOCX on a legacy row, it saves that path back into the row so the same row should not ask again next time.
 You can use the pen action first if a historical row needs case/court corrections before exporting honorários or creating the Gmail draft.
 
-This Gmail-draft branch always applies to translation honorários. Interpretation honorários can also produce a Gmail reply draft, but only when they start from Gmail intake in `Interpretation notice` mode.
+This Gmail-draft branch always applies to translation honorários. Interpretation honorários can also produce Gmail drafts:
+- manual/local interpretation exports create a fresh non-threaded draft and attach the honorários PDF only
+- Gmail-intake interpretation notice exports create a threaded reply draft and attach the honorários PDF only
 
 ## Gmail Intake Batch Replies
 Use this when the source files already arrived in Gmail and you want one reply draft back in the same thread.
@@ -249,9 +255,10 @@ Use this when the source files already arrived in Gmail and you want one reply d
 11. Interpretation-notice mode downloads the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
 12. After each successful translation, Arabic items first pause in the Word review gate. The dialog auto-opens the DOCX in Word, offers `Align Right + Save`, and auto-continues after a detected save; if automation fails, you can save manually and use `Continue now` or `Continue without changes`.
 13. Translation mode then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
-14. When all selected translation files are confirmed, the app can generate one honorários DOCX using the combined translated word count for the batch.
-15. If the translation honorários step succeeds, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários DOCX.
-16. If the interpretation honorários step succeeds, the app creates one Gmail reply draft in the original thread with the generated honorários DOCX only.
+14. When all selected translation files are confirmed, the app can generate one honorários export using the combined translated word count for the batch.
+15. The honorários export saves the DOCX first and then attempts a sibling PDF with the same basename.
+16. If the translation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários PDF.
+17. If the interpretation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with the generated honorários PDF only.
 
 ### Batch rules
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
@@ -265,7 +272,7 @@ Use this when the source files already arrived in Gmail and you want one reply d
 - The final Gmail result is always a draft only. The app does not auto-send.
 - If you accidentally choose an existing translated DOCX filename while saving honorários, the app auto-renames the honorários file instead of overwriting the translation.
 - Gmail draft creation blocks duplicate attachment paths and translated artifacts that are actually honorários content.
-- Interpretation honorários close with the saved `service_date` when that date parses as ISO, so you can generate the DOCX or draft in advance and still keep the hearing/service day in the footer.
+- Interpretation honorários keep the saved `service_date` in the body, but the footer date before the signature always uses the day you generate the document.
 
 ## Queue Runs
 Use queue mode when you want several PDFs to run in order.

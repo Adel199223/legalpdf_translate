@@ -79,6 +79,7 @@ from legalpdf_translate.gmail_draft import (
     GMAIL_DRAFTS_URL,
     assess_gmail_draft_prereqs,
     build_honorarios_gmail_request,
+    build_manual_interpretation_gmail_request,
     create_gmail_draft_via_gog,
     validate_translated_docx_artifacts_for_gmail_draft,
 )
@@ -131,6 +132,8 @@ from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_pag
 from legalpdf_translate.qt_gui.guarded_inputs import GuardedDateEdit, NoWheelComboBox, NoWheelSpinBox
 from legalpdf_translate.qt_gui.window_adaptive import CollapsibleSection, ResponsiveWindowController
 from legalpdf_translate.qt_gui.worker import (
+    HonorariosPdfExportResult,
+    HonorariosPdfExportWorker,
     GmailAttachmentPreviewBootstrapResult,
     GmailAttachmentPreviewBootstrapWorker,
     GmailAttachmentPreviewPageResult,
@@ -330,6 +333,27 @@ def _coerce_joblog_float(value: object, default: float = 0.0) -> float:
         return default
 
 
+def _coerce_joblog_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(int(value))
+    cleaned = str(value).strip()
+    if cleaned == "":
+        return default
+    try:
+        return bool(int(cleaned))
+    except ValueError:
+        lowered = cleaned.casefold()
+        if lowered in {"true", "yes", "on"}:
+            return True
+        if lowered in {"false", "no", "off"}:
+            return False
+    return default
+
+
 def build_seed_from_joblog_row(row: Mapping[str, object]) -> JobLogSeed:
     completed_at = str(row.get("completed_at", "") or "").strip()
     translation_date = str(row.get("translation_date", "") or "").strip()
@@ -359,7 +383,14 @@ def build_seed_from_joblog_row(row: Mapping[str, object]) -> JobLogSeed:
             if str(row.get("travel_km_return", "") or "").strip() == ""
             else _coerce_joblog_float(row.get("travel_km_return"))
         ),
-        use_service_location_in_honorarios=bool(int(row.get("use_service_location_in_honorarios", 0) or 0)),
+        use_service_location_in_honorarios=_coerce_joblog_bool(
+            row.get("use_service_location_in_honorarios"),
+            default=False,
+        ),
+        include_transport_sentence_in_honorarios=_coerce_joblog_bool(
+            row.get("include_transport_sentence_in_honorarios"),
+            default=True,
+        ),
         lang=str(row.get("lang", "") or "").strip(),
         pages=_coerce_joblog_int(row.get("pages")),
         word_count=_coerce_joblog_int(row.get("word_count")),
@@ -456,6 +487,7 @@ def _normalize_joblog_payload(
     raw_values: Mapping[str, str],
     service_same_checked: bool,
     use_service_location_in_honorarios_checked: bool = False,
+    include_transport_sentence_in_honorarios_checked: bool = True,
 ) -> dict[str, Any]:
     job_type = raw_values["job_type"].strip() or "Translation"
     is_interpretation = _is_interpretation_job_type(job_type)
@@ -477,8 +509,18 @@ def _normalize_joblog_payload(
     total_tokens = _parse_joblog_optional_int(raw_values["total_tokens"], "Total tokens")
     estimated_api_cost = _parse_joblog_optional_float(raw_values["estimated_api_cost"], "Estimated API cost")
     quality_risk_score = _parse_joblog_optional_float(raw_values["quality_risk_score"], "Quality risk score")
-    travel_km_outbound = _parse_joblog_optional_float(raw_values.get("travel_km_outbound", ""), "KM outbound")
-    travel_km_return = _parse_joblog_optional_float(raw_values.get("travel_km_return", ""), "KM return")
+    if include_transport_sentence_in_honorarios_checked:
+        travel_km_outbound = _parse_joblog_optional_float(raw_values.get("travel_km_outbound", ""), "KM outbound")
+        travel_km_return = _parse_joblog_optional_float(raw_values.get("travel_km_return", ""), "KM return")
+    else:
+        try:
+            travel_km_outbound = _parse_joblog_optional_float(raw_values.get("travel_km_outbound", ""), "KM outbound")
+        except ValueError:
+            travel_km_outbound = seed.travel_km_outbound
+        try:
+            travel_km_return = _parse_joblog_optional_float(raw_values.get("travel_km_return", ""), "KM return")
+        except ValueError:
+            travel_km_return = seed.travel_km_return
 
     translation_date = _validate_joblog_date(raw_values["translation_date"], "Translation date")
     service_date = _validate_joblog_date(raw_values["service_date"], "Service date")
@@ -516,6 +558,7 @@ def _normalize_joblog_payload(
         "travel_km_outbound": travel_km_outbound,
         "travel_km_return": travel_km_return,
         "use_service_location_in_honorarios": 1 if use_service_location_in_honorarios_checked else 0,
+        "include_transport_sentence_in_honorarios": 1 if include_transport_sentence_in_honorarios_checked else 0,
         "lang": raw_values["lang"].strip() or seed.lang,
         "target_lang": raw_values["target_lang"].strip() or seed.target_lang,
         "run_id": raw_values["run_id"].strip(),
@@ -603,6 +646,7 @@ class JobLogSeed:
     travel_km_outbound: float | None = None
     travel_km_return: float | None = None
     use_service_location_in_honorarios: bool = False
+    include_transport_sentence_in_honorarios: bool = True
     pdf_path: Path | None = None
     output_docx: Path | None = None
     partial_docx: Path | None = None
@@ -756,6 +800,7 @@ def build_seed_from_run(
         travel_km_outbound=None,
         travel_km_return=None,
         use_service_location_in_honorarios=False,
+        include_transport_sentence_in_honorarios=True,
         lang=lang,
         pages=int(completed_pages),
         word_count=int(word_count),
@@ -792,6 +837,7 @@ def build_blank_interpretation_seed() -> JobLogSeed:
         travel_km_outbound=None,
         travel_km_return=None,
         use_service_location_in_honorarios=False,
+        include_transport_sentence_in_honorarios=True,
         lang="",
         pages=0,
         word_count=0,
@@ -843,6 +889,7 @@ def build_interpretation_seed_from_notification_pdf(
         travel_km_outbound=None,
         travel_km_return=None,
         use_service_location_in_honorarios=False,
+        include_transport_sentence_in_honorarios=True,
         lang="",
         pages=0,
         word_count=0,
@@ -893,6 +940,7 @@ def build_interpretation_seed_from_photo_screenshot(
         travel_km_outbound=None,
         travel_km_return=None,
         use_service_location_in_honorarios=False,
+        include_transport_sentence_in_honorarios=True,
         lang="",
         pages=0,
         word_count=0,
@@ -1303,7 +1351,7 @@ class QtProfileManagerDialog(QDialog):
 
 
 class QtHonorariosExportDialog(QDialog):
-    """Generate a deterministic Requerimento de Honorarios DOCX."""
+    """Generate deterministic Requerimento de Honorarios DOCX/PDF files."""
 
     def __init__(
         self,
@@ -1327,6 +1375,15 @@ class QtHonorariosExportDialog(QDialog):
         )
         self.saved_path: Path | None = None
         self.requested_path: Path | None = None
+        self.saved_pdf_path: Path | None = None
+        self.pdf_export_error: str = ""
+        self.docx_saved_path: Path | None = None
+        self.pdf_saved_path: Path | None = None
+        self.pdf_failure_code: str = ""
+        self.pdf_failure_message: str = ""
+        self.pdf_failure_details: str = ""
+        self.pdf_export_elapsed_ms: int = 0
+        self.pdf_unavailable_explained: bool = False
         self.auto_renamed: bool = False
         self.generated_draft: HonorariosDraft | None = None
         self._recipient_block_user_edited = False
@@ -1335,6 +1392,9 @@ class QtHonorariosExportDialog(QDialog):
         self._distance_value_city_key = ""
         self._distance_value_profile_id = ""
         self._distance_value_is_manual = False
+        self._pdf_export_thread: QThread | None = None
+        self._pdf_export_worker: HonorariosPdfExportWorker | None = None
+        self._pdf_export_in_flight = False
         self._build_ui()
         self._refresh_profile_selector(self._primary_profile_id)
         self._responsive_window = ResponsiveWindowController(
@@ -1396,6 +1456,12 @@ class QtHonorariosExportDialog(QDialog):
             self.service_city_edit = QLineEdit(self._initial_draft.service_city)
             self.use_service_location_check = QCheckBox("Mention explicit service location in body text")
             self.use_service_location_check.setChecked(self._initial_draft.use_service_location_in_honorarios)
+            self.include_transport_sentence_check = QCheckBox(
+                "Include transport/distance sentence in honorários text"
+            )
+            self.include_transport_sentence_check.setChecked(
+                self._initial_draft.include_transport_sentence_in_honorarios
+            )
             distance_value = self._initial_draft.travel_km_outbound
             if distance_value <= 0 and self._initial_draft.travel_km_return > 0:
                 distance_value = self._initial_draft.travel_km_return
@@ -1418,6 +1484,7 @@ class QtHonorariosExportDialog(QDialog):
             form.addRow("Service entity", self.service_entity_edit)
             form.addRow("Service city", self.service_city_edit)
             form.addRow("", self.use_service_location_check)
+            form.addRow("", self.include_transport_sentence_check)
             form.addRow(self.distance_label.text(), self.travel_km_outbound_edit)
             form.addRow("Recipient", self.recipient_block_edit)
         else:
@@ -1428,6 +1495,14 @@ class QtHonorariosExportDialog(QDialog):
         scroll_root.addStretch(1)
         self.form_scroll_area.setWidget(scroll_content)
         root.addWidget(self.form_scroll_area, 1)
+        self.export_status_label = QLabel("")
+        self.export_status_label.setVisible(False)
+        root.addWidget(self.export_status_label)
+        self.export_progress = QProgressBar(self)
+        self.export_progress.setRange(0, 0)
+        self.export_progress.setTextVisible(False)
+        self.export_progress.setVisible(False)
+        root.addWidget(self.export_progress)
 
         self.action_bar = QWidget(self)
         self.action_bar.setObjectName("DialogActionBar")
@@ -1436,7 +1511,7 @@ class QtHonorariosExportDialog(QDialog):
         actions.setSpacing(10)
         actions.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
-        self.generate_btn = QPushButton("Gerar DOCX")
+        self.generate_btn = QPushButton("Gerar DOCX + PDF")
         self.generate_btn.setObjectName("PrimaryButton")
         actions.addWidget(self.cancel_btn)
         actions.addWidget(self.generate_btn)
@@ -1455,9 +1530,11 @@ class QtHonorariosExportDialog(QDialog):
             self.service_same_check.toggled.connect(self._on_interpretation_service_same_toggled)
             self.service_entity_edit.textChanged.connect(self._on_interpretation_service_fields_changed)
             self.service_city_edit.textChanged.connect(self._on_interpretation_service_fields_changed)
+            self.include_transport_sentence_check.toggled.connect(self._on_interpretation_transport_sentence_toggled)
             self.travel_km_outbound_edit.textEdited.connect(self._on_interpretation_distance_edited)
             self.recipient_block_edit.textChanged.connect(self._on_recipient_block_text_changed)
             self._refresh_interpretation_service_mirror_state()
+            self._refresh_interpretation_transport_sentence_state()
             self._apply_interpretation_distance_defaults()
         self._refresh_date_preview()
 
@@ -1501,6 +1578,236 @@ class QtHonorariosExportDialog(QDialog):
         city = self.case_city_edit.text().strip() or self._initial_draft.case_city.strip()
         self.date_preview_label.setText(f"{city}, {self._initial_draft.date_pt}" if city else self._initial_draft.date_pt)
 
+    def _reset_pdf_export_state(self) -> None:
+        self.saved_path = None
+        self.docx_saved_path = None
+        self.requested_path = None
+        self.saved_pdf_path = None
+        self.pdf_saved_path = None
+        self.pdf_export_error = ""
+        self.pdf_failure_code = ""
+        self.pdf_failure_message = ""
+        self.pdf_failure_details = ""
+        self.pdf_export_elapsed_ms = 0
+        self.pdf_unavailable_explained = False
+        self.auto_renamed = False
+
+    def _set_pdf_export_busy(self, busy: bool, *, status_text: str = "") -> None:
+        self._pdf_export_in_flight = busy
+        self.form_scroll_area.setEnabled(not busy)
+        self.generate_btn.setEnabled(not busy)
+        self.cancel_btn.setEnabled(not busy)
+        self.export_status_label.setVisible(busy or bool(status_text))
+        self.export_status_label.setText(status_text)
+        self.export_progress.setVisible(busy)
+
+    def _clear_pdf_export_worker_refs(self) -> None:
+        self._pdf_export_worker = None
+        self._pdf_export_thread = None
+
+    def _export_result_info_lines(self) -> list[str]:
+        lines: list[str] = []
+        if self.auto_renamed and self.saved_path is not None and self.saved_path != self.requested_path:
+            lines.extend(
+                [
+                    "The selected DOCX path already existed, so the document was saved as:",
+                    str(self.saved_path),
+                ]
+            )
+        if self.saved_path is not None:
+            lines.append(f"DOCX: {self.saved_path}")
+        if self.saved_pdf_path is not None:
+            lines.append(f"PDF: {self.saved_pdf_path}")
+        return lines
+
+    def _show_pdf_export_success_box(self) -> str:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Requerimento de Honorários")
+        box.setText("The honorários DOCX and PDF are ready.")
+        info_lines = self._export_result_info_lines()
+        if info_lines:
+            box.setInformativeText("\n".join(info_lines))
+        open_docx_btn = box.addButton("Open DOCX", QMessageBox.ButtonRole.ActionRole)
+        open_folder_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+        continue_btn = box.addButton("Continue", QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(continue_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is open_docx_btn:
+            return "open_docx"
+        if clicked is open_folder_btn:
+            return "open_folder"
+        return "continue"
+
+    def _show_pdf_export_failure_box(self) -> str:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Requerimento de Honorários")
+        box.setText("The honorários DOCX is ready, but the PDF is unavailable.")
+        info_lines = [
+            self.pdf_failure_message or "Word could not export the PDF.",
+            "Email drafting requires the PDF, so draft creation will stay blocked until a valid PDF is available.",
+            *self._export_result_info_lines(),
+        ]
+        box.setInformativeText("\n\n".join(line for line in info_lines if line))
+        if self.pdf_failure_details:
+            box.setDetailedText(self.pdf_failure_details)
+        open_docx_btn = box.addButton("Open DOCX", QMessageBox.ButtonRole.ActionRole)
+        open_folder_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+        retry_btn = box.addButton("Retry PDF", QMessageBox.ButtonRole.ActionRole)
+        select_pdf_btn = box.addButton("Select existing PDF...", QMessageBox.ButtonRole.ActionRole)
+        continue_btn = box.addButton("Continue local-only", QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(continue_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is open_docx_btn:
+            return "open_docx"
+        if clicked is open_folder_btn:
+            return "open_folder"
+        if clicked is retry_btn:
+            return "retry_pdf"
+        if clicked is select_pdf_btn:
+            return "select_existing_pdf"
+        return "continue_local"
+
+    def _validate_selected_honorarios_pdf(self, candidate: Path) -> str | None:
+        resolved = candidate.expanduser().resolve()
+        if resolved.suffix.casefold() != ".pdf":
+            return "Selected file must use the .pdf extension."
+        if not resolved.exists() or not resolved.is_file():
+            return f"Selected PDF was not found:\n{resolved}"
+        try:
+            header = resolved.read_bytes()[:5]
+        except Exception as exc:  # noqa: BLE001
+            return f"Could not read the selected PDF:\n{exc}"
+        if not header.startswith(b"%PDF"):
+            return "Selected file does not appear to be a valid PDF."
+        return None
+
+    def _select_existing_honorarios_pdf(self) -> bool:
+        base_dir = self._default_directory
+        if self.saved_path is not None:
+            base_dir = self.saved_path.expanduser().resolve().parent
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select existing honorários PDF",
+            str(base_dir),
+            "PDF Files (*.pdf);;All Files (*.*)",
+        )
+        if not selected:
+            return False
+        candidate = Path(selected).expanduser().resolve()
+        error = self._validate_selected_honorarios_pdf(candidate)
+        if error:
+            QMessageBox.critical(self, "Requerimento de Honorários", error)
+            return False
+        self.saved_pdf_path = candidate
+        self.pdf_saved_path = candidate
+        self.pdf_failure_code = ""
+        self.pdf_failure_message = ""
+        self.pdf_failure_details = ""
+        self.pdf_export_error = ""
+        return True
+
+    def _retry_pdf_export(self) -> bool:
+        if self.docx_saved_path is None:
+            QMessageBox.critical(
+                self,
+                "Requerimento de Honorários",
+                "The DOCX path is unavailable, so the PDF export cannot be retried.",
+            )
+            return False
+        target_pdf = self.docx_saved_path.with_suffix(".pdf")
+        self.saved_pdf_path = None
+        self.pdf_saved_path = None
+        self.pdf_failure_code = ""
+        self.pdf_failure_message = ""
+        self.pdf_failure_details = ""
+        self.pdf_export_error = ""
+        self._set_pdf_export_busy(
+            True,
+            status_text="DOCX saved. Retrying the sibling PDF export in the background...",
+        )
+        self._begin_pdf_export(docx_path=self.docx_saved_path, pdf_path=target_pdf)
+        return True
+
+    def _run_export_result_flow(self) -> None:
+        while True:
+            if self.saved_pdf_path is not None:
+                action = self._show_pdf_export_success_box()
+            else:
+                self.pdf_unavailable_explained = True
+                action = self._show_pdf_export_failure_box()
+            target = self.saved_pdf_path or self.saved_path
+            if action == "open_docx":
+                if self.saved_path is not None:
+                    _open_path_in_system(self, self.saved_path)
+                continue
+            if action == "open_folder":
+                if target is not None:
+                    _open_folder_for_path(self, target)
+                continue
+            if action == "retry_pdf":
+                if self._retry_pdf_export():
+                    return
+                continue
+            if action == "select_existing_pdf":
+                if self._select_existing_honorarios_pdf():
+                    continue
+                continue
+            self.accept()
+            return
+
+    def _begin_pdf_export(self, *, docx_path: Path, pdf_path: Path) -> None:
+        try:
+            thread = QThread(self)
+            worker = HonorariosPdfExportWorker(docx_path=docx_path, pdf_path=pdf_path)
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+            worker.finished.connect(self._on_pdf_export_finished)
+            worker.finished.connect(thread.quit)
+            worker.finished.connect(worker.deleteLater)
+            thread.finished.connect(self._clear_pdf_export_worker_refs)
+            thread.finished.connect(thread.deleteLater)
+            self._pdf_export_thread = thread
+            self._pdf_export_worker = worker
+            thread.start()
+        except Exception as exc:  # noqa: BLE001
+            self._on_pdf_export_finished(
+                HonorariosPdfExportResult(
+                    docx_path=docx_path,
+                    pdf_path=None,
+                    automation=WordAutomationResult(
+                        ok=False,
+                        action="export_pdf",
+                        message="Word PDF export could not be started.",
+                        failure_code="unknown",
+                        details=str(exc),
+                    ),
+                )
+            )
+
+    def _on_pdf_export_finished(self, result: HonorariosPdfExportResult) -> None:
+        self.docx_saved_path = result.docx_path
+        self.saved_path = result.docx_path
+        self.pdf_saved_path = result.pdf_path
+        self.saved_pdf_path = result.pdf_path
+        self.pdf_failure_code = ""
+        self.pdf_failure_message = ""
+        self.pdf_failure_details = ""
+        self.pdf_export_error = ""
+        self.pdf_export_elapsed_ms = int(result.automation.elapsed_ms)
+        if not result.automation.ok:
+            self.saved_pdf_path = None
+            self.pdf_saved_path = None
+            self.pdf_failure_code = str(result.automation.failure_code or "").strip()
+            self.pdf_failure_message = str(result.automation.message or "").strip() or "Word could not export the PDF."
+            self.pdf_failure_details = str(result.automation.details or "").strip()
+            self.pdf_export_error = self.pdf_failure_message
+        self._set_pdf_export_busy(False)
+        self._run_export_result_flow()
+
     def _on_recipient_block_text_changed(self) -> None:
         if self._setting_recipient_block or self._initial_draft.kind != HonorariosKind.INTERPRETATION:
             return
@@ -1510,6 +1817,25 @@ class QtHonorariosExportDialog(QDialog):
         if self._initial_draft.kind != HonorariosKind.INTERPRETATION or self._recipient_block_user_edited:
             return
         self._set_recipient_block_text(self._default_interpretation_recipient_block())
+
+    def _interpretation_transport_sentence_enabled(self) -> bool:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return False
+        checkbox = getattr(self, "include_transport_sentence_check", None)
+        if checkbox is None:
+            return True
+        return checkbox.isChecked()
+
+    def _refresh_interpretation_transport_sentence_state(self) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        enabled = self._interpretation_transport_sentence_enabled()
+        distance_label = getattr(self, "distance_label", None)
+        distance_edit = getattr(self, "travel_km_outbound_edit", None)
+        if distance_label is not None:
+            distance_label.setEnabled(enabled)
+        if distance_edit is not None:
+            distance_edit.setEnabled(enabled)
 
     def _sync_interpretation_service_with_case(self) -> None:
         self.service_entity_edit.setText(self.case_entity_edit.text().strip())
@@ -1537,6 +1863,13 @@ class QtHonorariosExportDialog(QDialog):
     def _on_interpretation_service_same_toggled(self, *_args: object) -> None:
         self._refresh_interpretation_service_mirror_state()
         self._apply_interpretation_distance_defaults()
+
+    def _on_interpretation_transport_sentence_toggled(self, checked: bool) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        self._refresh_interpretation_transport_sentence_state()
+        if checked:
+            self._apply_interpretation_distance_defaults()
 
     def _effective_interpretation_travel_city(self) -> str:
         if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
@@ -1582,6 +1915,8 @@ class QtHonorariosExportDialog(QDialog):
 
     def _apply_interpretation_distance_defaults(self, *_args: object) -> None:
         if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        if not self._interpretation_transport_sentence_enabled():
             return
         profile = self._selected_profile()
         city = self._effective_interpretation_travel_city()
@@ -1682,7 +2017,8 @@ class QtHonorariosExportDialog(QDialog):
                 f"Selected profile is missing required fields: {missing_message}. Use 'Edit Profiles...' first."
             )
         if self._initial_draft.kind == HonorariosKind.INTERPRETATION:
-            if not selected_profile.travel_origin_label.strip():
+            include_transport_sentence = self.include_transport_sentence_check.isChecked()
+            if include_transport_sentence and not selected_profile.travel_origin_label.strip():
                 raise ValueError(
                     "Selected profile is missing an interpretation travel origin label. Use 'Edit Profiles...' first."
                 )
@@ -1697,21 +2033,35 @@ class QtHonorariosExportDialog(QDialog):
                 raise ValueError("Service city is required.")
             if service_entity_is_law_enforcement and (not use_service_location or not service_city):
                 raise ValueError("GNR/PSP interpretation rows require a confirmed service city in the honorários text.")
-            effective_travel_city = service_city
-            if not effective_travel_city:
-                raise ValueError("Service city is required to resolve travel distance.")
-            one_way_distance = self._resolve_interpretation_distance(
-                profile=selected_profile,
-                city=effective_travel_city,
-                current_value=self.travel_km_outbound_edit.text(),
-                label="KM (one way)",
-            )
-            self._set_interpretation_distance_text(
-                one_way_distance,
-                city_key=effective_travel_city.casefold(),
-                profile_id=selected_profile.id,
-                manual=False,
-            )
+            one_way_distance = self._initial_draft.travel_km_outbound
+            if one_way_distance <= 0 and self._initial_draft.travel_km_return > 0:
+                one_way_distance = self._initial_draft.travel_km_return
+            if include_transport_sentence:
+                effective_travel_city = service_city
+                if not effective_travel_city:
+                    raise ValueError("Service city is required to resolve travel distance.")
+                one_way_distance = self._resolve_interpretation_distance(
+                    profile=selected_profile,
+                    city=effective_travel_city,
+                    current_value=self.travel_km_outbound_edit.text(),
+                    label="KM (one way)",
+                )
+                self._set_interpretation_distance_text(
+                    one_way_distance,
+                    city_key=effective_travel_city.casefold(),
+                    profile_id=selected_profile.id,
+                    manual=False,
+                )
+            else:
+                try:
+                    current_distance = _parse_joblog_optional_float(
+                        self.travel_km_outbound_edit.text(),
+                        "KM (one way)",
+                    )
+                except ValueError:
+                    current_distance = None
+                if current_distance is not None:
+                    one_way_distance = current_distance
             recipient_block = self.recipient_block_edit.toPlainText().strip() or self._default_interpretation_recipient_block()
             self._set_recipient_block_text(recipient_block)
             return build_interpretation_honorarios_draft(
@@ -1722,6 +2072,7 @@ class QtHonorariosExportDialog(QDialog):
                 service_entity=service_entity,
                 service_city=service_city,
                 use_service_location_in_honorarios=use_service_location,
+                include_transport_sentence_in_honorarios=include_transport_sentence,
                 travel_km_outbound=one_way_distance,
                 travel_km_return=one_way_distance,
                 recipient_block=recipient_block,
@@ -1742,6 +2093,7 @@ class QtHonorariosExportDialog(QDialog):
         )
 
     def _generate(self) -> None:
+        self._reset_pdf_export_state()
         try:
             draft = self._build_draft()
         except ValueError as exc:
@@ -1765,25 +2117,30 @@ class QtHonorariosExportDialog(QDialog):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Requerimento de Honorários", f"Failed to generate DOCX:\n{exc}")
             return
+        self.docx_saved_path = saved
         self.saved_path = saved
         self.auto_renamed = saved != requested_path
-        if saved != requested_path:
-            QMessageBox.information(
-                self,
-                "Requerimento de Honorários",
-                "The selected file already existed. The honorários DOCX was saved as:\n"
-                f"{saved}",
-            )
-        open_now = QMessageBox.question(
-            self,
-            "Requerimento de Honorários",
-            "Open containing folder now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+        pdf_path = saved.with_suffix(".pdf")
+        self._set_pdf_export_busy(
+            True,
+            status_text="DOCX saved. Generating the sibling PDF in the background...",
         )
-        if open_now == QMessageBox.StandardButton.Yes:
-            _open_folder_for_path(self, saved)
-        self.accept()
+        self._begin_pdf_export(docx_path=saved, pdf_path=pdf_path)
+
+    def reject(self) -> None:  # type: ignore[override]
+        if self._pdf_export_in_flight:
+            self.export_status_label.setVisible(True)
+            self.export_status_label.setText("PDF generation is still running. Please wait.")
+            return
+        super().reject()
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        if self._pdf_export_in_flight:
+            self.export_status_label.setVisible(True)
+            self.export_status_label.setText("PDF generation is still running. Please wait.")
+            event.ignore()
+            return
+        super().closeEvent(event)
 
 
 class QtArabicDocxReviewDialog(QDialog):
@@ -2214,21 +2571,26 @@ class QtSaveToJobLogDialog(QDialog):
         self.use_service_location_check = QCheckBox("Mention explicit service location in honorários text")
         self.use_service_location_check.setChecked(bool(self._seed.use_service_location_in_honorarios))
         interpretation_grid.addWidget(self.use_service_location_check, 0, 0, 1, 2)
+        self.include_transport_sentence_check = QCheckBox(
+            "Include transport/distance sentence in honorários text"
+        )
+        self.include_transport_sentence_check.setChecked(bool(self._seed.include_transport_sentence_in_honorarios))
+        interpretation_grid.addWidget(self.include_transport_sentence_check, 1, 0, 1, 2)
         self.distance_label = QLabel("KM (one way)")
-        interpretation_grid.addWidget(self.distance_label, 1, 0)
+        interpretation_grid.addWidget(self.distance_label, 2, 0)
         distance_value = self._seed.travel_km_outbound
         if distance_value is None:
             distance_value = self._seed.travel_km_return
         self.travel_km_outbound_edit = QLineEdit(
             "" if distance_value is None else f"{float(distance_value):g}"
         )
-        interpretation_grid.addWidget(self.travel_km_outbound_edit, 1, 1)
+        interpretation_grid.addWidget(self.travel_km_outbound_edit, 2, 1)
         self.travel_km_return_edit = self.travel_km_outbound_edit
         self.interpretation_hint_label = QLabel(
             "Distance is recorded per service city and reused automatically for future interpretation rows."
         )
         self.interpretation_hint_label.setWordWrap(True)
-        interpretation_grid.addWidget(self.interpretation_hint_label, 2, 0, 1, 2)
+        interpretation_grid.addWidget(self.interpretation_hint_label, 3, 0, 1, 2)
         interpretation_grid.setColumnStretch(1, 1)
         self.interpretation_group = interpretation_group
         scroll_root.addWidget(interpretation_group)
@@ -2345,6 +2707,7 @@ class QtSaveToJobLogDialog(QDialog):
         self.service_city_combo.currentTextChanged.connect(self._on_service_fields_changed)
         self.translation_date_edit.textChanged.connect(self._on_primary_date_changed)
         self.service_same_check.toggled.connect(self._on_service_same_toggled)
+        self.include_transport_sentence_check.toggled.connect(self._on_interpretation_transport_sentence_toggled)
         self.autofill_header_btn.clicked.connect(self._autofill_from_pdf_header)
         self.autofill_photo_btn.clicked.connect(self._autofill_from_photo)
         self.travel_km_outbound_edit.textEdited.connect(self._on_interpretation_distance_edited)
@@ -2466,7 +2829,31 @@ class QtSaveToJobLogDialog(QDialog):
         self._refresh_service_mirror_state()
         if is_interpretation:
             self.service_date_edit.setText(self.translation_date_edit.text().strip())
+            self._refresh_interpretation_transport_sentence_state()
         self._apply_interpretation_distance_defaults(prompt_if_missing=False)
+
+    def _interpretation_transport_sentence_enabled(self) -> bool:
+        checkbox = getattr(self, "include_transport_sentence_check", None)
+        if checkbox is None:
+            return True
+        return checkbox.isChecked()
+
+    def _refresh_interpretation_transport_sentence_state(self) -> None:
+        enabled = self._interpretation_transport_sentence_enabled()
+        distance_label = getattr(self, "distance_label", None)
+        distance_edit = getattr(self, "travel_km_outbound_edit", None)
+        hint_label = getattr(self, "interpretation_hint_label", None)
+        if distance_label is not None:
+            distance_label.setEnabled(enabled)
+        if distance_edit is not None:
+            distance_edit.setEnabled(enabled)
+        if hint_label is not None:
+            hint_label.setEnabled(enabled)
+
+    def _on_interpretation_transport_sentence_toggled(self, checked: bool) -> None:
+        self._refresh_interpretation_transport_sentence_state()
+        if checked:
+            self._apply_interpretation_distance_defaults(prompt_if_missing=False)
 
     def _trigger_save_shortcut(self) -> None:
         popup = QApplication.activePopupWidget()
@@ -2495,7 +2882,17 @@ class QtSaveToJobLogDialog(QDialog):
         case_city = self.case_city_combo.currentText().strip()
         profile = _current_primary_profile()
         if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
-            one_way_distance = self._parse_optional_float(self.travel_km_outbound_edit.text(), "KM (one way)") or 0.0
+            include_transport_sentence = self.include_transport_sentence_check.isChecked()
+            one_way_distance = 0.0
+            if include_transport_sentence:
+                one_way_distance = self._parse_optional_float(self.travel_km_outbound_edit.text(), "KM (one way)") or 0.0
+            else:
+                try:
+                    current_distance = self._parse_optional_float(self.travel_km_outbound_edit.text(), "KM (one way)")
+                except ValueError:
+                    current_distance = None
+                if current_distance is not None:
+                    one_way_distance = current_distance
             return build_interpretation_honorarios_draft(
                 case_number=case_number,
                 case_entity=case_entity,
@@ -2504,6 +2901,7 @@ class QtSaveToJobLogDialog(QDialog):
                 service_entity=self.service_entity_combo.currentText().strip(),
                 service_city=self.service_city_combo.currentText().strip(),
                 use_service_location_in_honorarios=self.use_service_location_check.isChecked(),
+                include_transport_sentence_in_honorarios=include_transport_sentence,
                 travel_km_outbound=one_way_distance,
                 travel_km_return=one_way_distance,
                 recipient_block=default_interpretation_recipient_block(case_entity, case_city),
@@ -2533,9 +2931,21 @@ class QtSaveToJobLogDialog(QDialog):
                     return resolved
         return None
 
-    def _offer_gmail_draft_for_honorarios(self, honorarios_docx: Path, profile: UserProfile) -> None:
+    def _offer_gmail_draft_for_honorarios(
+        self,
+        honorarios_docx: Path,
+        honorarios_pdf: Path | None,
+        profile: UserProfile,
+    ) -> None:
         court_email = self.court_email_combo.currentText().strip()
         if not court_email:
+            return
+        if honorarios_pdf is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                "The honorários PDF is unavailable for this export. Gmail draft creation requires the PDF.",
+            )
             return
         prereqs = assess_gmail_draft_prereqs(
             configured_gog_path=str(self._gui_settings.get("gmail_gog_path", "") or ""),
@@ -2563,7 +2973,7 @@ class QtSaveToJobLogDialog(QDialog):
         try:
             validate_translated_docx_artifacts_for_gmail_draft(
                 translated_docxs=(translation_docx,),
-                honorarios_docx=honorarios_docx,
+                honorarios_pdf=honorarios_pdf,
             )
             request = build_honorarios_gmail_request(
                 gog_path=prereqs.gog_path,
@@ -2571,7 +2981,83 @@ class QtSaveToJobLogDialog(QDialog):
                 to_email=court_email,
                 case_number=self.case_number_edit.text().strip(),
                 translation_docx=translation_docx,
-                honorarios_docx=honorarios_docx,
+                honorarios_pdf=honorarios_pdf,
+                profile=profile,
+            )
+        except ValueError as exc:
+            QMessageBox.critical(self, "Gmail draft", str(exc))
+            return
+        result = create_gmail_draft_via_gog(request)
+        if not result.ok:
+            details = result.stderr or result.stdout or result.message
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Failed to create Gmail draft.\n\n"
+                f"{details}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        open_gmail = QMessageBox.question(
+            self,
+            "Gmail draft",
+            "Gmail draft created successfully. Abrir Gmail?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if open_gmail == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
+
+    def _offer_gmail_draft_for_interpretation_honorarios(
+        self,
+        honorarios_pdf: Path | None,
+        profile: UserProfile,
+    ) -> None:
+        court_email = self.court_email_combo.currentText().strip()
+        if not court_email:
+            QMessageBox.information(
+                self,
+                "Gmail draft",
+                "Court Email is missing for this interpretation entry. The Gmail draft was not created.",
+            )
+            return
+        if honorarios_pdf is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                "The honorários PDF is unavailable for this export. Gmail draft creation requires the PDF.",
+            )
+            return
+        prereqs = assess_gmail_draft_prereqs(
+            configured_gog_path=str(self._gui_settings.get("gmail_gog_path", "") or ""),
+            configured_account_email=str(self._gui_settings.get("gmail_account_email", "") or ""),
+        )
+        if not prereqs.ready or prereqs.gog_path is None or prereqs.account_email is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                f"{prereqs.message}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Gmail draft",
+            f"Criar rascunho no Gmail para {court_email}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            request = build_manual_interpretation_gmail_request(
+                gog_path=prereqs.gog_path,
+                account_email=prereqs.account_email,
+                to_email=court_email,
+                case_number=self.case_number_edit.text().strip(),
+                honorarios_pdf=honorarios_pdf,
                 profile=profile,
             )
         except ValueError as exc:
@@ -2612,8 +3098,19 @@ class QtSaveToJobLogDialog(QDialog):
             generated_draft = getattr(dialog, "generated_draft", None)
             profile = generated_draft.profile if generated_draft is not None else _current_primary_profile()
             final_draft = generated_draft or draft
+            if final_draft.kind == HonorariosKind.INTERPRETATION:
+                self.include_transport_sentence_check.setChecked(
+                    bool(final_draft.include_transport_sentence_in_honorarios)
+                )
+            saved_pdf_path = getattr(dialog, "saved_pdf_path", None)
+            pdf_unavailable_explained = bool(getattr(dialog, "pdf_unavailable_explained", False))
             if final_draft.kind == HonorariosKind.TRANSLATION:
-                self._offer_gmail_draft_for_honorarios(dialog.saved_path, profile)
+                if saved_pdf_path is not None or not pdf_unavailable_explained:
+                    self._offer_gmail_draft_for_honorarios(dialog.saved_path, saved_pdf_path, profile)
+            elif final_draft.kind == HonorariosKind.INTERPRETATION and (
+                saved_pdf_path is not None or not pdf_unavailable_explained
+            ):
+                self._offer_gmail_draft_for_interpretation_honorarios(saved_pdf_path, profile)
 
     def _apply_header_suggestion(self, suggestion: MetadataSuggestion) -> None:
         if suggestion.case_entity:
@@ -2717,6 +3214,8 @@ class QtSaveToJobLogDialog(QDialog):
         self._distance_value_is_manual = True
 
     def _apply_interpretation_distance_defaults(self, *, prompt_if_missing: bool) -> None:
+        if not self._interpretation_transport_sentence_enabled():
+            return
         city = self._effective_interpretation_distance_city()
         if city == "":
             self._set_interpretation_distance_text(None, city_key="", manual=False)
@@ -2744,6 +3243,8 @@ class QtSaveToJobLogDialog(QDialog):
 
     def _prompt_interpretation_distance_for_imported_city(self) -> None:
         if not _is_interpretation_job_type(self.job_type_combo.currentText()):
+            return
+        if not self._interpretation_transport_sentence_enabled():
             return
         profiles, primary_profile_id = load_profile_settings()
         profile = primary_profile(profiles, primary_profile_id)
@@ -2779,6 +3280,8 @@ class QtSaveToJobLogDialog(QDialog):
 
     def _persist_interpretation_distance_for_current_city(self) -> None:
         if not _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            return
+        if not self._interpretation_transport_sentence_enabled():
             return
         city = self._effective_interpretation_distance_city()
         distance_text = self.travel_km_outbound_edit.text().strip()
@@ -2898,11 +3401,18 @@ class QtSaveToJobLogDialog(QDialog):
         }
 
     def _normalized_payload(self) -> dict[str, Any]:
+        include_transport_sentence_check = getattr(self, "include_transport_sentence_check", None)
+        include_transport_sentence = (
+            include_transport_sentence_check.isChecked()
+            if include_transport_sentence_check is not None
+            else bool(getattr(self._seed, "include_transport_sentence_in_honorarios", True))
+        )
         return _normalize_joblog_payload(
             seed=self._seed,
             raw_values=self._collect_raw_values(),
             service_same_checked=self.service_same_check.isChecked(),
             use_service_location_in_honorarios_checked=self.use_service_location_check.isChecked(),
+            include_transport_sentence_in_honorarios_checked=include_transport_sentence,
         )
 
     def _open_translation_docx(self) -> None:
@@ -3009,7 +3519,7 @@ class QtJobLogWindow(QDialog):
         self.honorarios_btn = QPushButton("Gerar Requerimento de Honorários...")
         self.honorarios_btn.setEnabled(False)
         self.add_menu = QMenu(self.add_btn)
-        self.add_blank_interpretation_action = self.add_menu.addAction("Blank interpretation entry")
+        self.add_blank_interpretation_action = self.add_menu.addAction("Blank/manual interpretation entry")
         self.add_notification_interpretation_action = self.add_menu.addAction("From notification PDF...")
         self.add_photo_interpretation_action = self.add_menu.addAction("From photo/screenshot...")
         self.add_btn.setMenu(self.add_menu)
@@ -3298,8 +3808,13 @@ class QtJobLogWindow(QDialog):
                 seed=build_seed_from_joblog_row(self._inline_original_row),
                 raw_values=self._collect_inline_raw_values(),
                 service_same_checked=False,
-                use_service_location_in_honorarios_checked=bool(
-                    int(self._inline_original_row.get("use_service_location_in_honorarios", 0) or 0)
+                use_service_location_in_honorarios_checked=_coerce_joblog_bool(
+                    self._inline_original_row.get("use_service_location_in_honorarios"),
+                    default=False,
+                ),
+                include_transport_sentence_in_honorarios_checked=_coerce_joblog_bool(
+                    self._inline_original_row.get("include_transport_sentence_in_honorarios"),
+                    default=True,
                 ),
             )
         except ValueError as exc:
@@ -3588,6 +4103,7 @@ class QtJobLogWindow(QDialog):
         self,
         row: dict[str, object],
         honorarios_docx: Path,
+        honorarios_pdf: Path | None,
         profile: UserProfile,
     ) -> None:
         court_email = str(row.get("court_email", "") or "").strip()
@@ -3596,6 +4112,13 @@ class QtJobLogWindow(QDialog):
                 self,
                 "Gmail draft",
                 "Court Email is missing for this Job Log entry. The Gmail draft was not created.",
+            )
+            return
+        if honorarios_pdf is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                "The honorários PDF is unavailable for this export. Gmail draft creation requires the PDF.",
             )
             return
         prereqs = assess_gmail_draft_prereqs(
@@ -3635,7 +4158,7 @@ class QtJobLogWindow(QDialog):
         try:
             validate_translated_docx_artifacts_for_gmail_draft(
                 translated_docxs=(translation_docx,),
-                honorarios_docx=honorarios_docx,
+                honorarios_pdf=honorarios_pdf,
             )
             request = build_honorarios_gmail_request(
                 gog_path=prereqs.gog_path,
@@ -3643,7 +4166,84 @@ class QtJobLogWindow(QDialog):
                 to_email=court_email,
                 case_number=str(row.get("case_number", "") or "").strip(),
                 translation_docx=translation_docx,
-                honorarios_docx=honorarios_docx,
+                honorarios_pdf=honorarios_pdf,
+                profile=profile,
+            )
+        except ValueError as exc:
+            QMessageBox.critical(self, "Gmail draft", str(exc))
+            return
+        result = create_gmail_draft_via_gog(request)
+        if not result.ok:
+            details = result.stderr or result.stdout or result.message
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Failed to create Gmail draft.\n\n"
+                f"{details}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        open_gmail = QMessageBox.question(
+            self,
+            "Gmail draft",
+            "Gmail draft created successfully. Abrir Gmail?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if open_gmail == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
+
+    def _offer_gmail_draft_for_interpretation_honorarios(
+        self,
+        row: dict[str, object],
+        honorarios_pdf: Path | None,
+        profile: UserProfile,
+    ) -> None:
+        court_email = str(row.get("court_email", "") or "").strip()
+        if not court_email:
+            QMessageBox.information(
+                self,
+                "Gmail draft",
+                "Court Email is missing for this Job Log entry. The Gmail draft was not created.",
+            )
+            return
+        if honorarios_pdf is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                "The honorários PDF is unavailable for this export. Gmail draft creation requires the PDF.",
+            )
+            return
+        prereqs = assess_gmail_draft_prereqs(
+            configured_gog_path=str(self._gui_settings.get("gmail_gog_path", "") or ""),
+            configured_account_email=str(self._gui_settings.get("gmail_account_email", "") or ""),
+        )
+        if not prereqs.ready or prereqs.gog_path is None or prereqs.account_email is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                f"{prereqs.message}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Gmail draft",
+            f"Criar rascunho no Gmail para {court_email}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            request = build_manual_interpretation_gmail_request(
+                gog_path=prereqs.gog_path,
+                account_email=prereqs.account_email,
+                to_email=court_email,
+                case_number=str(row.get("case_number", "") or "").strip(),
+                honorarios_pdf=honorarios_pdf,
                 profile=profile,
             )
         except ValueError as exc:
@@ -3770,7 +4370,14 @@ class QtJobLogWindow(QDialog):
                 service_date=str(row.get("service_date", "") or "").strip(),
                 service_entity=str(row.get("service_entity", "") or "").strip(),
                 service_city=str(row.get("service_city", "") or "").strip(),
-                use_service_location_in_honorarios=bool(int(row.get("use_service_location_in_honorarios", 0) or 0)),
+                use_service_location_in_honorarios=_coerce_joblog_bool(
+                    row.get("use_service_location_in_honorarios"),
+                    default=False,
+                ),
+                include_transport_sentence_in_honorarios=_coerce_joblog_bool(
+                    row.get("include_transport_sentence_in_honorarios"),
+                    default=True,
+                ),
                 travel_km_outbound=_coerce_joblog_float(row.get("travel_km_outbound")),
                 travel_km_return=_coerce_joblog_float(row.get("travel_km_return")),
                 recipient_block=default_interpretation_recipient_block(
@@ -3800,8 +4407,42 @@ class QtJobLogWindow(QDialog):
             generated_draft = getattr(dialog, "generated_draft", None)
             selected_profile = generated_draft.profile if generated_draft is not None else profile
             final_draft = generated_draft or draft
+            saved_pdf_path = getattr(dialog, "saved_pdf_path", None)
+            pdf_unavailable_explained = bool(getattr(dialog, "pdf_unavailable_explained", False))
             if final_draft.kind == HonorariosKind.TRANSLATION:
-                self._offer_gmail_draft_for_honorarios(row, dialog.saved_path, selected_profile)
+                if saved_pdf_path is not None or not pdf_unavailable_explained:
+                    self._offer_gmail_draft_for_honorarios(
+                        row,
+                        dialog.saved_path,
+                        saved_pdf_path,
+                        selected_profile,
+                    )
+            elif final_draft.kind == HonorariosKind.INTERPRETATION:
+                include_transport_sentence = bool(final_draft.include_transport_sentence_in_honorarios)
+                current_include_transport_sentence = _coerce_joblog_bool(
+                    row.get("include_transport_sentence_in_honorarios"),
+                    default=True,
+                )
+                if include_transport_sentence != current_include_transport_sentence:
+                    row_id = row.get("id")
+                    if row_id is not None:
+                        with closing(open_job_log(self._db_path)) as conn:
+                            update_job_run(
+                                conn,
+                                row_id=int(row_id),
+                                values={
+                                    "include_transport_sentence_in_honorarios": 1
+                                    if include_transport_sentence
+                                    else 0,
+                                },
+                            )
+                    row["include_transport_sentence_in_honorarios"] = 1 if include_transport_sentence else 0
+                if saved_pdf_path is not None or not pdf_unavailable_explained:
+                    self._offer_gmail_draft_for_interpretation_honorarios(
+                        row,
+                        saved_pdf_path,
+                        selected_profile,
+                    )
 
     def _open_columns_dialog(self) -> None:
         dialog = QDialog(self)

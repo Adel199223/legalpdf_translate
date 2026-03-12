@@ -172,7 +172,9 @@ class GmailBatchSession:
     consistency_signature: GmailBatchConsistencySignature | None = None
     honorarios_requested: bool = False
     requested_honorarios_path: Path | None = None
+    requested_honorarios_pdf_path: Path | None = None
     actual_honorarios_path: Path | None = None
+    actual_honorarios_pdf_path: Path | None = None
     honorarios_auto_renamed: bool = False
     draft_preflight_result: str = ""
     draft_created: bool = False
@@ -202,8 +204,15 @@ class GmailInterpretationSession:
     effective_output_dir: Path | None = None
     session_id: str = field(default_factory=lambda: f"gmail_interpretation_{uuid4().hex[:12]}")
     started_at: str = field(default_factory=_utc_now)
+    status: str = "prepared"
+    halt_reason: str = ""
+    session_report_dir: Path | None = None
+    session_report_path: Path | None = None
+    honorarios_requested: bool = False
     requested_honorarios_path: Path | None = None
+    requested_honorarios_pdf_path: Path | None = None
     actual_honorarios_path: Path | None = None
+    actual_honorarios_pdf_path: Path | None = None
     honorarios_auto_renamed: bool = False
     draft_created: bool = False
     draft_failure_reason: str = ""
@@ -246,6 +255,16 @@ def prepare_gmail_batch_session_report_path(
     return report_dir, report_dir / "gmail_batch_session.json"
 
 
+def prepare_gmail_interpretation_session_report_path(
+    *,
+    output_dir: Path,
+    session_id: str,
+) -> tuple[Path, Path]:
+    report_dir = output_dir.expanduser().resolve() / "_gmail_interpretation_sessions" / session_id
+    report_dir.mkdir(parents=True, exist_ok=True)
+    return report_dir, report_dir / "gmail_interpretation_session.json"
+
+
 def build_gmail_batch_session_payload(session: GmailBatchSession) -> dict[str, Any]:
     run_items = [
         {
@@ -264,9 +283,19 @@ def build_gmail_batch_session_payload(session: GmailBatchSession) -> dict[str, A
             if isinstance(session.requested_honorarios_path, Path)
             else ""
         ),
+        "requested_pdf_save_path": (
+            str(session.requested_honorarios_pdf_path.expanduser().resolve())
+            if isinstance(session.requested_honorarios_pdf_path, Path)
+            else ""
+        ),
         "actual_saved_path": (
             str(session.actual_honorarios_path.expanduser().resolve())
             if isinstance(session.actual_honorarios_path, Path)
+            else ""
+        ),
+        "actual_pdf_saved_path": (
+            str(session.actual_honorarios_pdf_path.expanduser().resolve())
+            if isinstance(session.actual_honorarios_pdf_path, Path)
             else ""
         ),
         "auto_renamed": bool(session.honorarios_auto_renamed),
@@ -308,11 +337,80 @@ def build_gmail_batch_session_payload(session: GmailBatchSession) -> dict[str, A
     }
 
 
+def build_gmail_interpretation_session_payload(session: GmailInterpretationSession) -> dict[str, Any]:
+    finalization: dict[str, Any] = {
+        "honorarios_requested": bool(session.honorarios_requested),
+        "requested_save_path": (
+            str(session.requested_honorarios_path.expanduser().resolve())
+            if isinstance(session.requested_honorarios_path, Path)
+            else ""
+        ),
+        "requested_pdf_save_path": (
+            str(session.requested_honorarios_pdf_path.expanduser().resolve())
+            if isinstance(session.requested_honorarios_pdf_path, Path)
+            else ""
+        ),
+        "actual_saved_path": (
+            str(session.actual_honorarios_path.expanduser().resolve())
+            if isinstance(session.actual_honorarios_path, Path)
+            else ""
+        ),
+        "actual_pdf_saved_path": (
+            str(session.actual_honorarios_pdf_path.expanduser().resolve())
+            if isinstance(session.actual_honorarios_pdf_path, Path)
+            else ""
+        ),
+        "auto_renamed": bool(session.honorarios_auto_renamed),
+        "draft_created": bool(session.draft_created),
+        "draft_failure_reason": session.draft_failure_reason.strip(),
+        "final_attachment_basenames": list(session.final_attachment_basenames),
+    }
+    return {
+        "session_id": session.session_id,
+        "started_at": session.started_at,
+        "status": session.status,
+        "halt_reason": session.halt_reason,
+        "effective_output_dir": (
+            str(session.effective_output_dir.expanduser().resolve())
+            if isinstance(session.effective_output_dir, Path)
+            else ""
+        ),
+        "intake_context": {
+            "message_id": session.intake_context.message_id,
+            "thread_id": session.intake_context.thread_id,
+            "subject": session.intake_context.subject,
+            "account_email": session.intake_context.account_email or "",
+            "selected_attachment_filename": session.downloaded_attachment.candidate.filename,
+            "selected_attachment": {
+                "filename": session.downloaded_attachment.candidate.filename,
+                "start_page": int(session.downloaded_attachment.start_page),
+                "page_count": int(session.downloaded_attachment.page_count),
+            },
+        },
+        "downloaded_notice": {
+            "filename": session.downloaded_attachment.candidate.filename,
+            "saved_path": str(session.downloaded_attachment.saved_path.expanduser().resolve()),
+        },
+        "finalization": finalization,
+    }
+
+
 def write_gmail_batch_session_report(session: GmailBatchSession) -> Path | None:
     report_path = session.session_report_path
     if report_path is None:
         return None
     payload = build_gmail_batch_session_payload(session)
+    tmp_path = report_path.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(report_path)
+    return report_path
+
+
+def write_gmail_interpretation_session_report(session: GmailInterpretationSession) -> Path | None:
+    report_path = session.session_report_path
+    if report_path is None:
+        return None
+    payload = build_gmail_interpretation_session_payload(session)
     tmp_path = report_path.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp_path.replace(report_path)
@@ -722,7 +820,12 @@ def prepare_gmail_interpretation_session(
         temp_dir.cleanup()
         raise
 
-    return GmailInterpretationSession(
+    session_id = f"gmail_interpretation_{uuid4().hex[:12]}"
+    report_dir, report_path = prepare_gmail_interpretation_session_report_path(
+        output_dir=effective_output_dir,
+        session_id=session_id,
+    )
+    session = GmailInterpretationSession(
         intake_context=intake_context,
         message=message,
         gog_path=gog_path.expanduser().resolve(),
@@ -730,8 +833,13 @@ def prepare_gmail_interpretation_session(
         downloaded_attachment=downloaded_attachment,
         download_dir=download_dir,
         effective_output_dir=effective_output_dir.expanduser().resolve(),
+        session_id=session_id,
+        session_report_dir=report_dir,
+        session_report_path=report_path,
         _temp_dir=temp_dir,
     )
+    write_gmail_interpretation_session_report(session)
+    return session
 
 
 def _resolve_account_email(

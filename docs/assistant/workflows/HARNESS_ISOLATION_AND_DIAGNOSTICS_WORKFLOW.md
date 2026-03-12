@@ -56,6 +56,7 @@ dart run tooling/validate_agent_docs.dart
 - Live user settings paths, roaming profile files, auth state, and caches must be explicit opt-in for tests, never inherited silently.
 - Tests should use non-live or ephemeral ports by default instead of the user-facing runtime port.
 - Listeners, windows, background workers, and service processes must have explicit teardown even when a test fails.
+- Focus-sensitive desktop tests must explicitly activate the target window/control and close leaked popups or modal dialogs between cases instead of relying on inherited focus state.
 
 ## Listener Ownership and Runtime Conflict Rules
 - If a feature depends on a localhost listener, verify the expected port is free or owned by the expected process before treating the integration as healthy.
@@ -85,6 +86,8 @@ dart run tooling/validate_agent_docs.dart
 ## Targeted Tests
 - test isolation from live settings, auth, caches, and default ports
 - listener ownership and bind-conflict handling
+- focus-sensitive dialog shortcut paths with explicit activation/cleanup
+- long-running host automation staying off the GUI thread when the feature is user-facing
 - per-run artifact integrity
 - finalization/export/draft integrity
 - diagnostics rendering and report linkage
@@ -104,6 +107,10 @@ dart run tooling/validate_agent_docs.dart
 - Historical polluted artifacts are discovered:
   - fail closed and rerun to create clean artifacts
   - do not silently substitute partial or guessed outputs
+- Host-bound desktop automation freezes the visible UI or dumps raw technical commands into the main warning text:
+  - move the long-running step off the GUI thread
+  - keep the main warning concise and place raw diagnostics in expandable details only
+  - preserve any usable local artifact and offer one calm recovery path instead of stacking follow-up warnings
 
 ## Handoff Checklist
 1. State whether the test/runtime used isolated state or explicit live-state opt-in.

@@ -325,3 +325,47 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-09_cleanup_continuity_hardening.md`
   - Branch: `main`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+
+### desktop-qt-honorarios-export-reliability
+- Title: Honorários PDF export and focus-sensitive Qt dialogs felt unstable because host-bound work blocked the UI and modal state leaked across paths
+- First seen timestamp: `2026-03-12T00:00:00Z`
+- Last seen timestamp: `2026-03-12T18:05:00Z`
+- Repeat count: `2`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - the visible LegalPDF window could show `No responde` while Word PDF export tried to launch or timed out
+  - PDF failure warnings dumped raw PowerShell/COM text inline and could cascade into an extra Gmail missing-PDF warning
+  - focus-sensitive Qt tests around Return/Delete shortcuts could fail intermittently because leaked dialogs or stale focus changed the active target
+- Likely root cause:
+  - host-bound Word PDF export originally ran on the GUI thread and failure handling spanned too many modal layers
+  - the Qt harness did not yet enforce deterministic popup cleanup, activation, and shortcut targeting for focus-sensitive dialog tests
+- Attempted fix history:
+  - `2026-03-12T00:00:00Z` — added synchronous honorários DOCX-to-PDF export through Word automation; outcome: insufficient because the UI could freeze and the failure diagnostics were too noisy
+- Accepted fix:
+  - `2026-03-12T18:05:00Z` — moved honorários PDF export to a worker thread, replaced raw command dumps with concise warnings plus expandable details, added one retry/select-existing-PDF/local-only recovery flow, reduced duplicate warning cascades, and hardened Qt popup cleanup plus explicit activation for focus-sensitive dialog tests
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+  - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/DOCS_REFRESH_NOTES.md`
+- Bootstrap relevance: `possible`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - non-blocking host automation for user-facing desktop flows
+    - concise user-facing failure text with expandable diagnostics
+    - single recovery flow for partial-success exports
+    - explicit activation and leaked-popup cleanup for focus-sensitive Qt tests
+- Evidence refs:
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-12_desktop_stability_honorarios_qt.md`
+  - File: `src/legalpdf_translate/qt_gui/dialogs.py`
+  - File: `src/legalpdf_translate/qt_gui/worker.py`
+  - File: `src/legalpdf_translate/word_automation.py`
+  - File: `tests/conftest.py`
+  - File: `tests/test_qt_app_state.py`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
