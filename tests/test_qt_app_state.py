@@ -1336,7 +1336,6 @@ def test_advanced_settings_hover_and_open_state_stays_local_to_active_combo() ->
         app.processEvents()
 
         QApplication.sendEvent(window.effort_policy_combo, QEvent(QEvent.Type.Enter))
-        app.processEvents()
         assert bool(window.effort_policy_combo.property("hovered")) is True
         assert bool(window.images_combo.property("hovered")) is False
 
@@ -4939,6 +4938,38 @@ def test_workspace_controller_apply_shared_settings_updates_runtime_theme(monkey
         assert refreshed_payloads == [{"ui_theme": "dark_simple"}]
     finally:
         controller._windows.clear()
+        if owns_app:
+            app.quit()
+
+
+def test_main_window_reapplies_shell_effect_colors_on_theme_reload() -> None:
+    from legalpdf_translate.qt_gui.styles import theme_effect_colors
+
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = QtMainWindow()
+    try:
+        futuristic = theme_effect_colors("dark_futuristic")
+        simple = theme_effect_colors("dark_simple")
+
+        assert window.title_label.graphicsEffect().color().getRgb() == futuristic["title_glow"].getRgb()
+        assert window.footer_card.graphicsEffect().color().getRgb() == futuristic["footer_glow"].getRgb()
+
+        window.reload_shared_settings({"ui_theme": "dark_simple"})
+        assert window._applied_effect_theme == "dark_simple"
+        assert window.title_label.graphicsEffect().color().getRgb() == simple["title_glow"].getRgb()
+        assert window.footer_card.graphicsEffect().color().getRgb() == simple["footer_glow"].getRgb()
+
+        window.reload_shared_settings({"ui_theme": "dark_futuristic"})
+        assert window._applied_effect_theme == "dark_futuristic"
+        assert window.title_label.graphicsEffect().color().getRgb() == futuristic["title_glow"].getRgb()
+        assert window.footer_card.graphicsEffect().color().getRgb() == futuristic["footer_glow"].getRgb()
+    finally:
+        window.close()
+        window.deleteLater()
         if owns_app:
             app.quit()
 

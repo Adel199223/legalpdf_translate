@@ -18,6 +18,10 @@ from PySide6.QtWidgets import QApplication
 import qt_render_review as render_tool
 
 
+def _brightness(rgb: list[int]) -> int:
+    return int(rgb[0]) + int(rgb[1]) + int(rgb[2])
+
+
 def test_resolve_profiles_rejects_unknown_name() -> None:
     try:
         render_tool.resolve_profiles(["wide", "unknown"])
@@ -45,6 +49,9 @@ def test_apply_reference_sample_sets_preview_values() -> None:
         assert "Translating text blocks" in window.status_label.text()
         assert window.metric_pages_value_label.text() == "12 / 25"
         assert window.metric_images_value_label.text() == "3 / 3"
+        assert window.translate_btn.isEnabled() is True
+        assert window.cancel_btn.isEnabled() is True
+        assert window.more_btn.isEnabled() is True
     finally:
         window.close()
         window.deleteLater()
@@ -68,6 +75,17 @@ def test_render_profiles_writes_png_and_metadata(tmp_path: Path) -> None:
     assert result["dashboard_frame_y"] > 0
     assert result["setup_panel_width"] > result["progress_panel_width"]
     assert result["footer_card_width"] < result["dashboard_frame_width"]
+    assert result["menu_bar_mid_rgb"][0] > result["menu_bar_mid_rgb"][2]
+    assert _brightness(result["left_glow_rgb"]) > _brightness(result["left_glow_control_rgb"])
+    assert _brightness(result["dashboard_border_rgb"]) > _brightness(result["dashboard_fill_rgb"])
+    assert _brightness(result["footer_halo_rgb"]) > _brightness(result["footer_fill_rgb"])
+    assert result["primary_button_rgb"][1] > result["primary_button_rgb"][0]
+    assert result["primary_button_rgb"][2] > result["primary_button_rgb"][0]
+    assert result["danger_button_rgb"][0] > result["danger_button_rgb"][1]
+    assert result["danger_button_rgb"][0] > result["danger_button_rgb"][2]
+    assert _brightness(result["sidebar_active_rgb"]) > _brightness(result["sidebar_inactive_rgb"])
+    assert result["sidebar_active_rgb"][1] > result["sidebar_inactive_rgb"][1]
+    assert result["sidebar_active_rgb"][2] > result["sidebar_inactive_rgb"][2]
 
 
 def test_render_profiles_ignore_live_screen_geometry(tmp_path: Path) -> None:

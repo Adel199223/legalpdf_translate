@@ -19,7 +19,7 @@ if str(SRC_ROOT) not in sys.path:
 if os.name != "nt" and "DISPLAY" not in os.environ:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QBuffer, QIODevice, QRect
+from PySide6.QtCore import QBuffer, QIODevice, QPoint, QRect
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPen
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -58,14 +58,14 @@ def _ensure_app() -> tuple[QApplication, bool]:
     owns_app = app is None
     if app is None:
         app = QApplication(sys.argv[:1])
-        app.setApplicationName("LegalPDF Translate")
-        app.setOrganizationName("LegalPDFTranslate")
-        app.setFont(QFont("Segoe UI", 12))
-        app.setStyle("Fusion")
-        app.setStyleSheet(build_stylesheet())
-        icon_path = resource_path("resources/icons/LegalPDFTranslate.png")
-        app_icon = QIcon(str(icon_path))
-        app.setWindowIcon(app_icon)
+    app.setApplicationName("LegalPDF Translate")
+    app.setOrganizationName("LegalPDFTranslate")
+    app.setFont(QFont("Segoe UI", 12))
+    app.setStyle("Fusion")
+    app.setStyleSheet(build_stylesheet())
+    icon_path = resource_path("resources/icons/LegalPDFTranslate.png")
+    app_icon = QIcon(str(icon_path))
+    app.setWindowIcon(app_icon)
     return app, owns_app
 
 
@@ -130,6 +130,52 @@ def apply_reference_sample(window: QtMainWindow) -> None:
     window._apply_dashboard_snapshot()
     window.header_status_label.setText(PREVIEW_TEXT["idle"])
     window.queue_status_label.setText("Queue: idle")
+    window.translate_btn.setEnabled(True)
+    window.cancel_btn.setEnabled(True)
+    window.more_btn.setEnabled(True)
+
+
+def _rgb_triplet(color: QColor) -> list[int]:
+    return [int(color.red()), int(color.green()), int(color.blue())]
+
+
+def _sample_rgb(image: QImage, x: int, y: int) -> list[int]:
+    clamped_x = max(0, min(image.width() - 1, int(x)))
+    clamped_y = max(0, min(image.height() - 1, int(y)))
+    return _rgb_triplet(image.pixelColor(clamped_x, clamped_y))
+
+
+def _widget_rect_in_window(window: QtMainWindow, widget) -> QRect:
+    top_left = widget.mapTo(window, QPoint(0, 0))
+    return QRect(top_left, widget.size())
+
+
+def _sample_dominant_rgb(image: QImage, rect: QRect, *, mode: str) -> list[int]:
+    left = max(0, rect.left())
+    top = max(0, rect.top())
+    right = min(image.width() - 1, rect.right())
+    bottom = min(image.height() - 1, rect.bottom())
+    if right < left or bottom < top:
+        return _sample_rgb(image, rect.center().x(), rect.center().y())
+
+    best_score: tuple[int, int] | None = None
+    best_color = image.pixelColor(left, top)
+    for y in range(top, bottom + 1):
+        for x in range(left, right + 1):
+            color = image.pixelColor(x, y)
+            red = int(color.red())
+            green = int(color.green())
+            blue = int(color.blue())
+            if mode == "warm":
+                score = (red - max(green, blue), red + green + blue)
+            elif mode == "teal":
+                score = (min(green, blue) - red, green + blue)
+            else:
+                score = (red + green + blue, min(green, blue) - red)
+            if best_score is None or score > best_score:
+                best_score = score
+                best_color = color
+    return _rgb_triplet(best_color)
 
 
 def render_gmail_review_dialog_sample(*, outdir: Path) -> dict[str, object]:
@@ -323,7 +369,15 @@ def render_profiles(
 
                     image_path = outdir / f"{profile_name}.png"
                     meta_path = outdir / f"{profile_name}.json"
-                    window.grab().save(str(image_path))
+                    grabbed = window.grab()
+                    grabbed.save(str(image_path))
+                    image = grabbed.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+                    dashboard_rect = _widget_rect_in_window(window, window.dashboard_frame)
+                    footer_rect = _widget_rect_in_window(window, window.footer_card)
+                    translate_rect = _widget_rect_in_window(window, window.translate_btn)
+                    cancel_rect = _widget_rect_in_window(window, window.cancel_btn)
+                    dashboard_nav_rect = _widget_rect_in_window(window, window.dashboard_nav_btn)
+                    settings_nav_rect = _widget_rect_in_window(window, window.settings_nav_btn)
                     metadata = {
                         "profile": profile_name,
                         "width": width,
@@ -337,6 +391,69 @@ def render_profiles(
                         "setup_panel_width": int(window.setup_panel.width()),
                         "progress_panel_width": int(window.progress_panel.width()),
                         "footer_card_width": int(window.footer_card.width()),
+                        "menu_bar_mid_rgb": _sample_rgb(image, width // 2, 24),
+                        "left_glow_rgb": _sample_rgb(image, int(width * 0.18), int(height * 0.30)),
+                        "left_glow_control_rgb": _sample_rgb(image, int(width * 0.18), int(height * 0.72)),
+                        "dashboard_border_rgb": _sample_dominant_rgb(
+                            image,
+                            QRect(
+                                dashboard_rect.x() + 36,
+                                dashboard_rect.y() - 4,
+                                max(1, dashboard_rect.width() - 72),
+                                18,
+                            ),
+                            mode="teal",
+                        ),
+                        "dashboard_fill_rgb": _sample_rgb(
+                            image,
+                            dashboard_rect.x() + (dashboard_rect.width() // 2),
+                            dashboard_rect.y() + 44,
+                        ),
+                        "footer_halo_rgb": _sample_dominant_rgb(
+                            image,
+                            QRect(
+                                footer_rect.x() + (footer_rect.width() // 5),
+                                footer_rect.y() - 26,
+                                max(1, (footer_rect.width() * 3) // 5),
+                                24,
+                            ),
+                            mode="teal",
+                        ),
+                        "footer_fill_rgb": _sample_rgb(
+                            image,
+                            footer_rect.x() + (footer_rect.width() // 2),
+                            footer_rect.y() + footer_rect.height() - 14,
+                        ),
+                        "primary_button_rgb": _sample_dominant_rgb(
+                            image,
+                            QRect(
+                                translate_rect.x() - 8,
+                                translate_rect.y() - 24,
+                                max(1, translate_rect.width() // 2),
+                                28,
+                            ),
+                            mode="teal",
+                        ),
+                        "danger_button_rgb": _sample_dominant_rgb(
+                            image,
+                            QRect(
+                                cancel_rect.x() - 8,
+                                cancel_rect.y() - 8,
+                                cancel_rect.width() + 24,
+                                28,
+                            ),
+                            mode="warm",
+                        ),
+                        "sidebar_active_rgb": _sample_rgb(
+                            image,
+                            dashboard_nav_rect.x() + 18,
+                            dashboard_nav_rect.y() + (dashboard_nav_rect.height() // 2),
+                        ),
+                        "sidebar_inactive_rgb": _sample_rgb(
+                            image,
+                            settings_nav_rect.x() + 18,
+                            settings_nav_rect.y() + (settings_nav_rect.height() // 2),
+                        ),
                         "image_path": str(image_path),
                     }
                     meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")

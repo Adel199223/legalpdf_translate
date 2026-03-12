@@ -47,6 +47,9 @@ class _PopupLabelDelegate(QStyledItemDelegate):
 class NoWheelComboBox(QComboBox):
     """Ignore wheel changes unless the popup list is intentionally open."""
 
+    _hover_owner: "NoWheelComboBox | None" = None
+    _popup_owner: "NoWheelComboBox | None" = None
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._state_mirrors: list[QWidget] = []
@@ -86,6 +89,15 @@ class NoWheelComboBox(QComboBox):
             return popup_label.strip()
         return self.itemText(index).strip()
 
+    def resetVisualState(self) -> None:
+        self._armed_popup_target_id = None
+        if NoWheelComboBox._hover_owner is self:
+            NoWheelComboBox._hover_owner = None
+        if NoWheelComboBox._popup_owner is self:
+            NoWheelComboBox._popup_owner = None
+        self._set_state_property("hovered", False)
+        self._set_state_property("popupOpen", False)
+
     def popupContentWidth(self) -> int:
         metrics = self.view().fontMetrics()
         widest = 0
@@ -105,7 +117,22 @@ class NoWheelComboBox(QComboBox):
                 widget.setProperty(name, normalized)
                 _repolish(widget)
 
+    def _set_hover_active(self, active: bool) -> None:
+        if active:
+            owner = NoWheelComboBox._hover_owner
+            if owner is not None and owner is not self:
+                owner._set_state_property("hovered", False)
+            NoWheelComboBox._hover_owner = self
+            self._set_state_property("hovered", True)
+            return
+        if NoWheelComboBox._hover_owner is self:
+            NoWheelComboBox._hover_owner = None
+        self._set_state_property("hovered", False)
+
     def showPopup(self) -> None:  # type: ignore[override]
+        owner = NoWheelComboBox._popup_owner
+        if owner is not None and owner is not self:
+            owner._set_state_property("popupOpen", False)
         super().showPopup()
         popup_width = self.popupContentWidth()
         popup_view = self.view()
@@ -113,18 +140,21 @@ class NoWheelComboBox(QComboBox):
         popup_window = popup_view.window()
         popup_window.setMinimumWidth(popup_width)
         popup_window.resize(max(popup_window.width(), popup_width), popup_window.height())
+        NoWheelComboBox._popup_owner = self
         self._set_state_property("popupOpen", True)
 
     def hidePopup(self) -> None:  # type: ignore[override]
         super().hidePopup()
+        if NoWheelComboBox._popup_owner is self:
+            NoWheelComboBox._popup_owner = None
         self._set_state_property("popupOpen", False)
 
     def enterEvent(self, event) -> None:  # type: ignore[override]
-        self._set_state_property("hovered", True)
+        self._set_hover_active(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:  # type: ignore[override]
-        self._set_state_property("hovered", False)
+        self._set_hover_active(False)
         super().leaveEvent(event)
 
     def focusInEvent(self, event) -> None:  # type: ignore[override]
@@ -139,9 +169,9 @@ class NoWheelComboBox(QComboBox):
         if watched in self._state_mirrors and event is not None:
             event_type = event.type()
             if event_type == QEvent.Type.Enter:
-                self._set_state_property("hovered", True)
+                self._set_hover_active(True)
             elif event_type == QEvent.Type.Leave:
-                self._set_state_property("hovered", False)
+                self._set_hover_active(False)
             elif event_type == QEvent.Type.MouseButtonPress and id(watched) in self._popup_click_targets:
                 if self.isEnabled() and getattr(event, "button", lambda: None)() == Qt.MouseButton.LeftButton:
                     self._armed_popup_target_id = id(watched)
