@@ -507,11 +507,17 @@ def test_dashboard_card_can_expand_wider_than_stage_two_cap() -> None:
             app.quit()
 
 
-def test_wide_dashboard_frame_matches_centered_gemini_footprint() -> None:
+def test_wide_dashboard_frame_matches_centered_gemini_footprint(monkeypatch) -> None:
     app = QApplication.instance()
     owns_app = app is None
     if app is None:
         app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        window_adaptive_module,
+        "available_screen_geometry",
+        lambda _widget: QRect(0, 0, 1800, 1000),
+    )
 
     window = QtMainWindow()
     try:
