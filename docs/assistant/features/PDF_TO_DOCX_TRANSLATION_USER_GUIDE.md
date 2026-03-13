@@ -56,8 +56,8 @@ It does not silently overwrite your saved defaults.
 
 ## Main Screen Layout
 - Left sidebar: navigation for `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, and `Profile`.
-- `Job Setup`: source PDF, target language, output folder, and `Advanced Settings`.
-- `Conversion Output`: progress bar, current task text, and page/image/error summary.
+- `Job Setup`: source PDF, target language, output folder, and `Advanced Settings` with a small info button for the extra guidance.
+- `Run Status`: progress bar, current task text, and page/image/error summary.
 - Bottom action rail: `Start Translate`, `Cancel`, and `...`.
 - `Settings > Appearance` now gives you two real live themes:
   - `dark_futuristic` for the brighter raised cyan-glass look
@@ -178,7 +178,7 @@ Use `Tools > View Job Log` when you want to review or correct saved rows later.
 5. Drag a column divider to resize it. Double-click the divider if you want that column auto-fitted again.
 6. If the Job Log becomes wider than the window, use the horizontal scrollbar instead of squeezing the headers.
 7. The app remembers your manual Job Log column widths.
-8. In the full edit dialog, fixed-choice fields such as `Job type`, `Lang`, and saved entity/city lists are picked from dropdowns instead of being typed directly. Use `Add...` when you need a new saved entity or city.
+8. In the full edit dialog, fixed-choice fields such as `Job type`, `Lang`, and saved entity/city lists are picked from dropdowns instead of being typed directly. Use the small `+` button when you need a new saved entity or city.
 9. Editable dates still accept `YYYY-MM-DD`, but the app now also gives you a calendar popup. The calendar starts on Monday.
 
 ## Interpretation Honorarios
@@ -191,10 +191,11 @@ Use this flow when you need a `Requerimento de Honorários` for interpreting wor
    - `From notification PDF...`
    - `From photo/screenshot...`
 3. Confirm the case, service, and date fields before saving the row.
+4. If a photo or screenshot import did not contain an explicit service entity or city, the form still opens and lets you fill those fields in manually.
 
 ### Service city and distance rules
 1. `Service same as Case` starts enabled for interpretation rows unless the imported data already proves a different service location.
-2. While that option stays on, the service entity and service city mirror the case values.
+2. While that option stays on, the service entity and service city mirror the case values, so the `SERVICE` section can stay collapsed until you actually need to change it.
 3. The service city is the travel-distance city for interpretation honorários.
 4. The visible KM field is the one-way distance only.
 5. When the current profile already has a saved distance for that service city, the app fills it in automatically.
@@ -204,12 +205,13 @@ Use this flow when you need a `Requerimento de Honorários` for interpreting wor
 1. If you used `Tools > New Interpretation Honorários...`, save the row first and the export dialog opens automatically. Otherwise, open the saved interpretation row or keep the edit dialog open.
 2. Click `Gerar Requerimento de Honorários...` when you are using the Job Log path.
 3. Use the profile selector if needed.
-4. On smaller screens, scroll inside the honorários dialog. The action buttons stay anchored at the bottom.
-5. The export saves the honorários DOCX first and then attempts a sibling PDF with the same basename.
-6. `Include transport/distance sentence in honorários text` starts enabled. Leave it on in the normal case, and turn it off only when the court is handling transport separately and that sentence should be omitted.
-7. The addressee auto-completes the case city for generic court entities. The body keeps the saved `service_date`, but the footer date before the signature always uses the day you generate the document.
-8. If automatic PDF export fails, the dialog keeps the saved DOCX usable locally and offers one recovery flow: retry PDF export, choose an existing PDF, open the DOCX/folder, or continue local-only.
-9. Manual/local interpretation exports can offer a fresh Gmail draft when the saved row has `Court Email`, Gmail draft prerequisites are ready, and the honorários PDF was generated successfully.
+4. The interpretation export dialog keeps the main case/profile controls visible first and groups secondary detail into `SERVICE`, `TEXT`, and `RECIPIENT` sections. `RECIPIENT` usually stays collapsed until you need to override the case-derived addressee.
+5. On smaller screens, scroll inside the honorários dialog. The action buttons stay anchored at the bottom.
+6. The export saves the honorários DOCX first and then attempts a sibling PDF with the same basename.
+7. `Include transport/distance sentence in honorários text` starts enabled. Leave it on in the normal case, and turn it off only when the court is handling transport separately and that sentence should be omitted.
+8. The addressee auto-completes the case city for generic court entities. The body keeps the saved `service_date`, but the footer date before the signature always uses the day you generate the document.
+9. If automatic PDF export fails, the dialog keeps the saved DOCX usable locally and offers one recovery flow: retry PDF export, choose an existing PDF, open the DOCX/folder, or continue local-only.
+10. Manual/local interpretation exports can offer a fresh Gmail draft when the saved row has `Court Email`, Gmail draft prerequisites are ready, and the honorários PDF was generated successfully.
 
 ## Honorarios + Gmail Drafts
 If you generate a `Requerimento de Honorários`, the app can also prepare a Gmail draft to the row's `Court Email`.
@@ -246,19 +248,20 @@ Use this when the source files already arrived in Gmail and you want one reply d
 4. Choose the Gmail intake mode in the review dialog:
    - `Translation` for the existing translation batch flow
    - `Interpretation notice` for one selected court-notice attachment that should not be translated
-5. In `Translation` mode, review the supported attachments from that exact message, select one or more files, and set the Gmail batch target language before preparation starts.
-6. In `Interpretation notice` mode, select exactly one supported PDF or image attachment. Translation-only controls stay hidden in that mode.
-7. Open the attachment preview when you need to inspect a file before proceeding.
-8. For translation PDFs, page `1` is the default. Scroll through the preview and click `Start from this page` only if translation should begin later. Interpretation notice imports do not use start-page semantics.
-9. `Prepare selected attachments` stages the files, and already previewed files are reused when possible instead of being downloaded again.
-10. Translation mode then translates the selected files one by one.
-11. Interpretation-notice mode downloads the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
-12. After each successful translation, Arabic items first pause in the Word review gate. The dialog auto-opens the DOCX in Word, offers `Align Right + Save`, and auto-continues after a detected save; if automation fails, you can save manually and use `Continue now` or `Continue without changes`.
-13. Translation mode then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
-14. When all selected translation files are confirmed, the app can generate one honorários export using the combined translated word count for the batch.
-15. The honorários export saves the DOCX first and then attempts a sibling PDF with the same basename.
-16. If the translation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários PDF.
-17. If the interpretation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with the generated honorários PDF only.
+5. The review dialog starts with a compact summary banner. Use its info button when you need the sender, Gmail account, or output-folder details.
+6. In `Translation` mode, review the supported attachments from that exact message, select one or more files, and set the Gmail batch target language before preparation starts.
+7. In `Interpretation notice` mode, select exactly one supported PDF or image attachment. Translation-only controls stay hidden in that mode.
+8. Open the attachment preview when you need to inspect a file before proceeding.
+9. For translation PDFs, page `1` is the default. Scroll through the preview and click `Start from this page` only if translation should begin later. Interpretation notice imports do not use start-page semantics.
+10. `Prepare selected attachments` stages the files, and already previewed files are reused when possible instead of being downloaded again.
+11. Translation mode then translates the selected files one by one.
+12. Interpretation-notice mode downloads the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
+13. After each successful translation, Arabic items first pause in the Word review gate. The dialog auto-opens the DOCX in Word, offers `Align Right + Save`, and auto-continues after a detected save; if automation fails, you can save manually and use `Continue now` or `Continue without changes`.
+14. Translation mode then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
+15. When all selected translation files are confirmed, the app can generate one honorários export using the combined translated word count for the batch.
+16. The honorários export saves the DOCX first and then attempts a sibling PDF with the same basename.
+17. If the translation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários PDF.
+18. If the interpretation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with the generated honorários PDF only.
 
 ### Batch rules
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.

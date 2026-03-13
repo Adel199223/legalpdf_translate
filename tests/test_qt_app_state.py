@@ -452,7 +452,11 @@ def test_stage_two_shell_smoke() -> None:
         assert window.content_card.objectName() == "ContentCard"
         assert window.translate_btn.text() == "Start Translate"
         assert window.show_adv.text() == "Advanced Settings"
-        assert window.progress_panel_title.text() == "Conversion Output"
+        assert window.advanced_help_btn.objectName() == "InlineInfoButton"
+        assert window.progress_panel_title.text() == "Run Status"
+        assert window.progress_help_btn.objectName() == "InlineInfoButton"
+        assert window.progress_eta_label.text() == "ETA --"
+        assert window.output_format_label.isHidden() is True
         assert window.more_btn.menu() is window.more_menu
         assert window.more_btn.text() == "..."
         assert window.footer_meta_label.text() == "Project v3.0 | LegalPDF"
@@ -723,7 +727,7 @@ def test_desktop_sidebar_buttons_have_room_for_full_labels() -> None:
         recent_text_width = window.recent_jobs_nav_btn.fontMetrics().horizontalAdvance("Recent Jobs")
         assert dashboard_text_width < window.dashboard_nav_btn.width() - 14
         assert recent_text_width < window.recent_jobs_nav_btn.width() - 14
-        assert window.progress_panel_title.text() == "Conversion Output"
+        assert window.progress_panel_title.text() == "Run Status"
         assert not window.more_menu.isVisible()
     finally:
         window.close()
@@ -2166,11 +2170,17 @@ def test_gmail_batch_review_dialog_returns_selected_attachments_and_target_lang(
         assert isinstance(dialog.target_lang_combo, NoWheelComboBox)
         assert dialog.target_lang_combo.isEditable() is False
         assert dialog.prepare_btn.objectName() == "PrimaryButton"
+        assert dialog.summary_info_btn.objectName() == "InlineInfoButton"
+        assert dialog.summary_label.text() == "Court reply needed | 2 files"
+        assert dialog.output_dir_label.text() == "Folder: out"
         assert dialog.target_lang_combo.currentText() == "FR"
-        assert dialog.table.horizontalHeaderItem(3).text() == "First page"
-        assert dialog.start_page_label.text() == "First page to translate"
+        assert dialog.table.horizontalHeaderItem(0).text() == "File"
+        assert dialog.table.horizontalHeaderItem(3).text() == "Start"
+        assert dialog.start_page_label.text() == "Start page"
         assert dialog.table.item(0, 3).text() == "1"
         assert dialog.table.item(1, 3).text() == "1"
+        assert dialog.preview_btn.text() == "Preview"
+        assert dialog.prepare_btn.text() == "Prepare selected"
         dialog.target_lang_combo.setCurrentText("EN")
         dialog.table.selectAll()
         dialog._accept_selection()
@@ -2235,7 +2245,10 @@ def test_gmail_batch_review_dialog_interpretation_mode_hides_translation_control
         assert dialog.start_page_spin.isHidden()
         assert dialog.table.isColumnHidden(3) is True
         assert dialog.table.selectionMode() == dialog.table.SelectionMode.SingleSelection
+        assert dialog.prepare_btn.text() == "Prepare notice"
         dialog.table.selectRow(0)
+        dialog._refresh_actions()
+        assert dialog.prepare_btn.text() == "Prepare notice"
         dialog._accept_selection()
         assert dialog.review_result == GmailBatchReviewResult(
             selections=(GmailAttachmentSelection(candidate=attachments[0], start_page=1),),
@@ -2298,7 +2311,8 @@ def test_gmail_batch_review_dialog_preview_updates_start_page(monkeypatch, tmp_p
         dialog.table.selectRow(0)
         dialog._open_preview_for_current_row()
         assert dialog.table.item(0, 3).text() == "3"
-        assert dialog.pages_value_label.text() == "Pages: 5"
+        assert dialog.pages_value_label.text() == "5 pages"
+        assert dialog.detail_attachment_label.text() == "court.pdf"
         assert dialog._preview_cache[attachment.attachment_id] == (tmp_path / "preview.pdf")
     finally:
         dialog.close()
@@ -7386,11 +7400,18 @@ def test_edit_joblog_dialog_interpretation_defaults_service_same_and_one_way_dis
         dialog.show()
         app.processEvents()
         assert dialog.service_same_check.isChecked() is True
+        assert dialog.service_group.is_expanded() is False
+        assert dialog.service_group.summary_label.text() == "Same as case"
         assert dialog.service_city_combo.currentText() == "Beja"
         assert dialog.include_transport_sentence_check.isChecked() is True
         assert dialog.travel_km_outbound_edit.text() == "39"
         assert dialog.travel_km_return_edit is dialog.travel_km_outbound_edit
         assert dialog.travel_km_outbound_edit.isEnabled() is True
+        assert dialog.add_case_entity_btn.objectName() == "CompactAddButton"
+        assert dialog.add_service_entity_btn.objectName() == "CompactAddButton"
+        assert dialog.use_service_location_check.text() == "Mention service location in text"
+        assert dialog.include_transport_sentence_check.text() == "Include transport sentence"
+        assert dialog.interpretation_hint_label.text() == "Distance saved by city."
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -7448,7 +7469,180 @@ def test_edit_joblog_dialog_interpretation_service_city_switches_to_saved_distan
         dialog.service_same_check.setChecked(False)
         dialog.service_city_combo.setCurrentText("Cuba")
         app.processEvents()
+        assert dialog.service_group.is_expanded() is True
         assert dialog.travel_km_outbound_edit.text() == "26"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_edit_joblog_dialog_interpretation_service_section_expands_when_location_is_mentioned(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    seed = JobLogSeed(
+        completed_at="2026-03-05T10:00:00",
+        translation_date="2026-03-05",
+        job_type="Interpretation",
+        case_number="ABC-1",
+        court_email="court@example.pt",
+        case_entity="Case Entity",
+        case_city="Beja",
+        service_entity="",
+        service_city="",
+        service_date="2026-03-05",
+        lang="",
+        pages=0,
+        word_count=0,
+        rate_per_word=0.0,
+        expected_total=0.0,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="",
+        target_lang="",
+        total_tokens=None,
+        estimated_api_cost=None,
+        quality_risk_score=None,
+        profit=0.0,
+    )
+
+    dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.service_group.is_expanded() is False
+        dialog.use_service_location_check.setChecked(True)
+        app.processEvents()
+        assert dialog.service_group.is_expanded() is True
+        assert dialog.service_group.summary_label.text() == "Location: Beja"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_edit_joblog_dialog_interpretation_header_autofill_reveals_distinct_service_location(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    seed = JobLogSeed(
+        completed_at="2026-03-05T10:00:00",
+        translation_date="2026-03-05",
+        job_type="Interpretation",
+        case_number="ABC-1",
+        court_email="court@example.pt",
+        case_entity="Case Entity",
+        case_city="Beja",
+        service_entity="",
+        service_city="",
+        service_date="2026-03-05",
+        lang="",
+        pages=0,
+        word_count=0,
+        rate_per_word=0.0,
+        expected_total=0.0,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="",
+        target_lang="",
+        total_tokens=None,
+        estimated_api_cost=None,
+        quality_risk_score=None,
+        profit=0.0,
+    )
+
+    dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog._apply_header_suggestion(
+            dialogs_module.MetadataSuggestion(
+                case_entity="Case Entity",
+                case_city="Beja",
+                case_number="109/26.0PBBJA",
+                service_entity="GNR",
+                service_city="Cuba",
+            )
+        )
+        app.processEvents()
+        assert dialog.service_same_check.isChecked() is False
+        assert dialog.service_entity_combo.currentText() == "GNR"
+        assert dialog.service_city_combo.currentText() == "Cuba"
+        assert dialog.service_group.is_expanded() is True
+        assert dialog.service_group.summary_label.text() == "Cuba"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_edit_joblog_dialog_interpretation_validation_error_expands_service_section(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    seed = JobLogSeed(
+        completed_at="2026-03-05T10:00:00",
+        translation_date="2026-03-05",
+        job_type="Interpretation",
+        case_number="ABC-1",
+        court_email="court@example.pt",
+        case_entity="Case Entity",
+        case_city="Beja",
+        service_entity="",
+        service_city="",
+        service_date="2026-03-05",
+        lang="",
+        pages=0,
+        word_count=0,
+        rate_per_word=0.0,
+        expected_total=0.0,
+        amount_paid=0.0,
+        api_cost=0.0,
+        run_id="",
+        target_lang="",
+        total_tokens=None,
+        estimated_api_cost=None,
+        quality_risk_score=None,
+        profit=0.0,
+    )
+
+    dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
+    messages: list[str] = []
+    monkeypatch.setattr(
+        dialogs_module.QMessageBox,
+        "critical",
+        lambda _parent, _title, message: messages.append(message),
+    )
+
+    def _raise_invalid() -> dict[str, object]:
+        raise ValueError("Service city must be set.")
+
+    monkeypatch.setattr(dialog, "_normalized_payload", _raise_invalid)
+
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.service_group.is_expanded() is False
+        dialog._save()
+        app.processEvents()
+        assert messages == ["Service city must be set."]
+        assert dialog.service_group.is_expanded() is True
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -8200,6 +8394,195 @@ def test_save_to_joblog_dialog_interpretation_photo_autofill_prompts_and_saves_d
     assert dialog.travel_km_return_edit.text() == "39"
     assert profile.travel_distances_by_city["Beja"] == 39.0
     assert saved["primary_profile_id"] == profile.id
+
+
+def test_honorarios_export_dialog_interpretation_defaults_to_collapsed_service_and_recipient_sections(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    profile = default_primary_profile(email="adel@example.com")
+    profile.travel_origin_label = "Marmelar"
+    profile.travel_distances_by_city = {"Ferreira do Alentejo": 42.0}
+    monkeypatch.setattr(dialogs_module, "load_profile_settings", lambda: ([profile], profile.id))
+
+    draft = dialogs_module.build_interpretation_honorarios_draft(
+        case_number="66/26.3GAFAL",
+        case_entity="Tribunal Judicial",
+        case_city="Ferreira do Alentejo",
+        service_date="2026-03-11",
+        service_entity="Tribunal Judicial",
+        service_city="Ferreira do Alentejo",
+        use_service_location_in_honorarios=False,
+        include_transport_sentence_in_honorarios=True,
+        travel_km_outbound=42.0,
+        travel_km_return=42.0,
+        recipient_block=dialogs_module.default_interpretation_recipient_block(
+            "Tribunal Judicial",
+            "Ferreira do Alentejo",
+        ),
+        profile=profile,
+    )
+
+    dialog = dialogs_module.QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.service_group.is_expanded() is False
+        assert dialog.service_group.summary_label.text() == "2026-03-11 · Same as case"
+        assert dialog.text_group.is_expanded() is True
+        assert dialog.recipient_group.is_expanded() is False
+        assert dialog.recipient_group.summary_label.text() == "Auto from case"
+        assert dialog.use_service_location_check.text() == "Mention service location in text"
+        assert dialog.include_transport_sentence_check.text() == "Include transport sentence"
+        assert dialog.distance_hint_label.text() == "Saved by city."
+        assert dialog.service_group_help_btn.objectName() == "InlineInfoButton"
+        assert dialog.recipient_group_help_btn.objectName() == "InlineInfoButton"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_export_dialog_service_section_expands_for_explicit_location(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    profile = default_primary_profile(email="adel@example.com")
+    profile.travel_origin_label = "Marmelar"
+    profile.travel_distances_by_city = {"Ferreira do Alentejo": 42.0}
+    monkeypatch.setattr(dialogs_module, "load_profile_settings", lambda: ([profile], profile.id))
+
+    draft = dialogs_module.build_interpretation_honorarios_draft(
+        case_number="66/26.3GAFAL",
+        case_entity="Tribunal Judicial",
+        case_city="Ferreira do Alentejo",
+        service_date="2026-03-11",
+        service_entity="Tribunal Judicial",
+        service_city="Ferreira do Alentejo",
+        use_service_location_in_honorarios=False,
+        include_transport_sentence_in_honorarios=True,
+        travel_km_outbound=42.0,
+        travel_km_return=42.0,
+        recipient_block=dialogs_module.default_interpretation_recipient_block(
+            "Tribunal Judicial",
+            "Ferreira do Alentejo",
+        ),
+        profile=profile,
+    )
+
+    dialog = dialogs_module.QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.service_group.is_expanded() is False
+        dialog.use_service_location_check.setChecked(True)
+        app.processEvents()
+        assert dialog.service_group.is_expanded() is True
+        assert dialog.service_group.summary_label.text() == "2026-03-11 · Location: Ferreira do Alentejo"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_export_dialog_distinct_service_values_start_expanded(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    profile = default_primary_profile(email="adel@example.com")
+    profile.travel_origin_label = "Marmelar"
+    profile.travel_distances_by_city = {"Cuba": 26.0}
+    monkeypatch.setattr(dialogs_module, "load_profile_settings", lambda: ([profile], profile.id))
+
+    draft = dialogs_module.build_interpretation_honorarios_draft(
+        case_number="66/26.3GAFAL",
+        case_entity="Tribunal Judicial",
+        case_city="Ferreira do Alentejo",
+        service_date="2026-03-11",
+        service_entity="GNR",
+        service_city="Cuba",
+        use_service_location_in_honorarios=True,
+        include_transport_sentence_in_honorarios=True,
+        travel_km_outbound=26.0,
+        travel_km_return=26.0,
+        recipient_block=dialogs_module.default_interpretation_recipient_block(
+            "Tribunal Judicial",
+            "Ferreira do Alentejo",
+        ),
+        profile=profile,
+    )
+
+    dialog = dialogs_module.QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.service_same_check.isChecked() is False
+        assert dialog.service_group.is_expanded() is True
+        assert dialog.service_group.summary_label.text() == "2026-03-11 · Location: Cuba"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_export_dialog_recipient_section_expands_after_manual_edit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    profile = default_primary_profile(email="adel@example.com")
+    profile.travel_origin_label = "Marmelar"
+    profile.travel_distances_by_city = {"Ferreira do Alentejo": 42.0}
+    monkeypatch.setattr(dialogs_module, "load_profile_settings", lambda: ([profile], profile.id))
+
+    draft = dialogs_module.build_interpretation_honorarios_draft(
+        case_number="66/26.3GAFAL",
+        case_entity="Tribunal Judicial",
+        case_city="Ferreira do Alentejo",
+        service_date="2026-03-11",
+        service_entity="Tribunal Judicial",
+        service_city="Ferreira do Alentejo",
+        use_service_location_in_honorarios=False,
+        include_transport_sentence_in_honorarios=True,
+        travel_km_outbound=42.0,
+        travel_km_return=42.0,
+        recipient_block=dialogs_module.default_interpretation_recipient_block(
+            "Tribunal Judicial",
+            "Ferreira do Alentejo",
+        ),
+        profile=profile,
+    )
+
+    dialog = dialogs_module.QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.recipient_group.is_expanded() is False
+        dialog.recipient_block_edit.setPlainText("Exmo. Senhor Juiz\nTribunal Judicial\nFerreira do Alentejo")
+        app.processEvents()
+        assert dialog.recipient_group.is_expanded() is True
+        assert dialog.recipient_group.summary_label.text() == "Exmo. Senhor Juiz (+2)"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
 
 
 def test_joblog_window_interpretation_honorarios_skips_gmail_offer(tmp_path: Path, monkeypatch) -> None:

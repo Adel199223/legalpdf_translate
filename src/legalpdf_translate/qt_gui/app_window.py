@@ -127,6 +127,7 @@ from legalpdf_translate.source_document import (
     is_pdf_source,
     is_supported_source_file,
 )
+from legalpdf_translate.qt_gui.declutter import build_inline_info_button
 from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
 from legalpdf_translate.queue_runner import QueueRunSummary, parse_queue_manifest
 from legalpdf_translate.qt_gui.dialogs import (
@@ -1121,7 +1122,20 @@ class QtMainWindow(QMainWindow):
         self.show_adv.setArrowType(Qt.ArrowType.RightArrow)
         self.show_adv.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.show_adv.setMinimumHeight(64)
-        setup_layout.addWidget(self.show_adv)
+        self.advanced_help_btn = build_inline_info_button(
+            tooltip=(
+                "OCR, queue, resume, and context overrides live here. "
+                "Keep this closed unless you need to change the default run."
+            ),
+            accessible_name="Advanced settings help",
+            parent=self.setup_panel,
+        )
+        advanced_toggle_row = QHBoxLayout()
+        advanced_toggle_row.setContentsMargins(0, 0, 0, 0)
+        advanced_toggle_row.setSpacing(8)
+        advanced_toggle_row.addWidget(self.show_adv, 1)
+        advanced_toggle_row.addWidget(self.advanced_help_btn, 0, Qt.AlignmentFlag.AlignTop)
+        setup_layout.addLayout(advanced_toggle_row)
 
         self.adv_frame = QFrame(objectName="ShellPanel")
         adv = QFormLayout(self.adv_frame)
@@ -1205,14 +1219,27 @@ class QtMainWindow(QMainWindow):
         progress_layout.setContentsMargins(28, 22, 28, 22)
         progress_layout.setSpacing(16)
 
-        self.progress_panel_title = QLabel("Conversion Output", objectName="PanelHeading")
-        progress_layout.addWidget(self.progress_panel_title)
+        self.progress_panel_title = QLabel("Run Status", objectName="PanelHeading")
+        self.progress_help_btn = build_inline_info_button(
+            tooltip=(
+                "Track the active run here. Extra actions like review, export, "
+                "and rebuild stay under More."
+            ),
+            accessible_name="Run status help",
+            parent=self.progress_panel,
+        )
+        progress_title_row = QHBoxLayout()
+        progress_title_row.setContentsMargins(0, 0, 0, 0)
+        progress_title_row.setSpacing(8)
+        progress_title_row.addWidget(self.progress_panel_title, 1)
+        progress_title_row.addWidget(self.progress_help_btn, 0, Qt.AlignmentFlag.AlignTop)
+        progress_layout.addLayout(progress_title_row)
 
         summary_row = QHBoxLayout()
         summary_row.setContentsMargins(0, 0, 0, 0)
         summary_row.setSpacing(18)
         self.progress_summary_label = QLabel("0%", objectName="ProgressSummaryLabel")
-        self.progress_eta_label = QLabel("Est. remaining: --", objectName="ProgressSummaryLabel")
+        self.progress_eta_label = QLabel("ETA --", objectName="ProgressSummaryLabel")
         summary_row.addWidget(self.progress_summary_label, 0)
         summary_row.addStretch(1)
         summary_row.addWidget(self.progress_eta_label, 0)
@@ -1226,8 +1253,7 @@ class QtMainWindow(QMainWindow):
 
         task_row = QHBoxLayout()
         task_row.setContentsMargins(0, 0, 0, 0)
-        task_row.setSpacing(8)
-        task_row.addWidget(QLabel("Current Task:", objectName="CurrentTaskLabel"), 0)
+        task_row.setSpacing(0)
         self.status_label = QLabel("Idle", objectName="CurrentTaskLabel")
         self.status_label.setWordWrap(True)
         task_row.addWidget(self.status_label, 1)
@@ -1280,6 +1306,7 @@ class QtMainWindow(QMainWindow):
         progress_layout.addWidget(metric_frame)
 
         self.output_format_label = QLabel("Output Format: DOCX", objectName="OutputFormatLabel")
+        self.output_format_label.hide()
         progress_layout.addWidget(self.output_format_label)
         progress_layout.addStretch(1)
         body_row.addWidget(self.progress_panel, 6)
@@ -1937,7 +1964,7 @@ class QtMainWindow(QMainWindow):
     def _apply_dashboard_snapshot(self) -> None:
         snapshot = self._dashboard_snapshot
         self.progress_summary_label.setText(f"{max(0, min(100, int(snapshot.progress_percent)))}%")
-        self.progress_eta_label.setText(f"Est. remaining: {snapshot.eta_text}")
+        self.progress_eta_label.setText(f"ETA {snapshot.eta_text}")
         self.status_label.setText(snapshot.current_task or "Idle")
 
         pages_total = snapshot.pages_total if snapshot.pages_total is not None else self._selected_pdf_page_total()
