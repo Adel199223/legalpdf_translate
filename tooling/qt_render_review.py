@@ -22,7 +22,16 @@ if os.name != "nt" and "DISPLAY" not in os.environ:
 from PySide6.QtCore import QBuffer, QIODevice, QPoint, QRect
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPen
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from legalpdf_translate.gmail_batch import FetchedGmailMessage, GmailAttachmentCandidate
 import legalpdf_translate.qt_gui.app_window as app_window_module
@@ -32,6 +41,13 @@ from legalpdf_translate.qt_gui.dialogs import (
     QtGmailAttachmentPreviewDialog,
     QtGmailBatchReviewDialog,
     QtHonorariosExportDialog,
+    QtSaveToJobLogDialog,
+    JobLogSeed,
+)
+from legalpdf_translate.qt_gui.declutter import (
+    DeclutterSection,
+    build_compact_add_button,
+    build_inline_info_button,
 )
 from legalpdf_translate.qt_gui.styles import build_stylesheet
 from legalpdf_translate.qt_gui import window_adaptive as window_adaptive_module
@@ -279,6 +295,16 @@ def render_gmail_review_dialog_sample(*, outdir: Path, theme: str = "dark_futuri
                 "row_count": int(dialog.table.rowCount()),
                 "current_row": int(dialog.table.currentRow()),
                 "target_lang": dialog.target_lang_combo.currentText(),
+                "summary_text": dialog.summary_label.text(),
+                "output_dir_text": dialog.output_dir_label.text(),
+                "summary_info_button_object_name": dialog.summary_info_btn.objectName(),
+                "file_header_text": dialog.table.horizontalHeaderItem(0).text(),
+                "start_header_text": dialog.table.horizontalHeaderItem(3).text(),
+                "detail_attachment_text": dialog.detail_attachment_label.text(),
+                "pages_text": dialog.pages_value_label.text(),
+                "start_page_label_text": dialog.start_page_label.text(),
+                "preview_button_text": dialog.preview_btn.text(),
+                "prepare_button_text": dialog.prepare_btn.text(),
                 "image_path": str(image_path),
             }
             meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -459,6 +485,16 @@ def render_honorarios_export_dialog_sample(*, outdir: Path, theme: str = "dark_f
                 "theme": theme,
                 "width": int(dialog.width()),
                 "height": int(dialog.height()),
+                "service_section_expanded": dialog.service_group.is_expanded(),
+                "service_section_summary": dialog.service_group.summary_label.text(),
+                "text_section_expanded": dialog.text_group.is_expanded(),
+                "recipient_section_expanded": dialog.recipient_group.is_expanded(),
+                "recipient_section_summary": dialog.recipient_group.summary_label.text(),
+                "service_help_button_object_name": dialog.service_group_help_btn.objectName(),
+                "recipient_help_button_object_name": dialog.recipient_group_help_btn.objectName(),
+                "use_service_location_label": dialog.use_service_location_check.text(),
+                "include_transport_sentence_label": dialog.include_transport_sentence_check.text(),
+                "distance_hint_text": dialog.distance_hint_label.text(),
                 "generate_button_rgb": _sample_dominant_rgb(
                     image,
                     generate_rect.adjusted(-8, -8, 8, 8),
@@ -475,6 +511,192 @@ def render_honorarios_export_dialog_sample(*, outdir: Path, theme: str = "dark_f
                     max(0, status_rect.center().x()),
                     max(0, status_rect.center().y()),
                 ),
+                "image_path": str(image_path),
+            }
+            meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            return metadata
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+            if owns_app:
+                app.quit()
+
+
+def render_joblog_interpretation_dialog_sample(*, outdir: Path, theme: str = "dark_futuristic") -> dict[str, object]:
+    outdir.mkdir(parents=True, exist_ok=True)
+    app, owns_app = _ensure_app(theme)
+    with _deterministic_render_screen(), _deterministic_ui_defaults(theme):
+        translated_path = outdir / "sample_translated.docx"
+        translated_path.write_bytes(b"docx")
+        dialog = QtSaveToJobLogDialog(
+            parent=None,
+            db_path=outdir / "joblog.sqlite3",
+            seed=JobLogSeed(
+                completed_at="2026-03-12T14:25:00",
+                translation_date="2026-03-12",
+                job_type="Interpretation",
+                case_number="109/26.0PBBJA",
+                court_email="beja.judicial@tribunais.org.pt",
+                case_entity="Juizo Local Criminal de Beja",
+                case_city="Beja",
+                service_entity="Juizo Local Criminal de Beja",
+                service_city="Beja",
+                service_date="2026-03-12",
+                lang="",
+                pages=0,
+                word_count=0,
+                rate_per_word=0.0,
+                expected_total=0.0,
+                amount_paid=0.0,
+                api_cost=0.0,
+                run_id="run-interpretation-1",
+                target_lang="",
+                total_tokens=None,
+                estimated_api_cost=None,
+                quality_risk_score=None,
+                profit=0.0,
+                travel_km_outbound=39.0,
+                travel_km_return=39.0,
+                use_service_location_in_honorarios=False,
+                include_transport_sentence_in_honorarios=True,
+                output_docx=translated_path,
+            ),
+            edit_row_id=5,
+        )
+        try:
+            dialog.resize(1120, 780)
+            dialog.show()
+            app.processEvents()
+            image_path = outdir / "joblog_interpretation_dialog.png"
+            meta_path = outdir / "joblog_interpretation_dialog.json"
+            grabbed = dialog.grab()
+            grabbed.save(str(image_path))
+            image = grabbed.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+            action_bar_rect = _widget_rect_in_window(dialog, dialog.action_bar)
+            metadata = {
+                "sample": "joblog_interpretation_dialog",
+                "theme": theme,
+                "width": int(dialog.width()),
+                "height": int(dialog.height()),
+                "window_title": dialog.windowTitle(),
+                "job_type": dialog.job_type_combo.currentText(),
+                "service_same_checked": bool(dialog.service_same_check.isChecked()),
+                "use_service_location_checked": bool(dialog.use_service_location_check.isChecked()),
+                "include_transport_sentence_checked": bool(dialog.include_transport_sentence_check.isChecked()),
+                "service_section_expanded": bool(dialog.service_group.is_expanded()),
+                "service_section_summary": dialog.service_group.summary_label.text(),
+                "service_group_visible": bool(dialog.service_group.isVisible()),
+                "interpretation_section_expanded": bool(dialog.interpretation_group.is_expanded()),
+                "interpretation_group_visible": bool(dialog.interpretation_group.isVisible()),
+                "case_entity_add_button_object_name": dialog.add_case_entity_btn.objectName(),
+                "service_entity_add_button_object_name": dialog.add_service_entity_btn.objectName(),
+                "use_service_location_label": dialog.use_service_location_check.text(),
+                "include_transport_sentence_label": dialog.include_transport_sentence_check.text(),
+                "interpretation_hint_text": dialog.interpretation_hint_label.text(),
+                "open_translation_enabled": bool(dialog.open_translation_btn.isEnabled()),
+                "honorarios_enabled": bool(dialog.honorarios_btn.isEnabled()),
+                "dialog_fill_rgb": _sample_rgb(image, dialog.width() // 2, dialog.height() // 2),
+                "action_bar_rgb": _sample_dominant_rgb(
+                    image,
+                    action_bar_rect.adjusted(0, 0, 0, 0),
+                    mode="teal",
+                ),
+                "image_path": str(image_path),
+            }
+            meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            return metadata
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+            if owns_app:
+                app.quit()
+
+
+def render_declutter_primitives_sample(*, outdir: Path, theme: str = "dark_futuristic") -> dict[str, object]:
+    outdir.mkdir(parents=True, exist_ok=True)
+    app, owns_app = _ensure_app(theme)
+    with _deterministic_render_screen(), _deterministic_ui_defaults(theme):
+        dialog = QDialog()
+        dialog.setWindowTitle("Declutter Primitives")
+        root = QVBoxLayout(dialog)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(10)
+
+        header = QLabel("Shared declutter primitives sample")
+        root.addWidget(header)
+
+        service_section = DeclutterSection(
+            "Service",
+            expanded=False,
+            summary_text="Same as case",
+            parent=dialog,
+        )
+        service_info_btn = build_inline_info_button(
+            tooltip="Secondary explanatory copy can move here without hiding required actions.",
+            accessible_name="Service section help",
+            parent=service_section,
+        )
+        service_add_btn = build_compact_add_button(
+            tooltip="Add service location",
+            accessible_name="Add service location",
+            parent=service_section,
+        )
+        service_section.add_header_widget(service_info_btn)
+        service_section.add_header_widget(service_add_btn)
+        service_content = QWidget(service_section)
+        service_content_layout = QHBoxLayout(service_content)
+        service_content_layout.setContentsMargins(0, 0, 0, 0)
+        service_content_layout.setSpacing(8)
+        service_content_layout.addWidget(QLabel("Service city"))
+        service_content_layout.addWidget(QLineEdit("Beja"))
+        service_section.set_content_widget(service_content)
+        root.addWidget(service_section)
+
+        interpretation_section = DeclutterSection(
+            "Interpretation",
+            expanded=True,
+            summary_text="Travel defaults ready",
+            parent=dialog,
+        )
+        interpretation_section.set_attention_state(True)
+        interpretation_info_btn = build_inline_info_button(
+            tooltip="Hover or focus for extra context while keeping the main form compact.",
+            accessible_name="Interpretation section help",
+            parent=interpretation_section,
+        )
+        interpretation_section.add_header_widget(interpretation_info_btn)
+        interpretation_content = QWidget(interpretation_section)
+        interpretation_content_layout = QHBoxLayout(interpretation_content)
+        interpretation_content_layout.setContentsMargins(0, 0, 0, 0)
+        interpretation_content_layout.setSpacing(8)
+        interpretation_content_layout.addWidget(QLabel("KM (one way)"))
+        interpretation_content_layout.addWidget(QLineEdit("39"))
+        interpretation_section.set_content_widget(interpretation_content)
+        root.addWidget(interpretation_section)
+
+        dialog.resize(720, 340)
+        try:
+            dialog.show()
+            app.processEvents()
+            image_path = outdir / "declutter_primitives.png"
+            meta_path = outdir / "declutter_primitives.json"
+            grabbed = dialog.grab()
+            grabbed.save(str(image_path))
+            image = grabbed.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+            add_rect = service_add_btn.geometry().translated(service_add_btn.mapTo(dialog, QPoint(0, 0)))
+            info_rect = service_info_btn.geometry().translated(service_info_btn.mapTo(dialog, QPoint(0, 0)))
+            metadata = {
+                "sample": "declutter_primitives",
+                "theme": theme,
+                "width": int(dialog.width()),
+                "height": int(dialog.height()),
+                "service_expanded": bool(service_section.is_expanded()),
+                "interpretation_expanded": bool(interpretation_section.is_expanded()),
+                "service_summary": service_section.summary_label.text(),
+                "add_button_object_name": service_add_btn.objectName(),
+                "info_button_object_name": service_info_btn.objectName(),
+                "add_button_rgb": _sample_dominant_rgb(image, add_rect.adjusted(-2, -2, 2, 2), mode="teal"),
+                "info_button_rgb": _sample_dominant_rgb(image, info_rect.adjusted(-2, -2, 2, 2), mode="teal"),
                 "image_path": str(image_path),
             }
             meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -598,6 +820,12 @@ def render_profiles(
                         "theme": theme,
                         "width": width,
                         "height": height,
+                        "advanced_settings_expanded": bool(window.show_adv.isChecked()),
+                        "advanced_help_button_object_name": window.advanced_help_btn.objectName(),
+                        "progress_help_button_object_name": window.progress_help_btn.objectName(),
+                        "progress_panel_title": window.progress_panel_title.text(),
+                        "progress_eta_text": window.progress_eta_label.text(),
+                        "output_format_hidden": bool(window.output_format_label.isHidden()),
                         "layout_mode": getattr(window, "_layout_mode", ""),
                         "sidebar_width": int(window.sidebar_frame.width()),
                         "content_card_width": int(window.content_card.width()),
@@ -652,12 +880,7 @@ def render_profiles(
                         ),
                         "danger_button_rgb": _sample_dominant_rgb(
                             image,
-                            QRect(
-                                cancel_rect.x() - 8,
-                                cancel_rect.y() - 8,
-                                cancel_rect.width() + 24,
-                                28,
-                            ),
+                            cancel_rect.adjusted(8, 8, -8, -8),
                             mode="warm",
                         ),
                         "sidebar_active_rgb": _sample_rgb(
@@ -733,6 +956,14 @@ def main(argv: list[str] | None = None) -> int:
                 theme=theme,
             ),
             "honorarios_export_dialog": render_honorarios_export_dialog_sample(
+                outdir=theme_outdir,
+                theme=theme,
+            ),
+            "declutter_primitives": render_declutter_primitives_sample(
+                outdir=theme_outdir,
+                theme=theme,
+            ),
+            "joblog_interpretation_dialog": render_joblog_interpretation_dialog_sample(
                 outdir=theme_outdir,
                 theme=theme,
             ),

@@ -7,9 +7,15 @@ from pathlib import Path
 if os.name != "nt" and "DISPLAY" not in os.environ:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QComboBox
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QComboBox, QHBoxLayout, QLabel, QWidget
 
 from legalpdf_translate.glossary_builder import GlossaryBuilderSuggestion
+from legalpdf_translate.qt_gui.declutter import (
+    DeclutterSection,
+    build_compact_add_button,
+    build_inline_info_button,
+)
 from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
 from legalpdf_translate.qt_gui.tools_dialogs import QtCalibrationAuditDialog, QtGlossaryBuilderDialog
 from legalpdf_translate.types import RunConfig, TargetLang
@@ -119,5 +125,59 @@ def test_calibration_audit_dialog_uses_guarded_spins_and_primary_actions(tmp_pat
     finally:
         dialog.close()
         dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_declutter_primitives_expose_accessible_compact_controls() -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    section = DeclutterSection("Service", expanded=False, summary_text="Same as case")
+    try:
+        add_btn = build_compact_add_button(
+            tooltip="Add service location",
+            accessible_name="Add service location",
+            parent=section,
+        )
+        info_btn = build_inline_info_button(
+            tooltip="Secondary explanatory copy can move here.",
+            accessible_name="Service help",
+            parent=section,
+        )
+        section.add_header_widget(info_btn)
+        section.add_header_widget(add_btn)
+        content = QWidget(section)
+        content_layout = QHBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addWidget(QLabel("Service city"))
+        section.set_content_widget(content)
+        section.set_attention_state(True)
+
+        assert add_btn.objectName() == "CompactAddButton"
+        assert add_btn.text() == "+"
+        assert add_btn.toolTip() == "Add service location"
+        assert add_btn.accessibleName() == "Add service location"
+        assert add_btn.focusPolicy() == Qt.FocusPolicy.StrongFocus
+
+        assert info_btn.objectName() == "InlineInfoButton"
+        assert info_btn.text() == "i"
+        assert info_btn.toolTip() == "Secondary explanatory copy can move here."
+        assert info_btn.accessibleName() == "Service help"
+        assert info_btn.focusPolicy() == Qt.FocusPolicy.StrongFocus
+
+        assert section.objectName() == "DeclutterSection"
+        assert section.is_expanded() is False
+        assert section.summary_label.text() == "Same as case"
+        assert section.summary_label.isHidden() is False
+        assert section.header_frame.property("attention") is True
+        assert section.content_frame.property("attention") is True
+
+        section.set_expanded(True)
+        assert section.is_expanded() is True
+    finally:
+        section.deleteLater()
         if owns_app:
             app.quit()
