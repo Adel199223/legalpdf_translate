@@ -31,8 +31,8 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 - Left sidebar: quick buttons for `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, and `Profile`.
 - Window title: shows `Workspace N`; when a file is loaded it can also add that filename so parallel windows are easier to tell apart.
 - Job Setup: where you choose the PDF, target language, and output folder.
-- Conversion Output: where you watch progress, current task text, and page/image/error counts.
-- Advanced Settings: a fold-open section for Analyze, OCR options, queue manifest, and other expert controls.
+- Run Status: where you watch progress, current task text, and page/image/error counts.
+- Advanced Settings: a fold-open section for Analyze, OCR options, queue manifest, and other expert controls, with a small info button for the extra guidance.
 - More menu (`...`): extra actions such as opening the output folder, rebuilding DOCX, or generating a run report.
 - Theme: in `Settings > Appearance`, `dark_futuristic` is the brighter elevated default and `dark_simple` is the quieter darker variant. The change applies live without restarting the app.
 - The main dashboard and the most-used dialogs now share the same raised translucent panel style, so Settings, Gmail review/preview, Save/Edit Job Log, and honorários export should feel like part of the same interface instead of separate utility windows.
@@ -79,7 +79,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 10. For interpretation work, `Service same as Case` is usually the default. The service city is treated as the travel city unless you change it manually.
 11. If a saved one-way distance already exists for that service city in the selected profile, the app fills it in automatically.
 12. `Autofill from PDF header` also works for interpretation edit rows that were not created from a saved PDF. The app asks you to choose the PDF file when needed.
-13. Fixed-choice fields such as `Job type`, `Lang`, and saved entity/city lists are chosen from dropdowns instead of typed manually. Use `Add...` when you need a new saved entity or city.
+13. Fixed-choice fields such as `Job type`, `Lang`, and saved entity/city lists are chosen from dropdowns instead of typed manually. Use the small `+` button when you need a new saved entity or city.
 14. Date fields can still be typed as `YYYY-MM-DD`, but you can now also pick them from a calendar popup. The calendar starts on Monday.
 
 ## Interpretation Honorarios
@@ -89,15 +89,17 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
    - `From notification PDF...`
    - `From photo/screenshot...`
 3. Review the case and service details before saving. Interpretation mode focuses on service date, service location, and distance instead of translation metrics.
-4. Keep `Service same as Case` on when the hearing/service happened in the same place as the case. Turn it off only when the service entity or city is different.
-5. The visible KM field is the one-way distance only. The app reuses the saved value for that service city when one already exists.
-6. If you enter a new one-way distance for a service city and save the row, the app remembers it for future interpretation rows under the current profile.
-7. If you used `Tools > New Interpretation Honorários...`, the export dialog opens right after save. Otherwise, use `Gerar Requerimento de Honorários...` from that row when you are ready.
-8. The export saves the DOCX first and then attempts a sibling PDF with the same basename.
-9. Leave `Include transport/distance sentence in honorários text` on in the normal case. Turn it off only when transport is being handled separately and you want that sentence omitted from the document.
-10. The body still uses the service day, but the footer date before your signature always uses the day you generate the document.
-11. If automatic PDF generation fails, the dialog keeps the DOCX, stays responsive, and lets you retry, choose an existing PDF, or continue local-only.
-12. Manual/local interpretation exports can create a fresh Gmail draft when `Court Email`, Gmail draft prerequisites, and the honorários PDF are all available. Those drafts attach the honorários PDF only.
+4. If a photo or screenshot import did not contain an explicit service entity or city, the form still opens normally and lets you fill those fields in manually.
+5. Keep `Service same as Case` on when the hearing/service happened in the same place as the case. Turn it off only when the service entity or city is different.
+6. The visible KM field is the one-way distance only. The app reuses the saved value for that service city when one already exists.
+7. If you enter a new one-way distance for a service city and save the row, the app remembers it for future interpretation rows under the current profile.
+8. If you used `Tools > New Interpretation Honorários...`, the export dialog opens right after save. Otherwise, use `Gerar Requerimento de Honorários...` from that row when you are ready.
+9. The export dialog keeps the main case/profile fields visible first and tucks extra detail into `SERVICE`, `TEXT`, and `RECIPIENT` sections. `RECIPIENT` usually stays collapsed until you need to override the case-derived addressee.
+10. The export saves the DOCX first and then attempts a sibling PDF with the same basename.
+11. Leave `Include transport/distance sentence in honorários text` on in the normal case. Turn it off only when transport is being handled separately and you want that sentence omitted from the document.
+12. The body still uses the service day, but the footer date before your signature always uses the day you generate the document.
+13. If automatic PDF generation fails, the dialog keeps the DOCX, stays responsive, and lets you retry, choose an existing PDF, or continue local-only.
+14. Manual/local interpretation exports can create a fresh Gmail draft when `Court Email`, Gmail draft prerequisites, and the honorários PDF are all available. Those drafts attach the honorários PDF only.
 
 ## Multiple Windows
 1. Open another workspace from `File > New Window`, `Ctrl+Shift+N`, or the bottom `...` menu.
@@ -116,20 +118,21 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 6. In the app, choose the Gmail intake mode first:
    - `Translation` keeps the existing multi-attachment translation batch behavior and target-language review.
    - `Interpretation notice` is for one selected court-notice attachment that should not be translated.
-7. In `Translation` mode, choose which files to translate and correct the target language if needed.
-8. In `Interpretation notice` mode, select exactly one supported PDF or image attachment. The app hides translation-only review inputs in that mode.
-9. Use `Preview selected attachment` when you need to inspect a file before preparing it.
-10. In preview, page `1` is the default. Scroll the PDF and click `Start from this page` only for translation batches when the file should begin later, such as after a cover sheet.
-11. When you click `Prepare selected attachments`, already previewed files are reused when possible instead of being downloaded again.
-12. Translation mode then translates the selected files one by one.
-13. Interpretation-notice mode stages the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
-14. Arabic translation files pause in a Word review step before `Save to Job Log`. Save the DOCX there and the app continues automatically; if save detection misses, use `Continue now` after saving.
-15. Translation mode requires each file to be saved before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
-16. If one translation file resolves to a different case or court, stop and split the work into separate batches.
-17. After the last translation file, or after the interpretation honorários export generates its PDF, the app can create one Gmail reply draft in the original thread.
-18. Translation Gmail drafts attach the translated DOCX files plus the generated honorários PDF.
-19. Interpretation Gmail drafts attach only the generated honorários PDF. They do not attach the original notice or any translated DOCX.
-20. The app creates a draft only. It does not send the email automatically.
+7. The review dialog starts with a short summary banner. Use its info button if you need the sender, Gmail account, or output-folder details.
+8. In `Translation` mode, choose which files to translate and correct the target language if needed.
+9. In `Interpretation notice` mode, select exactly one supported PDF or image attachment. The app hides translation-only review inputs in that mode.
+10. Use `Preview selected attachment` when you need to inspect a file before preparing it.
+11. In preview, page `1` is the default. Scroll the PDF and click `Start from this page` only for translation batches when the file should begin later, such as after a cover sheet.
+12. When you click `Prepare selected attachments`, already previewed files are reused when possible instead of being downloaded again.
+13. Translation mode then translates the selected files one by one.
+14. Interpretation-notice mode stages the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
+15. Arabic translation files pause in a Word review step before `Save to Job Log`. Save the DOCX there and the app continues automatically; if save detection misses, use `Continue now` after saving.
+16. Translation mode requires each file to be saved before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
+17. If one translation file resolves to a different case or court, stop and split the work into separate batches.
+18. After the last translation file, or after the interpretation honorários export generates its PDF, the app can create one Gmail reply draft in the original thread.
+19. Translation Gmail drafts attach the translated DOCX files plus the generated honorários PDF.
+20. Interpretation Gmail drafts attach only the generated honorários PDF. They do not attach the original notice or any translated DOCX.
+21. The app creates a draft only. It does not send the email automatically.
 
 ## If Gmail Intake Stops Early
 1. If the page says the app is not listening, confirm the bridge is enabled. A normal toolbar click can auto-start the app, so a manual launch should only be needed after an auto-start failure.

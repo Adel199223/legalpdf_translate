@@ -6,17 +6,22 @@ Open this file first for:
 - `where did we leave off`
 - `what is the next roadmap step`
 
-This file is the stable first resume stop for fresh sessions.
+This file is the roadmap anchor file and the stable first resume stop for fresh sessions.
+
+## Authoritative Worktree
+- Authoritative worktree: canonical merged checkout after this branch lands
+- Branch: `main`
 
 ## Roadmap State
 - Dormant roadmap state on `main`.
+- There is no active roadmap currently open on this worktree.
 - No active roadmap tracker is currently authoritative.
 - The beginner-first primary-flow UX roadmap is closed and retained only as historical reference:
   - `docs/assistant/exec_plans/completed/2026-03-12_beginner_first_primary_flow_ux_roadmap.md`
   - `docs/assistant/exec_plans/completed/2026-03-13_beginner_first_primary_flow_ux_stage4_honorarios_final_audit.md`
 
 ## Next Concrete Action
-- For normal new work, follow standard ExecPlan flow when scope or risk requires it.
+- For normal new work, follow normal ExecPlan flow when scope or risk requires it.
 - Do not require a `NEXT_STAGE_X` continuation token unless a new staged roadmap is explicitly opened.
 
 ## Resume Order

@@ -26,9 +26,9 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
   - left sidebar: `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`
   - hero row: centered `LegalPDF Translate` title and right-aligned status text
   - left card: `Job Setup`
-  - right card: `Conversion Output`
+  - right card: `Run Status`
   - bottom action rail: `Start Translate`, `Cancel`, `...`
-- `Advanced Settings` stays collapsed by default inside the setup card.
+- `Advanced Settings` stays collapsed by default inside the setup card, with a compact info affordance for extra guidance.
 - Review Queue and Save to Job Log remain available from the `Tools` menu; the `...` menu keeps output/report/job-log actions.
 - Workspace titles show `Workspace N` and can add the current source filename as a hint so parallel windows stay distinguishable.
 - The shell uses three responsive layout modes:
@@ -42,6 +42,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - Top-level fixed-vocabulary selectors in the shell, settings/admin tabs, and glossary/calibration tool dialogs now use guarded non-editable combos/spins; dense table-local editors keep their existing local combo contract.
 - Top-level windows and major dialogs now use shared screen-bounded sizing via `src/legalpdf_translate/qt_gui/window_adaptive.py`.
 - Main-shell resize work is deferred/coalesced so live resizing stays stable; the hero row also reserves width for the status label so short states such as `Idle` are not clipped during narrow-width transitions.
+- The beginner-first primary-flow cleanup also keeps the shell lighter by default: `Run Status` uses shorter visible copy, the always-visible output-format line is hidden, Gmail review compresses provenance/output detail behind an info button, interpretation Job Log uses compact `+` vocabulary buttons plus a default-collapsed `SERVICE` section, and interpretation honorários export now uses `SERVICE`, `TEXT`, and `RECIPIENT` disclosure sections.
 
 ## Core Runtime Modules
 - `src/legalpdf_translate/workflow.py`: translation pipeline orchestration.
@@ -168,15 +169,17 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - the main window also exposes `Tools > New Interpretation Honorários...` and the same footer-overflow action for the save-first no-document path
   - interpretation notification imports keep the local `pdf_path` when present
   - interpretation photo imports stay image-only and do not create a PDF-backed row contract
+  - interpretation photo/screenshot imports tolerate missing service entity or city values and keep the form editable instead of failing autofill
   - translation-only inputs are hidden in interpretation mode instead of shown as inactive clutter
   - the primary visible date in interpretation mode is the service date
   - interpretation distance is shown as one visible one-way value in the UI, keyed by `service_city`, and mirrored internally into outbound/return storage for compatibility
   - `Service same as Case` defaults on for interpretation unless an explicit different service location already exists
+  - interpretation edit mode now collapses `SERVICE` by default when it simply mirrors the case, and saved entity/city add actions use compact `+` buttons plus inline help affordances instead of long visible helper copy
   - profile-backed distance defaults are reused automatically by service city, and newly entered one-way values are persisted back to that profile-city mapping on save
 - Interpretation honorarios now use a kind-aware document branch:
   - manual interpretation rows can generate honorários from the Job Log dialog or from the save-first `Tools > New Interpretation Honorários...` quick action
   - notification PDF and photo/screenshot imports prefill interpretation case/service values before the user confirms the row
-  - interpretation honorarios exports use the responsive/scrollable profile-backed export dialog, save a DOCX first, then attempt a sibling PDF immediately without blocking the main UI
+  - interpretation honorarios exports use the responsive/scrollable profile-backed export dialog, keep the general case/profile inputs visible first through `SERVICE`, `TEXT`, and `RECIPIENT` disclosure sections, save a DOCX first, then attempt a sibling PDF immediately without blocking the main UI
   - the export dialog keeps `Include transport/distance sentence in honorários text` on by default, but you can turn it off when transport is being handled separately and the generated text should omit that clause
   - generated interpretation honorários now auto-complete a missing case city in generic court addressees, use the revised one-line-IBAN / centered `Espera deferimento,` closing block, keep `service_date` in the body, and use the document creation day in the footer date line before the signature
   - when automatic PDF export fails, the dialog keeps the saved DOCX usable locally and offers retry/select-existing-PDF/open-folder recovery before any Gmail draft path is allowed to continue
@@ -215,6 +218,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - The review dialog first selects the Gmail intake workflow kind:
   - `Translation` keeps the existing multi-attachment translation batch flow
   - `Interpretation notice` handles exactly one selected PDF/image court notice that should not be translated
+- The review header now starts with a compact summary banner and keeps sender/account/output-folder provenance behind an inline info button so attachment choices stay primary.
 - The attachment review step also includes the target-language selector for the whole Gmail batch, and the selected language is pushed back into the main app UI before preparation starts.
 - The review dialog now also supports per-attachment start-page selection and an in-app attachment preview before preparation begins.
 - PDF previews use a lazy continuous-scroll viewer so the user can inspect the document. Page `1` is always the default first page to translate; use `Start from this page` only when the batch should begin later. Image attachments remain single-page and always start at page `1`.
