@@ -8,9 +8,9 @@ import sys
 
 def run(argv: list[str] | None = None) -> int:
     try:
-        from PySide6.QtCore import QTimer, Qt
+        from PySide6.QtCore import Qt
         from PySide6.QtGui import QFont, QIcon
-        from PySide6.QtWidgets import QApplication, QMessageBox
+        from PySide6.QtWidgets import QApplication
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(
             "PySide6 is not installed. Install dependencies with `pip install -e .`."
@@ -47,6 +47,9 @@ def run(argv: list[str] | None = None) -> int:
     controller.create_workspace(show=True, focus=False)
     degraded_text = degraded_runtime_dialog_text()
     if degraded_text:
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QMessageBox
+
         def _show_degraded_runtime_warning() -> None:
             anchor = controller.last_active_window()
             QMessageBox.warning(anchor, "Degraded runtime session", degraded_text)
