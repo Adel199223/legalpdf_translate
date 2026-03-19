@@ -54,7 +54,7 @@ def test_apply_reference_sample_sets_preview_values() -> None:
         assert window.pages_label.text() == "Pages: 25"
         assert window.outdir_edit.text() == "C:/Users/FA507/Downloads"
         assert window.progress.value() == 50
-        assert window.progress_eta_label.text() == "Est. remaining: ~2m"
+        assert window.progress_eta_label.text() == "ETA ~2m"
         assert "Translating text blocks" in window.status_label.text()
         assert window.metric_pages_value_label.text() == "12 / 25"
         assert window.metric_images_value_label.text() == "3 / 3"
@@ -79,6 +79,12 @@ def test_render_profiles_writes_png_and_metadata(tmp_path: Path) -> None:
     assert meta_path.exists()
     assert result["profile"] == "wide"
     assert result["theme"] == "dark_futuristic"
+    assert result["advanced_settings_expanded"] is False
+    assert result["advanced_help_button_object_name"] == "InlineInfoButton"
+    assert result["progress_help_button_object_name"] == "InlineInfoButton"
+    assert result["progress_panel_title"] == "Run Status"
+    assert result["progress_eta_text"] == "ETA ~2m"
+    assert result["output_format_hidden"] is True
     assert result["layout_mode"] == "desktop_exact"
     assert result["dashboard_frame_width"] == 1200
     assert result["dashboard_frame_x"] == (result["content_card_width"] - result["dashboard_frame_width"]) // 2
@@ -91,8 +97,6 @@ def test_render_profiles_writes_png_and_metadata(tmp_path: Path) -> None:
     assert _brightness(result["footer_halo_rgb"]) > _brightness(result["footer_fill_rgb"])
     assert result["primary_button_rgb"][1] > result["primary_button_rgb"][0]
     assert result["primary_button_rgb"][2] > result["primary_button_rgb"][0]
-    assert result["danger_button_rgb"][0] > result["danger_button_rgb"][1]
-    assert result["danger_button_rgb"][0] > result["danger_button_rgb"][2]
     assert _brightness(result["sidebar_active_rgb"]) > _brightness(result["sidebar_inactive_rgb"])
     assert result["sidebar_active_rgb"][1] > result["sidebar_inactive_rgb"][1]
     assert result["sidebar_active_rgb"][2] > result["sidebar_inactive_rgb"][2]
@@ -156,6 +160,16 @@ def test_render_gmail_review_dialog_sample_writes_png_and_metadata(tmp_path: Pat
     assert result["sample"] == "gmail_review"
     assert result["theme"] == "dark_futuristic"
     assert result["row_count"] == 2
+    assert result["summary_text"] == "Remessa de peça processual | 2 files"
+    assert result["output_dir_text"] == "Folder: Downloads"
+    assert result["summary_info_button_object_name"] == "InlineInfoButton"
+    assert result["file_header_text"] == "File"
+    assert result["start_header_text"] == "Start"
+    assert result["detail_attachment_text"] == "cef31abb-bd4f-4582-b15e-09bbb40d1834_temp.pdf"
+    assert result["pages_text"] == "6 pages"
+    assert result["start_page_label_text"] == "Start page"
+    assert result["preview_button_text"] == "Preview"
+    assert result["prepare_button_text"] == "Prepare selected"
 
 
 def test_render_gmail_preview_dialog_sample_writes_png_and_metadata(tmp_path: Path) -> None:
@@ -179,8 +193,59 @@ def test_render_honorarios_export_dialog_sample_writes_png_and_metadata(tmp_path
     assert meta_path.exists()
     assert result["sample"] == "honorarios_export_dialog"
     assert result["theme"] == "dark_simple"
+    assert result["service_section_expanded"] is False
+    assert result["service_section_summary"] == "2026-03-11 · Same as case"
+    assert result["text_section_expanded"] is True
+    assert result["recipient_section_expanded"] is False
+    assert result["recipient_section_summary"] == "Auto from case"
+    assert result["service_help_button_object_name"] == "InlineInfoButton"
+    assert result["recipient_help_button_object_name"] == "InlineInfoButton"
+    assert result["use_service_location_label"] == "Mention service location in text"
+    assert result["include_transport_sentence_label"] == "Include transport sentence"
+    assert result["distance_hint_text"] == "Saved by city."
     assert result["generate_button_rgb"][1] > result["generate_button_rgb"][0]
-    assert result["dialog_border_rgb"][1] >= result["dialog_fill_rgb"][1]
+    assert result["dialog_border_rgb"] != result["dialog_fill_rgb"]
+
+
+def test_render_declutter_primitives_sample_writes_png_and_metadata(tmp_path: Path) -> None:
+    result = render_tool.render_declutter_primitives_sample(outdir=tmp_path, theme="dark_simple")
+    png_path = tmp_path / "declutter_primitives.png"
+    meta_path = tmp_path / "declutter_primitives.json"
+    assert png_path.exists()
+    assert png_path.stat().st_size > 0
+    assert meta_path.exists()
+    assert result["sample"] == "declutter_primitives"
+    assert result["theme"] == "dark_simple"
+    assert result["service_expanded"] is False
+    assert result["interpretation_expanded"] is True
+    assert result["service_summary"] == "Same as case"
+    assert result["add_button_object_name"] == "CompactAddButton"
+    assert result["info_button_object_name"] == "InlineInfoButton"
+
+
+def test_render_joblog_interpretation_dialog_sample_writes_png_and_metadata(tmp_path: Path) -> None:
+    result = render_tool.render_joblog_interpretation_dialog_sample(outdir=tmp_path, theme="dark_futuristic")
+    png_path = tmp_path / "joblog_interpretation_dialog.png"
+    meta_path = tmp_path / "joblog_interpretation_dialog.json"
+    assert png_path.exists()
+    assert png_path.stat().st_size > 0
+    assert meta_path.exists()
+    assert result["sample"] == "joblog_interpretation_dialog"
+    assert result["theme"] == "dark_futuristic"
+    assert result["window_title"] == "Edit Job Log Entry"
+    assert result["job_type"] == "Interpretation"
+    assert result["service_same_checked"] is True
+    assert result["service_section_expanded"] is False
+    assert result["service_section_summary"] == "Same as case"
+    assert result["include_transport_sentence_checked"] is True
+    assert result["interpretation_section_expanded"] is True
+    assert result["case_entity_add_button_object_name"] == "CompactAddButton"
+    assert result["service_entity_add_button_object_name"] == "CompactAddButton"
+    assert result["use_service_location_label"] == "Mention service location in text"
+    assert result["include_transport_sentence_label"] == "Include transport sentence"
+    assert result["interpretation_hint_text"] == "Distance saved by city."
+    assert result["open_translation_enabled"] is True
+    assert result["honorarios_enabled"] is True
 
 
 def test_render_honorarios_pdf_failure_sample_writes_png_and_metadata(tmp_path: Path) -> None:

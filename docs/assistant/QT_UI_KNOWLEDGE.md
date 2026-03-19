@@ -33,12 +33,15 @@
 | `HeroStatusLabel` | QLabel | right-aligned top status text |
 | `DashboardFrame` | QFrame | outer shell around setup/output/action regions |
 | `ShellPanel` | QFrame | interior setup/progress/details/advisor panels |
-| `PanelHeading` | QLabel | `Job Setup`, `Conversion Output` headings |
+| `PanelHeading` | QLabel | `Job Setup`, `Run Status` headings |
 | `FieldChrome` | QFrame | embedded dashboard field container |
 | `FieldBrowseButton` | QToolButton | right-edge browse/action affordance inside dashboard fields |
 | `LangCaretButton` | QToolButton | explicit dropdown caret in target-language field |
 | `SectionToggleButton` | QToolButton | `Advanced Settings` collapsible bar |
 | `MetricGridFrame` | QFrame | output metrics grid container |
+| `CompactAddButton` | QPushButton | compact `+` action for saved entity/city vocabulary add flows |
+| `InlineInfoButton` | QToolButton | compact hover/focus help affordance for secondary guidance |
+| `DeclutterSection` | QFrame | collapsible section shell used by beginner-first dialog cleanup |
 | `PrimaryButton` | QPushButton | shared primary commit/run/apply action across shell/dialog/tool surfaces |
 | `DangerButton` | QPushButton | shared destructive or reset action across shell/dialog/tool surfaces |
 | `OverflowMenuButton` | QToolButton | `...` overflow menu trigger |
@@ -84,7 +87,7 @@ QtMainWindow
                                 │                   │   │   ├── adv_frame
                                 │                   │   │   └── advisor_frame
                                 │                   │   └── QFrame#ShellPanel [progress_panel]
-                                │                   │       ├── QLabel#PanelHeading ("Conversion Output")
+                                │                   │       ├── QLabel#PanelHeading ("Run Status")
                                 │                   │       ├── summary row
                                 │                   │       ├── QProgressBar
                                 │                   │       ├── current-task row
@@ -258,6 +261,24 @@ QtMainWindow
 - **Where:** centralized selectors in `qt_gui/styles.py`, especially `QDialog`, `QGroupBox`, `QTabWidget`, `DialogScrollArea`, and `DialogActionBar`.
 - **Verify:** those dialogs visibly inherit the same layered panel/field/button treatment while remaining screen-bounded and responsive.
 
+### 13b. Interpretation Job Log declutter contract
+- **What:** the interpretation Save/Edit Job Log flow should default to the minimum visible context needed to finish the row safely.
+- **Where:** `QtSaveToJobLogDialog` plus shared helpers in `qt_gui/declutter.py`.
+- **Behavior:** saved entity/city add actions use `CompactAddButton`, secondary guidance routes through `InlineInfoButton`, and the interpretation `SERVICE` block starts collapsed when it only mirrors the case and no explicit service-location wording or distinct imported service data requires it.
+- **Verify:** interpretation edit mode opens with a lighter top section, expands `SERVICE` when `Service same as Case` is off or the service location differs, and keeps all existing actions reachable.
+
+### 13c. Gmail review compact-summary contract
+- **What:** the Gmail attachment review dialog should show decision-critical attachment controls before provenance detail.
+- **Where:** `QtGmailBatchReviewDialog` in `qt_gui/dialogs.py`.
+- **Behavior:** the dialog opens with a compact summary banner, shorter visible labels, and an inline info affordance for sender/account/output-folder details instead of keeping the full provenance block expanded by default.
+- **Verify:** attachment selection and workflow/language controls remain obvious first, while provenance detail is still available by hover/focus help.
+
+### 13d. Interpretation honorários disclosure contract
+- **What:** the interpretation honorários export dialog should keep the general export path legible before optional secondary sections.
+- **Where:** `QtHonorariosExportDialog` in `qt_gui/dialogs.py`.
+- **Behavior:** interpretation export uses `DeclutterSection` blocks for `SERVICE`, `TEXT`, and `RECIPIENT`; `SERVICE` collapses when redundant, `RECIPIENT` collapses when still auto-derived from the case, and the dialog opens tall enough that the primary controls are visible before scrolling.
+- **Verify:** the dialog starts on the general case/profile controls, expands the needed section automatically when the user changes service or recipient state, and preserves the existing export flow.
+
 ### 14. Preview resize coalescing contract
 - **What:** Attachment preview scaling must be coalesced so drag-resizing does not trigger full rescale/reflow work on every viewport tick.
 - **Where:** `QtGmailAttachmentPreviewDialog` uses `_scaled_preview_timer`, viewport event filtering, and a deferred `_refresh_scaled_preview()` path.
@@ -331,7 +352,7 @@ python -m compileall src tests
 
 1. Launch app: `python -m legalpdf_translate.qt_app`
 2. Optional detached launch on Windows: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`
-3. Desktop exact: sidebar labels readable, `Conversion Output` visible, two-column shell intact
+3. Desktop exact: sidebar labels readable, `Run Status` visible, two-column shell intact
 4. Desktop compact: still two-column, no clipped fields or drifting action rail
 5. Stacked compact: setup/output stack cleanly; footer reflows to two rows
 6. Switch language between `EN`, `FR`, `AR` and confirm one code + one flag only
@@ -344,13 +365,15 @@ python -m compileall src tests
 8. Open `Tools` and confirm `Review Queue...` and `Save to Job Log...` remain reachable
 9. Resize the main window across wide and narrow states and confirm the hero status text still fits cleanly without trembling or a shell-level horizontal scrollbar
 10. Open `Tools > Save to Job Log...` and confirm the dialog fits on-screen, scrolls internally on smaller sizes, and starts with `Run Metrics` and `Amounts` collapsed
-11. Open `Tools > View Job Log` and confirm the table uses icon row actions, resizable headers, and horizontal scrolling only when the table is wider than the window
-12. Open Gmail attachment preview and confirm drag-resizing does not visibly shake from repeated rescale/reflow work
-13. Scroll over the closed run-critical selectors and confirm they do not change by accident
-14. Trigger the EN/FR xhigh warning and confirm `Switch to fixed high` changes the current effort policy
-15. Trigger the OCR-heavy warning and confirm `Apply safe OCR profile` changes the current run only
-16. Open `File > New Window` or press `Ctrl+Shift+N` and confirm a second top-level window appears with the next `Workspace N` title
-17. Start a run in one workspace and confirm another workspace stays usable while it is busy
-18. Configure the same source file, target language, and output folder in two workspaces and confirm the second start is blocked as duplicate run-folder reuse
-19. If Gmail intake is enabled, confirm intake reuses an idle blank workspace first and opens a new workspace when the last active one is busy or already has job context
-20. In `dark_futuristic`, confirm the top menu bar reads as a warm smoky band, the left background glow is visibly stronger than the nearby cold field chrome, the dashboard/footer shells carry cyan bloom, the primary button reads cyan, and the cancel button reads salmon rather than disabled maroon
+11. Switch that dialog to interpretation mode and confirm `SERVICE` starts collapsed when it mirrors the case, compact `+` buttons replace the older `Add...` field actions, and inline info buttons hold the secondary helper copy
+12. Open `Tools > View Job Log` and confirm the table uses icon row actions, resizable headers, and horizontal scrolling only when the table is wider than the window
+13. Open Gmail attachment review and confirm the compact summary banner keeps sender/account/output-folder detail behind the info affordance while attachment choices stay primary
+14. Open Gmail attachment preview and confirm drag-resizing does not visibly shake from repeated rescale/reflow work
+15. Scroll over the closed run-critical selectors and confirm they do not change by accident
+16. Trigger the EN/FR xhigh warning and confirm `Switch to fixed high` changes the current effort policy
+17. Trigger the OCR-heavy warning and confirm `Apply safe OCR profile` changes the current run only
+18. Open `File > New Window` or press `Ctrl+Shift+N` and confirm a second top-level window appears with the next `Workspace N` title
+19. Start a run in one workspace and confirm another workspace stays usable while it is busy
+20. Configure the same source file, target language, and output folder in two workspaces and confirm the second start is blocked as duplicate run-folder reuse
+21. If Gmail intake is enabled, confirm intake reuses an idle blank workspace first and opens a new workspace when the last active one is busy or already has job context
+22. In `dark_futuristic`, confirm the top menu bar reads as a warm smoky band, the left background glow is visibly stronger than the nearby cold field chrome, the dashboard/footer shells carry cyan bloom, the primary button reads cyan, and the cancel button reads salmon rather than disabled maroon

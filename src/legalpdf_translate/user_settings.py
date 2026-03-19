@@ -11,6 +11,7 @@ from .config import (
     DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
     DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
 )
+from .ocr_engine import default_ocr_api_env_name
 from .glossary import (
     default_ar_entries,
     entries_from_legacy_rules,
@@ -29,6 +30,7 @@ from .user_profile import (
     serialize_profiles,
     UserProfile,
 )
+from .types import OcrApiProvider
 
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
@@ -94,7 +96,7 @@ DEFAULT_OCR_SETTINGS: dict[str, Any] = {
     "ocr_api_provider": "openai",
     "ocr_api_base_url": "",
     "ocr_api_model": "",
-    "ocr_api_key_env_name": "DEEPSEEK_API_KEY",
+    "ocr_api_key_env_name": default_ocr_api_env_name(OcrApiProvider.OPENAI),
 }
 DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "settings_schema_version": SETTINGS_SCHEMA_VERSION,
@@ -291,12 +293,12 @@ def settings_path() -> Path:
     return root / APP_FOLDER_NAME / SETTINGS_FILENAME
 
 
-def load_settings() -> dict[str, Any]:
-    path = settings_path()
-    if not path.exists():
+def load_settings_from_path(path: Path) -> dict[str, Any]:
+    resolved_path = path.expanduser().resolve()
+    if not resolved_path.exists():
         return {}
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = resolved_path.read_text(encoding="utf-8")
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError):
         return {}
@@ -305,19 +307,31 @@ def load_settings() -> dict[str, Any]:
     return data
 
 
-def save_settings(data: dict[str, Any]) -> None:
-    path = settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_suffix(".tmp")
+def load_settings() -> dict[str, Any]:
+    return load_settings_from_path(settings_path())
+
+
+def save_settings_to_path(path: Path, data: dict[str, Any]) -> None:
+    resolved_path = path.expanduser().resolve()
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = resolved_path.with_suffix(".tmp")
     temp_path.write_text(
         json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    temp_path.replace(path)
+    temp_path.replace(resolved_path)
+
+
+def save_settings(data: dict[str, Any]) -> None:
+    save_settings_to_path(settings_path(), data)
 
 
 def app_data_dir() -> Path:
     return settings_path().parent
+
+
+def app_data_dir_from_settings_path(path: Path) -> Path:
+    return path.expanduser().resolve().parent
 
 
 def _coerce_bool(value: object, default: bool) -> bool:
@@ -464,8 +478,7 @@ def _coerce_choice(value: object, *, default: str, allowed: set[str]) -> str:
     return default
 
 
-def load_gui_settings() -> dict[str, Any]:
-    data = load_settings()
+def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
     merged = dict(DEFAULT_GUI_SETTINGS)
     for key in ALLOWED_GUI_KEYS:
         if key in data:
@@ -557,11 +570,25 @@ def load_gui_settings() -> dict[str, Any]:
     merged["ocr_api_model"] = str(merged.get("ocr_api_model", "") or "")
     ocr_env_value = merged.get("ocr_api_key_env_name")
     if "ocr_api_key_env_name" not in data or not str(ocr_env_value or "").strip():
-        fallback_env = "GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY"
+        fallback_env = (
+            default_ocr_api_env_name(OcrApiProvider.GEMINI)
+            if merged["ocr_api_provider"] == "gemini"
+            else default_ocr_api_env_name(OcrApiProvider.OPENAI)
+        )
         ocr_env_value = data.get("ocr_api_key_env", fallback_env)
-    merged["ocr_api_key_env_name"] = str(
-        ocr_env_value or ("GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY")
-    )
+    resolved_ocr_env = str(
+        ocr_env_value
+        or (
+            default_ocr_api_env_name(OcrApiProvider.GEMINI)
+            if merged["ocr_api_provider"] == "gemini"
+            else default_ocr_api_env_name(OcrApiProvider.OPENAI)
+        )
+    ).strip()
+    if merged["ocr_api_provider"] == "openai" and resolved_ocr_env in {"", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"}:
+        resolved_ocr_env = default_ocr_api_env_name(OcrApiProvider.OPENAI)
+    if merged["ocr_api_provider"] == "gemini" and resolved_ocr_env == "":
+        resolved_ocr_env = default_ocr_api_env_name(OcrApiProvider.GEMINI)
+    merged["ocr_api_key_env_name"] = resolved_ocr_env
     merged["gmail_gog_path"] = str(merged.get("gmail_gog_path", "") or "")
     merged["gmail_account_email"] = str(merged.get("gmail_account_email", "") or "")
     normalized_profiles, primary_profile_id = normalize_profiles(
@@ -836,18 +863,30 @@ def load_gui_settings() -> dict[str, Any]:
     return merged
 
 
-def save_gui_settings(values: dict[str, Any]) -> None:
-    data = load_settings()
+def load_gui_settings_from_path(path: Path) -> dict[str, Any]:
+    return _normalize_gui_settings(load_settings_from_path(path))
+
+
+def load_gui_settings() -> dict[str, Any]:
+    return load_gui_settings_from_path(settings_path())
+
+
+def save_gui_settings_to_path(path: Path, values: dict[str, Any]) -> None:
+    data = load_settings_from_path(path)
     data["settings_schema_version"] = SETTINGS_SCHEMA_VERSION
     for key in ALLOWED_GUI_KEYS:
         if key in values:
             data[key] = values[key]
     data["default_start_page"] = 1
-    save_settings(data)
+    save_settings_to_path(path, data)
 
 
-def load_profile_settings() -> tuple[list[UserProfile], str]:
-    data = load_gui_settings()
+def save_gui_settings(values: dict[str, Any]) -> None:
+    save_gui_settings_to_path(settings_path(), values)
+
+
+def load_profile_settings_from_path(path: Path) -> tuple[list[UserProfile], str]:
+    data = load_gui_settings_from_path(path)
     profiles, primary_profile_id = normalize_profiles(
         data.get("profiles"),
         data.get("primary_profile_id"),
@@ -856,7 +895,12 @@ def load_profile_settings() -> tuple[list[UserProfile], str]:
     return profiles, primary_profile_id
 
 
-def save_profile_settings(
+def load_profile_settings() -> tuple[list[UserProfile], str]:
+    return load_profile_settings_from_path(settings_path())
+
+
+def save_profile_settings_to_path(
+    path: Path,
     *,
     profiles: list[UserProfile],
     primary_profile_id: str,
@@ -866,16 +910,28 @@ def save_profile_settings(
         primary_profile_id,
         fallback_email="",
     )
-    save_gui_settings(
+    save_gui_settings_to_path(
+        path,
         {
             "profiles": serialize_profiles(normalized_profiles),
             "primary_profile_id": primary_profile(normalized_profiles, normalized_primary_id).id,
-        }
+        },
     )
 
 
-def load_joblog_settings() -> dict[str, Any]:
-    data = load_settings()
+def save_profile_settings(
+    *,
+    profiles: list[UserProfile],
+    primary_profile_id: str,
+) -> None:
+    save_profile_settings_to_path(
+        settings_path(),
+        profiles=profiles,
+        primary_profile_id=primary_profile_id,
+    )
+
+
+def _normalize_joblog_settings(data: dict[str, Any]) -> dict[str, Any]:
     merged = dict(DEFAULT_JOBLOG_SETTINGS)
     for key in ALLOWED_JOBLOG_KEYS:
         if key in data:
@@ -940,13 +996,17 @@ def load_joblog_settings() -> dict[str, Any]:
     )
     merged["ocr_api_base_url"] = str(merged.get("ocr_api_base_url", "") or "")
     merged["ocr_api_model"] = str(merged.get("ocr_api_model", "") or "")
+    ocr_provider = OcrApiProvider.GEMINI if merged["ocr_api_provider"] == "gemini" else OcrApiProvider.OPENAI
+    default_ocr_env = default_ocr_api_env_name(ocr_provider)
     ocr_env_value = merged.get("ocr_api_key_env_name")
     if "ocr_api_key_env_name" not in data or not str(ocr_env_value or "").strip():
-        fallback_env = "GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY"
-        ocr_env_value = data.get("ocr_api_key_env", fallback_env)
-    merged["ocr_api_key_env_name"] = str(
-        ocr_env_value or ("GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY")
-    )
+        ocr_env_value = data.get("ocr_api_key_env", default_ocr_env)
+    resolved_ocr_env = str(ocr_env_value or default_ocr_env).strip() or default_ocr_env
+    if merged["ocr_api_provider"] == "openai" and resolved_ocr_env in {"", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"}:
+        resolved_ocr_env = default_ocr_api_env_name(OcrApiProvider.OPENAI)
+    if merged["ocr_api_provider"] == "gemini" and resolved_ocr_env == "":
+        resolved_ocr_env = default_ocr_api_env_name(OcrApiProvider.GEMINI)
+    merged["ocr_api_key_env_name"] = resolved_ocr_env
     if not merged["vocab_case_entities"]:
         merged["vocab_case_entities"] = list(merged["vocab_entities"])
     if not merged["vocab_service_entities"]:
@@ -954,13 +1014,25 @@ def load_joblog_settings() -> dict[str, Any]:
     return merged
 
 
-def save_joblog_settings(values: dict[str, Any]) -> None:
-    data = load_settings()
+def load_joblog_settings_from_path(path: Path) -> dict[str, Any]:
+    return _normalize_joblog_settings(load_settings_from_path(path))
+
+
+def load_joblog_settings() -> dict[str, Any]:
+    return load_joblog_settings_from_path(settings_path())
+
+
+def save_joblog_settings_to_path(path: Path, values: dict[str, Any]) -> None:
+    data = load_settings_from_path(path)
     data["settings_schema_version"] = SETTINGS_SCHEMA_VERSION
     for key in ALLOWED_JOBLOG_KEYS:
         if key in values:
             data[key] = values[key]
-    save_settings(data)
+    save_settings_to_path(path, data)
+
+
+def save_joblog_settings(values: dict[str, Any]) -> None:
+    save_joblog_settings_to_path(settings_path(), values)
 
 
 def load_last_outdir() -> Path | None:

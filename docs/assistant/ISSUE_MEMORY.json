@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "last_updated": "2026-03-12T18:05:00Z",
+  "last_updated": "2026-03-19T06:51:00Z",
   "issues": [
     {
       "id": "workflow-wrong-build-under-test",
       "title": "Wrong app/build under test because of mixed branches/worktrees and noncanonical launch",
       "first_seen_timestamp": "2026-03-06T00:00:00Z",
-      "last_seen_timestamp": "2026-03-09T01:00:00Z",
-      "repeat_count": 5,
+      "last_seen_timestamp": "2026-03-19T06:51:00Z",
+      "repeat_count": 6,
       "status": "mitigated",
       "trigger_source": "both",
       "symptoms": [
@@ -32,12 +32,17 @@
           "timestamp": "2026-03-09T01:00:00Z",
           "summary": "Added a saved multi-root VS Code workspace guide and archived a stale broken sibling folder out of the daily view.",
           "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-03-19T06:51:00Z",
+          "summary": "Promoted the local browser app to the preferred daily-use surface, added explicit live versus isolated shadow mode routing, and documented the canonical live browser URL plus detached launcher.",
+          "outcome": "partial_only"
         }
       ],
       "accepted_fix": {
-        "timestamp": "2026-03-07T10:33:19Z",
-        "summary": "Canonical build enforcement plus approved-base promotion discipline, launcher identity packet gating, and noncanonical launch override rules.",
-        "expected_result": "Only the canonical approved-base build is the default test target, and wrong-build launches fail closed unless explicitly overridden."
+        "timestamp": "2026-03-19T06:51:00Z",
+        "summary": "Canonical build enforcement plus approved-base promotion discipline, launcher identity packet gating, noncanonical launch override rules, and one browser-app-first daily entrypoint with explicit live versus isolated shadow semantics.",
+        "expected_result": "Only the canonical approved-base build is the default test target, the normal human entrypoint is unambiguous, and wrong-build launches fail closed unless explicitly overridden."
       },
       "regressed_after_accepted_fix": false,
       "affected_workflows": [
@@ -50,7 +55,10 @@
         "docs/assistant/DOCS_REFRESH_NOTES.md",
         "docs/assistant/INDEX.md",
         "docs/assistant/APP_KNOWLEDGE.md",
-        "docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md"
+        "docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/SESSION_RESUME.md"
       ],
       "bootstrap_relevance": "required",
       "docs_sync_relevance": {
@@ -94,6 +102,10 @@
         {
           "type": "worktree",
           "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_integration"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_beginner_first_ux"
         }
       ]
     },
@@ -101,14 +113,15 @@
       "id": "harness-live-state-contamination",
       "title": "Tests or harness cleanup reused live user state or user-facing ports and contaminated real runtime checks",
       "first_seen_timestamp": "2026-03-08T00:00:00Z",
-      "last_seen_timestamp": "2026-03-08T09:27:00Z",
-      "repeat_count": 2,
+      "last_seen_timestamp": "2026-03-19T06:51:00Z",
+      "repeat_count": 3,
       "status": "mitigated",
       "trigger_source": "both",
       "symptoms": [
         "The expected localhost listener belonged to pytest or another non-user runtime instead of the visible app.",
         "Tests reused live roaming/profile settings or bridge configuration.",
-        "The browser showed a successful handoff while the visible app stayed idle."
+        "The browser showed a successful handoff while the visible app stayed idle.",
+        "Browser validation needed an explicit isolated shadow mode because real Gmail bridge ownership and real user data could not safely share the same default runtime state."
       ],
       "likely_root_cause": "Tests and ad hoc debugging reused live %APPDATA%, live settings, or default user-facing ports instead of isolated temp state.",
       "attempted_fix_history": [
@@ -116,12 +129,17 @@
           "timestamp": "2026-03-08T00:00:00Z",
           "summary": "Isolated pytest APPDATA and stopped bridge tests from using the live Gmail port.",
           "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-03-19T06:51:00Z",
+          "summary": "Added explicit browser-app live versus isolated shadow mode, separate runtime roots, browser-owned live Gmail bridge ownership, and clearer diagnostics for active mode, data root, and listener owner.",
+          "outcome": "stronger_mitigation"
         }
       ],
       "accepted_fix": {
-        "timestamp": "2026-03-08T09:27:00Z",
-        "summary": "Project guidance now requires temp env/filesystem isolation, non-live or ephemeral test ports, explicit teardown, and visible listener-conflict status.",
-        "expected_result": "Tests no longer hijack live machine state, and listener/runtime conflicts are triaged as harness issues before product debugging starts."
+        "timestamp": "2026-03-19T06:51:00Z",
+        "summary": "Project guidance now requires temp env/filesystem isolation, non-live or ephemeral test ports, explicit teardown, visible listener-conflict status, and a first-class browser-app split between real-work live mode and isolated shadow mode.",
+        "expected_result": "Tests no longer hijack live machine state, browser diagnostics show which mode and data root are active, and listener/runtime conflicts are triaged as harness issues before product debugging starts."
       },
       "regressed_after_accepted_fix": false,
       "affected_workflows": [
@@ -132,7 +150,10 @@
       "affected_docs": [
         "docs/assistant/LOCAL_ENV_PROFILE.local.md",
         "docs/assistant/LOCAL_CAPABILITIES.md",
-        "docs/assistant/ISSUE_MEMORY.md"
+        "docs/assistant/ISSUE_MEMORY.md",
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/SESSION_RESUME.md"
       ],
       "bootstrap_relevance": "required",
       "docs_sync_relevance": {
@@ -147,6 +168,10 @@
         {
           "type": "worktree",
           "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_gmail_intake"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_beginner_first_ux"
         },
         {
           "type": "template",

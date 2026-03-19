@@ -54,6 +54,20 @@ function describeRuntimeReason(reason) {
   }
 }
 
+function describeUiOwner(response) {
+  const owner = normalizeToken(response && response.ui_owner);
+  if (owner === "browser_app") {
+    return "Browser app live bridge";
+  }
+  if (owner === "qt_app") {
+    return "Desktop app live bridge";
+  }
+  if (owner === "external") {
+    return "External process";
+  }
+  return "Auto-configured from LegalPDF Translate";
+}
+
 function describeLaunchReason(reason) {
   switch (normalizeToken(reason)) {
     case "launch_target_ready":
@@ -92,11 +106,16 @@ async function loadDiagnostics() {
     const resolvedPort = normalizePort(response && response.bridgePort);
     const tokenPresent = response && response.bridgeTokenPresent === true;
 
-    setText("mode", "Auto-configured from LegalPDF Translate");
+    setText("mode", describeUiOwner(response));
     setText("nativeHostAvailability", "Available");
     setText("resolvedPort", resolvedPort === null ? "Unavailable" : String(resolvedPort));
     setText("tokenPresence", tokenPresent ? "Yes" : "No");
-    setText("runtimeStatus", describeRuntimeReason(response && response.reason));
+    setText(
+      "runtimeStatus",
+      response && response.ok === true && normalizeToken(response.ui_owner) === "browser_app"
+        ? "Ready (browser app)"
+        : describeRuntimeReason(response && response.reason)
+    );
     setText(
       "autoLaunchReady",
       response && response.autoLaunchReady === true
@@ -105,13 +124,17 @@ async function loadDiagnostics() {
     );
     setText(
       "launchTarget",
-      response && typeof response.launchTarget === "string" && response.launchTarget.trim() !== ""
-        ? response.launchTarget.trim()
+      response && typeof response.browser_url === "string" && response.browser_url.trim() !== ""
+        ? response.browser_url.trim()
+        : response && typeof response.launchTarget === "string" && response.launchTarget.trim() !== ""
+          ? response.launchTarget.trim()
         : "Unavailable"
     );
     setStatus(
       response && response.ok === true
-        ? "Live Gmail bridge diagnostics loaded from LegalPDF Translate."
+        ? normalizeToken(response.ui_owner) === "browser_app"
+          ? "Browser-owned live Gmail bridge diagnostics loaded from LegalPDF Translate."
+          : "Live Gmail bridge diagnostics loaded from LegalPDF Translate."
         : response && response.autoLaunchReady === true
           ? "LegalPDF Translate responded. The Gmail bridge is not running right now, but toolbar clicks can auto-start the app."
           : "LegalPDF Translate responded, but the Gmail bridge is not ready yet.",

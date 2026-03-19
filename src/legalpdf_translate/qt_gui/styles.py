@@ -274,6 +274,14 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
         background: {PALETTE['menu_separator']};
     }}
 
+    QToolTip {{
+        background-color: rgba(6, 20, 38, 246);
+        color: {PALETTE['text']};
+        border: 1px solid {PALETTE['dialog_border']};
+        border-radius: 10px;
+        padding: 6px 8px;
+    }}
+
     QFrame#SidebarPanel {{
         background-color: {PALETTE['sidebar']};
         border-right: 1px solid rgba(132, 241, 255, 102);
@@ -486,6 +494,61 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
         background-color: {PALETTE['button_hover']};
     }}
 
+    QToolButton#CompactAddButton {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 18),
+            stop:0.22 {PALETTE['button_bg']},
+            stop:1 rgba(7, 27, 48, 240)
+        );
+        border: 1px solid rgba(132, 239, 255, 154);
+        border-radius: 15px;
+        color: {PALETTE['accent_hot']};
+        min-width: 30px;
+        max-width: 30px;
+        min-height: 30px;
+        max-height: 30px;
+        padding: 0;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 14pt;
+        font-weight: 700;
+    }}
+
+    QToolButton#CompactAddButton:hover {{
+        background-color: {PALETTE['button_hover']};
+        border-color: {PALETTE['field_focus_border']};
+    }}
+
+    QToolButton#CompactAddButton:focus {{
+        border-color: {PALETTE['field_focus_border']};
+    }}
+
+    QToolButton#InlineInfoButton {{
+        background: rgba(9, 33, 58, 212);
+        border: 1px solid rgba(122, 214, 238, 132);
+        border-radius: 12px;
+        color: {PALETTE['muted']};
+        min-width: 24px;
+        max-width: 24px;
+        min-height: 24px;
+        max-height: 24px;
+        padding: 0;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 10.5pt;
+        font-weight: 700;
+    }}
+
+    QToolButton#InlineInfoButton:hover {{
+        color: {PALETTE['accent_hot']};
+        border-color: {PALETTE['field_focus_border']};
+        background: rgba(16, 53, 84, 226);
+    }}
+
+    QToolButton#InlineInfoButton:focus {{
+        border-color: {PALETTE['field_focus_border']};
+        color: {PALETTE['accent_hot']};
+    }}
+
     QToolButton#LangCaretButton {{
         background: transparent;
         border: none;
@@ -535,6 +598,63 @@ def build_stylesheet(theme: str = "dark_futuristic") -> str:
 
     QToolButton#SectionToggleButton:hover {{
         background-color: {PALETTE['button_hover']};
+        border-color: {PALETTE['field_focus_border']};
+    }}
+
+    QFrame#DeclutterSectionHeader {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 10),
+            stop:0.18 rgba(8, 29, 51, 182),
+            stop:1 rgba(6, 21, 39, 228)
+        );
+        border: 1px solid rgba(116, 231, 255, 118);
+        border-radius: 16px;
+    }}
+
+    QFrame#DeclutterSectionHeader[attention=\"true\"] {{
+        border-color: {PALETTE['field_focus_border']};
+    }}
+
+    QToolButton#DeclutterSectionToggle {{
+        color: rgba(229, 247, 255, 228);
+        background: transparent;
+        border: none;
+        padding: 2px 0;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 11.5pt;
+        font-weight: 600;
+        letter-spacing: 0.16px;
+    }}
+
+    QToolButton#DeclutterSectionToggle:hover {{
+        color: {PALETTE['accent_hot']};
+    }}
+
+    QToolButton#DeclutterSectionToggle:focus {{
+        color: {PALETTE['accent_hot']};
+    }}
+
+    QLabel#DeclutterSectionSummary {{
+        color: {PALETTE['muted']};
+        font-family: {_BODY_FONT_STACK};
+        font-size: 10.2pt;
+        font-weight: 520;
+        letter-spacing: 0.04px;
+    }}
+
+    QFrame#DeclutterSectionContent {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 8),
+            stop:0.16 {PALETTE['surface_panel']},
+            stop:1 rgba(4, 15, 28, 216)
+        );
+        border: 1px solid rgba(114, 193, 227, 104);
+        border-radius: 16px;
+    }}
+
+    QFrame#DeclutterSectionContent[attention=\"true\"] {{
         border-color: {PALETTE['field_focus_border']};
     }}
 

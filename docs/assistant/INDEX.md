@@ -17,8 +17,8 @@
 - `docs/assistant/LOCAL_CAPABILITIES.md`: current machine/tool/skill capability inventory for this repo.
 
 ## Use when you need user-facing explanations
-- `docs/assistant/features/APP_USER_GUIDE.md`: beginner support guide covering OCR advisor, review queue, job log save/edit flows, interpretation honorários, and queue runs.
-- `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`: primary workflow guide covering cost guardrails, review export, OCR advisor, queue runner behavior, and interpretation Job Log/honorários flows.
+- `docs/assistant/features/APP_USER_GUIDE.md`: beginner support guide covering the browser app as the normal daily-use surface, `live` vs isolated `shadow` mode, Gmail intake, OCR advisor, review queue, job log save/edit flows, interpretation honorários, and queue runs.
+- `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`: primary workflow guide covering browser-app-first translation, Gmail intake/reply flows, cost guardrails, review export, OCR advisor, queue runner behavior, and interpretation Job Log/honorários flows.
 - `docs/assistant/features/PRIMARY_FEATURE_USER_GUIDE.md`: compatibility shim to primary workflow guide.
 - `docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md`: plain-language guide for the saved multi-root VS Code workspace and the active LegalPDF Git worktrees on this machine.
 
@@ -65,6 +65,7 @@
 - `tooling/automation_preflight.dart`
 - `tooling/cloud_eval_preflight.dart`
 - `tooling/qt_render_review.py` (deterministic wide/medium/narrow Qt renders for reference-locked UI review)
+- `tooling/launch_browser_app_live_detached.py` (detached Windows launcher for the browser app in `live` mode)
 - `tooling/launch_qt_build.py` (canonical multi-worktree Qt launch helper that emits a build identity packet)
 - `tooling/ocr_translation_probe.py` (small-slice OCR-heavy translation probe and safe-run packet)
 - `test/tooling/validate_agent_docs_test.dart`

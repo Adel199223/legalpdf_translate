@@ -28,7 +28,8 @@ _AR_TRACK_LANG_PACK = "ara+eng"
 _EARLY_ACCEPT_SCORE = 0.82
 _MIN_ACCEPTABLE_LOCAL_SCORE = 0.18
 OPENAI_OCR_DEFAULT_MODEL = "gpt-4o-mini"
-OPENAI_OCR_DEFAULT_ENV = "DEEPSEEK_API_KEY"
+OPENAI_OCR_DEFAULT_ENV = "OPENAI_API_KEY"
+OPENAI_OCR_LEGACY_ENV = "DEEPSEEK_API_KEY"
 GEMINI_OCR_DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
 GEMINI_OCR_BENCHMARK_MODEL = "gemini-3-flash-preview"
 GEMINI_OCR_DEFAULT_ENV = "GEMINI_API_KEY"
@@ -136,6 +137,49 @@ def default_ocr_api_env_name(provider: OcrApiProvider) -> str:
     if provider == OcrApiProvider.GEMINI:
         return GEMINI_OCR_DEFAULT_ENV
     return OPENAI_OCR_DEFAULT_ENV
+
+
+def local_ocr_available() -> bool:
+    return bool(which("tesseract"))
+
+
+def candidate_ocr_api_env_names(config: OcrEngineConfig) -> tuple[str, ...]:
+    provider = normalize_ocr_api_provider(config.api_provider)
+    configured = (config.api_key_env_name or "").strip()
+    if provider == OcrApiProvider.GEMINI:
+        return (configured or default_ocr_api_env_name(provider),)
+    if configured and configured not in {OPENAI_OCR_DEFAULT_ENV, OPENAI_OCR_LEGACY_ENV}:
+        return (configured,)
+    return (OPENAI_OCR_DEFAULT_ENV, OPENAI_OCR_LEGACY_ENV)
+
+
+def resolve_ocr_api_key_source(
+    config: OcrEngineConfig,
+) -> tuple[Literal["stored", "env"], str] | None:
+    try:
+        stored = get_ocr_key()
+    except RuntimeError:
+        stored = None
+    if stored:
+        return ("stored", "stored")
+    for env_name in candidate_ocr_api_env_names(config):
+        from_env = os.getenv(env_name, "").strip()
+        if from_env:
+            return ("env", env_name)
+    return None
+
+
+def resolve_ocr_api_key(config: OcrEngineConfig) -> str | None:
+    source = resolve_ocr_api_key_source(config)
+    if source is None:
+        return None
+    source_kind, source_name = source
+    if source_kind == "stored":
+        try:
+            return get_ocr_key()
+        except RuntimeError:
+            return None
+    return os.getenv(source_name, "").strip() or None
 
 
 def default_ocr_api_base_url(provider: OcrApiProvider) -> str:
@@ -693,15 +737,7 @@ class LocalThenApiEngine:
 
 
 def _resolve_api_key(config: OcrEngineConfig) -> str | None:
-    try:
-        stored = get_ocr_key()
-    except RuntimeError:
-        stored = None
-    if stored:
-        return stored
-    env_name = (config.api_key_env_name or "").strip() or default_ocr_api_env_name(config.api_provider)
-    from_env = os.getenv(env_name, "").strip()
-    return from_env or None
+    return resolve_ocr_api_key(config)
 
 
 def test_ocr_provider_connection(config: OcrEngineConfig, *, api_key: str) -> None:

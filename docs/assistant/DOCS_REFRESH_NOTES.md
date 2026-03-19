@@ -16,6 +16,73 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-19 — codex/beginner-first-primary-flow-ux (browser-app closeout docs sync)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/LOCAL_CAPABILITIES.md
+  - docs/assistant/LOCAL_ENV_PROFILE.local.md
+  - docs/assistant/SESSION_RESUME.md
+  - docs/assistant/ISSUE_MEMORY.md
+  - docs/assistant/ISSUE_MEMORY.json
+  - docs/assistant/manifest.json
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md
+  - docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::Browser App Shell
+  - APP_KNOWLEDGE.md::Persistence Notes
+  - APP_KNOWLEDGE.md::Gmail Intake Batch Workflow
+  - docs/assistant/SESSION_RESUME.md::Current Recommended Entry
+  - docs/assistant/features/APP_USER_GUIDE.md::Quick Start (No Technical Background)
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md::Gmail Intake Batch Replies
+  - docs/assistant/ISSUE_MEMORY.md::workflow-wrong-build-under-test
+  - docs/assistant/ISSUE_MEMORY.md::harness-live-state-contamination
+- User-visible behavior:
+  - Assistant docs now describe the local browser app as the preferred daily-use surface, with `live` mode for real work and isolated `shadow` mode for safe testing/development.
+  - Assistant docs now describe the browser app as the normal live Gmail bridge owner, the fixed live Gmail handoff workspace `gmail-intake`, and `Extension Lab` as the browser-side diagnostics companion for the real Gmail extension.
+  - Fresh-session continuity now starts from the browser app live URL and detached launcher instead of the older Qt-first mental model.
+  - The reusable browser-app live-vs-shadow pattern is now captured in project-local docs and issue memory so a later explicit template-folder sync can lift it cleanly without relying on thread history.
+- The docs sync widened because of the issue-memory entries `workflow-wrong-build-under-test` and `harness-live-state-contamination`, which now record the durable browser-app entrypoint and live-vs-shadow isolation pattern.
+- Tests:
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m compileall src tests` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
+## 2026-03-13 — codex/beginner-first-primary-flow-ux (targeted UI docs sync)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/QT_UI_KNOWLEDGE.md
+  - docs/assistant/SESSION_RESUME.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/exec_plans/completed/2026-03-13_beginner_first_primary_flow_ux_publish_closeout.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::Desktop UI Shell
+  - APP_KNOWLEDGE.md::Persistence Notes
+  - APP_KNOWLEDGE.md::Gmail Intake Batch Workflow
+  - docs/assistant/APP_KNOWLEDGE.md::Current-Truth Note
+  - docs/assistant/QT_UI_KNOWLEDGE.md::objectName Conventions
+  - docs/assistant/QT_UI_KNOWLEDGE.md::Interpretation Job Log declutter contract
+  - docs/assistant/features/APP_USER_GUIDE.md::What You See On Screen
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md::Interpretation Honorarios
+- User-visible behavior:
+  - Assistant docs now describe the lighter shell default: `Run Status` replaces the older `Conversion Output` wording, `Advanced Settings` keeps compact inline help, and the always-visible output-format line is intentionally hidden.
+  - Gmail review docs now describe the compact summary banner plus info-button disclosure for sender/account/output-folder provenance instead of leaving that detail fully expanded in the default view.
+  - Interpretation Save/Edit Job Log docs now describe compact `+` field actions, the default-collapsed `SERVICE` section when it mirrors the case, and the null-safe photo/screenshot import path when service entity/city metadata is missing.
+  - Interpretation honorários docs now describe the `SERVICE`, `TEXT`, and `RECIPIENT` disclosure sections that keep the primary export controls visible first.
+- Tests:
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m compileall src tests tooling/qt_render_review.py` -> PASS
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests/test_qt_render_review.py` -> `13 passed`
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests/test_qt_app_state.py::test_stage_two_shell_smoke tests/test_qt_app_state.py::test_gmail_batch_review_dialog_returns_selected_attachments_and_target_lang tests/test_qt_app_state.py::test_gmail_batch_review_dialog_interpretation_mode_hides_translation_controls_and_requires_one_attachment tests/test_qt_app_state.py::test_edit_joblog_dialog_interpretation_defaults_service_same_and_one_way_distance tests/test_qt_app_state.py::test_edit_joblog_dialog_interpretation_service_section_expands_when_location_is_mentioned tests/test_qt_app_state.py::test_edit_joblog_dialog_interpretation_header_autofill_reveals_distinct_service_location tests/test_qt_app_state.py::test_honorarios_export_dialog_interpretation_defaults_to_collapsed_service_and_recipient_sections tests/test_qt_app_state.py::test_honorarios_export_dialog_service_section_expands_for_explicit_location tests/test_qt_app_state.py::test_honorarios_export_dialog_distinct_service_values_start_expanded tests/test_qt_app_state.py::test_honorarios_export_dialog_recipient_section_expands_after_manual_edit` -> `10 passed`
+  - `QT_QPA_PLATFORM=offscreen C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe tooling/qt_render_review.py --outdir tmp/stage4_primary_flow_final_audit --themes dark_futuristic dark_simple --include-gmail-review` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q` -> `947 passed`
+
 ## 2026-03-12 — codex/honorarios-pdf-stage1 (batched March 12 docs sync)
 - Files changed:
   - APP_KNOWLEDGE.md

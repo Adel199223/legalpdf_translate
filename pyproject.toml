@@ -16,6 +16,10 @@ dependencies = [
   "Pillow>=10.0.0",
   "keyring>=25.0.0",
   "PySide6>=6.7.0",
+  "fastapi>=0.115.0",
+  "uvicorn>=0.30.0",
+  "Jinja2>=3.1.0",
+  "python-multipart>=0.0.9",
 ]
 authors = [{ name = "LegalPDF Translate" }]
 
@@ -28,7 +32,16 @@ legalpdf-translate-qt = "legalpdf_translate.qt_main:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-packages = ["legalpdf_translate", "legalpdf_translate.qt_gui", "legalpdf_translate.workflow_components"]
+include-package-data = true
+packages = [
+  "legalpdf_translate",
+  "legalpdf_translate.qt_gui",
+  "legalpdf_translate.shadow_web",
+  "legalpdf_translate.workflow_components",
+]
+
+[tool.setuptools.package-data]
+"legalpdf_translate.shadow_web" = ["templates/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

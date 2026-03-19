@@ -93,6 +93,7 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert loaded["perf_timeout_image_seconds"] == 720
     assert loaded["ocr_api_provider"] in {"openai", "gemini"}
     assert loaded["ocr_api_provider_default"] in {"openai", "gemini"}
+    assert loaded["ocr_api_key_env_name"] == "OPENAI_API_KEY"
 
 
 def test_load_gui_settings_coerces_gmail_intake_bridge_fields(tmp_path: Path, monkeypatch) -> None:
@@ -392,6 +393,36 @@ def test_load_gui_settings_uses_provider_aware_ocr_env_default(tmp_path: Path, m
 
     assert loaded["ocr_api_provider"] == "gemini"
     assert loaded["ocr_api_key_env_name"] == "GEMINI_API_KEY"
+
+
+def test_load_gui_settings_normalizes_openai_legacy_ocr_env_default(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps({"ocr_api_provider": "openai", "ocr_api_key_env_name": "DEEPSEEK_API_KEY"}),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["ocr_api_provider"] == "openai"
+    assert loaded["ocr_api_key_env_name"] == "OPENAI_API_KEY"
+
+
+def test_load_joblog_settings_normalizes_openai_legacy_ocr_env_default(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps({"ocr_api_provider": "openai", "ocr_api_key_env_name": "DEEPSEEK_API_KEY"}),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_joblog_settings()
+
+    assert loaded["ocr_api_provider"] == "openai"
+    assert loaded["ocr_api_key_env_name"] == "OPENAI_API_KEY"
 
 
 def test_load_gui_settings_migrates_legacy_single_scope_to_personal(tmp_path: Path, monkeypatch) -> None:

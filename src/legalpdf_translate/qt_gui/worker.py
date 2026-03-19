@@ -63,14 +63,15 @@ class HonorariosPdfExportResult:
 class HonorariosPdfExportWorker(QObject):
     finished = Signal(object)
 
-    def __init__(self, *, docx_path: Path, pdf_path: Path) -> None:
+    def __init__(self, *, docx_path: Path, pdf_path: Path, timeout_seconds: float = 45.0) -> None:
         super().__init__()
         self._docx_path = docx_path.expanduser().resolve()
         self._pdf_path = pdf_path.expanduser().resolve()
+        self._timeout_seconds = float(timeout_seconds)
 
     @Slot()
     def run(self) -> None:
-        preflight = probe_word_pdf_export_support()
+        preflight = probe_word_pdf_export_support(timeout_seconds=max(8.0, self._timeout_seconds))
         if not preflight.ok:
             self.finished.emit(
                 HonorariosPdfExportResult(
@@ -80,7 +81,11 @@ class HonorariosPdfExportWorker(QObject):
                 )
             )
             return
-        result = export_docx_to_pdf_in_word(self._docx_path, self._pdf_path)
+        result = export_docx_to_pdf_in_word(
+            self._docx_path,
+            self._pdf_path,
+            timeout_seconds=self._timeout_seconds,
+        )
         self.finished.emit(
             HonorariosPdfExportResult(
                 docx_path=self._docx_path,

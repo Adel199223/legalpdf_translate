@@ -15,6 +15,8 @@ It is intentionally tracked here because this repo is a personal harness and the
 
 ## Routing Rules
 ### Prefer Windows When
+- launching the local browser app in `live` mode for real user work
+- validating browser-app Gmail bridge ownership and extension handoff
 - launching the Qt app for visible end-user testing
 - validating Gmail draft creation through Windows `gog`
 - validating the Arabic DOCX Word review gate or `Align Right + Save`
@@ -30,10 +32,14 @@ It is intentionally tracked here because this repo is a personal harness and the
 If the feature depends on local auth state, browser state, or desktop runtime state, validate it on the same host where the app runs.
 
 Examples in this repo:
+- browser-app `live` mode, Gmail bridge ownership, and extension handoff
+- browser-app `shadow` mode when a risky isolated test should not touch live data
 - Gmail draft creation through Windows `gog`
 - visible Qt app testing
 - Arabic DOCX review through Windows Word / PowerShell COM automation
 - browser/account-linked local tooling
+- browser-app live daily-use URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#dashboard`
+- browser-app isolated test URL: `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#dashboard`
 
 Before browser/app or bridge triage on Windows, verify any required localhost listener is owned by the expected process. Unexpected listener ownership is a preflight `unavailable` condition, not a product failure.
 

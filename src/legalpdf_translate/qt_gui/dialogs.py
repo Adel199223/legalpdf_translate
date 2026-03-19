@@ -98,6 +98,26 @@ from legalpdf_translate.honorarios_docx import (
     default_honorarios_filename,
     generate_honorarios_docx,
 )
+from legalpdf_translate.interpretation_service import (
+    autofill_interpretation_from_notification_pdf as shared_service_autofill_interpretation_from_notification_pdf,
+    autofill_interpretation_from_photo as shared_service_autofill_interpretation_from_photo,
+)
+from legalpdf_translate.joblog_flow import (
+    JobLogSavedResult as SharedJobLogSavedResult,
+    JobLogSeed as SharedJobLogSeed,
+    build_blank_interpretation_seed as shared_build_blank_interpretation_seed,
+    build_interpretation_notice_diagnostics_text as shared_build_interpretation_notice_diagnostics_text,
+    build_interpretation_seed_from_notification_pdf as shared_build_interpretation_seed_from_notification_pdf,
+    build_interpretation_seed_from_photo_screenshot as shared_build_interpretation_seed_from_photo_screenshot,
+    build_joblog_saved_result,
+    build_joblog_settings_save_bundle,
+    build_seed_from_joblog_row as shared_build_seed_from_joblog_row,
+    build_seed_from_run as shared_build_seed_from_run,
+    count_words_from_output_artifacts as shared_count_words_from_output_artifacts,
+    hydrate_joblog_seed as shared_hydrate_joblog_seed,
+    merge_payload_into_joblog_settings,
+    normalize_joblog_payload as shared_normalize_joblog_payload,
+)
 from legalpdf_translate.joblog_db import (
     delete_job_runs,
     insert_job_run,
@@ -109,10 +129,11 @@ from legalpdf_translate.joblog_db import (
 )
 from legalpdf_translate.metadata_autofill import (
     MetadataAutofillConfig,
+    MetadataExtractionDiagnostics,
     MetadataSuggestion,
     apply_service_case_default_rule,
     choose_court_email_suggestion,
-    extract_interpretation_notification_metadata_from_pdf,
+    extract_interpretation_notification_metadata_from_pdf_with_diagnostics,
     extract_interpretation_photo_metadata_from_image,
     extract_pdf_header_metadata_priority_pages,
     extract_photo_metadata_from_image,
@@ -122,13 +143,22 @@ from legalpdf_translate.metadata_autofill import (
 from legalpdf_translate.openai_client import OpenAIResponsesClient
 from legalpdf_translate.ocr_engine import (
     OcrEngineConfig,
+    candidate_ocr_api_env_names,
     default_ocr_api_base_url,
     default_ocr_api_env_name,
     default_ocr_api_model,
+    local_ocr_available,
     normalize_ocr_api_provider,
+    resolve_ocr_api_key,
+    resolve_ocr_api_key_source,
     test_ocr_provider_connection,
 )
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
+from legalpdf_translate.qt_gui.declutter import (
+    DeclutterSection,
+    build_compact_add_button,
+    build_inline_info_button,
+)
 from legalpdf_translate.qt_gui.guarded_inputs import GuardedDateEdit, NoWheelComboBox, NoWheelSpinBox
 from legalpdf_translate.qt_gui.window_adaptive import CollapsibleSection, ResponsiveWindowController
 from legalpdf_translate.qt_gui.worker import (
@@ -174,6 +204,7 @@ from legalpdf_translate.user_settings import (
     load_gui_settings,
     load_joblog_settings,
     load_profile_settings,
+    settings_path,
     save_profile_settings,
     save_gui_settings,
     save_joblog_settings,
@@ -247,6 +278,9 @@ JOBLOG_COLUMN_LABELS = {
     "quality_risk_score": "Risk Score",
     "profit": "Profit",
 }
+
+INITIAL_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS = 45.0
+RETRY_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS = 90.0
 
 JOBLOG_ACTIONS_COLUMN_LABEL = "Actions"
 JOBLOG_ACTIONS_COLUMN_KEY = "__actions__"
@@ -355,71 +389,7 @@ def _coerce_joblog_bool(value: object, default: bool = False) -> bool:
 
 
 def build_seed_from_joblog_row(row: Mapping[str, object]) -> JobLogSeed:
-    completed_at = str(row.get("completed_at", "") or "").strip()
-    translation_date = str(row.get("translation_date", "") or "").strip()
-    if translation_date == "":
-        translation_date = _date_from_completed_at(completed_at)
-    service_date = str(row.get("service_date", "") or "").strip()
-    if service_date == "" and completed_at:
-        service_date = _date_from_completed_at(completed_at)
-    return JobLogSeed(
-        completed_at=completed_at or f"{translation_date}T00:00:00",
-        translation_date=translation_date,
-        job_type=str(row.get("job_type", "") or "Translation").strip() or "Translation",
-        case_number=str(row.get("case_number", "") or "").strip(),
-        court_email=str(row.get("court_email", "") or "").strip(),
-        case_entity=str(row.get("case_entity", "") or "").strip(),
-        case_city=str(row.get("case_city", "") or "").strip(),
-        service_entity=str(row.get("service_entity", "") or "").strip(),
-        service_city=str(row.get("service_city", "") or "").strip(),
-        service_date=service_date,
-        travel_km_outbound=(
-            None
-            if str(row.get("travel_km_outbound", "") or "").strip() == ""
-            else _coerce_joblog_float(row.get("travel_km_outbound"))
-        ),
-        travel_km_return=(
-            None
-            if str(row.get("travel_km_return", "") or "").strip() == ""
-            else _coerce_joblog_float(row.get("travel_km_return"))
-        ),
-        use_service_location_in_honorarios=_coerce_joblog_bool(
-            row.get("use_service_location_in_honorarios"),
-            default=False,
-        ),
-        include_transport_sentence_in_honorarios=_coerce_joblog_bool(
-            row.get("include_transport_sentence_in_honorarios"),
-            default=True,
-        ),
-        lang=str(row.get("lang", "") or "").strip(),
-        pages=_coerce_joblog_int(row.get("pages")),
-        word_count=_coerce_joblog_int(row.get("word_count")),
-        rate_per_word=_coerce_joblog_float(row.get("rate_per_word")),
-        expected_total=_coerce_joblog_float(row.get("expected_total")),
-        amount_paid=_coerce_joblog_float(row.get("amount_paid")),
-        api_cost=_coerce_joblog_float(row.get("api_cost")),
-        run_id=str(row.get("run_id", "") or "").strip(),
-        target_lang=str(row.get("target_lang", "") or "").strip(),
-        total_tokens=(
-            None
-            if str(row.get("total_tokens", "") or "").strip() == ""
-            else _coerce_joblog_int(row.get("total_tokens"))
-        ),
-        estimated_api_cost=(
-            None
-            if str(row.get("estimated_api_cost", "") or "").strip() == ""
-            else _coerce_joblog_float(row.get("estimated_api_cost"))
-        ),
-        quality_risk_score=(
-            None
-            if str(row.get("quality_risk_score", "") or "").strip() == ""
-            else _coerce_joblog_float(row.get("quality_risk_score"))
-        ),
-        profit=_coerce_joblog_float(row.get("profit")),
-        pdf_path=None,
-        output_docx=_coerce_joblog_path(row.get("output_docx_path")),
-        partial_docx=_coerce_joblog_path(row.get("partial_docx_path")),
-    )
+    return shared_build_seed_from_joblog_row(row)
 
 
 def _parse_joblog_float(value: str, label: str) -> float:
@@ -489,90 +459,13 @@ def _normalize_joblog_payload(
     use_service_location_in_honorarios_checked: bool = False,
     include_transport_sentence_in_honorarios_checked: bool = True,
 ) -> dict[str, Any]:
-    job_type = raw_values["job_type"].strip() or "Translation"
-    is_interpretation = _is_interpretation_job_type(job_type)
-
-    if is_interpretation:
-        rate = _parse_joblog_optional_float(raw_values["rate_per_word"], "Rate/word") or 0.0
-        expected_total = _parse_joblog_optional_float(raw_values["expected_total"], "Expected total") or 0.0
-        pages = _parse_joblog_optional_int(raw_values["pages"], "Pages") or 0
-        word_count = _parse_joblog_optional_int(raw_values["word_count"], "Words") or 0
-    else:
-        rate = _parse_joblog_float(raw_values["rate_per_word"], "Rate/word")
-        expected_total = _parse_joblog_float(raw_values["expected_total"], "Expected total")
-        pages = _parse_joblog_required_int(raw_values["pages"], "Pages")
-        word_count = _parse_joblog_required_int(raw_values["word_count"], "Words")
-
-    amount_paid = _parse_joblog_float(raw_values["amount_paid"], "Amount paid")
-    api_cost = _parse_joblog_float(raw_values["api_cost"], "API cost")
-    profit = _parse_joblog_float(raw_values["profit"], "Profit")
-    total_tokens = _parse_joblog_optional_int(raw_values["total_tokens"], "Total tokens")
-    estimated_api_cost = _parse_joblog_optional_float(raw_values["estimated_api_cost"], "Estimated API cost")
-    quality_risk_score = _parse_joblog_optional_float(raw_values["quality_risk_score"], "Quality risk score")
-    if include_transport_sentence_in_honorarios_checked:
-        travel_km_outbound = _parse_joblog_optional_float(raw_values.get("travel_km_outbound", ""), "KM outbound")
-        travel_km_return = _parse_joblog_optional_float(raw_values.get("travel_km_return", ""), "KM return")
-    else:
-        try:
-            travel_km_outbound = _parse_joblog_optional_float(raw_values.get("travel_km_outbound", ""), "KM outbound")
-        except ValueError:
-            travel_km_outbound = seed.travel_km_outbound
-        try:
-            travel_km_return = _parse_joblog_optional_float(raw_values.get("travel_km_return", ""), "KM return")
-        except ValueError:
-            travel_km_return = seed.travel_km_return
-
-    translation_date = _validate_joblog_date(raw_values["translation_date"], "Translation date")
-    service_date = _validate_joblog_date(raw_values["service_date"], "Service date")
-
-    case_entity = raw_values["case_entity"].strip()
-    case_city = raw_values["case_city"].strip()
-    service_entity = raw_values["service_entity"].strip()
-    service_city = raw_values["service_city"].strip()
-    if is_interpretation and service_same_checked:
-        service_entity = case_entity
-        service_city = case_city
-    if not is_interpretation:
-        service_entity = case_entity
-        service_city = case_city
-        service_date = translation_date
-
-    if expected_total == 0.0 and rate > 0:
-        expected_total = round(rate * float(word_count), 2)
-    if profit == 0.0:
-        if amount_paid > 0:
-            profit = round(amount_paid - api_cost, 2)
-        else:
-            profit = round(expected_total - api_cost, 2)
-
-    return {
-        "translation_date": translation_date or seed.translation_date,
-        "job_type": job_type,
-        "case_number": raw_values["case_number"].strip(),
-        "court_email": raw_values["court_email"].strip(),
-        "case_entity": case_entity,
-        "case_city": case_city,
-        "service_entity": service_entity,
-        "service_city": service_city,
-        "service_date": service_date,
-        "travel_km_outbound": travel_km_outbound,
-        "travel_km_return": travel_km_return,
-        "use_service_location_in_honorarios": 1 if use_service_location_in_honorarios_checked else 0,
-        "include_transport_sentence_in_honorarios": 1 if include_transport_sentence_in_honorarios_checked else 0,
-        "lang": raw_values["lang"].strip() or seed.lang,
-        "target_lang": raw_values["target_lang"].strip() or seed.target_lang,
-        "run_id": raw_values["run_id"].strip(),
-        "pages": pages,
-        "word_count": word_count,
-        "total_tokens": total_tokens,
-        "rate_per_word": rate,
-        "expected_total": expected_total,
-        "amount_paid": amount_paid,
-        "api_cost": api_cost,
-        "estimated_api_cost": estimated_api_cost,
-        "quality_risk_score": quality_risk_score,
-        "profit": profit,
-    }
+    return shared_normalize_joblog_payload(
+        seed=seed,
+        raw_values=raw_values,
+        service_same_checked=service_same_checked,
+        use_service_location_in_honorarios_checked=use_service_location_in_honorarios_checked,
+        include_transport_sentence_in_honorarios_checked=include_transport_sentence_in_honorarios_checked,
+    )
 
 
 def _ensure_value_in_joblog_settings(settings: dict[str, Any], key: str, value: str) -> None:
@@ -588,81 +481,25 @@ def _ensure_value_in_joblog_settings(settings: dict[str, Any], key: str, value: 
 
 
 def _persist_joblog_vocab_settings(settings: dict[str, Any], payload: Mapping[str, Any]) -> None:
-    for column, key in JOBLOG_VOCAB_SETTINGS_MAP.items():
-        value = str(payload.get(column, "") or "").strip()
-        if value:
-            _ensure_value_in_joblog_settings(settings, key, value)
+    updated = merge_payload_into_joblog_settings(
+        settings,
+        payload,
+        service_equals_case_by_default=bool(settings.get("service_equals_case_by_default", True)),
+    )
+    settings.clear()
+    settings.update(updated)
 
 
 def _save_joblog_settings_bundle(settings: dict[str, Any], *, service_equals_case_by_default: bool) -> None:
-    save_joblog_settings(
-        {
-            "vocab_case_entities": settings["vocab_case_entities"],
-            "vocab_service_entities": settings["vocab_service_entities"],
-            "vocab_cities": settings["vocab_cities"],
-            "vocab_job_types": settings["vocab_job_types"],
-            "vocab_court_emails": settings["vocab_court_emails"],
-            "default_rate_per_word": settings["default_rate_per_word"],
-            "joblog_visible_columns": settings["joblog_visible_columns"],
-            "joblog_column_widths": settings.get("joblog_column_widths", {}),
-            "metadata_ai_enabled": settings["metadata_ai_enabled"],
-            "metadata_photo_enabled": settings["metadata_photo_enabled"],
-            "service_equals_case_by_default": service_equals_case_by_default,
-            "non_court_service_entities": settings["non_court_service_entities"],
-            "ocr_mode": settings["ocr_mode"],
-            "ocr_engine": settings["ocr_engine"],
-            "ocr_api_base_url": settings["ocr_api_base_url"],
-            "ocr_api_model": settings["ocr_api_model"],
-            "ocr_api_key_env_name": settings["ocr_api_key_env_name"],
-        }
-    )
+    updated = dict(settings)
+    updated["service_equals_case_by_default"] = bool(service_equals_case_by_default)
+    settings.clear()
+    settings.update(updated)
+    save_joblog_settings(build_joblog_settings_save_bundle(settings))
 
 
-@dataclass(slots=True)
-class JobLogSeed:
-    completed_at: str
-    translation_date: str
-    job_type: str
-    case_number: str
-    court_email: str
-    case_entity: str
-    case_city: str
-    service_entity: str
-    service_city: str
-    service_date: str
-    lang: str
-    pages: int
-    word_count: int
-    rate_per_word: float
-    expected_total: float
-    amount_paid: float
-    api_cost: float
-    run_id: str
-    target_lang: str
-    total_tokens: int | None
-    estimated_api_cost: float | None
-    quality_risk_score: float | None
-    profit: float
-    travel_km_outbound: float | None = None
-    travel_km_return: float | None = None
-    use_service_location_in_honorarios: bool = False
-    include_transport_sentence_in_honorarios: bool = True
-    pdf_path: Path | None = None
-    output_docx: Path | None = None
-    partial_docx: Path | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class JobLogSavedResult:
-    row_id: int
-    word_count: int
-    case_number: str
-    case_entity: str
-    case_city: str
-    court_email: str
-    run_id: str
-    translated_docx_path: Path | None = None
-    payload: Mapping[str, Any] | None = None
+JobLogSeed = SharedJobLogSeed
+JobLogSavedResult = SharedJobLogSavedResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -747,15 +584,11 @@ def count_words_from_output_artifacts(
     partial_docx: Path | None,
     pages_dir: Path | None,
 ) -> int:
-    final_count = count_words_from_docx(output_docx)
-    if final_count > 0:
-        return final_count
-    partial_count = count_words_from_docx(partial_docx)
-    if partial_count > 0:
-        return partial_count
-    if pages_dir is None:
-        return 0
-    return count_words_from_pages_dir(pages_dir)
+    return shared_count_words_from_output_artifacts(
+        output_docx=output_docx,
+        partial_docx=partial_docx,
+        pages_dir=pages_dir,
+    )
 
 
 def _date_from_completed_at(completed_at: str) -> str:
@@ -780,81 +613,21 @@ def build_seed_from_run(
     default_rate_per_word: float,
     api_cost: float = 0.0,
 ) -> JobLogSeed:
-    word_count = count_words_from_output_artifacts(
+    return shared_build_seed_from_run(
+        pdf_path=pdf_path,
+        lang=lang,
         output_docx=output_docx,
         partial_docx=partial_docx,
         pages_dir=pages_dir,
-    )
-    expected_total = round(float(default_rate_per_word) * float(word_count), 2)
-    return JobLogSeed(
+        completed_pages=completed_pages,
         completed_at=completed_at,
-        translation_date=_date_from_completed_at(completed_at),
-        job_type="Translation",
-        case_number="",
-        court_email="",
-        case_entity="",
-        case_city="",
-        service_entity="",
-        service_city="",
-        service_date=_date_from_completed_at(completed_at),
-        travel_km_outbound=None,
-        travel_km_return=None,
-        use_service_location_in_honorarios=False,
-        include_transport_sentence_in_honorarios=True,
-        lang=lang,
-        pages=int(completed_pages),
-        word_count=int(word_count),
-        rate_per_word=float(default_rate_per_word),
-        expected_total=expected_total,
-        amount_paid=0.0,
-        api_cost=float(api_cost),
-        run_id="",
-        target_lang=lang,
-        total_tokens=None,
-        estimated_api_cost=None,
-        quality_risk_score=None,
-        profit=round(expected_total - float(api_cost), 2),
-        pdf_path=pdf_path,
-        output_docx=output_docx,
-        partial_docx=partial_docx,
+        default_rate_per_word=default_rate_per_word,
+        api_cost=api_cost,
     )
 
 
 def build_blank_interpretation_seed() -> JobLogSeed:
-    now = datetime.now()
-    today = now.date().isoformat()
-    return JobLogSeed(
-        completed_at=now.replace(microsecond=0).isoformat(),
-        translation_date=today,
-        job_type="Interpretation",
-        case_number="",
-        court_email="",
-        case_entity="",
-        case_city="",
-        service_entity="",
-        service_city="",
-        service_date=today,
-        travel_km_outbound=None,
-        travel_km_return=None,
-        use_service_location_in_honorarios=False,
-        include_transport_sentence_in_honorarios=True,
-        lang="",
-        pages=0,
-        word_count=0,
-        rate_per_word=0.0,
-        expected_total=0.0,
-        amount_paid=0.0,
-        api_cost=0.0,
-        run_id="",
-        target_lang="",
-        total_tokens=None,
-        estimated_api_cost=None,
-        quality_risk_score=None,
-        profit=0.0,
-        pdf_path=None,
-        output_docx=None,
-        partial_docx=None,
-    )
+    return shared_build_blank_interpretation_seed()
 
 
 def build_interpretation_seed_from_notification_pdf(
@@ -863,49 +636,10 @@ def build_interpretation_seed_from_notification_pdf(
     suggestion: MetadataSuggestion,
     vocab_court_emails: list[str],
 ) -> JobLogSeed:
-    now = datetime.now()
-    service_date = str(suggestion.service_date or "").strip() or now.date().isoformat()
-    case_entity = str(suggestion.case_entity or "").strip()
-    case_city = str(suggestion.case_city or "").strip()
-    return JobLogSeed(
-        completed_at=now.replace(microsecond=0).isoformat(),
-        translation_date=service_date,
-        job_type="Interpretation",
-        case_number=str(suggestion.case_number or "").strip(),
-        court_email=(
-            choose_court_email_suggestion(
-                exact_email=suggestion.court_email,
-                case_entity=case_entity,
-                case_city=case_city,
-                vocab_court_emails=vocab_court_emails,
-            )
-            or ""
-        ),
-        case_entity=case_entity,
-        case_city=case_city,
-        service_entity=str(suggestion.service_entity or "").strip(),
-        service_city=str(suggestion.service_city or "").strip(),
-        service_date=service_date,
-        travel_km_outbound=None,
-        travel_km_return=None,
-        use_service_location_in_honorarios=False,
-        include_transport_sentence_in_honorarios=True,
-        lang="",
-        pages=0,
-        word_count=0,
-        rate_per_word=0.0,
-        expected_total=0.0,
-        amount_paid=0.0,
-        api_cost=0.0,
-        run_id="",
-        target_lang="",
-        total_tokens=None,
-        estimated_api_cost=None,
-        quality_risk_score=None,
-        profit=0.0,
+    return shared_build_interpretation_seed_from_notification_pdf(
         pdf_path=pdf_path,
-        output_docx=None,
-        partial_docx=None,
+        suggestion=suggestion,
+        vocab_court_emails=vocab_court_emails,
     )
 
 
@@ -914,49 +648,9 @@ def build_interpretation_seed_from_photo_screenshot(
     suggestion: MetadataSuggestion,
     vocab_court_emails: list[str],
 ) -> JobLogSeed:
-    now = datetime.now()
-    service_date = str(suggestion.service_date or "").strip() or now.date().isoformat()
-    case_entity = str(suggestion.case_entity or "").strip()
-    case_city = str(suggestion.case_city or "").strip()
-    return JobLogSeed(
-        completed_at=now.replace(microsecond=0).isoformat(),
-        translation_date=service_date,
-        job_type="Interpretation",
-        case_number=str(suggestion.case_number or "").strip(),
-        court_email=(
-            choose_court_email_suggestion(
-                exact_email=suggestion.court_email,
-                case_entity=case_entity,
-                case_city=case_city,
-                vocab_court_emails=vocab_court_emails,
-            )
-            or ""
-        ),
-        case_entity=case_entity,
-        case_city=case_city,
-        service_entity=str(suggestion.service_entity or "").strip(),
-        service_city=str(suggestion.service_city or "").strip(),
-        service_date=service_date,
-        travel_km_outbound=None,
-        travel_km_return=None,
-        use_service_location_in_honorarios=False,
-        include_transport_sentence_in_honorarios=True,
-        lang="",
-        pages=0,
-        word_count=0,
-        rate_per_word=0.0,
-        expected_total=0.0,
-        amount_paid=0.0,
-        api_cost=0.0,
-        run_id="",
-        target_lang="",
-        total_tokens=None,
-        estimated_api_cost=None,
-        quality_risk_score=None,
-        profit=0.0,
-        pdf_path=None,
-        output_docx=None,
-        partial_docx=None,
+    return shared_build_interpretation_seed_from_photo_screenshot(
+        suggestion=suggestion,
+        vocab_court_emails=vocab_court_emails,
     )
 
 
@@ -1001,6 +695,40 @@ def _open_path_in_system(parent: QWidget, target: Path) -> None:
             subprocess.Popen(["xdg-open", str(resolved)])
     except Exception as exc:  # noqa: BLE001
         QMessageBox.critical(parent, "Open file failed", str(exc))
+
+
+def build_interpretation_notice_diagnostics_text(diagnostics: MetadataExtractionDiagnostics) -> str:
+    return shared_build_interpretation_notice_diagnostics_text(diagnostics)
+
+
+def show_local_only_honorarios_ready_box(
+    parent: QWidget,
+    *,
+    docx_path: Path,
+    pdf_error: str = "",
+    gmail_blocked: bool,
+) -> None:
+    resolved_docx = docx_path.expanduser().resolve()
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Information)
+    box.setWindowTitle("Requerimento de Honorários")
+    box.setText("Honorários DOCX ready locally.")
+    details = [f"DOCX: {resolved_docx}"]
+    if gmail_blocked:
+        details.append("Gmail draft was not created because the PDF is still unavailable.")
+    if pdf_error:
+        details.append(f"PDF export status: {pdf_error}")
+    box.setInformativeText("\n\n".join(details))
+    open_docx_btn = box.addButton("Open DOCX", QMessageBox.ButtonRole.ActionRole)
+    open_folder_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+    close_btn = box.addButton("Close", QMessageBox.ButtonRole.AcceptRole)
+    box.setDefaultButton(close_btn)
+    box.exec()
+    clicked = box.clickedButton()
+    if clicked is open_docx_btn:
+        _open_path_in_system(parent, resolved_docx)
+    elif clicked is open_folder_btn:
+        _open_folder_for_path(parent, resolved_docx)
 
 
 def _profile_missing_fields_message(profile: UserProfile) -> str:
@@ -1400,7 +1128,7 @@ class QtHonorariosExportDialog(QDialog):
         self._responsive_window = ResponsiveWindowController(
             self,
             role="form",
-            preferred_size=QSize(860, 420 if self._initial_draft.kind == HonorariosKind.INTERPRETATION else 300),
+            preferred_size=QSize(860, 540 if self._initial_draft.kind == HonorariosKind.INTERPRETATION else 300),
         )
 
     def _build_ui(self) -> None:
@@ -1417,10 +1145,12 @@ class QtHonorariosExportDialog(QDialog):
         scroll_content.setObjectName("DialogScrollContent")
         scroll_root = QVBoxLayout(scroll_content)
         scroll_root.setContentsMargins(0, 0, 0, 0)
-        scroll_root.setSpacing(0)
+        scroll_root.setSpacing(8)
 
-        form = QFormLayout()
-        form.setContentsMargins(0, 0, 0, 0)
+        general_panel = QFrame(scroll_content)
+        general_panel.setObjectName("ShellPanel")
+        form = QFormLayout(general_panel)
+        form.setContentsMargins(12, 12, 12, 12)
         form.setSpacing(10)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         profile_row = QHBoxLayout()
@@ -1454,10 +1184,10 @@ class QtHonorariosExportDialog(QDialog):
             self.service_date_edit.setPlaceholderText("YYYY-MM-DD")
             self.service_entity_edit = QLineEdit(self._initial_draft.service_entity)
             self.service_city_edit = QLineEdit(self._initial_draft.service_city)
-            self.use_service_location_check = QCheckBox("Mention explicit service location in body text")
+            self.use_service_location_check = QCheckBox("Mention service location in text")
             self.use_service_location_check.setChecked(self._initial_draft.use_service_location_in_honorarios)
             self.include_transport_sentence_check = QCheckBox(
-                "Include transport/distance sentence in honorários text"
+                "Include transport sentence"
             )
             self.include_transport_sentence_check.setChecked(
                 self._initial_draft.include_transport_sentence_in_honorarios
@@ -1479,19 +1209,85 @@ class QtHonorariosExportDialog(QDialog):
                     self._initial_draft.case_city,
                 )
             )
-            form.addRow("Service date", self.service_date_edit)
-            form.addRow("", self.service_same_check)
-            form.addRow("Service entity", self.service_entity_edit)
-            form.addRow("Service city", self.service_city_edit)
-            form.addRow("", self.use_service_location_check)
-            form.addRow("", self.include_transport_sentence_check)
-            form.addRow(self.distance_label.text(), self.travel_km_outbound_edit)
-            form.addRow("Recipient", self.recipient_block_edit)
         else:
             self.word_count_edit = QLineEdit(str(self._initial_draft.word_count))
             form.addRow("Número de palavras", self.word_count_edit)
         form.addRow("Data", self.date_preview_label)
-        scroll_root.addLayout(form)
+        scroll_root.addWidget(general_panel)
+
+        if self._initial_draft.kind == HonorariosKind.INTERPRETATION:
+            self.service_group = DeclutterSection("SERVICE", expanded=True, parent=scroll_content)
+            self.service_group_help_btn = build_inline_info_button(
+                tooltip=(
+                    "Open when the service differs from the case or when the generated text "
+                    "must mention the service location."
+                ),
+                accessible_name="Service section help",
+                parent=self.service_group,
+            )
+            self.service_group.add_header_widget(self.service_group_help_btn)
+            service_content = QWidget(self.service_group)
+            service_form = QFormLayout(service_content)
+            service_form.setContentsMargins(0, 0, 0, 0)
+            service_form.setSpacing(10)
+            service_form.addRow("Service date", self.service_date_edit)
+            service_form.addRow("", self.service_same_check)
+            service_form.addRow("Service entity", self.service_entity_edit)
+            service_form.addRow("Service city", self.service_city_edit)
+            self.service_group.set_content_widget(service_content)
+            scroll_root.addWidget(self.service_group)
+
+            self.text_group = DeclutterSection("TEXT", expanded=True, parent=scroll_content)
+            self.text_group_help_btn = build_inline_info_button(
+                tooltip=(
+                    "These options only change the generated honorários wording. "
+                    "The defaults already match the saved row."
+                ),
+                accessible_name="Text options help",
+                parent=self.text_group,
+            )
+            self.text_group.add_header_widget(self.text_group_help_btn)
+            text_content = QWidget(self.text_group)
+            text_grid = QGridLayout(text_content)
+            text_grid.setContentsMargins(0, 0, 0, 0)
+            text_grid.setHorizontalSpacing(10)
+            text_grid.setVerticalSpacing(10)
+            text_grid.addWidget(self.use_service_location_check, 0, 0, 1, 3)
+            text_grid.addWidget(self.include_transport_sentence_check, 1, 0, 1, 3)
+            text_grid.addWidget(self.distance_label, 2, 0)
+            text_grid.addWidget(self.travel_km_outbound_edit, 2, 1)
+            self.distance_hint_label = QLabel("Saved by city.")
+            self.distance_hint_info_btn = build_inline_info_button(
+                tooltip="Saved per service city and reused automatically for future interpretation drafts.",
+                accessible_name="Distance reuse help",
+                parent=text_content,
+            )
+            distance_hint_row = QHBoxLayout()
+            distance_hint_row.setContentsMargins(0, 0, 0, 0)
+            distance_hint_row.setSpacing(6)
+            distance_hint_row.addWidget(self.distance_hint_label, 0, Qt.AlignmentFlag.AlignVCenter)
+            distance_hint_row.addWidget(self.distance_hint_info_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+            distance_hint_row.addStretch(1)
+            text_grid.addLayout(distance_hint_row, 2, 2)
+            text_grid.setColumnStretch(1, 1)
+            self.text_group.set_content_widget(text_content)
+            scroll_root.addWidget(self.text_group)
+
+            self.recipient_group = DeclutterSection("RECIPIENT", expanded=True, parent=scroll_content)
+            self.recipient_group_help_btn = build_inline_info_button(
+                tooltip="Uses the case entity and city by default. Open only when the recipient block needs editing.",
+                accessible_name="Recipient block help",
+                parent=self.recipient_group,
+            )
+            self.recipient_group.add_header_widget(self.recipient_group_help_btn)
+            recipient_content = QWidget(self.recipient_group)
+            recipient_layout = QVBoxLayout(recipient_content)
+            recipient_layout.setContentsMargins(0, 0, 0, 0)
+            recipient_layout.setSpacing(8)
+            recipient_layout.addWidget(self.recipient_block_edit)
+            self.recipient_group.set_content_widget(recipient_content)
+            scroll_root.addWidget(self.recipient_group)
+
         scroll_root.addStretch(1)
         self.form_scroll_area.setWidget(scroll_content)
         root.addWidget(self.form_scroll_area, 1)
@@ -1527,15 +1323,19 @@ class QtHonorariosExportDialog(QDialog):
             self.case_entity_edit.textChanged.connect(self._on_interpretation_case_fields_changed)
             self.case_city_edit.textChanged.connect(self._sync_interpretation_recipient_block_if_auto)
             self.case_city_edit.textChanged.connect(self._on_interpretation_case_fields_changed)
+            self.service_date_edit.textChanged.connect(self._refresh_interpretation_service_section_state)
             self.service_same_check.toggled.connect(self._on_interpretation_service_same_toggled)
             self.service_entity_edit.textChanged.connect(self._on_interpretation_service_fields_changed)
             self.service_city_edit.textChanged.connect(self._on_interpretation_service_fields_changed)
+            self.use_service_location_check.toggled.connect(self._on_interpretation_use_service_location_toggled)
             self.include_transport_sentence_check.toggled.connect(self._on_interpretation_transport_sentence_toggled)
             self.travel_km_outbound_edit.textEdited.connect(self._on_interpretation_distance_edited)
             self.recipient_block_edit.textChanged.connect(self._on_recipient_block_text_changed)
             self._refresh_interpretation_service_mirror_state()
             self._refresh_interpretation_transport_sentence_state()
             self._apply_interpretation_distance_defaults()
+            self._refresh_interpretation_service_section_state()
+            self._refresh_recipient_section_state()
         self._refresh_date_preview()
 
     def _refresh_profile_selector(self, selected_profile_id: str | None = None) -> None:
@@ -1574,6 +1374,80 @@ class QtHonorariosExportDialog(QDialog):
             self.case_city_edit.text().strip(),
         )
 
+    def _interpretation_service_matches_case(self) -> bool:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return False
+        return (
+            self.service_entity_edit.text().strip() == self.case_entity_edit.text().strip()
+            and self.service_city_edit.text().strip() == self.case_city_edit.text().strip()
+        )
+
+    def _service_section_summary_text(self) -> str:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return ""
+        service_date = self.service_date_edit.text().strip()
+        service_city = self.service_city_edit.text().strip()
+        service_entity = self.service_entity_edit.text().strip()
+        if self.service_same_check.isChecked() and not self.use_service_location_check.isChecked():
+            status = "Same as case"
+        elif self.use_service_location_check.isChecked() and service_city:
+            status = f"Location: {service_city}"
+        else:
+            status = ", ".join(part for part in (service_entity, service_city) if part) or "Review service"
+        return " · ".join(part for part in (service_date, status) if part)
+
+    def _should_expand_interpretation_service_section(self) -> bool:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return False
+        return (
+            self.use_service_location_check.isChecked()
+            or not self.service_same_check.isChecked()
+            or not self._interpretation_service_matches_case()
+        )
+
+    def _refresh_interpretation_service_section_state(self, *_args: object, force_expand: bool = False) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        self.service_group.set_summary_text(self._service_section_summary_text())
+        self.service_group.set_expanded(force_expand or self._should_expand_interpretation_service_section())
+
+    def _recipient_block_matches_default(self) -> bool:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return False
+        current = self.recipient_block_edit.toPlainText().strip()
+        default = self._default_interpretation_recipient_block().strip()
+        return current == "" or current == default
+
+    def _recipient_block_is_auto(self) -> bool:
+        return (
+            self._initial_draft.kind == HonorariosKind.INTERPRETATION
+            and not self._recipient_block_user_edited
+            and self._recipient_block_matches_default()
+        )
+
+    def _recipient_section_summary_text(self) -> str:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return ""
+        if self._recipient_block_is_auto():
+            return "Auto from case"
+        if self._recipient_block_matches_default():
+            return "Manual copy"
+        lines = [line.strip() for line in self.recipient_block_edit.toPlainText().splitlines() if line.strip()]
+        if not lines:
+            return "Recipient block"
+        first_line = lines[0]
+        if len(first_line) > 36:
+            first_line = f"{first_line[:33]}..."
+        if len(lines) > 1:
+            return f"{first_line} (+{len(lines) - 1})"
+        return first_line
+
+    def _refresh_recipient_section_state(self, *_args: object, force_expand: bool = False) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        self.recipient_group.set_summary_text(self._recipient_section_summary_text())
+        self.recipient_group.set_expanded(force_expand or not self._recipient_block_is_auto())
+
     def _refresh_date_preview(self, *_args: object) -> None:
         city = self.case_city_edit.text().strip() or self._initial_draft.case_city.strip()
         self.date_preview_label.setText(f"{city}, {self._initial_draft.date_pt}" if city else self._initial_draft.date_pt)
@@ -1591,6 +1465,7 @@ class QtHonorariosExportDialog(QDialog):
         self.pdf_export_elapsed_ms = 0
         self.pdf_unavailable_explained = False
         self.auto_renamed = False
+        self._pdf_export_retry_count = 0
 
     def _set_pdf_export_busy(self, busy: bool, *, status_text: str = "") -> None:
         self._pdf_export_in_flight = busy
@@ -1610,7 +1485,7 @@ class QtHonorariosExportDialog(QDialog):
         if self.auto_renamed and self.saved_path is not None and self.saved_path != self.requested_path:
             lines.extend(
                 [
-                    "The selected DOCX path already existed, so the document was saved as:",
+                    "DOCX path already existed; saved as:",
                     str(self.saved_path),
                 ]
             )
@@ -1624,7 +1499,7 @@ class QtHonorariosExportDialog(QDialog):
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Information)
         box.setWindowTitle("Requerimento de Honorários")
-        box.setText("The honorários DOCX and PDF are ready.")
+        box.setText("Honorários DOCX and PDF ready.")
         info_lines = self._export_result_info_lines()
         if info_lines:
             box.setInformativeText("\n".join(info_lines))
@@ -1632,22 +1507,29 @@ class QtHonorariosExportDialog(QDialog):
         open_folder_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
         continue_btn = box.addButton("Continue", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(continue_btn)
+        action = "continue"
+
+        def _capture_clicked(button) -> None:
+            nonlocal action
+            if button is open_docx_btn:
+                action = "open_docx"
+            elif button is open_folder_btn:
+                action = "open_folder"
+            else:
+                action = "continue"
+
+        box.buttonClicked.connect(_capture_clicked)
         box.exec()
-        clicked = box.clickedButton()
-        if clicked is open_docx_btn:
-            return "open_docx"
-        if clicked is open_folder_btn:
-            return "open_folder"
-        return "continue"
+        return action
 
     def _show_pdf_export_failure_box(self) -> str:
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Requerimento de Honorários")
-        box.setText("The honorários DOCX is ready, but the PDF is unavailable.")
+        box.setText("DOCX ready, PDF unavailable.")
         info_lines = [
             self.pdf_failure_message or "Word could not export the PDF.",
-            "Email drafting requires the PDF, so draft creation will stay blocked until a valid PDF is available.",
+            "Gmail draft stays blocked until a valid PDF is available.",
             *self._export_result_info_lines(),
         ]
         box.setInformativeText("\n\n".join(line for line in info_lines if line))
@@ -1659,17 +1541,24 @@ class QtHonorariosExportDialog(QDialog):
         select_pdf_btn = box.addButton("Select existing PDF...", QMessageBox.ButtonRole.ActionRole)
         continue_btn = box.addButton("Continue local-only", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(continue_btn)
+        action = "continue_local"
+
+        def _capture_clicked(button) -> None:
+            nonlocal action
+            if button is open_docx_btn:
+                action = "open_docx"
+            elif button is open_folder_btn:
+                action = "open_folder"
+            elif button is retry_btn:
+                action = "retry_pdf"
+            elif button is select_pdf_btn:
+                action = "select_existing_pdf"
+            else:
+                action = "continue_local"
+
+        box.buttonClicked.connect(_capture_clicked)
         box.exec()
-        clicked = box.clickedButton()
-        if clicked is open_docx_btn:
-            return "open_docx"
-        if clicked is open_folder_btn:
-            return "open_folder"
-        if clicked is retry_btn:
-            return "retry_pdf"
-        if clicked is select_pdf_btn:
-            return "select_existing_pdf"
-        return "continue_local"
+        return action
 
     def _validate_selected_honorarios_pdf(self, candidate: Path) -> str | None:
         resolved = candidate.expanduser().resolve()
@@ -1710,7 +1599,7 @@ class QtHonorariosExportDialog(QDialog):
         self.pdf_export_error = ""
         return True
 
-    def _retry_pdf_export(self) -> bool:
+    def _retry_pdf_export(self, *, automatic: bool = False) -> bool:
         if self.docx_saved_path is None:
             QMessageBox.critical(
                 self,
@@ -1727,9 +1616,17 @@ class QtHonorariosExportDialog(QDialog):
         self.pdf_export_error = ""
         self._set_pdf_export_busy(
             True,
-            status_text="DOCX saved. Retrying the sibling PDF export in the background...",
+            status_text=(
+                "Word PDF export timed out once. Retrying once with a longer timeout..."
+                if automatic
+                else "DOCX saved. Retrying the sibling PDF export in the background..."
+            ),
         )
-        self._begin_pdf_export(docx_path=self.docx_saved_path, pdf_path=target_pdf)
+        self._begin_pdf_export(
+            docx_path=self.docx_saved_path,
+            pdf_path=target_pdf,
+            timeout_seconds=RETRY_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS,
+        )
         return True
 
     def _run_export_result_flow(self) -> None:
@@ -1756,13 +1653,20 @@ class QtHonorariosExportDialog(QDialog):
                 if self._select_existing_honorarios_pdf():
                     continue
                 continue
-            self.accept()
+            try:
+                self.accept()
+            except RuntimeError:
+                return
             return
 
-    def _begin_pdf_export(self, *, docx_path: Path, pdf_path: Path) -> None:
+    def _begin_pdf_export(self, *, docx_path: Path, pdf_path: Path, timeout_seconds: float) -> None:
         try:
             thread = QThread(self)
-            worker = HonorariosPdfExportWorker(docx_path=docx_path, pdf_path=pdf_path)
+            worker = HonorariosPdfExportWorker(
+                docx_path=docx_path,
+                pdf_path=pdf_path,
+                timeout_seconds=timeout_seconds,
+            )
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
             worker.finished.connect(self._on_pdf_export_finished)
@@ -1798,6 +1702,15 @@ class QtHonorariosExportDialog(QDialog):
         self.pdf_failure_details = ""
         self.pdf_export_error = ""
         self.pdf_export_elapsed_ms = int(result.automation.elapsed_ms)
+        if (
+            not result.automation.ok
+            and str(result.automation.failure_code or "").strip() == "timeout"
+            and int(getattr(self, "_pdf_export_retry_count", 0)) < 1
+        ):
+            self._pdf_export_retry_count = int(getattr(self, "_pdf_export_retry_count", 0)) + 1
+            self._set_pdf_export_busy(False)
+            QTimer.singleShot(0, lambda: self._retry_pdf_export(automatic=True))
+            return
         if not result.automation.ok:
             self.saved_pdf_path = None
             self.pdf_saved_path = None
@@ -1812,11 +1725,13 @@ class QtHonorariosExportDialog(QDialog):
         if self._setting_recipient_block or self._initial_draft.kind != HonorariosKind.INTERPRETATION:
             return
         self._recipient_block_user_edited = True
+        self._refresh_recipient_section_state(force_expand=True)
 
     def _sync_interpretation_recipient_block_if_auto(self, *_args: object) -> None:
         if self._initial_draft.kind != HonorariosKind.INTERPRETATION or self._recipient_block_user_edited:
             return
         self._set_recipient_block_text(self._default_interpretation_recipient_block())
+        self._refresh_recipient_section_state()
 
     def _interpretation_transport_sentence_enabled(self) -> bool:
         if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
@@ -1849,6 +1764,7 @@ class QtHonorariosExportDialog(QDialog):
             self._sync_interpretation_service_with_case()
         self.service_entity_edit.setEnabled(not same)
         self.service_city_edit.setEnabled(not same)
+        self._refresh_interpretation_service_section_state()
 
     def _on_interpretation_case_fields_changed(self, *_args: object) -> None:
         if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
@@ -1856,13 +1772,20 @@ class QtHonorariosExportDialog(QDialog):
         if self.service_same_check.isChecked():
             self._sync_interpretation_service_with_case()
         self._apply_interpretation_distance_defaults()
+        self._refresh_interpretation_service_section_state()
 
     def _on_interpretation_service_fields_changed(self, *_args: object) -> None:
         self._apply_interpretation_distance_defaults()
+        self._refresh_interpretation_service_section_state()
 
     def _on_interpretation_service_same_toggled(self, *_args: object) -> None:
         self._refresh_interpretation_service_mirror_state()
         self._apply_interpretation_distance_defaults()
+
+    def _on_interpretation_use_service_location_toggled(self, *_args: object) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        self._refresh_interpretation_service_section_state()
 
     def _on_interpretation_transport_sentence_toggled(self, checked: bool) -> None:
         if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
@@ -2092,11 +2015,23 @@ class QtHonorariosExportDialog(QDialog):
             profile=selected_profile,
         )
 
+    def _reveal_interpretation_sections_for_error(self, message: str) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        lowered = message.casefold()
+        if any(token in lowered for token in ("service", "location", "gnr", "psp")):
+            self._refresh_interpretation_service_section_state(force_expand=True)
+        if any(token in lowered for token in ("transport", "distance", "km")):
+            self.text_group.set_expanded(True)
+        if "recipient" in lowered:
+            self._refresh_recipient_section_state(force_expand=True)
+
     def _generate(self) -> None:
         self._reset_pdf_export_state()
         try:
             draft = self._build_draft()
         except ValueError as exc:
+            self._reveal_interpretation_sections_for_error(str(exc))
             QMessageBox.critical(self, "Requerimento de Honorários", str(exc))
             return
         self.generated_draft = draft
@@ -2125,7 +2060,11 @@ class QtHonorariosExportDialog(QDialog):
             True,
             status_text="DOCX saved. Generating the sibling PDF in the background...",
         )
-        self._begin_pdf_export(docx_path=saved, pdf_path=pdf_path)
+        self._begin_pdf_export(
+            docx_path=saved,
+            pdf_path=pdf_path,
+            timeout_seconds=INITIAL_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS,
+        )
 
     def reject(self) -> None:  # type: ignore[override]
         if self._pdf_export_in_flight:
@@ -2299,7 +2238,10 @@ class QtArabicDocxReviewDialog(QDialog):
         result = align_right_and_save_docx_in_word(self._docx_path)
         if result.ok:
             self._set_status("DOCX aligned right and saved in Word. Continuing now.")
-            self.accept()
+            try:
+                self.accept()
+            except RuntimeError:
+                return
             return
         self._set_status(
             f"{result.message}\n\nYou can keep editing manually in Word and save, or use Continue now."
@@ -2361,6 +2303,8 @@ class QtSaveToJobLogDialog(QDialog):
         self._distance_sync_in_progress = False
         self._distance_value_city_key = ""
         self._distance_value_is_manual = False
+        self._service_section_sync_in_progress = False
+        self._service_section_user_overridden = False
 
         self._build_ui()
         self._responsive_window = ResponsiveWindowController(
@@ -2485,13 +2429,20 @@ class QtSaveToJobLogDialog(QDialog):
 
         case_group = QGroupBox("CASE (belongs to)", scroll_content)
         case_form = QGridLayout(case_group)
+        case_form.setContentsMargins(12, 12, 12, 12)
+        case_form.setHorizontalSpacing(10)
+        case_form.setVerticalSpacing(10)
         case_form.addWidget(self._field_label("Case entity"), 0, 0)
         self.case_entity_combo = self._selection_combo(
             list(self._settings["vocab_case_entities"]),
             self._seed.case_entity,
         )
         case_form.addWidget(self.case_entity_combo, 0, 1)
-        self.add_case_entity_btn = QPushButton("Add...")
+        self.add_case_entity_btn = build_compact_add_button(
+            tooltip="Add case entity",
+            accessible_name="Add case entity",
+            parent=case_group,
+        )
         case_form.addWidget(self.add_case_entity_btn, 0, 2)
 
         case_form.addWidget(self._field_label("Case city"), 0, 3)
@@ -2500,7 +2451,11 @@ class QtSaveToJobLogDialog(QDialog):
             self._seed.case_city,
         )
         case_form.addWidget(self.case_city_combo, 0, 4)
-        self.add_case_city_btn = QPushButton("Add...")
+        self.add_case_city_btn = build_compact_add_button(
+            tooltip="Add case city",
+            accessible_name="Add case city",
+            parent=case_group,
+        )
         case_form.addWidget(self.add_case_city_btn, 0, 5)
 
         case_form.addWidget(self._field_label("Case number"), 1, 0)
@@ -2516,9 +2471,26 @@ class QtSaveToJobLogDialog(QDialog):
         case_form.setColumnStretch(4, 1)
         scroll_root.addWidget(case_group)
 
-        service_group = QGroupBox("SERVICE (provided to)", scroll_content)
+        service_group = DeclutterSection(
+            "SERVICE",
+            expanded=True,
+            parent=scroll_content,
+        )
         self.service_group = service_group
-        service_grid = QGridLayout(service_group)
+        self.service_group_help_btn = build_inline_info_button(
+            tooltip=(
+                "Expand this section when the service location differs from the case "
+                "or when you want the service location mentioned in the honorários text."
+            ),
+            accessible_name="Service section help",
+            parent=service_group,
+        )
+        service_group.add_header_widget(self.service_group_help_btn)
+        service_content = QWidget(service_group)
+        service_grid = QGridLayout(service_content)
+        service_grid.setContentsMargins(0, 0, 0, 0)
+        service_grid.setHorizontalSpacing(10)
+        service_grid.setVerticalSpacing(10)
         self.service_same_check = QCheckBox("Service same as Case")
         has_seed_service_values = any(
             (
@@ -2545,7 +2517,11 @@ class QtSaveToJobLogDialog(QDialog):
             self._seed.service_entity,
         )
         service_grid.addWidget(self.service_entity_combo, 1, 1)
-        self.add_service_entity_btn = QPushButton("Add...")
+        self.add_service_entity_btn = build_compact_add_button(
+            tooltip="Add service entity",
+            accessible_name="Add service entity",
+            parent=service_content,
+        )
         service_grid.addWidget(self.add_service_entity_btn, 1, 2)
 
         service_grid.addWidget(self._field_label("Service city"), 1, 3)
@@ -2554,7 +2530,11 @@ class QtSaveToJobLogDialog(QDialog):
             self._seed.service_city,
         )
         service_grid.addWidget(self.service_city_combo, 1, 4)
-        self.add_service_city_btn = QPushButton("Add...")
+        self.add_service_city_btn = build_compact_add_button(
+            tooltip="Add service city",
+            accessible_name="Add service city",
+            parent=service_content,
+        )
         service_grid.addWidget(self.add_service_city_btn, 1, 5)
 
         self.service_date_label = self._field_label("Service date (YYYY-MM-DD)")
@@ -2564,15 +2544,20 @@ class QtSaveToJobLogDialog(QDialog):
         service_grid.addWidget(self.service_date_edit, 2, 1)
         service_grid.setColumnStretch(1, 1)
         service_grid.setColumnStretch(4, 1)
+        service_group.set_content_widget(service_content)
         scroll_root.addWidget(service_group)
 
-        interpretation_group = QGroupBox("INTERPRETATION", scroll_content)
-        interpretation_grid = QGridLayout(interpretation_group)
-        self.use_service_location_check = QCheckBox("Mention explicit service location in honorários text")
+        interpretation_group = DeclutterSection("INTERPRETATION", expanded=True, parent=scroll_content)
+        interpretation_content = QWidget(interpretation_group)
+        interpretation_grid = QGridLayout(interpretation_content)
+        interpretation_grid.setContentsMargins(0, 0, 0, 0)
+        interpretation_grid.setHorizontalSpacing(10)
+        interpretation_grid.setVerticalSpacing(10)
+        self.use_service_location_check = QCheckBox("Mention service location in text")
         self.use_service_location_check.setChecked(bool(self._seed.use_service_location_in_honorarios))
         interpretation_grid.addWidget(self.use_service_location_check, 0, 0, 1, 2)
         self.include_transport_sentence_check = QCheckBox(
-            "Include transport/distance sentence in honorários text"
+            "Include transport sentence"
         )
         self.include_transport_sentence_check.setChecked(bool(self._seed.include_transport_sentence_in_honorarios))
         interpretation_grid.addWidget(self.include_transport_sentence_check, 1, 0, 1, 2)
@@ -2586,12 +2571,27 @@ class QtSaveToJobLogDialog(QDialog):
         )
         interpretation_grid.addWidget(self.travel_km_outbound_edit, 2, 1)
         self.travel_km_return_edit = self.travel_km_outbound_edit
-        self.interpretation_hint_label = QLabel(
-            "Distance is recorded per service city and reused automatically for future interpretation rows."
+        self.interpretation_hint_label = QLabel("Distance saved by city.")
+        self.interpretation_hint_info_btn = build_inline_info_button(
+            tooltip="Saved per service city and reused automatically for future interpretation rows.",
+            accessible_name="Distance reuse help",
+            parent=interpretation_content,
         )
-        self.interpretation_hint_label.setWordWrap(True)
-        interpretation_grid.addWidget(self.interpretation_hint_label, 3, 0, 1, 2)
+        interpretation_hint_row = QHBoxLayout()
+        interpretation_hint_row.setContentsMargins(0, 0, 0, 0)
+        interpretation_hint_row.setSpacing(6)
+        interpretation_hint_row.addWidget(self.interpretation_hint_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        interpretation_hint_row.addWidget(self.interpretation_hint_info_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        interpretation_hint_row.addStretch(1)
+        interpretation_grid.addLayout(interpretation_hint_row, 3, 0, 1, 2)
         interpretation_grid.setColumnStretch(1, 1)
+        self.interpretation_group_help_btn = build_inline_info_button(
+            tooltip="Keep transport details compact; the saved distance is reused for future interpretation rows.",
+            accessible_name="Interpretation section help",
+            parent=interpretation_group,
+        )
+        interpretation_group.add_header_widget(self.interpretation_group_help_btn)
+        interpretation_group.set_content_widget(interpretation_content)
         self.interpretation_group = interpretation_group
         scroll_root.addWidget(interpretation_group)
 
@@ -2699,6 +2699,7 @@ class QtSaveToJobLogDialog(QDialog):
             shortcut.activated.connect(self._trigger_save_shortcut)
         self.honorarios_btn.clicked.connect(self._open_honorarios_dialog)
         self.job_type_combo.currentTextChanged.connect(self._refresh_photo_controls)
+        self.job_type_combo.currentTextChanged.connect(self._refresh_pdf_autofill_control)
         self.job_type_combo.currentTextChanged.connect(self._refresh_interpretation_mode_state)
         self.photo_translation_check.toggled.connect(self._refresh_photo_controls)
         self.case_entity_combo.currentTextChanged.connect(self._on_case_fields_changed)
@@ -2707,9 +2708,12 @@ class QtSaveToJobLogDialog(QDialog):
         self.service_city_combo.currentTextChanged.connect(self._on_service_fields_changed)
         self.translation_date_edit.textChanged.connect(self._on_primary_date_changed)
         self.service_same_check.toggled.connect(self._on_service_same_toggled)
+        self.service_group.toggle_button.toggled.connect(self._on_service_section_toggled)
+        self.use_service_location_check.toggled.connect(self._on_use_service_location_toggled)
         self.include_transport_sentence_check.toggled.connect(self._on_interpretation_transport_sentence_toggled)
         self.autofill_header_btn.clicked.connect(self._autofill_from_pdf_header)
         self.autofill_photo_btn.clicked.connect(self._autofill_from_photo)
+        self.travel_km_outbound_edit.textChanged.connect(lambda _text: self._refresh_interpretation_transport_sentence_state())
         self.travel_km_outbound_edit.textEdited.connect(self._on_interpretation_distance_edited)
         self.add_case_entity_btn.clicked.connect(lambda: self._add_value("Case entity", "vocab_case_entities", self.case_entity_combo))
         self.add_service_entity_btn.clicked.connect(lambda: self._add_value("Service entity", "vocab_service_entities", self.service_entity_combo))
@@ -2751,6 +2755,114 @@ class QtSaveToJobLogDialog(QDialog):
         if suggestion:
             self.court_email_combo.setCurrentText(suggestion)
 
+    def _set_service_section_expanded(self, expanded: bool) -> None:
+        desired = bool(expanded)
+        if self.service_group.is_expanded() == desired:
+            return
+        self._service_section_sync_in_progress = True
+        try:
+            self.service_group.set_expanded(desired)
+        finally:
+            self._service_section_sync_in_progress = False
+
+    def _on_service_section_toggled(self, _checked: bool) -> None:
+        if self._service_section_sync_in_progress:
+            return
+        self._service_section_user_overridden = True
+        self.service_group.set_attention_state(False)
+
+    def _service_section_should_expand(self) -> bool:
+        return self.use_service_location_check.isChecked() or not self.service_same_check.isChecked()
+
+    def _service_section_summary_text(self) -> str:
+        if not _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            return ""
+        if self.use_service_location_check.isChecked():
+            service_city = self.service_city_combo.currentText().strip()
+            if service_city:
+                return f"Location: {service_city}"
+            return "Location in text"
+        if self.service_same_check.isChecked():
+            return "Same as case"
+        service_city = self.service_city_combo.currentText().strip()
+        if service_city:
+            return service_city
+        service_entity = self.service_entity_combo.currentText().strip()
+        if service_entity:
+            return service_entity
+        return "Custom service"
+
+    def _refresh_service_section_state(self) -> None:
+        self.service_group.set_summary_text(self._service_section_summary_text())
+        self.service_group.set_attention_state(False)
+        should_expand = self._service_section_should_expand()
+        if should_expand:
+            self._set_service_section_expanded(True)
+            return
+        if not self._service_section_user_overridden:
+            self._set_service_section_expanded(False)
+
+    def _on_use_service_location_toggled(self, _checked: bool) -> None:
+        self._refresh_service_section_state()
+
+    def _interpretation_section_summary_text(self) -> str:
+        if not _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            return ""
+        if not self._interpretation_transport_sentence_enabled():
+            return "Transport line off"
+        distance_text = self.travel_km_outbound_edit.text().strip()
+        if distance_text:
+            return f"{distance_text} km one way"
+        return "Transport line on"
+
+    def _imported_service_differs_from_case(self, *, service_entity: str, service_city: str) -> bool:
+        resolved_service_entity = str(service_entity or "").strip()
+        resolved_service_city = str(service_city or "").strip()
+        case_entity = self.case_entity_combo.currentText().strip()
+        case_city = self.case_city_combo.currentText().strip()
+        return (
+            (resolved_service_entity != "" and resolved_service_entity != case_entity)
+            or (resolved_service_city != "" and resolved_service_city != case_city)
+        )
+
+    def _apply_imported_service_fields(self, *, service_entity: str, service_city: str) -> None:
+        resolved_service_entity = str(service_entity or "").strip()
+        resolved_service_city = str(service_city or "").strip()
+        if not _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self._sync_service_with_case()
+            return
+        distinct_service = self._imported_service_differs_from_case(
+            service_entity=resolved_service_entity,
+            service_city=resolved_service_city,
+        )
+        if distinct_service and self.service_same_check.isChecked():
+            self.service_same_check.setChecked(False)
+        if self.service_same_check.isChecked():
+            self._sync_service_with_case()
+            return
+        if resolved_service_entity:
+            self._ensure_in_vocab("vocab_service_entities", resolved_service_entity)
+            self.service_entity_combo.setCurrentText(resolved_service_entity)
+        if resolved_service_city:
+            self._ensure_in_vocab("vocab_cities", resolved_service_city)
+            self.service_city_combo.setCurrentText(resolved_service_city)
+        if distinct_service:
+            self._refresh_service_section_state()
+
+    def _reveal_validation_context(self, message: str) -> None:
+        normalized = message.casefold()
+        target_widget: QWidget | None = None
+        if "service" in normalized:
+            self._set_service_section_expanded(True)
+            self.service_group.set_attention_state(True)
+            target_widget = self.service_group
+        if "km" in normalized or "distance" in normalized or "transport" in normalized:
+            self.interpretation_group.set_expanded(True)
+            self.interpretation_group.set_attention_state(True)
+            target_widget = self.interpretation_group
+        if target_widget is not None:
+            self.form_scroll_area.ensureWidgetVisible(target_widget, 0, 24)
+
     def _on_case_fields_changed(self) -> None:
         self._case_entity_user_set = True
         self._case_city_user_set = True
@@ -2758,10 +2870,12 @@ class QtSaveToJobLogDialog(QDialog):
             self._sync_service_with_case()
         self._set_court_email_from_context()
         self._apply_interpretation_distance_defaults(prompt_if_missing=False)
+        self._refresh_service_section_state()
 
     def _on_service_fields_changed(self) -> None:
         self._apply_non_court_default_rule()
         self._apply_interpretation_distance_defaults(prompt_if_missing=True)
+        self._refresh_service_section_state()
 
     def _on_service_same_toggled(self) -> None:
         self._refresh_service_mirror_state()
@@ -2778,6 +2892,9 @@ class QtSaveToJobLogDialog(QDialog):
             self._sync_service_with_case()
         self.service_entity_combo.setEnabled(not same)
         self.service_city_combo.setEnabled(not same)
+        self.add_service_entity_btn.setEnabled(not same)
+        self.add_service_city_btn.setEnabled(not same)
+        self._refresh_service_section_state()
 
     def _refresh_photo_controls(self) -> None:
         photo_enabled = bool(self._settings["metadata_photo_enabled"])
@@ -2800,6 +2917,13 @@ class QtSaveToJobLogDialog(QDialog):
         enabled = self.photo_translation_check.isChecked()
         self.autofill_photo_btn.setEnabled(enabled)
         self.photo_hint.setText("Enable photo autofill for this row.")
+
+    def _refresh_pdf_autofill_control(self) -> None:
+        is_interpretation = _is_interpretation_job_type(self.job_type_combo.currentText().strip())
+        self.autofill_header_btn.setText(
+            "Autofill from notification PDF..." if is_interpretation else "Autofill from PDF header"
+        )
+        self.autofill_header_btn.setEnabled(self._can_autofill_from_pdf_header())
 
     def _refresh_interpretation_mode_state(self) -> None:
         is_interpretation = _is_interpretation_job_type(self.job_type_combo.currentText().strip())
@@ -2831,6 +2955,7 @@ class QtSaveToJobLogDialog(QDialog):
             self.service_date_edit.setText(self.translation_date_edit.text().strip())
             self._refresh_interpretation_transport_sentence_state()
         self._apply_interpretation_distance_defaults(prompt_if_missing=False)
+        self._refresh_pdf_autofill_control()
 
     def _interpretation_transport_sentence_enabled(self) -> bool:
         checkbox = getattr(self, "include_transport_sentence_check", None)
@@ -2849,6 +2974,8 @@ class QtSaveToJobLogDialog(QDialog):
             distance_edit.setEnabled(enabled)
         if hint_label is not None:
             hint_label.setEnabled(enabled)
+        self.interpretation_group.set_summary_text(self._interpretation_section_summary_text())
+        self.interpretation_group.set_attention_state(False)
 
     def _on_interpretation_transport_sentence_toggled(self, checked: bool) -> None:
         self._refresh_interpretation_transport_sentence_state()
@@ -2867,7 +2994,7 @@ class QtSaveToJobLogDialog(QDialog):
 
     def _can_autofill_from_pdf_header(self) -> bool:
         if self._seed.pdf_path is None:
-            return True
+            return _is_interpretation_job_type(self.job_type_combo.currentText().strip())
         return self._seed.pdf_path.expanduser().resolve().exists()
 
     def _current_word_count_value(self) -> int:
@@ -3104,6 +3231,13 @@ class QtSaveToJobLogDialog(QDialog):
                 )
             saved_pdf_path = getattr(dialog, "saved_pdf_path", None)
             pdf_unavailable_explained = bool(getattr(dialog, "pdf_unavailable_explained", False))
+            if saved_pdf_path is None and pdf_unavailable_explained:
+                show_local_only_honorarios_ready_box(
+                    self,
+                    docx_path=dialog.saved_path,
+                    pdf_error=str(getattr(dialog, "pdf_export_error", "") or "").strip(),
+                    gmail_blocked=True,
+                )
             if final_draft.kind == HonorariosKind.TRANSLATION:
                 if saved_pdf_path is not None or not pdf_unavailable_explained:
                     self._offer_gmail_draft_for_honorarios(dialog.saved_path, saved_pdf_path, profile)
@@ -3121,15 +3255,12 @@ class QtSaveToJobLogDialog(QDialog):
             self.case_city_combo.setCurrentText(suggestion.case_city)
         if suggestion.case_number:
             self.case_number_edit.setText(suggestion.case_number)
-        if self.service_same_check.isChecked():
-            self._sync_service_with_case()
-        else:
-            if suggestion.service_entity and not self.service_entity_combo.currentText().strip():
-                self._ensure_in_vocab("vocab_service_entities", suggestion.service_entity)
-                self.service_entity_combo.setCurrentText(suggestion.service_entity)
-            if suggestion.service_city and not self.service_city_combo.currentText().strip():
-                self._ensure_in_vocab("vocab_cities", suggestion.service_city)
-                self.service_city_combo.setCurrentText(suggestion.service_city)
+        if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self.translation_date_edit.setText(str(suggestion.service_date or "").strip())
+        self._apply_imported_service_fields(
+            service_entity=suggestion.service_entity,
+            service_city=suggestion.service_city,
+        )
         self._apply_non_court_default_rule()
         ranked = rank_court_email_suggestions(
             exact_email=suggestion.court_email,
@@ -3139,20 +3270,76 @@ class QtSaveToJobLogDialog(QDialog):
         )
         if ranked:
             self.court_email_combo.setCurrentText(ranked[0])
+        self._refresh_service_section_state()
+
+    def _resolve_autofill_pdf_path(self, *, title: str, allow_manual_picker: bool) -> Path | None:
+        pdf_path = self._seed.pdf_path.expanduser().resolve() if self._seed.pdf_path is not None else None
+        if pdf_path is not None and pdf_path.exists():
+            return pdf_path
+        if not allow_manual_picker:
+            return None
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            title,
+            str(_default_downloads_dir()),
+            "PDF Files (*.pdf);;All Files (*.*)",
+        )
+        if not selected:
+            return None
+        pdf_path = Path(selected).expanduser().resolve()
+        self._seed.pdf_path = pdf_path
+        return pdf_path
+
+    def _autofill_from_interpretation_notice_pdf(self, pdf_path: Path) -> None:
+        result = extract_interpretation_notification_metadata_from_pdf_with_diagnostics(
+            pdf_path,
+            vocab_cities=list(self._settings["vocab_cities"]),
+            config=self._metadata_config,
+        )
+        suggestion = result.suggestion
+        diagnostics = result.diagnostics
+        if not any(
+            (
+                suggestion.case_entity,
+                suggestion.case_city,
+                suggestion.case_number,
+                suggestion.court_email,
+                suggestion.service_entity,
+                suggestion.service_city,
+                suggestion.service_date,
+            )
+        ):
+            self._set_service_section_expanded(True)
+            self.service_group.set_attention_state(True)
+            QMessageBox.warning(
+                self,
+                "Autofill",
+                "No notification metadata could be extracted automatically.\n\n"
+                f"{build_interpretation_notice_diagnostics_text(diagnostics)}",
+            )
+            return
+        self._apply_header_suggestion(suggestion)
+        if not str(suggestion.service_date or "").strip():
+            self._set_service_section_expanded(True)
+            self.service_group.set_attention_state(True)
+            QMessageBox.information(
+                self,
+                "Autofill",
+                "Notice data was recovered, but the service date still needs review.\n\n"
+                f"{build_interpretation_notice_diagnostics_text(diagnostics)}",
+            )
 
     def _autofill_from_pdf_header(self) -> None:
-        pdf_path = self._seed.pdf_path.expanduser().resolve() if self._seed.pdf_path is not None else None
-        if pdf_path is None or not pdf_path.exists():
-            selected, _ = QFileDialog.getOpenFileName(
-                self,
-                "Select PDF for header autofill",
-                str(_default_downloads_dir()),
-                "PDF Files (*.pdf);;All Files (*.*)",
-            )
-            if not selected:
-                return
-            pdf_path = Path(selected).expanduser().resolve()
-            self._seed.pdf_path = pdf_path
+        is_interpretation = _is_interpretation_job_type(self.job_type_combo.currentText().strip())
+        pdf_path = self._resolve_autofill_pdf_path(
+            title="Select interpretation notification PDF" if is_interpretation else "Select PDF for header autofill",
+            allow_manual_picker=is_interpretation,
+        )
+        if pdf_path is None:
+            return
+        if is_interpretation:
+            self._autofill_from_interpretation_notice_pdf(pdf_path)
+            return
         suggestion = extract_pdf_header_metadata_priority_pages(
             pdf_path,
             vocab_cities=list(self._settings["vocab_cities"]),
@@ -3315,7 +3502,12 @@ class QtSaveToJobLogDialog(QDialog):
                 vocab_cities=list(self._settings["vocab_cities"]),
                 config=self._metadata_config,
             )
-        if suggestion.service_city:
+        if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self._apply_imported_service_fields(
+                service_entity=suggestion.service_entity,
+                service_city=suggestion.service_city,
+            )
+        elif suggestion.service_city:
             self._ensure_in_vocab("vocab_cities", suggestion.service_city)
             self.service_city_combo.setCurrentText(suggestion.service_city)
         if suggestion.service_date:
@@ -3323,6 +3515,8 @@ class QtSaveToJobLogDialog(QDialog):
                 self.translation_date_edit.setText(suggestion.service_date)
             else:
                 self.service_date_edit.setText(suggestion.service_date)
+        elif _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self.translation_date_edit.setText("")
         if suggestion.case_number and not self.case_number_edit.text().strip():
             self.case_number_edit.setText(suggestion.case_number)
         if suggestion.case_entity:
@@ -3335,6 +3529,7 @@ class QtSaveToJobLogDialog(QDialog):
             self._ensure_in_vocab("vocab_court_emails", suggestion.court_email)
             self.court_email_combo.setCurrentText(suggestion.court_email)
         self._apply_non_court_default_rule()
+        self._refresh_service_section_state()
         if prompt_for_distance:
             self._prompt_interpretation_distance_for_imported_city()
 
@@ -3430,11 +3625,13 @@ class QtSaveToJobLogDialog(QDialog):
         try:
             payload = self._normalized_payload()
         except ValueError as exc:
+            self._reveal_validation_context(str(exc))
             QMessageBox.critical(self, "Invalid values", str(exc))
             return
         try:
             self._persist_interpretation_distance_for_current_city()
         except ValueError as exc:
+            self._reveal_validation_context(str(exc))
             QMessageBox.critical(self, "Invalid values", str(exc))
             return
 
@@ -3466,16 +3663,10 @@ class QtSaveToJobLogDialog(QDialog):
             service_equals_case_by_default=bool(self.service_same_check.isChecked()),
         )
         translated_docx_path = self._resolved_seed_docx_path()
-        self._saved_result = JobLogSavedResult(
+        self._saved_result = build_joblog_saved_result(
             row_id=int(row_id),
-            word_count=int(payload["word_count"]),
-            case_number=str(payload["case_number"] or ""),
-            case_entity=str(payload["case_entity"] or ""),
-            case_city=str(payload["case_city"] or ""),
-            court_email=str(payload["court_email"] or ""),
-            run_id=str(payload["run_id"] or ""),
+            payload=payload,
             translated_docx_path=translated_docx_path,
-            payload=dict(payload),
         )
         self._saved = True
         if self._on_saved is not None:
@@ -3904,34 +4095,29 @@ class QtJobLogWindow(QDialog):
         if not selected:
             return
         pdf_path = Path(selected).expanduser().resolve()
-        suggestion = extract_interpretation_notification_metadata_from_pdf(
-            pdf_path,
-            vocab_cities=list(self._settings["vocab_cities"]),
-            config=metadata_config_from_settings(self._settings),
+        response = shared_service_autofill_interpretation_from_notification_pdf(
+            pdf_path=pdf_path,
+            settings_path=settings_path(),
         )
-        if not any(
-            (
-                suggestion.case_entity,
-                suggestion.case_city,
-                suggestion.case_number,
-                suggestion.court_email,
-                suggestion.service_entity,
-                suggestion.service_city,
-                suggestion.service_date,
-            )
-        ):
+        diagnostics = dict(response.get("diagnostics", {}) if isinstance(response.get("diagnostics"), dict) else {})
+        metadata_extraction = diagnostics.get("metadata_extraction", {})
+        extracted_fields = []
+        if isinstance(metadata_extraction, dict):
+            extracted_fields = list(metadata_extraction.get("extracted_fields", []) or [])
+        if not extracted_fields:
             QMessageBox.information(
                 self,
                 "Interpretation notification",
-                "No notification metadata could be extracted automatically. Review the entry manually.",
+                "No notification metadata could be extracted automatically. Review the entry manually.\n\n"
+                f"{diagnostics.get('metadata_extraction_text', '')}",
             )
         dialog = QtSaveToJobLogDialog(
             parent=self,
             db_path=self._db_path,
-            seed=build_interpretation_seed_from_notification_pdf(
-                pdf_path=pdf_path,
-                suggestion=suggestion,
-                vocab_court_emails=list(self._settings["vocab_court_emails"]),
+            seed=shared_hydrate_joblog_seed(
+                response.get("normalized_payload", {})
+                if isinstance(response.get("normalized_payload"), dict)
+                else {}
             ),
             on_saved=lambda: self.refresh_rows(selected_row_index=0, force=True),
             allow_honorarios_export=True,
@@ -3954,19 +4140,16 @@ class QtJobLogWindow(QDialog):
         if not selected:
             return
         image_path = Path(selected).expanduser().resolve()
-        suggestion = extract_interpretation_photo_metadata_from_image(
-            image_path,
-            vocab_cities=list(self._settings["vocab_cities"]),
-            config=metadata_config_from_settings(self._settings),
+        response = shared_service_autofill_interpretation_from_photo(
+            image_path=image_path,
+            settings_path=settings_path(),
         )
-        if not any(
-            (
-                suggestion.case_entity,
-                suggestion.case_city,
-                suggestion.case_number,
-                suggestion.service_date,
-            )
-        ):
+        diagnostics = dict(response.get("diagnostics", {}) if isinstance(response.get("diagnostics"), dict) else {})
+        metadata_extraction = diagnostics.get("metadata_extraction", {})
+        extracted_fields = []
+        if isinstance(metadata_extraction, dict):
+            extracted_fields = list(metadata_extraction.get("extracted_fields", []) or [])
+        if not extracted_fields:
             QMessageBox.information(
                 self,
                 "Interpretation photo",
@@ -3975,9 +4158,10 @@ class QtJobLogWindow(QDialog):
         dialog = QtSaveToJobLogDialog(
             parent=self,
             db_path=self._db_path,
-            seed=build_interpretation_seed_from_photo_screenshot(
-                suggestion=suggestion,
-                vocab_court_emails=list(self._settings["vocab_court_emails"]),
+            seed=shared_hydrate_joblog_seed(
+                response.get("normalized_payload", {})
+                if isinstance(response.get("normalized_payload"), dict)
+                else {}
             ),
             on_saved=lambda: self.refresh_rows(selected_row_index=0, force=True),
             allow_honorarios_export=True,
@@ -4409,6 +4593,13 @@ class QtJobLogWindow(QDialog):
             final_draft = generated_draft or draft
             saved_pdf_path = getattr(dialog, "saved_pdf_path", None)
             pdf_unavailable_explained = bool(getattr(dialog, "pdf_unavailable_explained", False))
+            if saved_pdf_path is None and pdf_unavailable_explained:
+                show_local_only_honorarios_ready_box(
+                    self,
+                    docx_path=dialog.saved_path,
+                    pdf_error=str(getattr(dialog, "pdf_export_error", "") or "").strip(),
+                    gmail_blocked=True,
+                )
             if final_draft.kind == HonorariosKind.TRANSLATION:
                 if saved_pdf_path is not None or not pdf_unavailable_explained:
                     self._offer_gmail_draft_for_honorarios(
@@ -5457,9 +5648,25 @@ class QtGmailBatchReviewDialog(QDialog):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
+        self.summary_card = QFrame(self)
+        self.summary_card.setObjectName("ShellPanel")
+        summary_layout = QHBoxLayout(self.summary_card)
+        summary_layout.setContentsMargins(12, 10, 12, 10)
+        summary_layout.setSpacing(10)
         self.summary_label = QLabel("")
         self.summary_label.setWordWrap(True)
-        root.addWidget(self.summary_label)
+        self.output_dir_label = QLabel("")
+        self.output_dir_label.setObjectName("MutedLabel")
+        self.output_dir_label.setWordWrap(True)
+        self.summary_info_btn = build_inline_info_button(
+            tooltip="Message details",
+            accessible_name="Message details help",
+            parent=self.summary_card,
+        )
+        summary_layout.addWidget(self.summary_label, 1)
+        summary_layout.addWidget(self.output_dir_label, 0)
+        summary_layout.addWidget(self.summary_info_btn, 0, Qt.AlignmentFlag.AlignTop)
+        root.addWidget(self.summary_card)
 
         context_row = QHBoxLayout()
         context_row.setSpacing(8)
@@ -5468,26 +5675,23 @@ class QtGmailBatchReviewDialog(QDialog):
         self.workflow_combo.setEditable(False)
         self.workflow_combo.addItem("Translation", GMAIL_INTAKE_WORKFLOW_TRANSLATION)
         self.workflow_combo.addItem("Interpretation notice", GMAIL_INTAKE_WORKFLOW_INTERPRETATION)
-        self.target_lang_label = QLabel("Target language")
+        self.target_lang_label = QLabel("Language")
         self.target_lang_combo = NoWheelComboBox()
         self.target_lang_combo.setEditable(False)
         supported_langs = [str(lang).strip().upper() for lang in supported_target_langs()]
         self.target_lang_combo.addItems(supported_langs)
         if self._target_lang in supported_langs:
             self.target_lang_combo.setCurrentText(self._target_lang)
-        self.output_dir_label = QLabel("")
-        self.output_dir_label.setWordWrap(True)
         context_row.addWidget(self.workflow_label)
         context_row.addWidget(self.workflow_combo, 0)
         context_row.addSpacing(12)
         context_row.addWidget(self.target_lang_label)
         context_row.addWidget(self.target_lang_combo, 0)
-        context_row.addSpacing(12)
-        context_row.addWidget(self.output_dir_label, 1)
+        context_row.addStretch(1)
         root.addLayout(context_row)
 
         self.table = QTableWidget(0, 4, self)
-        self.table.setHorizontalHeaderLabels(["Filename", "Type", "Size", "First page"])
+        self.table.setHorizontalHeaderLabels(["File", "Type", "Size", "Start"])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.MultiSelection)
@@ -5500,14 +5704,14 @@ class QtGmailBatchReviewDialog(QDialog):
 
         detail_row = QHBoxLayout()
         detail_row.setSpacing(8)
-        self.detail_attachment_label = QLabel("Selected attachment: -")
+        self.detail_attachment_label = QLabel("-")
         self.detail_attachment_label.setWordWrap(True)
-        self.pages_value_label = QLabel("Pages: -")
-        self.start_page_label = QLabel("First page to translate")
+        self.pages_value_label = QLabel("-")
+        self.start_page_label = QLabel("Start page")
         self.start_page_spin = NoWheelSpinBox()
         self.start_page_spin.setMinimum(1)
         self.start_page_spin.setMaximum(9999)
-        self.preview_btn = QPushButton("Preview selected attachment")
+        self.preview_btn = QPushButton("Preview")
         detail_row.addWidget(self.detail_attachment_label, 1)
         detail_row.addWidget(self.pages_value_label)
         detail_row.addWidget(self.start_page_label)
@@ -5539,19 +5743,48 @@ class QtGmailBatchReviewDialog(QDialog):
     def _is_interpretation_workflow(self) -> bool:
         return self._current_workflow_kind() == GMAIL_INTAKE_WORKFLOW_INTERPRETATION
 
-    def _populate_table(self) -> None:
-        sender_summary = self._message.from_header or "(unknown sender)"
-        subject = self._message.subject or "(no subject)"
+    def _summary_subject_text(self) -> str:
+        subject = (self._message.subject or "").strip()
         attachment_count = len(self._message.attachments)
-        self.summary_label.setText(
-            "Subject: "
-            f"{subject}\n"
-            f"Sender: {sender_summary}\n"
-            f"Gmail account: {self._message.account_email}\n"
-            f"Supported attachments in this exact message: {attachment_count}"
+        noun = "file" if attachment_count == 1 else "files"
+        if subject:
+            return f"{subject} | {attachment_count} {noun}"
+        return f"{attachment_count} {noun} ready"
+
+    def _output_dir_summary_text(self) -> str:
+        if self._output_dir_text == "":
+            return "Folder: not set"
+        try:
+            display = Path(self._output_dir_text).name or self._output_dir_text
+        except Exception:  # noqa: BLE001
+            display = self._output_dir_text
+        return f"Folder: {display}"
+
+    def _refresh_summary_banner(self) -> None:
+        attachment_count = len(self._message.attachments)
+        workflow_hint = (
+            "Choose 1 file for interpretation notice."
+            if self._is_interpretation_workflow()
+            else "Choose one or more files to prepare."
         )
-        output_summary = self._output_dir_text or "(not set yet)"
-        self.output_dir_label.setText(f"Output folder: {output_summary}")
+        self.summary_label.setText(self._summary_subject_text())
+        self.summary_label.setToolTip(self._message.subject or "(no subject)")
+        self.output_dir_label.setText(self._output_dir_summary_text())
+        self.output_dir_label.setToolTip(self._output_dir_text or "(not set yet)")
+        self.summary_info_btn.setToolTip(
+            "\n".join(
+                (
+                    f"Sender: {self._message.from_header or '(unknown sender)'}",
+                    f"Gmail account: {self._message.account_email}",
+                    f"Supported attachments: {attachment_count}",
+                    workflow_hint,
+                    f"Output folder: {self._output_dir_text or '(not set yet)'}",
+                )
+            )
+        )
+
+    def _populate_table(self) -> None:
+        self._refresh_summary_banner()
         self.table.setRowCount(0)
         for attachment in self._message.attachments:
             row_idx = self.table.rowCount()
@@ -5579,8 +5812,8 @@ class QtGmailBatchReviewDialog(QDialog):
     def _page_count_text_for_row(self, row: int) -> str:
         page_count = self._page_counts[row]
         if isinstance(page_count, int) and page_count > 0:
-            return f"Pages: {page_count}"
-        return "Pages: preview to inspect"
+            return f"{page_count} page" if page_count == 1 else f"{page_count} pages"
+        return "Preview for pages"
 
     def _set_row_start_page(self, row: int, value: int) -> None:
         attachment = self._message.attachments[row]
@@ -5625,18 +5858,19 @@ class QtGmailBatchReviewDialog(QDialog):
         selected_rows = self._selected_rows()
         self.prepare_btn.setEnabled(has_rows and len(selected_rows) > 0)
         if not has_rows:
-            self.prepare_btn.setText("No supported attachments found")
+            self.prepare_btn.setText("No attachments")
         elif self._is_interpretation_workflow():
-            self.prepare_btn.setText("Prepare interpretation notice")
+            self.prepare_btn.setText("Prepare notice")
         else:
-            self.prepare_btn.setText("Prepare selected attachments")
+            self.prepare_btn.setText("Prepare selected")
+        self._refresh_summary_banner()
         self._refresh_detail_panel()
 
     def _refresh_detail_panel(self) -> None:
         row = self._current_row()
         if row is None:
-            self.detail_attachment_label.setText("Selected attachment: -")
-            self.pages_value_label.setText("Pages: -")
+            self.detail_attachment_label.setText("-")
+            self.pages_value_label.setText("-")
             self.start_page_spin.blockSignals(True)
             self.start_page_spin.setValue(1)
             self.start_page_spin.blockSignals(False)
@@ -5645,7 +5879,10 @@ class QtGmailBatchReviewDialog(QDialog):
             return
 
         attachment = self._message.attachments[row]
-        self.detail_attachment_label.setText(f"Selected attachment: {attachment.filename}")
+        self.detail_attachment_label.setText(attachment.filename)
+        self.detail_attachment_label.setToolTip(
+            f"{attachment.filename}\n{attachment.mime_type} | {_format_bytes(attachment.size_bytes)}"
+        )
         self.pages_value_label.setText(self._page_count_text_for_row(row))
         self.start_page_spin.blockSignals(True)
         self.start_page_spin.setMaximum(
@@ -8244,20 +8481,34 @@ class QtSettingsDialog(QDialog):
             return
         try:
             openai_stored = bool(get_openai_key())
-            ocr_stored = bool(get_ocr_key())
         except RuntimeError:
             openai_stored = False
-            ocr_stored = False
         resolved_model = model_edit.text().strip() if model_edit is not None else ""
         resolved_env = env_edit.text().strip() if env_edit is not None else ""
         resolved_base = base_edit.text().strip() if base_edit is not None else ""
         resolved_model = resolved_model or model_default
         resolved_env = resolved_env or env_default
         resolved_base = resolved_base or (base_default or "provider default")
+        ocr_config = OcrEngineConfig(
+            api_provider=provider,
+            api_base_url=resolved_base if resolved_base != "provider default" else None,
+            api_model=resolved_model,
+            api_key_env_name=resolved_env,
+        )
+        env_candidates = candidate_ocr_api_env_names(ocr_config)
+        resolved_source = resolve_ocr_api_key_source(ocr_config)
+        if resolved_source is None:
+            effective_credentials = "missing"
+        elif resolved_source[0] == "stored":
+            effective_credentials = "stored OCR key"
+        else:
+            effective_credentials = f"env {resolved_source[1]}"
+        local_status = "available" if local_ocr_available() else "missing"
         summary.setText(
             f"OCR provider: {provider.value}; model: {resolved_model}; env: {resolved_env}; "
-            f"base URL: {resolved_base}; OpenAI credentials {'present' if openai_stored else 'missing'}, "
-            f"OCR credentials {'present' if ocr_stored else 'missing'}."
+            f"base URL: {resolved_base}; env candidates: {', '.join(env_candidates)}; "
+            f"effective OCR credentials: {effective_credentials}; local Tesseract {local_status}; "
+            f"OpenAI credentials {'present' if openai_stored else 'missing'}."
         )
         QtSettingsDialog._refresh_gmail_bridge_summary(self)
 
@@ -8559,34 +8810,43 @@ class QtSettingsDialog(QDialog):
         QMessageBox.information(self, "Key Test", f"OpenAI test passed ({latency_ms} ms).")
 
     def _test_ocr_key(self) -> None:
-        try:
-            key = get_ocr_key()
-        except RuntimeError as exc:
-            QMessageBox.critical(self, "Settings", str(exc))
-            return
-        if not key:
-            QMessageBox.warning(self, "Key Test", "OCR key is not stored.")
-            return
         provider = self._current_ocr_provider()
         base_url = self.ocr_base_url_edit.text().strip() or default_ocr_api_base_url(provider)
         model = self.ocr_model_edit.text().strip() or default_ocr_api_model(provider)
         env_name = self.ocr_env_edit.text().strip() or default_ocr_api_env_name(provider)
+        config = OcrEngineConfig(
+            api_provider=provider,
+            api_base_url=base_url or None,
+            api_model=model,
+            api_key_env_name=env_name,
+        )
+        source = resolve_ocr_api_key_source(config)
+        key = resolve_ocr_api_key(config)
+        if source is None or not key:
+            checked_envs = ", ".join(candidate_ocr_api_env_names(config))
+            QMessageBox.warning(
+                self,
+                "Key Test",
+                "OCR credentials are unavailable. "
+                f"Checked the stored OCR key and env var(s): {checked_envs}.",
+            )
+            return
         started = time.perf_counter()
         try:
             test_ocr_provider_connection(
-                OcrEngineConfig(
-                    api_provider=provider,
-                    api_base_url=base_url or None,
-                    api_model=model,
-                    api_key_env_name=env_name,
-                ),
+                config,
                 api_key=key,
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Key Test", f"OCR key test failed: {type(exc).__name__}")
             return
         latency_ms = int((time.perf_counter() - started) * 1000)
-        QMessageBox.information(self, "Key Test", f"OCR test passed for {provider.value} ({latency_ms} ms).")
+        source_text = "stored OCR key" if source[0] == "stored" else f"env {source[1]}"
+        QMessageBox.information(
+            self,
+            "Key Test",
+            f"OCR test passed for {provider.value} via {source_text} ({latency_ms} ms).",
+        )
 
     def _restore_defaults(self) -> None:
         self.default_lang_combo.setCurrentText("EN")

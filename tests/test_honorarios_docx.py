@@ -40,6 +40,8 @@ from legalpdf_translate.qt_gui.dialogs import (
     build_blank_interpretation_seed,
 )
 from legalpdf_translate.qt_gui.guarded_inputs import CALENDAR_WEEKEND_COLOR, GuardedDateEdit
+from legalpdf_translate.qt_gui.worker import HonorariosPdfExportWorker
+import legalpdf_translate.qt_gui.worker as worker_module
 
 
 def _write_docx_with_paragraphs(path: Path, *paragraphs: str) -> None:
@@ -510,7 +512,7 @@ def test_honorarios_dialog_reports_auto_renamed_save_path(tmp_path: Path, monkey
     monkeypatch.setattr(
         QtHonorariosExportDialog,
         "_begin_pdf_export",
-        lambda self, *, docx_path, pdf_path: QtHonorariosExportDialog._on_pdf_export_finished(
+        lambda self, *, docx_path, pdf_path, timeout_seconds: QtHonorariosExportDialog._on_pdf_export_finished(
             self,
             SimpleNamespace(
                 docx_path=docx_path,
@@ -576,7 +578,7 @@ def test_honorarios_dialog_records_saved_pdf_path_after_docx_save(tmp_path: Path
     monkeypatch.setattr(
         QtHonorariosExportDialog,
         "_begin_pdf_export",
-        lambda self, *, docx_path, pdf_path: calls.update({"docx": docx_path, "pdf": pdf_path})
+        lambda self, *, docx_path, pdf_path, timeout_seconds: calls.update({"docx": docx_path, "pdf": pdf_path})
         or QtHonorariosExportDialog._on_pdf_export_finished(
             self,
             SimpleNamespace(
@@ -643,7 +645,7 @@ def test_honorarios_dialog_enters_async_pdf_export_state_before_worker_finishes(
     monkeypatch.setattr(
         QtHonorariosExportDialog,
         "_begin_pdf_export",
-        lambda self, *, docx_path, pdf_path: calls.update({"docx": docx_path, "pdf": pdf_path}),
+        lambda self, *, docx_path, pdf_path, timeout_seconds: calls.update({"docx": docx_path, "pdf": pdf_path}),
     )
     monkeypatch.setattr(QtHonorariosExportDialog, "_show_pdf_export_success_box", lambda self: "continue")
 
@@ -710,7 +712,7 @@ def test_honorarios_dialog_keeps_docx_when_pdf_export_fails(tmp_path: Path, monk
     monkeypatch.setattr(
         QtHonorariosExportDialog,
         "_begin_pdf_export",
-        lambda self, *, docx_path, pdf_path: QtHonorariosExportDialog._on_pdf_export_finished(
+        lambda self, *, docx_path, pdf_path, timeout_seconds: QtHonorariosExportDialog._on_pdf_export_finished(
             self,
             SimpleNamespace(
                 docx_path=docx_path,
@@ -782,16 +784,17 @@ def test_honorarios_dialog_partial_success_can_retry_pdf_export(tmp_path: Path, 
         app = QApplication(sys.argv[:1])
 
     requested = str(tmp_path / "honorarios.docx")
-    begin_calls: list[tuple[Path, Path]] = []
+    begin_calls: list[tuple[Path, Path, float]] = []
 
     monkeypatch.setattr(
         "legalpdf_translate.qt_gui.dialogs.QFileDialog.getSaveFileName",
         lambda *args, **kwargs: (requested, "Word Document (*.docx)"),
     )
     monkeypatch.setattr(QtHonorariosExportDialog, "_show_pdf_export_failure_box", lambda self: "retry_pdf")
+    monkeypatch.setattr("legalpdf_translate.qt_gui.dialogs.QTimer.singleShot", lambda _ms, callback: callback())
 
-    def _begin_export(self, *, docx_path: Path, pdf_path: Path) -> None:
-        begin_calls.append((docx_path, pdf_path))
+    def _begin_export(self, *, docx_path: Path, pdf_path: Path, timeout_seconds: float) -> None:
+        begin_calls.append((docx_path, pdf_path, float(timeout_seconds)))
         if len(begin_calls) == 1:
             QtHonorariosExportDialog._on_pdf_export_finished(
                 self,
@@ -827,16 +830,49 @@ def test_honorarios_dialog_partial_success_can_retry_pdf_export(tmp_path: Path, 
         dialog._generate()
         expected_docx = Path(requested).resolve()
         expected_pdf = expected_docx.with_suffix(".pdf")
-        assert begin_calls == [(expected_docx, expected_pdf), (expected_docx, expected_pdf)]
+        assert begin_calls == [
+            (expected_docx, expected_pdf, 45.0),
+            (expected_docx, expected_pdf, 90.0),
+        ]
         assert dialog._pdf_export_in_flight is True
         assert dialog.saved_pdf_path is None
-        assert dialog.export_status_label.text().startswith("DOCX saved. Retrying")
+        assert dialog.export_status_label.text().startswith("Word PDF export timed out once.")
     finally:
         dialog._set_pdf_export_busy(False)
         dialog.close()
         dialog.deleteLater()
         if owns_app:
             app.quit()
+
+
+def test_honorarios_pdf_export_worker_uses_export_timeout_for_preflight(tmp_path: Path, monkeypatch) -> None:
+    docx_path = tmp_path / "honorarios.docx"
+    docx_path.write_bytes(b"docx")
+    pdf_path = tmp_path / "honorarios.pdf"
+    preflight_calls: list[float] = []
+    export_calls: list[float] = []
+    results: list[object] = []
+
+    monkeypatch.setattr(
+        worker_module,
+        "probe_word_pdf_export_support",
+        lambda *, timeout_seconds=8.0: preflight_calls.append(float(timeout_seconds)) or SimpleNamespace(ok=True),
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "export_docx_to_pdf_in_word",
+        lambda _docx_path, _pdf_path, *, timeout_seconds=45.0: export_calls.append(float(timeout_seconds))
+        or SimpleNamespace(ok=True),
+    )
+
+    worker = HonorariosPdfExportWorker(docx_path=docx_path, pdf_path=pdf_path, timeout_seconds=90.0)
+    worker.finished.connect(results.append)
+    worker.run()
+
+    assert preflight_calls == [90.0]
+    assert export_calls == [90.0]
+    assert len(results) == 1
+    assert results[0].pdf_path == pdf_path.resolve()
 
 
 def test_honorarios_dialog_partial_success_can_accept_existing_pdf(tmp_path: Path, monkeypatch) -> None:
@@ -864,7 +900,7 @@ def test_honorarios_dialog_partial_success_can_accept_existing_pdf(tmp_path: Pat
     monkeypatch.setattr(
         QtHonorariosExportDialog,
         "_begin_pdf_export",
-        lambda self, *, docx_path, pdf_path: QtHonorariosExportDialog._on_pdf_export_finished(
+        lambda self, *, docx_path, pdf_path, timeout_seconds: QtHonorariosExportDialog._on_pdf_export_finished(
             self,
             SimpleNamespace(
                 docx_path=docx_path,

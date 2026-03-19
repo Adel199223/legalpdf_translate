@@ -8,6 +8,7 @@ from legalpdf_translate.metadata_autofill import (
     choose_court_email_suggestion,
     extract_from_header_text,
     extract_interpretation_notification_metadata_from_pdf,
+    extract_interpretation_notification_metadata_from_pdf_with_diagnostics,
     extract_interpretation_notification_metadata_from_text,
     extract_pdf_header_metadata_priority_pages,
     rank_court_email_suggestions,
@@ -162,7 +163,7 @@ def test_resolve_api_client_uses_bounded_retry_and_timeout(monkeypatch) -> None:
             captured["timeout"] = timeout
 
     monkeypatch.setattr(metadata_autofill, "OpenAI", _FakeOpenAI)
-    monkeypatch.setattr(metadata_autofill, "get_ocr_key", lambda: "stored-key")
+    monkeypatch.setattr(metadata_autofill, "resolve_ocr_api_key", lambda _config: "stored-key")
 
     client = metadata_autofill._resolve_api_client(
         MetadataAutofillConfig(
@@ -266,6 +267,44 @@ def test_extract_interpretation_notification_metadata_from_pdf_uses_priority_pag
     assert suggestion.service_date == "2025-06-12"
     assert suggestion.service_entity == "PSP"
     assert suggestion.service_city == "Beja"
+
+
+def test_extract_interpretation_notification_metadata_with_diagnostics_attempts_ocr_when_mode_is_off(monkeypatch) -> None:
+    class _FakeOrderedText:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    monkeypatch.setattr("legalpdf_translate.metadata_autofill.get_page_count", lambda _pdf_path: 1)
+    monkeypatch.setattr(
+        "legalpdf_translate.metadata_autofill.extract_ordered_page_text",
+        lambda _pdf_path, _page_index: _FakeOrderedText(""),
+    )
+    monkeypatch.setattr("legalpdf_translate.metadata_autofill.local_ocr_available", lambda: False)
+    monkeypatch.setattr("legalpdf_translate.metadata_autofill.resolve_ocr_api_key", lambda _config: None)
+    monkeypatch.setattr("legalpdf_translate.metadata_autofill._build_ocr_engine_from_config", lambda _config: object())
+    monkeypatch.setattr(
+        "legalpdf_translate.metadata_autofill.ocr_pdf_page_text",
+        lambda **_kwargs: metadata_autofill.OcrResult(
+            text="",
+            engine="local",
+            failed_reason="Local OCR unavailable: 'tesseract' executable was not found in PATH.",
+            chars=0,
+        ),
+    )
+
+    result = extract_interpretation_notification_metadata_from_pdf_with_diagnostics(
+        Path("sample.pdf"),
+        vocab_cities=["Beja"],
+        config=MetadataAutofillConfig(metadata_ai_enabled=False, ocr_mode=metadata_autofill.OcrMode.OFF),
+    )
+
+    assert result.suggestion.case_number is None
+    assert result.diagnostics.ocr_attempted is True
+    assert result.diagnostics.ocr_attempted_pages == (1,)
+    assert result.diagnostics.local_ocr_available is False
+    assert result.diagnostics.api_ocr_configured is False
+    assert result.diagnostics.effective_ocr_mode == "auto"
+    assert "tesseract" in result.diagnostics.ocr_failure_reason
 
 
 def test_extract_header_metadata_prefers_local_criminal_prosecution_section_over_generic_public_prosecution_header() -> None:

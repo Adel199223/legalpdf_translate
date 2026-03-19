@@ -23,7 +23,7 @@ Define unavoidable technical terms in one sentence.
 This user guide is not canonical architecture truth. Defer to `APP_KNOWLEDGE.md`, and treat source code as final truth on conflict.
 
 ## Quick Start (No Technical Background)
-1. Open LegalPDF Translate.
+1. Open the LegalPDF browser app in `live` mode.
 2. Select your PDF.
 3. Choose target language.
 4. Choose output folder.
@@ -55,14 +55,16 @@ That applies this safer profile for the current run only:
 It does not silently overwrite your saved defaults.
 
 ## Main Screen Layout
-- Left sidebar: navigation for `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, and `Profile`.
-- `Job Setup`: source PDF, target language, output folder, and `Advanced Settings`.
-- `Conversion Output`: progress bar, current task text, and page/image/error summary.
+- Left sidebar: navigation for `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab`.
+- `Dashboard`: machine state, runtime mode, OCR, Word PDF export, browser automation, and Gmail bridge cards.
+- `New Job`: source PDF, target language, output folder, translation controls, Gmail intake workspace, and the most-used translation/history actions.
+- `Run Status`: progress bar, current task text, and page/image/error summary.
 - Bottom action rail: `Start Translate`, `Cancel`, and `...`.
 - `Settings > Appearance` now gives you two real live themes:
   - `dark_futuristic` for the brighter raised cyan-glass look
   - `dark_simple` for a quieter darker look with the same layout and controls
-- The main dashboard plus the core dialogs now use the same elevated translucent panel style, so the interface should feel more layered and easier to read than the older flatter shell.
+- `live` mode is the real-work browser surface. `shadow` mode is the isolated test copy that keeps separate settings, job log, and outputs.
+- The browser app is now the preferred daily-use surface. The Qt shell remains a supported fallback, not the default starting point.
 - `...` opens:
   - `Open Output Folder`
   - `Export Partial DOCX`
@@ -76,20 +78,22 @@ It does not silently overwrite your saved defaults.
 - Retry: The app making another attempt after a failed page response.
 - OCR: Reading text from page images when normal extraction is poor.
 - Run summary: A final report about what happened in the run.
+- Live mode: The real browser-app path that uses your real settings, job log, outputs, and Gmail workflow.
+- Shadow mode: The isolated browser-app path used for development, testing, or safe experiments.
 
 ## Multi-Window Workspaces
 Use this when you want to work on more than one translation job at the same time.
 
 ### Open another workspace
-1. Use `File > New Window`.
-2. Or press `Ctrl+Shift+N`.
-3. Or open the bottom `...` menu and choose the blank-window action there.
+1. Open another browser tab or browser window with a different workspace URL.
+2. Or duplicate the current browser app tab and switch the `workspace=` value.
+3. Use the Qt `New Window` path only if you are intentionally working in the fallback desktop shell.
 
 ### How it behaves
-1. Each top-level window is its own workspace.
-2. The title bar shows `Workspace N` and can also add the current source filename so you can tell windows apart quickly.
+1. Each browser workspace is independent.
+2. The current workspace stays visible in the URL, so separate tabs are easier to tell apart.
 3. `New Run` still resets only the current workspace.
-4. A busy workspace does not block `New Window`; you can open and prepare another job while the first one is running.
+4. A busy workspace does not block another browser tab; you can open and prepare another job while the first one is running.
 5. Unstarted form edits stay local to that workspace until you explicitly start a task.
 
 ### Run jobs in parallel
@@ -104,10 +108,9 @@ Use this when you want to work on more than one translation job at the same time
 - When this happens, use `Focus other workspace` or change the output folder / target language before retrying.
 
 ### Gmail intake + workspaces
-- The normal app launch now owns one shared Gmail intake bridge for all workspaces.
-- If the last active workspace is idle and pristine, Gmail intake reuses it.
-- If the last active workspace is busy or already has job context/draft state, Gmail intake opens a new blank workspace automatically.
-- Gmail-related settings stay global, but another window's unstarted launch-form edits should not be overwritten by those updates.
+- The browser app live server now owns the normal Gmail intake bridge for all live browser workspaces when the bridge is enabled.
+- The browser extension opens or focuses the fixed live browser workspace `gmail-intake`.
+- Gmail-related settings stay global in `live` mode, but `shadow` mode stays isolated on purpose and does not own the real Gmail bridge.
 
 ## Analyze + OCR Advisor
 Use Analyze when you want the app to inspect the PDF before spending translation time or money.
@@ -178,7 +181,7 @@ Use `Tools > View Job Log` when you want to review or correct saved rows later.
 5. Drag a column divider to resize it. Double-click the divider if you want that column auto-fitted again.
 6. If the Job Log becomes wider than the window, use the horizontal scrollbar instead of squeezing the headers.
 7. The app remembers your manual Job Log column widths.
-8. In the full edit dialog, fixed-choice fields such as `Job type`, `Lang`, and saved entity/city lists are picked from dropdowns instead of being typed directly. Use `Add...` when you need a new saved entity or city.
+8. In the full edit dialog, fixed-choice fields such as `Job type`, `Lang`, and saved entity/city lists are picked from dropdowns instead of being typed directly. Use the small `+` button when you need a new saved entity or city.
 9. Editable dates still accept `YYYY-MM-DD`, but the app now also gives you a calendar popup. The calendar starts on Monday.
 
 ## Interpretation Honorarios
@@ -191,10 +194,11 @@ Use this flow when you need a `Requerimento de Honorários` for interpreting wor
    - `From notification PDF...`
    - `From photo/screenshot...`
 3. Confirm the case, service, and date fields before saving the row.
+4. If a photo or screenshot import did not contain an explicit service entity or city, the form still opens and lets you fill those fields in manually.
 
 ### Service city and distance rules
 1. `Service same as Case` starts enabled for interpretation rows unless the imported data already proves a different service location.
-2. While that option stays on, the service entity and service city mirror the case values.
+2. While that option stays on, the service entity and service city mirror the case values, so the `SERVICE` section can stay collapsed until you actually need to change it.
 3. The service city is the travel-distance city for interpretation honorários.
 4. The visible KM field is the one-way distance only.
 5. When the current profile already has a saved distance for that service city, the app fills it in automatically.
@@ -204,12 +208,13 @@ Use this flow when you need a `Requerimento de Honorários` for interpreting wor
 1. If you used `Tools > New Interpretation Honorários...`, save the row first and the export dialog opens automatically. Otherwise, open the saved interpretation row or keep the edit dialog open.
 2. Click `Gerar Requerimento de Honorários...` when you are using the Job Log path.
 3. Use the profile selector if needed.
-4. On smaller screens, scroll inside the honorários dialog. The action buttons stay anchored at the bottom.
-5. The export saves the honorários DOCX first and then attempts a sibling PDF with the same basename.
-6. `Include transport/distance sentence in honorários text` starts enabled. Leave it on in the normal case, and turn it off only when the court is handling transport separately and that sentence should be omitted.
-7. The addressee auto-completes the case city for generic court entities. The body keeps the saved `service_date`, but the footer date before the signature always uses the day you generate the document.
-8. If automatic PDF export fails, the dialog keeps the saved DOCX usable locally and offers one recovery flow: retry PDF export, choose an existing PDF, open the DOCX/folder, or continue local-only.
-9. Manual/local interpretation exports can offer a fresh Gmail draft when the saved row has `Court Email`, Gmail draft prerequisites are ready, and the honorários PDF was generated successfully.
+4. The interpretation export dialog keeps the main case/profile controls visible first and groups secondary detail into `SERVICE`, `TEXT`, and `RECIPIENT` sections. `RECIPIENT` usually stays collapsed until you need to override the case-derived addressee.
+5. On smaller screens, scroll inside the honorários dialog. The action buttons stay anchored at the bottom.
+6. The export saves the honorários DOCX first and then attempts a sibling PDF with the same basename.
+7. `Include transport/distance sentence in honorários text` starts enabled. Leave it on in the normal case, and turn it off only when the court is handling transport separately and that sentence should be omitted.
+8. The addressee auto-completes the case city for generic court entities. The body keeps the saved `service_date`, but the footer date before the signature always uses the day you generate the document.
+9. If automatic PDF export fails, the dialog keeps the saved DOCX usable locally and offers one recovery flow: retry PDF export, choose an existing PDF, open the DOCX/folder, or continue local-only.
+10. Manual/local interpretation exports can offer a fresh Gmail draft when the saved row has `Court Email`, Gmail draft prerequisites are ready, and the honorários PDF was generated successfully.
 
 ## Honorarios + Gmail Drafts
 If you generate a `Requerimento de Honorários`, the app can also prepare a Gmail draft to the row's `Court Email`.
@@ -236,32 +241,35 @@ Use this when the source files already arrived in Gmail and you want one reply d
 
 ### Setup
 1. In `Settings > Keys & Providers > Gmail Drafts (Windows)`, enable the Gmail intake bridge.
-2. Normal use no longer requires copying the bridge token and port into the unpacked extension options page. Use the options page for diagnostics only.
-3. Keep LegalPDF Translate and Gmail on the same Windows host as Windows `gog`.
+2. Use the browser app in `live` mode for real Gmail work. `shadow` mode is only for isolated testing and diagnostics.
+3. Normal use no longer requires copying the bridge token and port into the unpacked extension options page. Use the options page or `Extension Lab` for diagnostics only.
+4. Keep LegalPDF Translate and Gmail on the same Windows host as Windows `gog`.
 
 ### Run the batch
 1. Open Gmail in Edge or Chromium.
 2. Expand exactly one message in the target thread.
-3. Click the extension toolbar action. If the app is closed but the Gmail bridge is configured, the extension can auto-start the current checkout and continue that same click.
+3. Click the extension toolbar action. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the current checkout and continue that same click.
 4. Choose the Gmail intake mode in the review dialog:
    - `Translation` for the existing translation batch flow
    - `Interpretation notice` for one selected court-notice attachment that should not be translated
-5. In `Translation` mode, review the supported attachments from that exact message, select one or more files, and set the Gmail batch target language before preparation starts.
-6. In `Interpretation notice` mode, select exactly one supported PDF or image attachment. Translation-only controls stay hidden in that mode.
-7. Open the attachment preview when you need to inspect a file before proceeding.
-8. For translation PDFs, page `1` is the default. Scroll through the preview and click `Start from this page` only if translation should begin later. Interpretation notice imports do not use start-page semantics.
-9. `Prepare selected attachments` stages the files, and already previewed files are reused when possible instead of being downloaded again.
-10. Translation mode then translates the selected files one by one.
-11. Interpretation-notice mode downloads the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
-12. After each successful translation, Arabic items first pause in the Word review gate. The dialog auto-opens the DOCX in Word, offers `Align Right + Save`, and auto-continues after a detected save; if automation fails, you can save manually and use `Continue now` or `Continue without changes`.
-13. Translation mode then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
-14. When all selected translation files are confirmed, the app can generate one honorários export using the combined translated word count for the batch.
-15. The honorários export saves the DOCX first and then attempts a sibling PDF with the same basename.
-16. If the translation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários PDF.
-17. If the interpretation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with the generated honorários PDF only.
+5. The review dialog starts with a compact summary banner. Use its info button when you need the sender, Gmail account, or output-folder details.
+6. In `Translation` mode, review the supported attachments from that exact message, select one or more files, and set the Gmail batch target language before preparation starts.
+7. In `Interpretation notice` mode, select exactly one supported PDF or image attachment. Translation-only controls stay hidden in that mode.
+8. Open the attachment preview when you need to inspect a file before proceeding.
+9. For translation PDFs, page `1` is the default. Scroll through the preview and click `Start from this page` only if translation should begin later. Interpretation notice imports do not use start-page semantics.
+10. `Prepare selected attachments` stages the files, and already previewed files are reused when possible instead of being downloaded again.
+11. Translation mode then translates the selected files one by one.
+12. Interpretation-notice mode downloads the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
+13. After each successful translation, Arabic items first pause in the Word review gate. The dialog auto-opens the DOCX in Word, offers `Align Right + Save`, and auto-continues after a detected save; if automation fails, you can save manually and use `Continue now` or `Continue without changes`.
+14. Translation mode then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
+15. When all selected translation files are confirmed, the app can generate one honorários export using the combined translated word count for the batch.
+16. The honorários export saves the DOCX first and then attempts a sibling PDF with the same basename.
+17. If the translation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários PDF.
+18. If the interpretation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with the generated honorários PDF only.
 
 ### Batch rules
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
+- In normal browser-first use, the live bridge owner should be the LegalPDF browser app server. Qt ownership is fallback/coexistence only.
 - The app fetches only the exact intake message, not the whole thread.
 - The review list hides inline/signature/media junk and shows only supported source attachments from that exact message.
 - PDF preview uses a lazy continuous-scroll viewer so large documents can be inspected before translation without rendering every page up front.
@@ -298,8 +306,8 @@ Queue mode writes these sidecar files next to the manifest:
 - `<manifest_stem>.queue_summary.json`
 
 ## Troubleshooting
-1. Easiest manual launch on Windows: double-click `Launch LegalPDF Translate.bat` in the repo root.
-2. If the desktop app does not open from terminal, use the real GUI entrypoint: `.\.venv311\Scripts\python.exe -m legalpdf_translate.qt_app`.
+1. Easiest manual launch on Windows: double-click `LegalPDF Browser App (Live).cmd` on the Desktop if it exists, or run `.\.venv311\Scripts\python.exe -m legalpdf_translate.shadow_web.server --open`.
+2. If you want the live browser app without keeping a terminal attached, run `.\.venv311\Scripts\python.exe tooling/launch_browser_app_live_detached.py`.
 3. If setup commands fail with `html.entities` or `idna` import errors, run `powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate`, then activate `. .\.venv311\Scripts\Activate.ps1`.
 4. If output is missing pages, check if run stopped early and use resume.
 5. If run is slow, lower worker count and retry.
@@ -316,8 +324,8 @@ Queue mode writes these sidecar files next to the manifest:
 16. If a historical honorários Gmail draft still asks you to pick the translated DOCX, that means the row has no stored artifact path and exact `run_id` recovery did not find one unique valid match. After one successful manual selection, the row should be healed and stop asking again.
 17. If `Autofill from PDF header` is available on an interpretation row without an attached source PDF, that is expected. The app now asks you to choose the PDF manually for that autofill pass.
 18. If an interpretation row shows the wrong travel distance, check the `Service city` first. The saved KM value is keyed to that service city.
-19. If Gmail intake says the app is not listening, confirm the bridge is enabled in Settings. A normal toolbar click can auto-start the app, so repeated listener errors usually mean a bridge or launch-target problem instead of “app closed”.
-20. If the app shows `Gmail intake bridge unavailable`, treat that as a port/process conflict first. The listener on `127.0.0.1:<port>` must belong to `python.exe -m legalpdf_translate.qt_app`, not `pytest`.
+19. If Gmail intake says the app is not listening, confirm the bridge is enabled in `live` mode. A normal toolbar click can auto-start the browser app, so repeated listener errors usually mean a bridge or launch-target problem instead of “app closed”.
+20. If the app shows `Gmail intake bridge unavailable`, treat that as a port/process conflict first. The listener on `127.0.0.1:<port>` should normally belong to the LegalPDF browser app live server, not `pytest`.
 21. If Gmail intake says auto-launch is unavailable from this checkout, refresh the extension diagnostics and verify the native host can still see this repo worktree.
 22. If Gmail intake says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
 23. If Gmail intake cannot identify the open Gmail message, collapse extra messages and leave exactly one expanded message visible.

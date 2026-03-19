@@ -13,6 +13,10 @@ function normalizeToken(value) {
   return String(value ?? "").trim();
 }
 
+function normalizeUrl(value) {
+  return String(value ?? "").trim();
+}
+
 async function getStoredBridgeConfig() {
   const stored = await chrome.storage.local.get(["bridgePort", "bridgeToken"]);
   return {
@@ -164,6 +168,10 @@ function buildFocusNotice(nativeResponse, degradedMode) {
     return "App focus helper returned an invalid response; if the app did not come forward, check the taskbar.";
   }
 
+  if (nativeResponse.ui_owner === "browser_app") {
+    return "";
+  }
+
   if (nativeResponse.ok === true && nativeResponse.focused === true) {
     return "";
   }
@@ -173,6 +181,46 @@ function buildFocusNotice(nativeResponse, degradedMode) {
       : "The app was flashed in the taskbar.";
   }
   return `App focus helper could not foreground the app (${buildPrepareFailureMessage(nativeResponse)}).`;
+}
+
+function urlsMatchForFocus(candidateUrl, targetUrl) {
+  try {
+    const candidate = new URL(candidateUrl);
+    const target = new URL(targetUrl);
+    return candidate.origin === target.origin
+      && candidate.pathname === target.pathname
+      && candidate.search === target.search
+      && candidate.hash === target.hash;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function openOrFocusBrowserApp(browserUrl) {
+  const targetUrl = normalizeUrl(browserUrl);
+  if (targetUrl === "") {
+    return false;
+  }
+  let url;
+  try {
+    url = new URL(targetUrl);
+  } catch (_error) {
+    return false;
+  }
+  const candidates = await chrome.tabs.query({ url: `${url.origin}/*` });
+  const existing = candidates.find((tab) => urlsMatchForFocus(tab.url, targetUrl));
+  if (existing && Number.isInteger(existing.id)) {
+    await chrome.tabs.update(existing.id, { active: true, url: targetUrl });
+    if (Number.isInteger(existing.windowId)) {
+      await chrome.windows.update(existing.windowId, { focused: true });
+    }
+    return true;
+  }
+  const created = await chrome.tabs.create({ url: targetUrl, active: true });
+  if (created && Number.isInteger(created.windowId)) {
+    await chrome.windows.update(created.windowId, { focused: true });
+  }
+  return true;
 }
 
 async function resolveBridgeConfigForClick() {
@@ -215,7 +263,7 @@ async function resolveBridgeConfigForClick() {
   };
 }
 
-async function postContext(tabId, context, config, focusNotice) {
+async function postContext(tabId, context, config, nativeResponse, focusNotice) {
   const endpoint = `http://127.0.0.1:${config.bridgePort}/gmail-intake`;
   let response;
   try {
@@ -261,7 +309,18 @@ async function postContext(tabId, context, config, focusNotice) {
     typeof payload.message === "string" && payload.message.trim() !== ""
       ? payload.message.trim()
       : "Gmail intake accepted.";
-  const message = focusNotice === "" ? baseMessage : `${baseMessage} ${focusNotice}`;
+  let browserAppOpened = false;
+  if (nativeResponse && nativeResponse.ui_owner === "browser_app" && normalizeUrl(nativeResponse.browser_url) !== "") {
+    browserAppOpened = await openOrFocusBrowserApp(nativeResponse.browser_url);
+  }
+  const suffix = [];
+  if (focusNotice !== "") {
+    suffix.push(focusNotice);
+  }
+  if (nativeResponse && nativeResponse.ui_owner === "browser_app" && !browserAppOpened) {
+    suffix.push("The browser app may need manual focus.");
+  }
+  const message = suffix.length ? `${baseMessage} ${suffix.join(" ")}` : baseMessage;
   await notifyTab(tabId, "success", message);
 }
 
@@ -303,5 +362,11 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 
   const focusNotice = buildFocusNotice(bridgeResolution.nativeResponse, bridgeResolution.degradedMode);
-  await postContext(tab.id, extraction.context, bridgeResolution.config, focusNotice);
+  await postContext(
+    tab.id,
+    extraction.context,
+    bridgeResolution.config,
+    bridgeResolution.nativeResponse,
+    focusNotice,
+  );
 });

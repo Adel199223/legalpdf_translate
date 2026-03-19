@@ -5,12 +5,19 @@ This file is canonical for app-level architecture and status.
 ## App Summary
 LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX using one-page-per-request processing for each translation job, supports sequential multi-document queue execution, supports true multi-window Qt workspaces for parallel jobs, and supports a Windows-only Gmail intake batch-reply workflow.
 
-- Primary UI: Qt/PySide6 desktop app.
+- Primary UI: local browser app on `127.0.0.1`.
+- Secondary UI: Qt/PySide6 desktop shell.
 - Secondary interface: CLI.
 - Model transport: OpenAI Responses API.
 - Key invariant: page-by-page translation flow, no whole-document batch request.
+- Preferred day-to-day mode: browser app `live` mode.
+- Explicit development/testing mode: browser `shadow` mode with isolated state roots.
 
 ## Entrypoints
+- Browser app: `python -m legalpdf_translate.shadow_web.server --open`
+- Browser app URL (daily use): `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#dashboard`
+- Browser app URL (isolated testing): `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#dashboard`
+- Detached browser-app launcher: `python tooling/launch_browser_app_live_detached.py`
 - GUI: `python -m legalpdf_translate.qt_app`
 - GUI compatibility shim: `python -m legalpdf_translate.qt_main`
 - Beginner Windows launcher: double-click `Launch LegalPDF Translate.bat` in the repo root. It delegates to `tooling/launch_qt_build.py --worktree <repo-root>`.
@@ -19,6 +26,14 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
   - Queue mode (optional): `legalpdf-translate --queue-manifest <manifest.jsonl> --rerun-failed-only true --lang EN --outdir <dir>`
 - Build: `powershell -ExecutionPolicy Bypass -File scripts/build_qt.ps1`
 
+## Browser App Shell
+- The local browser app is now the preferred day-to-day interface for this repo.
+- Main browser surfaces: `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab`.
+- Browser workspace state is URL-scoped through `workspace=<id>`, so separate tabs can keep independent draft/progress state.
+- `mode=live` uses the real settings, profiles, job log, outputs, and Gmail workflow.
+- `mode=shadow` is the explicit isolated test mode for development and browser automation. It uses separate state roots and never silently falls back to live data.
+- `Extension Lab` is a diagnostics and simulation companion for the real Gmail extension. It does not replace the extension itself.
+
 ## Desktop UI Shell
 - The desktop app now uses a dashboard-style shell instead of the older stacked utility card.
 - Each top-level app window is an independent workspace under one `QApplication`.
@@ -26,9 +41,9 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
   - left sidebar: `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`
   - hero row: centered `LegalPDF Translate` title and right-aligned status text
   - left card: `Job Setup`
-  - right card: `Conversion Output`
+  - right card: `Run Status`
   - bottom action rail: `Start Translate`, `Cancel`, `...`
-- `Advanced Settings` stays collapsed by default inside the setup card.
+- `Advanced Settings` stays collapsed by default inside the setup card, with a compact info affordance for extra guidance.
 - Review Queue and Save to Job Log remain available from the `Tools` menu; the `...` menu keeps output/report/job-log actions.
 - Workspace titles show `Workspace N` and can add the current source filename as a hint so parallel windows stay distinguishable.
 - The shell uses three responsive layout modes:
@@ -42,6 +57,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - Top-level fixed-vocabulary selectors in the shell, settings/admin tabs, and glossary/calibration tool dialogs now use guarded non-editable combos/spins; dense table-local editors keep their existing local combo contract.
 - Top-level windows and major dialogs now use shared screen-bounded sizing via `src/legalpdf_translate/qt_gui/window_adaptive.py`.
 - Main-shell resize work is deferred/coalesced so live resizing stays stable; the hero row also reserves width for the status label so short states such as `Idle` are not clipped during narrow-width transitions.
+- The beginner-first primary-flow cleanup also keeps the shell lighter by default: `Run Status` uses shorter visible copy, the always-visible output-format line is hidden, Gmail review compresses provenance/output detail behind an info button, interpretation Job Log uses compact `+` vocabulary buttons plus a default-collapsed `SERVICE` section, and interpretation honorários export now uses `SERVICE`, `TEXT`, and `RECIPIENT` disclosure sections.
 
 ## Core Runtime Modules
 - `src/legalpdf_translate/workflow.py`: translation pipeline orchestration.
@@ -139,10 +155,16 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - `<manifest_stem>.queue_summary.json`
 
 ## Persistence Notes
+- The browser app now has two explicit runtime/storage modes:
+  - `live`: real settings, profiles, job log, outputs, and Gmail-linked flows
+  - `shadow`: isolated test data keyed per build/worktree identity
+- Browser runtime metadata records the active mode, workspace, build identity, listener ownership, and bridge provenance so live vs isolated runs stay diagnosable.
 - The job log SQLite schema now includes additive run-metric/risk columns: `run_id`, `target_lang`, `total_tokens`, `estimated_api_cost`, and `quality_risk_score`.
 - The job log also stores additive translation artifact paths for Gmail/honorarios reuse: `output_docx_path` and `partial_docx_path`.
 - Job-form draft edits are workspace-local session state. Shared settings now persist launch fields only when a task explicitly starts, so closing or resetting one workspace does not write another window's draft inputs back into `settings.json`.
 - Gmail intake bridge settings persist in GUI settings as `gmail_intake_bridge_enabled`, `gmail_intake_bridge_token`, and `gmail_intake_port`.
+- When the browser server is running, the browser app is the primary live Gmail bridge owner. The real extension/native host now hands off into the browser app first and falls back to Qt only when browser launch is unavailable and no healthy browser-owned bridge already exists.
+- The browser-owned live Gmail bridge uses the fixed live browser workspace `gmail-intake`, and successful extension handoff opens `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job`.
 - In normal app launches, the Gmail intake bridge is app-level. It reuses the last active workspace only when that workspace is idle and pristine; otherwise it opens a new blank workspace for the intake automatically.
 - Multi-window runs share a controller-owned reservation map keyed by the resolved run directory. A second workspace cannot start `translate`, `analyze`, `rebuild`, or `queue` if it would reuse the same run folder as an active workspace.
 - Gmail intake translation batches now write one durable app-owned session report at `<effective_outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`.
@@ -168,15 +190,17 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - the main window also exposes `Tools > New Interpretation Honorários...` and the same footer-overflow action for the save-first no-document path
   - interpretation notification imports keep the local `pdf_path` when present
   - interpretation photo imports stay image-only and do not create a PDF-backed row contract
+  - interpretation photo/screenshot imports tolerate missing service entity or city values and keep the form editable instead of failing autofill
   - translation-only inputs are hidden in interpretation mode instead of shown as inactive clutter
   - the primary visible date in interpretation mode is the service date
   - interpretation distance is shown as one visible one-way value in the UI, keyed by `service_city`, and mirrored internally into outbound/return storage for compatibility
   - `Service same as Case` defaults on for interpretation unless an explicit different service location already exists
+  - interpretation edit mode now collapses `SERVICE` by default when it simply mirrors the case, and saved entity/city add actions use compact `+` buttons plus inline help affordances instead of long visible helper copy
   - profile-backed distance defaults are reused automatically by service city, and newly entered one-way values are persisted back to that profile-city mapping on save
 - Interpretation honorarios now use a kind-aware document branch:
   - manual interpretation rows can generate honorários from the Job Log dialog or from the save-first `Tools > New Interpretation Honorários...` quick action
   - notification PDF and photo/screenshot imports prefill interpretation case/service values before the user confirms the row
-  - interpretation honorarios exports use the responsive/scrollable profile-backed export dialog, save a DOCX first, then attempt a sibling PDF immediately without blocking the main UI
+  - interpretation honorarios exports use the responsive/scrollable profile-backed export dialog, keep the general case/profile inputs visible first through `SERVICE`, `TEXT`, and `RECIPIENT` disclosure sections, save a DOCX first, then attempt a sibling PDF immediately without blocking the main UI
   - the export dialog keeps `Include transport/distance sentence in honorários text` on by default, but you can turn it off when transport is being handled separately and the generated text should omit that clause
   - generated interpretation honorários now auto-complete a missing case city in generic court addressees, use the revised one-line-IBAN / centered `Espera deferimento,` closing block, keep `service_date` in the body, and use the document creation day in the footer date line before the signature
   - when automatic PDF export fails, the dialog keeps the saved DOCX usable locally and offers retry/select-existing-PDF/open-folder recovery before any Gmail draft path is allowed to continue
@@ -203,7 +227,8 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - This workflow is Windows-only and starts from Gmail web in Edge/Chromium, not from a second Gmail OAuth stack inside the app.
 - A Manifest V3 extension on `https://mail.google.com/*` posts exact Gmail message context to a token-protected localhost bridge bound only to `127.0.0.1`.
 - The extension now self-heals stale Gmail tabs by reinjecting its content script when needed and shows visible Gmail-page banner errors instead of failing silently.
-- On real toolbar clicks, the Edge native host now auto-starts the current repo checkout through `tooling/launch_qt_build.py` when the Gmail bridge is configured but not already running.
+- On real toolbar clicks, the native host now prefers launching the browser app live server and only falls back to Qt when browser launch is unavailable and no healthy browser-owned bridge already exists.
+- After a successful prepare plus localhost POST, the extension opens or focuses the browser app at the live Gmail workspace URL instead of depending on Qt window focus.
 - The intake contract is fail-closed: if the browser cannot identify exactly one open Gmail message, the app is not listening, or the bearer token is wrong, the handoff stops immediately.
 - If the app cannot bind the localhost bridge port, the UI now shows a visible `Gmail intake bridge unavailable` state instead of looking idle.
 - The app fetches only the exact intake message through Windows `gog`, resolves the Gmail account in this order, and no other order:
@@ -215,6 +240,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - The review dialog first selects the Gmail intake workflow kind:
   - `Translation` keeps the existing multi-attachment translation batch flow
   - `Interpretation notice` handles exactly one selected PDF/image court notice that should not be translated
+- The review header now starts with a compact summary banner and keeps sender/account/output-folder provenance behind an inline info button so attachment choices stay primary.
 - The attachment review step also includes the target-language selector for the whole Gmail batch, and the selected language is pushed back into the main app UI before preparation starts.
 - The review dialog now also supports per-attachment start-page selection and an in-app attachment preview before preparation begins.
 - PDF previews use a lazy continuous-scroll viewer so the user can inspect the document. Page `1` is always the default first page to translate; use `Start from this page` only when the batch should begin later. Image attachments remain single-page and always start at page `1`.
@@ -232,11 +258,17 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Arabic failures now surface additive diagnostics such as `validator_defect_reason`, `ar_violation_kind`, and limited sampled offending snippets in run artifacts and the stop dialog.
 
 ## Operational Guidance
+- Browser-app launch is now the canonical day-to-day local entry path for this repo:
+  - attached/local browser server: `python -m legalpdf_translate.shadow_web.server --open`
+  - detached live launcher: `python tooling/launch_browser_app_live_detached.py`
+  - default daily-use URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#dashboard`
+  - explicit isolated test URL: `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#dashboard`
 - Windows-native GUI launch is canonical for this repo:
   - attached launch: `python -m legalpdf_translate.qt_app`
   - detached Windows launch: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`
 - `python -m legalpdf_translate.qt_gui` remains a valid GUI compatibility entrypoint, but `qt_app` is the canonical docs command.
 - On Windows, the beginner-friendly manual launch path is `Launch LegalPDF Translate.bat` in the repo root. It uses the same canonical Qt launcher helper instead of duplicating startup logic.
+- Use browser `live` mode for real work. Use browser `shadow` mode only when you intentionally want isolated test data and no real live Gmail bridge ownership.
 - Open another workspace from `File > New Window`, `Ctrl+Shift+N`, or the `...` overflow action. `New Window` stays available even while another workspace is busy.
 - The main dashboard shell should stay horizontally adaptive without a shell-level horizontal scrollbar; dense secondary tables such as Job Log may still overflow horizontally inside their own window or table viewport.
 - Major dialogs and dense secondary windows should remain screen-bounded and user-resizable instead of relying on fixed geometries that can open off-screen on smaller displays.
@@ -257,11 +289,11 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Mouse-wheel guards now cover the main run controls, Gmail review workflow/target-language selectors, settings defaults/provider selectors, and fixed-vocabulary Job Log combos; glossary/study/tool selectors and dense table editors still keep their local plain-combo behavior.
 - OCR-heavy runtime triage routes to `docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md`.
 - Host-bound workflows that add localhost listeners, browser/app bridges, or separate handoff/run/finalization failure surfaces should also route through `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`.
-- Gmail intake live validation must use the same Windows host for the signed-in Edge/Chromium Gmail tab, the Qt app, and Windows `gog`; a WSL-only smoke does not satisfy the final host-bound check.
-- If Gmail shows `accepted` but the app stays idle, check port ownership first. The listener on `127.0.0.1:<gmail_intake_port>` must belong to `python.exe -m legalpdf_translate.qt_app`, not to `pytest` or another stray process.
+- Gmail intake live validation must use the same Windows host for the signed-in Edge/Chromium Gmail tab, the browser app or Qt shell that owns the workflow, and Windows `gog`; a WSL-only smoke does not satisfy the final host-bound check.
+- If Gmail shows `accepted` but the app stays idle, check port ownership first. The listener on `127.0.0.1:<gmail_intake_port>` should normally belong to the browser app server process, not to `pytest`, a stale server, or another stray process.
 - For future triage, the durable support packet is:
   1. Gmail banner text/screenshot when handoff failed before app intake
-  2. app window title + visible bridge status
+  2. browser dashboard or Qt window build identity plus visible bridge status
   3. `run_report.md` / `run_summary.json` for the affected translation run
   4. `gmail_batch_session.json` for batch-level finalization or draft issues
 

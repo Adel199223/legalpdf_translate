@@ -53,6 +53,10 @@ class BridgeOwnerValidationResult:
     pid: int | None
     hwnd: int | None
     reason: str
+    owner_kind: str | None = None
+    runtime_mode: str | None = None
+    workspace_id: str | None = None
+    browser_url: str | None = None
 
 
 class _FLASHWINFO(ctypes.Structure):
@@ -92,6 +96,10 @@ def write_bridge_runtime_metadata(
     window_title: str,
     build_identity: dict[str, object] | None,
     running: bool,
+    owner_kind: str = "qt_app",
+    runtime_mode: str | None = None,
+    workspace_id: str | None = None,
+    browser_url: str | None = None,
 ) -> Path:
     base_dir.mkdir(parents=True, exist_ok=True)
     path = bridge_runtime_metadata_path(base_dir)
@@ -103,6 +111,10 @@ def write_bridge_runtime_metadata(
         "build_identity": build_identity if isinstance(build_identity, dict) else None,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "running": bool(running),
+        "owner_kind": str(owner_kind or "qt_app").strip() or "qt_app",
+        "runtime_mode": str(runtime_mode or "").strip() or None,
+        "workspace_id": str(workspace_id or "").strip() or None,
+        "browser_url": str(browser_url or "").strip() or None,
     }
     temp_path = path.with_suffix(".tmp")
     temp_path.write_text(
@@ -287,11 +299,23 @@ def _visible_window_hwnds_for_pid(pid: int) -> list[int]:
 def _legacy_bridge_owner_validation(*, bridge_port: int, fallback_reason: str) -> BridgeOwnerValidationResult:
     owner_pid = detect_listener_pid(bridge_port)
     if owner_pid is None:
-        return BridgeOwnerValidationResult(ok=False, pid=None, hwnd=None, reason=fallback_reason)
+        return BridgeOwnerValidationResult(
+            ok=False,
+            pid=None,
+            hwnd=None,
+            reason=fallback_reason,
+            owner_kind="none",
+        )
 
     hwnds = _visible_window_hwnds_for_pid(owner_pid)
     if not hwnds:
-        return BridgeOwnerValidationResult(ok=False, pid=owner_pid, hwnd=None, reason=fallback_reason)
+        return BridgeOwnerValidationResult(
+            ok=False,
+            pid=owner_pid,
+            hwnd=None,
+            reason=fallback_reason,
+            owner_kind="external",
+        )
 
     preferred_hwnd = None
     for hwnd in hwnds:
@@ -300,13 +324,20 @@ def _legacy_bridge_owner_validation(*, bridge_port: int, fallback_reason: str) -
             preferred_hwnd = hwnd
             break
     if preferred_hwnd is None:
-        return BridgeOwnerValidationResult(ok=False, pid=owner_pid, hwnd=None, reason=fallback_reason)
+        return BridgeOwnerValidationResult(
+            ok=False,
+            pid=owner_pid,
+            hwnd=None,
+            reason=fallback_reason,
+            owner_kind="external",
+        )
 
     return BridgeOwnerValidationResult(
         ok=True,
         pid=owner_pid,
         hwnd=preferred_hwnd,
         reason="legacy_bridge_owner_ready",
+        owner_kind="qt_app",
     )
 
 
@@ -408,6 +439,24 @@ def _detect_listener_pid_from_netstat(port: int) -> int | None:
     return parse_listener_pid_from_netstat(completed.stdout, port)
 
 
+def _pid_is_running(pid: int | None) -> bool:
+    try:
+        parsed = int(pid or 0)
+    except (TypeError, ValueError):
+        return False
+    if parsed <= 0:
+        return False
+    try:
+        os.kill(parsed, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except (OSError, SystemError):
+        return False
+    return True
+
+
 def detect_listener_pid(port: int) -> int | None:
     if not _is_windows():
         return None
@@ -425,9 +474,21 @@ def detect_listener_pid(port: int) -> int | None:
 
 def validate_bridge_owner(*, bridge_port: int, base_dir: Path) -> BridgeOwnerValidationResult:
     if not _is_windows():
-        return BridgeOwnerValidationResult(ok=False, pid=None, hwnd=None, reason="unsupported_platform")
+        return BridgeOwnerValidationResult(
+            ok=False,
+            pid=None,
+            hwnd=None,
+            reason="unsupported_platform",
+            owner_kind="none",
+        )
     if int(bridge_port) <= 0 or int(bridge_port) > 65535:
-        return BridgeOwnerValidationResult(ok=False, pid=None, hwnd=None, reason="invalid_bridge_port")
+        return BridgeOwnerValidationResult(
+            ok=False,
+            pid=None,
+            hwnd=None,
+            reason="invalid_bridge_port",
+            owner_kind="none",
+        )
 
     payload = load_bridge_runtime_metadata(base_dir)
     if payload is None:
@@ -459,25 +520,77 @@ def validate_bridge_owner(*, bridge_port: int, base_dir: Path) -> BridgeOwnerVal
             bridge_port=bridge_port,
             fallback_reason="runtime_metadata_invalid",
         )
-
     owner_pid = detect_listener_pid(bridge_port)
     if owner_pid is None:
-        return BridgeOwnerValidationResult(ok=False, pid=metadata_pid, hwnd=None, reason="bridge_port_owner_unknown")
+        if not _pid_is_running(metadata_pid):
+            return _legacy_bridge_owner_validation(
+                bridge_port=bridge_port,
+                fallback_reason="bridge_owner_stale",
+            )
+        return BridgeOwnerValidationResult(
+            ok=False,
+            pid=metadata_pid,
+            hwnd=None,
+            reason="bridge_port_owner_unknown",
+            owner_kind="external",
+        )
     if owner_pid != metadata_pid:
         return _legacy_bridge_owner_validation(
             bridge_port=bridge_port,
             fallback_reason="bridge_port_owner_mismatch",
         )
 
+    owner_kind = str(payload.get("owner_kind", "") or "").strip() or "qt_app"
+    runtime_mode = str(payload.get("runtime_mode", "") or "").strip() or None
+    workspace_id = str(payload.get("workspace_id", "") or "").strip() or None
+    browser_url = str(payload.get("browser_url", "") or "").strip() or None
+
+    if owner_kind == "browser_app":
+        return BridgeOwnerValidationResult(
+            ok=True,
+            pid=metadata_pid,
+            hwnd=None,
+            reason="bridge_owner_ready",
+            owner_kind="browser_app",
+            runtime_mode=runtime_mode,
+            workspace_id=workspace_id,
+            browser_url=browser_url,
+        )
+
     hwnds = _visible_window_hwnds_for_pid(metadata_pid)
     if not hwnds:
-        return BridgeOwnerValidationResult(ok=False, pid=metadata_pid, hwnd=None, reason="window_not_found")
+        return BridgeOwnerValidationResult(
+            ok=False,
+            pid=metadata_pid,
+            hwnd=None,
+            reason="window_not_found",
+            owner_kind=owner_kind,
+            runtime_mode=runtime_mode,
+            workspace_id=workspace_id,
+            browser_url=browser_url,
+        )
 
-    return BridgeOwnerValidationResult(ok=True, pid=metadata_pid, hwnd=hwnds[0], reason="bridge_owner_ready")
+    return BridgeOwnerValidationResult(
+        ok=True,
+        pid=metadata_pid,
+        hwnd=hwnds[0],
+        reason="bridge_owner_ready",
+        owner_kind=owner_kind,
+        runtime_mode=runtime_mode,
+        workspace_id=workspace_id,
+        browser_url=browser_url,
+    )
 
 
 def focus_bridge_owner(*, bridge_port: int, base_dir: Path) -> BridgeFocusResult:
     validation = validate_bridge_owner(bridge_port=bridge_port, base_dir=base_dir)
+    if validation.ok and validation.owner_kind == "browser_app":
+        return BridgeFocusResult(
+            ok=True,
+            focused=False,
+            flashed=False,
+            reason="browser_tab_focus_delegated",
+        )
     if not validation.ok or validation.hwnd is None:
         return BridgeFocusResult(ok=False, focused=False, flashed=False, reason=validation.reason)
 

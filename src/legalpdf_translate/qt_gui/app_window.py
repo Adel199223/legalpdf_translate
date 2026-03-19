@@ -91,6 +91,7 @@ from legalpdf_translate.gmail_batch import (
 from legalpdf_translate.gmail_focus import (
     clear_bridge_runtime_metadata,
     request_window_attention,
+    validate_bridge_owner,
     write_bridge_runtime_metadata,
 )
 from legalpdf_translate.gmail_focus_host import ensure_edge_native_host_registered
@@ -103,7 +104,7 @@ from legalpdf_translate.honorarios_docx import (
 )
 from legalpdf_translate.metadata_autofill import (
     choose_court_email_suggestion,
-    extract_interpretation_notification_metadata_from_pdf,
+    extract_interpretation_notification_metadata_from_pdf_with_diagnostics,
     extract_interpretation_photo_metadata_from_image,
     extract_pdf_header_metadata_priority_pages,
     metadata_config_from_settings,
@@ -127,6 +128,7 @@ from legalpdf_translate.source_document import (
     is_pdf_source,
     is_supported_source_file,
 )
+from legalpdf_translate.qt_gui.declutter import build_inline_info_button
 from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
 from legalpdf_translate.queue_runner import QueueRunSummary, parse_queue_manifest
 from legalpdf_translate.qt_gui.dialogs import (
@@ -144,10 +146,12 @@ from legalpdf_translate.qt_gui.dialogs import (
     QtSaveToJobLogDialog,
     QtSettingsDialog,
     build_blank_interpretation_seed,
+    build_interpretation_notice_diagnostics_text,
     build_interpretation_seed_from_notification_pdf,
     build_interpretation_seed_from_photo_screenshot,
     build_seed_from_run,
     normalize_review_queue_entries,
+    show_local_only_honorarios_ready_box,
 )
 from legalpdf_translate.qt_gui.tools_dialogs import QtCalibrationAuditDialog, QtGlossaryBuilderDialog
 from legalpdf_translate.qt_gui.window_adaptive import ResponsiveWindowController
@@ -1121,7 +1125,20 @@ class QtMainWindow(QMainWindow):
         self.show_adv.setArrowType(Qt.ArrowType.RightArrow)
         self.show_adv.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.show_adv.setMinimumHeight(64)
-        setup_layout.addWidget(self.show_adv)
+        self.advanced_help_btn = build_inline_info_button(
+            tooltip=(
+                "OCR, queue, resume, and context overrides live here. "
+                "Keep this closed unless you need to change the default run."
+            ),
+            accessible_name="Advanced settings help",
+            parent=self.setup_panel,
+        )
+        advanced_toggle_row = QHBoxLayout()
+        advanced_toggle_row.setContentsMargins(0, 0, 0, 0)
+        advanced_toggle_row.setSpacing(8)
+        advanced_toggle_row.addWidget(self.show_adv, 1)
+        advanced_toggle_row.addWidget(self.advanced_help_btn, 0, Qt.AlignmentFlag.AlignTop)
+        setup_layout.addLayout(advanced_toggle_row)
 
         self.adv_frame = QFrame(objectName="ShellPanel")
         adv = QFormLayout(self.adv_frame)
@@ -1205,14 +1222,27 @@ class QtMainWindow(QMainWindow):
         progress_layout.setContentsMargins(28, 22, 28, 22)
         progress_layout.setSpacing(16)
 
-        self.progress_panel_title = QLabel("Conversion Output", objectName="PanelHeading")
-        progress_layout.addWidget(self.progress_panel_title)
+        self.progress_panel_title = QLabel("Run Status", objectName="PanelHeading")
+        self.progress_help_btn = build_inline_info_button(
+            tooltip=(
+                "Track the active run here. Extra actions like review, export, "
+                "and rebuild stay under More."
+            ),
+            accessible_name="Run status help",
+            parent=self.progress_panel,
+        )
+        progress_title_row = QHBoxLayout()
+        progress_title_row.setContentsMargins(0, 0, 0, 0)
+        progress_title_row.setSpacing(8)
+        progress_title_row.addWidget(self.progress_panel_title, 1)
+        progress_title_row.addWidget(self.progress_help_btn, 0, Qt.AlignmentFlag.AlignTop)
+        progress_layout.addLayout(progress_title_row)
 
         summary_row = QHBoxLayout()
         summary_row.setContentsMargins(0, 0, 0, 0)
         summary_row.setSpacing(18)
         self.progress_summary_label = QLabel("0%", objectName="ProgressSummaryLabel")
-        self.progress_eta_label = QLabel("Est. remaining: --", objectName="ProgressSummaryLabel")
+        self.progress_eta_label = QLabel("ETA --", objectName="ProgressSummaryLabel")
         summary_row.addWidget(self.progress_summary_label, 0)
         summary_row.addStretch(1)
         summary_row.addWidget(self.progress_eta_label, 0)
@@ -1226,8 +1256,7 @@ class QtMainWindow(QMainWindow):
 
         task_row = QHBoxLayout()
         task_row.setContentsMargins(0, 0, 0, 0)
-        task_row.setSpacing(8)
-        task_row.addWidget(QLabel("Current Task:", objectName="CurrentTaskLabel"), 0)
+        task_row.setSpacing(0)
         self.status_label = QLabel("Idle", objectName="CurrentTaskLabel")
         self.status_label.setWordWrap(True)
         task_row.addWidget(self.status_label, 1)
@@ -1280,6 +1309,7 @@ class QtMainWindow(QMainWindow):
         progress_layout.addWidget(metric_frame)
 
         self.output_format_label = QLabel("Output Format: DOCX", objectName="OutputFormatLabel")
+        self.output_format_label.hide()
         progress_layout.addWidget(self.output_format_label)
         progress_layout.addStretch(1)
         body_row.addWidget(self.progress_panel, 6)
@@ -1937,7 +1967,7 @@ class QtMainWindow(QMainWindow):
     def _apply_dashboard_snapshot(self) -> None:
         snapshot = self._dashboard_snapshot
         self.progress_summary_label.setText(f"{max(0, min(100, int(snapshot.progress_percent)))}%")
-        self.progress_eta_label.setText(f"Est. remaining: {snapshot.eta_text}")
+        self.progress_eta_label.setText(f"ETA {snapshot.eta_text}")
         self.status_label.setText(snapshot.current_task or "Idle")
 
         pages_total = snapshot.pages_total if snapshot.pages_total is not None else self._selected_pdf_page_total()
@@ -3029,6 +3059,13 @@ class QtMainWindow(QMainWindow):
             )
             saved_pdf_path = getattr(dialog, "saved_pdf_path", None)
             pdf_unavailable_explained = bool(getattr(dialog, "pdf_unavailable_explained", False))
+            if saved_pdf_path is None and pdf_unavailable_explained:
+                show_local_only_honorarios_ready_box(
+                    self,
+                    docx_path=dialog.saved_path,
+                    pdf_error=str(getattr(dialog, "pdf_export_error", "") or "").strip(),
+                    gmail_blocked=True,
+                )
             if saved_pdf_path is not None or not pdf_unavailable_explained:
                 self._offer_manual_interpretation_gmail_draft(
                     saved_result=saved_result,
@@ -3198,6 +3235,7 @@ class QtMainWindow(QMainWindow):
         session = self._gmail_interpretation_session
         if session is None:
             return
+        message_parent = self if isinstance(self, QWidget) else None
         persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
         source_path = session.downloaded_attachment.saved_path.expanduser().resolve()
         settings = load_joblog_settings()
@@ -3205,11 +3243,36 @@ class QtMainWindow(QMainWindow):
         vocab_cities = list(settings.get("vocab_cities", []))
         vocab_court_emails = list(settings.get("vocab_court_emails", []))
         if is_pdf_source(source_path):
-            suggestion = extract_interpretation_notification_metadata_from_pdf(
+            extraction_result = extract_interpretation_notification_metadata_from_pdf_with_diagnostics(
                 source_path,
                 vocab_cities=vocab_cities,
                 config=metadata_config,
             )
+            suggestion = extraction_result.suggestion
+            session.metadata_extraction = {
+                "input_kind": "pdf",
+                "source_path": str(source_path),
+                **extraction_result.diagnostics.to_payload(),
+            }
+            if callable(persist_report):
+                persist_report(session=session)
+            if not any(
+                (
+                    getattr(suggestion, "case_entity", ""),
+                    getattr(suggestion, "case_city", ""),
+                    getattr(suggestion, "case_number", ""),
+                    getattr(suggestion, "court_email", ""),
+                    getattr(suggestion, "service_entity", ""),
+                    getattr(suggestion, "service_city", ""),
+                    getattr(suggestion, "service_date", ""),
+                )
+            ):
+                QMessageBox.information(
+                    message_parent,
+                    "Gmail interpretation",
+                    "No notification metadata could be extracted automatically. Review the entry manually.\n\n"
+                    f"{build_interpretation_notice_diagnostics_text(extraction_result.diagnostics)}",
+                )
             seed = build_interpretation_seed_from_notification_pdf(
                 pdf_path=source_path,
                 suggestion=suggestion,
@@ -3221,6 +3284,26 @@ class QtMainWindow(QMainWindow):
                 vocab_cities=vocab_cities,
                 config=metadata_config,
             )
+            extracted_fields = [
+                field_name
+                for field_name in (
+                    "case_entity",
+                    "case_city",
+                    "case_number",
+                    "court_email",
+                    "service_entity",
+                    "service_city",
+                    "service_date",
+                )
+                if str(getattr(suggestion, field_name, "") or "").strip()
+            ]
+            session.metadata_extraction = {
+                "input_kind": "image",
+                "source_path": str(source_path),
+                "extracted_fields": extracted_fields,
+            }
+            if callable(persist_report):
+                persist_report(session=session)
             seed = build_interpretation_seed_from_photo_screenshot(
                 suggestion=suggestion,
                 vocab_court_emails=vocab_court_emails,
@@ -3252,7 +3335,7 @@ class QtMainWindow(QMainWindow):
             self.header_status_label.setText("Gmail interpretation failed")
             self._dashboard_snapshot.current_task = "Gmail interpretation failed"
             self._append_log(f"Gmail interpretation draft preparation failed: {exc}")
-            QMessageBox.warning(self, "Gmail interpretation", str(exc))
+            QMessageBox.warning(message_parent, "Gmail interpretation", str(exc))
             self._clear_gmail_batch_session()
             return
         profile_save_callback = getattr(self, "_save_profile_settings_from_dialog", None)
@@ -3288,6 +3371,13 @@ class QtMainWindow(QMainWindow):
         session.actual_honorarios_path = honorarios_docx
         session.actual_honorarios_pdf_path = honorarios_pdf
         session.honorarios_auto_renamed = bool(dialog.auto_renamed)
+        session.pdf_export = {
+            "status": "ready" if honorarios_pdf is not None else "unavailable",
+            "failure_code": str(getattr(dialog, "pdf_failure_code", "") or "").strip(),
+            "failure_message": pdf_export_error,
+            "elapsed_ms": int(getattr(dialog, "pdf_export_elapsed_ms", 0) or 0),
+            "local_only": honorarios_pdf is None and bool(getattr(dialog, "pdf_unavailable_explained", False)),
+        }
         generated_draft = getattr(dialog, "generated_draft", None)
         selected_profile = generated_draft.profile if generated_draft is not None else draft.profile
         final_draft = generated_draft or draft
@@ -3321,6 +3411,12 @@ class QtMainWindow(QMainWindow):
                 "Gmail interpretation draft was not created because the honorários PDF could not be generated. "
                 f"Local DOCX: {honorarios_docx}. "
                 f"PDF export error: {pdf_export_error or 'unknown Word export failure.'}"
+            )
+            show_local_only_honorarios_ready_box(
+                self,
+                docx_path=honorarios_docx,
+                pdf_error=pdf_export_error or "Honorários PDF generation failed.",
+                gmail_blocked=True,
             )
             self._clear_gmail_batch_session()
             return
@@ -3358,6 +3454,7 @@ class QtMainWindow(QMainWindow):
 
     def _finalize_completed_gmail_batch(self) -> None:
         session = self._gmail_batch_session
+        message_parent = self if isinstance(self, QWidget) else None
         persist_report = getattr(self, "_persist_gmail_batch_session_report", None)
         if session is None:
             return
@@ -3387,7 +3484,7 @@ class QtMainWindow(QMainWindow):
         try:
             draft = self._build_gmail_batch_honorarios_draft()
         except ValueError as exc:
-            QMessageBox.warning(self, "Gmail batch", str(exc))
+            QMessageBox.warning(message_parent, "Gmail batch", str(exc))
             self._set_gmail_batch_finalization_state(
                 status_text="Gmail batch finalization failed",
                 header_status_text="Gmail batch failed",
@@ -3427,6 +3524,13 @@ class QtMainWindow(QMainWindow):
         session.actual_honorarios_path = honorarios_docx
         session.actual_honorarios_pdf_path = honorarios_pdf
         session.honorarios_auto_renamed = bool(dialog.auto_renamed)
+        session.pdf_export = {
+            "status": "ready" if honorarios_pdf is not None else "unavailable",
+            "failure_code": str(getattr(dialog, "pdf_failure_code", "") or "").strip(),
+            "failure_message": pdf_export_error,
+            "elapsed_ms": int(getattr(dialog, "pdf_export_elapsed_ms", 0) or 0),
+            "local_only": honorarios_pdf is None and bool(getattr(dialog, "pdf_unavailable_explained", False)),
+        }
         if honorarios_pdf is None:
             session.draft_created = False
             session.draft_failure_reason = (
@@ -3448,6 +3552,13 @@ class QtMainWindow(QMainWindow):
                     "the sibling PDF could not be generated."
                 ),
             )
+            if message_parent is not None:
+                show_local_only_honorarios_ready_box(
+                    message_parent,
+                    docx_path=honorarios_docx,
+                    pdf_error=pdf_export_error or "Honorários PDF generation failed.",
+                    gmail_blocked=True,
+                )
             dialog.deleteLater()
             return
         if callable(persist_report):
@@ -3790,6 +3901,22 @@ class QtMainWindow(QMainWindow):
             return
         if token == "":
             self._append_log("Gmail intake bridge is enabled but token is blank; bridge not started.")
+            return
+
+        existing_owner = validate_bridge_owner(
+            bridge_port=port,
+            base_dir=app_data_dir(),
+        )
+        if existing_owner.ok and existing_owner.owner_kind == "browser_app":
+            browser_url = str(existing_owner.browser_url or "").strip()
+            status_text = "Gmail intake bridge handled by browser app"
+            self.status_label.setText(status_text)
+            self.header_status_label.setText(status_text)
+            self._dashboard_snapshot.current_task = status_text
+            self._append_log(
+                f"Gmail intake bridge already owned by browser app on 127.0.0.1:{port}."
+                + (f" Browser target: {browser_url}" if browser_url else "")
+            )
             return
 
         bridge = LocalGmailIntakeBridge(

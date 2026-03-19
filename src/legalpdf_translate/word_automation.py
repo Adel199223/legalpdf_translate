@@ -101,6 +101,7 @@ def _build_powershell_command(docx_path: Path, *, align_right_and_save: bool) ->
     script = _build_word_powershell_script(docx_path, align_right_and_save=align_right_and_save)
     return (
         powershell,
+        "-Sta",
         "-NoLogo",
         "-NoProfile",
         "-ExecutionPolicy",
@@ -175,6 +176,7 @@ def _build_pdf_export_powershell_command(docx_path: Path, pdf_path: Path) -> tup
     script = _build_pdf_export_powershell_script(docx_path, pdf_path)
     return (
         powershell,
+        "-Sta",
         "-NoLogo",
         "-NoProfile",
         "-ExecutionPolicy",
@@ -212,6 +214,7 @@ def _build_pdf_preflight_powershell_command() -> tuple[str, ...] | None:
         return None
     return (
         powershell,
+        "-Sta",
         "-NoLogo",
         "-NoProfile",
         "-ExecutionPolicy",
@@ -443,7 +446,12 @@ def align_right_and_save_docx_in_word(docx_path: Path) -> WordAutomationResult:
     return _run_word_action(docx_path, align_right_and_save=True)
 
 
-def export_docx_to_pdf_in_word(docx_path: Path, pdf_path: Path) -> WordAutomationResult:
+def export_docx_to_pdf_in_word(
+    docx_path: Path,
+    pdf_path: Path,
+    *,
+    timeout_seconds: float = 45.0,
+) -> WordAutomationResult:
     action = "export_pdf"
     resolved_docx = docx_path.expanduser().resolve()
     resolved_pdf = pdf_path.expanduser().resolve()
@@ -471,6 +479,7 @@ def export_docx_to_pdf_in_word(docx_path: Path, pdf_path: Path) -> WordAutomatio
         action=action,
         command=command,
         success_message="Word document exported to PDF.",
+        timeout_seconds=float(timeout_seconds),
     )
     if result.ok and not resolved_pdf.exists():
         return _build_pdf_failure_result(
