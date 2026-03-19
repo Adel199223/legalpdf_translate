@@ -178,7 +178,7 @@ Map<String, dynamic> runAutomationPreflight({
       break;
     }
     if (browserBinary.isEmpty && windowsFallbackAllowed && !disableWindowsFallback) {
-      browserBinary = _resolveExistingPath(<String>[
+      final List<String> windowsCandidates = <String>[
         r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
         r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
         if ((env['LOCALAPPDATA'] ?? '').trim().isNotEmpty)
@@ -187,7 +187,13 @@ Map<String, dynamic> runAutomationPreflight({
         r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
         if ((env['LOCALAPPDATA'] ?? '').trim().isNotEmpty)
           '${env['LOCALAPPDATA']!.trim()}\\Google\\Chrome\\Application\\chrome.exe',
-      ]);
+      ];
+      browserBinary = assumeWindowsFallback
+          ? windowsCandidates.firstWhere(
+              (String candidate) => candidate.trim().isNotEmpty,
+              orElse: () => '',
+            )
+          : _resolveExistingPath(windowsCandidates);
       if (browserBinary.isNotEmpty) {
         final _ToolCheck bin = _checkToolVersion(browserBinary, <String>['--version'], run);
         browserVersion = bin.version;
