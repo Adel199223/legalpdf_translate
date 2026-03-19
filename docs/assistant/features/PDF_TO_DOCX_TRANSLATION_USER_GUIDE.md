@@ -23,7 +23,7 @@ Define unavoidable technical terms in one sentence.
 This user guide is not canonical architecture truth. Defer to `APP_KNOWLEDGE.md`, and treat source code as final truth on conflict.
 
 ## Quick Start (No Technical Background)
-1. Open LegalPDF Translate.
+1. Open the LegalPDF browser app in `live` mode.
 2. Select your PDF.
 3. Choose target language.
 4. Choose output folder.
@@ -55,14 +55,16 @@ That applies this safer profile for the current run only:
 It does not silently overwrite your saved defaults.
 
 ## Main Screen Layout
-- Left sidebar: navigation for `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, and `Profile`.
-- `Job Setup`: source PDF, target language, output folder, and `Advanced Settings` with a small info button for the extra guidance.
+- Left sidebar: navigation for `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab`.
+- `Dashboard`: machine state, runtime mode, OCR, Word PDF export, browser automation, and Gmail bridge cards.
+- `New Job`: source PDF, target language, output folder, translation controls, Gmail intake workspace, and the most-used translation/history actions.
 - `Run Status`: progress bar, current task text, and page/image/error summary.
 - Bottom action rail: `Start Translate`, `Cancel`, and `...`.
 - `Settings > Appearance` now gives you two real live themes:
   - `dark_futuristic` for the brighter raised cyan-glass look
   - `dark_simple` for a quieter darker look with the same layout and controls
-- The main dashboard plus the core dialogs now use the same elevated translucent panel style, so the interface should feel more layered and easier to read than the older flatter shell.
+- `live` mode is the real-work browser surface. `shadow` mode is the isolated test copy that keeps separate settings, job log, and outputs.
+- The browser app is now the preferred daily-use surface. The Qt shell remains a supported fallback, not the default starting point.
 - `...` opens:
   - `Open Output Folder`
   - `Export Partial DOCX`
@@ -76,20 +78,22 @@ It does not silently overwrite your saved defaults.
 - Retry: The app making another attempt after a failed page response.
 - OCR: Reading text from page images when normal extraction is poor.
 - Run summary: A final report about what happened in the run.
+- Live mode: The real browser-app path that uses your real settings, job log, outputs, and Gmail workflow.
+- Shadow mode: The isolated browser-app path used for development, testing, or safe experiments.
 
 ## Multi-Window Workspaces
 Use this when you want to work on more than one translation job at the same time.
 
 ### Open another workspace
-1. Use `File > New Window`.
-2. Or press `Ctrl+Shift+N`.
-3. Or open the bottom `...` menu and choose the blank-window action there.
+1. Open another browser tab or browser window with a different workspace URL.
+2. Or duplicate the current browser app tab and switch the `workspace=` value.
+3. Use the Qt `New Window` path only if you are intentionally working in the fallback desktop shell.
 
 ### How it behaves
-1. Each top-level window is its own workspace.
-2. The title bar shows `Workspace N` and can also add the current source filename so you can tell windows apart quickly.
+1. Each browser workspace is independent.
+2. The current workspace stays visible in the URL, so separate tabs are easier to tell apart.
 3. `New Run` still resets only the current workspace.
-4. A busy workspace does not block `New Window`; you can open and prepare another job while the first one is running.
+4. A busy workspace does not block another browser tab; you can open and prepare another job while the first one is running.
 5. Unstarted form edits stay local to that workspace until you explicitly start a task.
 
 ### Run jobs in parallel
@@ -104,10 +108,9 @@ Use this when you want to work on more than one translation job at the same time
 - When this happens, use `Focus other workspace` or change the output folder / target language before retrying.
 
 ### Gmail intake + workspaces
-- The normal app launch now owns one shared Gmail intake bridge for all workspaces.
-- If the last active workspace is idle and pristine, Gmail intake reuses it.
-- If the last active workspace is busy or already has job context/draft state, Gmail intake opens a new blank workspace automatically.
-- Gmail-related settings stay global, but another window's unstarted launch-form edits should not be overwritten by those updates.
+- The browser app live server now owns the normal Gmail intake bridge for all live browser workspaces when the bridge is enabled.
+- The browser extension opens or focuses the fixed live browser workspace `gmail-intake`.
+- Gmail-related settings stay global in `live` mode, but `shadow` mode stays isolated on purpose and does not own the real Gmail bridge.
 
 ## Analyze + OCR Advisor
 Use Analyze when you want the app to inspect the PDF before spending translation time or money.
@@ -238,13 +241,14 @@ Use this when the source files already arrived in Gmail and you want one reply d
 
 ### Setup
 1. In `Settings > Keys & Providers > Gmail Drafts (Windows)`, enable the Gmail intake bridge.
-2. Normal use no longer requires copying the bridge token and port into the unpacked extension options page. Use the options page for diagnostics only.
-3. Keep LegalPDF Translate and Gmail on the same Windows host as Windows `gog`.
+2. Use the browser app in `live` mode for real Gmail work. `shadow` mode is only for isolated testing and diagnostics.
+3. Normal use no longer requires copying the bridge token and port into the unpacked extension options page. Use the options page or `Extension Lab` for diagnostics only.
+4. Keep LegalPDF Translate and Gmail on the same Windows host as Windows `gog`.
 
 ### Run the batch
 1. Open Gmail in Edge or Chromium.
 2. Expand exactly one message in the target thread.
-3. Click the extension toolbar action. If the app is closed but the Gmail bridge is configured, the extension can auto-start the current checkout and continue that same click.
+3. Click the extension toolbar action. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the current checkout and continue that same click.
 4. Choose the Gmail intake mode in the review dialog:
    - `Translation` for the existing translation batch flow
    - `Interpretation notice` for one selected court-notice attachment that should not be translated
@@ -265,6 +269,7 @@ Use this when the source files already arrived in Gmail and you want one reply d
 
 ### Batch rules
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
+- In normal browser-first use, the live bridge owner should be the LegalPDF browser app server. Qt ownership is fallback/coexistence only.
 - The app fetches only the exact intake message, not the whole thread.
 - The review list hides inline/signature/media junk and shows only supported source attachments from that exact message.
 - PDF preview uses a lazy continuous-scroll viewer so large documents can be inspected before translation without rendering every page up front.
@@ -301,8 +306,8 @@ Queue mode writes these sidecar files next to the manifest:
 - `<manifest_stem>.queue_summary.json`
 
 ## Troubleshooting
-1. Easiest manual launch on Windows: double-click `Launch LegalPDF Translate.bat` in the repo root.
-2. If the desktop app does not open from terminal, use the real GUI entrypoint: `.\.venv311\Scripts\python.exe -m legalpdf_translate.qt_app`.
+1. Easiest manual launch on Windows: double-click `LegalPDF Browser App (Live).cmd` on the Desktop if it exists, or run `.\.venv311\Scripts\python.exe -m legalpdf_translate.shadow_web.server --open`.
+2. If you want the live browser app without keeping a terminal attached, run `.\.venv311\Scripts\python.exe tooling/launch_browser_app_live_detached.py`.
 3. If setup commands fail with `html.entities` or `idna` import errors, run `powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate`, then activate `. .\.venv311\Scripts\Activate.ps1`.
 4. If output is missing pages, check if run stopped early and use resume.
 5. If run is slow, lower worker count and retry.
@@ -319,8 +324,8 @@ Queue mode writes these sidecar files next to the manifest:
 16. If a historical honorários Gmail draft still asks you to pick the translated DOCX, that means the row has no stored artifact path and exact `run_id` recovery did not find one unique valid match. After one successful manual selection, the row should be healed and stop asking again.
 17. If `Autofill from PDF header` is available on an interpretation row without an attached source PDF, that is expected. The app now asks you to choose the PDF manually for that autofill pass.
 18. If an interpretation row shows the wrong travel distance, check the `Service city` first. The saved KM value is keyed to that service city.
-19. If Gmail intake says the app is not listening, confirm the bridge is enabled in Settings. A normal toolbar click can auto-start the app, so repeated listener errors usually mean a bridge or launch-target problem instead of “app closed”.
-20. If the app shows `Gmail intake bridge unavailable`, treat that as a port/process conflict first. The listener on `127.0.0.1:<port>` must belong to `python.exe -m legalpdf_translate.qt_app`, not `pytest`.
+19. If Gmail intake says the app is not listening, confirm the bridge is enabled in `live` mode. A normal toolbar click can auto-start the browser app, so repeated listener errors usually mean a bridge or launch-target problem instead of “app closed”.
+20. If the app shows `Gmail intake bridge unavailable`, treat that as a port/process conflict first. The listener on `127.0.0.1:<port>` should normally belong to the LegalPDF browser app live server, not `pytest`.
 21. If Gmail intake says auto-launch is unavailable from this checkout, refresh the extension diagnostics and verify the native host can still see this repo worktree.
 22. If Gmail intake says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
 23. If Gmail intake cannot identify the open Gmail message, collapse extra messages and leave exactly one expanded message visible.

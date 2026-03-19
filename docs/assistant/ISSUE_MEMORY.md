@@ -89,8 +89,8 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 ### workflow-wrong-build-under-test
 - Title: Wrong app/build under test because of mixed branches/worktrees and noncanonical launch
 - First seen timestamp: `2026-03-06T00:00:00Z`
-- Last seen timestamp: `2026-03-09T01:00:00Z`
-- Repeat count: `5`
+- Last seen timestamp: `2026-03-19T06:51:00Z`
+- Repeat count: `6`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
@@ -106,8 +106,9 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - `2026-03-07T00:00:00Z` — added worktree baseline discipline docs; outcome: insufficient on its own
   - `2026-03-07T00:00:00Z` — added Qt build identity helper and noncanonical build markers; outcome: reduced ambiguity but did not solve accepted-feature promotion drift by itself
   - `2026-03-09T01:00:00Z` — added a saved multi-root VS Code workspace guide and archived a stale broken sibling folder out of the daily view; outcome: partial_only because it reduces navigation confusion but does not replace canonical build identity enforcement
+  - `2026-03-19T06:51:00Z` — promoted the local browser app to the preferred daily-use surface, added explicit `live` versus isolated `shadow` mode routing, and documented the canonical live browser URL plus detached launcher; outcome: partial_only because it gives one stable human entrypoint, but branch/publish discipline still matters
 - Accepted fix:
-  - `2026-03-07T10:33:19Z` — canonical build enforcement + approved-base promotion discipline + launcher identity packet gating + noncanonical launch override rules
+  - `2026-03-19T06:51:00Z` — canonical build enforcement plus approved-base promotion discipline, launcher identity packet gating, noncanonical launch override rules, and one browser-app-first daily entrypoint with explicit `live` versus isolated `shadow` semantics
 - Regressed after accepted fix: `no`
 - Affected workflows/docs:
   - `docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md`
@@ -116,6 +117,9 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - `docs/assistant/runtime/CANONICAL_BUILD.json`
   - `docs/assistant/APP_KNOWLEDGE.md`
   - `docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/SESSION_RESUME.md`
 - Bootstrap relevance: `required`
 - Docs-sync relevance:
   - Priority: `high`
@@ -124,7 +128,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - approved-base promotion rules
     - canonical launch/default test target guidance
     - plain-language local workspace entry guidance
-- Evidence refs:
+  - Evidence refs:
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_worktree_baseline_docs_sync.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_qt_build_identity_hardening.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_accepted_feature_promotion_canonical_enforcement.md`
@@ -133,24 +137,27 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
   - Workspace: `C:\Users\FA507\.codex\legalpdf_translate-worktrees.code-workspace`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_integration`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_beginner_first_ux`
 
 ### harness-live-state-contamination
 - Title: Tests or harness cleanup reused live user state or user-facing ports and contaminated real runtime checks
 - First seen timestamp: `2026-03-08T00:00:00Z`
-- Last seen timestamp: `2026-03-08T09:27:00Z`
-- Repeat count: `2`
+- Last seen timestamp: `2026-03-19T06:51:00Z`
+- Repeat count: `3`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
   - the expected localhost listener belonged to `pytest` or another non-user runtime instead of the visible app
   - tests reused live roaming/profile settings or bridge configuration
   - the browser showed a successful handoff while the visible app stayed idle
+  - browser validation needed an explicit isolated browser `shadow` mode because real Gmail bridge ownership and real user data could not safely share the same default runtime state
 - Likely root cause:
   - tests and ad hoc debugging reused live `%APPDATA%`, live settings, or default user-facing ports instead of isolated temp state
 - Attempted fix history:
   - `2026-03-08T00:00:00Z` — isolated pytest APPDATA and stopped bridge tests from using the live Gmail port; outcome: partial_only
+  - `2026-03-19T06:51:00Z` — added explicit browser-app `live` versus isolated `shadow` mode, separate runtime roots, browser-owned live Gmail bridge ownership, and clearer diagnostics for active mode, data root, and listener owner; outcome: stronger_mitigation
 - Accepted fix:
-  - `2026-03-08T09:27:00Z` — project guidance now requires temp env/filesystem isolation, non-live or ephemeral test ports, explicit teardown, and visible listener-conflict status
+  - `2026-03-19T06:51:00Z` — project guidance now requires temp env/filesystem isolation, non-live or ephemeral test ports, explicit teardown, visible listener-conflict status, and a first-class browser-app split between real-work `live` mode and isolated `shadow` mode
 - Regressed after accepted fix: `no`
 - Affected workflows/docs:
   - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
@@ -158,6 +165,9 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
   - `docs/assistant/LOCAL_ENV_PROFILE.local.md`
   - `docs/assistant/LOCAL_CAPABILITIES.md`
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/SESSION_RESUME.md`
 - Bootstrap relevance: `required`
 - Docs-sync relevance:
   - Priority: `high`
@@ -167,6 +177,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - visible runtime conflict handling
 - Evidence refs:
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_intake`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_beginner_first_ux`
   - Template: `docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md`
   - Template: `docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md`
 

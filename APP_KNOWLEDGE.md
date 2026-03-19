@@ -5,12 +5,19 @@ This file is canonical for app-level architecture and status.
 ## App Summary
 LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX using one-page-per-request processing for each translation job, supports sequential multi-document queue execution, supports true multi-window Qt workspaces for parallel jobs, and supports a Windows-only Gmail intake batch-reply workflow.
 
-- Primary UI: Qt/PySide6 desktop app.
+- Primary UI: local browser app on `127.0.0.1`.
+- Secondary UI: Qt/PySide6 desktop shell.
 - Secondary interface: CLI.
 - Model transport: OpenAI Responses API.
 - Key invariant: page-by-page translation flow, no whole-document batch request.
+- Preferred day-to-day mode: browser app `live` mode.
+- Explicit development/testing mode: browser `shadow` mode with isolated state roots.
 
 ## Entrypoints
+- Browser app: `python -m legalpdf_translate.shadow_web.server --open`
+- Browser app URL (daily use): `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#dashboard`
+- Browser app URL (isolated testing): `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#dashboard`
+- Detached browser-app launcher: `python tooling/launch_browser_app_live_detached.py`
 - GUI: `python -m legalpdf_translate.qt_app`
 - GUI compatibility shim: `python -m legalpdf_translate.qt_main`
 - Beginner Windows launcher: double-click `Launch LegalPDF Translate.bat` in the repo root. It delegates to `tooling/launch_qt_build.py --worktree <repo-root>`.
@@ -18,6 +25,14 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
   - Cost guardrails (optional): `--budget-cap-usd <float> --cost-profile-id <string> --budget-on-exceed warn|block`
   - Queue mode (optional): `legalpdf-translate --queue-manifest <manifest.jsonl> --rerun-failed-only true --lang EN --outdir <dir>`
 - Build: `powershell -ExecutionPolicy Bypass -File scripts/build_qt.ps1`
+
+## Browser App Shell
+- The local browser app is now the preferred day-to-day interface for this repo.
+- Main browser surfaces: `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab`.
+- Browser workspace state is URL-scoped through `workspace=<id>`, so separate tabs can keep independent draft/progress state.
+- `mode=live` uses the real settings, profiles, job log, outputs, and Gmail workflow.
+- `mode=shadow` is the explicit isolated test mode for development and browser automation. It uses separate state roots and never silently falls back to live data.
+- `Extension Lab` is a diagnostics and simulation companion for the real Gmail extension. It does not replace the extension itself.
 
 ## Desktop UI Shell
 - The desktop app now uses a dashboard-style shell instead of the older stacked utility card.
@@ -140,10 +155,16 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - `<manifest_stem>.queue_summary.json`
 
 ## Persistence Notes
+- The browser app now has two explicit runtime/storage modes:
+  - `live`: real settings, profiles, job log, outputs, and Gmail-linked flows
+  - `shadow`: isolated test data keyed per build/worktree identity
+- Browser runtime metadata records the active mode, workspace, build identity, listener ownership, and bridge provenance so live vs isolated runs stay diagnosable.
 - The job log SQLite schema now includes additive run-metric/risk columns: `run_id`, `target_lang`, `total_tokens`, `estimated_api_cost`, and `quality_risk_score`.
 - The job log also stores additive translation artifact paths for Gmail/honorarios reuse: `output_docx_path` and `partial_docx_path`.
 - Job-form draft edits are workspace-local session state. Shared settings now persist launch fields only when a task explicitly starts, so closing or resetting one workspace does not write another window's draft inputs back into `settings.json`.
 - Gmail intake bridge settings persist in GUI settings as `gmail_intake_bridge_enabled`, `gmail_intake_bridge_token`, and `gmail_intake_port`.
+- When the browser server is running, the browser app is the primary live Gmail bridge owner. The real extension/native host now hands off into the browser app first and falls back to Qt only when browser launch is unavailable and no healthy browser-owned bridge already exists.
+- The browser-owned live Gmail bridge uses the fixed live browser workspace `gmail-intake`, and successful extension handoff opens `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job`.
 - In normal app launches, the Gmail intake bridge is app-level. It reuses the last active workspace only when that workspace is idle and pristine; otherwise it opens a new blank workspace for the intake automatically.
 - Multi-window runs share a controller-owned reservation map keyed by the resolved run directory. A second workspace cannot start `translate`, `analyze`, `rebuild`, or `queue` if it would reuse the same run folder as an active workspace.
 - Gmail intake translation batches now write one durable app-owned session report at `<effective_outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`.
@@ -206,7 +227,8 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - This workflow is Windows-only and starts from Gmail web in Edge/Chromium, not from a second Gmail OAuth stack inside the app.
 - A Manifest V3 extension on `https://mail.google.com/*` posts exact Gmail message context to a token-protected localhost bridge bound only to `127.0.0.1`.
 - The extension now self-heals stale Gmail tabs by reinjecting its content script when needed and shows visible Gmail-page banner errors instead of failing silently.
-- On real toolbar clicks, the Edge native host now auto-starts the current repo checkout through `tooling/launch_qt_build.py` when the Gmail bridge is configured but not already running.
+- On real toolbar clicks, the native host now prefers launching the browser app live server and only falls back to Qt when browser launch is unavailable and no healthy browser-owned bridge already exists.
+- After a successful prepare plus localhost POST, the extension opens or focuses the browser app at the live Gmail workspace URL instead of depending on Qt window focus.
 - The intake contract is fail-closed: if the browser cannot identify exactly one open Gmail message, the app is not listening, or the bearer token is wrong, the handoff stops immediately.
 - If the app cannot bind the localhost bridge port, the UI now shows a visible `Gmail intake bridge unavailable` state instead of looking idle.
 - The app fetches only the exact intake message through Windows `gog`, resolves the Gmail account in this order, and no other order:
@@ -236,11 +258,17 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Arabic failures now surface additive diagnostics such as `validator_defect_reason`, `ar_violation_kind`, and limited sampled offending snippets in run artifacts and the stop dialog.
 
 ## Operational Guidance
+- Browser-app launch is now the canonical day-to-day local entry path for this repo:
+  - attached/local browser server: `python -m legalpdf_translate.shadow_web.server --open`
+  - detached live launcher: `python tooling/launch_browser_app_live_detached.py`
+  - default daily-use URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#dashboard`
+  - explicit isolated test URL: `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#dashboard`
 - Windows-native GUI launch is canonical for this repo:
   - attached launch: `python -m legalpdf_translate.qt_app`
   - detached Windows launch: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`
 - `python -m legalpdf_translate.qt_gui` remains a valid GUI compatibility entrypoint, but `qt_app` is the canonical docs command.
 - On Windows, the beginner-friendly manual launch path is `Launch LegalPDF Translate.bat` in the repo root. It uses the same canonical Qt launcher helper instead of duplicating startup logic.
+- Use browser `live` mode for real work. Use browser `shadow` mode only when you intentionally want isolated test data and no real live Gmail bridge ownership.
 - Open another workspace from `File > New Window`, `Ctrl+Shift+N`, or the `...` overflow action. `New Window` stays available even while another workspace is busy.
 - The main dashboard shell should stay horizontally adaptive without a shell-level horizontal scrollbar; dense secondary tables such as Job Log may still overflow horizontally inside their own window or table viewport.
 - Major dialogs and dense secondary windows should remain screen-bounded and user-resizable instead of relying on fixed geometries that can open off-screen on smaller displays.
@@ -261,11 +289,11 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Mouse-wheel guards now cover the main run controls, Gmail review workflow/target-language selectors, settings defaults/provider selectors, and fixed-vocabulary Job Log combos; glossary/study/tool selectors and dense table editors still keep their local plain-combo behavior.
 - OCR-heavy runtime triage routes to `docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md`.
 - Host-bound workflows that add localhost listeners, browser/app bridges, or separate handoff/run/finalization failure surfaces should also route through `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`.
-- Gmail intake live validation must use the same Windows host for the signed-in Edge/Chromium Gmail tab, the Qt app, and Windows `gog`; a WSL-only smoke does not satisfy the final host-bound check.
-- If Gmail shows `accepted` but the app stays idle, check port ownership first. The listener on `127.0.0.1:<gmail_intake_port>` must belong to `python.exe -m legalpdf_translate.qt_app`, not to `pytest` or another stray process.
+- Gmail intake live validation must use the same Windows host for the signed-in Edge/Chromium Gmail tab, the browser app or Qt shell that owns the workflow, and Windows `gog`; a WSL-only smoke does not satisfy the final host-bound check.
+- If Gmail shows `accepted` but the app stays idle, check port ownership first. The listener on `127.0.0.1:<gmail_intake_port>` should normally belong to the browser app server process, not to `pytest`, a stale server, or another stray process.
 - For future triage, the durable support packet is:
   1. Gmail banner text/screenshot when handoff failed before app intake
-  2. app window title + visible bridge status
+  2. browser dashboard or Qt window build identity plus visible bridge status
   3. `run_report.md` / `run_summary.json` for the affected translation run
   4. `gmail_batch_session.json` for batch-level finalization or draft issues
 

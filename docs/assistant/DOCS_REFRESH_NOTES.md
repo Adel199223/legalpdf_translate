@@ -16,6 +16,41 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-03-19 — codex/beginner-first-primary-flow-ux (browser-app closeout docs sync)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/LOCAL_CAPABILITIES.md
+  - docs/assistant/LOCAL_ENV_PROFILE.local.md
+  - docs/assistant/SESSION_RESUME.md
+  - docs/assistant/ISSUE_MEMORY.md
+  - docs/assistant/ISSUE_MEMORY.json
+  - docs/assistant/manifest.json
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md
+  - docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::Browser App Shell
+  - APP_KNOWLEDGE.md::Persistence Notes
+  - APP_KNOWLEDGE.md::Gmail Intake Batch Workflow
+  - docs/assistant/SESSION_RESUME.md::Current Recommended Entry
+  - docs/assistant/features/APP_USER_GUIDE.md::Quick Start (No Technical Background)
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md::Gmail Intake Batch Replies
+  - docs/assistant/ISSUE_MEMORY.md::workflow-wrong-build-under-test
+  - docs/assistant/ISSUE_MEMORY.md::harness-live-state-contamination
+- User-visible behavior:
+  - Assistant docs now describe the local browser app as the preferred daily-use surface, with `live` mode for real work and isolated `shadow` mode for safe testing/development.
+  - Assistant docs now describe the browser app as the normal live Gmail bridge owner, the fixed live Gmail handoff workspace `gmail-intake`, and `Extension Lab` as the browser-side diagnostics companion for the real Gmail extension.
+  - Fresh-session continuity now starts from the browser app live URL and detached launcher instead of the older Qt-first mental model.
+  - The reusable browser-app live-vs-shadow pattern is now captured in project-local docs and issue memory so a later explicit template-folder sync can lift it cleanly without relying on thread history.
+- The docs sync widened because of the issue-memory entries `workflow-wrong-build-under-test` and `harness-live-state-contamination`, which now record the durable browser-app entrypoint and live-vs-shadow isolation pattern.
+- Tests:
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m compileall src tests` -> PASS
+  - `dart run tooling/validate_agent_docs.dart` -> PASS
+  - `dart run tooling/validate_workspace_hygiene.dart` -> PASS
+
 ## 2026-03-13 — codex/beginner-first-primary-flow-ux (targeted UI docs sync)
 - Files changed:
   - APP_KNOWLEDGE.md

@@ -54,6 +54,7 @@ dart run tooling/validate_agent_docs.dart
 ## Default Test Isolation Rules
 - pytest-style temporary filesystem and environment state is the default for tests that touch settings, caches, or runtime-owned files.
 - Live user settings paths, roaming profile files, auth state, and caches must be explicit opt-in for tests, never inherited silently.
+- When one localhost browser app supports both daily-use and testing, keep an explicit isolated mode with separate state roots instead of spinning up ad hoc near-live harnesses.
 - Tests should use non-live or ephemeral ports by default instead of the user-facing runtime port.
 - Listeners, windows, background workers, and service processes must have explicit teardown even when a test fails.
 - Focus-sensitive desktop tests must explicitly activate the target window/control and close leaked popups or modal dialogs between cases instead of relying on inherited focus state.
@@ -62,6 +63,7 @@ dart run tooling/validate_agent_docs.dart
 - If a feature depends on a localhost listener, verify the expected port is free or owned by the expected process before treating the integration as healthy.
 - Classify unexpected listener ownership or bind conflicts as preflight `unavailable`, not as product `failed`.
 - Runtime listener startup failures must surface visible status, not silent logs only.
+- If one browser app serves both live and isolated modes, diagnostics must show the active mode, data root, workspace, and listener owner so shadow/test state cannot be mistaken for live readiness.
 
 ## Durable Diagnostics and Support Packet Rules
 - Keep existing per-run artifacts as the main run evidence.

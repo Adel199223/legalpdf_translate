@@ -62,6 +62,7 @@ dart run tooling/validate_workspace_hygiene.dart
    - verify the app and the integration run in the same host/runtime environment when required
 4. Localhost listener ownership is correct
    - when a localhost listener is part of the integration, verify the port is free or owned by the expected process
+   - if the integration supports both live and isolated browser-app modes, verify which mode owns the listener and whether that owner is supposed to be live-capable
 5. Live smoke check passes
    - run a minimal real operation before building the full feature
 
@@ -69,6 +70,11 @@ dart run tooling/validate_workspace_hygiene.dart
 If the app runs on Windows and the integration depends on Windows-local auth or desktop state, validate it on Windows.
 
 For this repo, Gmail draft creation through `gog` is the clearest example: the desktop app and the authenticated `gog` runtime must be validated on the same Windows host.
+
+The browser app now makes this stricter for Gmail intake:
+- validate the browser app in `live` mode, not isolated `shadow` mode
+- confirm the live Gmail bridge owner and handoff URL, not just that some localhost listener is up
+- treat browser-owned bridge readiness as the normal green path and Qt ownership as fallback/coexistence, not the default assumption
 
 ## Failure Modes and Fallback Steps
 - `unavailable`

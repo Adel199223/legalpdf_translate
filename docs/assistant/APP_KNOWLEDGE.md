@@ -28,6 +28,7 @@ For support/non-technical explanations, start with:
 - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
 - Local folder/worktree/workspace organization questions route to `docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md` first, then `docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md` if branch/build provenance matters.
 - Multi-window workspace usage, duplicate-target blocking, or Gmail intake opening/reusing a workspace route to `docs/assistant/features/APP_USER_GUIDE.md`, `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`, and `APP_KNOWLEDGE.md`.
+- Browser app `live` vs isolated `shadow` mode, browser workspace URLs, or browser-app-first daily-use guidance route to `docs/assistant/features/APP_USER_GUIDE.md`, `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`, and `APP_KNOWLEDGE.md`.
 - Qt dashboard shell/launch behavior routes to `docs/assistant/QT_UI_KNOWLEDGE.md` and `docs/assistant/QT_UI_PLAYBOOK.md`.
 - Future Qt/UI resize or geometry work should start with `docs/assistant/QT_UI_KNOWLEDGE.md`, `docs/assistant/QT_UI_PLAYBOOK.md`, and `src/legalpdf_translate/qt_gui/window_adaptive.py` before any one-off widget geometry edits.
 - Reference-locked Qt UI work routes to `docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md`.
@@ -41,6 +42,7 @@ For support/non-technical explanations, start with:
 - Interpretation Job Log intake, interpretation-only honorarios generation, and service-city distance behavior route to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`, `docs/assistant/features/APP_USER_GUIDE.md`, and `APP_KNOWLEDGE.md`.
 - Listener ownership, test isolation, and multi-surface handoff/run/finalization diagnostics route to `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`.
 - Gmail intake extension setup, exact-message batch review, per-attachment start-page selection, in-app preview, sequential Save-to-Job-Log checkpoints, and one threaded reply-draft batch semantics route to `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md` and `APP_KNOWLEDGE.md`.
+- Browser-owned Gmail bridge readiness, browser-app handoff URLs, and Extension Lab diagnostics route to `docs/assistant/features/APP_USER_GUIDE.md`, `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`, `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`, and `APP_KNOWLEDGE.md`.
 - Gmail intake troubleshooting now routes by failure surface:
   - extension/banner or app-bridge startup issue: `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
   - translation/run issue: `run_report.md`, `run_summary.json`, and `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
@@ -56,6 +58,7 @@ Cost-guardrail support routing:
 
 ## Current-Truth Note
 - Canonical current-truth now includes queue runner support, OCR advisor flows, review queue handling, and job-log metric sync.
+- Canonical current-truth now includes the local browser app as the preferred daily-use surface, explicit browser `live` vs isolated `shadow` runtime modes, browser workspace URLs, and live Gmail bridge ownership by the browser app when available.
 - Canonical current-truth also includes the screenshot-driven Qt dashboard shell and the real GUI module entrypoint: `python -m legalpdf_translate.qt_app`.
 - Canonical current-truth also includes a repo-root beginner launcher, `Launch LegalPDF Translate.bat`, which delegates to `tooling/launch_qt_build.py` instead of duplicating the GUI startup path.
 - Canonical current-truth also includes a real runtime `ui_theme` contract in the Qt shell: `dark_futuristic` is the elevated default, `dark_simple` is the lower-noise variant, and both are applied live through the shared Qt style system rather than existing as dead settings.
@@ -77,6 +80,7 @@ Cost-guardrail support routing:
 - Canonical current-truth also includes a shared legal-header glossary catalog for recurring Portuguese court/prosecution/judicial header phrases, exact institutional-header prompt injection ahead of generic glossary rows, OCR-tolerant matching for common header variants, cross-language EN/FR/AR seed alignment from one source of truth, metadata/header extraction that prefers the most specific institutional match, and a review-first policy for riskier prosecution-office variants instead of silently broadening the enforced glossary.
 - Canonical current-truth also includes translation edit-mode cleanup in the Job Log dialog: fixed-vocabulary fields are selection-only, the translation service section is hidden, and the rounded primary action no longer falls back to a native rectangular default-button style.
 - Canonical current-truth also includes project-local harness sync from vendored templates, with `implement the template files` / `sync project harness` reserved for local harness application and `update codex bootstrap` / `UCBS` reserved for template-system maintenance.
+- Canonical current-truth also includes the browser parity surface as a reusable local-app pattern: one browser app can serve daily-use `live` mode and isolated test mode from the same repo while keeping state roots, listener ownership, and diagnostics explicit instead of relying on separate ad hoc harnesses.
 - Canonical current-truth also includes the local harness-sync rule that vendored template changes affecting continuity or cleanup must resync the publish/docs-maintenance governance surfaces, not just routing docs and validators.
 - Canonical current-truth also includes roadmap governance for this repo: `docs/assistant/SESSION_RESUME.md` is the roadmap anchor file, roadmap state may be active or in a dormant roadmap state, the active roadmap tracker is the sequence source when present, the active wave ExecPlan is the implementation-detail source when present, and issue memory is not roadmap history.
 - Canonical current-truth also includes active-worktree authority for live roadmap state during in-progress wave work, while `main` may intentionally carry a dormant roadmap state between roadmap-scoped threads.
