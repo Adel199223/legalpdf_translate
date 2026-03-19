@@ -15,8 +15,13 @@ from legalpdf_translate.ocr_engine import (
 from legalpdf_translate.types import OcrApiProvider, OcrEnginePolicy
 
 
-def test_api_policy_missing_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clear_openai_ocr_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+
+def test_api_policy_missing_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_openai_ocr_env(monkeypatch)
     monkeypatch.setattr(ocr_engine, "get_ocr_key", lambda: None)
     config = OcrEngineConfig(
         policy=OcrEnginePolicy.API,
@@ -29,7 +34,23 @@ def test_api_policy_missing_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_api_policy_with_env_key_builds_api_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ocr_engine, "get_ocr_key", lambda: None)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    config = OcrEngineConfig(
+        policy=OcrEnginePolicy.API,
+        api_model="gpt-4o-mini",
+        api_key_env_name="DEEPSEEK_API_KEY",
+    )
+    engine = build_ocr_engine(config)
+    assert isinstance(engine, ApiOcrEngine)
+
+
+def test_api_policy_with_openai_default_env_still_builds_api_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ocr_engine, "get_ocr_key", lambda: None)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     config = OcrEngineConfig(
         policy=OcrEnginePolicy.API,
         api_model="gpt-4o-mini",
@@ -41,7 +62,7 @@ def test_api_policy_with_env_key_builds_api_engine(monkeypatch: pytest.MonkeyPat
 
 def test_local_then_api_without_key_disables_api_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ocr_engine, "get_ocr_key", lambda: None)
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    _clear_openai_ocr_env(monkeypatch)
     config = OcrEngineConfig(
         policy=OcrEnginePolicy.LOCAL_THEN_API,
         api_model="gpt-4o-mini",
@@ -54,6 +75,7 @@ def test_local_then_api_without_key_disables_api_fallback(monkeypatch: pytest.Mo
 
 def test_local_then_api_with_key_enables_api_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ocr_engine, "get_ocr_key", lambda: None)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     config = OcrEngineConfig(
         policy=OcrEnginePolicy.LOCAL_THEN_API,
@@ -66,6 +88,7 @@ def test_local_then_api_with_key_enables_api_fallback(monkeypatch: pytest.Monkey
 
 
 def test_stored_ocr_key_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "env-key")
     monkeypatch.setattr(ocr_engine, "get_ocr_key", lambda: "stored-key")
     config = OcrEngineConfig(api_key_env_name="DEEPSEEK_API_KEY")
