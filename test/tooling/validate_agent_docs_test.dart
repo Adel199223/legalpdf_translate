@@ -111,6 +111,19 @@ void _replaceInFile(String root, String relPath, String from, String to) {
   file.writeAsStringSync(text.replaceAll(from, to));
 }
 
+void _replaceSessionResumeBranch(String root, String branchName) {
+  final File file = File(_resolve(root, 'docs/assistant/SESSION_RESUME.md'));
+  final String text = file.readAsStringSync();
+  final String updated = text.replaceFirstMapped(
+    RegExp(r'^- Branch:\s+`[^`]+`$', multiLine: true),
+    (Match _) => '- Branch: `$branchName`',
+  );
+  if (identical(updated, text) || updated == text) {
+    throw _CaseFailure('SESSION_RESUME.md did not contain a branch line to replace.');
+  }
+  file.writeAsStringSync(updated);
+}
+
 void _runGit(String root, List<String> args) {
   final ProcessResult result = Process.runSync('git', <String>[
     '-C',
@@ -1317,6 +1330,7 @@ void main() {
     'passes when SESSION_RESUME points to canonical main in detached git repo',
     () {
       final String root = _fixtureRoot();
+      _replaceSessionResumeBranch(root, 'main');
       _initGitFixtureRepo(root);
       final String sha = _runGitCapture(root, <String>['rev-parse', 'HEAD']);
       _runGit(root, <String>['checkout', '--detach', sha]);
@@ -1332,13 +1346,8 @@ void main() {
     'fails when SESSION_RESUME points to a deleted branch in a git repo',
     () {
       final String root = _fixtureRoot();
+      _replaceSessionResumeBranch(root, 'feat/deleted-branch');
       _initGitFixtureRepo(root);
-      _replaceInFile(
-        root,
-        'docs/assistant/SESSION_RESUME.md',
-        '- Branch: `main`',
-        '- Branch: `feat/deleted-branch`',
-      );
       final List<validator.ValidationIssue> issues = validator
           .validateAgentDocs(rootPath: root);
       _expect(_hasRule(issues, 'AD046'), 'Expected AD046');
