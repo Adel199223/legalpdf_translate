@@ -142,6 +142,9 @@ Map<String, dynamic> runAutomationPreflight({
   String browserSource = 'system';
   final bool disableWindowsFallback =
       (env['AUTOMATION_PREFLIGHT_DISABLE_WINDOWS_BROWSER_FALLBACK'] ?? '').trim() == '1';
+  final bool assumeWindowsFallback =
+      (env['AUTOMATION_PREFLIGHT_ASSUME_WINDOWS'] ?? '').trim() == '1';
+  final bool windowsFallbackAllowed = Platform.isWindows || assumeWindowsFallback;
 
   final String envBinary = (env['AUTOMATION_BROWSER_BINARY'] ?? '').trim();
   if (envBinary.isNotEmpty) {
@@ -168,13 +171,13 @@ Map<String, dynamic> runAutomationPreflight({
       browserBinary = resolved;
       final _ToolCheck bin = _checkToolVersion(resolved, <String>['--version'], run);
       browserVersion = bin.version;
-      if (browserVersion.isEmpty && Platform.isWindows) {
+      if (browserVersion.isEmpty && windowsFallbackAllowed) {
         browserVersion = _readWindowsFileVersion(resolved, run);
       }
       browserSource = 'system';
       break;
     }
-    if (browserBinary.isEmpty && Platform.isWindows && !disableWindowsFallback) {
+    if (browserBinary.isEmpty && windowsFallbackAllowed && !disableWindowsFallback) {
       browserBinary = _resolveExistingPath(<String>[
         r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
         r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',

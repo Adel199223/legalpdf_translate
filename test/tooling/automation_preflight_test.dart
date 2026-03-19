@@ -155,6 +155,7 @@ void main() {
     final Map<String, dynamic> result = preflight.runAutomationPreflight(
       runner: _runnerWindowsEdgeFallback,
       environment: <String, String>{
+        'AUTOMATION_PREFLIGHT_ASSUME_WINDOWS': '1',
         'LOCALAPPDATA': r'C:\Users\FA507\AppData\Local',
       },
     );
