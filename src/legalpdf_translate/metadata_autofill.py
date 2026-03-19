@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -17,10 +16,17 @@ from PIL import Image
 from .config import DEFAULT_METADATA_AI_TIMEOUT_SECONDS, DEFAULT_OCR_API_TIMEOUT_SECONDS
 from .legal_header_glossary import extract_best_case_entity_match
 from .ocr_engine import OcrEngineConfig, OcrResult, build_ocr_engine
-from .ocr_engine import default_ocr_api_env_name, invoke_ocr_image, normalize_ocr_api_provider
+from .ocr_engine import (
+    candidate_ocr_api_env_names,
+    default_ocr_api_env_name,
+    invoke_ocr_image,
+    local_ocr_available,
+    normalize_ocr_api_provider,
+    resolve_ocr_api_key,
+)
 from .ocr_helpers import ocr_pdf_page_text
 from .pdf_text_order import extract_ordered_page_text, get_page_count
-from .secrets_store import get_ocr_key
+from .runtime_health import degraded_runtime_reason_from_env
 from .types import OcrApiProvider, OcrEnginePolicy, OcrMode
 
 GENERIC_CASE_ENTITIES = {"", "unknown", "desconhecido", "n/a", "na", "sem informação", "sem informacao"}
@@ -131,6 +137,44 @@ class MetadataAutofillConfig:
     metadata_allow_header_ocr_even_if_ocr_off: bool = True
 
 
+@dataclass(slots=True)
+class MetadataExtractionDiagnostics:
+    page_numbers: tuple[int, ...] = ()
+    embedded_text_pages: tuple[int, ...] = ()
+    ocr_attempted_pages: tuple[int, ...] = ()
+    embedded_text_found: bool = False
+    ocr_attempted: bool = False
+    local_ocr_available: bool = False
+    api_ocr_configured: bool = False
+    api_env_names: tuple[str, ...] = ()
+    effective_ocr_mode: str = ""
+    ocr_failure_reason: str = ""
+    runtime_caveat: str = ""
+    extracted_fields: tuple[str, ...] = ()
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "page_numbers": list(self.page_numbers),
+            "embedded_text_pages": list(self.embedded_text_pages),
+            "ocr_attempted_pages": list(self.ocr_attempted_pages),
+            "embedded_text_found": bool(self.embedded_text_found),
+            "ocr_attempted": bool(self.ocr_attempted),
+            "local_ocr_available": bool(self.local_ocr_available),
+            "api_ocr_configured": bool(self.api_ocr_configured),
+            "api_env_names": list(self.api_env_names),
+            "effective_ocr_mode": self.effective_ocr_mode,
+            "ocr_failure_reason": self.ocr_failure_reason,
+            "runtime_caveat": self.runtime_caveat,
+            "extracted_fields": list(self.extracted_fields),
+        }
+
+
+@dataclass(slots=True)
+class MetadataExtractionResult:
+    suggestion: MetadataSuggestion
+    diagnostics: MetadataExtractionDiagnostics
+
+
 def metadata_config_from_settings(settings: dict[str, object]) -> MetadataAutofillConfig:
     ocr_mode_text = str(settings.get("ocr_mode", "auto") or "auto").strip().lower()
     if ocr_mode_text not in {"off", "auto", "always"}:
@@ -146,6 +190,8 @@ def metadata_config_from_settings(settings: dict[str, object]) -> MetadataAutofi
         )
         or default_ocr_api_env_name(provider)
     ).strip() or default_ocr_api_env_name(provider)
+    if provider == OcrApiProvider.OPENAI and key_env_name in {"", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"}:
+        key_env_name = default_ocr_api_env_name(provider)
     return MetadataAutofillConfig(
         ocr_mode=OcrMode(ocr_mode_text),
         ocr_engine_policy=OcrEnginePolicy(ocr_engine_text),
@@ -417,14 +463,16 @@ def _parse_json_object(raw: str) -> dict[str, Any] | None:
 def _resolve_api_client(config: MetadataAutofillConfig) -> OpenAI | None:
     if config.ocr_api_provider != OcrApiProvider.OPENAI:
         return None
-    try:
-        key = get_ocr_key()
-    except RuntimeError:
-        key = None
-    if not key:
-        env_name = (config.ocr_api_key_env_name or "").strip() or default_ocr_api_env_name(config.ocr_api_provider)
-        from_env = os.getenv(env_name, "").strip()
-        key = from_env or None
+    key = resolve_ocr_api_key(
+        OcrEngineConfig(
+            policy=config.ocr_engine_policy,
+            api_provider=config.ocr_api_provider,
+            api_base_url=config.ocr_api_base_url,
+            api_model=config.ocr_api_model,
+            api_key_env_name=config.ocr_api_key_env_name,
+            api_timeout_seconds=float(config.ocr_api_timeout_seconds),
+        )
+    )
     if not key:
         return None
     return OpenAI(
@@ -792,6 +840,39 @@ def _build_ocr_engine_from_config(config: MetadataAutofillConfig):
     )
 
 
+def _metadata_extracted_fields(suggestion: MetadataSuggestion) -> tuple[str, ...]:
+    extracted: list[str] = []
+    for field_name in (
+        "case_entity",
+        "case_city",
+        "case_number",
+        "court_email",
+        "service_entity",
+        "service_city",
+        "service_date",
+    ):
+        if str(getattr(suggestion, field_name, "") or "").strip():
+            extracted.append(field_name)
+    return tuple(extracted)
+
+
+def _interpretation_notice_ocr_config(config: MetadataAutofillConfig) -> MetadataAutofillConfig:
+    if config.ocr_mode != OcrMode.OFF:
+        return config
+    return MetadataAutofillConfig(
+        ocr_mode=OcrMode.AUTO,
+        ocr_engine_policy=config.ocr_engine_policy,
+        ocr_api_provider=config.ocr_api_provider,
+        ocr_api_base_url=config.ocr_api_base_url,
+        ocr_api_model=config.ocr_api_model,
+        ocr_api_key_env_name=config.ocr_api_key_env_name,
+        ocr_api_timeout_seconds=float(config.ocr_api_timeout_seconds),
+        metadata_ai_timeout_seconds=float(config.metadata_ai_timeout_seconds),
+        metadata_ai_enabled=config.metadata_ai_enabled,
+        metadata_allow_header_ocr_even_if_ocr_off=config.metadata_allow_header_ocr_even_if_ocr_off,
+    )
+
+
 def extract_header_text_from_pdf_page_with_ocr_fallback(
     pdf_path: Path,
     *,
@@ -975,7 +1056,23 @@ def extract_interpretation_notification_metadata_from_pdf(
     config: MetadataAutofillConfig | None = None,
     page_numbers: tuple[int, ...] = (1, 2),
 ) -> MetadataSuggestion:
+    return extract_interpretation_notification_metadata_from_pdf_with_diagnostics(
+        pdf_path,
+        vocab_cities=vocab_cities,
+        config=config,
+        page_numbers=page_numbers,
+    ).suggestion
+
+
+def extract_interpretation_notification_metadata_from_pdf_with_diagnostics(
+    pdf_path: Path,
+    *,
+    vocab_cities: list[str],
+    config: MetadataAutofillConfig | None = None,
+    page_numbers: tuple[int, ...] = (1, 2),
+) -> MetadataExtractionResult:
     effective = config or MetadataAutofillConfig()
+    notice_config = _interpretation_notice_ocr_config(effective)
     max_page_count = 0
     try:
         max_page_count = max(0, int(get_page_count(pdf_path)))
@@ -993,24 +1090,78 @@ def extract_interpretation_notification_metadata_from_pdf(
     if not ordered_pages:
         ordered_pages = [1]
 
+    ocr_engine_config = OcrEngineConfig(
+        policy=notice_config.ocr_engine_policy,
+        api_provider=notice_config.ocr_api_provider,
+        api_base_url=notice_config.ocr_api_base_url,
+        api_model=notice_config.ocr_api_model,
+        api_key_env_name=notice_config.ocr_api_key_env_name,
+        api_timeout_seconds=float(notice_config.ocr_api_timeout_seconds),
+    )
+    embedded_text_pages: list[int] = []
+    ocr_attempted_pages: list[int] = []
+    failure_reasons: list[str] = []
+    resolved_engine = None
+    engine_ready = False
     combined_text_parts: list[str] = []
     for page_number in ordered_pages:
-        page_text = extract_full_text_from_pdf_page_with_ocr_fallback(
-            pdf_path,
+        try:
+            ordered = extract_ordered_page_text(pdf_path, page_number - 1)
+        except Exception as exc:
+            ordered = None
+            failure_reasons.append(f"embedded text extraction failed on page {page_number}: {exc}")
+        page_text = ordered.text.strip() if ordered is not None else ""
+        if page_text:
+            embedded_text_pages.append(page_number)
+            combined_text_parts.append(page_text)
+            continue
+        ocr_attempted_pages.append(page_number)
+        if not engine_ready:
+            try:
+                resolved_engine = _build_ocr_engine_from_config(notice_config)
+            except Exception as exc:
+                resolved_engine = None
+                failure_reasons.append(str(exc))
+            engine_ready = True
+        if resolved_engine is None:
+            continue
+        ocr_result = ocr_pdf_page_text(
+            pdf_path=pdf_path,
             page_number=page_number,
-            config=effective,
+            mode=notice_config.ocr_mode,
+            engine=resolved_engine,
+            prefer_header=False,
+            lang_hint="PT",
         )
+        page_text = ocr_result.text.strip()
         if page_text.strip():
             combined_text_parts.append(page_text.strip())
-    if not combined_text_parts:
-        return MetadataSuggestion()
-    combined_text = "\n\n".join(combined_text_parts)
-    return extract_interpretation_notification_metadata_from_text(
-        combined_text,
-        vocab_cities=vocab_cities,
-        ai_enabled=effective.metadata_ai_enabled,
-        ai_config=effective,
+        elif ocr_result.failed_reason:
+            failure_reasons.append(ocr_result.failed_reason)
+    suggestion = MetadataSuggestion()
+    if combined_text_parts:
+        combined_text = "\n\n".join(combined_text_parts)
+        suggestion = extract_interpretation_notification_metadata_from_text(
+            combined_text,
+            vocab_cities=vocab_cities,
+            ai_enabled=notice_config.metadata_ai_enabled,
+            ai_config=notice_config,
+        )
+    diagnostics = MetadataExtractionDiagnostics(
+        page_numbers=tuple(ordered_pages),
+        embedded_text_pages=tuple(embedded_text_pages),
+        ocr_attempted_pages=tuple(ocr_attempted_pages),
+        embedded_text_found=bool(embedded_text_pages),
+        ocr_attempted=bool(ocr_attempted_pages),
+        local_ocr_available=local_ocr_available(),
+        api_ocr_configured=resolve_ocr_api_key(ocr_engine_config) is not None,
+        api_env_names=tuple(candidate_ocr_api_env_names(ocr_engine_config)),
+        effective_ocr_mode=notice_config.ocr_mode.value,
+        ocr_failure_reason="; ".join(dict.fromkeys(reason.strip() for reason in failure_reasons if reason.strip())),
+        runtime_caveat=degraded_runtime_reason_from_env(),
+        extracted_fields=_metadata_extracted_fields(suggestion),
     )
+    return MetadataExtractionResult(suggestion=suggestion, diagnostics=diagnostics)
 
 
 def _read_exif_date(image_path: Path) -> str | None:

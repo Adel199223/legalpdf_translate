@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,6 +27,11 @@ from legalpdf_translate.build_identity import (  # noqa: E402
     try_load_canonical_build_config,
     normalize_path_identity,
     parse_build_labels,
+)
+from legalpdf_translate.runtime_health import (  # noqa: E402
+    CRITICAL_APP_IMPORTS,
+    CRITICAL_RUNTIME_IMPORTS,
+    DEGRADED_RUNTIME_REASON_ENV,
 )
 
 
@@ -97,6 +103,92 @@ def _python_executable_or_placeholder(worktree: Path) -> str:
     except LaunchError:
         placeholder = _python_candidates_for(worktree)[0]
         return str(placeholder)
+
+
+def _probe_python_executable(python_exe: Path) -> Path:
+    if python_exe.name.lower() == 'pythonw.exe':
+        probe = python_exe.with_name('python.exe')
+        if probe.exists():
+            return probe
+    return python_exe
+
+
+def _runtime_preflight_env(worktree: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    pythonpath = str((worktree / 'src').resolve())
+    existing = str(env.get('PYTHONPATH', '') or '').strip()
+    env['PYTHONPATH'] = (
+        pythonpath if existing == '' else os.pathsep.join([pythonpath, existing])
+    )
+    env.pop(DEGRADED_RUNTIME_REASON_ENV, None)
+    return env
+
+
+def _runtime_preflight_code() -> str:
+    modules = [*CRITICAL_RUNTIME_IMPORTS, *CRITICAL_APP_IMPORTS]
+    return textwrap.dedent(
+        f"""
+        import importlib
+        import json
+        import sys
+
+        modules = {json.dumps(modules)}
+        failed = []
+        for name in modules:
+            try:
+                importlib.import_module(name)
+            except Exception as exc:
+                failed.append({{"module": name, "error": f"{{type(exc).__name__}}: {{exc}}"}})
+        print(json.dumps({{"failed_imports": failed}}))
+        raise SystemExit(0 if not failed else 1)
+        """
+    ).strip()
+
+
+def _run_runtime_preflight(python_exe: Path, worktree: Path) -> dict[str, object]:
+    probe_exe = _probe_python_executable(python_exe)
+    proc = subprocess.run(
+        [str(probe_exe), '-c', _runtime_preflight_code()],
+        cwd=worktree,
+        env=_runtime_preflight_env(worktree),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    stdout = proc.stdout.strip()
+    payload: dict[str, object] = {}
+    if stdout:
+        try:
+            payload = json.loads(stdout.splitlines()[-1])
+        except json.JSONDecodeError:
+            payload = {'failed_imports': [], 'raw_stdout': stdout}
+    failed_imports = payload.get('failed_imports', [])
+    if proc.returncode != 0 or failed_imports:
+        lines = [
+            f'Runtime preflight failed for {python_exe}.',
+            'The selected runtime is missing required imports and would launch a degraded or broken GUI session.',
+        ]
+        if isinstance(failed_imports, list):
+            for item in failed_imports:
+                if not isinstance(item, dict):
+                    continue
+                module_name = str(item.get('module', '')).strip()
+                error_text = str(item.get('error', '')).strip()
+                if module_name and error_text:
+                    lines.append(f'- {module_name}: {error_text}')
+        stderr = proc.stderr.strip()
+        raw_stdout = str(payload.get('raw_stdout', '')).strip()
+        if stderr:
+            lines.append(f'stderr: {stderr}')
+        elif raw_stdout:
+            lines.append(f'stdout: {raw_stdout}')
+        lines.append('Repair the selected Python 3.11 / .venv311 before launching.')
+        raise LaunchError('\n'.join(lines))
+    return {
+        'status': 'ok',
+        'probe_python_executable': str(probe_exe),
+        'checked_modules': [*CRITICAL_RUNTIME_IMPORTS, *CRITICAL_APP_IMPORTS],
+    }
 
 
 def _coerce_input_path(path_text: str) -> str:
@@ -185,6 +277,7 @@ def _launch_windows(packet: dict[str, object]) -> None:
         f"$env:PYTHONPATH={json.dumps(_to_windows_path(pythonpath))}; "
         f"$env:LEGALPDF_BUILD_LABELS={json.dumps(labels)}; "
         f"$env:LEGALPDF_CANONICAL_BUILD_CONFIG={json.dumps(_to_windows_path(config_path))}; "
+        "Remove-Item Env:LEGALPDF_DEGRADED_RUNTIME_REASON -ErrorAction SilentlyContinue; "
         f"Start-Process -FilePath {json.dumps(_to_windows_path(python_exe))} "
         f"-WorkingDirectory {json.dumps(_to_windows_path(worktree))} "
         f"-ArgumentList @('-m','legalpdf_translate.qt_app')"
@@ -222,6 +315,13 @@ def main() -> int:
             raise LaunchError(
                 'Refusing to launch noncanonical worktree without --allow-noncanonical. '
                 + ' '.join(str(item) for item in packet['noncanonical_reasons'])
+            )
+        if args.dry_run:
+            packet['runtime_preflight'] = {'status': 'skipped', 'reason': 'dry-run'}
+        else:
+            packet['runtime_preflight'] = _run_runtime_preflight(
+                Path(str(packet['python_executable'])),
+                worktree,
             )
         packet['dry_run'] = bool(args.dry_run)
         packet['allow_noncanonical'] = bool(args.allow_noncanonical)

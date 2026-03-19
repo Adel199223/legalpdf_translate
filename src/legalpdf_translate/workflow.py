@@ -73,6 +73,7 @@ from .ocr_engine import (
     OCREngine,
     OcrResult,
     build_ocr_engine,
+    default_ocr_api_env_name,
     local_only_ocr_engine_config_from_run_config,
     ocr_engine_config_from_run_config,
 )
@@ -3269,7 +3270,8 @@ class TranslationWorkflow:
             ocr_api_provider=config.ocr_api_provider,
             ocr_api_base_url=(config.ocr_api_base_url or "").strip() or None,
             ocr_api_model=(config.ocr_api_model or "").strip() or None,
-            ocr_api_key_env_name=(config.ocr_api_key_env_name or "").strip() or "DEEPSEEK_API_KEY",
+            ocr_api_key_env_name=(config.ocr_api_key_env_name or "").strip()
+            or default_ocr_api_env_name(config.ocr_api_provider),
             context_file=context_file_abs,
             context_text=config.context_text,
             glossary_file=config.glossary_file.expanduser().resolve() if config.glossary_file else None,

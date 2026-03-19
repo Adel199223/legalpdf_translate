@@ -98,6 +98,26 @@ from legalpdf_translate.honorarios_docx import (
     default_honorarios_filename,
     generate_honorarios_docx,
 )
+from legalpdf_translate.interpretation_service import (
+    autofill_interpretation_from_notification_pdf as shared_service_autofill_interpretation_from_notification_pdf,
+    autofill_interpretation_from_photo as shared_service_autofill_interpretation_from_photo,
+)
+from legalpdf_translate.joblog_flow import (
+    JobLogSavedResult as SharedJobLogSavedResult,
+    JobLogSeed as SharedJobLogSeed,
+    build_blank_interpretation_seed as shared_build_blank_interpretation_seed,
+    build_interpretation_notice_diagnostics_text as shared_build_interpretation_notice_diagnostics_text,
+    build_interpretation_seed_from_notification_pdf as shared_build_interpretation_seed_from_notification_pdf,
+    build_interpretation_seed_from_photo_screenshot as shared_build_interpretation_seed_from_photo_screenshot,
+    build_joblog_saved_result,
+    build_joblog_settings_save_bundle,
+    build_seed_from_joblog_row as shared_build_seed_from_joblog_row,
+    build_seed_from_run as shared_build_seed_from_run,
+    count_words_from_output_artifacts as shared_count_words_from_output_artifacts,
+    hydrate_joblog_seed as shared_hydrate_joblog_seed,
+    merge_payload_into_joblog_settings,
+    normalize_joblog_payload as shared_normalize_joblog_payload,
+)
 from legalpdf_translate.joblog_db import (
     delete_job_runs,
     insert_job_run,
@@ -109,10 +129,11 @@ from legalpdf_translate.joblog_db import (
 )
 from legalpdf_translate.metadata_autofill import (
     MetadataAutofillConfig,
+    MetadataExtractionDiagnostics,
     MetadataSuggestion,
     apply_service_case_default_rule,
     choose_court_email_suggestion,
-    extract_interpretation_notification_metadata_from_pdf,
+    extract_interpretation_notification_metadata_from_pdf_with_diagnostics,
     extract_interpretation_photo_metadata_from_image,
     extract_pdf_header_metadata_priority_pages,
     extract_photo_metadata_from_image,
@@ -122,10 +143,14 @@ from legalpdf_translate.metadata_autofill import (
 from legalpdf_translate.openai_client import OpenAIResponsesClient
 from legalpdf_translate.ocr_engine import (
     OcrEngineConfig,
+    candidate_ocr_api_env_names,
     default_ocr_api_base_url,
     default_ocr_api_env_name,
     default_ocr_api_model,
+    local_ocr_available,
     normalize_ocr_api_provider,
+    resolve_ocr_api_key,
+    resolve_ocr_api_key_source,
     test_ocr_provider_connection,
 )
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
@@ -179,6 +204,7 @@ from legalpdf_translate.user_settings import (
     load_gui_settings,
     load_joblog_settings,
     load_profile_settings,
+    settings_path,
     save_profile_settings,
     save_gui_settings,
     save_joblog_settings,
@@ -252,6 +278,9 @@ JOBLOG_COLUMN_LABELS = {
     "quality_risk_score": "Risk Score",
     "profit": "Profit",
 }
+
+INITIAL_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS = 45.0
+RETRY_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS = 90.0
 
 JOBLOG_ACTIONS_COLUMN_LABEL = "Actions"
 JOBLOG_ACTIONS_COLUMN_KEY = "__actions__"
@@ -360,71 +389,7 @@ def _coerce_joblog_bool(value: object, default: bool = False) -> bool:
 
 
 def build_seed_from_joblog_row(row: Mapping[str, object]) -> JobLogSeed:
-    completed_at = str(row.get("completed_at", "") or "").strip()
-    translation_date = str(row.get("translation_date", "") or "").strip()
-    if translation_date == "":
-        translation_date = _date_from_completed_at(completed_at)
-    service_date = str(row.get("service_date", "") or "").strip()
-    if service_date == "" and completed_at:
-        service_date = _date_from_completed_at(completed_at)
-    return JobLogSeed(
-        completed_at=completed_at or f"{translation_date}T00:00:00",
-        translation_date=translation_date,
-        job_type=str(row.get("job_type", "") or "Translation").strip() or "Translation",
-        case_number=str(row.get("case_number", "") or "").strip(),
-        court_email=str(row.get("court_email", "") or "").strip(),
-        case_entity=str(row.get("case_entity", "") or "").strip(),
-        case_city=str(row.get("case_city", "") or "").strip(),
-        service_entity=str(row.get("service_entity", "") or "").strip(),
-        service_city=str(row.get("service_city", "") or "").strip(),
-        service_date=service_date,
-        travel_km_outbound=(
-            None
-            if str(row.get("travel_km_outbound", "") or "").strip() == ""
-            else _coerce_joblog_float(row.get("travel_km_outbound"))
-        ),
-        travel_km_return=(
-            None
-            if str(row.get("travel_km_return", "") or "").strip() == ""
-            else _coerce_joblog_float(row.get("travel_km_return"))
-        ),
-        use_service_location_in_honorarios=_coerce_joblog_bool(
-            row.get("use_service_location_in_honorarios"),
-            default=False,
-        ),
-        include_transport_sentence_in_honorarios=_coerce_joblog_bool(
-            row.get("include_transport_sentence_in_honorarios"),
-            default=True,
-        ),
-        lang=str(row.get("lang", "") or "").strip(),
-        pages=_coerce_joblog_int(row.get("pages")),
-        word_count=_coerce_joblog_int(row.get("word_count")),
-        rate_per_word=_coerce_joblog_float(row.get("rate_per_word")),
-        expected_total=_coerce_joblog_float(row.get("expected_total")),
-        amount_paid=_coerce_joblog_float(row.get("amount_paid")),
-        api_cost=_coerce_joblog_float(row.get("api_cost")),
-        run_id=str(row.get("run_id", "") or "").strip(),
-        target_lang=str(row.get("target_lang", "") or "").strip(),
-        total_tokens=(
-            None
-            if str(row.get("total_tokens", "") or "").strip() == ""
-            else _coerce_joblog_int(row.get("total_tokens"))
-        ),
-        estimated_api_cost=(
-            None
-            if str(row.get("estimated_api_cost", "") or "").strip() == ""
-            else _coerce_joblog_float(row.get("estimated_api_cost"))
-        ),
-        quality_risk_score=(
-            None
-            if str(row.get("quality_risk_score", "") or "").strip() == ""
-            else _coerce_joblog_float(row.get("quality_risk_score"))
-        ),
-        profit=_coerce_joblog_float(row.get("profit")),
-        pdf_path=None,
-        output_docx=_coerce_joblog_path(row.get("output_docx_path")),
-        partial_docx=_coerce_joblog_path(row.get("partial_docx_path")),
-    )
+    return shared_build_seed_from_joblog_row(row)
 
 
 def _parse_joblog_float(value: str, label: str) -> float:
@@ -494,90 +459,13 @@ def _normalize_joblog_payload(
     use_service_location_in_honorarios_checked: bool = False,
     include_transport_sentence_in_honorarios_checked: bool = True,
 ) -> dict[str, Any]:
-    job_type = raw_values["job_type"].strip() or "Translation"
-    is_interpretation = _is_interpretation_job_type(job_type)
-
-    if is_interpretation:
-        rate = _parse_joblog_optional_float(raw_values["rate_per_word"], "Rate/word") or 0.0
-        expected_total = _parse_joblog_optional_float(raw_values["expected_total"], "Expected total") or 0.0
-        pages = _parse_joblog_optional_int(raw_values["pages"], "Pages") or 0
-        word_count = _parse_joblog_optional_int(raw_values["word_count"], "Words") or 0
-    else:
-        rate = _parse_joblog_float(raw_values["rate_per_word"], "Rate/word")
-        expected_total = _parse_joblog_float(raw_values["expected_total"], "Expected total")
-        pages = _parse_joblog_required_int(raw_values["pages"], "Pages")
-        word_count = _parse_joblog_required_int(raw_values["word_count"], "Words")
-
-    amount_paid = _parse_joblog_float(raw_values["amount_paid"], "Amount paid")
-    api_cost = _parse_joblog_float(raw_values["api_cost"], "API cost")
-    profit = _parse_joblog_float(raw_values["profit"], "Profit")
-    total_tokens = _parse_joblog_optional_int(raw_values["total_tokens"], "Total tokens")
-    estimated_api_cost = _parse_joblog_optional_float(raw_values["estimated_api_cost"], "Estimated API cost")
-    quality_risk_score = _parse_joblog_optional_float(raw_values["quality_risk_score"], "Quality risk score")
-    if include_transport_sentence_in_honorarios_checked:
-        travel_km_outbound = _parse_joblog_optional_float(raw_values.get("travel_km_outbound", ""), "KM outbound")
-        travel_km_return = _parse_joblog_optional_float(raw_values.get("travel_km_return", ""), "KM return")
-    else:
-        try:
-            travel_km_outbound = _parse_joblog_optional_float(raw_values.get("travel_km_outbound", ""), "KM outbound")
-        except ValueError:
-            travel_km_outbound = seed.travel_km_outbound
-        try:
-            travel_km_return = _parse_joblog_optional_float(raw_values.get("travel_km_return", ""), "KM return")
-        except ValueError:
-            travel_km_return = seed.travel_km_return
-
-    translation_date = _validate_joblog_date(raw_values["translation_date"], "Translation date")
-    service_date = _validate_joblog_date(raw_values["service_date"], "Service date")
-
-    case_entity = raw_values["case_entity"].strip()
-    case_city = raw_values["case_city"].strip()
-    service_entity = raw_values["service_entity"].strip()
-    service_city = raw_values["service_city"].strip()
-    if is_interpretation and service_same_checked:
-        service_entity = case_entity
-        service_city = case_city
-    if not is_interpretation:
-        service_entity = case_entity
-        service_city = case_city
-        service_date = translation_date
-
-    if expected_total == 0.0 and rate > 0:
-        expected_total = round(rate * float(word_count), 2)
-    if profit == 0.0:
-        if amount_paid > 0:
-            profit = round(amount_paid - api_cost, 2)
-        else:
-            profit = round(expected_total - api_cost, 2)
-
-    return {
-        "translation_date": translation_date or seed.translation_date,
-        "job_type": job_type,
-        "case_number": raw_values["case_number"].strip(),
-        "court_email": raw_values["court_email"].strip(),
-        "case_entity": case_entity,
-        "case_city": case_city,
-        "service_entity": service_entity,
-        "service_city": service_city,
-        "service_date": service_date,
-        "travel_km_outbound": travel_km_outbound,
-        "travel_km_return": travel_km_return,
-        "use_service_location_in_honorarios": 1 if use_service_location_in_honorarios_checked else 0,
-        "include_transport_sentence_in_honorarios": 1 if include_transport_sentence_in_honorarios_checked else 0,
-        "lang": raw_values["lang"].strip() or seed.lang,
-        "target_lang": raw_values["target_lang"].strip() or seed.target_lang,
-        "run_id": raw_values["run_id"].strip(),
-        "pages": pages,
-        "word_count": word_count,
-        "total_tokens": total_tokens,
-        "rate_per_word": rate,
-        "expected_total": expected_total,
-        "amount_paid": amount_paid,
-        "api_cost": api_cost,
-        "estimated_api_cost": estimated_api_cost,
-        "quality_risk_score": quality_risk_score,
-        "profit": profit,
-    }
+    return shared_normalize_joblog_payload(
+        seed=seed,
+        raw_values=raw_values,
+        service_same_checked=service_same_checked,
+        use_service_location_in_honorarios_checked=use_service_location_in_honorarios_checked,
+        include_transport_sentence_in_honorarios_checked=include_transport_sentence_in_honorarios_checked,
+    )
 
 
 def _ensure_value_in_joblog_settings(settings: dict[str, Any], key: str, value: str) -> None:
@@ -593,81 +481,25 @@ def _ensure_value_in_joblog_settings(settings: dict[str, Any], key: str, value: 
 
 
 def _persist_joblog_vocab_settings(settings: dict[str, Any], payload: Mapping[str, Any]) -> None:
-    for column, key in JOBLOG_VOCAB_SETTINGS_MAP.items():
-        value = str(payload.get(column, "") or "").strip()
-        if value:
-            _ensure_value_in_joblog_settings(settings, key, value)
+    updated = merge_payload_into_joblog_settings(
+        settings,
+        payload,
+        service_equals_case_by_default=bool(settings.get("service_equals_case_by_default", True)),
+    )
+    settings.clear()
+    settings.update(updated)
 
 
 def _save_joblog_settings_bundle(settings: dict[str, Any], *, service_equals_case_by_default: bool) -> None:
-    save_joblog_settings(
-        {
-            "vocab_case_entities": settings["vocab_case_entities"],
-            "vocab_service_entities": settings["vocab_service_entities"],
-            "vocab_cities": settings["vocab_cities"],
-            "vocab_job_types": settings["vocab_job_types"],
-            "vocab_court_emails": settings["vocab_court_emails"],
-            "default_rate_per_word": settings["default_rate_per_word"],
-            "joblog_visible_columns": settings["joblog_visible_columns"],
-            "joblog_column_widths": settings.get("joblog_column_widths", {}),
-            "metadata_ai_enabled": settings["metadata_ai_enabled"],
-            "metadata_photo_enabled": settings["metadata_photo_enabled"],
-            "service_equals_case_by_default": service_equals_case_by_default,
-            "non_court_service_entities": settings["non_court_service_entities"],
-            "ocr_mode": settings["ocr_mode"],
-            "ocr_engine": settings["ocr_engine"],
-            "ocr_api_base_url": settings["ocr_api_base_url"],
-            "ocr_api_model": settings["ocr_api_model"],
-            "ocr_api_key_env_name": settings["ocr_api_key_env_name"],
-        }
-    )
+    updated = dict(settings)
+    updated["service_equals_case_by_default"] = bool(service_equals_case_by_default)
+    settings.clear()
+    settings.update(updated)
+    save_joblog_settings(build_joblog_settings_save_bundle(settings))
 
 
-@dataclass(slots=True)
-class JobLogSeed:
-    completed_at: str
-    translation_date: str
-    job_type: str
-    case_number: str
-    court_email: str
-    case_entity: str
-    case_city: str
-    service_entity: str
-    service_city: str
-    service_date: str
-    lang: str
-    pages: int
-    word_count: int
-    rate_per_word: float
-    expected_total: float
-    amount_paid: float
-    api_cost: float
-    run_id: str
-    target_lang: str
-    total_tokens: int | None
-    estimated_api_cost: float | None
-    quality_risk_score: float | None
-    profit: float
-    travel_km_outbound: float | None = None
-    travel_km_return: float | None = None
-    use_service_location_in_honorarios: bool = False
-    include_transport_sentence_in_honorarios: bool = True
-    pdf_path: Path | None = None
-    output_docx: Path | None = None
-    partial_docx: Path | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class JobLogSavedResult:
-    row_id: int
-    word_count: int
-    case_number: str
-    case_entity: str
-    case_city: str
-    court_email: str
-    run_id: str
-    translated_docx_path: Path | None = None
-    payload: Mapping[str, Any] | None = None
+JobLogSeed = SharedJobLogSeed
+JobLogSavedResult = SharedJobLogSavedResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -752,15 +584,11 @@ def count_words_from_output_artifacts(
     partial_docx: Path | None,
     pages_dir: Path | None,
 ) -> int:
-    final_count = count_words_from_docx(output_docx)
-    if final_count > 0:
-        return final_count
-    partial_count = count_words_from_docx(partial_docx)
-    if partial_count > 0:
-        return partial_count
-    if pages_dir is None:
-        return 0
-    return count_words_from_pages_dir(pages_dir)
+    return shared_count_words_from_output_artifacts(
+        output_docx=output_docx,
+        partial_docx=partial_docx,
+        pages_dir=pages_dir,
+    )
 
 
 def _date_from_completed_at(completed_at: str) -> str:
@@ -785,81 +613,21 @@ def build_seed_from_run(
     default_rate_per_word: float,
     api_cost: float = 0.0,
 ) -> JobLogSeed:
-    word_count = count_words_from_output_artifacts(
+    return shared_build_seed_from_run(
+        pdf_path=pdf_path,
+        lang=lang,
         output_docx=output_docx,
         partial_docx=partial_docx,
         pages_dir=pages_dir,
-    )
-    expected_total = round(float(default_rate_per_word) * float(word_count), 2)
-    return JobLogSeed(
+        completed_pages=completed_pages,
         completed_at=completed_at,
-        translation_date=_date_from_completed_at(completed_at),
-        job_type="Translation",
-        case_number="",
-        court_email="",
-        case_entity="",
-        case_city="",
-        service_entity="",
-        service_city="",
-        service_date=_date_from_completed_at(completed_at),
-        travel_km_outbound=None,
-        travel_km_return=None,
-        use_service_location_in_honorarios=False,
-        include_transport_sentence_in_honorarios=True,
-        lang=lang,
-        pages=int(completed_pages),
-        word_count=int(word_count),
-        rate_per_word=float(default_rate_per_word),
-        expected_total=expected_total,
-        amount_paid=0.0,
-        api_cost=float(api_cost),
-        run_id="",
-        target_lang=lang,
-        total_tokens=None,
-        estimated_api_cost=None,
-        quality_risk_score=None,
-        profit=round(expected_total - float(api_cost), 2),
-        pdf_path=pdf_path,
-        output_docx=output_docx,
-        partial_docx=partial_docx,
+        default_rate_per_word=default_rate_per_word,
+        api_cost=api_cost,
     )
 
 
 def build_blank_interpretation_seed() -> JobLogSeed:
-    now = datetime.now()
-    today = now.date().isoformat()
-    return JobLogSeed(
-        completed_at=now.replace(microsecond=0).isoformat(),
-        translation_date=today,
-        job_type="Interpretation",
-        case_number="",
-        court_email="",
-        case_entity="",
-        case_city="",
-        service_entity="",
-        service_city="",
-        service_date=today,
-        travel_km_outbound=None,
-        travel_km_return=None,
-        use_service_location_in_honorarios=False,
-        include_transport_sentence_in_honorarios=True,
-        lang="",
-        pages=0,
-        word_count=0,
-        rate_per_word=0.0,
-        expected_total=0.0,
-        amount_paid=0.0,
-        api_cost=0.0,
-        run_id="",
-        target_lang="",
-        total_tokens=None,
-        estimated_api_cost=None,
-        quality_risk_score=None,
-        profit=0.0,
-        pdf_path=None,
-        output_docx=None,
-        partial_docx=None,
-    )
+    return shared_build_blank_interpretation_seed()
 
 
 def build_interpretation_seed_from_notification_pdf(
@@ -868,49 +636,10 @@ def build_interpretation_seed_from_notification_pdf(
     suggestion: MetadataSuggestion,
     vocab_court_emails: list[str],
 ) -> JobLogSeed:
-    now = datetime.now()
-    service_date = str(suggestion.service_date or "").strip() or now.date().isoformat()
-    case_entity = str(suggestion.case_entity or "").strip()
-    case_city = str(suggestion.case_city or "").strip()
-    return JobLogSeed(
-        completed_at=now.replace(microsecond=0).isoformat(),
-        translation_date=service_date,
-        job_type="Interpretation",
-        case_number=str(suggestion.case_number or "").strip(),
-        court_email=(
-            choose_court_email_suggestion(
-                exact_email=suggestion.court_email,
-                case_entity=case_entity,
-                case_city=case_city,
-                vocab_court_emails=vocab_court_emails,
-            )
-            or ""
-        ),
-        case_entity=case_entity,
-        case_city=case_city,
-        service_entity=str(suggestion.service_entity or "").strip(),
-        service_city=str(suggestion.service_city or "").strip(),
-        service_date=service_date,
-        travel_km_outbound=None,
-        travel_km_return=None,
-        use_service_location_in_honorarios=False,
-        include_transport_sentence_in_honorarios=True,
-        lang="",
-        pages=0,
-        word_count=0,
-        rate_per_word=0.0,
-        expected_total=0.0,
-        amount_paid=0.0,
-        api_cost=0.0,
-        run_id="",
-        target_lang="",
-        total_tokens=None,
-        estimated_api_cost=None,
-        quality_risk_score=None,
-        profit=0.0,
+    return shared_build_interpretation_seed_from_notification_pdf(
         pdf_path=pdf_path,
-        output_docx=None,
-        partial_docx=None,
+        suggestion=suggestion,
+        vocab_court_emails=vocab_court_emails,
     )
 
 
@@ -919,49 +648,9 @@ def build_interpretation_seed_from_photo_screenshot(
     suggestion: MetadataSuggestion,
     vocab_court_emails: list[str],
 ) -> JobLogSeed:
-    now = datetime.now()
-    service_date = str(suggestion.service_date or "").strip() or now.date().isoformat()
-    case_entity = str(suggestion.case_entity or "").strip()
-    case_city = str(suggestion.case_city or "").strip()
-    return JobLogSeed(
-        completed_at=now.replace(microsecond=0).isoformat(),
-        translation_date=service_date,
-        job_type="Interpretation",
-        case_number=str(suggestion.case_number or "").strip(),
-        court_email=(
-            choose_court_email_suggestion(
-                exact_email=suggestion.court_email,
-                case_entity=case_entity,
-                case_city=case_city,
-                vocab_court_emails=vocab_court_emails,
-            )
-            or ""
-        ),
-        case_entity=case_entity,
-        case_city=case_city,
-        service_entity=str(suggestion.service_entity or "").strip(),
-        service_city=str(suggestion.service_city or "").strip(),
-        service_date=service_date,
-        travel_km_outbound=None,
-        travel_km_return=None,
-        use_service_location_in_honorarios=False,
-        include_transport_sentence_in_honorarios=True,
-        lang="",
-        pages=0,
-        word_count=0,
-        rate_per_word=0.0,
-        expected_total=0.0,
-        amount_paid=0.0,
-        api_cost=0.0,
-        run_id="",
-        target_lang="",
-        total_tokens=None,
-        estimated_api_cost=None,
-        quality_risk_score=None,
-        profit=0.0,
-        pdf_path=None,
-        output_docx=None,
-        partial_docx=None,
+    return shared_build_interpretation_seed_from_photo_screenshot(
+        suggestion=suggestion,
+        vocab_court_emails=vocab_court_emails,
     )
 
 
@@ -1006,6 +695,40 @@ def _open_path_in_system(parent: QWidget, target: Path) -> None:
             subprocess.Popen(["xdg-open", str(resolved)])
     except Exception as exc:  # noqa: BLE001
         QMessageBox.critical(parent, "Open file failed", str(exc))
+
+
+def build_interpretation_notice_diagnostics_text(diagnostics: MetadataExtractionDiagnostics) -> str:
+    return shared_build_interpretation_notice_diagnostics_text(diagnostics)
+
+
+def show_local_only_honorarios_ready_box(
+    parent: QWidget,
+    *,
+    docx_path: Path,
+    pdf_error: str = "",
+    gmail_blocked: bool,
+) -> None:
+    resolved_docx = docx_path.expanduser().resolve()
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Information)
+    box.setWindowTitle("Requerimento de Honorários")
+    box.setText("Honorários DOCX ready locally.")
+    details = [f"DOCX: {resolved_docx}"]
+    if gmail_blocked:
+        details.append("Gmail draft was not created because the PDF is still unavailable.")
+    if pdf_error:
+        details.append(f"PDF export status: {pdf_error}")
+    box.setInformativeText("\n\n".join(details))
+    open_docx_btn = box.addButton("Open DOCX", QMessageBox.ButtonRole.ActionRole)
+    open_folder_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+    close_btn = box.addButton("Close", QMessageBox.ButtonRole.AcceptRole)
+    box.setDefaultButton(close_btn)
+    box.exec()
+    clicked = box.clickedButton()
+    if clicked is open_docx_btn:
+        _open_path_in_system(parent, resolved_docx)
+    elif clicked is open_folder_btn:
+        _open_folder_for_path(parent, resolved_docx)
 
 
 def _profile_missing_fields_message(profile: UserProfile) -> str:
@@ -1742,6 +1465,7 @@ class QtHonorariosExportDialog(QDialog):
         self.pdf_export_elapsed_ms = 0
         self.pdf_unavailable_explained = False
         self.auto_renamed = False
+        self._pdf_export_retry_count = 0
 
     def _set_pdf_export_busy(self, busy: bool, *, status_text: str = "") -> None:
         self._pdf_export_in_flight = busy
@@ -1783,13 +1507,20 @@ class QtHonorariosExportDialog(QDialog):
         open_folder_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
         continue_btn = box.addButton("Continue", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(continue_btn)
+        action = "continue"
+
+        def _capture_clicked(button) -> None:
+            nonlocal action
+            if button is open_docx_btn:
+                action = "open_docx"
+            elif button is open_folder_btn:
+                action = "open_folder"
+            else:
+                action = "continue"
+
+        box.buttonClicked.connect(_capture_clicked)
         box.exec()
-        clicked = box.clickedButton()
-        if clicked is open_docx_btn:
-            return "open_docx"
-        if clicked is open_folder_btn:
-            return "open_folder"
-        return "continue"
+        return action
 
     def _show_pdf_export_failure_box(self) -> str:
         box = QMessageBox(self)
@@ -1810,17 +1541,24 @@ class QtHonorariosExportDialog(QDialog):
         select_pdf_btn = box.addButton("Select existing PDF...", QMessageBox.ButtonRole.ActionRole)
         continue_btn = box.addButton("Continue local-only", QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(continue_btn)
+        action = "continue_local"
+
+        def _capture_clicked(button) -> None:
+            nonlocal action
+            if button is open_docx_btn:
+                action = "open_docx"
+            elif button is open_folder_btn:
+                action = "open_folder"
+            elif button is retry_btn:
+                action = "retry_pdf"
+            elif button is select_pdf_btn:
+                action = "select_existing_pdf"
+            else:
+                action = "continue_local"
+
+        box.buttonClicked.connect(_capture_clicked)
         box.exec()
-        clicked = box.clickedButton()
-        if clicked is open_docx_btn:
-            return "open_docx"
-        if clicked is open_folder_btn:
-            return "open_folder"
-        if clicked is retry_btn:
-            return "retry_pdf"
-        if clicked is select_pdf_btn:
-            return "select_existing_pdf"
-        return "continue_local"
+        return action
 
     def _validate_selected_honorarios_pdf(self, candidate: Path) -> str | None:
         resolved = candidate.expanduser().resolve()
@@ -1861,7 +1599,7 @@ class QtHonorariosExportDialog(QDialog):
         self.pdf_export_error = ""
         return True
 
-    def _retry_pdf_export(self) -> bool:
+    def _retry_pdf_export(self, *, automatic: bool = False) -> bool:
         if self.docx_saved_path is None:
             QMessageBox.critical(
                 self,
@@ -1878,9 +1616,17 @@ class QtHonorariosExportDialog(QDialog):
         self.pdf_export_error = ""
         self._set_pdf_export_busy(
             True,
-            status_text="DOCX saved. Retrying the sibling PDF export in the background...",
+            status_text=(
+                "Word PDF export timed out once. Retrying once with a longer timeout..."
+                if automatic
+                else "DOCX saved. Retrying the sibling PDF export in the background..."
+            ),
         )
-        self._begin_pdf_export(docx_path=self.docx_saved_path, pdf_path=target_pdf)
+        self._begin_pdf_export(
+            docx_path=self.docx_saved_path,
+            pdf_path=target_pdf,
+            timeout_seconds=RETRY_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS,
+        )
         return True
 
     def _run_export_result_flow(self) -> None:
@@ -1907,13 +1653,20 @@ class QtHonorariosExportDialog(QDialog):
                 if self._select_existing_honorarios_pdf():
                     continue
                 continue
-            self.accept()
+            try:
+                self.accept()
+            except RuntimeError:
+                return
             return
 
-    def _begin_pdf_export(self, *, docx_path: Path, pdf_path: Path) -> None:
+    def _begin_pdf_export(self, *, docx_path: Path, pdf_path: Path, timeout_seconds: float) -> None:
         try:
             thread = QThread(self)
-            worker = HonorariosPdfExportWorker(docx_path=docx_path, pdf_path=pdf_path)
+            worker = HonorariosPdfExportWorker(
+                docx_path=docx_path,
+                pdf_path=pdf_path,
+                timeout_seconds=timeout_seconds,
+            )
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
             worker.finished.connect(self._on_pdf_export_finished)
@@ -1949,6 +1702,15 @@ class QtHonorariosExportDialog(QDialog):
         self.pdf_failure_details = ""
         self.pdf_export_error = ""
         self.pdf_export_elapsed_ms = int(result.automation.elapsed_ms)
+        if (
+            not result.automation.ok
+            and str(result.automation.failure_code or "").strip() == "timeout"
+            and int(getattr(self, "_pdf_export_retry_count", 0)) < 1
+        ):
+            self._pdf_export_retry_count = int(getattr(self, "_pdf_export_retry_count", 0)) + 1
+            self._set_pdf_export_busy(False)
+            QTimer.singleShot(0, lambda: self._retry_pdf_export(automatic=True))
+            return
         if not result.automation.ok:
             self.saved_pdf_path = None
             self.pdf_saved_path = None
@@ -2298,7 +2060,11 @@ class QtHonorariosExportDialog(QDialog):
             True,
             status_text="DOCX saved. Generating the sibling PDF in the background...",
         )
-        self._begin_pdf_export(docx_path=saved, pdf_path=pdf_path)
+        self._begin_pdf_export(
+            docx_path=saved,
+            pdf_path=pdf_path,
+            timeout_seconds=INITIAL_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS,
+        )
 
     def reject(self) -> None:  # type: ignore[override]
         if self._pdf_export_in_flight:
@@ -2472,7 +2238,10 @@ class QtArabicDocxReviewDialog(QDialog):
         result = align_right_and_save_docx_in_word(self._docx_path)
         if result.ok:
             self._set_status("DOCX aligned right and saved in Word. Continuing now.")
-            self.accept()
+            try:
+                self.accept()
+            except RuntimeError:
+                return
             return
         self._set_status(
             f"{result.message}\n\nYou can keep editing manually in Word and save, or use Continue now."
@@ -2930,6 +2699,7 @@ class QtSaveToJobLogDialog(QDialog):
             shortcut.activated.connect(self._trigger_save_shortcut)
         self.honorarios_btn.clicked.connect(self._open_honorarios_dialog)
         self.job_type_combo.currentTextChanged.connect(self._refresh_photo_controls)
+        self.job_type_combo.currentTextChanged.connect(self._refresh_pdf_autofill_control)
         self.job_type_combo.currentTextChanged.connect(self._refresh_interpretation_mode_state)
         self.photo_translation_check.toggled.connect(self._refresh_photo_controls)
         self.case_entity_combo.currentTextChanged.connect(self._on_case_fields_changed)
@@ -3148,6 +2918,13 @@ class QtSaveToJobLogDialog(QDialog):
         self.autofill_photo_btn.setEnabled(enabled)
         self.photo_hint.setText("Enable photo autofill for this row.")
 
+    def _refresh_pdf_autofill_control(self) -> None:
+        is_interpretation = _is_interpretation_job_type(self.job_type_combo.currentText().strip())
+        self.autofill_header_btn.setText(
+            "Autofill from notification PDF..." if is_interpretation else "Autofill from PDF header"
+        )
+        self.autofill_header_btn.setEnabled(self._can_autofill_from_pdf_header())
+
     def _refresh_interpretation_mode_state(self) -> None:
         is_interpretation = _is_interpretation_job_type(self.job_type_combo.currentText().strip())
         self.interpretation_group.setVisible(is_interpretation)
@@ -3178,6 +2955,7 @@ class QtSaveToJobLogDialog(QDialog):
             self.service_date_edit.setText(self.translation_date_edit.text().strip())
             self._refresh_interpretation_transport_sentence_state()
         self._apply_interpretation_distance_defaults(prompt_if_missing=False)
+        self._refresh_pdf_autofill_control()
 
     def _interpretation_transport_sentence_enabled(self) -> bool:
         checkbox = getattr(self, "include_transport_sentence_check", None)
@@ -3216,7 +2994,7 @@ class QtSaveToJobLogDialog(QDialog):
 
     def _can_autofill_from_pdf_header(self) -> bool:
         if self._seed.pdf_path is None:
-            return True
+            return _is_interpretation_job_type(self.job_type_combo.currentText().strip())
         return self._seed.pdf_path.expanduser().resolve().exists()
 
     def _current_word_count_value(self) -> int:
@@ -3453,6 +3231,13 @@ class QtSaveToJobLogDialog(QDialog):
                 )
             saved_pdf_path = getattr(dialog, "saved_pdf_path", None)
             pdf_unavailable_explained = bool(getattr(dialog, "pdf_unavailable_explained", False))
+            if saved_pdf_path is None and pdf_unavailable_explained:
+                show_local_only_honorarios_ready_box(
+                    self,
+                    docx_path=dialog.saved_path,
+                    pdf_error=str(getattr(dialog, "pdf_export_error", "") or "").strip(),
+                    gmail_blocked=True,
+                )
             if final_draft.kind == HonorariosKind.TRANSLATION:
                 if saved_pdf_path is not None or not pdf_unavailable_explained:
                     self._offer_gmail_draft_for_honorarios(dialog.saved_path, saved_pdf_path, profile)
@@ -3470,6 +3255,8 @@ class QtSaveToJobLogDialog(QDialog):
             self.case_city_combo.setCurrentText(suggestion.case_city)
         if suggestion.case_number:
             self.case_number_edit.setText(suggestion.case_number)
+        if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self.translation_date_edit.setText(str(suggestion.service_date or "").strip())
         self._apply_imported_service_fields(
             service_entity=suggestion.service_entity,
             service_city=suggestion.service_city,
@@ -3485,19 +3272,74 @@ class QtSaveToJobLogDialog(QDialog):
             self.court_email_combo.setCurrentText(ranked[0])
         self._refresh_service_section_state()
 
-    def _autofill_from_pdf_header(self) -> None:
+    def _resolve_autofill_pdf_path(self, *, title: str, allow_manual_picker: bool) -> Path | None:
         pdf_path = self._seed.pdf_path.expanduser().resolve() if self._seed.pdf_path is not None else None
-        if pdf_path is None or not pdf_path.exists():
-            selected, _ = QFileDialog.getOpenFileName(
-                self,
-                "Select PDF for header autofill",
-                str(_default_downloads_dir()),
-                "PDF Files (*.pdf);;All Files (*.*)",
+        if pdf_path is not None and pdf_path.exists():
+            return pdf_path
+        if not allow_manual_picker:
+            return None
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            title,
+            str(_default_downloads_dir()),
+            "PDF Files (*.pdf);;All Files (*.*)",
+        )
+        if not selected:
+            return None
+        pdf_path = Path(selected).expanduser().resolve()
+        self._seed.pdf_path = pdf_path
+        return pdf_path
+
+    def _autofill_from_interpretation_notice_pdf(self, pdf_path: Path) -> None:
+        result = extract_interpretation_notification_metadata_from_pdf_with_diagnostics(
+            pdf_path,
+            vocab_cities=list(self._settings["vocab_cities"]),
+            config=self._metadata_config,
+        )
+        suggestion = result.suggestion
+        diagnostics = result.diagnostics
+        if not any(
+            (
+                suggestion.case_entity,
+                suggestion.case_city,
+                suggestion.case_number,
+                suggestion.court_email,
+                suggestion.service_entity,
+                suggestion.service_city,
+                suggestion.service_date,
             )
-            if not selected:
-                return
-            pdf_path = Path(selected).expanduser().resolve()
-            self._seed.pdf_path = pdf_path
+        ):
+            self._set_service_section_expanded(True)
+            self.service_group.set_attention_state(True)
+            QMessageBox.warning(
+                self,
+                "Autofill",
+                "No notification metadata could be extracted automatically.\n\n"
+                f"{build_interpretation_notice_diagnostics_text(diagnostics)}",
+            )
+            return
+        self._apply_header_suggestion(suggestion)
+        if not str(suggestion.service_date or "").strip():
+            self._set_service_section_expanded(True)
+            self.service_group.set_attention_state(True)
+            QMessageBox.information(
+                self,
+                "Autofill",
+                "Notice data was recovered, but the service date still needs review.\n\n"
+                f"{build_interpretation_notice_diagnostics_text(diagnostics)}",
+            )
+
+    def _autofill_from_pdf_header(self) -> None:
+        is_interpretation = _is_interpretation_job_type(self.job_type_combo.currentText().strip())
+        pdf_path = self._resolve_autofill_pdf_path(
+            title="Select interpretation notification PDF" if is_interpretation else "Select PDF for header autofill",
+            allow_manual_picker=is_interpretation,
+        )
+        if pdf_path is None:
+            return
+        if is_interpretation:
+            self._autofill_from_interpretation_notice_pdf(pdf_path)
+            return
         suggestion = extract_pdf_header_metadata_priority_pages(
             pdf_path,
             vocab_cities=list(self._settings["vocab_cities"]),
@@ -3673,6 +3515,8 @@ class QtSaveToJobLogDialog(QDialog):
                 self.translation_date_edit.setText(suggestion.service_date)
             else:
                 self.service_date_edit.setText(suggestion.service_date)
+        elif _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self.translation_date_edit.setText("")
         if suggestion.case_number and not self.case_number_edit.text().strip():
             self.case_number_edit.setText(suggestion.case_number)
         if suggestion.case_entity:
@@ -3819,16 +3663,10 @@ class QtSaveToJobLogDialog(QDialog):
             service_equals_case_by_default=bool(self.service_same_check.isChecked()),
         )
         translated_docx_path = self._resolved_seed_docx_path()
-        self._saved_result = JobLogSavedResult(
+        self._saved_result = build_joblog_saved_result(
             row_id=int(row_id),
-            word_count=int(payload["word_count"]),
-            case_number=str(payload["case_number"] or ""),
-            case_entity=str(payload["case_entity"] or ""),
-            case_city=str(payload["case_city"] or ""),
-            court_email=str(payload["court_email"] or ""),
-            run_id=str(payload["run_id"] or ""),
+            payload=payload,
             translated_docx_path=translated_docx_path,
-            payload=dict(payload),
         )
         self._saved = True
         if self._on_saved is not None:
@@ -4257,34 +4095,29 @@ class QtJobLogWindow(QDialog):
         if not selected:
             return
         pdf_path = Path(selected).expanduser().resolve()
-        suggestion = extract_interpretation_notification_metadata_from_pdf(
-            pdf_path,
-            vocab_cities=list(self._settings["vocab_cities"]),
-            config=metadata_config_from_settings(self._settings),
+        response = shared_service_autofill_interpretation_from_notification_pdf(
+            pdf_path=pdf_path,
+            settings_path=settings_path(),
         )
-        if not any(
-            (
-                suggestion.case_entity,
-                suggestion.case_city,
-                suggestion.case_number,
-                suggestion.court_email,
-                suggestion.service_entity,
-                suggestion.service_city,
-                suggestion.service_date,
-            )
-        ):
+        diagnostics = dict(response.get("diagnostics", {}) if isinstance(response.get("diagnostics"), dict) else {})
+        metadata_extraction = diagnostics.get("metadata_extraction", {})
+        extracted_fields = []
+        if isinstance(metadata_extraction, dict):
+            extracted_fields = list(metadata_extraction.get("extracted_fields", []) or [])
+        if not extracted_fields:
             QMessageBox.information(
                 self,
                 "Interpretation notification",
-                "No notification metadata could be extracted automatically. Review the entry manually.",
+                "No notification metadata could be extracted automatically. Review the entry manually.\n\n"
+                f"{diagnostics.get('metadata_extraction_text', '')}",
             )
         dialog = QtSaveToJobLogDialog(
             parent=self,
             db_path=self._db_path,
-            seed=build_interpretation_seed_from_notification_pdf(
-                pdf_path=pdf_path,
-                suggestion=suggestion,
-                vocab_court_emails=list(self._settings["vocab_court_emails"]),
+            seed=shared_hydrate_joblog_seed(
+                response.get("normalized_payload", {})
+                if isinstance(response.get("normalized_payload"), dict)
+                else {}
             ),
             on_saved=lambda: self.refresh_rows(selected_row_index=0, force=True),
             allow_honorarios_export=True,
@@ -4307,19 +4140,16 @@ class QtJobLogWindow(QDialog):
         if not selected:
             return
         image_path = Path(selected).expanduser().resolve()
-        suggestion = extract_interpretation_photo_metadata_from_image(
-            image_path,
-            vocab_cities=list(self._settings["vocab_cities"]),
-            config=metadata_config_from_settings(self._settings),
+        response = shared_service_autofill_interpretation_from_photo(
+            image_path=image_path,
+            settings_path=settings_path(),
         )
-        if not any(
-            (
-                suggestion.case_entity,
-                suggestion.case_city,
-                suggestion.case_number,
-                suggestion.service_date,
-            )
-        ):
+        diagnostics = dict(response.get("diagnostics", {}) if isinstance(response.get("diagnostics"), dict) else {})
+        metadata_extraction = diagnostics.get("metadata_extraction", {})
+        extracted_fields = []
+        if isinstance(metadata_extraction, dict):
+            extracted_fields = list(metadata_extraction.get("extracted_fields", []) or [])
+        if not extracted_fields:
             QMessageBox.information(
                 self,
                 "Interpretation photo",
@@ -4328,9 +4158,10 @@ class QtJobLogWindow(QDialog):
         dialog = QtSaveToJobLogDialog(
             parent=self,
             db_path=self._db_path,
-            seed=build_interpretation_seed_from_photo_screenshot(
-                suggestion=suggestion,
-                vocab_court_emails=list(self._settings["vocab_court_emails"]),
+            seed=shared_hydrate_joblog_seed(
+                response.get("normalized_payload", {})
+                if isinstance(response.get("normalized_payload"), dict)
+                else {}
             ),
             on_saved=lambda: self.refresh_rows(selected_row_index=0, force=True),
             allow_honorarios_export=True,
@@ -4762,6 +4593,13 @@ class QtJobLogWindow(QDialog):
             final_draft = generated_draft or draft
             saved_pdf_path = getattr(dialog, "saved_pdf_path", None)
             pdf_unavailable_explained = bool(getattr(dialog, "pdf_unavailable_explained", False))
+            if saved_pdf_path is None and pdf_unavailable_explained:
+                show_local_only_honorarios_ready_box(
+                    self,
+                    docx_path=dialog.saved_path,
+                    pdf_error=str(getattr(dialog, "pdf_export_error", "") or "").strip(),
+                    gmail_blocked=True,
+                )
             if final_draft.kind == HonorariosKind.TRANSLATION:
                 if saved_pdf_path is not None or not pdf_unavailable_explained:
                     self._offer_gmail_draft_for_honorarios(
@@ -8643,20 +8481,34 @@ class QtSettingsDialog(QDialog):
             return
         try:
             openai_stored = bool(get_openai_key())
-            ocr_stored = bool(get_ocr_key())
         except RuntimeError:
             openai_stored = False
-            ocr_stored = False
         resolved_model = model_edit.text().strip() if model_edit is not None else ""
         resolved_env = env_edit.text().strip() if env_edit is not None else ""
         resolved_base = base_edit.text().strip() if base_edit is not None else ""
         resolved_model = resolved_model or model_default
         resolved_env = resolved_env or env_default
         resolved_base = resolved_base or (base_default or "provider default")
+        ocr_config = OcrEngineConfig(
+            api_provider=provider,
+            api_base_url=resolved_base if resolved_base != "provider default" else None,
+            api_model=resolved_model,
+            api_key_env_name=resolved_env,
+        )
+        env_candidates = candidate_ocr_api_env_names(ocr_config)
+        resolved_source = resolve_ocr_api_key_source(ocr_config)
+        if resolved_source is None:
+            effective_credentials = "missing"
+        elif resolved_source[0] == "stored":
+            effective_credentials = "stored OCR key"
+        else:
+            effective_credentials = f"env {resolved_source[1]}"
+        local_status = "available" if local_ocr_available() else "missing"
         summary.setText(
             f"OCR provider: {provider.value}; model: {resolved_model}; env: {resolved_env}; "
-            f"base URL: {resolved_base}; OpenAI credentials {'present' if openai_stored else 'missing'}, "
-            f"OCR credentials {'present' if ocr_stored else 'missing'}."
+            f"base URL: {resolved_base}; env candidates: {', '.join(env_candidates)}; "
+            f"effective OCR credentials: {effective_credentials}; local Tesseract {local_status}; "
+            f"OpenAI credentials {'present' if openai_stored else 'missing'}."
         )
         QtSettingsDialog._refresh_gmail_bridge_summary(self)
 
@@ -8958,34 +8810,43 @@ class QtSettingsDialog(QDialog):
         QMessageBox.information(self, "Key Test", f"OpenAI test passed ({latency_ms} ms).")
 
     def _test_ocr_key(self) -> None:
-        try:
-            key = get_ocr_key()
-        except RuntimeError as exc:
-            QMessageBox.critical(self, "Settings", str(exc))
-            return
-        if not key:
-            QMessageBox.warning(self, "Key Test", "OCR key is not stored.")
-            return
         provider = self._current_ocr_provider()
         base_url = self.ocr_base_url_edit.text().strip() or default_ocr_api_base_url(provider)
         model = self.ocr_model_edit.text().strip() or default_ocr_api_model(provider)
         env_name = self.ocr_env_edit.text().strip() or default_ocr_api_env_name(provider)
+        config = OcrEngineConfig(
+            api_provider=provider,
+            api_base_url=base_url or None,
+            api_model=model,
+            api_key_env_name=env_name,
+        )
+        source = resolve_ocr_api_key_source(config)
+        key = resolve_ocr_api_key(config)
+        if source is None or not key:
+            checked_envs = ", ".join(candidate_ocr_api_env_names(config))
+            QMessageBox.warning(
+                self,
+                "Key Test",
+                "OCR credentials are unavailable. "
+                f"Checked the stored OCR key and env var(s): {checked_envs}.",
+            )
+            return
         started = time.perf_counter()
         try:
             test_ocr_provider_connection(
-                OcrEngineConfig(
-                    api_provider=provider,
-                    api_base_url=base_url or None,
-                    api_model=model,
-                    api_key_env_name=env_name,
-                ),
+                config,
                 api_key=key,
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Key Test", f"OCR key test failed: {type(exc).__name__}")
             return
         latency_ms = int((time.perf_counter() - started) * 1000)
-        QMessageBox.information(self, "Key Test", f"OCR test passed for {provider.value} ({latency_ms} ms).")
+        source_text = "stored OCR key" if source[0] == "stored" else f"env {source[1]}"
+        QMessageBox.information(
+            self,
+            "Key Test",
+            f"OCR test passed for {provider.value} via {source_text} ({latency_ms} ms).",
+        )
 
     def _restore_defaults(self) -> None:
         self.default_lang_combo.setCurrentText("EN")

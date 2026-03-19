@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from legalpdf_translate.build_identity import current_branch, current_head_sha
 
 
@@ -91,6 +93,7 @@ def test_launch_qt_build_dry_run_emits_identity_packet(tmp_path: Path) -> None:
     assert "launch_command" in payload
     assert payload["allow_noncanonical"] is False
     assert payload["noncanonical_reasons"] == []
+    assert payload["runtime_preflight"]["status"] == "skipped"
 
 
 def test_launch_qt_build_rejects_invalid_worktree() -> None:
@@ -296,3 +299,68 @@ def test_to_windows_path_accepts_plain_string_paths() -> None:
     from tooling.launch_qt_build import _to_windows_path
 
     assert _to_windows_path(r"C:\repo\src") == r"C:\repo\src"
+
+
+def test_run_runtime_preflight_reports_success(monkeypatch, tmp_path: Path) -> None:
+    import tooling.launch_qt_build as launch_module
+
+    scripts_dir = tmp_path / "Scripts"
+    scripts_dir.mkdir()
+    pythonw_exe = scripts_dir / "pythonw.exe"
+    python_exe = scripts_dir / "python.exe"
+    pythonw_exe.write_text("", encoding="utf-8")
+    python_exe.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(
+        launch_module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps({"failed_imports": []}) + "\n",
+            stderr="",
+        ),
+    )
+
+    result = launch_module._run_runtime_preflight(pythonw_exe, REPO_ROOT)
+
+    assert result["status"] == "ok"
+    assert result["probe_python_executable"] == str(python_exe)
+    assert "openai" in result["checked_modules"]
+
+
+def test_run_runtime_preflight_raises_on_missing_imports(monkeypatch, tmp_path: Path) -> None:
+    import tooling.launch_qt_build as launch_module
+
+    scripts_dir = tmp_path / "Scripts"
+    scripts_dir.mkdir()
+    python_exe = scripts_dir / "python.exe"
+    python_exe.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(
+        launch_module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=1,
+            stdout=json.dumps(
+                {
+                    "failed_imports": [
+                        {
+                            "module": "openai",
+                            "error": "ModuleNotFoundError: No module named 'typing_extensions'",
+                        }
+                    ]
+                }
+            )
+            + "\n",
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(launch_module.LaunchError) as excinfo:
+        launch_module._run_runtime_preflight(python_exe, REPO_ROOT)
+
+    message = str(excinfo.value)
+    assert "Runtime preflight failed" in message
+    assert "- openai: ModuleNotFoundError: No module named 'typing_extensions'" in message

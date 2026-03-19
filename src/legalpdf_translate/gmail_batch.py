@@ -180,6 +180,7 @@ class GmailBatchSession:
     draft_created: bool = False
     draft_failure_reason: str = ""
     final_attachment_basenames: tuple[str, ...] = ()
+    pdf_export: dict[str, Any] = field(default_factory=dict)
     _temp_dir: tempfile.TemporaryDirectory[str] | None = field(
         default=None,
         repr=False,
@@ -217,6 +218,8 @@ class GmailInterpretationSession:
     draft_created: bool = False
     draft_failure_reason: str = ""
     final_attachment_basenames: tuple[str, ...] = ()
+    metadata_extraction: dict[str, Any] = field(default_factory=dict)
+    pdf_export: dict[str, Any] = field(default_factory=dict)
     _temp_dir: tempfile.TemporaryDirectory[str] | None = field(
         default=None,
         repr=False,
@@ -333,6 +336,7 @@ def build_gmail_batch_session_payload(session: GmailBatchSession) -> dict[str, A
             ],
         },
         "runs": run_items,
+        "pdf_export": dict(session.pdf_export),
         "finalization": finalization,
     }
 
@@ -391,6 +395,8 @@ def build_gmail_interpretation_session_payload(session: GmailInterpretationSessi
             "filename": session.downloaded_attachment.candidate.filename,
             "saved_path": str(session.downloaded_attachment.saved_path.expanduser().resolve()),
         },
+        "metadata_extraction": dict(session.metadata_extraction),
+        "pdf_export": dict(session.pdf_export),
         "finalization": finalization,
     }
 

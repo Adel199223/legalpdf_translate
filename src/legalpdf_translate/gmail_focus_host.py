@@ -16,6 +16,7 @@ from typing import Any, BinaryIO
 
 from legalpdf_translate.build_identity import normalize_path_identity, try_load_canonical_build_config
 from legalpdf_translate.gmail_focus import focus_bridge_owner, validate_bridge_owner
+from legalpdf_translate.shadow_runtime import SHADOW_DEFAULT_PORT
 from legalpdf_translate.user_settings import app_data_dir, load_gui_settings
 
 
@@ -28,8 +29,9 @@ _EDGE_NATIVE_HOST_EXE = "LegalPDFGmailFocusHost.exe"
 _AUTO_LAUNCH_WAIT_SECONDS = 15.0
 _AUTO_LAUNCH_POLL_INTERVAL_SECONDS = 0.25
 _AUTO_LAUNCH_LABELS = ("gmail-intake", "auto-launch")
-_AUTO_LAUNCHABLE_BRIDGE_REASONS = {"runtime_metadata_missing", "bridge_not_running"}
+_AUTO_LAUNCHABLE_BRIDGE_REASONS = {"runtime_metadata_missing", "bridge_not_running", "bridge_owner_stale"}
 _WSL_MNT_RE = re.compile(r"^/mnt/([A-Za-z])/(.*)$")
+_BROWSER_GMAIL_WORKSPACE_ID = "gmail-intake"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +59,9 @@ class AutoLaunchTarget:
     python_executable: str | None
     launcher_script: str | None
     reason: str
+    ui_owner: str = "qt_app"
+    browser_url: str | None = None
+    launch_args: tuple[str, ...] = ()
 
 
 def _is_windows() -> bool:
@@ -122,7 +127,11 @@ def _resolve_repo_worktree_for_auto_launch(*, runtime_path: Path | None = None) 
     return None
 
 
-def _resolve_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaunchTarget:
+def _browser_gmail_workspace_url(*, port: int = SHADOW_DEFAULT_PORT) -> str:
+    return f"http://127.0.0.1:{int(port)}/?mode=live&workspace={_BROWSER_GMAIL_WORKSPACE_ID}#new-job"
+
+
+def _resolve_qt_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaunchTarget:
     worktree = _resolve_repo_worktree_for_auto_launch(runtime_path=runtime_path)
     if worktree is None:
         return AutoLaunchTarget(
@@ -131,6 +140,7 @@ def _resolve_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaun
             python_executable=None,
             launcher_script=None,
             reason="launch_target_missing",
+            ui_owner="qt_app",
         )
 
     launcher_script = (worktree / "tooling" / "launch_qt_build.py").expanduser().resolve()
@@ -141,6 +151,7 @@ def _resolve_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaun
             python_executable=None,
             launcher_script=None,
             reason="launch_helper_missing",
+            ui_owner="qt_app",
         )
 
     python_executable = _python_executable_for_worktree(worktree)
@@ -151,6 +162,7 @@ def _resolve_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaun
             python_executable=None,
             launcher_script=str(launcher_script),
             reason="launch_python_missing",
+            ui_owner="qt_app",
         )
 
     return AutoLaunchTarget(
@@ -159,33 +171,132 @@ def _resolve_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaun
         python_executable=str(python_executable),
         launcher_script=str(launcher_script),
         reason="launch_target_ready",
+        ui_owner="qt_app",
     )
 
 
-def _launch_repo_worktree(target: AutoLaunchTarget) -> str:
-    if not target.ready or not target.worktree_path or not target.python_executable or not target.launcher_script:
-        return target.reason or "launch_target_missing"
-    command = [
-        target.python_executable,
-        target.launcher_script,
-        "--worktree",
-        target.worktree_path,
-        "--allow-noncanonical",
-        "--labels",
-        ",".join(_AUTO_LAUNCH_LABELS),
-    ]
-    try:
-        subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=target.worktree_path,
-            timeout=20,
+def _resolve_browser_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaunchTarget:
+    worktree = _resolve_repo_worktree_for_auto_launch(runtime_path=runtime_path)
+    if worktree is None:
+        return AutoLaunchTarget(
+            ready=False,
+            worktree_path=None,
+            python_executable=None,
+            launcher_script=None,
+            reason="launch_target_missing",
+            ui_owner="browser_app",
+            browser_url=_browser_gmail_workspace_url(),
         )
-    except Exception:
-        return "launch_command_failed"
-    return "launch_started"
+
+    python_executable = _python_executable_for_worktree(worktree)
+    if python_executable is None:
+        return AutoLaunchTarget(
+            ready=False,
+            worktree_path=str(worktree),
+            python_executable=None,
+            launcher_script=None,
+            reason="launch_python_missing",
+            ui_owner="browser_app",
+            browser_url=_browser_gmail_workspace_url(),
+        )
+
+    return AutoLaunchTarget(
+        ready=True,
+        worktree_path=str(worktree),
+        python_executable=str(python_executable),
+        launcher_script=None,
+        reason="launch_target_ready",
+        ui_owner="browser_app",
+        browser_url=_browser_gmail_workspace_url(),
+        launch_args=(
+            "-m",
+            "legalpdf_translate.shadow_web.server",
+            "--port",
+            str(SHADOW_DEFAULT_PORT),
+        ),
+    )
+
+
+def _resolve_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaunchTarget:
+    browser_target = _resolve_browser_auto_launch_target(runtime_path=runtime_path)
+    if browser_target.ready:
+        return browser_target
+    qt_target = _resolve_qt_auto_launch_target(runtime_path=runtime_path)
+    if qt_target.ready:
+        return qt_target
+    return browser_target
+
+
+def _apply_validation_context(
+    response: dict[str, object],
+    *,
+    validation: Any,
+    fallback_browser_url: str | None = None,
+) -> None:
+    owner_kind = str(getattr(validation, "owner_kind", "") or "").strip() or "none"
+    if owner_kind == "none" and bool(getattr(validation, "ok", False)):
+        owner_kind = "qt_app"
+    response["ui_owner"] = owner_kind
+    if owner_kind == "browser_app":
+        response["browser_url"] = str(
+            getattr(validation, "browser_url", "") or fallback_browser_url or ""
+        ).strip()
+        response["workspace_id"] = str(
+            getattr(validation, "workspace_id", "") or _BROWSER_GMAIL_WORKSPACE_ID
+        ).strip() or _BROWSER_GMAIL_WORKSPACE_ID
+        response["runtime_mode"] = str(getattr(validation, "runtime_mode", "") or "live").strip() or "live"
+    elif fallback_browser_url:
+        response["browser_url"] = fallback_browser_url
+
+
+def _launch_repo_worktree(target: AutoLaunchTarget) -> str:
+    if not target.ready or not target.worktree_path or not target.python_executable:
+        return target.reason or "launch_target_missing"
+    if target.launch_args:
+        command = [
+            target.python_executable,
+            *target.launch_args,
+        ]
+        try:
+            creationflags = 0
+            creationflags |= int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+            creationflags |= int(getattr(subprocess, "DETACHED_PROCESS", 0))
+            creationflags |= int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            subprocess.Popen(
+                command,
+                cwd=target.worktree_path,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+        except Exception:
+            return "launch_command_failed"
+        return "launch_started"
+    else:
+        if not target.launcher_script:
+            return target.reason or "launch_target_missing"
+        command = [
+            target.python_executable,
+            target.launcher_script,
+            "--worktree",
+            target.worktree_path,
+            "--allow-noncanonical",
+            "--labels",
+            ",".join(_AUTO_LAUNCH_LABELS),
+        ]
+        try:
+            subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                cwd=target.worktree_path,
+                timeout=20,
+            )
+        except Exception:
+            return "launch_command_failed"
+        return "launch_started"
 
 
 def _wait_for_bridge_owner_after_launch(*, bridge_port: int, base_dir: Path) -> str:
@@ -515,9 +626,12 @@ def prepare_gmail_intake(
         "launched": False,
         "autoLaunchReady": auto_launch_target.ready,
         "launchTargetReason": auto_launch_target.reason,
+        "ui_owner": "none",
     }
     if auto_launch_target.worktree_path:
         response["launchTarget"] = auto_launch_target.worktree_path
+    if auto_launch_target.ui_owner == "browser_app" and auto_launch_target.browser_url:
+        response["browser_url"] = auto_launch_target.browser_url
     bridge_port = settings.get("bridgePort")
     if isinstance(bridge_port, int):
         response["bridgePort"] = bridge_port
@@ -537,6 +651,11 @@ def prepare_gmail_intake(
         base_dir=base_dir,
     )
     response["reason"] = validation.reason
+    _apply_validation_context(
+        response,
+        validation=validation,
+        fallback_browser_url=auto_launch_target.browser_url,
+    )
 
     if not validation.ok and request_focus and validation.reason in _AUTO_LAUNCHABLE_BRIDGE_REASONS:
         launch_reason = _launch_repo_worktree(auto_launch_target)
@@ -556,8 +675,19 @@ def prepare_gmail_intake(
             base_dir=base_dir,
         )
         response["reason"] = validation.reason
+        _apply_validation_context(
+            response,
+            validation=validation,
+            fallback_browser_url=auto_launch_target.browser_url,
+        )
 
     if not validation.ok:
+        return response
+
+    if str(getattr(validation, "owner_kind", "") or "").strip() == "browser_app":
+        response["ok"] = True
+        if include_token:
+            response["bridgeToken"] = str(settings["bridgeToken"])
         return response
 
     if request_focus:

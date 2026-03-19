@@ -21,6 +21,7 @@ def test_build_open_powershell_command_uses_exact_resolved_path(tmp_path: Path, 
     command = word_automation._build_powershell_command(docx_path, align_right_and_save=False)
 
     assert command is not None
+    assert "-Sta" in command
     script = command[-1]
     assert str(docx_path.resolve()).replace("'", "''") in script
     assert "Documents.Open($target)" in script
@@ -41,6 +42,7 @@ def test_build_align_save_powershell_command_sets_alignment_and_save(tmp_path: P
     command = word_automation._build_powershell_command(docx_path, align_right_and_save=True)
 
     assert command is not None
+    assert "-Sta" in command
     script = command[-1]
     assert "$doc.Range().ParagraphFormat.Alignment = 2" in script
     assert "$doc.Save()" in script
@@ -61,6 +63,7 @@ def test_build_pdf_export_powershell_command_uses_docx_and_pdf_paths(tmp_path: P
     command = word_automation._build_pdf_export_powershell_command(docx_path, pdf_path)
 
     assert command is not None
+    assert "-Sta" in command
     script = command[-1]
     assert str(docx_path.resolve()).replace("'", "''") in script
     assert str(pdf_path.resolve()).replace("'", "''") in script
@@ -80,6 +83,7 @@ def test_build_pdf_preflight_powershell_command_starts_and_quits_word(monkeypatc
     command = word_automation._build_pdf_preflight_powershell_command()
 
     assert command is not None
+    assert "-Sta" in command
     script = command[-1]
     assert "New-Object -ComObject Word.Application" in script
     assert "$word.Quit()" in script

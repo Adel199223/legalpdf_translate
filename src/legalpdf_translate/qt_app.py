@@ -8,9 +8,9 @@ import sys
 
 def run(argv: list[str] | None = None) -> int:
     try:
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import QTimer, Qt
         from PySide6.QtGui import QFont, QIcon
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication, QMessageBox
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(
             "PySide6 is not installed. Install dependencies with `pip install -e .`."
@@ -20,6 +20,7 @@ def run(argv: list[str] | None = None) -> int:
     from legalpdf_translate.qt_gui.styles import apply_app_appearance
     from legalpdf_translate.qt_gui.window_controller import WorkspaceWindowController
     from legalpdf_translate.resources_loader import resource_path
+    from legalpdf_translate.runtime_health import degraded_runtime_dialog_text
     from legalpdf_translate.user_settings import load_gui_settings
 
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
@@ -44,6 +45,13 @@ def run(argv: list[str] | None = None) -> int:
         window_icon=app_icon,
     )
     controller.create_workspace(show=True, focus=False)
+    degraded_text = degraded_runtime_dialog_text()
+    if degraded_text:
+        def _show_degraded_runtime_warning() -> None:
+            anchor = controller.last_active_window()
+            QMessageBox.warning(anchor, "Degraded runtime session", degraded_text)
+
+        QTimer.singleShot(0, _show_degraded_runtime_warning)
     return app.exec()
 
 

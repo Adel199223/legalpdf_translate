@@ -16,26 +16,35 @@ class CommandResult {
 }
 
 class _ToolCheck {
-  _ToolCheck({required this.available, required this.version});
+  _ToolCheck({
+    required this.available,
+    required this.version,
+    this.source = '',
+  });
 
   final bool available;
   final String version;
+  final String source;
 }
 
 CommandResult _defaultRunner(List<String> command) {
   if (command.isEmpty) {
     return CommandResult(exitCode: 1, stdout: '', stderr: 'empty command');
   }
-  final ProcessResult result = Process.runSync(
-    command.first,
-    command.sublist(1),
-    runInShell: true,
-  );
-  return CommandResult(
-    exitCode: result.exitCode,
-    stdout: (result.stdout ?? '').toString(),
-    stderr: (result.stderr ?? '').toString(),
-  );
+  try {
+    final ProcessResult result = Process.runSync(
+      command.first,
+      command.sublist(1),
+      runInShell: true,
+    );
+    return CommandResult(
+      exitCode: result.exitCode,
+      stdout: (result.stdout ?? '').toString(),
+      stderr: (result.stderr ?? '').toString(),
+    );
+  } on ProcessException catch (error) {
+    return CommandResult(exitCode: 1, stdout: '', stderr: error.message);
+  }
 }
 
 String _firstLine(String text) {
@@ -65,6 +74,57 @@ _ToolCheck _checkToolVersion(String command, List<String> args, CommandRunner ru
   return _ToolCheck(available: true, version: line);
 }
 
+String _readWindowsFileVersion(String executable, CommandRunner runner) {
+  final String escaped = executable.replaceAll("'", "''");
+  final CommandResult result = runner(<String>[
+    'powershell',
+    '-NoProfile',
+    '-Command',
+    "(Get-Item '$escaped').VersionInfo.ProductVersion",
+  ]);
+  if (result.exitCode != 0) {
+    return '';
+  }
+  return _firstLine('${result.stdout}\n${result.stderr}');
+}
+
+_ToolCheck _checkPlaywrightTool(CommandRunner runner) {
+  final _ToolCheck direct = _checkToolVersion('npx', <String>['playwright', '--version'], runner);
+  if (direct.available) {
+    return _ToolCheck(
+      available: true,
+      version: direct.version,
+      source: 'npx_playwright',
+    );
+  }
+  final _ToolCheck cliWrapper = _checkToolVersion(
+    'npx',
+    <String>['--yes', '--package', '@playwright/cli', 'playwright-cli', '--version'],
+    runner,
+  );
+  if (cliWrapper.available) {
+    return _ToolCheck(
+      available: true,
+      version: cliWrapper.version,
+      source: 'playwright_cli_wrapper',
+    );
+  }
+  return _ToolCheck(available: false, version: '', source: '');
+}
+
+String _resolveExistingPath(List<String> candidates) {
+  for (final String candidate in candidates) {
+    if (candidate.trim().isEmpty) {
+      continue;
+    }
+    final File file = File(candidate);
+    if (file.existsSync()) {
+      return file.path;
+    }
+  }
+  return '';
+}
+
 Map<String, dynamic> runAutomationPreflight({
   CommandRunner? runner,
   Map<String, String>? environment,
@@ -75,11 +135,13 @@ Map<String, dynamic> runAutomationPreflight({
   final _ToolCheck node = _checkToolVersion('node', <String>['--version'], run);
   final _ToolCheck npm = _checkToolVersion('npm', <String>['--version'], run);
   final _ToolCheck npx = _checkToolVersion('npx', <String>['--version'], run);
-  final _ToolCheck playwright = _checkToolVersion('npx', <String>['playwright', '--version'], run);
+  final _ToolCheck playwright = _checkPlaywrightTool(run);
 
   String browserBinary = '';
   String browserVersion = '';
   String browserSource = 'system';
+  final bool disableWindowsFallback =
+      (env['AUTOMATION_PREFLIGHT_DISABLE_WINDOWS_BROWSER_FALLBACK'] ?? '').trim() == '1';
 
   final String envBinary = (env['AUTOMATION_BROWSER_BINARY'] ?? '').trim();
   if (envBinary.isNotEmpty) {
@@ -106,8 +168,31 @@ Map<String, dynamic> runAutomationPreflight({
       browserBinary = resolved;
       final _ToolCheck bin = _checkToolVersion(resolved, <String>['--version'], run);
       browserVersion = bin.version;
+      if (browserVersion.isEmpty && Platform.isWindows) {
+        browserVersion = _readWindowsFileVersion(resolved, run);
+      }
       browserSource = 'system';
       break;
+    }
+    if (browserBinary.isEmpty && Platform.isWindows && !disableWindowsFallback) {
+      browserBinary = _resolveExistingPath(<String>[
+        r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+        r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+        if ((env['LOCALAPPDATA'] ?? '').trim().isNotEmpty)
+          '${env['LOCALAPPDATA']!.trim()}\\Microsoft\\Edge\\Application\\msedge.exe',
+        r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+        r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+        if ((env['LOCALAPPDATA'] ?? '').trim().isNotEmpty)
+          '${env['LOCALAPPDATA']!.trim()}\\Google\\Chrome\\Application\\chrome.exe',
+      ]);
+      if (browserBinary.isNotEmpty) {
+        final _ToolCheck bin = _checkToolVersion(browserBinary, <String>['--version'], run);
+        browserVersion = bin.version;
+        if (browserVersion.isEmpty) {
+          browserVersion = _readWindowsFileVersion(browserBinary, run);
+        }
+        browserSource = 'system';
+      }
     }
   }
 
@@ -133,6 +218,7 @@ Map<String, dynamic> runAutomationPreflight({
       'npx_version': npx.version,
       'playwright_available': playwright.available,
       'playwright_version': playwright.version,
+      'playwright_probe_source': playwright.source,
     },
     'automation_browser_binary': browserBinary,
     'automation_browser_version': browserVersion,

@@ -85,7 +85,7 @@ class RunConfig:
     ocr_api_provider: OcrApiProvider = OcrApiProvider.OPENAI
     ocr_api_base_url: str | None = None
     ocr_api_model: str | None = None
-    ocr_api_key_env_name: str = "DEEPSEEK_API_KEY"
+    ocr_api_key_env_name: str = "OPENAI_API_KEY"
     context_file: Path | None = None
     context_text: str | None = None
     glossary_file: Path | None = None
