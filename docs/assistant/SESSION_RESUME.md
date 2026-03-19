@@ -38,32 +38,36 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Template-folder synchronization is intentionally deferred for now. If a later task asks to sync the project harness/template files, carry this live-vs-shadow browser-app pattern forward explicitly instead of rediscovering it from thread history.
 
 ## Authoritative Worktree
-- Authoritative worktree after publish/merge: canonical merged checkout on `main`
-- Branch: `main`
+- Worktree: `/mnt/c/Users/FA507/.codex/legalpdf_translate_ocr_hardening`
+- Branch: `codex/ocr-hardening-roadmap`
+- Stable merged baseline remains `main` on the canonical worktree for merge/publish and future dormant-roadmap continuity.
 
 ## Roadmap State
-- Dormant roadmap state after the browser-app closeout.
+- Dormant roadmap state after OCR/runtime hardening closeout.
 - No active roadmap currently open on this worktree.
 - No active roadmap tracker is currently authoritative.
+- Completed OCR roadmap history for reference:
+  - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_roadmap.md`
+  - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_wave1.md`
+  - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_wave2.md`
 
 ## Next Concrete Action
-- For normal new work, follow normal ExecPlan flow when scope or risk requires it.
-- For browser product work, start from the browser app in `live` mode unless the task explicitly calls for isolated testing in `shadow` mode.
-- If the user later asks to sync the project harness/template layer, use the current browser-app live/shadow system as one of the main reusable patterns to preserve.
-- Do not require a `NEXT_STAGE_X` continuation token unless a new staged roadmap is explicitly opened.
+- OCR roadmap restart is complete on this worktree.
+- For new work, use normal ExecPlan flow unless the user explicitly opens a new roadmap.
+- If the user asks to publish or merge this branch, follow the standard commit/publish workflow instead of reopening roadmap mode.
 
 ## Resume Order
 1. Read this file.
-2. Open `APP_KNOWLEDGE.md` for current product truth.
-3. If the task touches browser/live-vs-shadow routing, read:
-   - `docs/assistant/APP_KNOWLEDGE.md`
-   - `docs/assistant/features/APP_USER_GUIDE.md`
-   - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
-4. If the task touches reusable harness/template strategy later, preserve the browser-app live/shadow pattern without editing templates unless the user explicitly asks for template sync.
+2. Open `APP_KNOWLEDGE.md` for current product truth when implementation context is needed.
+3. If historical OCR roadmap context is needed, read:
+   - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_roadmap.md`
+   - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_wave1.md`
+   - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_wave2.md`
+4. If the task touches browser/live-vs-shadow routing, keep the browser app `live` mode as the preferred daily-use surface unless the task explicitly requires isolated `shadow` mode.
 5. Otherwise continue with normal task routing and create a standard ExecPlan only when the task warrants it.
 
 ## Authority Notes
 - Issue memory is only for repeatable governance/workflow failures. It is not normal roadmap history.
 - Completed roadmap and ExecPlan artifacts remain reference history, not live authority.
-- During active roadmap work in a separate worktree, that worktree's `SESSION_RESUME.md`, active roadmap tracker, and active wave ExecPlan become authoritative for live roadmap state.
-- When roadmap work is dormant on `main`, this file must say so explicitly instead of pointing at stale feature-branch artifacts.
+- This worktree is now back in dormant-roadmap mode after the OCR roadmap closeout.
+- If a future roadmap is opened, its wave ExecPlan must be updated first, roadmap tracker second, and `SESSION_RESUME.md` third.
