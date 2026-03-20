@@ -30,8 +30,13 @@ export const appState = {
   runtimeMode: "live",
   workspaceId: "workspace-1",
   activeView: "dashboard",
+  uiVariant: "qt",
   extensionDiagnostics: null,
 };
+
+function defaultViewForUiVariant(uiVariant) {
+  return uiVariant === "legacy" ? "dashboard" : "new-job";
+}
 
 export function initializeRouteState(config) {
   const params = new URLSearchParams(window.location.search);
@@ -40,16 +45,28 @@ export function initializeRouteState(config) {
     params.get("workspace") || config.defaultWorkspaceId || nextWorkspaceId(),
     "workspace-1",
   );
-  const hashView = window.location.hash.replace(/^#/, "").trim();
-  appState.activeView = SUPPORTED_VIEWS.has(hashView) ? hashView : "dashboard";
+  appState.uiVariant = params.get("ui") === "legacy" ? "legacy" : String(config.defaultUiVariant || "qt");
+  syncActiveViewFromLocation();
+  document.body.dataset.uiVariant = appState.uiVariant;
   writeRouteState();
   return appState;
+}
+
+export function syncActiveViewFromLocation() {
+  const hashView = window.location.hash.replace(/^#/, "").trim();
+  appState.activeView = SUPPORTED_VIEWS.has(hashView) ? hashView : defaultViewForUiVariant(appState.uiVariant);
+  return appState.activeView;
 }
 
 export function writeRouteState() {
   const url = new URL(window.location.href);
   url.searchParams.set("mode", appState.runtimeMode);
   url.searchParams.set("workspace", appState.workspaceId);
+  if (appState.uiVariant === "legacy") {
+    url.searchParams.set("ui", "legacy");
+  } else {
+    url.searchParams.delete("ui");
+  }
   url.hash = appState.activeView;
   window.history.replaceState({}, "", url);
 }
@@ -60,6 +77,6 @@ export function setRuntimeMode(mode) {
 }
 
 export function setActiveView(view) {
-  appState.activeView = SUPPORTED_VIEWS.has(view) ? view : "dashboard";
+  appState.activeView = SUPPORTED_VIEWS.has(view) ? view : defaultViewForUiVariant(appState.uiVariant);
   writeRouteState();
 }

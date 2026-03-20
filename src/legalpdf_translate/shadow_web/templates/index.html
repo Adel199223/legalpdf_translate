@@ -6,7 +6,7 @@
     <title>LegalPDF Translate Browser App</title>
     <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
   </head>
-  <body>
+  <body data-ui-variant="{{ ui_variant }}">
     <script>
       window.LEGALPDF_BROWSER_BOOTSTRAP = {
         buildBranch: {{ build_branch | tojson }},
@@ -14,7 +14,8 @@
         shadowHost: {{ shadow_host | tojson }},
         shadowPort: {{ shadow_port | tojson }},
         defaultRuntimeMode: {{ default_runtime_mode | tojson }},
-        defaultWorkspaceId: {{ default_workspace_id | tojson }}
+        defaultWorkspaceId: {{ default_workspace_id | tojson }},
+        defaultUiVariant: {{ ui_variant | tojson }}
       };
     </script>
 
@@ -23,10 +24,10 @@
     <main class="app-shell">
       <aside class="sidebar">
         <div class="sidebar-brand">
-          <p class="eyebrow">Browser App</p>
+          <p class="eyebrow">Browser Qt Parity</p>
           <h1>LegalPDF Translate</h1>
           <p class="sidebar-copy">
-            Use the full app in your browser. Live mode uses your real settings, Gmail bridge, and job log; isolated test mode stays available for safe testing.
+            The browser app now follows the Qt shell more closely. Live mode uses your real settings and job log; isolated test mode keeps the same layout with separate data.
           </p>
         </div>
 
@@ -77,8 +78,8 @@
       <div class="main-shell">
         <header class="topbar">
           <div class="topbar-copy">
-            <p class="eyebrow">Local Browser App</p>
-            <h2 id="topbar-title">LegalPDF Translate Browser App</h2>
+            <p class="eyebrow">Workspace Shell</p>
+            <h2 id="topbar-title">LegalPDF Translate</h2>
             <p id="topbar-status">
               Loading your browser workspace, Gmail bridge, and app capabilities...
             </p>
@@ -126,29 +127,37 @@
           </div>
         </section>
 
-        <section class="page-view hidden" data-view="new-job">
-          <div class="panel">
+        <section class="page-view hidden qt-workspace-view" data-view="new-job">
+          <div class="panel workspace-panel workspace-hero">
             <div class="panel-header">
-              <h2>New Job</h2>
-              <p class="panel-copy">Translation and interpretation both run in the browser app. Live mode uses your real settings and job log; isolated test mode stays available when you want a safe sandbox.</p>
+              <div>
+                <p class="eyebrow">Primary Flow</p>
+                <h2>Workspace</h2>
+                <p class="panel-copy">Set up the job on the left, watch the active run on the right, and keep the primary actions together in one rail.</p>
+              </div>
             </div>
             <div class="launch-grid">
               <article class="launch-card ready">
-                <h3>Translation Flow</h3>
-                <p>Upload or point to a source file, analyze, translate, cancel or resume, rebuild DOCX, export review queue, and save the finished run to the job log.</p>
-                <button type="button" class="ghost-button" data-target-view="new-job">Open Translation Workspace</button>
+                <h3>Translation</h3>
+                <p>Analyze, translate, resume, rebuild, and save in one workspace.</p>
               </article>
               <article class="launch-card ready">
-                <h3>Interpretation Flow</h3>
-                <p>Notification/photo autofill, edit, save to job log, and honorários export are live in the browser now.</p>
-                <button type="button" class="ghost-button" data-target-view="new-job">Open Interpretation Workspace</button>
+                <h3>Gmail Intake</h3>
+                <p>Load one Gmail message and hand off attachments into translation or interpretation.</p>
+              </article>
+              <article class="launch-card ready">
+                <h3>Interpretation</h3>
+                <p>Autofill notices, review key fields, and export honorários without leaving the shell.</p>
               </article>
             </div>
           </div>
 
-          <div class="panel">
+          <div class="panel workspace-panel workspace-panel-gmail">
             <div class="panel-header">
-              <h2>Gmail Intake Workspace</h2>
+              <div>
+                <p class="eyebrow">Gmail</p>
+                <h2>Gmail Intake Workspace</h2>
+              </div>
               <div class="panel-actions">
                 <button type="button" class="ghost-button" id="gmail-refresh">Refresh Gmail State</button>
                 <button type="button" class="ghost-button" id="gmail-reset">Reset Gmail Workspace</button>
@@ -217,9 +226,12 @@
             </details>
           </div>
 
-          <div class="panel">
+          <div class="panel workspace-panel workspace-panel-gmail-session">
             <div class="panel-header">
-              <h2>Gmail Session</h2>
+              <div>
+                <p class="eyebrow">Gmail</p>
+                <h2>Gmail Session</h2>
+              </div>
             </div>
             <p class="panel-copy" id="gmail-session-status">No Gmail translation batch or interpretation notice is active in this workspace yet.</p>
             <div id="gmail-session-result" class="result-card empty-state">Prepare a Gmail session to keep batch progression, interpretation notice state, and draft-finalization context in one browser workspace.</div>
@@ -245,14 +257,14 @@
             </details>
           </div>
 
-          <div class="panel">
+          <div class="panel workspace-panel workspace-panel-setup">
             <div class="panel-header">
-              <h2>Translation Workspace</h2>
-              <div class="panel-actions">
-                <button type="button" class="ghost-button" id="translation-refresh">Refresh Translation State</button>
+              <div>
+                <p class="eyebrow">Translation</p>
+                <h2>Job Setup</h2>
               </div>
             </div>
-            <p class="panel-copy" id="translation-status">Load a source file, then analyze or translate it in this browser workspace.</p>
+            <p class="panel-copy">Keep the core launch fields visible first. OCR and recovery controls stay under Advanced Settings by default.</p>
             <form id="translation-setup-form" class="form-grid">
               <input id="translation-job-id" type="hidden">
               <div class="form-section-title">Source</div>
@@ -270,7 +282,7 @@
               </div>
               <div class="field field-wide">
                 <label for="translation-source-summary">Source Summary</label>
-                <textarea id="translation-source-summary" rows="2" readonly placeholder="Uploaded source metadata appears here."></textarea>
+                <textarea id="translation-source-summary" rows="1" readonly placeholder="Uploaded source metadata appears here."></textarea>
               </div>
 
               <div class="form-section-title">Run Settings</div>
@@ -282,89 +294,90 @@
                   <option value="AR">AR</option>
                 </select>
               </div>
-              <div class="field">
-                <label for="translation-effort">Effort</label>
-                <select id="translation-effort">
-                  <option value="high">high</option>
-                  <option value="xhigh">xhigh</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="translation-effort-policy">Effort Policy</label>
-                <select id="translation-effort-policy">
-                  <option value="adaptive">adaptive</option>
-                  <option value="fixed_high">fixed_high</option>
-                  <option value="fixed_xhigh">fixed_xhigh</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="translation-image-mode">Image Mode</label>
-                <select id="translation-image-mode">
-                  <option value="off">off</option>
-                  <option value="auto">auto</option>
-                  <option value="always">always</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="translation-ocr-mode">OCR Mode</label>
-                <select id="translation-ocr-mode">
-                  <option value="off">off</option>
-                  <option value="auto">auto</option>
-                  <option value="always">always</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="translation-ocr-engine">OCR Engine</label>
-                <select id="translation-ocr-engine">
-                  <option value="local">local</option>
-                  <option value="local_then_api">local_then_api</option>
-                  <option value="api">api</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="translation-start-page">Start Page</label>
-                <input id="translation-start-page" type="number" min="1" step="1">
-              </div>
-              <div class="field">
-                <label for="translation-end-page">End Page</label>
-                <input id="translation-end-page" type="number" min="1" step="1">
-              </div>
-              <div class="field">
-                <label for="translation-max-pages">Max Pages</label>
-                <input id="translation-max-pages" type="number" min="1" step="1">
-              </div>
-              <div class="field">
-                <label for="translation-workers">Parallel Workers</label>
-                <input id="translation-workers" type="number" min="1" max="6" step="1">
-              </div>
-              <div class="field">
-                <label for="translation-context-file">Context File Path</label>
-                <input id="translation-context-file" type="text" placeholder="Optional context file path">
-              </div>
-              <div class="field">
-                <label for="translation-glossary-file">Glossary File Path</label>
-                <input id="translation-glossary-file" type="text" placeholder="Optional glossary file path">
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="translation-resume" type="checkbox" checked> Resume</label>
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="translation-page-breaks" type="checkbox" checked> Insert page breaks</label>
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="translation-keep-intermediates" type="checkbox" checked> Keep intermediates</label>
-              </div>
-              <div class="field field-wide">
-                <label for="translation-context-text">Context Text</label>
-                <textarea id="translation-context-text" rows="4" placeholder="Optional context text for the translation run."></textarea>
-              </div>
-              <div class="form-actions">
-                <button type="button" id="translation-analyze">Analyze Only</button>
-                <button type="button" class="primary-button" id="translation-start">Start Translate</button>
-                <button type="button" id="translation-cancel">Cancel</button>
-                <button type="button" id="translation-resume-btn">Resume Translation</button>
-                <button type="button" id="translation-rebuild">Rebuild DOCX</button>
-              </div>
+              <details class="shell-collapsible field-wide" id="translation-advanced-section">
+                <summary>
+                  <span>Advanced Settings</span>
+                  <span class="details-hint" id="translation-advanced-section-summary">OCR policy, page limits, recovery, and context controls.</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field">
+                    <label for="translation-effort">Effort</label>
+                    <select id="translation-effort">
+                      <option value="high">high</option>
+                      <option value="xhigh">xhigh</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="translation-effort-policy">Effort Policy</label>
+                    <select id="translation-effort-policy">
+                      <option value="adaptive">adaptive</option>
+                      <option value="fixed_high">fixed_high</option>
+                      <option value="fixed_xhigh">fixed_xhigh</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="translation-image-mode">Image Mode</label>
+                    <select id="translation-image-mode">
+                      <option value="off">off</option>
+                      <option value="auto">auto</option>
+                      <option value="always">always</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="translation-ocr-mode">OCR Mode</label>
+                    <select id="translation-ocr-mode">
+                      <option value="off">off</option>
+                      <option value="auto">auto</option>
+                      <option value="always">always</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="translation-ocr-engine">OCR Engine</label>
+                    <select id="translation-ocr-engine">
+                      <option value="local">local</option>
+                      <option value="local_then_api">local_then_api</option>
+                      <option value="api">api</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="translation-start-page">Start Page</label>
+                    <input id="translation-start-page" type="number" min="1" step="1">
+                  </div>
+                  <div class="field">
+                    <label for="translation-end-page">End Page</label>
+                    <input id="translation-end-page" type="number" min="1" step="1">
+                  </div>
+                  <div class="field">
+                    <label for="translation-max-pages">Max Pages</label>
+                    <input id="translation-max-pages" type="number" min="1" step="1">
+                  </div>
+                  <div class="field">
+                    <label for="translation-workers">Parallel Workers</label>
+                    <input id="translation-workers" type="number" min="1" max="6" step="1">
+                  </div>
+                  <div class="field">
+                    <label for="translation-context-file">Context File Path</label>
+                    <input id="translation-context-file" type="text" placeholder="Optional context file path">
+                  </div>
+                  <div class="field">
+                    <label for="translation-glossary-file">Glossary File Path</label>
+                    <input id="translation-glossary-file" type="text" placeholder="Optional glossary file path">
+                  </div>
+                  <div class="field checkbox-field">
+                    <label><input id="translation-resume" type="checkbox" checked> Resume</label>
+                  </div>
+                  <div class="field checkbox-field">
+                    <label><input id="translation-page-breaks" type="checkbox" checked> Insert page breaks</label>
+                  </div>
+                  <div class="field checkbox-field">
+                    <label><input id="translation-keep-intermediates" type="checkbox" checked> Keep intermediates</label>
+                  </div>
+                  <div class="field field-wide">
+                    <label for="translation-context-text">Context Text</label>
+                    <textarea id="translation-context-text" rows="4" placeholder="Optional context text for the translation run."></textarea>
+                  </div>
+                </div>
+              </details>
             </form>
             <details class="details-panel" id="translation-details">
               <summary>
@@ -375,18 +388,25 @@
             </details>
           </div>
 
-          <div class="panel">
+          <div class="panel workspace-panel workspace-panel-status">
             <div class="panel-header">
-              <h2>Translation Result</h2>
+              <div>
+                <p class="eyebrow">Translation</p>
+                <h2>Run Status</h2>
+                <p class="panel-copy" id="translation-status">Load a source file, then analyze or translate it in this browser workspace.</p>
+              </div>
               <div class="panel-actions">
-                <button type="button" id="translation-review-export">Export Review Queue</button>
-                <a id="translation-download-docx" class="ghost-button" href="#" download>Download DOCX</a>
-                <a id="translation-download-partial" class="ghost-button" href="#" download>Download Partial DOCX</a>
-                <a id="translation-download-summary" class="ghost-button" href="#" download>Download Run Summary</a>
-                <a id="translation-download-analyze" class="ghost-button" href="#" download>Download Analyze Report</a>
+                <button type="button" class="ghost-button" id="translation-refresh">Refresh Translation State</button>
               </div>
             </div>
             <div id="translation-result" class="result-card empty-state">No translation job has run in this workspace yet.</div>
+            <div class="panel-actions status-actions">
+              <button type="button" id="translation-review-export">Export Review Queue</button>
+              <a id="translation-download-docx" class="ghost-button" href="#" download>Download DOCX</a>
+              <a id="translation-download-partial" class="ghost-button" href="#" download>Download Partial DOCX</a>
+              <a id="translation-download-summary" class="ghost-button" href="#" download>Download Run Summary</a>
+              <a id="translation-download-analyze" class="ghost-button" href="#" download>Download Analyze Report</a>
+            </div>
             <details class="details-panel" id="translation-job-details">
               <summary>
                 <span>Translation job state</span>
@@ -396,11 +416,34 @@
             </details>
           </div>
 
-          <div class="panel">
+          <div class="panel workspace-panel workspace-action-rail">
             <div class="panel-header">
-              <h2>Save Translation To Job Log</h2>
+              <div>
+                <p class="eyebrow">Primary Actions</p>
+                <h2>Action Rail</h2>
+              </div>
             </div>
-            <p class="panel-copy" id="translation-save-status">After a translation finishes, review the metadata and accounting fields before saving the row.</p>
+            <div class="workspace-action-buttons">
+              <div class="workspace-action-primary">
+                <button type="button" id="translation-analyze">Analyze Only</button>
+                <button type="button" class="primary-button" id="translation-start">Start Translate</button>
+                <button type="button" id="translation-cancel">Cancel</button>
+              </div>
+              <div class="workspace-action-secondary">
+                <button type="button" id="translation-resume-btn">Resume Translation</button>
+                <button type="button" id="translation-rebuild">Rebuild DOCX</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel workspace-panel workspace-panel-save">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Translation</p>
+                <h2>Save To Job Log</h2>
+              </div>
+            </div>
+            <p class="panel-copy" id="translation-save-status">After a translation finishes, review the case fields first. Run metrics and amounts stay collapsed until you need them.</p>
             <form id="translation-joblog-form" class="form-grid">
               <input id="translation-row-id" type="hidden">
               <div class="form-section-title">Case</div>
@@ -428,52 +471,68 @@
                 <label for="translation-run-id">Run ID</label>
                 <input id="translation-run-id" type="text" readonly>
               </div>
-
-              <div class="form-section-title">Metrics</div>
-              <div class="field">
-                <label for="translation-pages">Pages</label>
-                <input id="translation-pages" type="number" min="0">
-              </div>
-              <div class="field">
-                <label for="translation-word-count">Words</label>
-                <input id="translation-word-count" type="number" min="0">
-              </div>
               <div class="field">
                 <label for="translation-target-lang-readonly">Target Language</label>
                 <input id="translation-target-lang-readonly" type="text" readonly>
               </div>
-              <div class="field">
-                <label for="translation-total-tokens">Total Tokens</label>
-                <input id="translation-total-tokens" type="number" min="0">
-              </div>
-              <div class="field">
-                <label for="translation-rate-per-word">Rate / Word</label>
-                <input id="translation-rate-per-word" type="number" min="0" step="0.01">
-              </div>
-              <div class="field">
-                <label for="translation-expected-total">Expected Total</label>
-                <input id="translation-expected-total" type="number" min="0" step="0.01">
-              </div>
-              <div class="field">
-                <label for="translation-amount-paid">Amount Paid</label>
-                <input id="translation-amount-paid" type="number" min="0" step="0.01">
-              </div>
-              <div class="field">
-                <label for="translation-api-cost">API Cost</label>
-                <input id="translation-api-cost" type="number" min="0" step="0.01">
-              </div>
-              <div class="field">
-                <label for="translation-estimated-api-cost">Estimated API Cost</label>
-                <input id="translation-estimated-api-cost" type="number" min="0" step="0.01">
-              </div>
-              <div class="field">
-                <label for="translation-quality-risk-score">Quality Risk Score</label>
-                <input id="translation-quality-risk-score" type="number" min="0" max="1" step="0.0001">
-              </div>
-              <div class="field">
-                <label for="translation-profit">Profit</label>
-                <input id="translation-profit" type="number" step="0.01">
-              </div>
+
+              <details class="shell-collapsible field-wide" id="translation-save-metrics-section">
+                <summary>
+                  <span>Run Metrics (auto-filled)</span>
+                  <span class="details-hint">Pages, words, tokens, and quality-risk details.</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field">
+                    <label for="translation-pages">Pages</label>
+                    <input id="translation-pages" type="number" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="translation-word-count">Words</label>
+                    <input id="translation-word-count" type="number" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="translation-total-tokens">Total Tokens</label>
+                    <input id="translation-total-tokens" type="number" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="translation-quality-risk-score">Quality Risk Score</label>
+                    <input id="translation-quality-risk-score" type="number" min="0" max="1" step="0.0001">
+                  </div>
+                </div>
+              </details>
+
+              <details class="shell-collapsible field-wide" id="translation-save-amounts-section">
+                <summary>
+                  <span>Amounts (EUR)</span>
+                  <span class="details-hint">Rate, totals, API-cost, and profit fields.</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field">
+                    <label for="translation-rate-per-word">Rate / Word</label>
+                    <input id="translation-rate-per-word" type="number" min="0" step="0.01">
+                  </div>
+                  <div class="field">
+                    <label for="translation-expected-total">Expected Total</label>
+                    <input id="translation-expected-total" type="number" min="0" step="0.01">
+                  </div>
+                  <div class="field">
+                    <label for="translation-amount-paid">Amount Paid</label>
+                    <input id="translation-amount-paid" type="number" min="0" step="0.01">
+                  </div>
+                  <div class="field">
+                    <label for="translation-api-cost">API Cost</label>
+                    <input id="translation-api-cost" type="number" min="0" step="0.01">
+                  </div>
+                  <div class="field">
+                    <label for="translation-estimated-api-cost">Estimated API Cost</label>
+                    <input id="translation-estimated-api-cost" type="number" min="0" step="0.01">
+                  </div>
+                  <div class="field">
+                    <label for="translation-profit">Profit</label>
+                    <input id="translation-profit" type="number" step="0.01">
+                  </div>
+                </div>
+              </details>
               <div class="form-actions">
                 <button type="button" id="translation-new-save">New Translation Save Form</button>
                 <button type="button" class="primary-button" id="translation-save-row">Save Translation Row</button>
@@ -488,9 +547,12 @@
             </details>
           </div>
 
-          <div class="panel upload-panel">
+          <div class="panel upload-panel workspace-panel workspace-panel-autofill">
             <div class="panel-header">
-              <h2>Autofill Inputs</h2>
+              <div>
+                <p class="eyebrow">Interpretation</p>
+                <h2>Autofill Inputs</h2>
+              </div>
             </div>
             <p class="panel-copy" id="autofill-status">Upload a notification PDF or screenshot to seed the interpretation form.</p>
             <div class="upload-grid">
@@ -514,9 +576,12 @@
             </details>
           </div>
 
-          <div class="panel">
+          <div class="panel workspace-panel workspace-panel-interpretation">
             <div class="panel-header">
-              <h2>Interpretation Form</h2>
+              <div>
+                <p class="eyebrow">Interpretation</p>
+                <h2>Interpretation Workspace</h2>
+              </div>
               <div class="panel-actions">
                 <button type="button" class="ghost-button" id="clear-form">New Blank Entry</button>
                 <button type="button" class="ghost-button" id="reload-history">Reload History</button>
@@ -546,79 +611,106 @@
                 <label for="case-city">Case City</label>
                 <input id="case-city" name="case_city" type="text">
               </div>
+              <details class="shell-collapsible field-wide" id="interpretation-service-section">
+                <summary>
+                  <span>SERVICE</span>
+                  <span class="details-hint" id="interpretation-service-section-summary">Same as case</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field checkbox-field field-wide">
+                    <label><input id="service-same" type="checkbox" checked> Service same as case</label>
+                    <p class="field-hint" id="service-same-hint">
+                      Service entity and city will mirror the case fields for save and export.
+                    </p>
+                  </div>
+                  <div class="field">
+                    <label for="service-entity">Service Entity</label>
+                    <input id="service-entity" name="service_entity" type="text">
+                  </div>
+                  <div class="field">
+                    <label for="service-city">Service City</label>
+                    <input id="service-city" name="service_city" type="text">
+                  </div>
+                  <div class="field">
+                    <label for="service-date">Service Date</label>
+                    <input id="service-date" name="service_date" type="date">
+                  </div>
+                </div>
+              </details>
 
-              <div class="form-section-title">Service Details</div>
-              <div class="field checkbox-field field-wide">
-                <label><input id="service-same" type="checkbox" checked> Service same as case</label>
-                <p class="field-hint" id="service-same-hint">
-                  Service entity and city will mirror the case fields for save and export.
-                </p>
-              </div>
-              <div class="field">
-                <label for="service-entity">Service Entity</label>
-                <input id="service-entity" name="service_entity" type="text">
-              </div>
-              <div class="field">
-                <label for="service-city">Service City</label>
-                <input id="service-city" name="service_city" type="text">
-              </div>
-              <div class="field">
-                <label for="service-date">Service Date</label>
-                <input id="service-date" name="service_date" type="date">
-              </div>
+              <details class="shell-collapsible field-wide" id="interpretation-text-section" open>
+                <summary>
+                  <span>TEXT</span>
+                  <span class="details-hint">Honorários wording, transport text, and export filename.</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field checkbox-field">
+                    <label><input id="use-service-location" type="checkbox"> Mention service location in text</label>
+                  </div>
+                  <div class="field checkbox-field">
+                    <label><input id="include-transport" type="checkbox" checked> Include transport sentence</label>
+                  </div>
+                  <div class="field">
+                    <label for="travel-km-outbound">KM (One Way)</label>
+                    <input id="travel-km-outbound" name="travel_km_outbound" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="output-filename">Output Filename</label>
+                    <input id="output-filename" name="output_filename" type="text" placeholder="Optional DOCX filename">
+                  </div>
+                </div>
+              </details>
 
-              <div class="form-section-title">Honorários Content</div>
-              <div class="field checkbox-field">
-                <label><input id="use-service-location" type="checkbox"> Mention service location in text</label>
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="include-transport" type="checkbox" checked> Include transport sentence</label>
-              </div>
-              <div class="field">
-                <label for="travel-km-outbound">KM (One Way)</label>
-                <input id="travel-km-outbound" name="travel_km_outbound" type="number" step="0.01" min="0">
-              </div>
-              <div class="field field-wide">
-                <label for="recipient-block">Recipient Override (Export Only)</label>
-                <p class="field-hint">Used only for the current export. It is not saved to job-log history.</p>
-                <textarea id="recipient-block" name="recipient_block" rows="4"></textarea>
-              </div>
+              <details class="shell-collapsible field-wide" id="interpretation-recipient-section">
+                <summary>
+                  <span>RECIPIENT</span>
+                  <span class="details-hint" id="interpretation-recipient-section-summary">Auto-derived recipient</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field field-wide">
+                    <label for="recipient-block">Recipient Override (Export Only)</label>
+                    <p class="field-hint">Used only for the current export. It is not saved to job-log history.</p>
+                    <textarea id="recipient-block" name="recipient_block" rows="4"></textarea>
+                  </div>
+                </div>
+              </details>
 
-              <div class="form-section-title">Accounting Snapshot</div>
-              <div class="field">
-                <label for="pages">Pages</label>
-                <input id="pages" name="pages" type="number" min="0">
-              </div>
-              <div class="field">
-                <label for="word-count">Words</label>
-                <input id="word-count" name="word_count" type="number" min="0">
-              </div>
-              <div class="field">
-                <label for="rate-per-word">Rate / Word</label>
-                <input id="rate-per-word" name="rate_per_word" type="number" step="0.01" min="0">
-              </div>
-              <div class="field">
-                <label for="expected-total">Expected Total</label>
-                <input id="expected-total" name="expected_total" type="number" step="0.01" min="0">
-              </div>
-              <div class="field">
-                <label for="amount-paid">Amount Paid</label>
-                <input id="amount-paid" name="amount_paid" type="number" step="0.01" min="0">
-              </div>
-              <div class="field">
-                <label for="api-cost">API Cost</label>
-                <input id="api-cost" name="api_cost" type="number" step="0.01" min="0">
-              </div>
-              <div class="field">
-                <label for="profit">Profit</label>
-                <input id="profit" name="profit" type="number" step="0.01">
-              </div>
-
-              <div class="form-section-title">Export</div>
-              <div class="field">
-                <label for="output-filename">Output Filename</label>
-                <input id="output-filename" name="output_filename" type="text" placeholder="Optional DOCX filename">
-              </div>
+              <details class="shell-collapsible field-wide" id="interpretation-amounts-section">
+                <summary>
+                  <span>Amounts (EUR)</span>
+                  <span class="details-hint">Pages, words, rate, totals, API-cost, and profit.</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field">
+                    <label for="pages">Pages</label>
+                    <input id="pages" name="pages" type="number" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="word-count">Words</label>
+                    <input id="word-count" name="word_count" type="number" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="rate-per-word">Rate / Word</label>
+                    <input id="rate-per-word" name="rate_per_word" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="expected-total">Expected Total</label>
+                    <input id="expected-total" name="expected_total" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="amount-paid">Amount Paid</label>
+                    <input id="amount-paid" name="amount_paid" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="api-cost">API Cost</label>
+                    <input id="api-cost" name="api_cost" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="profit">Profit</label>
+                    <input id="profit" name="profit" type="number" step="0.01">
+                  </div>
+                </div>
+              </details>
               <div class="form-actions">
                 <button type="button" id="save-row">Save Interpretation Row</button>
                 <button type="button" class="primary-button" id="export-honorarios">Generate DOCX + PDF</button>
@@ -633,9 +725,12 @@
             </details>
           </div>
 
-          <div class="panel">
+          <div class="panel workspace-panel workspace-panel-export">
             <div class="panel-header">
-              <h2>Export Result</h2>
+              <div>
+                <p class="eyebrow">Interpretation</p>
+                <h2>Export Result</h2>
+              </div>
             </div>
             <div id="export-result" class="result-card empty-state">No export has been run yet.</div>
           </div>

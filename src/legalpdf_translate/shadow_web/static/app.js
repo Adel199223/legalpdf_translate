@@ -1,5 +1,5 @@
 import { fetchJson } from "./api.js";
-import { appState, initializeRouteState, setActiveView, setRuntimeMode } from "./state.js";
+import { appState, initializeRouteState, setActiveView, setRuntimeMode, syncActiveViewFromLocation } from "./state.js";
 import {
   initializeTranslationUi,
   loadTranslationHistoryItem,
@@ -122,6 +122,42 @@ function syncServiceFieldsFromCase() {
   setFieldValue("service-city", fieldValue("case-city"));
 }
 
+function setDisclosureState(id, expanded, summaryText = "") {
+  const details = qs(id);
+  if (details) {
+    details.open = Boolean(expanded);
+  }
+  const summaryNode = qs(`${id}-summary`);
+  if (summaryNode) {
+    summaryNode.textContent = summaryText;
+  }
+}
+
+function syncInterpretationDisclosureState() {
+  const serviceSame = qs("service-same")?.checked ?? true;
+  setDisclosureState(
+    "interpretation-service-section",
+    !serviceSame,
+    serviceSame ? "Same as case" : "Custom service details",
+  );
+  const recipientOverride = fieldValue("recipient-block");
+  setDisclosureState(
+    "interpretation-recipient-section",
+    Boolean(recipientOverride),
+    recipientOverride ? "Custom recipient override ready" : "Auto-derived recipient",
+  );
+}
+
+function syncShellChrome() {
+  document.body.dataset.activeView = appState.activeView;
+  const currentNav = document.querySelector(`.nav-button[data-view="${appState.activeView}"] span`);
+  if (qs("topbar-title") && currentNav?.textContent?.trim()) {
+    qs("topbar-title").textContent = currentNav.textContent.trim() === "Dashboard"
+      ? "LegalPDF Translate"
+      : `LegalPDF Translate | ${currentNav.textContent.trim()}`;
+  }
+}
+
 function updateServiceFieldState() {
   const serviceSame = qs("service-same").checked;
   if (serviceSame) {
@@ -132,6 +168,7 @@ function updateServiceFieldState() {
   qs("service-same-hint").textContent = serviceSame
     ? "Service entity and city will mirror the case fields for save and export."
     : "Use different service fields when the service location differs from the case.";
+  syncInterpretationDisclosureState();
 }
 
 function cloneJson(value) {
@@ -347,6 +384,7 @@ function renderShellVisibility() {
   qsa(".nav-button").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === appState.activeView);
   });
+  syncShellChrome();
 }
 
 function renderDashboardCards(cards) {
@@ -810,8 +848,8 @@ function renderTopbar(payload) {
   qs("workspace-id-label").textContent = runtime.workspace_id;
   qs("runtime-mode-label").textContent = runtime.runtime_mode_label;
   qs("topbar-status").textContent = runtime.live_data
-    ? `Live mode is active for workspace ${runtime.workspace_id}. Your real settings, Gmail bridge, and job-log writes are active here.`
-    : `Isolated test mode is active for workspace ${runtime.workspace_id}. Changes here stay separate from your live browser app data.`;
+    ? `Live workspace ${runtime.workspace_id}: real settings, Gmail bridge, and job-log writes are active here.`
+    : `Shadow workspace ${runtime.workspace_id}: isolated browser-app data stays separate from live mode.`;
   qs("topbar-status").dataset.tone = runtime.live_data ? "info" : "ok";
   showLiveBanner(runtime);
 }
@@ -1111,6 +1149,11 @@ async function runWithBusy(buttonIds, busyLabels, action) {
 }
 
 function wireEvents() {
+  window.addEventListener("hashchange", () => {
+    syncActiveViewFromLocation();
+    renderShellVisibility();
+  });
+
   window.addEventListener("legalpdf:bootstrap-invalidated", async () => {
     try {
       await loadBootstrap();
@@ -1304,10 +1347,12 @@ function wireEvents() {
   qs("service-same").addEventListener("change", updateServiceFieldState);
   qs("case-entity").addEventListener("input", updateServiceFieldState);
   qs("case-city").addEventListener("input", updateServiceFieldState);
+  qs("recipient-block").addEventListener("input", syncInterpretationDisclosureState);
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
   initializeRouteState(window.LEGALPDF_BROWSER_BOOTSTRAP || {});
+  renderShellVisibility();
   wireEvents();
   initializeTranslationUi();
   initializeGmailUi({

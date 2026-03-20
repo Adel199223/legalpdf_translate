@@ -38,36 +38,42 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Template-folder synchronization is intentionally deferred for now. If a later task asks to sync the project harness/template files, carry this live-vs-shadow browser-app pattern forward explicitly instead of rediscovering it from thread history.
 
 ## Authoritative Worktree
-- Worktree: `/mnt/c/Users/FA507/.codex/legalpdf_translate_ocr_hardening`
-- Branch: `codex/ocr-hardening-roadmap`
+- Worktree: `/mnt/c/Users/FA507/.codex/legalpdf_translate_browser_qt_parity`
+- Branch: `codex/browser-qt-parity-shell`
+- Active feature ExecPlan on this worktree:
+  - `docs/assistant/exec_plans/active/2026-03-19_browser_qt_parity_shell.md`
 - Stable merged baseline remains `main` on the canonical worktree for merge/publish and future dormant-roadmap continuity.
 
 ## Roadmap State
-- Dormant roadmap state after OCR/runtime hardening closeout.
+- Dormant roadmap state on this worktree.
 - No active roadmap currently open on this worktree.
 - No active roadmap tracker is currently authoritative.
+- Current branch is using normal ExecPlan flow for browser Qt-parity shell work:
+  - `docs/assistant/exec_plans/active/2026-03-19_browser_qt_parity_shell.md`
 - Completed OCR roadmap history for reference:
   - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_roadmap.md`
   - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_wave1.md`
   - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_wave2.md`
 
 ## Next Concrete Action
-- OCR roadmap restart is complete on this worktree.
-- For new work, use normal ExecPlan flow unless the user explicitly opens a new roadmap.
+- Continue the browser Qt-parity shell acceptance and integration pass on this worktree.
+- For roadmap requests, keep dormant-roadmap behavior unless the user explicitly opens a new roadmap.
 - If the user asks to publish or merge this branch, follow the standard commit/publish workflow instead of reopening roadmap mode.
 
 ## Resume Order
 1. Read this file.
-2. Open `APP_KNOWLEDGE.md` for current product truth when implementation context is needed.
-3. If historical OCR roadmap context is needed, read:
+2. Open `docs/assistant/exec_plans/active/2026-03-19_browser_qt_parity_shell.md` for current branch implementation context.
+3. Open `APP_KNOWLEDGE.md` for current product truth when implementation context is needed.
+4. If historical OCR roadmap context is needed, read:
    - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_roadmap.md`
    - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_wave1.md`
    - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_wave2.md`
-4. If the task touches browser/live-vs-shadow routing, keep the browser app `live` mode as the preferred daily-use surface unless the task explicitly requires isolated `shadow` mode.
-5. Otherwise continue with normal task routing and create a standard ExecPlan only when the task warrants it.
+5. If the task touches browser/live-vs-shadow routing, keep the browser app `live` mode as the preferred daily-use surface unless the task explicitly requires isolated `shadow` mode.
+6. Otherwise continue with normal task routing and create a standard ExecPlan only when the task warrants it.
 
 ## Authority Notes
 - Issue memory is only for repeatable governance/workflow failures. It is not normal roadmap history.
 - Completed roadmap and ExecPlan artifacts remain reference history, not live authority.
-- This worktree is now back in dormant-roadmap mode after the OCR roadmap closeout.
+- This worktree is in dormant-roadmap mode and currently using normal ExecPlan flow for browser Qt-parity shell work.
+- The active browser Qt-parity ExecPlan is the first source for current branch implementation detail.
 - If a future roadmap is opened, its wave ExecPlan must be updated first, roadmap tracker second, and `SESSION_RESUME.md` third.
