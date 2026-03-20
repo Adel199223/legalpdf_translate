@@ -92,6 +92,12 @@ def browser_navigation_sections() -> list[dict[str, str]]:
             "description": "Translation and interpretation both run directly in the browser app.",
         },
         {
+            "id": "gmail-intake",
+            "label": "Gmail",
+            "status": "ready",
+            "description": "Dedicated Gmail handoff, attachment review, and finalization workspace.",
+        },
+        {
             "id": "recent-jobs",
             "label": "Recent Jobs",
             "status": "ready",

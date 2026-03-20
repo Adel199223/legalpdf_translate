@@ -254,6 +254,25 @@ function blankSaveSeed() {
   };
 }
 
+function dispatchNewJobTask(task) {
+  window.dispatchEvent(new CustomEvent("legalpdf:set-new-job-task", { detail: { task } }));
+}
+
+function syncTranslationPostRunVisibility() {
+  const panel = qs("translation-postrun-panel");
+  if (!panel) {
+    return;
+  }
+  const seed = translationState.currentSeed || {};
+  const shouldShow = Boolean(
+    translationState.currentRowId
+    || translationState.currentJob?.result?.save_seed
+    || seed.run_id
+    || seed.case_number,
+  );
+  panel.classList.toggle("hidden", !shouldShow);
+}
+
 function translationStatusSummary(job) {
   if (!job) {
     return "";
@@ -284,6 +303,7 @@ function translationStatusSummary(job) {
 }
 
 function applyTranslationSeed(seed, { rowId = null } = {}) {
+  dispatchNewJobTask("translation");
   const resolved = seed || blankSaveSeed();
   translationState.currentSeed = resolved;
   translationState.currentRowId = rowId;
@@ -305,6 +325,7 @@ function applyTranslationSeed(seed, { rowId = null } = {}) {
   setFieldValue("translation-estimated-api-cost", resolved.estimated_api_cost ?? "");
   setFieldValue("translation-quality-risk-score", resolved.quality_risk_score ?? "");
   setFieldValue("translation-profit", resolved.profit ?? "");
+  syncTranslationPostRunVisibility();
 }
 
 async function deleteTranslationJobLogRow(rowId) {
@@ -351,6 +372,7 @@ export function applyTranslationLaunch(launch) {
   if (!launch || typeof launch !== "object") {
     return;
   }
+  dispatchNewJobTask("translation");
   if (launch.source_path) {
     setFieldValue("translation-source-path", launch.source_path);
   }
@@ -449,6 +471,7 @@ function renderTranslationJob(job) {
     applyTranslationSeed(job.result.save_seed);
     setPanelStatus("translation-save", "", "Translation seed loaded from the completed run. Review the fields before saving.");
   }
+  syncTranslationPostRunVisibility();
   if (job && ["queued", "running", "cancel_requested"].includes(job.status)) {
     stopPolling();
     translationState.pollTimer = window.setTimeout(pollCurrentJob, 1500);
@@ -503,6 +526,7 @@ function loadTranslationHistoryItem(item) {
   const row = item?.row || {};
   applyTranslationSeed(item?.seed || blankSaveSeed(), { rowId: row.id || null });
   setActiveView("new-job");
+  dispatchNewJobTask("translation");
   document.querySelectorAll(".page-view").forEach((node) => {
     node.classList.toggle("hidden", node.dataset.view !== "new-job");
   });
@@ -568,6 +592,7 @@ function renderTranslationBootstrap(payload) {
   if (!translationState.currentSeed) {
     applyTranslationSeed(blankSaveSeed());
   }
+  syncTranslationPostRunVisibility();
 }
 
 async function refreshTranslationBootstrap() {
@@ -703,6 +728,7 @@ async function handleTranslationSave() {
 function resetTranslationSaveForm() {
   applyTranslationSeed(translationState.currentJob?.result?.save_seed || blankSaveSeed(), { rowId: null });
   setPanelStatus("translation-save", "", "Translation save form reset.");
+  syncTranslationPostRunVisibility();
 }
 
 export function initializeTranslationUi() {
@@ -722,6 +748,7 @@ export function initializeTranslationUi() {
   clearDownloadLink("translation-download-partial");
   clearDownloadLink("translation-download-summary");
   clearDownloadLink("translation-download-analyze");
+  syncTranslationPostRunVisibility();
 
   qs("translation-refresh")?.addEventListener("click", async () => {
     await runWithBusy(["translation-refresh"], { "translation-refresh": "Refreshing..." }, async () => {

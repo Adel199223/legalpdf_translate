@@ -21,16 +21,18 @@ Use this sequence:
 This guide is explanatory only. For architecture/status truth, defer to `APP_KNOWLEDGE.md`. If docs conflict with code, source code is final truth.
 
 ## Quick Start (No Technical Background)
-1. Open the browser app in `live` mode.
-2. Go to `New Job`.
+1. Open the browser app in `live` mode. It opens to `New Job` by default.
+2. Stay on `New Job` for normal translation work, or use the dedicated Gmail handoff screen when starting from Gmail.
 3. Choose your PDF file or start from Gmail intake.
 4. Pick output language (`EN`, `FR`, or `AR`) when you are translating.
 5. Start the job and review the generated DOCX or honorários output when it finishes.
 
 ## What You See On Screen
-- Left sidebar: quick buttons for `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab`.
+- Left sidebar: the normal first-level buttons are `New Job`, `Recent Jobs`, and sometimes `Gmail`. Less-common areas stay under `More`.
+- `New Job`: the main beginner-first work area. Translation is the default view, and `Interpretation` is available through the in-page task switch.
+- `Gmail`: a dedicated Gmail handoff screen that keeps exact-message review, attachment selection, and Gmail-session follow-up separate from the normal first screen.
+- `More`: keeps `Dashboard`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab` reachable without making the everyday shell feel crowded.
 - `Dashboard`: environment cards that show whether you are in real-work `live` mode or isolated `shadow` mode, plus OCR, Word PDF export, browser automation, and Gmail bridge status.
-- `New Job`: the main work area for translation, Gmail intake, interpretation notice intake, and honorários follow-up.
 - `Recent Jobs`: saved translation and interpretation rows with reopen and delete actions.
 - `Settings`: provider keys, Gmail bridge options, OCR checks, and other machine-level settings.
 - `Profile`: your saved person/company details, addresses, distance defaults, and primary profile choice.
@@ -166,8 +168,8 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 ## If The App Does Not Open
 Quickest beginner option:
 1. Open the repo folder in File Explorer.
-2. Double-click `LegalPDF Browser App (Live).cmd` if it is available on your Desktop.
-3. Or open `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#dashboard` directly after launching the browser app.
+2. If you already have a browser-app launcher shortcut, use that first.
+3. Or open `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job` directly after launching the browser app.
 
 Terminal option:
 1. Open PowerShell in the project folder.

@@ -24,43 +24,19 @@
     <main class="app-shell">
       <aside class="sidebar">
         <div class="sidebar-brand">
-          <p class="eyebrow">Browser Qt Parity</p>
+          <p class="eyebrow">Browser App</p>
           <h1>LegalPDF Translate</h1>
           <p class="sidebar-copy">
-            The browser app now follows the Qt shell more closely. Live mode uses your real settings and job log; isolated test mode keeps the same layout with separate data.
+            Keep the everyday browser app simple: one clear job screen for normal work, with Gmail handoff and advanced tools still reachable when you need them.
           </p>
         </div>
 
-        <nav class="sidebar-nav" id="section-nav" aria-label="Primary">
-          <button type="button" class="nav-button active" data-view="dashboard">
-            <span>Dashboard</span>
-            <span class="nav-meta">Ready</span>
-          </button>
-          <button type="button" class="nav-button" data-view="new-job">
-            <span>New Job</span>
-            <span class="nav-meta">Ready</span>
-          </button>
-          <button type="button" class="nav-button" data-view="recent-jobs">
-            <span>Recent Jobs</span>
-            <span class="nav-meta">Ready</span>
-          </button>
-          <button type="button" class="nav-button" data-view="settings">
-            <span>Settings</span>
-            <span class="nav-meta">Ready</span>
-          </button>
-          <button type="button" class="nav-button" data-view="profile">
-            <span>Profile</span>
-            <span class="nav-meta">Ready</span>
-          </button>
-          <button type="button" class="nav-button" data-view="power-tools">
-            <span>Power Tools</span>
-            <span class="nav-meta">Ready</span>
-          </button>
-          <button type="button" class="nav-button" data-view="extension-lab">
-            <span>Extension Lab</span>
-            <span class="nav-meta">Ready</span>
-          </button>
-        </nav>
+        <nav class="sidebar-nav primary-nav" id="section-nav" aria-label="Primary"></nav>
+
+        <details class="sidebar-more" id="more-nav-shell">
+          <summary class="sidebar-more-summary">More</summary>
+          <nav class="sidebar-nav more-nav" id="more-nav" aria-label="Secondary"></nav>
+        </details>
 
         <section class="sidebar-card">
           <p class="sidebar-card-label">Build</p>
@@ -78,7 +54,7 @@
       <div class="main-shell">
         <header class="topbar">
           <div class="topbar-copy">
-            <p class="eyebrow">Workspace Shell</p>
+            <p class="eyebrow">Simple Workspace Shell</p>
             <h2 id="topbar-title">LegalPDF Translate</h2>
             <p id="topbar-status">
               Loading your browser workspace, Gmail bridge, and app capabilities...
@@ -127,27 +103,27 @@
           </div>
         </section>
 
-        <section class="page-view hidden qt-workspace-view" data-view="new-job">
+        <section class="page-view hidden qt-workspace-view" data-view="gmail-intake">
           <div class="panel workspace-panel workspace-hero">
             <div class="panel-header">
               <div>
-                <p class="eyebrow">Primary Flow</p>
-                <h2>Workspace</h2>
-                <p class="panel-copy">Set up the job on the left, watch the active run on the right, and keep the primary actions together in one rail.</p>
+                <p class="eyebrow">Gmail</p>
+                <h2>Gmail Handoff</h2>
+                <p class="panel-copy">Review the exact message, prepare the right workflow, and continue into translation or interpretation only when the Gmail context is ready.</p>
               </div>
             </div>
             <div class="launch-grid">
               <article class="launch-card ready">
-                <h3>Translation</h3>
-                <p>Analyze, translate, resume, rebuild, and save in one workspace.</p>
+                <h3>Exact Message Context</h3>
+                <p>Keep the browser Gmail workspace focused on one message, one attachment review step, and one active session.</p>
               </article>
               <article class="launch-card ready">
-                <h3>Gmail Intake</h3>
-                <p>Load one Gmail message and hand off attachments into translation or interpretation.</p>
+                <h3>Attachment Review</h3>
+                <p>Select the workflow, preview attachments, and prepare the session before leaving this screen.</p>
               </article>
               <article class="launch-card ready">
-                <h3>Interpretation</h3>
-                <p>Autofill notices, review key fields, and export honorários without leaving the shell.</p>
+                <h3>Continue To Work</h3>
+                <p>Hand the prepared Gmail session into translation or interpretation only when you are ready to continue.</p>
               </article>
             </div>
           </div>
@@ -156,7 +132,7 @@
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Gmail</p>
-                <h2>Gmail Intake Workspace</h2>
+                <h2>Exact Message Context</h2>
               </div>
               <div class="panel-actions">
                 <button type="button" class="ghost-button" id="gmail-refresh">Refresh Gmail State</button>
@@ -241,10 +217,10 @@
                 <input id="gmail-final-output-filename" type="text" placeholder="Optional DOCX filename for Gmail finalization">
               </div>
             </div>
-            <div class="panel-actions">
-              <button type="button" id="gmail-load-translation-launch">Load Current Attachment Into Translation</button>
+            <div class="panel-actions gmail-session-actions">
+              <button type="button" id="gmail-load-translation-launch">Continue In Translation</button>
               <button type="button" id="gmail-confirm-translation">Confirm Current Translation Row</button>
-              <button type="button" id="gmail-load-interpretation-seed">Load Notice Into Interpretation Form</button>
+              <button type="button" id="gmail-load-interpretation-seed">Continue In Interpretation</button>
               <button type="button" id="gmail-finalize-batch">Finalize Gmail Batch Reply</button>
               <button type="button" id="gmail-finalize-interpretation">Finalize Interpretation Reply</button>
             </div>
@@ -257,6 +233,27 @@
             </details>
           </div>
 
+        </section>
+
+        <section class="page-view hidden qt-workspace-view beginner-shell-view" data-view="new-job">
+          <div id="gmail-workspace-strip" class="compact-gmail-strip hidden">
+            <div>
+              <p class="eyebrow">Gmail Session</p>
+              <strong id="gmail-workspace-strip-title">A Gmail handoff is available for this workspace.</strong>
+              <p id="gmail-workspace-strip-copy">Open the Gmail workspace to review the exact message, attachments, and finalization steps.</p>
+            </div>
+            <div class="panel-actions">
+              <button type="button" class="ghost-button" data-target-view="gmail-intake">Open Gmail Workspace</button>
+            </div>
+          </div>
+
+          <div class="task-switcher" id="new-job-task-switcher" role="tablist" aria-label="Primary task">
+            <button type="button" class="task-switch active" id="new-job-task-translation" data-task="translation" aria-selected="true">Translation</button>
+            <button type="button" class="task-switch" id="new-job-task-interpretation" data-task="interpretation" aria-selected="false">Interpretation</button>
+          </div>
+
+          <div class="simple-task-shell" data-task-panel="translation">
+
           <div class="panel workspace-panel workspace-panel-setup">
             <div class="panel-header">
               <div>
@@ -264,28 +261,17 @@
                 <h2>Job Setup</h2>
               </div>
             </div>
-            <p class="panel-copy">Keep the core launch fields visible first. OCR and recovery controls stay under Advanced Settings by default.</p>
+            <p class="panel-copy">Keep the first screen calm: source, target language, output folder, and Advanced Settings are the only default controls.</p>
             <form id="translation-setup-form" class="form-grid">
               <input id="translation-job-id" type="hidden">
-              <div class="form-section-title">Source</div>
-              <div class="field">
-                <label for="translation-source-file">Upload Source PDF or Image</label>
+              <div class="field field-wide">
+                <label for="translation-source-file">Source File</label>
                 <input id="translation-source-file" type="file" accept=".pdf,image/*">
-              </div>
-              <div class="field">
-                <label for="translation-source-path">Or Use Existing Source Path</label>
-                <input id="translation-source-path" type="text" placeholder="C:\\Users\\...\\document.pdf">
               </div>
               <div class="field">
                 <label for="translation-output-dir">Output Folder</label>
                 <input id="translation-output-dir" type="text" placeholder="C:\\Users\\...\\Downloads">
               </div>
-              <div class="field field-wide">
-                <label for="translation-source-summary">Source Summary</label>
-                <textarea id="translation-source-summary" rows="1" readonly placeholder="Uploaded source metadata appears here."></textarea>
-              </div>
-
-              <div class="form-section-title">Run Settings</div>
               <div class="field">
                 <label for="translation-target-lang">Target Language</label>
                 <select id="translation-target-lang">
@@ -294,6 +280,22 @@
                   <option value="AR">AR</option>
                 </select>
               </div>
+              <details class="shell-collapsible field-wide" id="translation-source-options-section">
+                <summary>
+                  <span>Source Options</span>
+                  <span class="details-hint">Existing path and uploaded source summary.</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field">
+                    <label for="translation-source-path">Existing Source Path</label>
+                    <input id="translation-source-path" type="text" placeholder="C:\\Users\\...\\document.pdf">
+                  </div>
+                  <div class="field field-wide">
+                    <label for="translation-source-summary">Source Summary</label>
+                    <textarea id="translation-source-summary" rows="2" readonly placeholder="Uploaded source metadata appears here."></textarea>
+                  </div>
+                </div>
+              </details>
               <details class="shell-collapsible field-wide" id="translation-advanced-section">
                 <summary>
                   <span>Advanced Settings</span>
@@ -400,13 +402,6 @@
               </div>
             </div>
             <div id="translation-result" class="result-card empty-state">No translation job has run in this workspace yet.</div>
-            <div class="panel-actions status-actions">
-              <button type="button" id="translation-review-export">Export Review Queue</button>
-              <a id="translation-download-docx" class="ghost-button" href="#" download>Download DOCX</a>
-              <a id="translation-download-partial" class="ghost-button" href="#" download>Download Partial DOCX</a>
-              <a id="translation-download-summary" class="ghost-button" href="#" download>Download Run Summary</a>
-              <a id="translation-download-analyze" class="ghost-button" href="#" download>Download Analyze Report</a>
-            </div>
             <details class="details-panel" id="translation-job-details">
               <summary>
                 <span>Translation job state</span>
@@ -423,20 +418,26 @@
                 <h2>Action Rail</h2>
               </div>
             </div>
-            <div class="workspace-action-buttons">
-              <div class="workspace-action-primary">
-                <button type="button" id="translation-analyze">Analyze Only</button>
-                <button type="button" class="primary-button" id="translation-start">Start Translate</button>
-                <button type="button" id="translation-cancel">Cancel</button>
-              </div>
-              <div class="workspace-action-secondary">
-                <button type="button" id="translation-resume-btn">Resume Translation</button>
-                <button type="button" id="translation-rebuild">Rebuild DOCX</button>
-              </div>
+            <div class="workspace-action-buttons simple-action-buttons">
+              <button type="button" class="primary-button" id="translation-start">Start Translate</button>
+              <button type="button" id="translation-cancel">Cancel</button>
+              <details class="action-overflow-menu">
+                <summary id="translation-overflow-toggle">...</summary>
+                <div class="action-overflow-content">
+                  <button type="button" id="translation-analyze">Analyze Only</button>
+                  <button type="button" id="translation-resume-btn">Resume Translation</button>
+                  <button type="button" id="translation-rebuild">Rebuild DOCX</button>
+                  <button type="button" id="translation-review-export">Export Review Queue</button>
+                  <a id="translation-download-docx" class="ghost-button" href="#" download>Download DOCX</a>
+                  <a id="translation-download-partial" class="ghost-button" href="#" download>Download Partial DOCX</a>
+                  <a id="translation-download-summary" class="ghost-button" href="#" download>Download Run Summary</a>
+                  <a id="translation-download-analyze" class="ghost-button" href="#" download>Download Analyze Report</a>
+                </div>
+              </details>
             </div>
           </div>
 
-          <div class="panel workspace-panel workspace-panel-save">
+          <div class="panel workspace-panel workspace-panel-save hidden" id="translation-postrun-panel">
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Translation</p>
@@ -547,6 +548,10 @@
             </details>
           </div>
 
+          </div>
+
+          <div class="simple-task-shell hidden" data-task-panel="interpretation">
+
           <div class="panel upload-panel workspace-panel workspace-panel-autofill">
             <div class="panel-header">
               <div>
@@ -580,11 +585,7 @@
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Interpretation</p>
-                <h2>Interpretation Workspace</h2>
-              </div>
-              <div class="panel-actions">
-                <button type="button" class="ghost-button" id="clear-form">New Blank Entry</button>
-                <button type="button" class="ghost-button" id="reload-history">Reload History</button>
+                <h2>Job Setup</h2>
               </div>
             </div>
             <p class="panel-copy" id="form-status">Review the extracted fields, then save or generate honorários.</p>
@@ -711,10 +712,6 @@
                   </div>
                 </div>
               </details>
-              <div class="form-actions">
-                <button type="button" id="save-row">Save Interpretation Row</button>
-                <button type="button" class="primary-button" id="export-honorarios">Generate DOCX + PDF</button>
-              </div>
             </form>
             <details class="details-panel" id="form-details">
               <summary>
@@ -725,14 +722,36 @@
             </details>
           </div>
 
-          <div class="panel workspace-panel workspace-panel-export">
+          <div class="panel workspace-panel workspace-panel-export hidden" id="interpretation-export-panel">
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Interpretation</p>
-                <h2>Export Result</h2>
+                <h2>Run Status</h2>
               </div>
             </div>
             <div id="export-result" class="result-card empty-state">No export has been run yet.</div>
+          </div>
+
+          <div class="panel workspace-panel workspace-action-rail interpretation-action-rail">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Primary Actions</p>
+                <h2>Action Rail</h2>
+              </div>
+            </div>
+            <div class="workspace-action-buttons simple-action-buttons">
+              <button type="button" id="save-row">Save Interpretation Row</button>
+              <button type="button" class="primary-button" id="export-honorarios">Generate DOCX + PDF</button>
+              <details class="action-overflow-menu">
+                <summary id="interpretation-overflow-toggle">...</summary>
+                <div class="action-overflow-content">
+                  <button type="button" id="clear-form">New Blank Entry</button>
+                  <button type="button" id="reload-history">Reload History</button>
+                </div>
+              </details>
+            </div>
+          </div>
+
           </div>
         </section>
 

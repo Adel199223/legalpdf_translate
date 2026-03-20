@@ -34,7 +34,7 @@ def build_browser_gmail_workspace_url(
     server_port: int = SHADOW_DEFAULT_PORT,
     workspace_id: str = LIVE_GMAIL_WORKSPACE_ID,
 ) -> str:
-    return f"http://{SHADOW_HOST}:{int(server_port)}/?mode=live&workspace={workspace_id}#new-job"
+    return f"http://{SHADOW_HOST}:{int(server_port)}/?mode=live&workspace={workspace_id}#gmail-intake"
 
 
 @dataclass(frozen=True, slots=True)

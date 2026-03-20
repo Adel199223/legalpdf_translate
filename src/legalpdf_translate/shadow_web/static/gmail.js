@@ -287,15 +287,66 @@ function renderSessionResult(activeSession) {
   `;
 }
 
+function renderWorkspaceStrip() {
+  const strip = qs("gmail-workspace-strip");
+  if (!strip) {
+    return;
+  }
+  const show = Boolean(gmailState.loadResult || gmailState.activeSession);
+  strip.classList.toggle("hidden", !show);
+  if (!show) {
+    return;
+  }
+  const title = qs("gmail-workspace-strip-title");
+  const copy = qs("gmail-workspace-strip-copy");
+  if (gmailState.activeSession?.kind === "translation") {
+    title.textContent = "A Gmail translation batch is active.";
+    copy.textContent = "Open the Gmail workspace to review the current attachment, confirm the row, or finalize the reply draft.";
+    return;
+  }
+  if (gmailState.activeSession?.kind === "interpretation") {
+    title.textContent = "A Gmail interpretation handoff is active.";
+    copy.textContent = "Open the Gmail workspace to confirm the notice session and finalize the interpretation reply when it is ready.";
+    return;
+  }
+  title.textContent = "A Gmail message is loaded for this workspace.";
+  copy.textContent = "Open the Gmail workspace to review the exact message context and prepare the right workflow before you continue.";
+}
+
+function syncShellState() {
+  if (appState.bootstrap?.normalized_payload) {
+    appState.bootstrap.normalized_payload.gmail = {
+      ...(appState.bootstrap.normalized_payload.gmail || {}),
+      ...gmailState.bootstrap,
+      load_result: gmailState.loadResult,
+      active_session: gmailState.activeSession,
+      interpretation_seed: gmailState.interpretationSeed,
+      suggested_translation_launch: gmailState.suggestedTranslationLaunch,
+    };
+  }
+  renderWorkspaceStrip();
+  window.dispatchEvent(new CustomEvent("legalpdf:shell-state-updated"));
+}
+
 function updateSessionButtons() {
   const activeSession = gmailState.activeSession;
   const translationReady = Boolean(gmailState.suggestedTranslationLaunch);
   const interpretationReady = Boolean(gmailState.interpretationSeed);
-  qs("gmail-load-translation-launch").disabled = !(activeSession?.kind === "translation" && translationReady);
-  qs("gmail-confirm-translation").disabled = !(activeSession?.kind === "translation");
-  qs("gmail-finalize-batch").disabled = !(activeSession?.kind === "translation" && activeSession.completed);
-  qs("gmail-load-interpretation-seed").disabled = !(activeSession?.kind === "interpretation" && interpretationReady);
-  qs("gmail-finalize-interpretation").disabled = !(activeSession?.kind === "interpretation");
+  const rules = [
+    ["gmail-load-translation-launch", activeSession?.kind === "translation" && translationReady],
+    ["gmail-confirm-translation", activeSession?.kind === "translation"],
+    ["gmail-finalize-batch", activeSession?.kind === "translation" && activeSession.completed],
+    ["gmail-load-interpretation-seed", activeSession?.kind === "interpretation" && interpretationReady],
+    ["gmail-finalize-interpretation", activeSession?.kind === "interpretation"],
+  ];
+  for (const [id, enabled] of rules) {
+    const button = qs(id);
+    if (!button) {
+      continue;
+    }
+    button.disabled = !enabled;
+    button.classList.toggle("hidden", !enabled);
+  }
 }
 
 export function renderGmailBootstrap(payload) {
@@ -325,6 +376,7 @@ export function renderGmailBootstrap(payload) {
       ? `Gmail ${gmailState.activeSession.kind} session is active in workspace ${appState.workspaceId}.`
       : "No Gmail translation batch or interpretation notice is active in this workspace yet.",
   );
+  syncShellState();
 }
 
 async function refreshGmailState() {

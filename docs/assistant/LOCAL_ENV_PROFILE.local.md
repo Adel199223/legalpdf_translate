@@ -38,8 +38,9 @@ Examples in this repo:
 - visible Qt app testing
 - Arabic DOCX review through Windows Word / PowerShell COM automation
 - browser/account-linked local tooling
-- browser-app live daily-use URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#dashboard`
-- browser-app isolated test URL: `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#dashboard`
+- browser-app live daily-use URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job`
+- browser-app isolated test URL: `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#new-job`
+- browser-app Gmail handoff URL: `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`
 
 Before browser/app or bridge triage on Windows, verify any required localhost listener is owned by the expected process. Unexpected listener ownership is a preflight `unavailable` condition, not a product failure.
 

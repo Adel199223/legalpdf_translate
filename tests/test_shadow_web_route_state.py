@@ -76,6 +76,9 @@ results.push(capture("legacy-invalid-fallback"));
 installWindow("http://127.0.0.1:8887/?mode=shadow&workspace=workspace-qt#recent-jobs");
 stateModule.initializeRouteState(config);
 results.push(capture("explicit-hash"));
+installWindow("http://127.0.0.1:8887/?mode=live&workspace=gmail-intake#gmail-intake");
+stateModule.initializeRouteState(config);
+results.push(capture("gmail-intake-hash"));
 window.location.hash = "#settings";
 stateModule.syncActiveViewFromLocation();
 results.push(capture("hashchange-settings"));
@@ -120,6 +123,9 @@ def test_shadow_web_route_state_invalid_views_and_hash_sync() -> None:
 
     assert results["explicit-hash"]["activeView"] == "recent-jobs"
     assert results["explicit-hash"]["href"].endswith("#recent-jobs")
+
+    assert results["gmail-intake-hash"]["activeView"] == "gmail-intake"
+    assert results["gmail-intake-hash"]["href"].endswith("workspace=gmail-intake#gmail-intake")
 
     assert results["hashchange-settings"]["activeView"] == "settings"
     assert results["hashchange-settings"]["href"].endswith("#settings")

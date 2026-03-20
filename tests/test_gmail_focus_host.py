@@ -33,7 +33,7 @@ def test_launch_repo_worktree_detaches_browser_server(monkeypatch, tmp_path: Pat
         launcher_script=None,
         reason="launch_target_ready",
         ui_owner="browser_app",
-        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job",
+        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
         launch_args=("-m", "legalpdf_translate.shadow_web.server", "--port", "8877"),
     )
     recorded: dict[str, object] = {}
@@ -814,7 +814,7 @@ def test_prepare_gmail_intake_returns_browser_owner_context_without_focus(monkey
             launcher_script=None,
             reason="launch_target_ready",
             ui_owner="browser_app",
-            browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job",
+            browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
             launch_args=("-m", "legalpdf_translate.shadow_web.server", "--port", "8877"),
         ),
     )
@@ -839,7 +839,7 @@ def test_prepare_gmail_intake_returns_browser_owner_context_without_focus(monkey
                 "hwnd": None,
                 "reason": "bridge_owner_ready",
                 "owner_kind": "browser_app",
-                "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job",
+                "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
                 "workspace_id": "gmail-intake",
                 "runtime_mode": "live",
             },
@@ -863,7 +863,7 @@ def test_prepare_gmail_intake_returns_browser_owner_context_without_focus(monkey
         "launchTarget": str(tmp_path),
         "launchTargetReason": "launch_target_ready",
         "ui_owner": "browser_app",
-        "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job",
+        "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
         "workspace_id": "gmail-intake",
         "runtime_mode": "live",
         "bridgePort": 9011,

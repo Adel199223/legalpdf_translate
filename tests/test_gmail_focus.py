@@ -278,7 +278,7 @@ def test_validate_bridge_owner_accepts_browser_owned_runtime_without_window(monk
         owner_kind="browser_app",
         runtime_mode="live",
         workspace_id="gmail-intake",
-        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job",
+        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
     )
     monkeypatch.setattr(gmail_focus, "detect_listener_pid", lambda _port: 4321)
     monkeypatch.setattr(gmail_focus, "_visible_window_hwnds_for_pid", lambda _pid: [])
@@ -293,7 +293,7 @@ def test_validate_bridge_owner_accepts_browser_owned_runtime_without_window(monk
         owner_kind="browser_app",
         runtime_mode="live",
         workspace_id="gmail-intake",
-        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job",
+        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
     )
 
 
@@ -309,7 +309,7 @@ def test_validate_bridge_owner_treats_dead_runtime_metadata_pid_as_stale(monkeyp
         owner_kind="browser_app",
         runtime_mode="live",
         workspace_id="gmail-intake",
-        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job",
+        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
     )
     monkeypatch.setattr(gmail_focus, "_pid_is_running", lambda pid: False if pid == 4321 else True)
     monkeypatch.setattr(gmail_focus, "detect_listener_pid", lambda _port: None)
@@ -337,7 +337,7 @@ def test_focus_bridge_owner_treats_browser_owned_bridge_as_delegated(monkeypatch
         owner_kind="browser_app",
         runtime_mode="live",
         workspace_id="gmail-intake",
-        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job",
+        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
     )
     monkeypatch.setattr(gmail_focus, "detect_listener_pid", lambda _port: 4321)
     monkeypatch.setattr(gmail_focus, "_visible_window_hwnds_for_pid", lambda _pid: [])

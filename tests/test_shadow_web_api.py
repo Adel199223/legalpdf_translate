@@ -89,6 +89,7 @@ def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> 
         assert bootstrap_payload["normalized_payload"]["runtime"]["port"] == 8877
         assert bootstrap_payload["normalized_payload"]["runtime"]["runtime_mode"] == "live"
         assert bootstrap_payload["normalized_payload"]["blank_seed"]["service_date"] == ""
+        assert any(item["id"] == "gmail-intake" for item in bootstrap_payload["normalized_payload"]["navigation"])
         assert any(item["id"] == "extension-lab" for item in bootstrap_payload["normalized_payload"]["navigation"])
         assert any(item["id"] == "power-tools" for item in bootstrap_payload["normalized_payload"]["navigation"])
         assert "settings_admin" in bootstrap_payload["normalized_payload"]
@@ -131,30 +132,34 @@ def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> 
         assert len(history_payload["normalized_payload"]["history"]) == 1
 
 
-def test_shadow_web_index_contains_stage_four_shell_sections(tmp_path: Path, monkeypatch) -> None:
+def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path, monkeypatch) -> None:
     with _build_app(tmp_path, monkeypatch) as client:
         response = client.get("/")
         assert response.status_code == 200
         text = response.text
         assert 'defaultRuntimeMode: "live"' in text
         assert 'defaultUiVariant: "qt"' in text
-        assert "Dashboard" in text
-        assert "New Job" in text
-        assert "Recent Jobs" in text
+        assert "Simple Workspace Shell" in text
+        assert 'data-view="gmail-intake"' in text
+        assert 'data-view="new-job"' in text
+        assert 'id="section-nav"' in text
+        assert 'id="more-nav-shell"' in text
+        assert "More" in text
+        assert 'id="new-job-task-switcher"' in text
+        assert 'id="gmail-workspace-strip"' in text
+        assert "Gmail Handoff" in text
         assert "Job Setup" in text
         assert "Run Status" in text
-        assert "Action Rail" in text
+        assert "Start Translate" in text
         assert "Advanced Settings" in text
         assert "Run Metrics (auto-filled)" in text
         assert "Amounts (EUR)" in text
         assert "SERVICE" in text
         assert "RECIPIENT" in text
-        assert "Settings" in text
-        assert "Profile" in text
-        assert "Power Tools" in text
-        assert "Glossary Workspace" in text
-        assert "Calibration Audit" in text
-        assert "Extension Lab" in text
+        assert "Continue In Translation" in text
+        assert "Continue In Interpretation" in text
+        assert 'id="translation-postrun-panel"' in text
+        assert 'id="interpretation-export-panel"' in text
 
 
 def test_shadow_web_index_supports_legacy_ui_flag(tmp_path: Path, monkeypatch) -> None:
@@ -165,6 +170,7 @@ def test_shadow_web_index_supports_legacy_ui_flag(tmp_path: Path, monkeypatch) -
         assert 'defaultUiVariant: "legacy"' in text
         assert 'data-ui-variant="legacy"' in text
         assert "Action Rail" in text
+        assert "Dashboard" in text
 
 
 def test_shadow_web_runtime_mode_and_extension_simulator_endpoints(tmp_path: Path, monkeypatch) -> None:

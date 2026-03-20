@@ -37,6 +37,9 @@ const profileState = {
   currentProfileId: "",
 };
 
+const PRIMARY_NAV_ORDER = ["new-job", "gmail-intake", "recent-jobs"];
+const MORE_NAV_ORDER = ["dashboard", "settings", "profile", "power-tools", "extension-lab"];
+
 function formatDiagnosticValue(value) {
   if (value instanceof Error) {
     const payload = { status: "failed", message: value.message || "Unexpected error." };
@@ -146,6 +149,65 @@ function syncInterpretationDisclosureState() {
     Boolean(recipientOverride),
     recipientOverride ? "Custom recipient override ready" : "Auto-derived recipient",
   );
+}
+
+function shouldShowGmailNav(payload = appState.bootstrap) {
+  const gmail = payload?.normalized_payload?.gmail || {};
+  return Boolean(
+    appState.activeView === "gmail-intake"
+    || appState.workspaceId === "gmail-intake"
+    || gmail.load_result
+    || gmail.active_session
+    || gmail.interpretation_seed
+    || gmail.suggested_translation_launch,
+  );
+}
+
+function findNavigationItem(items, id) {
+  return items.find((item) => item.id === id) || null;
+}
+
+function buildNavigationGroups(items) {
+  const primary = [];
+  for (const id of PRIMARY_NAV_ORDER) {
+    if (id === "gmail-intake") {
+      if (!shouldShowGmailNav()) {
+        continue;
+      }
+      const source = findNavigationItem(items, "gmail-intake");
+      primary.push({
+        id: "gmail-intake",
+        label: source?.label || "Gmail",
+        status: source?.status || "ready",
+      });
+      continue;
+    }
+    const item = findNavigationItem(items, id);
+    if (item) {
+      primary.push(item);
+    }
+  }
+
+  const more = [];
+  for (const id of MORE_NAV_ORDER) {
+    const item = findNavigationItem(items, id);
+    if (item) {
+      more.push(item);
+    }
+  }
+  return { primary, more };
+}
+
+function setNewJobTask(task) {
+  appState.newJobTask = task === "interpretation" ? "interpretation" : "translation";
+  qsa("[data-task-panel]").forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.taskPanel !== appState.newJobTask);
+  });
+  qsa(".task-switch").forEach((button) => {
+    const selected = button.dataset.task === appState.newJobTask;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+  });
 }
 
 function syncShellChrome() {
@@ -281,7 +343,10 @@ export function collectInterpretationFormValues() {
   };
 }
 
-export function applyInterpretationSeed(seed) {
+export function applyInterpretationSeed(seed, { activateTask = true } = {}) {
+  if (activateTask) {
+    setNewJobTask("interpretation");
+  }
   appState.currentSeed = seed;
   appState.currentRowId = null;
   qs("row-id").value = "";
@@ -308,6 +373,7 @@ export function applyInterpretationSeed(seed) {
 }
 
 function applyHistoryItem(item) {
+  setNewJobTask("interpretation");
   appState.currentSeed = item.seed;
   appState.currentRowId = item.row.id;
   qs("row-id").value = item.row.id;
@@ -362,19 +428,34 @@ function renderProfiles(profiles, primaryProfileId) {
 }
 
 function renderNavigation(items) {
-  const container = qs("section-nav");
-  container.innerHTML = "";
-  for (const item of items) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "nav-button";
-    button.dataset.view = item.id;
-    button.innerHTML = `<span>${item.label}</span><span class="nav-meta">${item.status === "ready" ? "Ready" : item.status}</span>`;
-    if (item.id === appState.activeView) {
-      button.classList.add("active");
+  const primaryContainer = qs("section-nav");
+  const moreContainer = qs("more-nav");
+  const moreShell = qs("more-nav-shell");
+  const { primary, more } = buildNavigationGroups(items);
+
+  primaryContainer.innerHTML = "";
+  moreContainer.innerHTML = "";
+
+  for (const collection of [
+    { container: primaryContainer, items: primary },
+    { container: moreContainer, items: more },
+  ]) {
+    for (const item of collection.items) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "nav-button";
+      button.dataset.view = item.id;
+      button.innerHTML = `<span>${item.label}</span><span class="nav-meta">${item.status === "ready" ? "Ready" : item.status}</span>`;
+      if (item.id === appState.activeView) {
+        button.classList.add("active");
+      }
+      collection.container.appendChild(button);
     }
-    container.appendChild(button);
   }
+
+  const moreActive = MORE_NAV_ORDER.includes(appState.activeView);
+  moreShell.open = moreActive;
+  moreShell.classList.toggle("has-active-view", moreActive);
 }
 
 function renderShellVisibility() {
@@ -384,6 +465,13 @@ function renderShellVisibility() {
   qsa(".nav-button").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === appState.activeView);
   });
+  const moreShell = qs("more-nav-shell");
+  if (moreShell) {
+    const moreActive = MORE_NAV_ORDER.includes(appState.activeView);
+    moreShell.open = moreActive || moreShell.open;
+    moreShell.classList.toggle("has-active-view", moreActive);
+  }
+  setNewJobTask(appState.newJobTask);
   syncShellChrome();
 }
 
@@ -592,6 +680,7 @@ function renderStatus(payload) {
 
 export function renderInterpretationExportResult(payload) {
   const container = qs("export-result");
+  qs("interpretation-export-panel")?.classList.remove("hidden");
   const result = payload.normalized_payload || {};
   const pdf = payload.diagnostics?.pdf_export || {};
   const isOk = payload.status === "ok";
@@ -891,7 +980,7 @@ function renderBootstrap(payload) {
   renderTranslationBootstrap(payload);
   renderShellVisibility();
   if (!appState.currentSeed && payload.normalized_payload.blank_seed) {
-    applyInterpretationSeed(payload.normalized_payload.blank_seed);
+    applyInterpretationSeed(payload.normalized_payload.blank_seed, { activateTask: false });
   }
 }
 
@@ -1151,7 +1240,21 @@ async function runWithBusy(buttonIds, busyLabels, action) {
 function wireEvents() {
   window.addEventListener("hashchange", () => {
     syncActiveViewFromLocation();
+    if (appState.bootstrap?.normalized_payload) {
+      renderNavigation(appState.bootstrap.normalized_payload.navigation || []);
+    }
     renderShellVisibility();
+  });
+
+  window.addEventListener("legalpdf:route-state-changed", () => {
+    if (appState.bootstrap?.normalized_payload) {
+      renderNavigation(appState.bootstrap.normalized_payload.navigation || []);
+    }
+    renderShellVisibility();
+  });
+
+  window.addEventListener("legalpdf:set-new-job-task", (event) => {
+    setNewJobTask(event.detail?.task);
   });
 
   window.addEventListener("legalpdf:bootstrap-invalidated", async () => {
@@ -1163,22 +1266,30 @@ function wireEvents() {
     }
   });
 
-  qs("section-nav").addEventListener("click", (event) => {
-    const button = event.target.closest(".nav-button");
-    if (!button) {
+  window.addEventListener("legalpdf:shell-state-updated", () => {
+    if (!appState.bootstrap?.normalized_payload) {
       return;
     }
-    setActiveView(button.dataset.view);
+    renderNavigation(appState.bootstrap.normalized_payload.navigation || []);
     renderShellVisibility();
   });
 
   document.addEventListener("click", (event) => {
+    const navButton = event.target.closest(".nav-button");
+    if (navButton) {
+      setActiveView(navButton.dataset.view);
+      return;
+    }
+    const taskButton = event.target.closest(".task-switch");
+    if (taskButton) {
+      setNewJobTask(taskButton.dataset.task);
+      return;
+    }
     const target = event.target.closest("[data-target-view]");
     if (!target) {
       return;
     }
     setActiveView(target.dataset.targetView);
-    renderShellVisibility();
   });
 
   qs("notification-upload-form").addEventListener("submit", async (event) => {

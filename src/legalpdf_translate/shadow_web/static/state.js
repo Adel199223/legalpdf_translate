@@ -1,6 +1,7 @@
 const SUPPORTED_VIEWS = new Set([
   "dashboard",
   "new-job",
+  "gmail-intake",
   "recent-jobs",
   "settings",
   "profile",
@@ -31,8 +32,23 @@ export const appState = {
   workspaceId: "workspace-1",
   activeView: "dashboard",
   uiVariant: "qt",
+  newJobTask: "translation",
   extensionDiagnostics: null,
 };
+
+function emitRouteStateChanged() {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function" || typeof CustomEvent !== "function") {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent("legalpdf:route-state-changed", {
+    detail: {
+      activeView: appState.activeView,
+      runtimeMode: appState.runtimeMode,
+      workspaceId: appState.workspaceId,
+      uiVariant: appState.uiVariant,
+    },
+  }));
+}
 
 function defaultViewForUiVariant(uiVariant) {
   return uiVariant === "legacy" ? "dashboard" : "new-job";
@@ -79,4 +95,5 @@ export function setRuntimeMode(mode) {
 export function setActiveView(view) {
   appState.activeView = SUPPORTED_VIEWS.has(view) ? view : defaultViewForUiVariant(appState.uiVariant);
   writeRouteState();
+  emitRouteStateChanged();
 }
