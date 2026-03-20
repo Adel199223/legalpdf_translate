@@ -15,8 +15,9 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 
 ## Entrypoints
 - Browser app: `python -m legalpdf_translate.shadow_web.server --open`
-- Browser app URL (daily use): `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#dashboard`
-- Browser app URL (isolated testing): `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#dashboard`
+- Browser app URL (daily use): `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job`
+- Browser app URL (isolated testing): `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#new-job`
+- Browser app Gmail handoff URL: `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`
 - Detached browser-app launcher: `python tooling/launch_browser_app_live_detached.py`
 - GUI: `python -m legalpdf_translate.qt_app`
 - GUI compatibility shim: `python -m legalpdf_translate.qt_main`
@@ -28,7 +29,13 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 
 ## Browser App Shell
 - The local browser app is now the preferred day-to-day interface for this repo.
-- Main browser surfaces: `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab`.
+- Main beginner-first browser surfaces:
+  - `New Job` as the default daily landing screen
+  - conditional `Gmail` for dedicated Gmail handoff/review
+  - `Recent Jobs`
+  - `More`, which keeps `Dashboard`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab` reachable without crowding the first screen
+- `New Job` is translation-first by default and keeps interpretation inside the same shell through an in-page task switcher.
+- `Gmail` is a dedicated browser view for exact-message context, attachment review, Gmail session state, and continuation into translation or interpretation.
 - Browser workspace state is URL-scoped through `workspace=<id>`, so separate tabs can keep independent draft/progress state.
 - `mode=live` uses the real settings, profiles, job log, outputs, and Gmail workflow.
 - `mode=shadow` is the explicit isolated test mode for development and browser automation. It uses separate state roots and never silently falls back to live data.
@@ -164,7 +171,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Job-form draft edits are workspace-local session state. Shared settings now persist launch fields only when a task explicitly starts, so closing or resetting one workspace does not write another window's draft inputs back into `settings.json`.
 - Gmail intake bridge settings persist in GUI settings as `gmail_intake_bridge_enabled`, `gmail_intake_bridge_token`, and `gmail_intake_port`.
 - When the browser server is running, the browser app is the primary live Gmail bridge owner. The real extension/native host now hands off into the browser app first and falls back to Qt only when browser launch is unavailable and no healthy browser-owned bridge already exists.
-- The browser-owned live Gmail bridge uses the fixed live browser workspace `gmail-intake`, and successful extension handoff opens `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job`.
+- The browser-owned live Gmail bridge uses the fixed live browser workspace `gmail-intake`, and successful extension handoff opens `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`.
 - In normal app launches, the Gmail intake bridge is app-level. It reuses the last active workspace only when that workspace is idle and pristine; otherwise it opens a new blank workspace for the intake automatically.
 - Multi-window runs share a controller-owned reservation map keyed by the resolved run directory. A second workspace cannot start `translate`, `analyze`, `rebuild`, or `queue` if it would reuse the same run folder as an active workspace.
 - Gmail intake translation batches now write one durable app-owned session report at `<effective_outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`.
@@ -261,8 +268,9 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Browser-app launch is now the canonical day-to-day local entry path for this repo:
   - attached/local browser server: `python -m legalpdf_translate.shadow_web.server --open`
   - detached live launcher: `python tooling/launch_browser_app_live_detached.py`
-  - default daily-use URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#dashboard`
-  - explicit isolated test URL: `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#dashboard`
+  - default daily-use URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job`
+  - explicit isolated test URL: `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#new-job`
+  - Gmail handoff URL: `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`
 - Windows-native GUI launch is canonical for this repo:
   - attached launch: `python -m legalpdf_translate.qt_app`
   - detached Windows launch: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`
