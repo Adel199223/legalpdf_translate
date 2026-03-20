@@ -14,6 +14,8 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Canonical daily URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job`
 - Gmail handoff workspace: `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`
 - Preferred detached launcher: `python tooling/launch_browser_app_live_detached.py`
+- Fixed review-preview URL: `http://127.0.0.1:8888/?mode=shadow&workspace=workspace-preview#new-job`
+- Fixed review-preview launcher: `Launch LegalPDF Browser App (Preview).cmd`
 - Qt status: supported secondary shell and fallback, not the lead day-to-day surface
 
 ## Browser Mode Contract
@@ -29,6 +31,10 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
   - the primary browser shell is reduced to `New Job`, `Recent Jobs`, conditional `Gmail`, and `More`
   - translation is the default first task, with interpretation available inside the same simple shell
   - advanced/admin/testing surfaces still exist behind direct routes and the `More` expander
+- Preview/stale-tab contract:
+  - port `8877` remains the canonical daily-use/live/Gmail browser port
+  - port `8888` is the fixed review-preview port for this feature worktree
+  - if a cached review tab on `8888` shows browser fetch failures, restart the preview and reopen the fixed preview URL instead of treating it as the daily app being down
 - Browser-app live vs isolated-test mode is now a deliberate reusable system that should be preserved in project docs and later template-sync work.
 - Template-folder synchronization is intentionally deferred for now. If a later task asks to sync the project harness/template files, carry this live-vs-shadow browser-app pattern forward explicitly instead of rediscovering it from thread history.
 
@@ -51,7 +57,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
   - `docs/assistant/exec_plans/completed/2026-03-19_ocr_hardening_wave2.md`
 
 ## Next Concrete Action
-- Continue the browser beginner-first shell validation and acceptance pass on this worktree.
+- Continue the browser beginner-first shell validation and acceptance pass on this worktree, using `8877` for daily/live behavior and `8888` for branch review preview.
 - For roadmap requests, keep dormant-roadmap behavior unless the user explicitly opens a new roadmap.
 - If the user asks to publish or merge this branch, follow the standard commit/publish workflow instead of reopening roadmap mode.
 

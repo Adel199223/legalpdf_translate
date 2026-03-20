@@ -1,4 +1,4 @@
-import { fetchJson } from "./api.js";
+import { describeLocalServerUnavailable, fetchJson, isLocalServerUnavailableError } from "./api.js";
 import { appState, initializeRouteState, setActiveView, setRuntimeMode, syncActiveViewFromLocation } from "./state.js";
 import {
   initializeTranslationUi,
@@ -90,6 +90,90 @@ function setPanelStatus(slot, tone, message) {
   } else {
     delete panel.dataset.tone;
   }
+}
+
+function setTopbarStatus(message, tone) {
+  const panel = qs("topbar-status");
+  if (!panel) {
+    return;
+  }
+  panel.textContent = message;
+  if (tone) {
+    panel.dataset.tone = tone;
+  } else {
+    delete panel.dataset.tone;
+  }
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderRecoveryResult(containerId, details) {
+  const container = qs(containerId);
+  if (!container) {
+    return;
+  }
+  container.classList.remove("empty-state");
+  const steps = details.recoverySteps
+    .map((step) => `<li>${escapeHtml(step)}</li>`)
+    .join("");
+  container.innerHTML = `
+    <div class="result-header">
+      <div><strong>${escapeHtml(details.title)}</strong></div>
+      <span class="status-chip bad">Unavailable</span>
+    </div>
+    <div class="result-grid">
+      <div>
+        <h3>Listener</h3>
+        <p class="word-break">${escapeHtml(`${details.host}:${details.port}`)}</p>
+      </div>
+      <div>
+        <h3>Recommended URL</h3>
+        <p class="word-break">${escapeHtml(details.recommendedUrl)}</p>
+      </div>
+      <div>
+        <h3>Launcher</h3>
+        <p class="word-break">${escapeHtml(details.launcherCommand)}</p>
+      </div>
+    </div>
+    <div>
+      <h3>Recovery</h3>
+      <ul>${steps}</ul>
+    </div>
+  `;
+}
+
+function applyBootstrapFailureState(error) {
+  if (isLocalServerUnavailableError(error)) {
+    const details = describeLocalServerUnavailable(error);
+    qs("workspace-id-label").textContent = details.workspaceId;
+    qs("runtime-mode-label").textContent = details.port === 8888
+      ? "Fixed Review Preview"
+      : (details.runtimeMode === "live" ? "Live App Data" : "Isolated Test Data");
+    setTopbarStatus(details.statusMessage, "bad");
+    const banner = qs("live-banner");
+    banner.classList.add("hidden");
+    banner.textContent = "";
+    setPanelStatus("runtime", "bad", details.message);
+    setPanelStatus("parity-audit", "bad", details.statusMessage);
+    setPanelStatus("translation", "bad", details.message);
+    setPanelStatus("gmail", "bad", details.message);
+    setDiagnostics("runtime", error, { hint: details.diagnosticsHint, open: true });
+    renderRecoveryResult("parity-audit-result", details);
+    renderRecoveryResult("translation-result", details);
+    renderRecoveryResult("gmail-message-result", details);
+    renderRecoveryResult("gmail-session-result", details);
+    return;
+  }
+  setTopbarStatus(error.message || "Browser app bootstrap failed.", "bad");
+  setPanelStatus("runtime", "bad", error.message || "Browser app bootstrap failed.");
+  setDiagnostics("runtime", error, { hint: error.message || "Browser app bootstrap failed.", open: true });
 }
 
 function fieldValue(id) {
@@ -936,10 +1020,9 @@ function renderTopbar(payload) {
   const runtime = payload.normalized_payload.runtime;
   qs("workspace-id-label").textContent = runtime.workspace_id;
   qs("runtime-mode-label").textContent = runtime.runtime_mode_label;
-  qs("topbar-status").textContent = runtime.live_data
+  setTopbarStatus(runtime.live_data
     ? `Live workspace ${runtime.workspace_id}: real settings, Gmail bridge, and job-log writes are active here.`
-    : `Shadow workspace ${runtime.workspace_id}: isolated browser-app data stays separate from live mode.`;
-  qs("topbar-status").dataset.tone = runtime.live_data ? "info" : "ok";
+    : `Shadow workspace ${runtime.workspace_id}: isolated browser-app data stays separate from live mode.`, runtime.live_data ? "info" : "ok");
   showLiveBanner(runtime);
 }
 
@@ -1488,7 +1571,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadBootstrap();
   } catch (error) {
-    setPanelStatus("runtime", "bad", error.message || "Browser app bootstrap failed.");
-    setDiagnostics("runtime", error, { hint: error.message || "Browser app bootstrap failed.", open: true });
+    applyBootstrapFailureState(error);
   }
 });

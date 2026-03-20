@@ -18,7 +18,9 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - Browser app URL (daily use): `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job`
 - Browser app URL (isolated testing): `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#new-job`
 - Browser app Gmail handoff URL: `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`
+- Browser review-preview URL (fixed branch-review contract): `http://127.0.0.1:8888/?mode=shadow&workspace=workspace-preview#new-job`
 - Detached browser-app launcher: `python tooling/launch_browser_app_live_detached.py`
+- Review-preview launcher: double-click `Launch LegalPDF Browser App (Preview).cmd` in the repo root.
 - GUI: `python -m legalpdf_translate.qt_app`
 - GUI compatibility shim: `python -m legalpdf_translate.qt_main`
 - Beginner Windows launcher: double-click `Launch LegalPDF Translate.bat` in the repo root. It delegates to `tooling/launch_qt_build.py --worktree <repo-root>`.
@@ -39,6 +41,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - Browser workspace state is URL-scoped through `workspace=<id>`, so separate tabs can keep independent draft/progress state.
 - `mode=live` uses the real settings, profiles, job log, outputs, and Gmail workflow.
 - `mode=shadow` is the explicit isolated test mode for development and browser automation. It uses separate state roots and never silently falls back to live data.
+- Port `8877` remains the canonical daily-use/live/Gmail browser port; port `8888` is reserved for fixed branch-review previews so stale review tabs and normal work tabs do not collide.
 - `Extension Lab` is a diagnostics and simulation companion for the real Gmail extension. It does not replace the extension itself.
 
 ## Desktop UI Shell

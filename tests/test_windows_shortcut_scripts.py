@@ -18,6 +18,28 @@ def test_repo_launcher_batch_supports_canonical_venv_fallback_for_worktree_testi
     assert "PYTHONPATH" not in text
 
 
+def test_browser_app_cmd_launchers_use_detached_launcher_and_expected_contracts() -> None:
+    live = _read_script("Launch LegalPDF Browser App (Live).cmd")
+    shadow = _read_script("Launch LegalPDF Browser App (Shadow).cmd")
+    preview = _read_script("Launch LegalPDF Browser App (Preview).cmd")
+
+    for text in (live, shadow, preview):
+        assert ".venv311\\Scripts\\python.exe" in text
+        assert "tooling\\launch_browser_app_live_detached.py" in text
+        assert "CANONICAL_BUILD.json" in text
+        assert "ConvertFrom-Json" in text
+
+    assert "--mode live" in live
+    assert "--workspace workspace-1" in live
+
+    assert "--mode shadow" in shadow
+    assert "--workspace workspace-1" in shadow
+
+    assert "--mode shadow" in preview
+    assert "--workspace workspace-preview" in preview
+    assert "--port 8888" in preview
+
+
 def test_create_shortcut_script_uses_ico_and_public_desktop_cleanup() -> None:
     text = _read_script("scripts/create_desktop_shortcut.ps1")
     assert "CommonDesktopDirectory" in text

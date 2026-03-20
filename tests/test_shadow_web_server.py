@@ -80,3 +80,7 @@ def test_run_browser_server_disables_uvicorn_signal_handlers_on_windows(monkeypa
     assert seen["install_signal_handlers"]() is None
     assert seen["capture_signals"] is nullcontext
     assert seen["ran"] is True
+
+
+def test_default_browser_url_targets_new_job() -> None:
+    assert server._default_browser_url(8877) == "http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job"

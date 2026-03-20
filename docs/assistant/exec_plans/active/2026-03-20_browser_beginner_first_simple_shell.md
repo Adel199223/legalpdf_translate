@@ -14,6 +14,8 @@
   - dedicated `#gmail-intake` browser route and Gmail handoff URL updates
   - simplified `#new-job` translation-first home with an in-page translation/interpretation task switch
   - hidden-by-default post-run translation save surfaces and compact Gmail session strip behavior
+  - fixed preview-port operability on `127.0.0.1:8888` for branch review
+  - browser bootstrap recovery UX for dead local listeners / stale cached preview tabs
   - focused browser/Gmail route and handoff regression tests
 - Out of scope:
   - full visual restyling of all admin/secondary pages
@@ -62,10 +64,15 @@
    - route defaults
    - Gmail bridge/focus-host URLs
    - simple-shell HTML presence/behavior
+6. Add preview-operability hardening:
+   - upgrade the detached browser launcher on this branch to the hardened arg-aware version with `--mode`, `--workspace`, `--port`, `--ui`, and `--no-open`
+   - add a fixed review-preview wrapper targeting `127.0.0.1:8888/?mode=shadow&workspace=workspace-preview#new-job`
+   - normalize dead-listener fetch failures into friendly local recovery copy instead of raw `Failed to fetch`
+   - keep `8877` as the daily/live/Gmail contract and document `8888` as the fixed review-preview contract only
 
 ## Tests and acceptance criteria
 - Focused tests:
-  - `.\.venv311\Scripts\python.exe -m pytest -q tests/test_shadow_web_route_state.py tests/test_shadow_web_api.py tests/test_shadow_web_server.py tests/test_browser_gmail_bridge.py tests/test_gmail_focus.py tests/test_gmail_focus_host.py`
+  - `.\.venv311\Scripts\python.exe -m pytest -q tests/test_launch_browser_app_live_detached.py tests/test_shadow_web_runtime_recovery.py tests/test_shadow_web_route_state.py tests/test_shadow_web_api.py tests/test_shadow_web_server.py tests/test_browser_gmail_bridge.py tests/test_gmail_focus.py tests/test_gmail_focus_host.py tests/test_windows_shortcut_scripts.py`
 - Acceptance:
   - no-hash Qt/default browser route lands on `#new-job`
   - Gmail browser handoff lands on `#gmail-intake`
@@ -75,6 +82,8 @@
   - Gmail intake panels are absent from the normal home screen and replaced there by a compact Gmail session strip when relevant
   - translation save/log panels stay hidden until a run or saved row makes them relevant
   - interpretation disclosure defaults continue to match the Qt-derived `SERVICE` / `TEXT` / `RECIPIENT` / `Amounts` behavior
+  - the daily browser app remains on `8877`, while the branch-review preview always uses `8888`
+  - stale cached preview tabs surface a friendly local-server-unavailable recovery state instead of only `Failed to fetch`
 
 ## Rollout and fallback
 - Keep `ui=legacy` as the temporary internal shell fallback during this branch pass.
@@ -114,3 +123,4 @@
 - Remaining optional follow-up:
   - live visual acceptance in the browser app
   - targeted docs sync for touched browser-app user/ops references that still mention the older default URL
+  - preview-port stabilization closeout on the open feature PR
