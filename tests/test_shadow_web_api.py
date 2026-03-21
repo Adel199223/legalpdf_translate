@@ -89,6 +89,7 @@ def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> 
         assert bootstrap_payload["normalized_payload"]["runtime"]["port"] == 8877
         assert bootstrap_payload["normalized_payload"]["runtime"]["runtime_mode"] == "live"
         assert bootstrap_payload["normalized_payload"]["blank_seed"]["service_date"] == ""
+        assert any(item["id"] == "gmail-intake" for item in bootstrap_payload["normalized_payload"]["navigation"])
         assert any(item["id"] == "extension-lab" for item in bootstrap_payload["normalized_payload"]["navigation"])
         assert any(item["id"] == "power-tools" for item in bootstrap_payload["normalized_payload"]["navigation"])
         assert "settings_admin" in bootstrap_payload["normalized_payload"]
@@ -131,21 +132,93 @@ def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> 
         assert len(history_payload["normalized_payload"]["history"]) == 1
 
 
-def test_shadow_web_index_contains_stage_four_shell_sections(tmp_path: Path, monkeypatch) -> None:
+def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path, monkeypatch) -> None:
     with _build_app(tmp_path, monkeypatch) as client:
         response = client.get("/")
         assert response.status_code == 200
         text = response.text
         assert 'defaultRuntimeMode: "live"' in text
+        assert 'defaultUiVariant: "qt"' in text
+        assert "Simple Workspace Shell" in text
+        assert 'data-view="gmail-intake"' in text
+        assert 'data-view="new-job"' in text
+        assert 'id="section-nav"' in text
+        assert 'id="more-nav-shell"' in text
+        assert 'id="operator-mode-toggle"' in text
+        assert "More" in text
+        assert "Operator Details" in text
+        assert 'class="sidebar-card operator-only"' in text
+        assert 'class="details-panel operator-only"' in text
+        assert 'id="new-job-task-switcher"' in text
+        assert 'id="gmail-workspace-strip"' in text
+        assert 'id="gmail-workspace-strip-action"' in text
+        assert "Gmail Handoff" in text
+        assert "Focused Intake Review" in text
+        assert "Message Details and Overrides" in text
+        assert 'id="gmail-open-session"' in text
+        assert 'id="gmail-preview-session"' in text
+        assert 'id="gmail-session-banner"' in text
+        assert 'id="gmail-session-drawer"' in text
+        assert 'id="gmail-session-drawer-backdrop"' in text
+        assert 'id="gmail-close-session-drawer"' in text
+        assert "Job Setup" in text
+        assert "Run Status" in text
+        assert "Start Translate" in text
+        assert "Advanced Settings" in text
+        assert 'id="translation-open-completion"' in text
+        assert 'id="translation-completion-drawer"' in text
+        assert 'id="translation-completion-drawer-backdrop"' in text
+        assert 'id="translation-close-completion"' in text
+        assert "Finish Translation" in text
+        assert "Completion Surface" in text
+        assert "Export Review Queue" in text
+        assert "Run Metrics (auto-filled)" in text
+        assert "Amounts (EUR)" in text
+        assert "Interpretation Intake" in text
+        assert "Seed Review" in text
+        assert 'id="interpretation-open-review"' in text
+        assert 'id="interpretation-review-drawer"' in text
+        assert 'id="interpretation-review-drawer-backdrop"' in text
+        assert 'id="interpretation-open-gmail-session"' in text
+        assert "SERVICE" in text
+        assert "RECIPIENT" in text
+        assert "Continue In Translation" in text
+        assert "Continue In Interpretation" in text
+        assert "Open Session Actions" in text
+        assert 'data-view="recent-jobs"' in text
+        assert "Bounded Review Flow" in text
+        assert "Recent Translation Runs" in text
+        assert "Translation Job Log History" in text
+        assert "Interpretation History" in text
+        assert 'data-view="settings"' in text
+        assert 'id="settings-defaults-section"' in text
+        assert 'id="settings-integrations-section"' in text
+        assert 'id="settings-ops-section"' in text
+        assert "Provider and Host Preflight" in text
+        assert 'data-view="profile"' in text
+        assert "One Profile At A Time" in text
+        assert 'id="profile-editor-drawer"' in text
+        assert 'id="profile-editor-drawer-backdrop"' in text
+        assert 'id="profile-close-editor"' in text
+        assert 'id="profile-close-editor-footer"' in text
+        assert 'data-view="power-tools"' in text
+        assert "bounded tool stack" in text
+        assert 'data-view="extension-lab"' in text
+        assert "bounded operator lab" in text
+        assert "workspace-panel-gmail-session" not in text
+        assert 'id="translation-postrun-panel"' not in text
+        assert 'id="interpretation-export-panel"' not in text
+
+
+def test_shadow_web_index_supports_legacy_ui_flag(tmp_path: Path, monkeypatch) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.get("/", params={"ui": "legacy"})
+        assert response.status_code == 200
+        text = response.text
+        assert 'defaultUiVariant: "legacy"' in text
+        assert 'data-ui-variant="legacy"' in text
+        assert "Action Rail" in text
         assert "Dashboard" in text
-        assert "New Job" in text
-        assert "Recent Jobs" in text
-        assert "Settings" in text
-        assert "Profile" in text
-        assert "Power Tools" in text
-        assert "Glossary Workspace" in text
-        assert "Calibration Audit" in text
-        assert "Extension Lab" in text
 
 
 def test_shadow_web_runtime_mode_and_extension_simulator_endpoints(tmp_path: Path, monkeypatch) -> None:

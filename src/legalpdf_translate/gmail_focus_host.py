@@ -128,7 +128,7 @@ def _resolve_repo_worktree_for_auto_launch(*, runtime_path: Path | None = None) 
 
 
 def _browser_gmail_workspace_url(*, port: int = SHADOW_DEFAULT_PORT) -> str:
-    return f"http://127.0.0.1:{int(port)}/?mode=live&workspace={_BROWSER_GMAIL_WORKSPACE_ID}#new-job"
+    return f"http://127.0.0.1:{int(port)}/?mode=live&workspace={_BROWSER_GMAIL_WORKSPACE_ID}#gmail-intake"
 
 
 def _resolve_qt_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaunchTarget:

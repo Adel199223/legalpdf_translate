@@ -1,6 +1,7 @@
 const SUPPORTED_VIEWS = new Set([
   "dashboard",
   "new-job",
+  "gmail-intake",
   "recent-jobs",
   "settings",
   "profile",
@@ -30,8 +31,30 @@ export const appState = {
   runtimeMode: "live",
   workspaceId: "workspace-1",
   activeView: "dashboard",
+  uiVariant: "qt",
+  operatorMode: false,
+  newJobTask: "translation",
   extensionDiagnostics: null,
 };
+
+function emitRouteStateChanged() {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function" || typeof CustomEvent !== "function") {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent("legalpdf:route-state-changed", {
+    detail: {
+      activeView: appState.activeView,
+      runtimeMode: appState.runtimeMode,
+      workspaceId: appState.workspaceId,
+      uiVariant: appState.uiVariant,
+      operatorMode: appState.operatorMode,
+    },
+  }));
+}
+
+function defaultViewForUiVariant(uiVariant) {
+  return uiVariant === "legacy" ? "dashboard" : "new-job";
+}
 
 export function initializeRouteState(config) {
   const params = new URLSearchParams(window.location.search);
@@ -40,16 +63,34 @@ export function initializeRouteState(config) {
     params.get("workspace") || config.defaultWorkspaceId || nextWorkspaceId(),
     "workspace-1",
   );
-  const hashView = window.location.hash.replace(/^#/, "").trim();
-  appState.activeView = SUPPORTED_VIEWS.has(hashView) ? hashView : "dashboard";
+  appState.uiVariant = params.get("ui") === "legacy" ? "legacy" : String(config.defaultUiVariant || "qt");
+  appState.operatorMode = ["1", "true", "on"].includes(String(params.get("operator") || "").trim().toLowerCase());
+  syncActiveViewFromLocation();
+  document.body.dataset.uiVariant = appState.uiVariant;
   writeRouteState();
   return appState;
+}
+
+export function syncActiveViewFromLocation() {
+  const hashView = window.location.hash.replace(/^#/, "").trim();
+  appState.activeView = SUPPORTED_VIEWS.has(hashView) ? hashView : defaultViewForUiVariant(appState.uiVariant);
+  return appState.activeView;
 }
 
 export function writeRouteState() {
   const url = new URL(window.location.href);
   url.searchParams.set("mode", appState.runtimeMode);
   url.searchParams.set("workspace", appState.workspaceId);
+  if (appState.uiVariant === "legacy") {
+    url.searchParams.set("ui", "legacy");
+  } else {
+    url.searchParams.delete("ui");
+  }
+  if (appState.operatorMode) {
+    url.searchParams.set("operator", "1");
+  } else {
+    url.searchParams.delete("operator");
+  }
   url.hash = appState.activeView;
   window.history.replaceState({}, "", url);
 }
@@ -60,6 +101,13 @@ export function setRuntimeMode(mode) {
 }
 
 export function setActiveView(view) {
-  appState.activeView = SUPPORTED_VIEWS.has(view) ? view : "dashboard";
+  appState.activeView = SUPPORTED_VIEWS.has(view) ? view : defaultViewForUiVariant(appState.uiVariant);
   writeRouteState();
+  emitRouteStateChanged();
+}
+
+export function setOperatorMode(enabled) {
+  appState.operatorMode = Boolean(enabled);
+  writeRouteState();
+  emitRouteStateChanged();
 }

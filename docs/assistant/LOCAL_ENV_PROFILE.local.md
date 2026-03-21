@@ -38,10 +38,14 @@ Examples in this repo:
 - visible Qt app testing
 - Arabic DOCX review through Windows Word / PowerShell COM automation
 - browser/account-linked local tooling
-- browser-app live daily-use URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#dashboard`
-- browser-app isolated test URL: `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#dashboard`
+- browser-app live daily-use URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job`
+- browser-app isolated test URL: `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#new-job`
+- browser-app Gmail handoff URL: `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`
+- fixed browser review-preview URL: `http://127.0.0.1:8888/?mode=shadow&workspace=workspace-preview#new-job`
 
 Before browser/app or bridge triage on Windows, verify any required localhost listener is owned by the expected process. Unexpected listener ownership is a preflight `unavailable` condition, not a product failure.
+
+For browser-shell review work, keep `8877` for the normal daily browser app and `8888` for the fixed feature-preview contract. If an old cached preview tab shows fetch failures on `8888`, relaunch the preview instead of treating it as a product-runtime regression on the daily app.
 
 For the Arabic DOCX review gate, WSL-only validation is insufficient because Word automation, visible Word editing, and save-detection behavior are Windows-host runtime facts.
 

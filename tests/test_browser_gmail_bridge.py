@@ -118,7 +118,7 @@ def test_browser_live_gmail_bridge_manager_starts_and_clears_runtime_metadata(mo
     assert payload["owner_kind"] == "browser_app"
     assert payload["workspace_id"] == "gmail-intake"
     assert payload["runtime_mode"] == "live"
-    assert payload["browser_url"] == "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job"
+    assert payload["browser_url"] == "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake"
 
     manager.stop()
 

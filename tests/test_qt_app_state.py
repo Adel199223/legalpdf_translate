@@ -1793,7 +1793,7 @@ def test_workspace_controller_gmail_bridge_backs_off_when_browser_app_owns_live_
             hwnd=None,
             reason="bridge_owner_ready",
             owner_kind="browser_app",
-            browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#new-job",
+            browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
             workspace_id="gmail-intake",
             runtime_mode="live",
         ),

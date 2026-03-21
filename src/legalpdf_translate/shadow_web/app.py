@@ -178,6 +178,13 @@ def _supported_browser_modes() -> list[dict[str, str]]:
     ]
 
 
+def _normalize_ui_variant(raw_value: object | None) -> str:
+    candidate = str(raw_value or "").strip().lower()
+    if candidate == "legacy":
+        return "legacy"
+    return "qt"
+
+
 def _runtime_payload(context: ShadowWebContext, target: ActiveBrowserTarget) -> dict[str, Any]:
     return {
         "host": SHADOW_HOST,
@@ -386,6 +393,7 @@ def create_shadow_app(
                 "build_sha": context.build_identity.head_sha,
                 "default_runtime_mode": _default_browser_mode(request.query_params.get("mode")),
                 "default_workspace_id": normalize_workspace_id(request.query_params.get("workspace")),
+                "ui_variant": _normalize_ui_variant(request.query_params.get("ui")),
             },
         )
 

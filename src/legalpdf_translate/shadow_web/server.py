@@ -27,7 +27,7 @@ _DEFAULT_BROWSER_WORKSPACE = "workspace-1"
 
 
 def _default_browser_url(port: int) -> str:
-    return f"http://{SHADOW_HOST}:{int(port)}/?mode=live&workspace={_DEFAULT_BROWSER_WORKSPACE}#dashboard"
+    return f"http://{SHADOW_HOST}:{int(port)}/?mode=live&workspace={_DEFAULT_BROWSER_WORKSPACE}#new-job"
 
 
 def _build_parser() -> argparse.ArgumentParser:
