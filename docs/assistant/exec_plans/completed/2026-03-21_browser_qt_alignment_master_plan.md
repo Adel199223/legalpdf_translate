@@ -4,8 +4,7 @@
 - Goal: align the browser app with the Qt information hierarchy while keeping the browser app clearly web-native and calmer for daily use.
 - Goal: replace the remaining operator-console feel with one focused main shell, staged Gmail intake, and bounded secondary work in same-tab dialogs/drawers.
 - Preserve `mode=live|shadow`, default `#new-job`, Gmail handoff on `#gmail-intake`, daily app ownership on `127.0.0.1:8877`, review preview on `127.0.0.1:8888`, and temporary `ui=legacy`.
-- Execution is hard stage-gated. Stop after each stage and require the exact continuation token format `NEXT_STAGE_X`.
-- Current status: Stages 1 through 5 are complete; the implementation program is ready for review and publish flow.
+- Execution was hard stage-gated. Stages 1 through 5 are complete, and the implementation program is ready for review and publish flow.
 
 ## Worktree provenance
 - worktree path: `C:\Users\FA507\.codex\legalpdf_translate_browser_qt_parity`
@@ -13,7 +12,7 @@
 - base branch: `main`
 - update target: PR `#30`
 
-## Authority order
+## Authority order during execution
 1. Active stage packet in `docs/assistant/exec_plans/active/`
 2. This master ExecPlan
 3. `docs/assistant/SESSION_RESUME.md`
