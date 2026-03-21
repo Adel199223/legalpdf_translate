@@ -55,9 +55,11 @@ That applies this safer profile for the current run only:
 It does not silently overwrite your saved defaults.
 
 ## Main Screen Layout
-- Left sidebar: navigation for `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab`.
-- `Dashboard`: machine state, runtime mode, OCR, Word PDF export, browser automation, and Gmail bridge cards.
-- `New Job`: source PDF, target language, output folder, translation controls, Gmail intake workspace, and the most-used translation/history actions.
+- Left sidebar: the calm first-level buttons are `New Job`, `Recent Jobs`, and sometimes `Gmail`. Less-common pages stay under `More`.
+- `Dashboard`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab` are still available, but they now behave as secondary/operator surfaces rather than the normal first screen.
+- `New Job`: the default daily shell. It stays focused on source PDF, target language, output folder, bounded advanced settings, run status, and the bottom action rail.
+- `Gmail`: a dedicated compact handoff screen for exact-message review and attachment selection. Deeper Gmail session/finalization work stays in same-tab drawers instead of appearing inline on the main shell.
+- `Recent Jobs`: the main secondary production page, with the latest saved rows visible first and deeper translation/interpretation history kept behind collapsible sections.
 - `Run Status`: progress bar, current task text, and page/image/error summary.
 - Bottom action rail: `Start Translate`, `Cancel`, and `...`.
 - `Settings > Appearance` now gives you two real live themes:
@@ -66,11 +68,9 @@ It does not silently overwrite your saved defaults.
 - `live` mode is the real-work browser surface. `shadow` mode is the isolated test copy that keeps separate settings, job log, and outputs.
 - The browser app is now the preferred daily-use surface. The Qt shell remains a supported fallback, not the default starting point.
 - `...` opens:
-  - `Open Output Folder`
-  - `Export Partial DOCX`
+  - `Analyze Only`
+  - `Resume Translation`
   - `Rebuild DOCX`
-  - `Generate Run Report`
-  - `View Job Log`
 
 ## Terms in Plain English
 - Target language: The language you want the final document in.

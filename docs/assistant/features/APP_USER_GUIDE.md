@@ -30,13 +30,14 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 ## What You See On Screen
 - Left sidebar: the normal first-level buttons are `New Job`, `Recent Jobs`, and sometimes `Gmail`. Less-common areas stay under `More`.
 - `New Job`: the main beginner-first work area. Translation is the default view, and `Interpretation` is available through the in-page task switch.
-- `Gmail`: a dedicated Gmail handoff screen that keeps exact-message review, attachment selection, and Gmail-session follow-up separate from the normal first screen.
+- `Gmail`: a dedicated Gmail handoff screen that starts as a compact review-first surface. Exact-message review and attachment choice are shown first; deeper Gmail session/finalization work opens later in same-tab drawers.
 - `More`: keeps `Dashboard`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab` reachable without making the everyday shell feel crowded.
-- `Dashboard`: environment cards that show whether you are in real-work `live` mode or isolated `shadow` mode, plus OCR, Word PDF export, browser automation, and Gmail bridge status.
-- `Recent Jobs`: saved translation and interpretation rows with reopen and delete actions.
-- `Settings`: provider keys, Gmail bridge options, OCR checks, and other machine-level settings.
-- `Profile`: your saved person/company details, addresses, distance defaults, and primary profile choice.
-- `Extension Lab`: the browser-side diagnostics/simulator surface for Gmail handoff checks. The real browser extension stays canonical, but this lab is the best place to inspect readiness.
+- `Dashboard`: an operator/status page under `More` that shows runtime mode, OCR, Word PDF export, browser automation, and Gmail bridge state when you need machine-level visibility.
+- `Recent Jobs`: the main secondary production page. It shows the latest saved rows first and keeps deeper translation and interpretation history tucked into collapsible sections until you ask for them.
+- `Settings`: a bounded operator sheet for provider keys, Gmail bridge options, OCR checks, and other machine-level settings. The screen is grouped so defaults stay visible first and lower-frequency diagnostics stay tucked away.
+- `Profile`: your saved person/company details, addresses, distance defaults, and primary profile choice. The main page stays focused on the list and primary profile, while the full editor opens in a drawer.
+- `Power Tools`: a bounded operator stack for glossary, calibration, and diagnostics workflows.
+- `Extension Lab`: the browser-side diagnostics/simulator surface for Gmail handoff checks. The real browser extension stays canonical, and this lab remains an operator page rather than part of the normal daily flow.
 - Workspace: the browser app still uses workspaces, but they are shown through the current browser tab or window instead of separate Qt windows by default.
 - Theme: in `Settings > Appearance`, `dark_futuristic` is the brighter elevated default and `dark_simple` is the quieter darker variant. The change applies live without restarting the app.
 - The browser app shell, Settings, Gmail review/preview, Save/Edit Job Log, and honorários export now share the same raised translucent panel style so the interface feels like one connected product surface.
@@ -68,7 +69,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 6. Save the finished run to the Job Log so the case and cost details are stored together.
 7. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
 8. Use Gmail intake when you want to start from one open Gmail message instead of choosing files manually.
-9. Open `File > New Window` or press `Ctrl+Shift+N` when you want a second independent workspace for another job.
+9. Open another browser tab or browser window with a different workspace URL when you want a second independent workspace for another job.
 10. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when that flow supports it and `Court Email` is available.
 11. Use the Job Log when you need an interpretation-only honorários document without a translation run, or start from Gmail intake when the court notice already arrived by email.
 
