@@ -1,5 +1,12 @@
 import { describeLocalServerUnavailable, fetchJson, isLocalServerUnavailableError } from "./api.js";
-import { appState, initializeRouteState, setActiveView, setRuntimeMode, syncActiveViewFromLocation } from "./state.js";
+import {
+  appState,
+  initializeRouteState,
+  setActiveView,
+  setOperatorMode,
+  setRuntimeMode,
+  syncActiveViewFromLocation,
+} from "./state.js";
 import {
   initializeTranslationUi,
   loadTranslationHistoryItem,
@@ -35,6 +42,14 @@ function chipToneClass(status) {
 
 const profileState = {
   currentProfileId: "",
+};
+
+const profileUiState = {
+  editorDrawerOpen: false,
+};
+
+const interpretationUiState = {
+  reviewDrawerOpen: false,
 };
 
 const PRIMARY_NAV_ORDER = ["new-job", "gmail-intake", "recent-jobs"];
@@ -76,6 +91,11 @@ function setDiagnostics(slot, value, { hint = "", open = false } = {}) {
   const details = qs(`${slot}-details`);
   if (details) {
     details.open = Boolean(open);
+    if (open) {
+      details.dataset.reveal = "true";
+    } else {
+      delete details.dataset.reveal;
+    }
   }
 }
 
@@ -227,12 +247,179 @@ function syncInterpretationDisclosureState() {
     !serviceSame,
     serviceSame ? "Same as case" : "Custom service details",
   );
+  const useServiceLocation = qs("use-service-location")?.checked ?? false;
+  const includeTransport = qs("include-transport")?.checked ?? true;
+  const travelDistance = fieldValue("travel-km-outbound");
+  const outputFilename = fieldValue("output-filename");
+  const textCustomized = Boolean(useServiceLocation || !includeTransport || travelDistance || outputFilename);
+  setDisclosureState(
+    "interpretation-text-section",
+    textCustomized,
+    textCustomized ? "Custom wording or export detail ready" : "Honorarios wording and filename stay tucked away until needed",
+  );
   const recipientOverride = fieldValue("recipient-block");
   setDisclosureState(
     "interpretation-recipient-section",
     Boolean(recipientOverride),
     recipientOverride ? "Custom recipient override ready" : "Auto-derived recipient",
   );
+  const amountsTouched = Boolean(
+    fieldValue("pages")
+    || fieldValue("word-count")
+    || fieldValue("rate-per-word")
+    || fieldValue("expected-total")
+    || fieldValue("amount-paid")
+    || fieldValue("api-cost")
+    || fieldValue("profit"),
+  );
+  const amountsSummary = amountsTouched
+    ? "Metrics and pricing are ready for final review"
+    : "Pages, words, rate, totals, API-cost, and profit stay tucked away until final review";
+  const amountsSummaryNode = qs("interpretation-amounts-section-summary");
+  if (amountsSummaryNode) {
+    amountsSummaryNode.textContent = amountsSummary;
+  }
+  const amountsSection = qs("interpretation-amounts-section");
+  if (amountsSection) {
+    amountsSection.open = false;
+  }
+}
+
+function interpretationActiveSession() {
+  return appState.bootstrap?.normalized_payload?.gmail?.active_session || null;
+}
+
+function interpretationSnapshot() {
+  return {
+    rowId: String(appState.currentRowId || "").trim(),
+    caseNumber: fieldValue("case-number"),
+    courtEmail: fieldValue("court-email"),
+    caseEntity: fieldValue("case-entity"),
+    caseCity: fieldValue("case-city"),
+    serviceDate: fieldValue("service-date"),
+    travelKmOutbound: fieldValue("travel-km-outbound"),
+    pages: fieldValue("pages"),
+    wordCount: fieldValue("word-count"),
+  };
+}
+
+function hasMeaningfulInterpretationValue(value) {
+  const normalized = String(value ?? "").trim();
+  return Boolean(normalized && normalized !== "0" && normalized !== "0.0" && normalized !== "0.00");
+}
+
+function hasInterpretationReviewData(snapshot = interpretationSnapshot()) {
+  return Boolean(
+    snapshot.rowId
+    || hasMeaningfulInterpretationValue(snapshot.caseNumber)
+    || hasMeaningfulInterpretationValue(snapshot.courtEmail)
+    || hasMeaningfulInterpretationValue(snapshot.caseEntity)
+    || hasMeaningfulInterpretationValue(snapshot.caseCity)
+    || hasMeaningfulInterpretationValue(snapshot.serviceDate)
+    || hasMeaningfulInterpretationValue(snapshot.travelKmOutbound)
+    || hasMeaningfulInterpretationValue(snapshot.pages)
+    || hasMeaningfulInterpretationValue(snapshot.wordCount),
+  );
+}
+
+function interpretationReviewButtonLabel(snapshot = interpretationSnapshot()) {
+  if (snapshot.rowId) {
+    return "Review Saved Row";
+  }
+  if (hasInterpretationReviewData(snapshot)) {
+    return "Review Interpretation";
+  }
+  return "Start Blank Review";
+}
+
+function renderInterpretationSeedCard(containerId) {
+  const container = qs(containerId);
+  if (!container) {
+    return;
+  }
+  const snapshot = interpretationSnapshot();
+  const gmailSession = interpretationActiveSession();
+  if (!hasInterpretationReviewData(snapshot)) {
+    container.classList.add("empty-state");
+    container.textContent = "Upload a notification PDF or screenshot to recover the case data, or start a blank review if you need to enter it manually.";
+    return;
+  }
+  const title = snapshot.rowId
+    ? `Saved interpretation row #${snapshot.rowId} is ready to review.`
+    : "Recovered interpretation seed is ready to review.";
+  const sessionLabel = gmailSession?.kind === "interpretation" ? "Gmail interpretation session active." : "Local interpretation review.";
+  container.classList.remove("empty-state");
+  container.innerHTML = `
+    <div class="result-header">
+      <div>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(sessionLabel)}</p>
+      </div>
+      <span class="status-chip ${snapshot.rowId ? "ok" : "info"}">${snapshot.rowId ? "Saved" : "Ready"}</span>
+    </div>
+    <div class="result-grid">
+      <div><h3>Case</h3><p class="word-break">${escapeHtml(snapshot.caseNumber || "Not set yet")}</p></div>
+      <div><h3>Court Email</h3><p class="word-break">${escapeHtml(snapshot.courtEmail || "Not set yet")}</p></div>
+      <div><h3>Service Date</h3><p class="word-break">${escapeHtml(snapshot.serviceDate || "Not set yet")}</p></div>
+      <div><h3>Location</h3><p class="word-break">${escapeHtml([snapshot.caseEntity, snapshot.caseCity].filter(Boolean).join(" | ") || "Not set yet")}</p></div>
+    </div>
+  `;
+}
+
+function resetInterpretationExportResult() {
+  const panel = qs("interpretation-review-export-panel");
+  const result = qs("export-result");
+  if (panel) {
+    panel.classList.add("hidden");
+  }
+  if (result) {
+    result.classList.add("empty-state");
+    result.textContent = "No export has been run yet.";
+  }
+}
+
+function setInterpretationReviewDrawerOpen(open) {
+  const backdrop = qs("interpretation-review-drawer-backdrop");
+  if (!backdrop) {
+    return;
+  }
+  interpretationUiState.reviewDrawerOpen = Boolean(open);
+  backdrop.classList.toggle("hidden", !interpretationUiState.reviewDrawerOpen);
+  backdrop.setAttribute("aria-hidden", interpretationUiState.reviewDrawerOpen ? "false" : "true");
+  document.body.dataset.interpretationReviewDrawer = interpretationUiState.reviewDrawerOpen ? "open" : "closed";
+}
+
+function openInterpretationReviewDrawer() {
+  setInterpretationReviewDrawerOpen(true);
+}
+
+function closeInterpretationReviewDrawer() {
+  setInterpretationReviewDrawerOpen(false);
+}
+
+function syncInterpretationReviewSurface() {
+  const snapshot = interpretationSnapshot();
+  const button = qs("interpretation-open-review");
+  const gmailButton = qs("interpretation-open-gmail-session");
+  const gmailCard = qs("interpretation-gmail-next-step-card");
+  if (button) {
+    button.textContent = interpretationReviewButtonLabel(snapshot);
+  }
+  renderInterpretationSeedCard("interpretation-review-home-result");
+  renderInterpretationSeedCard("interpretation-review-result");
+  const hasGmailInterpretationSession = interpretationActiveSession()?.kind === "interpretation";
+  if (gmailButton) {
+    gmailButton.classList.toggle("hidden", !hasGmailInterpretationSession);
+  }
+  if (gmailCard) {
+    gmailCard.classList.toggle("hidden", !hasGmailInterpretationSession);
+  }
+  const statusNode = qs("interpretation-review-status");
+  if (statusNode) {
+    statusNode.textContent = hasInterpretationReviewData(snapshot)
+      ? "Review the recovered case data first, then save the row or generate honorários from this bounded review surface."
+      : "Autofill a notification or open a blank review surface to prepare the interpretation row, honorários export, and any Gmail follow-up.";
+  }
 }
 
 function shouldShowGmailNav(payload = appState.bootstrap) {
@@ -304,6 +491,26 @@ function syncShellChrome() {
   }
 }
 
+function operatorChromeActive() {
+  return appState.operatorMode || MORE_NAV_ORDER.includes(appState.activeView);
+}
+
+function syncOperatorChrome() {
+  document.body.dataset.operatorChrome = operatorChromeActive() ? "on" : "off";
+  const toggle = qs("operator-mode-toggle");
+  if (!toggle) {
+    return;
+  }
+  toggle.setAttribute("aria-pressed", appState.operatorMode ? "true" : "false");
+  toggle.textContent = appState.operatorMode ? "Hide Technical Details" : "Show Technical Details";
+  const hint = qs("operator-mode-hint");
+  if (hint) {
+    hint.textContent = appState.operatorMode
+      ? "Technical build, listener, and diagnostics panels stay visible across the shell until you turn them off."
+      : "Build, listener, and diagnostics panels stay hidden until you ask for them or a failure occurs.";
+  }
+}
+
 function updateServiceFieldState() {
   const serviceSame = qs("service-same").checked;
   if (serviceSame) {
@@ -341,6 +548,25 @@ function blankProfileDraft() {
   };
 }
 
+function setProfileEditorDrawerOpen(open) {
+  const backdrop = qs("profile-editor-drawer-backdrop");
+  if (!backdrop) {
+    return;
+  }
+  profileUiState.editorDrawerOpen = Boolean(open);
+  backdrop.classList.toggle("hidden", !profileUiState.editorDrawerOpen);
+  backdrop.setAttribute("aria-hidden", profileUiState.editorDrawerOpen ? "false" : "true");
+  document.body.dataset.profileEditorDrawer = profileUiState.editorDrawerOpen ? "open" : "closed";
+}
+
+function openProfileEditorDrawer() {
+  setProfileEditorDrawerOpen(true);
+}
+
+function closeProfileEditorDrawer() {
+  setProfileEditorDrawerOpen(false);
+}
+
 function profileFieldIds() {
   return {
     id: "profile-editor-id",
@@ -362,7 +588,7 @@ function formatDistanceJson(value) {
   return JSON.stringify(distances, null, 2);
 }
 
-function applyProfileEditor(profile) {
+function applyProfileEditor(profile, { openDrawer = false } = {}) {
   const resolved = { ...blankProfileDraft(), ...(profile || {}) };
   const fieldIds = profileFieldIds();
   for (const [key, id] of Object.entries(fieldIds)) {
@@ -376,6 +602,9 @@ function applyProfileEditor(profile) {
     : "Editing a new profile draft.";
   qs("profile-set-primary").disabled = !resolved.id;
   qs("profile-delete").disabled = !resolved.id;
+  if (openDrawer) {
+    openProfileEditorDrawer();
+  }
 }
 
 function collectProfileFormValues() {
@@ -427,7 +656,7 @@ export function collectInterpretationFormValues() {
   };
 }
 
-export function applyInterpretationSeed(seed, { activateTask = true } = {}) {
+export function applyInterpretationSeed(seed, { activateTask = true, openReview = false } = {}) {
   if (activateTask) {
     setNewJobTask("interpretation");
   }
@@ -454,6 +683,11 @@ export function applyInterpretationSeed(seed, { activateTask = true } = {}) {
   setCheckbox("include-transport", seed.include_transport_sentence_in_honorarios !== false);
   qs("recipient-block").value = "";
   updateServiceFieldState();
+  resetInterpretationExportResult();
+  syncInterpretationReviewSurface();
+  if (openReview) {
+    openInterpretationReviewDrawer();
+  }
 }
 
 function applyHistoryItem(item) {
@@ -481,10 +715,13 @@ function applyHistoryItem(item) {
   setCheckbox("use-service-location", Boolean(item.row.use_service_location_in_honorarios));
   setCheckbox("include-transport", item.row.include_transport_sentence_in_honorarios !== 0);
   updateServiceFieldState();
+  resetInterpretationExportResult();
+  syncInterpretationReviewSurface();
   setPanelStatus("form", "ok", `Loaded row #${item.row.id} from the active job log.`);
   setDiagnostics("form", { status: "ok", message: `Loaded row #${item.row.id}.` }, { hint: "Loaded from job-log history.", open: false });
   setActiveView("new-job");
   renderShellVisibility();
+  openInterpretationReviewDrawer();
 }
 
 function renderProfiles(profiles, primaryProfileId) {
@@ -556,7 +793,9 @@ function renderShellVisibility() {
     moreShell.classList.toggle("has-active-view", moreActive);
   }
   setNewJobTask(appState.newJobTask);
+  syncInterpretationReviewSurface();
   syncShellChrome();
+  syncOperatorChrome();
 }
 
 function renderDashboardCards(cards) {
@@ -764,7 +1003,7 @@ function renderStatus(payload) {
 
 export function renderInterpretationExportResult(payload) {
   const container = qs("export-result");
-  qs("interpretation-export-panel")?.classList.remove("hidden");
+  qs("interpretation-review-export-panel")?.classList.remove("hidden");
   const result = payload.normalized_payload || {};
   const pdf = payload.diagnostics?.pdf_export || {};
   const isOk = payload.status === "ok";
@@ -784,6 +1023,7 @@ export function renderInterpretationExportResult(payload) {
       <div><h3>PDF Export</h3><p>${pdf.ok ? "Ready" : pdf.failure_message || "Unavailable"}</p></div>
     </div>
   `;
+  openInterpretationReviewDrawer();
 }
 
 function renderDashboard(payload) {
@@ -900,7 +1140,7 @@ function renderProfile(payload) {
     const editButton = document.createElement("button");
     editButton.type = "button";
     editButton.textContent = "Edit";
-    editButton.addEventListener("click", () => applyProfileEditor(cloneJson(profile)));
+    editButton.addEventListener("click", () => applyProfileEditor(cloneJson(profile), { openDrawer: true }));
     const primaryButton = document.createElement("button");
     primaryButton.type = "button";
     primaryButton.textContent = profile.is_primary ? "Primary" : "Set Primary";
@@ -941,7 +1181,7 @@ function renderProfile(payload) {
     || primary
     || summary.profiles?.[0]
     || blankProfileDraft();
-  applyProfileEditor(cloneJson(selectedProfile));
+  applyProfileEditor(cloneJson(selectedProfile), { openDrawer: false });
 }
 
 function renderExtensionLab(payload) {
@@ -1065,6 +1305,7 @@ function renderBootstrap(payload) {
   if (!appState.currentSeed && payload.normalized_payload.blank_seed) {
     applyInterpretationSeed(payload.normalized_payload.blank_seed, { activateTask: false });
   }
+  syncInterpretationReviewSurface();
 }
 
 async function loadBootstrap() {
@@ -1120,6 +1361,7 @@ async function handleUpload(formId, endpoint) {
   const message = extractedFields.length ? `Recovered ${extractedFields.join(", ")} from the uploaded file.` : "No metadata fields were recovered automatically.";
   setPanelStatus("autofill", extractedFields.length ? "ok" : "warn", message);
   setDiagnostics("autofill", payload.diagnostics, { hint: message, open: !extractedFields.length });
+  openInterpretationReviewDrawer();
 }
 
 async function handleSave() {
@@ -1141,6 +1383,8 @@ async function handleSave() {
   setPanelStatus("form", "ok", `Saved row #${payload.saved_result.row_id} to the active job log.`);
   setDiagnostics("form", payload, { hint: `Saved row #${payload.saved_result.row_id}.`, open: false });
   await loadBootstrap();
+  syncInterpretationReviewSurface();
+  openInterpretationReviewDrawer();
 }
 
 async function handleExport() {
@@ -1176,7 +1420,7 @@ async function handleImportLiveProfiles() {
 
 async function handleNewProfile() {
   const payload = await fetchJson("/api/profile/new", appState);
-  applyProfileEditor(payload.normalized_payload?.profile || blankProfileDraft());
+  applyProfileEditor(payload.normalized_payload?.profile || blankProfileDraft(), { openDrawer: true });
   setPanelStatus("profile", "", "New profile draft loaded. Fill the required fields, then save it.");
   setDiagnostics("profile", payload, {
     hint: "New profile draft loaded.",
@@ -1223,6 +1467,7 @@ async function handleDeleteProfile(profileId = fieldValue("profile-editor-id")) 
   profileState.currentProfileId = "";
   const message = payload.normalized_payload?.message || `Deleted profile ${resolvedId}.`;
   await loadBootstrap();
+  closeProfileEditorDrawer();
   setPanelStatus("profile", "ok", message);
   setDiagnostics("profile", payload, {
     hint: payload.normalized_payload?.message || `Deleted profile ${resolvedId}.`,
@@ -1259,6 +1504,7 @@ function resetFormToBlank() {
     updateServiceFieldState();
     setPanelStatus("form", "", "Blank interpretation entry loaded. Fill fields manually or use autofill above.");
     setDiagnostics("form", { status: "ok", message: "Blank interpretation seed loaded." }, { hint: "Blank interpretation seed loaded.", open: false });
+    openInterpretationReviewDrawer();
   }
 }
 
@@ -1375,6 +1621,10 @@ function wireEvents() {
     setActiveView(target.dataset.targetView);
   });
 
+  qs("operator-mode-toggle")?.addEventListener("click", () => {
+    setOperatorMode(!appState.operatorMode);
+  });
+
   qs("notification-upload-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     await runWithBusy(["notification-submit"], { "notification-submit": "Autofilling..." }, async () => {
@@ -1424,6 +1674,39 @@ function wireEvents() {
       }
     });
   });
+  qs("interpretation-open-review")?.addEventListener("click", openInterpretationReviewDrawer);
+  qs("interpretation-close-review")?.addEventListener("click", closeInterpretationReviewDrawer);
+  qs("interpretation-close-review-footer")?.addEventListener("click", closeInterpretationReviewDrawer);
+  qs("interpretation-clear-review")?.addEventListener("click", resetFormToBlank);
+  qs("interpretation-open-gmail-session")?.addEventListener("click", () => {
+    closeInterpretationReviewDrawer();
+    window.dispatchEvent(new CustomEvent("legalpdf:open-gmail-session-drawer"));
+  });
+  qs("interpretation-review-drawer-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === qs("interpretation-review-drawer-backdrop")) {
+      closeInterpretationReviewDrawer();
+    }
+  });
+  qs("profile-close-editor")?.addEventListener("click", closeProfileEditorDrawer);
+  qs("profile-close-editor-footer")?.addEventListener("click", closeProfileEditorDrawer);
+  qs("profile-editor-drawer-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === qs("profile-editor-drawer-backdrop")) {
+      closeProfileEditorDrawer();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && interpretationUiState.reviewDrawerOpen) {
+      closeInterpretationReviewDrawer();
+      return;
+    }
+    if (event.key === "Escape" && profileUiState.editorDrawerOpen) {
+      closeProfileEditorDrawer();
+    }
+  });
+
+  qs("use-service-location")?.addEventListener("change", syncInterpretationDisclosureState);
+  qs("include-transport")?.addEventListener("change", syncInterpretationDisclosureState);
+  qs("recipient-block")?.addEventListener("input", syncInterpretationDisclosureState);
 
   qs("import-live-profiles").addEventListener("click", async () => {
     await runWithBusy(["import-live-profiles", "new-profile", "profile-save", "profile-set-primary", "profile-delete"], { "import-live-profiles": "Importing..." }, async () => {

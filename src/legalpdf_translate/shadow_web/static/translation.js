@@ -9,6 +9,8 @@ const translationState = {
   uploadedSourcePath: "",
   uploadedSourceKey: "",
   pollTimer: null,
+  completionDrawerOpen: false,
+  lastAutoOpenedCompletionKey: "",
 };
 
 function qs(id) {
@@ -69,6 +71,11 @@ function setDiagnostics(slot, value, { hint = "", open = false } = {}) {
   const details = qs(`${slot}-details`);
   if (details) {
     details.open = Boolean(open);
+    if (open) {
+      details.dataset.reveal = "true";
+    } else {
+      delete details.dataset.reveal;
+    }
   }
 }
 
@@ -258,19 +265,166 @@ function dispatchNewJobTask(task) {
   window.dispatchEvent(new CustomEvent("legalpdf:set-new-job-task", { detail: { task } }));
 }
 
-function syncTranslationPostRunVisibility() {
-  const panel = qs("translation-postrun-panel");
-  if (!panel) {
-    return;
-  }
+function collapseTranslationCompletionSections() {
+  qs("translation-save-metrics-section")?.removeAttribute("open");
+  qs("translation-save-amounts-section")?.removeAttribute("open");
+}
+
+function hasTranslationSaveSeed() {
   const seed = translationState.currentSeed || {};
-  const shouldShow = Boolean(
+  return Boolean(
     translationState.currentRowId
     || translationState.currentJob?.result?.save_seed
     || seed.run_id
-    || seed.case_number,
+    || seed.case_number
+    || seed.court_email
+    || seed.case_entity
+    || seed.case_city,
   );
-  panel.classList.toggle("hidden", !shouldShow);
+}
+
+function hasTranslationCompletionSurface() {
+  return hasTranslationSaveSeed() || Boolean(translationState.currentJob?.status === "completed");
+}
+
+function currentTranslationCompletionKey() {
+  if (translationState.currentJob?.status === "completed" && translationState.currentJobId) {
+    return `job:${translationState.currentJobId}:${translationState.currentJob?.job_kind || "translate"}`;
+  }
+  if (translationState.currentRowId) {
+    return `row:${translationState.currentRowId}`;
+  }
+  const seed = translationState.currentSeed || {};
+  if (seed.run_id || seed.case_number) {
+    return `seed:${seed.run_id || ""}:${seed.case_number || ""}`;
+  }
+  return "";
+}
+
+function setTranslationCompletionDrawerOpen(open) {
+  const backdrop = qs("translation-completion-drawer-backdrop");
+  if (!backdrop) {
+    return;
+  }
+  translationState.completionDrawerOpen = Boolean(open) && hasTranslationCompletionSurface();
+  backdrop.classList.toggle("hidden", !translationState.completionDrawerOpen);
+  backdrop.setAttribute("aria-hidden", translationState.completionDrawerOpen ? "false" : "true");
+  document.body.dataset.translationCompletionDrawer = translationState.completionDrawerOpen ? "open" : "closed";
+}
+
+function openTranslationCompletionDrawer({ auto = false } = {}) {
+  if (!hasTranslationCompletionSurface()) {
+    return;
+  }
+  setTranslationCompletionDrawerOpen(true);
+  if (auto) {
+    translationState.lastAutoOpenedCompletionKey = currentTranslationCompletionKey();
+  }
+}
+
+function closeTranslationCompletionDrawer() {
+  setTranslationCompletionDrawerOpen(false);
+}
+
+function completionButtonLabel() {
+  if (translationState.currentRowId) {
+    return "Open Saved Row";
+  }
+  if (translationState.currentJob?.job_kind === "analyze") {
+    return "Review Results";
+  }
+  return "Finish Translation";
+}
+
+function completionSurfaceSummary() {
+  const job = translationState.currentJob;
+  if (job?.job_kind === "analyze" && job.status === "completed") {
+    return "Analyze-only preflight is complete. Export the report or other artifacts here, or start the full translation when you are ready to create a job-log row.";
+  }
+  if (translationState.currentRowId) {
+    return `Loaded translation row #${translationState.currentRowId}. Review the case fields first, then save any edits back to the active job log.`;
+  }
+  if (hasTranslationSaveSeed()) {
+    return "Translation complete. Review the case fields first. Run metrics and amounts stay collapsed until you need them.";
+  }
+  return "Complete a translation run or load a saved translation row to review the case fields, artifacts, and finish-the-job actions here.";
+}
+
+function renderTranslationCompletionResultCard() {
+  const container = qs("translation-completion-result");
+  if (!container) {
+    return;
+  }
+  if (translationState.currentJob) {
+    renderTranslationResultCard(translationState.currentJob, { containerId: "translation-completion-result" });
+    return;
+  }
+  if (!hasTranslationSaveSeed()) {
+    container.classList.add("empty-state");
+    container.textContent = "Complete a translation run or load a saved row to open the bounded translation finish surface.";
+    return;
+  }
+  const seed = translationState.currentSeed || {};
+  container.classList.remove("empty-state");
+  container.innerHTML = `
+    <div class="result-header">
+      <div>
+        <strong>Saved translation row is ready to review.</strong>
+        <p>${seed.case_number || "No case number"}<br>${seed.case_entity || "No case entity"} | ${seed.case_city || "No case city"} | ${seed.translation_date || "No date"}</p>
+      </div>
+      <span class="status-chip info">Ready</span>
+    </div>
+  `;
+}
+
+function syncTranslationCompletionSurface() {
+  const available = hasTranslationCompletionSurface();
+  const openButton = qs("translation-open-completion");
+  const formShell = qs("translation-completion-form-shell");
+  const emptyShell = qs("translation-completion-empty");
+  const statusNode = qs("translation-completion-status");
+  const reviewExportButton = qs("translation-review-export");
+  if (openButton) {
+    openButton.classList.toggle("hidden", !available);
+    openButton.textContent = completionButtonLabel();
+  }
+  if (!translationState.currentJob) {
+    if (reviewExportButton) {
+      reviewExportButton.disabled = true;
+    }
+    clearDownloadLink("translation-download-docx");
+    clearDownloadLink("translation-download-partial");
+    clearDownloadLink("translation-download-summary");
+    clearDownloadLink("translation-download-analyze");
+  }
+  if (!available) {
+    formShell?.classList.add("hidden");
+    emptyShell?.classList.add("hidden");
+    if (statusNode) {
+      statusNode.textContent = "Complete a translation run or load a saved translation row to review the case fields, artifacts, and finish-the-job actions here.";
+    }
+    renderTranslationCompletionResultCard();
+    closeTranslationCompletionDrawer();
+    return;
+  }
+  if (statusNode) {
+    statusNode.textContent = completionSurfaceSummary();
+  }
+  const hasSaveSurface = hasTranslationSaveSeed();
+  formShell?.classList.toggle("hidden", !hasSaveSurface);
+  emptyShell?.classList.toggle("hidden", hasSaveSurface);
+  renderTranslationCompletionResultCard();
+}
+
+function maybeAutoOpenTranslationCompletion(job) {
+  if (!job || job.status !== "completed") {
+    return;
+  }
+  const key = currentTranslationCompletionKey();
+  if (!key || translationState.lastAutoOpenedCompletionKey === key) {
+    return;
+  }
+  openTranslationCompletionDrawer({ auto: true });
 }
 
 function translationStatusSummary(job) {
@@ -279,16 +433,16 @@ function translationStatusSummary(job) {
   }
   if (job.job_kind === "analyze") {
     return job.status === "completed"
-      ? "Analyze complete. Review the advisor output or start the full translation."
+      ? "Analyze complete. Open the bounded results surface to export the report or start the full translation."
       : job.status_text || "Analyze job is running.";
   }
   if (job.job_kind === "rebuild") {
     return job.status === "completed"
-      ? "DOCX rebuild complete."
+      ? "DOCX rebuild complete. Open the bounded results surface to collect the refreshed artifact."
       : job.status_text || "DOCX rebuild is running.";
   }
   if (job.status === "completed") {
-    return "Translation complete. Review the save form, artifacts, and review queue.";
+    return "Translation complete. Finish the job from the bounded results surface.";
   }
   if (job.status === "cancel_requested") {
     return "Cancellation requested. Waiting for the current page task to stop cleanly.";
@@ -325,7 +479,8 @@ function applyTranslationSeed(seed, { rowId = null } = {}) {
   setFieldValue("translation-estimated-api-cost", resolved.estimated_api_cost ?? "");
   setFieldValue("translation-quality-risk-score", resolved.quality_risk_score ?? "");
   setFieldValue("translation-profit", resolved.profit ?? "");
-  syncTranslationPostRunVisibility();
+  collapseTranslationCompletionSections();
+  syncTranslationCompletionSurface();
 }
 
 async function deleteTranslationJobLogRow(rowId) {
@@ -405,8 +560,11 @@ export function collectCurrentTranslationSaveValues() {
   return collectTranslationSaveValues();
 }
 
-function renderTranslationResultCard(job) {
-  const container = qs("translation-result");
+function renderTranslationResultCard(job, { containerId = "translation-result" } = {}) {
+  const container = qs(containerId);
+  if (!container) {
+    return;
+  }
   if (!job) {
     container.classList.add("empty-state");
     container.textContent = "No translation job has run in this workspace yet.";
@@ -471,7 +629,8 @@ function renderTranslationJob(job) {
     applyTranslationSeed(job.result.save_seed);
     setPanelStatus("translation-save", "", "Translation seed loaded from the completed run. Review the fields before saving.");
   }
-  syncTranslationPostRunVisibility();
+  syncTranslationCompletionSurface();
+  maybeAutoOpenTranslationCompletion(job);
   if (job && ["queued", "running", "cancel_requested"].includes(job.status)) {
     stopPolling();
     translationState.pollTimer = window.setTimeout(pollCurrentJob, 1500);
@@ -537,6 +696,7 @@ function loadTranslationHistoryItem(item) {
     setPanelStatus("translation-save", "ok", `Loaded translation row #${row.id} from the active job log.`);
     setDiagnostics("translation-save", item, { hint: `Loaded row #${row.id}.`, open: false });
   }
+  openTranslationCompletionDrawer();
 }
 
 function renderTranslationJobs(jobs) {
@@ -592,7 +752,7 @@ function renderTranslationBootstrap(payload) {
   if (!translationState.currentSeed) {
     applyTranslationSeed(blankSaveSeed());
   }
-  syncTranslationPostRunVisibility();
+  syncTranslationCompletionSurface();
 }
 
 async function refreshTranslationBootstrap() {
@@ -705,6 +865,7 @@ async function handleReviewExport() {
     method: "POST",
   });
   setDiagnostics("translation-job", payload, { hint: "Review queue export created.", open: true });
+  openTranslationCompletionDrawer();
 }
 
 async function handleTranslationSave() {
@@ -728,7 +889,8 @@ async function handleTranslationSave() {
 function resetTranslationSaveForm() {
   applyTranslationSeed(translationState.currentJob?.result?.save_seed || blankSaveSeed(), { rowId: null });
   setPanelStatus("translation-save", "", "Translation save form reset.");
-  syncTranslationPostRunVisibility();
+  collapseTranslationCompletionSections();
+  syncTranslationCompletionSurface();
 }
 
 export function initializeTranslationUi() {
@@ -748,7 +910,7 @@ export function initializeTranslationUi() {
   clearDownloadLink("translation-download-partial");
   clearDownloadLink("translation-download-summary");
   clearDownloadLink("translation-download-analyze");
-  syncTranslationPostRunVisibility();
+  syncTranslationCompletionSurface();
 
   qs("translation-refresh")?.addEventListener("click", async () => {
     await runWithBusy(["translation-refresh"], { "translation-refresh": "Refreshing..." }, async () => {
@@ -763,6 +925,7 @@ export function initializeTranslationUi() {
   qs("translation-analyze")?.addEventListener("click", async () => {
     await runWithBusy(["translation-analyze", "translation-start"], { "translation-analyze": "Analyzing..." }, async () => {
       try {
+        closeTranslationCompletionDrawer();
         setPanelStatus("translation", "", "Running analyze-only preflight...");
         await handleAnalyze();
       } catch (error) {
@@ -774,6 +937,7 @@ export function initializeTranslationUi() {
   qs("translation-start")?.addEventListener("click", async () => {
     await runWithBusy(["translation-analyze", "translation-start"], { "translation-start": "Starting..." }, async () => {
       try {
+        closeTranslationCompletionDrawer();
         setPanelStatus("translation", "", "Starting translation run...");
         await handleTranslate();
       } catch (error) {
@@ -795,6 +959,7 @@ export function initializeTranslationUi() {
   qs("translation-resume-btn")?.addEventListener("click", async () => {
     await runWithBusy(["translation-resume-btn"], { "translation-resume-btn": "Resuming..." }, async () => {
       try {
+        closeTranslationCompletionDrawer();
         await handleResume();
       } catch (error) {
         setPanelStatus("translation", "bad", error.message || "Resume failed.");
@@ -805,6 +970,7 @@ export function initializeTranslationUi() {
   qs("translation-rebuild")?.addEventListener("click", async () => {
     await runWithBusy(["translation-rebuild"], { "translation-rebuild": "Rebuilding..." }, async () => {
       try {
+        closeTranslationCompletionDrawer();
         await handleRebuild();
       } catch (error) {
         setPanelStatus("translation", "bad", error.message || "Rebuild failed.");
@@ -833,6 +999,19 @@ export function initializeTranslationUi() {
     });
   });
   qs("translation-new-save")?.addEventListener("click", resetTranslationSaveForm);
+  qs("translation-open-completion")?.addEventListener("click", () => openTranslationCompletionDrawer());
+  qs("translation-close-completion")?.addEventListener("click", closeTranslationCompletionDrawer);
+  qs("translation-close-completion-form")?.addEventListener("click", closeTranslationCompletionDrawer);
+  qs("translation-completion-drawer-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === qs("translation-completion-drawer-backdrop")) {
+      closeTranslationCompletionDrawer();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && translationState.completionDrawerOpen) {
+      closeTranslationCompletionDrawer();
+    }
+  });
 }
 
 export { loadTranslationHistoryItem, refreshTranslationBootstrap, refreshTranslationHistory, renderTranslationBootstrap };

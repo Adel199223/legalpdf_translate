@@ -32,6 +32,7 @@ export const appState = {
   workspaceId: "workspace-1",
   activeView: "dashboard",
   uiVariant: "qt",
+  operatorMode: false,
   newJobTask: "translation",
   extensionDiagnostics: null,
 };
@@ -46,6 +47,7 @@ function emitRouteStateChanged() {
       runtimeMode: appState.runtimeMode,
       workspaceId: appState.workspaceId,
       uiVariant: appState.uiVariant,
+      operatorMode: appState.operatorMode,
     },
   }));
 }
@@ -62,6 +64,7 @@ export function initializeRouteState(config) {
     "workspace-1",
   );
   appState.uiVariant = params.get("ui") === "legacy" ? "legacy" : String(config.defaultUiVariant || "qt");
+  appState.operatorMode = ["1", "true", "on"].includes(String(params.get("operator") || "").trim().toLowerCase());
   syncActiveViewFromLocation();
   document.body.dataset.uiVariant = appState.uiVariant;
   writeRouteState();
@@ -83,6 +86,11 @@ export function writeRouteState() {
   } else {
     url.searchParams.delete("ui");
   }
+  if (appState.operatorMode) {
+    url.searchParams.set("operator", "1");
+  } else {
+    url.searchParams.delete("operator");
+  }
   url.hash = appState.activeView;
   window.history.replaceState({}, "", url);
 }
@@ -94,6 +102,12 @@ export function setRuntimeMode(mode) {
 
 export function setActiveView(view) {
   appState.activeView = SUPPORTED_VIEWS.has(view) ? view : defaultViewForUiVariant(appState.uiVariant);
+  writeRouteState();
+  emitRouteStateChanged();
+}
+
+export function setOperatorMode(enabled) {
+  appState.operatorMode = Boolean(enabled);
   writeRouteState();
   emitRouteStateChanged();
 }

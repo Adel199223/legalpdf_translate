@@ -8,6 +8,7 @@ const gmailState = {
   interpretationSeed: null,
   suggestedTranslationLaunch: null,
   selectionState: new Map(),
+  sessionDrawerOpen: false,
   hooks: {},
 };
 
@@ -62,6 +63,11 @@ function setDiagnostics(slot, value, { hint = "", open = false } = {}) {
   const details = qs(`${slot}-details`);
   if (details) {
     details.open = Boolean(open);
+    if (open) {
+      details.dataset.reveal = "true";
+    } else {
+      delete details.dataset.reveal;
+    }
   }
 }
 
@@ -166,6 +172,32 @@ function currentWorkflowKind() {
   return fieldValue("gmail-workflow-kind") === "interpretation" ? "interpretation" : "translation";
 }
 
+function bootstrapMessageContext() {
+  return gmailState.bootstrap?.defaults?.message_context || {};
+}
+
+function setSessionDrawerOpen(open) {
+  const backdrop = qs("gmail-session-drawer-backdrop");
+  if (!backdrop) {
+    return;
+  }
+  gmailState.sessionDrawerOpen = Boolean(open) && Boolean(gmailState.activeSession);
+  backdrop.classList.toggle("hidden", !gmailState.sessionDrawerOpen);
+  backdrop.setAttribute("aria-hidden", gmailState.sessionDrawerOpen ? "false" : "true");
+  document.body.dataset.gmailSessionDrawer = gmailState.sessionDrawerOpen ? "open" : "closed";
+}
+
+function openSessionDrawer() {
+  if (!gmailState.activeSession) {
+    return;
+  }
+  setSessionDrawerOpen(true);
+}
+
+function closeSessionDrawer() {
+  setSessionDrawerOpen(false);
+}
+
 function collectSelections() {
   const selections = [];
   for (const [attachmentId, item] of gmailState.selectionState.entries()) {
@@ -182,9 +214,35 @@ function collectSelections() {
 
 function renderMessageResult(loadResult) {
   const container = qs("gmail-message-result");
+  const defaults = bootstrapMessageContext();
+  const detailsHint = qs("gmail-intake-details-summary");
   if (!loadResult) {
-    container.classList.add("empty-state");
-    container.textContent = "No Gmail message is loaded in this browser workspace yet.";
+    const hasContext = Boolean(defaults.message_id || defaults.thread_id || defaults.subject || defaults.account_email);
+    if (!hasContext) {
+      container.classList.add("empty-state");
+      container.textContent = "No Gmail message is loaded in this browser workspace yet.";
+      if (detailsHint) {
+        detailsHint.textContent = "Message and output overrides stay collapsed unless you need them.";
+      }
+      return;
+    }
+    container.classList.remove("empty-state");
+    container.innerHTML = `
+      <div class="result-header">
+        <div>
+          <strong>Extension handoff detected for this workspace.</strong>
+          <p>${defaults.subject || "Subject unavailable"}<br>${defaults.account_email || "Account unavailable"}</p>
+        </div>
+        <span class="status-chip info">Pending load</span>
+      </div>
+      <div class="result-grid">
+        <div><h3>Message ID</h3><p class="word-break">${defaults.message_id || "Unavailable"}</p></div>
+        <div><h3>Thread ID</h3><p class="word-break">${defaults.thread_id || "Unavailable"}</p></div>
+      </div>
+    `;
+    if (detailsHint) {
+      detailsHint.textContent = "Extension defaults are ready; expand only if you need manual overrides.";
+    }
     return;
   }
   const message = loadResult.message || {};
@@ -198,7 +256,14 @@ function renderMessageResult(loadResult) {
       </div>
       <span class="status-chip ${loadResult.ok ? "ok" : loadResult.classification === "unavailable" ? "warn" : "bad"}">${loadResult.classification || (loadResult.ok ? "ready" : "failed")}</span>
     </div>
+    <div class="result-grid">
+      <div><h3>Workflow</h3><p>${currentWorkflowKind() === "interpretation" ? "Interpretation notice" : "Translation batch"}</p></div>
+      <div><h3>Attachments</h3><p>${attachmentCount}</p></div>
+    </div>
   `;
+  if (detailsHint) {
+    detailsHint.textContent = "Message identifiers, account, and output overrides stay out of the way unless you need them.";
+  }
 }
 
 function renderAttachmentList(loadResult) {
@@ -243,6 +308,42 @@ function renderAttachmentList(loadResult) {
     row.appendChild(controls);
     container.appendChild(row);
   }
+}
+
+function renderSessionBanner(activeSession) {
+  const container = qs("gmail-session-banner");
+  if (!container) {
+    return;
+  }
+  if (!activeSession) {
+    container.classList.add("hidden");
+    container.classList.add("empty-state");
+    container.textContent = "No Gmail session is active yet.";
+    return;
+  }
+  container.classList.remove("hidden");
+  container.classList.remove("empty-state");
+  if (activeSession.kind === "translation") {
+    container.innerHTML = `
+      <div class="result-header">
+        <div>
+          <strong>Translation batch prepared.</strong>
+          <p>${activeSession.completed ? "All selected attachments are confirmed and ready to finalize." : `Attachment ${activeSession.current_item_number}/${activeSession.total_items} is ready for the next translation step.`}</p>
+        </div>
+        <span class="status-chip ${activeSession.completed ? "ok" : "info"}">${activeSession.status || "prepared"}</span>
+      </div>
+    `;
+    return;
+  }
+  container.innerHTML = `
+    <div class="result-header">
+      <div>
+        <strong>Interpretation notice prepared.</strong>
+        <p>Open session actions when you are ready to continue into interpretation or finalize the Gmail reply.</p>
+      </div>
+      <span class="status-chip info">${activeSession.status || "prepared"}</span>
+    </div>
+  `;
 }
 
 function renderSessionResult(activeSession) {
@@ -299,18 +400,55 @@ function renderWorkspaceStrip() {
   }
   const title = qs("gmail-workspace-strip-title");
   const copy = qs("gmail-workspace-strip-copy");
+  const action = qs("gmail-workspace-strip-action");
   if (gmailState.activeSession?.kind === "translation") {
     title.textContent = "A Gmail translation batch is active.";
-    copy.textContent = "Open the Gmail workspace to review the current attachment, confirm the row, or finalize the reply draft.";
+    copy.textContent = "Open session actions when you need to confirm the current row or finalize the reply draft.";
+    if (action) {
+      action.textContent = "Open Session Actions";
+      action.dataset.gmailStripAction = "session";
+    }
     return;
   }
   if (gmailState.activeSession?.kind === "interpretation") {
     title.textContent = "A Gmail interpretation handoff is active.";
-    copy.textContent = "Open the Gmail workspace to confirm the notice session and finalize the interpretation reply when it is ready.";
+    copy.textContent = "Open session actions when you need to continue into interpretation or finalize the Gmail reply.";
+    if (action) {
+      action.textContent = "Open Session Actions";
+      action.dataset.gmailStripAction = "session";
+    }
     return;
   }
   title.textContent = "A Gmail message is loaded for this workspace.";
-  copy.textContent = "Open the Gmail workspace to review the exact message context and prepare the right workflow before you continue.";
+  copy.textContent = "Open Gmail intake to review attachments and choose the right workflow before you continue.";
+  if (action) {
+    action.textContent = "Open Gmail Intake";
+    action.dataset.gmailStripAction = "intake";
+  }
+}
+
+function updatePrepareActionState() {
+  const button = qs("gmail-prepare-session");
+  if (!button) {
+    return;
+  }
+  const selections = collectSelections();
+  let label = currentWorkflowKind() === "interpretation"
+    ? "Continue To Interpretation"
+    : "Continue To Translation";
+  let disabled = false;
+  if (!gmailState.loadResult?.ok || !gmailState.loadResult?.message) {
+    label = "Load Exact Gmail Message First";
+    disabled = true;
+  } else if (!selections.length) {
+    label = currentWorkflowKind() === "interpretation"
+      ? "Select One Notice To Continue"
+      : "Select Attachments To Continue";
+    disabled = true;
+  }
+  button.textContent = label;
+  button.dataset.defaultLabel = label;
+  button.disabled = disabled;
 }
 
 function syncShellState() {
@@ -332,6 +470,15 @@ function updateSessionButtons() {
   const activeSession = gmailState.activeSession;
   const translationReady = Boolean(gmailState.suggestedTranslationLaunch);
   const interpretationReady = Boolean(gmailState.interpretationSeed);
+  const sessionAvailable = Boolean(activeSession);
+  for (const id of ["gmail-open-session", "gmail-preview-session"]) {
+    const button = qs(id);
+    if (!button) {
+      continue;
+    }
+    button.disabled = !sessionAvailable;
+    button.classList.toggle("hidden", !sessionAvailable);
+  }
   const rules = [
     ["gmail-load-translation-launch", activeSession?.kind === "translation" && translationReady],
     ["gmail-confirm-translation", activeSession?.kind === "translation"],
@@ -347,6 +494,9 @@ function updateSessionButtons() {
     button.disabled = !enabled;
     button.classList.toggle("hidden", !enabled);
   }
+  if (!sessionAvailable) {
+    closeSessionDrawer();
+  }
 }
 
 export function renderGmailBootstrap(payload) {
@@ -360,14 +510,16 @@ export function renderGmailBootstrap(payload) {
   ensureSelectionState(gmailState.loadResult, gmailState.activeSession);
   renderMessageResult(gmailState.loadResult);
   renderAttachmentList(gmailState.loadResult);
+  renderSessionBanner(gmailState.activeSession);
   renderSessionResult(gmailState.activeSession);
+  updatePrepareActionState();
   updateSessionButtons();
   setPanelStatus(
     "gmail",
     gmailState.loadResult?.ok ? "ok" : "",
     gmailState.activeSession
-      ? "Gmail workspace is carrying message, attachment, and finalization state for this browser workspace."
-      : "Load one exact Gmail message, review supported attachments, and continue into translation or interpretation finalization.",
+      ? "Gmail handoff is staged and ready. Open session actions only when you need the next downstream step."
+      : "Review the exact message, choose the attachment flow, and continue only when the handoff is ready.",
   );
   setPanelStatus(
     "gmail-session",
@@ -404,10 +556,16 @@ async function loadMessage() {
   ensureSelectionState(gmailState.loadResult, null);
   renderMessageResult(gmailState.loadResult);
   renderAttachmentList(gmailState.loadResult);
+  renderSessionBanner(null);
   renderSessionResult(null);
+  updatePrepareActionState();
   updateSessionButtons();
   setPanelStatus("gmail", payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad", payload.normalized_payload.load_result?.status_message || "Gmail message load complete.");
   setDiagnostics("gmail", payload, { hint: payload.normalized_payload.load_result?.status_message || "Gmail message load complete.", open: payload.status !== "ok" });
+  const details = qs("gmail-intake-details");
+  if (details) {
+    details.open = false;
+  }
 }
 
 async function previewAttachment(attachmentId) {
@@ -440,15 +598,19 @@ async function prepareSession() {
   gmailState.activeSession = payload.normalized_payload.active_session || null;
   gmailState.interpretationSeed = payload.normalized_payload.interpretation_seed || null;
   gmailState.suggestedTranslationLaunch = payload.normalized_payload.suggested_translation_launch || null;
+  renderSessionBanner(gmailState.activeSession);
   renderSessionResult(gmailState.activeSession);
+  updatePrepareActionState();
   updateSessionButtons();
   setDiagnostics("gmail", payload, { hint: "Gmail session prepared.", open: false });
   if (gmailState.suggestedTranslationLaunch) {
     gmailState.hooks.applyTranslationLaunch?.(gmailState.suggestedTranslationLaunch);
   }
   if (gmailState.interpretationSeed) {
-    gmailState.hooks.applyInterpretationSeed?.(gmailState.interpretationSeed);
+    gmailState.hooks.applyInterpretationSeed?.(gmailState.interpretationSeed, { openReview: true });
   }
+  setPanelStatus("gmail", "ok", "Gmail handoff is prepared. Open session actions when you are ready to continue into the working shell.");
+  openSessionDrawer();
 }
 
 async function confirmCurrentTranslation() {
@@ -467,6 +629,7 @@ async function confirmCurrentTranslation() {
   });
   gmailState.activeSession = payload.normalized_payload.active_session || null;
   gmailState.suggestedTranslationLaunch = payload.normalized_payload.suggested_translation_launch || null;
+  renderSessionBanner(gmailState.activeSession);
   renderSessionResult(gmailState.activeSession);
   updateSessionButtons();
   setDiagnostics("gmail-session", payload, { hint: "Current Gmail attachment confirmed and saved to the job log.", open: false });
@@ -486,6 +649,7 @@ async function finalizeBatch() {
     }),
   });
   gmailState.activeSession = payload.normalized_payload.active_session || null;
+  renderSessionBanner(gmailState.activeSession);
   renderSessionResult(gmailState.activeSession);
   updateSessionButtons();
   setDiagnostics("gmail-session", payload, { hint: payload.status === "ok" ? "Gmail batch reply draft is ready." : "Gmail batch finalization completed with warnings.", open: payload.status !== "ok" });
@@ -503,6 +667,7 @@ async function finalizeInterpretation() {
     }),
   });
   gmailState.activeSession = payload.normalized_payload.active_session || null;
+  renderSessionBanner(gmailState.activeSession);
   renderSessionResult(gmailState.activeSession);
   updateSessionButtons();
   gmailState.hooks.renderInterpretationExportResult?.(payload);
@@ -546,6 +711,8 @@ export function initializeGmailUi(hooks) {
       }
     }
     renderAttachmentList(gmailState.loadResult);
+    renderMessageResult(gmailState.loadResult);
+    updatePrepareActionState();
   });
   qs("gmail-attachment-list")?.addEventListener("change", (event) => {
     const checkbox = event.target.closest("[data-attachment-checkbox]");
@@ -562,6 +729,7 @@ export function initializeGmailUi(hooks) {
       if (currentWorkflowKind() === "interpretation") {
         renderAttachmentList(gmailState.loadResult);
       }
+      updatePrepareActionState();
       return;
     }
     const startPage = event.target.closest("[data-attachment-start-page]");
@@ -604,12 +772,19 @@ export function initializeGmailUi(hooks) {
     if (gmailState.suggestedTranslationLaunch) {
       gmailState.hooks.applyTranslationLaunch?.(gmailState.suggestedTranslationLaunch);
       setActiveView("new-job");
+      closeSessionDrawer();
     }
   });
   qs("gmail-load-interpretation-seed")?.addEventListener("click", () => {
     if (gmailState.interpretationSeed) {
-      gmailState.hooks.applyInterpretationSeed?.(gmailState.interpretationSeed);
+      gmailState.hooks.applyInterpretationSeed?.(gmailState.interpretationSeed, { openReview: true });
       setActiveView("new-job");
+      closeSessionDrawer();
+    }
+  });
+  window.addEventListener("legalpdf:open-gmail-session-drawer", () => {
+    if (gmailState.activeSession) {
+      openSessionDrawer();
     }
   });
   qs("gmail-confirm-translation")?.addEventListener("click", async () => {
@@ -658,10 +833,31 @@ export function initializeGmailUi(hooks) {
         const payload = await fetchJson("/api/gmail/reset", appState, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
         renderGmailBootstrap({ normalized_payload: { gmail: payload.normalized_payload } });
         setDiagnostics("gmail-session", payload, { hint: "Gmail workspace reset.", open: false });
+        closeSessionDrawer();
       } catch (error) {
         setPanelStatus("gmail-session", "bad", error.message || "Gmail workspace reset failed.");
         setDiagnostics("gmail-session", error, { hint: error.message || "Gmail workspace reset failed.", open: true });
       }
     });
+  });
+  qs("gmail-open-session")?.addEventListener("click", openSessionDrawer);
+  qs("gmail-preview-session")?.addEventListener("click", openSessionDrawer);
+  qs("gmail-workspace-strip-action")?.addEventListener("click", () => {
+    if (gmailState.activeSession) {
+      openSessionDrawer();
+      return;
+    }
+    setActiveView("gmail-intake");
+  });
+  qs("gmail-close-session-drawer")?.addEventListener("click", closeSessionDrawer);
+  qs("gmail-session-drawer-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === qs("gmail-session-drawer-backdrop")) {
+      closeSessionDrawer();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && gmailState.sessionDrawerOpen) {
+      closeSessionDrawer();
+    }
   });
 }

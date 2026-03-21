@@ -36,15 +36,20 @@
         <details class="sidebar-more" id="more-nav-shell">
           <summary class="sidebar-more-summary">More</summary>
           <nav class="sidebar-nav more-nav" id="more-nav" aria-label="Secondary"></nav>
+          <div class="sidebar-utility">
+            <p class="sidebar-card-label">Operator Details</p>
+            <button type="button" class="ghost-button sidebar-utility-button" id="operator-mode-toggle" aria-pressed="false">Show Technical Details</button>
+            <p class="sidebar-card-meta" id="operator-mode-hint">Build, listener, and diagnostics panels stay hidden until you ask for them or a failure occurs.</p>
+          </div>
         </details>
 
-        <section class="sidebar-card">
+        <section class="sidebar-card operator-only">
           <p class="sidebar-card-label">Build</p>
           <strong id="build-label">{{ build_branch }}@{{ build_sha }}</strong>
           <p class="sidebar-card-meta">Listener <span id="listener-label">{{ shadow_host }}:{{ shadow_port }}</span></p>
         </section>
 
-        <section class="sidebar-card">
+        <section class="sidebar-card operator-only">
           <p class="sidebar-card-label">Workspace</p>
           <strong id="workspace-id-label">{{ default_workspace_id }}</strong>
           <p class="sidebar-card-meta" id="runtime-mode-label">Live App Data</p>
@@ -84,7 +89,7 @@
             </div>
             <p class="panel-copy" id="runtime-status">Checking browser runtime capabilities...</p>
             <div class="status-grid" id="status-grid"></div>
-            <details class="details-panel" id="runtime-details">
+            <details class="details-panel operator-only" id="runtime-details">
               <summary>
                 <span>Runtime diagnostics</span>
                 <span class="details-hint" id="runtime-hint">Build identity, listener ownership, and runtime-mode provenance.</span>
@@ -109,22 +114,8 @@
               <div>
                 <p class="eyebrow">Gmail</p>
                 <h2>Gmail Handoff</h2>
-                <p class="panel-copy">Review the exact message, prepare the right workflow, and continue into translation or interpretation only when the Gmail context is ready.</p>
+                <p class="panel-copy">Keep Gmail intake narrow and decision-first: confirm the message, pick the right attachment flow, and leave the heavier session actions for a drawer only when they become relevant.</p>
               </div>
-            </div>
-            <div class="launch-grid">
-              <article class="launch-card ready">
-                <h3>Exact Message Context</h3>
-                <p>Keep the browser Gmail workspace focused on one message, one attachment review step, and one active session.</p>
-              </article>
-              <article class="launch-card ready">
-                <h3>Attachment Review</h3>
-                <p>Select the workflow, preview attachments, and prepare the session before leaving this screen.</p>
-              </article>
-              <article class="launch-card ready">
-                <h3>Continue To Work</h3>
-                <p>Hand the prepared Gmail session into translation or interpretation only when you are ready to continue.</p>
-              </article>
             </div>
           </div>
 
@@ -132,42 +123,50 @@
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Gmail</p>
-                <h2>Exact Message Context</h2>
+                <h2>Focused Intake Review</h2>
               </div>
               <div class="panel-actions">
                 <button type="button" class="ghost-button" id="gmail-refresh">Refresh Gmail State</button>
+                <button type="button" class="ghost-button hidden" id="gmail-open-session">Open Session Actions</button>
                 <button type="button" class="ghost-button" id="gmail-reset">Reset Gmail Workspace</button>
               </div>
             </div>
-            <p class="panel-copy" id="gmail-status">Load one exact Gmail message, review supported attachments, and continue into translation or interpretation finalization.</p>
-            <form id="gmail-context-form" class="form-grid compact-grid">
-              <div class="form-section-title">Exact Message Context</div>
-              <div class="field">
-                <label for="gmail-message-id">Message ID</label>
-                <input id="gmail-message-id" type="text">
-              </div>
-              <div class="field">
-                <label for="gmail-thread-id">Thread ID</label>
-                <input id="gmail-thread-id" type="text">
-              </div>
-              <div class="field">
-                <label for="gmail-subject">Subject</label>
-                <input id="gmail-subject" type="text">
-              </div>
-              <div class="field">
-                <label for="gmail-account-email">Account Email</label>
-                <input id="gmail-account-email" type="email">
-              </div>
-              <div class="field field-wide">
-                <label for="gmail-output-dir">Gmail Output Folder</label>
-                <input id="gmail-output-dir" type="text" placeholder="Optional output folder for Gmail attachment work">
-              </div>
-              <div class="form-actions">
-                <button type="button" id="gmail-use-simulator-defaults">Use Extension Defaults</button>
-                <button type="submit" class="primary-button" id="gmail-load-message">Load Exact Gmail Message</button>
-              </div>
-            </form>
+            <p class="panel-copy" id="gmail-status">Review one Gmail message, select the attachment flow, and continue only when the handoff is ready.</p>
             <div id="gmail-message-result" class="result-card empty-state">No Gmail message is loaded in this browser workspace yet.</div>
+            <details class="shell-collapsible field-wide" id="gmail-intake-details">
+              <summary>
+                <span>Message Details and Overrides</span>
+                <span class="details-hint" id="gmail-intake-details-summary">Message and output overrides stay collapsed unless you need them.</span>
+              </summary>
+              <div class="shell-collapsible-body">
+                <form id="gmail-context-form" class="form-grid compact-grid">
+                  <div class="field">
+                    <label for="gmail-message-id">Message ID</label>
+                    <input id="gmail-message-id" type="text">
+                  </div>
+                  <div class="field">
+                    <label for="gmail-thread-id">Thread ID</label>
+                    <input id="gmail-thread-id" type="text">
+                  </div>
+                  <div class="field">
+                    <label for="gmail-subject">Subject</label>
+                    <input id="gmail-subject" type="text">
+                  </div>
+                  <div class="field">
+                    <label for="gmail-account-email">Account Email</label>
+                    <input id="gmail-account-email" type="email">
+                  </div>
+                  <div class="field field-wide">
+                    <label for="gmail-output-dir">Gmail Output Folder</label>
+                    <input id="gmail-output-dir" type="text" placeholder="Optional output folder for Gmail attachment work">
+                  </div>
+                  <div class="form-actions">
+                    <button type="button" id="gmail-use-simulator-defaults">Use Extension Defaults</button>
+                    <button type="submit" class="primary-button" id="gmail-load-message">Load Exact Gmail Message</button>
+                  </div>
+                </form>
+              </div>
+            </details>
             <form id="gmail-prepare-form" class="form-grid compact-grid">
               <div class="form-section-title">Attachment Review</div>
               <div class="field">
@@ -190,10 +189,12 @@
                 <div id="gmail-attachment-list" class="history-list compact-list"></div>
               </div>
               <div class="form-actions">
-                <button type="submit" class="primary-button" id="gmail-prepare-session">Prepare Gmail Session</button>
+                <button type="button" class="ghost-button hidden" id="gmail-preview-session">Open Session Actions</button>
+                <button type="submit" class="primary-button" id="gmail-prepare-session">Continue To Translation</button>
               </div>
             </form>
-            <details class="details-panel" id="gmail-details">
+            <div id="gmail-session-banner" class="result-card empty-state hidden">No Gmail session is active yet.</div>
+            <details class="details-panel operator-only" id="gmail-details">
               <summary>
                 <span>Gmail diagnostics</span>
                 <span class="details-hint" id="gmail-hint">Exact-message load, attachment preview, and session preparation details appear here.</span>
@@ -201,38 +202,6 @@
               <pre class="diagnostics-box" id="gmail-diagnostics"></pre>
             </details>
           </div>
-
-          <div class="panel workspace-panel workspace-panel-gmail-session">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">Gmail</p>
-                <h2>Gmail Session</h2>
-              </div>
-            </div>
-            <p class="panel-copy" id="gmail-session-status">No Gmail translation batch or interpretation notice is active in this workspace yet.</p>
-            <div id="gmail-session-result" class="result-card empty-state">Prepare a Gmail session to keep batch progression, interpretation notice state, and draft-finalization context in one browser workspace.</div>
-            <div class="form-grid compact-grid">
-              <div class="field">
-                <label for="gmail-final-output-filename">Gmail Honorários Filename</label>
-                <input id="gmail-final-output-filename" type="text" placeholder="Optional DOCX filename for Gmail finalization">
-              </div>
-            </div>
-            <div class="panel-actions gmail-session-actions">
-              <button type="button" id="gmail-load-translation-launch">Continue In Translation</button>
-              <button type="button" id="gmail-confirm-translation">Confirm Current Translation Row</button>
-              <button type="button" id="gmail-load-interpretation-seed">Continue In Interpretation</button>
-              <button type="button" id="gmail-finalize-batch">Finalize Gmail Batch Reply</button>
-              <button type="button" id="gmail-finalize-interpretation">Finalize Interpretation Reply</button>
-            </div>
-            <details class="details-panel" id="gmail-session-details">
-              <summary>
-                <span>Gmail session result</span>
-                <span class="details-hint" id="gmail-session-hint">Batch progression, staged attachments, export status, and Gmail draft details appear here.</span>
-              </summary>
-              <pre class="diagnostics-box" id="gmail-session-diagnostics"></pre>
-            </details>
-          </div>
-
         </section>
 
         <section class="page-view hidden qt-workspace-view beginner-shell-view" data-view="new-job">
@@ -243,7 +212,7 @@
               <p id="gmail-workspace-strip-copy">Open the Gmail workspace to review the exact message, attachments, and finalization steps.</p>
             </div>
             <div class="panel-actions">
-              <button type="button" class="ghost-button" data-target-view="gmail-intake">Open Gmail Workspace</button>
+              <button type="button" class="ghost-button" id="gmail-workspace-strip-action">Open Gmail Workspace</button>
             </div>
           </div>
 
@@ -381,7 +350,7 @@
                 </div>
               </details>
             </form>
-            <details class="details-panel" id="translation-details">
+            <details class="details-panel operator-only" id="translation-details">
               <summary>
                 <span>Translation diagnostics</span>
                 <span class="details-hint" id="translation-hint">Run requests, source-upload details, and backend validation appear here.</span>
@@ -398,11 +367,12 @@
                 <p class="panel-copy" id="translation-status">Load a source file, then analyze or translate it in this browser workspace.</p>
               </div>
               <div class="panel-actions">
+                <button type="button" class="ghost-button hidden" id="translation-open-completion">Finish Translation</button>
                 <button type="button" class="ghost-button" id="translation-refresh">Refresh Translation State</button>
               </div>
             </div>
             <div id="translation-result" class="result-card empty-state">No translation job has run in this workspace yet.</div>
-            <details class="details-panel" id="translation-job-details">
+            <details class="details-panel operator-only" id="translation-job-details">
               <summary>
                 <span>Translation job state</span>
                 <span class="details-hint" id="translation-job-hint">Latest progress, log tail, review queue, and failure context appear here.</span>
@@ -427,125 +397,9 @@
                   <button type="button" id="translation-analyze">Analyze Only</button>
                   <button type="button" id="translation-resume-btn">Resume Translation</button>
                   <button type="button" id="translation-rebuild">Rebuild DOCX</button>
-                  <button type="button" id="translation-review-export">Export Review Queue</button>
-                  <a id="translation-download-docx" class="ghost-button" href="#" download>Download DOCX</a>
-                  <a id="translation-download-partial" class="ghost-button" href="#" download>Download Partial DOCX</a>
-                  <a id="translation-download-summary" class="ghost-button" href="#" download>Download Run Summary</a>
-                  <a id="translation-download-analyze" class="ghost-button" href="#" download>Download Analyze Report</a>
                 </div>
               </details>
             </div>
-          </div>
-
-          <div class="panel workspace-panel workspace-panel-save hidden" id="translation-postrun-panel">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">Translation</p>
-                <h2>Save To Job Log</h2>
-              </div>
-            </div>
-            <p class="panel-copy" id="translation-save-status">After a translation finishes, review the case fields first. Run metrics and amounts stay collapsed until you need them.</p>
-            <form id="translation-joblog-form" class="form-grid">
-              <input id="translation-row-id" type="hidden">
-              <div class="form-section-title">Case</div>
-              <div class="field">
-                <label for="translation-date">Translation Date</label>
-                <input id="translation-date" type="date">
-              </div>
-              <div class="field">
-                <label for="translation-case-number">Case Number</label>
-                <input id="translation-case-number" type="text">
-              </div>
-              <div class="field">
-                <label for="translation-court-email">Court Email</label>
-                <input id="translation-court-email" type="email">
-              </div>
-              <div class="field">
-                <label for="translation-case-entity">Case Entity</label>
-                <input id="translation-case-entity" type="text">
-              </div>
-              <div class="field">
-                <label for="translation-case-city">Case City</label>
-                <input id="translation-case-city" type="text">
-              </div>
-              <div class="field">
-                <label for="translation-run-id">Run ID</label>
-                <input id="translation-run-id" type="text" readonly>
-              </div>
-              <div class="field">
-                <label for="translation-target-lang-readonly">Target Language</label>
-                <input id="translation-target-lang-readonly" type="text" readonly>
-              </div>
-
-              <details class="shell-collapsible field-wide" id="translation-save-metrics-section">
-                <summary>
-                  <span>Run Metrics (auto-filled)</span>
-                  <span class="details-hint">Pages, words, tokens, and quality-risk details.</span>
-                </summary>
-                <div class="shell-collapsible-body form-grid compact-grid">
-                  <div class="field">
-                    <label for="translation-pages">Pages</label>
-                    <input id="translation-pages" type="number" min="0">
-                  </div>
-                  <div class="field">
-                    <label for="translation-word-count">Words</label>
-                    <input id="translation-word-count" type="number" min="0">
-                  </div>
-                  <div class="field">
-                    <label for="translation-total-tokens">Total Tokens</label>
-                    <input id="translation-total-tokens" type="number" min="0">
-                  </div>
-                  <div class="field">
-                    <label for="translation-quality-risk-score">Quality Risk Score</label>
-                    <input id="translation-quality-risk-score" type="number" min="0" max="1" step="0.0001">
-                  </div>
-                </div>
-              </details>
-
-              <details class="shell-collapsible field-wide" id="translation-save-amounts-section">
-                <summary>
-                  <span>Amounts (EUR)</span>
-                  <span class="details-hint">Rate, totals, API-cost, and profit fields.</span>
-                </summary>
-                <div class="shell-collapsible-body form-grid compact-grid">
-                  <div class="field">
-                    <label for="translation-rate-per-word">Rate / Word</label>
-                    <input id="translation-rate-per-word" type="number" min="0" step="0.01">
-                  </div>
-                  <div class="field">
-                    <label for="translation-expected-total">Expected Total</label>
-                    <input id="translation-expected-total" type="number" min="0" step="0.01">
-                  </div>
-                  <div class="field">
-                    <label for="translation-amount-paid">Amount Paid</label>
-                    <input id="translation-amount-paid" type="number" min="0" step="0.01">
-                  </div>
-                  <div class="field">
-                    <label for="translation-api-cost">API Cost</label>
-                    <input id="translation-api-cost" type="number" min="0" step="0.01">
-                  </div>
-                  <div class="field">
-                    <label for="translation-estimated-api-cost">Estimated API Cost</label>
-                    <input id="translation-estimated-api-cost" type="number" min="0" step="0.01">
-                  </div>
-                  <div class="field">
-                    <label for="translation-profit">Profit</label>
-                    <input id="translation-profit" type="number" step="0.01">
-                  </div>
-                </div>
-              </details>
-              <div class="form-actions">
-                <button type="button" id="translation-new-save">New Translation Save Form</button>
-                <button type="button" class="primary-button" id="translation-save-row">Save Translation Row</button>
-              </div>
-            </form>
-            <details class="details-panel" id="translation-save-details">
-              <summary>
-                <span>Translation save diagnostics</span>
-                <span class="details-hint" id="translation-save-hint">Row-save validation and payload details appear here.</span>
-              </summary>
-              <pre class="diagnostics-box" id="translation-save-diagnostics"></pre>
-            </details>
           </div>
 
           </div>
@@ -556,10 +410,10 @@
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Interpretation</p>
-                <h2>Autofill Inputs</h2>
+                <h2>Interpretation Intake</h2>
               </div>
             </div>
-            <p class="panel-copy" id="autofill-status">Upload a notification PDF or screenshot to seed the interpretation form.</p>
+            <p class="panel-copy" id="autofill-status">Upload a notification PDF or screenshot to recover the case details, then continue in the bounded review surface.</p>
             <div class="upload-grid">
               <form id="notification-upload-form" class="upload-form">
                 <label for="notification-file">Notification PDF</label>
@@ -572,7 +426,7 @@
                 <button id="photo-submit" type="submit">Autofill From Photo</button>
               </form>
             </div>
-            <details class="details-panel" id="autofill-details">
+            <details class="details-panel operator-only" id="autofill-details">
               <summary>
                 <span>Autofill diagnostics</span>
                 <span class="details-hint" id="autofill-hint">Metadata extraction details appear here after an upload.</span>
@@ -585,151 +439,11 @@
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Interpretation</p>
-                <h2>Job Setup</h2>
+                <h2>Seed Review</h2>
               </div>
             </div>
-            <p class="panel-copy" id="form-status">Review the extracted fields, then save or generate honorários.</p>
-            <form id="interpretation-form" class="form-grid">
-              <input id="row-id" type="hidden">
-              <div class="form-section-title">Case Context</div>
-              <div class="field">
-                <label for="profile-id">Profile</label>
-                <select id="profile-id"></select>
-              </div>
-              <div class="field">
-                <label for="case-number">Case Number</label>
-                <input id="case-number" name="case_number" type="text">
-              </div>
-              <div class="field">
-                <label for="court-email">Court Email</label>
-                <input id="court-email" name="court_email" type="email">
-              </div>
-              <div class="field">
-                <label for="case-entity">Case Entity</label>
-                <input id="case-entity" name="case_entity" type="text">
-              </div>
-              <div class="field">
-                <label for="case-city">Case City</label>
-                <input id="case-city" name="case_city" type="text">
-              </div>
-              <details class="shell-collapsible field-wide" id="interpretation-service-section">
-                <summary>
-                  <span>SERVICE</span>
-                  <span class="details-hint" id="interpretation-service-section-summary">Same as case</span>
-                </summary>
-                <div class="shell-collapsible-body form-grid compact-grid">
-                  <div class="field checkbox-field field-wide">
-                    <label><input id="service-same" type="checkbox" checked> Service same as case</label>
-                    <p class="field-hint" id="service-same-hint">
-                      Service entity and city will mirror the case fields for save and export.
-                    </p>
-                  </div>
-                  <div class="field">
-                    <label for="service-entity">Service Entity</label>
-                    <input id="service-entity" name="service_entity" type="text">
-                  </div>
-                  <div class="field">
-                    <label for="service-city">Service City</label>
-                    <input id="service-city" name="service_city" type="text">
-                  </div>
-                  <div class="field">
-                    <label for="service-date">Service Date</label>
-                    <input id="service-date" name="service_date" type="date">
-                  </div>
-                </div>
-              </details>
-
-              <details class="shell-collapsible field-wide" id="interpretation-text-section" open>
-                <summary>
-                  <span>TEXT</span>
-                  <span class="details-hint">Honorários wording, transport text, and export filename.</span>
-                </summary>
-                <div class="shell-collapsible-body form-grid compact-grid">
-                  <div class="field checkbox-field">
-                    <label><input id="use-service-location" type="checkbox"> Mention service location in text</label>
-                  </div>
-                  <div class="field checkbox-field">
-                    <label><input id="include-transport" type="checkbox" checked> Include transport sentence</label>
-                  </div>
-                  <div class="field">
-                    <label for="travel-km-outbound">KM (One Way)</label>
-                    <input id="travel-km-outbound" name="travel_km_outbound" type="number" step="0.01" min="0">
-                  </div>
-                  <div class="field">
-                    <label for="output-filename">Output Filename</label>
-                    <input id="output-filename" name="output_filename" type="text" placeholder="Optional DOCX filename">
-                  </div>
-                </div>
-              </details>
-
-              <details class="shell-collapsible field-wide" id="interpretation-recipient-section">
-                <summary>
-                  <span>RECIPIENT</span>
-                  <span class="details-hint" id="interpretation-recipient-section-summary">Auto-derived recipient</span>
-                </summary>
-                <div class="shell-collapsible-body form-grid compact-grid">
-                  <div class="field field-wide">
-                    <label for="recipient-block">Recipient Override (Export Only)</label>
-                    <p class="field-hint">Used only for the current export. It is not saved to job-log history.</p>
-                    <textarea id="recipient-block" name="recipient_block" rows="4"></textarea>
-                  </div>
-                </div>
-              </details>
-
-              <details class="shell-collapsible field-wide" id="interpretation-amounts-section">
-                <summary>
-                  <span>Amounts (EUR)</span>
-                  <span class="details-hint">Pages, words, rate, totals, API-cost, and profit.</span>
-                </summary>
-                <div class="shell-collapsible-body form-grid compact-grid">
-                  <div class="field">
-                    <label for="pages">Pages</label>
-                    <input id="pages" name="pages" type="number" min="0">
-                  </div>
-                  <div class="field">
-                    <label for="word-count">Words</label>
-                    <input id="word-count" name="word_count" type="number" min="0">
-                  </div>
-                  <div class="field">
-                    <label for="rate-per-word">Rate / Word</label>
-                    <input id="rate-per-word" name="rate_per_word" type="number" step="0.01" min="0">
-                  </div>
-                  <div class="field">
-                    <label for="expected-total">Expected Total</label>
-                    <input id="expected-total" name="expected_total" type="number" step="0.01" min="0">
-                  </div>
-                  <div class="field">
-                    <label for="amount-paid">Amount Paid</label>
-                    <input id="amount-paid" name="amount_paid" type="number" step="0.01" min="0">
-                  </div>
-                  <div class="field">
-                    <label for="api-cost">API Cost</label>
-                    <input id="api-cost" name="api_cost" type="number" step="0.01" min="0">
-                  </div>
-                  <div class="field">
-                    <label for="profit">Profit</label>
-                    <input id="profit" name="profit" type="number" step="0.01">
-                  </div>
-                </div>
-              </details>
-            </form>
-            <details class="details-panel" id="form-details">
-              <summary>
-                <span>Form diagnostics</span>
-                <span class="details-hint" id="form-hint">Save/export responses and validation details appear here.</span>
-              </summary>
-              <pre class="diagnostics-box" id="form-diagnostics"></pre>
-            </details>
-          </div>
-
-          <div class="panel workspace-panel workspace-panel-export hidden" id="interpretation-export-panel">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">Interpretation</p>
-                <h2>Run Status</h2>
-              </div>
-            </div>
-            <div id="export-result" class="result-card empty-state">No export has been run yet.</div>
+            <p class="panel-copy" id="form-status">Recover the case details first, then use the bounded review surface for edits, save, and honorários generation.</p>
+            <div id="interpretation-review-home-result" class="result-card empty-state">Upload a notification PDF or screenshot to recover the case data, or start a blank review if you need to enter it manually.</div>
           </div>
 
           <div class="panel workspace-panel workspace-action-rail interpretation-action-rail">
@@ -740,12 +454,11 @@
               </div>
             </div>
             <div class="workspace-action-buttons simple-action-buttons">
-              <button type="button" id="save-row">Save Interpretation Row</button>
-              <button type="button" class="primary-button" id="export-honorarios">Generate DOCX + PDF</button>
+              <button type="button" class="primary-button" id="interpretation-open-review">Review Interpretation</button>
+              <button type="button" id="clear-form">New Blank Entry</button>
               <details class="action-overflow-menu">
                 <summary id="interpretation-overflow-toggle">...</summary>
                 <div class="action-overflow-content">
-                  <button type="button" id="clear-form">New Blank Entry</button>
                   <button type="button" id="reload-history">Reload History</button>
                 </div>
               </details>
@@ -755,319 +468,370 @@
           </div>
         </section>
 
-        <section class="page-view hidden" data-view="recent-jobs">
-          <div class="panel">
+        <section class="page-view hidden secondary-route-view production-secondary-view" data-view="recent-jobs">
+          <div class="panel secondary-route-hero">
             <div class="panel-header">
-              <h2>Job Log Overview</h2>
-              <p class="panel-copy" id="recent-jobs-status">Loading recent job-log rows...</p>
+              <div>
+                <p class="eyebrow">Recent Jobs</p>
+                <h2>Recent Jobs</h2>
+                <p class="panel-copy">Keep job-log review calm: start with the most recent rows, then expand the heavier translation and interpretation histories only when you need deeper context.</p>
+              </div>
             </div>
-            <div id="recent-jobs-list" class="history-list"></div>
           </div>
 
-          <div class="panel history-panel">
-            <div class="panel-header">
-              <h2>Recent Translation Runs</h2>
-              <p class="panel-copy" id="translation-jobs-status">Loading active and recent browser translation jobs...</p>
+          <div class="secondary-route-sheet recent-jobs-sheet">
+            <div class="panel secondary-route-main">
+              <div class="panel-header">
+                <div>
+                  <h2>Job Log Overview</h2>
+                  <p class="panel-copy" id="recent-jobs-status">Loading recent job-log rows...</p>
+                </div>
+              </div>
+              <div id="recent-jobs-list" class="history-list"></div>
             </div>
-            <div id="translation-jobs-list" class="history-list"></div>
+
+            <div class="panel secondary-route-side">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">How It Works</p>
+                  <h2>Bounded Review Flow</h2>
+                </div>
+              </div>
+              <div class="result-card">
+                <div class="result-header">
+                  <div>
+                    <strong>Recent rows stay here. Editing opens in the task-specific drawer.</strong>
+                    <p>Translation rows reopen the bounded finish surface, and interpretation rows reopen the bounded review surface. The long histories below stay collapsed until you ask for them.</p>
+                  </div>
+                  <span class="status-chip info">Focused</span>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div class="panel history-panel">
-            <div class="panel-header">
-              <h2 id="translation-history-heading">Translation Job Log History</h2>
+          <details class="shell-collapsible history-route-collapsible">
+            <summary>
+              <span>Recent Translation Runs</span>
+              <span class="details-hint" id="translation-jobs-status">Loading active and recent browser translation jobs...</span>
+            </summary>
+            <div class="shell-collapsible-body">
+              <div id="translation-jobs-list" class="history-list"></div>
             </div>
-            <div id="translation-history-list" class="history-list"></div>
-          </div>
+          </details>
 
-          <div class="panel history-panel">
-            <div class="panel-header">
-              <h2 id="history-heading">Interpretation History</h2>
+          <details class="shell-collapsible history-route-collapsible">
+            <summary>
+              <span id="translation-history-heading">Translation Job Log History</span>
+              <span class="details-hint">Saved translation rows stay tucked away until you need a deeper rewind.</span>
+            </summary>
+            <div class="shell-collapsible-body">
+              <div id="translation-history-list" class="history-list"></div>
             </div>
-            <div id="history-list" class="history-list"></div>
-          </div>
+          </details>
+
+          <details class="shell-collapsible history-route-collapsible">
+            <summary>
+              <span id="history-heading">Interpretation History</span>
+              <span class="details-hint">Saved interpretation rows stay tucked away until you need them.</span>
+            </summary>
+            <div class="shell-collapsible-body">
+              <div id="history-list" class="history-list"></div>
+            </div>
+          </details>
         </section>
 
-        <section class="page-view hidden" data-view="settings">
-          <div class="panel">
+        <section class="page-view hidden secondary-route-view operator-route-view" data-view="settings">
+          <div class="panel secondary-route-hero">
             <div class="panel-header">
-              <h2>Settings</h2>
+              <div>
+                <p class="eyebrow">Settings</p>
+                <h2>Settings</h2>
+                <p class="panel-copy">Treat settings like a bounded operator sheet: confirm the runtime summary first, then expand only the group you actually need to edit.</p>
+              </div>
               <div class="panel-actions">
                 <button type="button" class="ghost-button" id="settings-refresh-admin">Refresh Settings</button>
                 <button type="button" class="ghost-button" id="settings-run-preflight">Refresh Preflight</button>
               </div>
             </div>
-            <p class="panel-copy" id="settings-status">Loading current settings, provider state, and admin controls...</p>
-            <div class="summary-grid" id="settings-summary-grid"></div>
-            <form id="settings-form" class="form-grid compact-grid">
-              <div class="form-section-title">Defaults</div>
-              <div class="field">
-                <label for="settings-default-lang">Default Language</label>
-                <select id="settings-default-lang">
-                  <option value="EN">EN</option>
-                  <option value="FR">FR</option>
-                  <option value="AR">AR</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="settings-default-effort">Default Effort</label>
-                <select id="settings-default-effort">
-                  <option value="high">high</option>
-                  <option value="xhigh">xhigh</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="settings-default-effort-policy">Effort Policy</label>
-                <select id="settings-default-effort-policy">
-                  <option value="adaptive">adaptive</option>
-                  <option value="fixed_high">fixed_high</option>
-                  <option value="fixed_xhigh">fixed_xhigh</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="settings-default-images-mode">Default Image Mode</label>
-                <select id="settings-default-images-mode">
-                  <option value="off">off</option>
-                  <option value="auto">auto</option>
-                  <option value="always">always</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="settings-default-outdir">Default Output Folder</label>
-                <input id="settings-default-outdir" type="text">
-              </div>
-              <div class="field">
-                <label for="settings-default-workers">Default Workers</label>
-                <input id="settings-default-workers" type="number" min="1" max="6" step="1">
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="settings-default-resume" type="checkbox"> Default Resume</label>
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="settings-default-keep" type="checkbox"> Keep Intermediates</label>
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="settings-default-breaks" type="checkbox"> Insert Page Breaks</label>
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="settings-allow-xhigh" type="checkbox"> Allow xhigh escalation</label>
-              </div>
-
-              <div class="form-section-title">OCR and Gmail</div>
-              <div class="field">
-                <label for="settings-ocr-provider">OCR Provider</label>
-                <select id="settings-ocr-provider">
-                  <option value="openai">openai</option>
-                  <option value="gemini">gemini</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="settings-ocr-provider-default">Default OCR Provider</label>
-                <select id="settings-ocr-provider-default">
-                  <option value="openai">openai</option>
-                  <option value="gemini">gemini</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="settings-ocr-mode-default">Default OCR Mode</label>
-                <select id="settings-ocr-mode-default">
-                  <option value="off">off</option>
-                  <option value="auto">auto</option>
-                  <option value="always">always</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="settings-ocr-engine-default">Default OCR Engine</label>
-                <select id="settings-ocr-engine-default">
-                  <option value="local">local</option>
-                  <option value="local_then_api">local_then_api</option>
-                  <option value="api">api</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="settings-ocr-api-base-url">OCR Base URL</label>
-                <input id="settings-ocr-api-base-url" type="text">
-              </div>
-              <div class="field">
-                <label for="settings-ocr-api-model">OCR Model</label>
-                <input id="settings-ocr-api-model" type="text">
-              </div>
-              <div class="field">
-                <label for="settings-ocr-api-env">OCR API Env Name</label>
-                <input id="settings-ocr-api-env" type="text">
-              </div>
-              <div class="field">
-                <label for="settings-gmail-gog-path">gog Path</label>
-                <input id="settings-gmail-gog-path" type="text">
-              </div>
-              <div class="field">
-                <label for="settings-gmail-account-email">Gmail Account</label>
-                <input id="settings-gmail-account-email" type="email">
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="settings-gmail-bridge-enabled" type="checkbox"> Enable Gmail Bridge</label>
-              </div>
-              <div class="field">
-                <label for="settings-gmail-bridge-port">Gmail Bridge Port</label>
-                <input id="settings-gmail-bridge-port" type="number" min="1" max="65535" step="1">
-              </div>
-
-              <div class="form-section-title">Diagnostics and Job Log</div>
-              <div class="field checkbox-field">
-                <label><input id="settings-diagnostics-admin-mode" type="checkbox"> Admin diagnostics mode</label>
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="settings-diagnostics-snippets" type="checkbox"> Include sanitized snippets</label>
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="settings-diagnostics-verbose" type="checkbox"> Verbose metadata logs</label>
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="settings-diagnostics-cost" type="checkbox"> Show cost summary</label>
-              </div>
-              <div class="field">
-                <label for="settings-transport-retries">Transport Retries</label>
-                <input id="settings-transport-retries" type="number" min="0" max="12" step="1">
-              </div>
-              <div class="field">
-                <label for="settings-backoff-cap">Backoff Cap Seconds</label>
-                <input id="settings-backoff-cap" type="number" min="1" max="120" step="0.1">
-              </div>
-              <div class="field">
-                <label for="settings-timeout-text">Text Timeout Seconds</label>
-                <input id="settings-timeout-text" type="number" min="5" max="600" step="1">
-              </div>
-              <div class="field">
-                <label for="settings-timeout-image">Image Timeout Seconds</label>
-                <input id="settings-timeout-image" type="number" min="5" max="1200" step="1">
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="settings-metadata-ai-enabled" type="checkbox"> Metadata AI enabled</label>
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="settings-metadata-photo-enabled" type="checkbox"> Metadata photo enabled</label>
-              </div>
-              <div class="field checkbox-field">
-                <label><input id="settings-service-equals-case" type="checkbox"> Service equals case by default</label>
-              </div>
-              <div class="field field-wide">
-                <label for="settings-default-rate-json">Default Rate / Word JSON</label>
-                <textarea id="settings-default-rate-json" rows="4" placeholder='{"EN":0.08,"FR":0.08,"AR":0.09}'></textarea>
-              </div>
-              <div class="form-actions">
-                <button type="button" class="primary-button" id="settings-save">Save Settings</button>
-                <button type="button" id="settings-test-ocr">Test OCR Provider</button>
-                <button type="button" id="settings-test-gmail">Check Gmail Draft Prereqs</button>
-              </div>
-            </form>
-            <details class="details-panel" id="settings-admin-details">
-              <summary>
-                <span>Settings diagnostics</span>
-                <span class="details-hint" id="settings-admin-hint">Save responses and provider-state refresh details appear here.</span>
-              </summary>
-              <pre class="diagnostics-box" id="settings-admin-diagnostics"></pre>
-            </details>
-            <details class="details-panel" id="settings-test-details">
-              <summary>
-                <span>Provider test output</span>
-                <span class="details-hint" id="settings-test-hint">OCR and Gmail preflight checks appear here.</span>
-              </summary>
-              <pre class="diagnostics-box" id="settings-test-diagnostics"></pre>
-            </details>
           </div>
 
-          <div class="panel">
-            <div class="panel-header">
-              <h2>Provider and Host Preflight</h2>
+          <div class="secondary-route-sheet operator-route-sheet settings-route-sheet">
+            <div class="panel secondary-route-main">
+              <p class="panel-copy" id="settings-status">Loading current settings, provider state, and admin controls...</p>
+              <div class="summary-grid" id="settings-summary-grid"></div>
+              <form id="settings-form" class="form-grid compact-grid">
+                <details class="shell-collapsible field-wide" id="settings-defaults-section" open>
+                  <summary>
+                    <span>Defaults</span>
+                    <span class="details-hint">Daily translation defaults stay visible first.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <div class="field">
+                      <label for="settings-default-lang">Default Language</label>
+                      <select id="settings-default-lang">
+                        <option value="EN">EN</option>
+                        <option value="FR">FR</option>
+                        <option value="AR">AR</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-default-effort">Default Effort</label>
+                      <select id="settings-default-effort">
+                        <option value="high">high</option>
+                        <option value="xhigh">xhigh</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-default-effort-policy">Effort Policy</label>
+                      <select id="settings-default-effort-policy">
+                        <option value="adaptive">adaptive</option>
+                        <option value="fixed_high">fixed_high</option>
+                        <option value="fixed_xhigh">fixed_xhigh</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-default-images-mode">Default Image Mode</label>
+                      <select id="settings-default-images-mode">
+                        <option value="off">off</option>
+                        <option value="auto">auto</option>
+                        <option value="always">always</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-default-outdir">Default Output Folder</label>
+                      <input id="settings-default-outdir" type="text">
+                    </div>
+                    <div class="field">
+                      <label for="settings-default-workers">Default Workers</label>
+                      <input id="settings-default-workers" type="number" min="1" max="6" step="1">
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-default-resume" type="checkbox"> Default Resume</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-default-keep" type="checkbox"> Keep Intermediates</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-default-breaks" type="checkbox"> Insert Page Breaks</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-allow-xhigh" type="checkbox"> Allow xhigh escalation</label>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="shell-collapsible field-wide" id="settings-integrations-section">
+                  <summary>
+                    <span>OCR and Gmail</span>
+                    <span class="details-hint">Provider, bridge, and draft settings stay tucked away until needed.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <div class="field">
+                      <label for="settings-ocr-provider">OCR Provider</label>
+                      <select id="settings-ocr-provider">
+                        <option value="openai">openai</option>
+                        <option value="gemini">gemini</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-ocr-provider-default">Default OCR Provider</label>
+                      <select id="settings-ocr-provider-default">
+                        <option value="openai">openai</option>
+                        <option value="gemini">gemini</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-ocr-mode-default">Default OCR Mode</label>
+                      <select id="settings-ocr-mode-default">
+                        <option value="off">off</option>
+                        <option value="auto">auto</option>
+                        <option value="always">always</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-ocr-engine-default">Default OCR Engine</label>
+                      <select id="settings-ocr-engine-default">
+                        <option value="local">local</option>
+                        <option value="local_then_api">local_then_api</option>
+                        <option value="api">api</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-ocr-api-base-url">OCR Base URL</label>
+                      <input id="settings-ocr-api-base-url" type="text">
+                    </div>
+                    <div class="field">
+                      <label for="settings-ocr-api-model">OCR Model</label>
+                      <input id="settings-ocr-api-model" type="text">
+                    </div>
+                    <div class="field">
+                      <label for="settings-ocr-api-env">OCR API Env Name</label>
+                      <input id="settings-ocr-api-env" type="text">
+                    </div>
+                    <div class="field">
+                      <label for="settings-gmail-gog-path">gog Path</label>
+                      <input id="settings-gmail-gog-path" type="text">
+                    </div>
+                    <div class="field">
+                      <label for="settings-gmail-account-email">Gmail Account</label>
+                      <input id="settings-gmail-account-email" type="email">
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-gmail-bridge-enabled" type="checkbox"> Enable Gmail Bridge</label>
+                    </div>
+                    <div class="field">
+                      <label for="settings-gmail-bridge-port">Gmail Bridge Port</label>
+                      <input id="settings-gmail-bridge-port" type="number" min="1" max="65535" step="1">
+                    </div>
+                  </div>
+                </details>
+
+                <details class="shell-collapsible field-wide" id="settings-ops-section">
+                  <summary>
+                    <span>Diagnostics and Job Log</span>
+                    <span class="details-hint">Only open this when you are actively tuning recovery, logging, or job-log defaults.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <div class="field checkbox-field">
+                      <label><input id="settings-diagnostics-admin-mode" type="checkbox"> Admin diagnostics mode</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-diagnostics-snippets" type="checkbox"> Include sanitized snippets</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-diagnostics-verbose" type="checkbox"> Verbose metadata logs</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-diagnostics-cost" type="checkbox"> Show cost summary</label>
+                    </div>
+                    <div class="field">
+                      <label for="settings-transport-retries">Transport Retries</label>
+                      <input id="settings-transport-retries" type="number" min="0" max="12" step="1">
+                    </div>
+                    <div class="field">
+                      <label for="settings-backoff-cap">Backoff Cap Seconds</label>
+                      <input id="settings-backoff-cap" type="number" min="1" max="120" step="0.1">
+                    </div>
+                    <div class="field">
+                      <label for="settings-timeout-text">Text Timeout Seconds</label>
+                      <input id="settings-timeout-text" type="number" min="5" max="600" step="1">
+                    </div>
+                    <div class="field">
+                      <label for="settings-timeout-image">Image Timeout Seconds</label>
+                      <input id="settings-timeout-image" type="number" min="5" max="1200" step="1">
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-metadata-ai-enabled" type="checkbox"> Metadata AI enabled</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-metadata-photo-enabled" type="checkbox"> Metadata photo enabled</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-service-equals-case" type="checkbox"> Service equals case by default</label>
+                    </div>
+                    <div class="field field-wide">
+                      <label for="settings-default-rate-json">Default Rate / Word JSON</label>
+                      <textarea id="settings-default-rate-json" rows="4" placeholder='{"EN":0.08,"FR":0.08,"AR":0.09}'></textarea>
+                    </div>
+                  </div>
+                </details>
+
+                <div class="form-actions">
+                  <button type="button" class="primary-button" id="settings-save">Save Settings</button>
+                  <button type="button" id="settings-test-ocr">Test OCR Provider</button>
+                  <button type="button" id="settings-test-gmail">Check Gmail Draft Prereqs</button>
+                </div>
+              </form>
+              <details class="details-panel operator-only" id="settings-admin-details">
+                <summary>
+                  <span>Settings diagnostics</span>
+                  <span class="details-hint" id="settings-admin-hint">Save responses and provider-state refresh details appear here.</span>
+                </summary>
+                <pre class="diagnostics-box" id="settings-admin-diagnostics"></pre>
+              </details>
+              <details class="details-panel operator-only" id="settings-test-details">
+                <summary>
+                  <span>Provider test output</span>
+                  <span class="details-hint" id="settings-test-hint">OCR and Gmail preflight checks appear here.</span>
+                </summary>
+                <pre class="diagnostics-box" id="settings-test-diagnostics"></pre>
+              </details>
             </div>
-            <div class="status-grid" id="settings-capability-grid"></div>
+
+            <div class="panel secondary-route-side">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Preflight</p>
+                  <h2>Provider and Host Preflight</h2>
+                </div>
+              </div>
+              <p class="panel-copy">Keep the runtime summary here and only go back into the operator sections when a provider or Gmail prerequisite actually needs attention.</p>
+              <div class="status-grid" id="settings-capability-grid"></div>
+            </div>
           </div>
         </section>
 
-        <section class="page-view hidden" data-view="profile">
-          <div class="panel">
+        <section class="page-view hidden secondary-route-view operator-route-view" data-view="profile">
+          <div class="panel secondary-route-hero">
             <div class="panel-header">
-              <h2>Profiles</h2>
+              <div>
+                <p class="eyebrow">Profiles</p>
+                <h2>Profiles</h2>
+                <p class="panel-copy">Keep profile management bounded: review the primary profile and the card list here, then edit one profile at a time in the drawer.</p>
+              </div>
               <div class="panel-actions">
                 <button type="button" class="ghost-button" id="new-profile">New Profile</button>
                 <button type="button" class="ghost-button" id="import-live-profiles">Import Live Profiles</button>
               </div>
             </div>
-            <p class="panel-copy" id="profile-status">Loading profile summaries...</p>
-            <div id="profile-primary-card" class="result-card empty-state">No primary profile loaded yet.</div>
-            <div id="profile-list" class="profile-grid"></div>
-            <details class="details-panel" id="profile-details">
-              <summary>
-                <span>Profile diagnostics</span>
-                <span class="details-hint" id="profile-hint">Profile saves, deletes, and import details appear here.</span>
-              </summary>
-              <pre class="diagnostics-box" id="profile-diagnostics"></pre>
-            </details>
           </div>
 
-          <div class="panel">
-            <div class="panel-header">
-              <h2>Profile Editor</h2>
-              <div class="panel-actions">
-                <button type="button" id="profile-save" class="primary-button">Save Profile</button>
-                <button type="button" id="profile-set-primary">Set as Primary</button>
-                <button type="button" id="profile-delete">Delete Profile</button>
+          <div class="secondary-route-sheet operator-route-sheet profile-route-sheet">
+            <div class="panel secondary-route-main">
+              <p class="panel-copy" id="profile-status">Loading profile summaries...</p>
+              <div id="profile-primary-card" class="result-card empty-state">No primary profile loaded yet.</div>
+              <div id="profile-list" class="profile-grid"></div>
+              <details class="details-panel operator-only" id="profile-details">
+                <summary>
+                  <span>Profile diagnostics</span>
+                  <span class="details-hint" id="profile-hint">Profile saves, deletes, and import details appear here.</span>
+                </summary>
+                <pre class="diagnostics-box" id="profile-diagnostics"></pre>
+              </details>
+            </div>
+
+            <div class="panel secondary-route-side">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Editor Surface</p>
+                  <h2>One Profile At A Time</h2>
+                </div>
+              </div>
+              <div class="result-card">
+                <div class="result-header">
+                  <div>
+                    <strong>The profile editor now opens in a bounded drawer.</strong>
+                    <p>Select a profile card to edit it, or start a new profile. The day-to-day route stays focused on the list and current primary profile.</p>
+                  </div>
+                  <span class="status-chip info">Drawer</span>
+                </div>
               </div>
             </div>
-            <p class="panel-copy" id="profile-editor-status">Select a profile card or create a new profile, then edit its details here.</p>
-            <form id="profile-editor-form" class="form-grid compact-grid">
-              <input id="profile-editor-id" type="hidden">
-              <div class="field">
-                <label for="profile-editor-first-name">First Name</label>
-                <input id="profile-editor-first-name" type="text">
-              </div>
-              <div class="field">
-                <label for="profile-editor-last-name">Last Name</label>
-                <input id="profile-editor-last-name" type="text">
-              </div>
-              <div class="field">
-                <label for="profile-editor-document-name-override">Document Name Override</label>
-                <input id="profile-editor-document-name-override" type="text">
-              </div>
-              <div class="field">
-                <label for="profile-editor-email">Email</label>
-                <input id="profile-editor-email" type="email">
-              </div>
-              <div class="field">
-                <label for="profile-editor-phone-number">Phone Number</label>
-                <input id="profile-editor-phone-number" type="text">
-              </div>
-              <div class="field">
-                <label for="profile-editor-travel-origin-label">Travel Origin Label</label>
-                <input id="profile-editor-travel-origin-label" type="text">
-              </div>
-              <div class="field field-wide">
-                <label for="profile-editor-postal-address">Postal Address</label>
-                <textarea id="profile-editor-postal-address" rows="3"></textarea>
-              </div>
-              <div class="field">
-                <label for="profile-editor-iban">IBAN</label>
-                <input id="profile-editor-iban" type="text">
-              </div>
-              <div class="field">
-                <label for="profile-editor-iva-text">IVA Text</label>
-                <input id="profile-editor-iva-text" type="text">
-              </div>
-              <div class="field">
-                <label for="profile-editor-irs-text">IRS Text</label>
-                <input id="profile-editor-irs-text" type="text">
-              </div>
-              <div class="field checkbox-field field-wide">
-                <label><input id="profile-editor-make-primary" type="checkbox"> Make this the primary profile when saving</label>
-              </div>
-              <div class="field field-wide">
-                <label for="profile-editor-travel-distances-json">Travel Distances JSON</label>
-                <textarea id="profile-editor-travel-distances-json" rows="8" placeholder='{"Beja":39,"Cuba":26}'></textarea>
-              </div>
-            </form>
           </div>
         </section>
 
-        <section class="page-view hidden" data-view="power-tools">
+        <section class="page-view hidden secondary-route-view operator-route-view" data-view="power-tools">
+          <div class="panel secondary-route-hero">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Power Tools</p>
+                <h2>Power Tools</h2>
+                <p class="panel-copy">This stays an operator surface, but it now reads as a bounded tool stack instead of a product-level home page.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="secondary-route-stack operator-route-stack">
           <div class="panel">
             <div class="panel-header">
               <h2>Glossary Workspace</h2>
@@ -1251,9 +1015,21 @@
               <pre class="diagnostics-box" id="power-tools-diagnostics-diagnostics"></pre>
             </details>
           </div>
+          </div>
         </section>
 
-        <section class="page-view hidden" data-view="extension-lab">
+        <section class="page-view hidden secondary-route-view operator-route-view" data-view="extension-lab">
+          <div class="panel secondary-route-hero">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Extension Lab</p>
+                <h2>Extension Lab</h2>
+                <p class="panel-copy">Keep the real Gmail flow in the main app and use this page only as a bounded operator lab for native-host and extension diagnostics.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="secondary-route-stack operator-route-stack">
           <div class="panel">
             <div class="panel-header">
               <h2>Extension Lab</h2>
@@ -1316,7 +1092,426 @@
             <p class="panel-copy">These are the extension/native-host prepare reasons the browser lab now surfaces explicitly.</p>
             <div id="extension-reason-catalog" class="history-list compact-list"></div>
           </div>
+          </div>
         </section>
+
+        <div class="workspace-drawer-backdrop hidden" id="profile-editor-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer workspace-drawer-wide" id="profile-editor-drawer" aria-labelledby="profile-editor-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Profiles</p>
+                <h2 id="profile-editor-drawer-title">Profile Editor</h2>
+              </div>
+              <button type="button" class="ghost-button" id="profile-close-editor">Close</button>
+            </div>
+            <p class="panel-copy" id="profile-editor-status">Select a profile card or create a new profile, then edit its details here.</p>
+            <form id="profile-editor-form" class="form-grid compact-grid">
+              <input id="profile-editor-id" type="hidden">
+              <div class="field">
+                <label for="profile-editor-first-name">First Name</label>
+                <input id="profile-editor-first-name" type="text">
+              </div>
+              <div class="field">
+                <label for="profile-editor-last-name">Last Name</label>
+                <input id="profile-editor-last-name" type="text">
+              </div>
+              <div class="field">
+                <label for="profile-editor-document-name-override">Document Name Override</label>
+                <input id="profile-editor-document-name-override" type="text">
+              </div>
+              <div class="field">
+                <label for="profile-editor-email">Email</label>
+                <input id="profile-editor-email" type="email">
+              </div>
+              <div class="field">
+                <label for="profile-editor-phone-number">Phone Number</label>
+                <input id="profile-editor-phone-number" type="text">
+              </div>
+              <div class="field">
+                <label for="profile-editor-travel-origin-label">Travel Origin Label</label>
+                <input id="profile-editor-travel-origin-label" type="text">
+              </div>
+              <div class="field field-wide">
+                <label for="profile-editor-postal-address">Postal Address</label>
+                <textarea id="profile-editor-postal-address" rows="3"></textarea>
+              </div>
+              <div class="field">
+                <label for="profile-editor-iban">IBAN</label>
+                <input id="profile-editor-iban" type="text">
+              </div>
+              <div class="field">
+                <label for="profile-editor-iva-text">IVA Text</label>
+                <input id="profile-editor-iva-text" type="text">
+              </div>
+              <div class="field">
+                <label for="profile-editor-irs-text">IRS Text</label>
+                <input id="profile-editor-irs-text" type="text">
+              </div>
+              <div class="field checkbox-field field-wide">
+                <label><input id="profile-editor-make-primary" type="checkbox"> Make this the primary profile when saving</label>
+              </div>
+              <div class="field field-wide">
+                <label for="profile-editor-travel-distances-json">Travel Distances JSON</label>
+                <textarea id="profile-editor-travel-distances-json" rows="8" placeholder='{"Beja":39,"Cuba":26}'></textarea>
+              </div>
+            </form>
+            <div class="form-actions drawer-action-row">
+              <button type="button" id="profile-set-primary">Set as Primary</button>
+              <button type="button" id="profile-delete">Delete Profile</button>
+              <button type="button" id="profile-close-editor-footer">Close</button>
+              <button type="button" id="profile-save" class="primary-button">Save Profile</button>
+            </div>
+          </section>
+        </div>
+
+        <div class="workspace-drawer-backdrop hidden" id="gmail-session-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer" id="gmail-session-drawer" aria-labelledby="gmail-session-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Gmail Session</p>
+                <h2 id="gmail-session-drawer-title">Session Actions</h2>
+              </div>
+              <button type="button" class="ghost-button" id="gmail-close-session-drawer">Close</button>
+            </div>
+            <p class="panel-copy" id="gmail-session-status">No Gmail translation batch or interpretation notice is active in this workspace yet.</p>
+            <div id="gmail-session-result" class="result-card empty-state">Prepare a Gmail session to keep batch progression, interpretation notice state, and draft-finalization context in one browser workspace.</div>
+            <div class="form-grid compact-grid">
+              <div class="field">
+                <label for="gmail-final-output-filename">Gmail Honorários Filename</label>
+                <input id="gmail-final-output-filename" type="text" placeholder="Optional DOCX filename for Gmail finalization">
+              </div>
+            </div>
+            <div class="panel-actions gmail-session-actions">
+              <button type="button" id="gmail-load-translation-launch">Continue In Translation</button>
+              <button type="button" id="gmail-confirm-translation">Confirm Current Translation Row</button>
+              <button type="button" id="gmail-load-interpretation-seed">Continue In Interpretation</button>
+              <button type="button" id="gmail-finalize-batch">Finalize Gmail Batch Reply</button>
+              <button type="button" id="gmail-finalize-interpretation">Finalize Interpretation Reply</button>
+            </div>
+            <details class="details-panel operator-only" id="gmail-session-details">
+              <summary>
+                <span>Gmail session result</span>
+                <span class="details-hint" id="gmail-session-hint">Batch progression, staged attachments, export status, and Gmail draft details appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="gmail-session-diagnostics"></pre>
+            </details>
+          </section>
+        </div>
+
+        <div class="workspace-drawer-backdrop hidden" id="translation-completion-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer workspace-drawer-wide" id="translation-completion-drawer" aria-labelledby="translation-completion-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Translation</p>
+                <h2 id="translation-completion-drawer-title">Finish Translation</h2>
+              </div>
+              <button type="button" class="ghost-button" id="translation-close-completion">Close</button>
+            </div>
+            <p class="panel-copy" id="translation-completion-status">Complete a translation run or load a saved translation row to review the case fields, artifacts, and finish-the-job actions here.</p>
+            <div id="translation-completion-result" class="result-card empty-state">Complete a translation run or load a saved row to open the bounded translation finish surface.</div>
+            <div class="panel-actions translation-completion-actions" id="translation-completion-actions">
+              <button type="button" id="translation-review-export">Export Review Queue</button>
+              <a id="translation-download-docx" class="ghost-button" href="#" download>Download DOCX</a>
+              <a id="translation-download-partial" class="ghost-button" href="#" download>Download Partial DOCX</a>
+              <a id="translation-download-summary" class="ghost-button" href="#" download>Download Run Summary</a>
+              <a id="translation-download-analyze" class="ghost-button" href="#" download>Download Analyze Report</a>
+            </div>
+
+            <div class="panel workspace-panel workspace-panel-save hidden" id="translation-completion-empty">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Translation</p>
+                  <h2>Completion Surface</h2>
+                </div>
+              </div>
+              <p class="panel-copy">This run does not have a job-log save form yet. Use the actions above to export the analyze report or other artifacts, or start the full translation when you are ready to create a translation row.</p>
+            </div>
+
+            <div class="panel workspace-panel workspace-panel-save hidden" id="translation-completion-form-shell">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Translation</p>
+                  <h2>Save To Job Log</h2>
+                </div>
+              </div>
+              <p class="panel-copy" id="translation-save-status">After a translation finishes, review the case fields first. Run metrics and amounts stay collapsed until you need them.</p>
+              <form id="translation-joblog-form" class="form-grid">
+                <input id="translation-row-id" type="hidden">
+                <div class="form-section-title">Case</div>
+                <div class="field">
+                  <label for="translation-date">Translation Date</label>
+                  <input id="translation-date" type="date">
+                </div>
+                <div class="field">
+                  <label for="translation-case-number">Case Number</label>
+                  <input id="translation-case-number" type="text">
+                </div>
+                <div class="field">
+                  <label for="translation-court-email">Court Email</label>
+                  <input id="translation-court-email" type="email">
+                </div>
+                <div class="field">
+                  <label for="translation-case-entity">Case Entity</label>
+                  <input id="translation-case-entity" type="text">
+                </div>
+                <div class="field">
+                  <label for="translation-case-city">Case City</label>
+                  <input id="translation-case-city" type="text">
+                </div>
+                <div class="field">
+                  <label for="translation-run-id">Run ID</label>
+                  <input id="translation-run-id" type="text" readonly>
+                </div>
+                <div class="field">
+                  <label for="translation-target-lang-readonly">Target Language</label>
+                  <input id="translation-target-lang-readonly" type="text" readonly>
+                </div>
+
+                <details class="shell-collapsible field-wide" id="translation-save-metrics-section">
+                  <summary>
+                    <span>Run Metrics (auto-filled)</span>
+                    <span class="details-hint">Pages, words, tokens, and quality-risk details.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <div class="field">
+                      <label for="translation-pages">Pages</label>
+                      <input id="translation-pages" type="number" min="0">
+                    </div>
+                    <div class="field">
+                      <label for="translation-word-count">Words</label>
+                      <input id="translation-word-count" type="number" min="0">
+                    </div>
+                    <div class="field">
+                      <label for="translation-total-tokens">Total Tokens</label>
+                      <input id="translation-total-tokens" type="number" min="0">
+                    </div>
+                    <div class="field">
+                      <label for="translation-quality-risk-score">Quality Risk Score</label>
+                      <input id="translation-quality-risk-score" type="number" min="0" max="1" step="0.0001">
+                    </div>
+                  </div>
+                </details>
+
+                <details class="shell-collapsible field-wide" id="translation-save-amounts-section">
+                  <summary>
+                    <span>Amounts (EUR)</span>
+                    <span class="details-hint">Rate, totals, API-cost, and profit fields.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <div class="field">
+                      <label for="translation-rate-per-word">Rate / Word</label>
+                      <input id="translation-rate-per-word" type="number" min="0" step="0.01">
+                    </div>
+                    <div class="field">
+                      <label for="translation-expected-total">Expected Total</label>
+                      <input id="translation-expected-total" type="number" min="0" step="0.01">
+                    </div>
+                    <div class="field">
+                      <label for="translation-amount-paid">Amount Paid</label>
+                      <input id="translation-amount-paid" type="number" min="0" step="0.01">
+                    </div>
+                    <div class="field">
+                      <label for="translation-api-cost">API Cost</label>
+                      <input id="translation-api-cost" type="number" min="0" step="0.01">
+                    </div>
+                    <div class="field">
+                      <label for="translation-estimated-api-cost">Estimated API Cost</label>
+                      <input id="translation-estimated-api-cost" type="number" min="0" step="0.01">
+                    </div>
+                    <div class="field">
+                      <label for="translation-profit">Profit</label>
+                      <input id="translation-profit" type="number" step="0.01">
+                    </div>
+                  </div>
+                </details>
+                <div class="form-actions drawer-action-row">
+                  <button type="button" id="translation-new-save">New Translation Save Form</button>
+                  <button type="button" id="translation-close-completion-form">Close</button>
+                  <button type="button" class="primary-button" id="translation-save-row">Save Translation Row</button>
+                </div>
+              </form>
+              <details class="details-panel operator-only" id="translation-save-details">
+                <summary>
+                  <span>Translation save diagnostics</span>
+                  <span class="details-hint" id="translation-save-hint">Row-save validation and payload details appear here.</span>
+                </summary>
+                <pre class="diagnostics-box" id="translation-save-diagnostics"></pre>
+              </details>
+            </div>
+          </section>
+        </div>
+
+        <div class="workspace-drawer-backdrop hidden" id="interpretation-review-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer workspace-drawer-wide" id="interpretation-review-drawer" aria-labelledby="interpretation-review-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Interpretation</p>
+                <h2 id="interpretation-review-drawer-title">Review Interpretation</h2>
+              </div>
+              <button type="button" class="ghost-button" id="interpretation-close-review">Close</button>
+            </div>
+            <p class="panel-copy" id="interpretation-review-status">Autofill a notification or open a blank review surface to prepare the interpretation row, honorários export, and any Gmail follow-up.</p>
+            <div id="interpretation-review-result" class="result-card empty-state">Recover the case data first, or start a blank review if you need to enter it manually.</div>
+            <div class="result-card hidden" id="interpretation-gmail-next-step-card">
+              <div class="result-header">
+                <div>
+                  <strong>Gmail session is active for this interpretation.</strong>
+                  <p>Save or export here first, then open Gmail session actions when you are ready to finalize the reply.</p>
+                </div>
+                <span class="status-chip info">Gmail ready</span>
+              </div>
+              <div class="panel-actions translation-completion-actions">
+                <button type="button" id="interpretation-open-gmail-session">Open Gmail Session Actions</button>
+              </div>
+            </div>
+            <form id="interpretation-form" class="form-grid">
+              <input id="row-id" type="hidden">
+              <div class="form-section-title">Case Context</div>
+              <div class="field">
+                <label for="profile-id">Profile</label>
+                <select id="profile-id"></select>
+              </div>
+              <div class="field">
+                <label for="case-number">Case Number</label>
+                <input id="case-number" name="case_number" type="text">
+              </div>
+              <div class="field">
+                <label for="court-email">Court Email</label>
+                <input id="court-email" name="court_email" type="email">
+              </div>
+              <div class="field">
+                <label for="case-entity">Case Entity</label>
+                <input id="case-entity" name="case_entity" type="text">
+              </div>
+              <div class="field">
+                <label for="case-city">Case City</label>
+                <input id="case-city" name="case_city" type="text">
+              </div>
+              <details class="shell-collapsible field-wide" id="interpretation-service-section">
+                <summary>
+                  <span>SERVICE</span>
+                  <span class="details-hint" id="interpretation-service-section-summary">Same as case</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field checkbox-field field-wide">
+                    <label><input id="service-same" type="checkbox" checked> Service same as case</label>
+                    <p class="field-hint" id="service-same-hint">
+                      Service entity and city will mirror the case fields for save and export.
+                    </p>
+                  </div>
+                  <div class="field">
+                    <label for="service-entity">Service Entity</label>
+                    <input id="service-entity" name="service_entity" type="text">
+                  </div>
+                  <div class="field">
+                    <label for="service-city">Service City</label>
+                    <input id="service-city" name="service_city" type="text">
+                  </div>
+                  <div class="field">
+                    <label for="service-date">Service Date</label>
+                    <input id="service-date" name="service_date" type="date">
+                  </div>
+                </div>
+              </details>
+
+              <details class="shell-collapsible field-wide" id="interpretation-text-section">
+                <summary>
+                  <span>TEXT</span>
+                  <span class="details-hint" id="interpretation-text-section-summary">Honorários wording and filename stay tucked away until needed</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field checkbox-field">
+                    <label><input id="use-service-location" type="checkbox"> Mention service location in text</label>
+                  </div>
+                  <div class="field checkbox-field">
+                    <label><input id="include-transport" type="checkbox" checked> Include transport sentence</label>
+                  </div>
+                  <div class="field">
+                    <label for="travel-km-outbound">KM (One Way)</label>
+                    <input id="travel-km-outbound" name="travel_km_outbound" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="output-filename">Output Filename</label>
+                    <input id="output-filename" name="output_filename" type="text" placeholder="Optional DOCX filename">
+                  </div>
+                </div>
+              </details>
+
+              <details class="shell-collapsible field-wide" id="interpretation-recipient-section">
+                <summary>
+                  <span>RECIPIENT</span>
+                  <span class="details-hint" id="interpretation-recipient-section-summary">Auto-derived recipient</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field field-wide">
+                    <label for="recipient-block">Recipient Override (Export Only)</label>
+                    <p class="field-hint">Used only for the current export. It is not saved to job-log history.</p>
+                    <textarea id="recipient-block" name="recipient_block" rows="4"></textarea>
+                  </div>
+                </div>
+              </details>
+
+              <details class="shell-collapsible field-wide" id="interpretation-amounts-section">
+                <summary>
+                  <span>Amounts (EUR)</span>
+                  <span class="details-hint" id="interpretation-amounts-section-summary">Pages, words, rate, totals, API-cost, and profit stay tucked away until final review</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field">
+                    <label for="pages">Pages</label>
+                    <input id="pages" name="pages" type="number" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="word-count">Words</label>
+                    <input id="word-count" name="word_count" type="number" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="rate-per-word">Rate / Word</label>
+                    <input id="rate-per-word" name="rate_per_word" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="expected-total">Expected Total</label>
+                    <input id="expected-total" name="expected_total" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="amount-paid">Amount Paid</label>
+                    <input id="amount-paid" name="amount_paid" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="api-cost">API Cost</label>
+                    <input id="api-cost" name="api_cost" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="profit">Profit</label>
+                    <input id="profit" name="profit" type="number" step="0.01">
+                  </div>
+                </div>
+              </details>
+            </form>
+            <div class="panel workspace-panel workspace-panel-export hidden" id="interpretation-review-export-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Interpretation</p>
+                  <h2>Honorários Output</h2>
+                </div>
+              </div>
+              <div id="export-result" class="result-card empty-state">No export has been run yet.</div>
+            </div>
+            <div class="form-actions drawer-action-row">
+              <button type="button" id="interpretation-clear-review">New Blank Entry</button>
+              <button type="button" id="interpretation-close-review-footer">Close</button>
+              <button type="button" id="save-row">Save Interpretation Row</button>
+              <button type="button" class="primary-button" id="export-honorarios">Generate DOCX + PDF</button>
+            </div>
+            <details class="details-panel operator-only" id="form-details">
+              <summary>
+                <span>Form diagnostics</span>
+                <span class="details-hint" id="form-hint">Save/export responses and validation details appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="form-diagnostics"></pre>
+            </details>
+          </section>
+        </div>
       </div>
     </main>
 

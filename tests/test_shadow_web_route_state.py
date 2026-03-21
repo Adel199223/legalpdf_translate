@@ -48,6 +48,7 @@ function capture(name) {{
     workspaceId: stateModule.appState.workspaceId,
     activeView: stateModule.appState.activeView,
     uiVariant: stateModule.appState.uiVariant,
+    operatorMode: stateModule.appState.operatorMode,
     href: window.location.href,
     uiDataset: document.body.dataset.uiVariant || "",
   }};
@@ -82,6 +83,11 @@ results.push(capture("gmail-intake-hash"));
 window.location.hash = "#settings";
 stateModule.syncActiveViewFromLocation();
 results.push(capture("hashchange-settings"));
+installWindow("http://127.0.0.1:8887/?mode=shadow&workspace=workspace-qt&operator=1");
+stateModule.initializeRouteState(config);
+results.push(capture("qt-operator"));
+stateModule.setOperatorMode(false);
+results.push(capture("operator-disabled"));
 
 console.log(JSON.stringify(results));
 """
@@ -105,6 +111,7 @@ def test_shadow_web_route_state_defaults_follow_ui_variant() -> None:
     assert results["qt-default"]["uiVariant"] == "qt"
     assert results["qt-default"]["uiDataset"] == "qt"
     assert results["qt-default"]["workspaceId"] == "workspace-qt"
+    assert results["qt-default"]["operatorMode"] is False
 
     assert results["legacy-default"]["activeView"] == "dashboard"
     assert results["legacy-default"]["href"].endswith("ui=legacy#dashboard")
@@ -129,3 +136,9 @@ def test_shadow_web_route_state_invalid_views_and_hash_sync() -> None:
 
     assert results["hashchange-settings"]["activeView"] == "settings"
     assert results["hashchange-settings"]["href"].endswith("#settings")
+
+    assert results["qt-operator"]["operatorMode"] is True
+    assert "operator=1" in results["qt-operator"]["href"]
+
+    assert results["operator-disabled"]["operatorMode"] is False
+    assert "operator=1" not in results["operator-disabled"]["href"]
