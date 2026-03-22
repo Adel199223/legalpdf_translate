@@ -125,34 +125,37 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 6. The browser app opens the fixed live workspace `gmail-intake` and asks you to choose the Gmail intake mode:
    - `Translation` keeps the existing multi-attachment translation batch behavior and target-language review.
    - `Interpretation notice` is for one selected court-notice attachment that should not be translated.
-7. The review dialog starts with a short summary banner. Use its info button if you need the sender, Gmail account, bridge owner, or output-folder details.
+7. The Gmail page starts compactly. The first screen shows the message summary, supported attachments, workflow choice, target language when needed, and one main continue action. Use the small info button only when you need sender, Gmail account, bridge owner, or output-folder details.
 8. In `Translation` mode, choose which files to translate and correct the target language if needed.
 9. In `Interpretation notice` mode, select exactly one supported PDF or image attachment. The app hides translation-only review inputs in that mode.
 10. Use `Preview selected attachment` when you need to inspect a file before preparing it.
 11. In preview, page `1` is the default. Scroll the PDF and click `Start from this page` only for translation batches when the file should begin later, such as after a cover sheet.
 12. When you click `Prepare selected attachments`, already previewed files are reused when possible instead of being downloaded again.
-13. Translation mode then translates the selected files one by one.
-14. Interpretation-notice mode stages the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
-15. Arabic translation files pause in a Word review step before `Save to Job Log`. Save the DOCX there and the app continues automatically; if save detection misses, use `Continue now` after saving.
-16. Translation mode requires each file to be saved before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
-17. If one translation file resolves to a different case or court, stop and split the work into separate batches.
-18. After the last translation file, or after the interpretation honorários export generates its PDF, the app can create one Gmail reply draft in the original thread.
-19. Translation Gmail drafts attach the translated DOCX files plus the generated honorários PDF.
-20. Interpretation Gmail drafts attach only the generated honorários PDF. They do not attach the original notice or any translated DOCX.
-21. The app creates a draft only. It does not send the email automatically.
+13. Translation mode now keeps the Gmail and translation flow calmer than before: the reviewed files auto-start, then the save/export/review work appears in one bounded `Finish Translation` surface instead of stacking large Gmail and translation pages together.
+14. Interpretation-notice mode stages the original notice, then moves into one compact `Current Interpretation Step` view plus a bounded `Review Interpretation` drawer instead of a long mixed admin page.
+15. If the interpretation city or distance is invalid, the browser now blocks finalization and asks you to correct the city/distance before saving, exporting, or finalizing the Gmail reply.
+16. Arabic translation files pause in a Word review step before `Save to Job Log`. Save the DOCX there and the app continues automatically; if save detection misses, use `Continue now` after saving.
+17. Translation mode requires each file to be saved before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
+18. If one translation file resolves to a different case or court, stop and split the work into separate batches.
+19. After the last translation file, or after the interpretation honorários export generates its PDF, the app can create one Gmail reply draft in the original thread.
+20. Translation Gmail drafts attach the translated DOCX files plus the generated honorários PDF.
+21. Interpretation Gmail drafts attach only the generated honorários PDF. They do not attach the original notice or any translated DOCX.
+22. When the original Gmail message explicitly names a reply email, the app now prefers that reply address for the Gmail draft instead of a weaker derived guess.
+23. The app creates a draft only. It does not send the email automatically.
 
 ## If Gmail Intake Stops Early
 1. If the page says the app is not listening, confirm the bridge is enabled in `Settings` and that you are using the browser app in `live` mode. A normal toolbar click can auto-start the app, so a manual launch should only be needed after an auto-start failure.
 2. If the dashboard or Extension Lab says `Gmail intake bridge unavailable`, another process may already be using the bridge port or the live browser server may not own it yet.
 3. If Gmail shows `accepted` but the browser app stays idle, check that the listener on `127.0.0.1:<port>` belongs to the LegalPDF browser app live server and not to `pytest` or another stray process.
-4. If the page says auto-launch is unavailable from this checkout, open the extension options page and refresh diagnostics.
-5. If the page says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
-6. If the page says the message is ambiguous, collapse extra Gmail messages and leave only one expanded.
-7. If the app shows no supported attachments, that email likely contains only inline or unsupported files.
-8. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
-9. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
-10. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
-11. If the honorários PDF cannot be generated, the export still keeps the local DOCX but Gmail draft creation stays blocked for that export.
+4. If the extension says the native host is unavailable, reload the extension or open the extension options page and refresh diagnostics. Normal use should not require manually copying bridge tokens.
+5. If the page says auto-launch is unavailable from this checkout, open the extension options page and refresh diagnostics.
+6. If the page says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
+7. If the page says the message is ambiguous, collapse extra Gmail messages and leave only one expanded.
+8. If the app shows no supported attachments, that email likely contains only inline or unsupported files.
+9. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
+10. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
+11. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
+12. If the honorários PDF cannot be generated, the export still keeps the local DOCX but Gmail draft creation stays blocked for that export.
 
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.

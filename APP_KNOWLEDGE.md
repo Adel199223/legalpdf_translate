@@ -38,6 +38,14 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
   - `More`, which keeps `Dashboard`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab` reachable without crowding the first screen
 - `New Job` is translation-first by default and keeps interpretation inside the same shell through an in-page task switcher.
 - `Gmail` is a dedicated browser view for exact-message context, attachment review, and continuation into translation or interpretation; deeper Gmail session/finalization work stays in same-tab drawers instead of crowding the intake screen.
+- Gmail intake now starts as one compact review-first surface instead of a stacked workspace. The first screen keeps message summary, supported attachments, workflow choice, target language, and one primary continue action visible.
+- Gmail translation continuation stays bounded in browser-native secondary surfaces:
+  - a focused attachment-review drawer for selection and preview
+  - a `Finish Translation` drawer for save/export/review actions
+  - a `Finalize Gmail Batch` drawer for the last reply step
+- Gmail interpretation continuation now stays inside the same calm shell:
+  - `#new-job` shows one compact `Current Interpretation Step` panel during an active Gmail interpretation session
+  - the detailed work happens in a bounded `Review Interpretation` drawer instead of a persistent admin-style page stack
 - `Recent Jobs` is the main secondary production route. It starts with a bounded overview of the latest saved rows and keeps deeper translation/interpretation histories collapsed until requested.
 - `Settings` is a bounded operator sheet with grouped sections for defaults, OCR/Gmail integration, and diagnostics/job-log tuning.
 - `Profile` keeps the primary profile and profile list on-page while the actual editor opens in a same-tab drawer.
@@ -46,6 +54,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - `mode=live` uses the real settings, profiles, job log, outputs, and Gmail workflow.
 - `mode=shadow` is the explicit isolated test mode for development and browser automation. It uses separate state roots and never silently falls back to live data.
 - Port `8877` remains the canonical daily-use/live/Gmail browser port; port `8888` is reserved for fixed branch-review previews so stale review tabs and normal work tabs do not collide.
+- The preview port on `8888` never owns the real live Gmail bridge. Live Gmail extension handoff always points back to the canonical browser app on `8877`.
 - `Extension Lab` is a diagnostics and simulation companion for the real Gmail extension. It does not replace the extension itself.
 
 ## Desktop UI Shell
@@ -179,6 +188,8 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Gmail intake bridge settings persist in GUI settings as `gmail_intake_bridge_enabled`, `gmail_intake_bridge_token`, and `gmail_intake_port`.
 - When the browser server is running, the browser app is the primary live Gmail bridge owner. The real extension/native host now hands off into the browser app first and falls back to Qt only when browser launch is unavailable and no healthy browser-owned bridge already exists.
 - The browser-owned live Gmail bridge uses the fixed live browser workspace `gmail-intake`, and successful extension handoff opens `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`.
+- Local source-checkout registration now prefers an app-data native-host wrapper at `AppData\\Roaming\\LegalPDFTranslate\\native_messaging\\LegalPDFGmailFocusHost.cmd` when available. That wrapper sets `PYTHONPATH` and invokes the repo venv module so local Edge handoff does not depend on a packaged host executable that Windows App Control may block.
+- Browser live-bridge ownership is now guarded by port: noncanonical live listeners such as the fixed review preview on `8888` skip bridge registration and direct the extension back to the canonical live browser URL on `8877`.
 - In normal app launches, the Gmail intake bridge is app-level. It reuses the last active workspace only when that workspace is idle and pristine; otherwise it opens a new blank workspace for the intake automatically.
 - Multi-window runs share a controller-owned reservation map keyed by the resolved run directory. A second workspace cannot start `translate`, `analyze`, `rebuild`, or `queue` if it would reuse the same run folder as an active workspace.
 - Gmail intake translation batches now write one durable app-owned session report at `<effective_outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`.
@@ -220,6 +231,8 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - when automatic PDF export fails, the dialog keeps the saved DOCX usable locally and offers retry/select-existing-PDF/open-folder recovery before any Gmail draft path is allowed to continue
   - manual/local interpretation exports can offer a fresh non-threaded Gmail draft when `Court Email`, Gmail prerequisites, and the generated honorários PDF are all available
   - Gmail-started interpretation notice intake can create one threaded Gmail reply draft with the generated honorários PDF only
+  - when the originating Gmail message explicitly states a reply address, that address overrides weaker derived recipient guesses in the browser Gmail finalization flow
+  - browser interpretation save/export/finalization now guards service-city and distance integrity: unknown cities and transport `0 km` exports are blocked until the operator confirms or adds a valid city/distance pair
 - Gmail draft attachment reuse for honorarios now prefers known translated output artifacts in this order: final DOCX path, partial DOCX path, exact `run_id` recovery, then a manual `.docx` picker only as the final fallback.
 - If a legacy historical row needs one manual translated-DOCX selection, the app persists that choice back into the row so the picker should not appear again for that same row.
 - Gmail intake batch downloads, interpretation-notice staging data, and confirmed per-item results are kept in memory only for the active Gmail intake session. They are cleared on reset, failure paths, app shutdown, or successful finalization.
@@ -255,6 +268,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - `Translation` keeps the existing multi-attachment translation batch flow
   - `Interpretation notice` handles exactly one selected PDF/image court notice that should not be translated
 - The review header now starts with a compact summary banner and keeps sender/account/output-folder provenance behind an inline info button so attachment choices stay primary.
+- The Gmail browser flow no longer uses a persistent session control-center page as the normal path. After handoff, the user moves through one focused intake step and then bounded same-tab drawers for review, save, export, and Gmail finalization.
 - The attachment review step also includes the target-language selector for the whole Gmail batch, and the selected language is pushed back into the main app UI before preparation starts.
 - The review dialog now also supports per-attachment start-page selection and an in-app attachment preview before preparation begins.
 - PDF previews use a lazy continuous-scroll viewer so the user can inspect the document. Page `1` is always the default first page to translate; use `Start from this page` only when the batch should begin later. Image attachments remain single-page and always start at page `1`.
@@ -262,11 +276,14 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Previewed attachments are cached temporarily and reused during `Prepare selected attachments` when still valid so the batch does not redownload the same file unnecessarily.
 - If the current output folder is stale or missing, Gmail batch startup recovers automatically in this order: current valid output folder, valid `default_outdir`, then `Downloads`.
 - Completed checkpoints with missing page artifacts are treated as stale and are not reused as resumable state.
+- Translation batches now auto-start from the reviewed Gmail selection, keep the main `#new-job` shell calm, and surface the case-save/export/review actions inside a bounded `Finish Translation` drawer instead of restacking Gmail and translation dashboards together.
+- Interpretation-notice handoff now transitions to one compact `Current Interpretation Step` shell plus a bounded `Review Interpretation` drawer. Gmail reply finalization stays inside that interpretation review flow instead of bouncing back to a generic Gmail session dashboard.
 - Arabic runs now insert a Word review gate before Save-to-Job-Log opens. The dialog auto-opens the DOCX in Word, offers `Align Right + Save`, auto-continues after a detected save, and still allows manual save plus `Continue now` / `Continue without changes` when automation or reopen fails.
 - Selected attachments are translated one at a time. After each successful translation, the app opens Save to Job Log and requires a confirmed save before continuing.
 - For Arabic Gmail batch items, the DOCX saved after that review gate is the reviewed artifact later used by the downstream batch item flow.
 - A Gmail batch remains valid only while every confirmed item resolves to the same `case_number`, `case_entity`, `case_city`, and `court_email`. Any mismatch stops the batch and tells the user to split it into separate replies.
 - After all selected attachments are translated and confirmed, the user may generate one honorários export for the batch and one Gmail reply draft in the original thread. The app saves the honorários DOCX locally, attempts a sibling PDF immediately, and attaches all translated DOCXs plus that single honorários PDF when draft creation succeeds. Interpretation-notice replies attach only the honorários PDF. The app never auto-sends.
+- When the original Gmail message contains an explicit reply destination, Gmail finalization now prefers that reply address over looser case-derived recipient guesses.
 - If the user picks an existing translated filename when saving honorários, the app auto-renames the honorários file instead of overwriting the translation.
 - Gmail draft creation now blocks duplicate attachment paths and contaminated translated artifacts (for example, a translated DOCX path that actually contains honorários content).
 - Arabic failures now surface additive diagnostics such as `validator_defect_reason`, `ar_violation_kind`, and limited sampled offending snippets in run artifacts and the stop dialog.
