@@ -837,7 +837,15 @@ def _build_interpretation_draft_from_form(
     travel_km_outbound = resolved_distance if include_transport_sentence else None
     if not include_transport_sentence:
         raw_distance = str(form_values.get("travel_km_outbound", "") or "").strip().replace(",", ".")
-        travel_km_outbound = float(raw_distance) if raw_distance else 0.0
+        try:
+            travel_km_outbound = float(raw_distance) if raw_distance else 0.0
+        except ValueError:
+            travel_km_outbound = 0.0
+    raw_return_distance = form_values.get("travel_km_return", travel_km_outbound) or travel_km_outbound or 0.0
+    try:
+        travel_km_return = float(raw_return_distance)
+    except (TypeError, ValueError):
+        travel_km_return = float(travel_km_outbound or 0.0)
     recipient_block = (
         str(form_values.get("recipient_block", "") or "").strip()
         or default_interpretation_recipient_block(case_entity, case_city)
@@ -852,7 +860,7 @@ def _build_interpretation_draft_from_form(
         use_service_location_in_honorarios=bool(form_values.get("use_service_location_in_honorarios", False)),
         include_transport_sentence_in_honorarios=include_transport_sentence,
         travel_km_outbound=travel_km_outbound,
-        travel_km_return=float(form_values.get("travel_km_return", travel_km_outbound) or travel_km_outbound or 0.0),
+        travel_km_return=travel_km_return,
         recipient_block=recipient_block,
         profile=profile,
     )
