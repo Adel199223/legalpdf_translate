@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from hashlib import sha1
+import json
 from pathlib import Path
+import re
 import tempfile
 import threading
 from typing import Any, Mapping, Sequence
@@ -61,6 +64,21 @@ GMAIL_WORKFLOW_TRANSLATION = "translation"
 GMAIL_WORKFLOW_INTERPRETATION = "interpretation"
 
 _DEFAULT_GMAIL_OUTPUT_SUBDIR = "gmail_browser"
+_EMAIL_PATTERN = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.IGNORECASE)
+_REPLY_HINT_TERMS = (
+    "reply",
+    "resposta",
+    "responder",
+    "respond",
+    "response",
+    "remet",
+    "endere",
+    "address",
+    "seguinte",
+    "following",
+    "exclusive",
+    "exclusiv",
+)
 _PREPARE_REASON_MESSAGES = {
     "bridge_disabled": "Gmail bridge is disabled in LegalPDF Translate.",
     "bridge_token_missing": "Gmail bridge is not configured in LegalPDF Translate.",
@@ -83,6 +101,14 @@ _PREPARE_REASON_MESSAGES = {
 
 def _clean_text(value: object) -> str:
     return " ".join(str(value or "").split()).strip()
+
+
+def _sanitize_email(value: object) -> str:
+    cleaned = str(value or "").strip().strip("<>[](){}\"'`")
+    cleaned = re.sub(r"[.,;:]+$", "", cleaned)
+    if cleaned and _EMAIL_PATTERN.fullmatch(cleaned):
+        return cleaned
+    return ""
 
 
 def _path_text(path: Path | None) -> str:
@@ -122,6 +148,103 @@ def _default_output_dir(settings_path: Path, outputs_dir: Path) -> Path:
 
 def extension_prepare_reason_catalog() -> list[dict[str, str]]:
     return [{"reason": key, "message": value} for key, value in sorted(_PREPARE_REASON_MESSAGES.items())]
+
+
+def _load_result_stdout_payload(result: GmailMessageLoadResult) -> dict[str, Any]:
+    stdout = str(result.stdout or "").strip()
+    if not stdout:
+        return {}
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _header_value(headers: object, *names: str) -> str:
+    if not isinstance(headers, list):
+        return ""
+    name_set = {name.casefold() for name in names}
+    for item in headers:
+        if not isinstance(item, Mapping):
+            continue
+        header_name = str(item.get("name", "") or "").strip().casefold()
+        if header_name not in name_set:
+            continue
+        email = _sanitize_email(item.get("value"))
+        if email:
+            return email
+    return ""
+
+
+def _extract_reply_email_from_text(text: str) -> str:
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    scored_candidates: list[tuple[int, int, str]] = []
+    all_emails: list[str] = []
+    seen_all: set[str] = set()
+    for line_index, _line in enumerate(lines):
+        window = " ".join(lines[max(0, line_index - 1): min(len(lines), line_index + 2)]).casefold()
+        score = sum(1 for term in _REPLY_HINT_TERMS if term in window)
+        for match in _EMAIL_PATTERN.finditer(lines[line_index]):
+            email = _sanitize_email(match.group(0))
+            if not email:
+                continue
+            lowered = email.casefold()
+            if lowered not in seen_all:
+                all_emails.append(email)
+                seen_all.add(lowered)
+            if score > 0:
+                scored_candidates.append((-score, line_index, email))
+    if scored_candidates:
+        scored_candidates.sort()
+        return scored_candidates[0][2]
+    if len(all_emails) == 1:
+        return all_emails[0]
+    return ""
+
+
+def _preferred_reply_email_from_load_result(result: GmailMessageLoadResult) -> str:
+    payload = _load_result_stdout_payload(result)
+    header_email = _header_value(payload.get("headers"), "Reply-To")
+    if header_email:
+        return header_email
+    message_payload = payload.get("message")
+    if isinstance(message_payload, Mapping):
+        nested_payload = message_payload.get("payload")
+        if isinstance(nested_payload, Mapping):
+            header_email = _header_value(nested_payload.get("headers"), "Reply-To")
+            if header_email:
+                return header_email
+    body_email = _extract_reply_email_from_text(str(payload.get("body", "") or ""))
+    if body_email:
+        return body_email
+    return ""
+
+
+def _seed_payload_with_preferred_reply_email(seed_payload: object, preferred_reply_email: str) -> object:
+    if not isinstance(seed_payload, Mapping):
+        return seed_payload
+    if not preferred_reply_email:
+        return dict(seed_payload)
+    patched = dict(seed_payload)
+    patched["court_email"] = preferred_reply_email
+    return patched
+
+
+def _seed_response_with_preferred_reply_email(
+    seed_response: dict[str, Any],
+    preferred_reply_email: str,
+) -> dict[str, Any]:
+    if not preferred_reply_email:
+        return seed_response
+    patched = dict(seed_response)
+    patched["normalized_payload"] = _seed_payload_with_preferred_reply_email(
+        seed_response.get("normalized_payload"),
+        preferred_reply_email,
+    )
+    return patched
 
 
 def _serialize_attachment_candidate(attachment: GmailAttachmentCandidate) -> dict[str, Any]:
@@ -172,6 +295,28 @@ def _serialize_load_result(result: GmailMessageLoadResult) -> dict[str, Any]:
             "account_email": result.intake_context.account_email or "",
         },
     }
+
+
+def _message_signature(result: GmailMessageLoadResult) -> str:
+    message = result.message
+    subject = message.subject if message is not None else result.intake_context.subject
+    account_email = result.account_email or result.intake_context.account_email or ""
+    attachment_ids = "|".join(
+        attachment.attachment_id
+        for attachment in (message.attachments if message is not None else ())
+    )
+    raw = "\n".join(
+        (
+            _clean_text(result.intake_context.message_id),
+            _clean_text(result.intake_context.thread_id),
+            _clean_text(subject),
+            _clean_text(account_email),
+            attachment_ids,
+        )
+    )
+    if raw.strip() == "":
+        return ""
+    return sha1(raw.encode("utf-8")).hexdigest()
 
 
 def _serialize_confirmed_item(item: GmailBatchConfirmedItem) -> dict[str, Any]:
@@ -320,6 +465,9 @@ class _WorkspaceState:
     interpretation_session: GmailInterpretationSession | None = None
     current_batch_index: int = 0
     interpretation_seed_response: dict[str, Any] | None = None
+    review_event_id: int = 0
+    message_signature: str = ""
+    preferred_reply_email: str = ""
     preview_paths: dict[str, Path] = field(default_factory=dict, repr=False)
     preview_page_counts: dict[str, int] = field(default_factory=dict, repr=False)
     _preview_temp_dir: tempfile.TemporaryDirectory[str] | None = field(default=None, repr=False)
@@ -336,6 +484,7 @@ class _WorkspaceState:
         self.preview_paths = {}
         self.preview_page_counts = {}
         self.interpretation_seed_response = None
+        self.preferred_reply_email = ""
         self.current_batch_index = 0
         if preview_dir is not None:
             preview_dir.cleanup()
@@ -422,11 +571,16 @@ class GmailBrowserSessionManager:
             "active_session": None,
             "suggested_translation_launch": None,
             "interpretation_seed": (
-                workspace.interpretation_seed_response.get("normalized_payload")
+                _seed_payload_with_preferred_reply_email(
+                    workspace.interpretation_seed_response.get("normalized_payload"),
+                    workspace.preferred_reply_email,
+                )
                 if isinstance(workspace.interpretation_seed_response, dict)
                 else None
             ),
             "draft_prereqs": _serialize_draft_prereqs(prereqs),
+            "review_event_id": int(workspace.review_event_id),
+            "message_signature": workspace.message_signature,
         }
         if workspace.batch_session is not None:
             payload["active_session"] = _serialize_batch_session(
@@ -454,10 +608,18 @@ class GmailBrowserSessionManager:
         runtime_mode: str,
         workspace_id: str,
         result: GmailMessageLoadResult,
-    ) -> None:
+    ) -> dict[str, Any]:
         workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
+        next_event_id = max(0, int(workspace.review_event_id)) + 1
         workspace.cleanup()
         workspace.loaded_result = result
+        workspace.review_event_id = next_event_id
+        workspace.message_signature = _message_signature(result)
+        workspace.preferred_reply_email = _preferred_reply_email_from_load_result(result)
+        return {
+            "review_event_id": int(workspace.review_event_id),
+            "message_signature": workspace.message_signature,
+        }
 
     def load_message(
         self,
@@ -474,7 +636,7 @@ class GmailBrowserSessionManager:
             configured_gog_path=configured_gog_path,
             configured_account_email=configured_account_email,
         )
-        self._store_loaded_result(
+        review_state = self._store_loaded_result(
             runtime_mode=runtime_mode,
             workspace_id=workspace_id,
             result=result,
@@ -485,6 +647,7 @@ class GmailBrowserSessionManager:
             "normalized_payload": {
                 "load_result": _serialize_load_result(result),
                 "message": _serialize_message(result.message) if result.message is not None else None,
+                **review_state,
             },
             "diagnostics": {},
             "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
@@ -504,7 +667,7 @@ class GmailBrowserSessionManager:
             configured_gog_path=configured_gog_path,
             configured_account_email=configured_account_email,
         )
-        self._store_loaded_result(
+        review_state = self._store_loaded_result(
             runtime_mode=runtime_mode,
             workspace_id=workspace_id,
             result=result,
@@ -516,6 +679,7 @@ class GmailBrowserSessionManager:
                 "message": _serialize_message(result.message) if result.message is not None else None,
                 "workspace_id": workspace_id,
                 "runtime_mode": runtime_mode,
+                **review_state,
             },
             "diagnostics": {
                 "bridge_ingest": True,
@@ -649,6 +813,10 @@ class GmailBrowserSessionManager:
             seed_response = autofill_interpretation_from_notification_pdf(
                 pdf_path=session.downloaded_attachment.saved_path,
                 settings_path=settings_path,
+            )
+            seed_response = _seed_response_with_preferred_reply_email(
+                seed_response,
+                workspace.preferred_reply_email,
             )
             session.metadata_extraction = dict(seed_response.get("diagnostics", {}).get("metadata_extraction", {}))
             write_gmail_interpretation_session_report(session)
@@ -899,7 +1067,7 @@ class GmailBrowserSessionManager:
         request = build_gmail_batch_reply_request(
             gog_path=prereqs.gog_path or session.gog_path,
             account_email=prereqs.account_email or session.account_email,
-            to_email=signature[3],
+            to_email=workspace.preferred_reply_email or signature[3],
             subject=session.message.subject,
             reply_to_message_id=session.message.message_id,
             translated_docxs=translated_docxs,
@@ -997,10 +1165,11 @@ class GmailBrowserSessionManager:
             }
 
         _profiles, _primary_profile_id, profile = _current_profile(settings_path=settings_path, profile_id=profile_id)
+        resolved_reply_email = workspace.preferred_reply_email or _clean_text(form_values.get("court_email"))
         request = build_interpretation_gmail_reply_request(
             gog_path=prereqs.gog_path or session.gog_path,
             account_email=prereqs.account_email or session.account_email,
-            to_email=_clean_text(form_values.get("court_email")),
+            to_email=resolved_reply_email,
             subject=session.message.subject,
             reply_to_message_id=session.message.message_id,
             honorarios_pdf=Path(_clean_text(normalized_payload.get("pdf_path"))).expanduser().resolve(),

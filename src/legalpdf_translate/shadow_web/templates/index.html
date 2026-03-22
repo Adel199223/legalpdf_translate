@@ -126,13 +126,16 @@
                 <h2>Focused Intake Review</h2>
               </div>
               <div class="panel-actions">
+                <button type="button" class="primary-button" id="gmail-open-review">Open Attachment Review</button>
+                <button type="button" class="ghost-button hidden" id="gmail-resume-step">Resume Current Step</button>
                 <button type="button" class="ghost-button" id="gmail-refresh">Refresh Gmail State</button>
-                <button type="button" class="ghost-button hidden" id="gmail-open-session">Open Session Actions</button>
+                <button type="button" class="ghost-button" id="gmail-open-full-workspace">Open Full Workspace</button>
                 <button type="button" class="ghost-button" id="gmail-reset">Reset Gmail Workspace</button>
               </div>
             </div>
-            <p class="panel-copy" id="gmail-status">Review one Gmail message, select the attachment flow, and continue only when the handoff is ready.</p>
+            <p class="panel-copy" id="gmail-status">Keep Gmail intake compact here. Open Attachment Review to choose files, preview the selected document, and decide where translation should start.</p>
             <div id="gmail-message-result" class="result-card empty-state">No Gmail message is loaded in this browser workspace yet.</div>
+            <div id="gmail-resume-result" class="result-card empty-state hidden">No Gmail step is waiting yet.</div>
             <details class="shell-collapsible field-wide" id="gmail-intake-details">
               <summary>
                 <span>Message Details and Overrides</span>
@@ -167,33 +170,6 @@
                 </form>
               </div>
             </details>
-            <form id="gmail-prepare-form" class="form-grid compact-grid">
-              <div class="form-section-title">Attachment Review</div>
-              <div class="field">
-                <label for="gmail-workflow-kind">Workflow</label>
-                <select id="gmail-workflow-kind">
-                  <option value="translation">Translation batch</option>
-                  <option value="interpretation">Interpretation notice</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="gmail-target-lang">Target Language</label>
-                <select id="gmail-target-lang">
-                  <option value="EN">EN</option>
-                  <option value="FR">FR</option>
-                  <option value="AR">AR</option>
-                </select>
-              </div>
-              <div class="field field-wide">
-                <label>Selected Attachments</label>
-                <div id="gmail-attachment-list" class="history-list compact-list"></div>
-              </div>
-              <div class="form-actions">
-                <button type="button" class="ghost-button hidden" id="gmail-preview-session">Open Session Actions</button>
-                <button type="submit" class="primary-button" id="gmail-prepare-session">Continue To Translation</button>
-              </div>
-            </form>
-            <div id="gmail-session-banner" class="result-card empty-state hidden">No Gmail session is active yet.</div>
             <details class="details-panel operator-only" id="gmail-details">
               <summary>
                 <span>Gmail diagnostics</span>
@@ -406,7 +382,22 @@
 
           <div class="simple-task-shell hidden" data-task-panel="interpretation">
 
-          <div class="panel upload-panel workspace-panel workspace-panel-autofill">
+          <div class="panel workspace-panel workspace-panel-interpretation-session hidden" id="interpretation-session-shell">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Interpretation</p>
+                <h2>Current Interpretation Step</h2>
+              </div>
+            </div>
+            <p class="panel-copy" id="interpretation-session-status">Keep the active Gmail interpretation in one focused review surface.</p>
+            <div id="interpretation-session-result" class="result-card empty-state">A Gmail interpretation session summary appears here when the exact notice is prepared.</div>
+            <div class="panel-actions">
+              <button type="button" class="primary-button" id="interpretation-session-primary">Review Interpretation</button>
+              <button type="button" id="interpretation-session-open-full-workspace" data-target-view="gmail-intake">Open Full Workspace</button>
+            </div>
+          </div>
+
+          <div class="panel upload-panel workspace-panel workspace-panel-autofill" id="interpretation-intake-panel">
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Interpretation</p>
@@ -435,7 +426,7 @@
             </details>
           </div>
 
-          <div class="panel workspace-panel workspace-panel-interpretation">
+          <div class="panel workspace-panel workspace-panel-interpretation" id="interpretation-seed-panel">
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Interpretation</p>
@@ -446,7 +437,7 @@
             <div id="interpretation-review-home-result" class="result-card empty-state">Upload a notification PDF or screenshot to recover the case data, or start a blank review if you need to enter it manually.</div>
           </div>
 
-          <div class="panel workspace-panel workspace-action-rail interpretation-action-rail">
+          <div class="panel workspace-panel workspace-action-rail interpretation-action-rail" id="interpretation-action-rail">
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Primary Actions</p>
@@ -1164,6 +1155,101 @@
           </section>
         </div>
 
+        <div class="workspace-drawer-backdrop hidden" id="gmail-review-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer workspace-drawer-wide" id="gmail-review-drawer" aria-labelledby="gmail-review-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Gmail</p>
+                <h2 id="gmail-review-drawer-title">Gmail Attachment Review</h2>
+              </div>
+              <button type="button" class="ghost-button" id="gmail-close-review-drawer">Close</button>
+            </div>
+            <p class="panel-copy" id="gmail-review-status">Choose the Gmail workflow, select the files you want, and set the page where translation should begin.</p>
+            <div id="gmail-review-summary" class="result-card empty-state">Load the exact Gmail message to open attachment review.</div>
+            <details class="shell-collapsible field-wide" id="gmail-review-summary-details">
+              <summary>
+                <span>Show Message Details</span>
+                <span class="details-hint">Sender, Gmail account, IDs, and the full output folder stay tucked away unless you need them.</span>
+              </summary>
+              <div class="shell-collapsible-body">
+                <div id="gmail-review-summary-grid" class="summary-grid"></div>
+              </div>
+            </details>
+            <form id="gmail-prepare-form" class="form-grid compact-grid">
+              <div class="field">
+                <label for="gmail-workflow-kind">Workflow</label>
+                <select id="gmail-workflow-kind">
+                  <option value="translation">Translation batch</option>
+                  <option value="interpretation">Interpretation notice</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="gmail-target-lang">Target Language</label>
+                <select id="gmail-target-lang">
+                  <option value="EN">EN</option>
+                  <option value="FR">FR</option>
+                  <option value="AR">AR</option>
+                </select>
+              </div>
+              <div class="field field-wide">
+                <label>Attachments</label>
+                <div class="gmail-review-table-shell">
+                  <table class="gmail-review-table" aria-describedby="gmail-review-status">
+                    <thead>
+                      <tr>
+                        <th scope="col">Pick</th>
+                        <th scope="col">File</th>
+                        <th scope="col">Type</th>
+                        <th scope="col">Size</th>
+                        <th scope="col" id="gmail-review-start-heading">Start</th>
+                      </tr>
+                    </thead>
+                    <tbody id="gmail-attachment-list">
+                      <tr>
+                        <td colspan="5" class="empty-state">Load the exact Gmail message to review supported attachments.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="field field-wide">
+                <label>Current Attachment</label>
+                <div id="gmail-review-detail" class="result-card empty-state">Select an attachment row to inspect it, preview it, and set the starting page.</div>
+              </div>
+              <div class="form-actions drawer-action-row">
+                <button type="submit" class="primary-button" id="gmail-prepare-session">Prepare selected</button>
+              </div>
+            </form>
+          </section>
+        </div>
+
+        <div class="workspace-drawer-backdrop workspace-dialog-backdrop hidden" id="gmail-preview-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer workspace-drawer-wide" id="gmail-preview-drawer" aria-labelledby="gmail-preview-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Preview</p>
+                <h2 id="gmail-preview-drawer-title">Attachment Preview</h2>
+              </div>
+              <button type="button" class="ghost-button" id="gmail-close-preview-drawer">Close</button>
+            </div>
+            <p class="panel-copy" id="gmail-preview-status">Open preview when you need to inspect the current attachment more closely.</p>
+            <div id="gmail-preview-summary" class="result-card empty-state">Choose Preview from the review drawer to inspect an attachment here.</div>
+            <div class="gmail-preview-toolbar">
+              <div class="gmail-review-preview-pager">
+                <button type="button" id="gmail-preview-prev">Previous</button>
+                <label class="gmail-review-inline-label" for="gmail-preview-page">Page</label>
+                <input id="gmail-preview-page" type="number" min="1" step="1" value="1">
+                <button type="button" id="gmail-preview-next">Next</button>
+              </div>
+              <a id="gmail-preview-open-tab" class="ghost-button hidden" href="#" target="_blank" rel="noopener noreferrer">Open in new tab</a>
+            </div>
+            <div id="gmail-preview-frame" class="gmail-inline-preview empty-state">Preview opens here when requested.</div>
+            <div class="form-actions drawer-action-row gmail-preview-action-row">
+              <button type="button" class="primary-button" id="gmail-preview-apply">Use current page</button>
+            </div>
+          </section>
+        </div>
+
         <div class="workspace-drawer-backdrop hidden" id="gmail-session-drawer-backdrop" aria-hidden="true">
           <section class="workspace-drawer" id="gmail-session-drawer" aria-labelledby="gmail-session-drawer-title">
             <div class="workspace-drawer-header">
@@ -1209,6 +1295,18 @@
             </div>
             <p class="panel-copy" id="translation-completion-status">Complete a translation run or load a saved translation row to review the case fields, artifacts, and finish-the-job actions here.</p>
             <div id="translation-completion-result" class="result-card empty-state">Complete a translation run or load a saved row to open the bounded translation finish surface.</div>
+            <div id="translation-gmail-step-card" class="result-card hidden">
+              <div class="result-header">
+                <div>
+                  <strong id="translation-gmail-step-title">Current Gmail attachment is ready to confirm.</strong>
+                  <p id="translation-gmail-step-copy">Use the Gmail confirm action here to save the row and continue the batch.</p>
+                </div>
+                <span class="status-chip info" id="translation-gmail-step-chip">Gmail</span>
+              </div>
+              <div class="panel-actions translation-completion-actions">
+                <button type="button" class="primary-button" id="translation-gmail-confirm-current">Confirm Current Translation Row</button>
+              </div>
+            </div>
             <div class="panel-actions translation-completion-actions" id="translation-completion-actions">
               <button type="button" id="translation-review-export">Export Review Queue</button>
               <a id="translation-download-docx" class="ghost-button" href="#" download>Download DOCX</a>
@@ -1341,8 +1439,39 @@
           </section>
         </div>
 
+        <div class="workspace-drawer-backdrop hidden" id="gmail-batch-finalize-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer" id="gmail-batch-finalize-drawer" aria-labelledby="gmail-batch-finalize-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Gmail Batch</p>
+                <h2 id="gmail-batch-finalize-drawer-title">Finalize Gmail Batch</h2>
+              </div>
+              <button type="button" class="ghost-button" id="gmail-close-batch-finalize-drawer">Close</button>
+            </div>
+            <p class="panel-copy" id="gmail-batch-finalize-status">Confirm every selected Gmail attachment before finalizing the batch reply.</p>
+            <div id="gmail-batch-finalize-summary" class="result-card empty-state">Finish every Gmail attachment first to open the final reply step.</div>
+            <form id="gmail-batch-finalize-form" class="form-grid compact-grid">
+              <div class="field">
+                <label for="gmail-batch-final-output-filename">Gmail Honorários Filename</label>
+                <input id="gmail-batch-final-output-filename" type="text" placeholder="Optional DOCX filename for Gmail batch finalization">
+              </div>
+              <div class="form-actions drawer-action-row">
+                <button type="submit" class="primary-button" id="gmail-batch-finalize-run">Finalize Gmail Batch Reply</button>
+              </div>
+            </form>
+            <div id="gmail-batch-finalize-result" class="result-card empty-state">Draft, honorários, and Gmail reply details appear here after finalization.</div>
+            <details class="details-panel operator-only" id="gmail-batch-finalize-details">
+              <summary>
+                <span>Gmail batch finalization diagnostics</span>
+                <span class="details-hint" id="gmail-batch-finalize-hint">Final draft request details and honorários export diagnostics appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="gmail-batch-finalize-diagnostics"></pre>
+            </details>
+          </section>
+        </div>
+
         <div class="workspace-drawer-backdrop hidden" id="interpretation-review-drawer-backdrop" aria-hidden="true">
-          <section class="workspace-drawer workspace-drawer-wide" id="interpretation-review-drawer" aria-labelledby="interpretation-review-drawer-title">
+          <section class="workspace-drawer workspace-drawer-interpretation" id="interpretation-review-drawer" aria-labelledby="interpretation-review-drawer-title">
             <div class="workspace-drawer-header">
               <div>
                 <p class="eyebrow">Interpretation</p>
@@ -1351,19 +1480,27 @@
               <button type="button" class="ghost-button" id="interpretation-close-review">Close</button>
             </div>
             <p class="panel-copy" id="interpretation-review-status">Autofill a notification or open a blank review surface to prepare the interpretation row, honorários export, and any Gmail follow-up.</p>
-            <div id="interpretation-review-result" class="result-card empty-state">Recover the case data first, or start a blank review if you need to enter it manually.</div>
-            <div class="result-card hidden" id="interpretation-gmail-next-step-card">
+            <div id="interpretation-review-summary-card" class="result-card empty-state">Recover the case data first, or start a blank review if you need to enter it manually.</div>
+            <div class="result-card hidden" id="interpretation-review-context-card">
               <div class="result-header">
                 <div>
-                  <strong>Gmail session is active for this interpretation.</strong>
-                  <p>Save or export here first, then open Gmail session actions when you are ready to finalize the reply.</p>
+                  <strong id="interpretation-review-context-title">Keep the Gmail follow-up inside this review step.</strong>
+                  <p id="interpretation-review-context-copy">Review the notice details here, then finalize the reply from this same bounded surface.</p>
                 </div>
-                <span class="status-chip info">Gmail ready</span>
+                <span class="status-chip info" id="interpretation-review-context-chip">Prepared</span>
               </div>
               <div class="panel-actions translation-completion-actions">
-                <button type="button" id="interpretation-open-gmail-session">Open Gmail Session Actions</button>
+                <button type="button" class="primary-button" id="interpretation-finalize-gmail">Finalize Gmail Reply</button>
               </div>
+              <div id="interpretation-gmail-result" class="result-card empty-state">Gmail draft and final attachment details appear here after finalization.</div>
             </div>
+            <div id="interpretation-completion-card" class="result-card hidden">The finalized Gmail result appears here after completion.</div>
+            <details class="shell-collapsible field-wide interpretation-review-details-shell" id="interpretation-review-details" open>
+              <summary>
+                <span>Review details</span>
+                <span class="details-hint" id="interpretation-review-details-summary">Case context and honorários controls are open</span>
+              </summary>
+              <div class="shell-collapsible-body">
             <form id="interpretation-form" class="form-grid">
               <input id="row-id" type="hidden">
               <div class="form-section-title">Case Context</div>
@@ -1385,7 +1522,11 @@
               </div>
               <div class="field">
                 <label for="case-city">Case City</label>
-                <input id="case-city" name="case_city" type="text">
+                <div class="field-inline">
+                  <select id="case-city" name="case_city"></select>
+                  <button type="button" class="ghost-button compact-inline-button" id="case-city-add">Add city...</button>
+                </div>
+                <p class="field-hint hidden" id="case-city-warning"></p>
               </div>
               <details class="shell-collapsible field-wide" id="interpretation-service-section">
                 <summary>
@@ -1405,7 +1546,11 @@
                   </div>
                   <div class="field">
                     <label for="service-city">Service City</label>
-                    <input id="service-city" name="service_city" type="text">
+                    <div class="field-inline">
+                      <select id="service-city" name="service_city"></select>
+                      <button type="button" class="ghost-button compact-inline-button" id="service-city-add">Add city...</button>
+                    </div>
+                    <p class="field-hint hidden" id="service-city-warning"></p>
                   </div>
                   <div class="field">
                     <label for="service-date">Service Date</label>
@@ -1429,6 +1574,7 @@
                   <div class="field">
                     <label for="travel-km-outbound">KM (One Way)</label>
                     <input id="travel-km-outbound" name="travel_km_outbound" type="number" step="0.01" min="0">
+                    <p class="field-hint" id="travel-km-hint">Distance saved by city will appear here when available.</p>
                   </div>
                   <div class="field">
                     <label for="output-filename">Output Filename</label>
@@ -1488,6 +1634,7 @@
                 </div>
               </details>
             </form>
+            <div class="result-card hidden" id="interpretation-location-guard-card"></div>
             <div class="panel workspace-panel workspace-panel-export hidden" id="interpretation-review-export-panel">
               <div class="panel-header">
                 <div>
@@ -1510,10 +1657,42 @@
               </summary>
               <pre class="diagnostics-box" id="form-diagnostics"></pre>
             </details>
+              </div>
+            </details>
           </section>
         </div>
       </div>
     </main>
+
+    <div class="workspace-dialog-backdrop hidden" id="interpretation-city-dialog-backdrop" aria-hidden="true">
+      <section class="workspace-drawer interpretation-city-dialog" id="interpretation-city-dialog" role="dialog" aria-modal="true" aria-labelledby="interpretation-city-dialog-title">
+        <div class="workspace-drawer-header">
+          <div>
+            <p class="eyebrow">Interpretation</p>
+            <h2 id="interpretation-city-dialog-title">Add City</h2>
+          </div>
+          <button type="button" class="ghost-button" id="interpretation-city-dialog-close">Close</button>
+        </div>
+        <p class="panel-copy" id="interpretation-city-dialog-status">Confirm the city details before continuing.</p>
+        <form id="interpretation-city-dialog-form" class="form-grid compact-grid">
+          <input id="interpretation-city-dialog-field-name" type="hidden">
+          <input id="interpretation-city-dialog-mode" type="hidden">
+          <div class="field field-wide">
+            <label for="interpretation-city-dialog-name">City</label>
+            <input id="interpretation-city-dialog-name" type="text" autocomplete="off">
+          </div>
+          <div class="field hidden" id="interpretation-city-dialog-distance-shell">
+            <label for="interpretation-city-dialog-distance">KM (One Way)</label>
+            <input id="interpretation-city-dialog-distance" type="number" step="0.01" min="0.01">
+            <p class="field-hint" id="interpretation-city-dialog-distance-hint">Use the one-way distance from your profile travel origin.</p>
+          </div>
+        </form>
+        <div class="form-actions drawer-action-row">
+          <button type="button" id="interpretation-city-dialog-cancel">Cancel</button>
+          <button type="submit" form="interpretation-city-dialog-form" class="primary-button" id="interpretation-city-dialog-confirm">Save City</button>
+        </div>
+      </section>
+    </div>
 
     <script type="module" src="{{ url_for('static', path='app.js') }}"></script>
   </body>

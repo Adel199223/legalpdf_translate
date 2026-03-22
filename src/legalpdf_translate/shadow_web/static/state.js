@@ -37,6 +37,22 @@ export const appState = {
   extensionDiagnostics: null,
 };
 
+export function routeShellMode(state = appState) {
+  return state.uiVariant === "qt" && state.workspaceId === "gmail-intake" && state.activeView === "gmail-intake"
+    ? "gmail-focus"
+    : "standard";
+}
+
+function syncRouteDatasets() {
+  if (!globalThis.document?.body?.dataset) {
+    return;
+  }
+  document.body.dataset.uiVariant = appState.uiVariant;
+  document.body.dataset.workspaceId = appState.workspaceId;
+  document.body.dataset.activeView = appState.activeView;
+  document.body.dataset.shellMode = routeShellMode();
+}
+
 function emitRouteStateChanged() {
   if (typeof window === "undefined" || typeof window.dispatchEvent !== "function" || typeof CustomEvent !== "function") {
     return;
@@ -66,7 +82,7 @@ export function initializeRouteState(config) {
   appState.uiVariant = params.get("ui") === "legacy" ? "legacy" : String(config.defaultUiVariant || "qt");
   appState.operatorMode = ["1", "true", "on"].includes(String(params.get("operator") || "").trim().toLowerCase());
   syncActiveViewFromLocation();
-  document.body.dataset.uiVariant = appState.uiVariant;
+  syncRouteDatasets();
   writeRouteState();
   return appState;
 }
@@ -74,6 +90,7 @@ export function initializeRouteState(config) {
 export function syncActiveViewFromLocation() {
   const hashView = window.location.hash.replace(/^#/, "").trim();
   appState.activeView = SUPPORTED_VIEWS.has(hashView) ? hashView : defaultViewForUiVariant(appState.uiVariant);
+  syncRouteDatasets();
   return appState.activeView;
 }
 
@@ -98,16 +115,19 @@ export function writeRouteState() {
 export function setRuntimeMode(mode) {
   appState.runtimeMode = mode === "live" ? "live" : "shadow";
   writeRouteState();
+  syncRouteDatasets();
 }
 
 export function setActiveView(view) {
   appState.activeView = SUPPORTED_VIEWS.has(view) ? view : defaultViewForUiVariant(appState.uiVariant);
   writeRouteState();
+  syncRouteDatasets();
   emitRouteStateChanged();
 }
 
 export function setOperatorMode(enabled) {
   appState.operatorMode = Boolean(enabled);
   writeRouteState();
+  syncRouteDatasets();
   emitRouteStateChanged();
 }

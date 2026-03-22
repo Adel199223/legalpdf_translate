@@ -175,3 +175,45 @@ def test_browser_live_gmail_bridge_manager_backs_off_for_existing_qt_owner(monke
     assert result.owner_kind == "qt_app"
     assert _FakeBridge.instances == []
     assert load_bridge_runtime_metadata(live_root) is None
+
+
+def test_browser_live_gmail_bridge_manager_disables_noncanonical_live_port(monkeypatch, tmp_path: Path) -> None:
+    _FakeBridge.instances = []
+    live_root = tmp_path / "live"
+    live_root.mkdir(parents=True, exist_ok=True)
+    (live_root / "settings.json").write_text(
+        json.dumps(
+            {
+                "gmail_intake_bridge_enabled": True,
+                "gmail_intake_bridge_token": "shared-token",
+                "gmail_intake_port": 9011,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(browser_bridge_module, "detect_browser_data_paths", lambda **kwargs: _live_data_paths(live_root))
+    monkeypatch.setattr(browser_bridge_module, "LocalGmailIntakeBridge", _FakeBridge)
+    monkeypatch.setattr(
+        browser_bridge_module,
+        "ensure_edge_native_host_registered",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("registration should be skipped on noncanonical live ports")
+        ),
+    )
+
+    manager = browser_bridge_module.BrowserLiveGmailBridgeManager(
+        repo_root=tmp_path,
+        build_identity=_identity(),
+        server_port=8888,
+        gmail_sessions=GmailBrowserSessionManager(),
+    )
+
+    result = manager.sync()
+
+    assert result.status == "disabled"
+    assert result.reason == "noncanonical_live_bridge_port"
+    assert result.browser_url == "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake"
+    assert result.registration_ok is False
+    assert result.registration_reason == "skipped_noncanonical_live_bridge_port"
+    assert _FakeBridge.instances == []
+    assert load_bridge_runtime_metadata(live_root) is None

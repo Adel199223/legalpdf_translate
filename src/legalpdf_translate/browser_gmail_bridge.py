@@ -99,6 +99,10 @@ class BrowserLiveGmailBridgeManager:
     def last_result(self) -> BrowserLiveBridgeSyncResult:
         return self._last_result
 
+    @property
+    def canonical_browser_url(self) -> str:
+        return build_browser_gmail_workspace_url(server_port=SHADOW_DEFAULT_PORT)
+
     def _settings(self) -> tuple[bool, int, str]:
         values = load_gui_settings_from_path(self._data_paths.settings_path)
         enabled = bool(values.get("gmail_intake_bridge_enabled", False))
@@ -177,6 +181,22 @@ class BrowserLiveGmailBridgeManager:
     def sync(self) -> BrowserLiveBridgeSyncResult:
         enabled, port, token = self._settings()
         current = self._bridge
+        if self._server_port != SHADOW_DEFAULT_PORT:
+            if current is not None:
+                self._stop_current_bridge()
+            self._last_result = BrowserLiveBridgeSyncResult(
+                status="disabled",
+                reason="noncanonical_live_bridge_port",
+                bridge_enabled=enabled,
+                bridge_port=port,
+                owner_kind="none",
+                browser_url=self.canonical_browser_url,
+                workspace_id=self.workspace_id,
+                started=False,
+                registration_ok=False,
+                registration_reason="skipped_noncanonical_live_bridge_port",
+            )
+            return self._last_result
         current_matches = (
             current is not None
             and current.host == SHADOW_HOST

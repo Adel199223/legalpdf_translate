@@ -70,7 +70,7 @@ def test_launch_repo_worktree_detaches_browser_server(monkeypatch, tmp_path: Pat
     assert recorded["kwargs"]["stdin"] == host_module.subprocess.DEVNULL
 
 
-def test_resolve_auto_launch_target_uses_canonical_worktree_python_when_local_worktree_lacks_venv(
+def test_resolve_auto_launch_target_prefers_canonical_worktree_when_local_worktree_lacks_venv(
     tmp_path: Path,
 ) -> None:
     worktree = tmp_path / "worktree"
@@ -78,9 +78,13 @@ def test_resolve_auto_launch_target_uses_canonical_worktree_python_when_local_wo
     (worktree / "tooling").mkdir(parents=True)
     (worktree / "src" / "legalpdf_translate").mkdir(parents=True)
     (worktree / "docs" / "assistant" / "runtime").mkdir(parents=True)
+    (canonical / "tooling").mkdir(parents=True)
+    (canonical / "src" / "legalpdf_translate").mkdir(parents=True)
     (canonical / ".venv311" / "Scripts").mkdir(parents=True)
     (worktree / "tooling" / "launch_qt_build.py").write_text("print('ok')\n", encoding="utf-8")
     (worktree / "src" / "legalpdf_translate" / "qt_app.py").write_text("print('qt')\n", encoding="utf-8")
+    (canonical / "tooling" / "launch_qt_build.py").write_text("print('canonical')\n", encoding="utf-8")
+    (canonical / "src" / "legalpdf_translate" / "qt_app.py").write_text("print('canonical-qt')\n", encoding="utf-8")
     python_exe = canonical / ".venv311" / "Scripts" / "python.exe"
     python_exe.write_text("", encoding="utf-8")
     (worktree / "docs" / "assistant" / "runtime" / "CANONICAL_BUILD.json").write_text(
@@ -102,7 +106,7 @@ def test_resolve_auto_launch_target_uses_canonical_worktree_python_when_local_wo
     )
 
     assert target.ready is True
-    assert target.worktree_path == str(worktree.resolve())
+    assert target.worktree_path == str(canonical.resolve())
     assert target.python_executable == str(python_exe.resolve())
     assert target.reason == "launch_target_ready"
 
@@ -276,6 +280,46 @@ def test_ensure_edge_native_host_registered_is_idempotent(monkeypatch, tmp_path:
         executable_path=str(host_exe.resolve()),
         reason="already_registered",
     )
+
+
+def test_ensure_edge_native_host_registered_prefers_checkout_wrapper_when_available(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(host_module, "_is_windows", lambda: True)
+    repo_root = tmp_path / "repo"
+    python_exe = repo_root / ".venv311" / "Scripts" / "python.exe"
+    python_exe.parent.mkdir(parents=True, exist_ok=True)
+    python_exe.write_text("", encoding="utf-8")
+    registry: dict[str, str] = {}
+    monkeypatch.setattr(
+        host_module,
+        "_preferred_repo_worktree_for_auto_launch",
+        lambda runtime_path=None: repo_root,
+    )
+
+    result = host_module.ensure_edge_native_host_registered(
+        base_dir=tmp_path,
+        read_registry_value=lambda: registry.get("value"),
+        write_registry_value=lambda value: registry.__setitem__("value", value),
+    )
+
+    manifest_path = tmp_path / "native_messaging" / "com.legalpdf.gmail_focus.edge.json"
+    wrapper_path = tmp_path / "native_messaging" / "LegalPDFGmailFocusHost.cmd"
+    assert wrapper_path.exists()
+    assert result == host_module.NativeHostRegistrationResult(
+        ok=True,
+        changed=True,
+        manifest_path=str(manifest_path.resolve()),
+        executable_path=str(wrapper_path.resolve()),
+        reason="registered",
+    )
+    payload = host_module.json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["path"] == str(wrapper_path.resolve())
+    wrapper_text = wrapper_path.read_text(encoding="utf-8")
+    assert 'legalpdf_translate.gmail_focus_host' in wrapper_text
+    assert str((repo_root / "src").resolve()) in wrapper_text
+    assert str(python_exe.resolve()) in wrapper_text
 
 
 def test_native_message_round_trip() -> None:

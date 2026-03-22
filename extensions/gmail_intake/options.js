@@ -23,6 +23,14 @@ function setStatus(message, kind) {
   node.dataset.kind = kind;
 }
 
+function formatNativeHostError(error) {
+  const message =
+    error && typeof error.message === "string" && error.message.trim() !== ""
+      ? error.message.trim()
+      : normalizeToken(error);
+  return message === "" ? "Unavailable" : message;
+}
+
 function describeRuntimeReason(reason) {
   switch (normalizeToken(reason)) {
     case "bridge_owner_ready":
@@ -86,6 +94,7 @@ function describeLaunchReason(reason) {
 async function loadDiagnostics() {
   setStatus("Refreshing diagnostics...", "info");
   setText("extensionId", chrome.runtime.id);
+  setText("nativeHostError", "None");
 
   const stored = await chrome.storage.local.get(["bridgePort", "bridgeToken"]);
   const fallbackPort = normalizePort(stored.bridgePort);
@@ -141,6 +150,7 @@ async function loadDiagnostics() {
       response && response.ok === true ? "success" : "warning"
     );
   } catch (_error) {
+    setText("nativeHostError", formatNativeHostError(_error));
     setText("mode", fallbackTokenPresent ? "Legacy fallback only" : "Auto-config unavailable");
     setText("nativeHostAvailability", "Unavailable");
     setText("resolvedPort", fallbackPort === null ? "Unknown" : String(fallbackPort));

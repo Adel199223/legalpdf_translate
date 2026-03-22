@@ -2,6 +2,7 @@ import { describeLocalServerUnavailable, fetchJson, isLocalServerUnavailableErro
 import {
   appState,
   initializeRouteState,
+  routeShellMode,
   setActiveView,
   setOperatorMode,
   setRuntimeMode,
@@ -10,14 +11,26 @@ import {
 import {
   initializeTranslationUi,
   loadTranslationHistoryItem,
+  openTranslationCompletionDrawer,
   refreshTranslationHistory,
   applyTranslationLaunch,
+  closeTranslationCompletionDrawer,
   collectCurrentTranslationSaveValues,
+  getTranslationUiSnapshot,
   getCurrentTranslationJobId,
   renderTranslationBootstrap,
+  startTranslationLaunch,
 } from "./translation.js";
-import { initializeGmailUi, renderGmailBootstrap } from "./gmail.js";
+import { closeSessionDrawer, initializeGmailUi, renderGmailBootstrap } from "./gmail.js";
 import { initializePowerToolsUi, renderPowerToolsBootstrap } from "./power-tools.js";
+import {
+  buildInterpretationReference,
+  deriveInterpretationDrawerLayout,
+  deriveInterpretationGuardState,
+  deriveInterpretationWorkspaceMode,
+  normalizeCityName,
+  resolveKnownCity,
+} from "./interpretation_review_state.js";
 
 function qs(id) {
   return document.getElementById(id);
@@ -50,7 +63,44 @@ const profileUiState = {
 
 const interpretationUiState = {
   reviewDrawerOpen: false,
+  validationField: "",
+  completionPayload: null,
 };
+
+const interpretationCityState = {
+  provisionalCities: {
+    case_city: "",
+    service_city: "",
+  },
+  dialogOpen: false,
+  dialogResolver: null,
+  activeDialog: {
+    mode: "add",
+    fieldName: "service_city",
+    requireDistance: false,
+  },
+  autoDistanceCity: "",
+  manualDistance: false,
+};
+
+const shellUiState = {
+  gmailFocusActive: false,
+};
+
+let lastInterpretationUiSnapshotKey = "";
+
+function interpretationUiSnapshotKey() {
+  return JSON.stringify(getInterpretationUiSnapshot());
+}
+
+function notifyInterpretationUiStateChanged({ force = false } = {}) {
+  const nextKey = interpretationUiSnapshotKey();
+  if (!force && nextKey === lastInterpretationUiSnapshotKey) {
+    return;
+  }
+  lastInterpretationUiSnapshotKey = nextKey;
+  window.dispatchEvent(new CustomEvent("legalpdf:interpretation-ui-state-changed"));
+}
 
 const PRIMARY_NAV_ORDER = ["new-job", "gmail-intake", "recent-jobs"];
 const MORE_NAV_ORDER = ["dashboard", "settings", "profile", "power-tools", "extension-lab"];
@@ -208,6 +258,68 @@ function setCheckbox(id, value) {
   qs(id).checked = Boolean(value);
 }
 
+function profileSummaries() {
+  return appState.bootstrap?.normalized_payload?.profiles || [];
+}
+
+function currentInterpretationReference() {
+  return buildInterpretationReference(
+    appState.bootstrap?.normalized_payload?.interpretation_reference || {},
+    profileSummaries(),
+    qs("profile-id")?.value || "",
+  );
+}
+
+function interpretationFieldId(fieldName) {
+  return fieldName === "service_city" ? "service-city" : "case-city";
+}
+
+function interpretationCityAddButtonId(fieldName) {
+  return fieldName === "service_city" ? "service-city-add" : "case-city-add";
+}
+
+function interpretationCityWarningId(fieldName) {
+  return fieldName === "service_city" ? "service-city-warning" : "case-city-warning";
+}
+
+function provisionalCityValue(fieldName) {
+  return interpretationCityState.provisionalCities[fieldName] || "";
+}
+
+function setProvisionalCityValue(fieldName, value) {
+  interpretationCityState.provisionalCities[fieldName] = normalizeCityName(value);
+}
+
+function displayedInterpretationCity(fieldName) {
+  return fieldValue(interpretationFieldId(fieldName)) || provisionalCityValue(fieldName);
+}
+
+function populateInterpretationCitySelect(fieldName, selectedValue = "") {
+  const select = qs(interpretationFieldId(fieldName));
+  if (!select) {
+    return;
+  }
+  const reference = currentInterpretationReference();
+  const currentValue = resolveKnownCity(selectedValue || select.value, reference.availableCities);
+  select.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Select a city";
+  select.appendChild(placeholder);
+  for (const city of reference.availableCities) {
+    const option = document.createElement("option");
+    option.value = city;
+    option.textContent = city;
+    select.appendChild(option);
+  }
+  select.value = currentValue || "";
+}
+
+function refreshInterpretationCitySelectors() {
+  populateInterpretationCitySelect("case_city", fieldValue("case-city"));
+  populateInterpretationCitySelect("service_city", fieldValue("service-city"));
+}
+
 function normalizedField(value) {
   return String(value ?? "").trim().toLocaleLowerCase();
 }
@@ -227,6 +339,7 @@ function syncServiceFieldsFromCase() {
   }
   setFieldValue("service-entity", fieldValue("case-entity"));
   setFieldValue("service-city", fieldValue("case-city"));
+  setProvisionalCityValue("service_city", provisionalCityValue("case_city"));
 }
 
 function setDisclosureState(id, expanded, summaryText = "") {
@@ -242,9 +355,15 @@ function setDisclosureState(id, expanded, summaryText = "") {
 
 function syncInterpretationDisclosureState() {
   const serviceSame = qs("service-same")?.checked ?? true;
+  const drawerLayout = deriveInterpretationDrawerLayout({
+    workspaceMode: interpretationWorkspaceMode(),
+    activeSession: interpretationActiveSession(),
+    serviceSame,
+    validationField: interpretationUiState.validationField,
+  });
   setDisclosureState(
     "interpretation-service-section",
-    !serviceSame,
+    drawerLayout.sections.serviceOpen,
     serviceSame ? "Same as case" : "Custom service details",
   );
   const useServiceLocation = qs("use-service-location")?.checked ?? false;
@@ -254,13 +373,13 @@ function syncInterpretationDisclosureState() {
   const textCustomized = Boolean(useServiceLocation || !includeTransport || travelDistance || outputFilename);
   setDisclosureState(
     "interpretation-text-section",
-    textCustomized,
-    textCustomized ? "Custom wording or export detail ready" : "Honorarios wording and filename stay tucked away until needed",
+    drawerLayout.sections.textOpen,
+    textCustomized ? "Custom wording or export detail ready" : "Review wording and filename before you finalize",
   );
   const recipientOverride = fieldValue("recipient-block");
   setDisclosureState(
     "interpretation-recipient-section",
-    Boolean(recipientOverride),
+    drawerLayout.sections.recipientOpen,
     recipientOverride ? "Custom recipient override ready" : "Auto-derived recipient",
   );
   const amountsTouched = Boolean(
@@ -281,12 +400,21 @@ function syncInterpretationDisclosureState() {
   }
   const amountsSection = qs("interpretation-amounts-section");
   if (amountsSection) {
-    amountsSection.open = false;
+    amountsSection.open = drawerLayout.sections.amountsOpen;
   }
 }
 
 function interpretationActiveSession() {
   return appState.bootstrap?.normalized_payload?.gmail?.active_session || null;
+}
+
+function interpretationNoticeFilename(activeSession = interpretationActiveSession()) {
+  return String(
+    activeSession?.attachment?.attachment?.filename
+    || activeSession?.attachment?.filename
+    || activeSession?.current_attachment?.attachment?.filename
+    || ""
+  ).trim();
 }
 
 function interpretationSnapshot() {
@@ -295,12 +423,55 @@ function interpretationSnapshot() {
     caseNumber: fieldValue("case-number"),
     courtEmail: fieldValue("court-email"),
     caseEntity: fieldValue("case-entity"),
-    caseCity: fieldValue("case-city"),
+    caseCity: displayedInterpretationCity("case_city"),
+    serviceEntity: fieldValue("service-entity"),
+    serviceCity: displayedInterpretationCity("service_city"),
+    serviceSame: qs("service-same")?.checked ?? true,
     serviceDate: fieldValue("service-date"),
     travelKmOutbound: fieldValue("travel-km-outbound"),
     pages: fieldValue("pages"),
     wordCount: fieldValue("word-count"),
   };
+}
+
+function interpretationCaseLocation(snapshot = interpretationSnapshot()) {
+  return [snapshot.caseEntity, snapshot.caseCity].filter(Boolean).join(" | ") || "Not set yet";
+}
+
+function interpretationServiceLocation(snapshot = interpretationSnapshot()) {
+  if (snapshot.serviceSame) {
+    return interpretationCaseLocation(snapshot);
+  }
+  return [snapshot.serviceEntity, snapshot.serviceCity].filter(Boolean).join(" | ") || "Not set yet";
+}
+
+function interpretationLocationSummary(snapshot = interpretationSnapshot()) {
+  const caseLocation = interpretationCaseLocation(snapshot);
+  if (!snapshot.serviceSame) {
+    return interpretationServiceLocation(snapshot) || caseLocation || "Not set yet";
+  }
+  return caseLocation || "Not set yet";
+}
+
+function interpretationWorkspaceMode(snapshot = interpretationSnapshot(), activeSession = interpretationActiveSession()) {
+  return deriveInterpretationWorkspaceMode({
+    snapshot,
+    activeSession,
+    hasCompletionPayload: Boolean(interpretationUiState.completionPayload),
+  });
+}
+
+function currentInterpretationGuardState() {
+  return deriveInterpretationGuardState({
+    reference: currentInterpretationReference(),
+    caseCity: fieldValue("case-city"),
+    serviceCity: fieldValue("service-city"),
+    serviceSame: qs("service-same")?.checked ?? true,
+    provisionalCaseCity: provisionalCityValue("case_city"),
+    provisionalServiceCity: provisionalCityValue("service_city"),
+    includeTransport: qs("include-transport")?.checked ?? true,
+    travelKmOutbound: fieldValue("travel-km-outbound"),
+  });
 }
 
 function hasMeaningfulInterpretationValue(value) {
@@ -330,6 +501,83 @@ function interpretationReviewButtonLabel(snapshot = interpretationSnapshot()) {
     return "Review Interpretation";
   }
   return "Start Blank Review";
+}
+
+function interpretationSessionChip(session, mode, completionPayload = interpretationUiState.completionPayload) {
+  const status = String(session?.status || "").trim();
+  if (mode === "gmail_completed") {
+    const completionStatus = String(completionPayload?.status || "").trim();
+    if (completionStatus === "ok") {
+      return { tone: "ok", label: "Draft ready" };
+    }
+    if (completionStatus === "local_only") {
+      return { tone: "warn", label: "Local only" };
+    }
+    if (completionStatus === "draft_unavailable") {
+      return { tone: "warn", label: "Draft unavailable" };
+    }
+    if (completionStatus) {
+      return { tone: "bad", label: "Needs review" };
+    }
+    if (session?.draft_created || status === "draft_ready") {
+      return { tone: "ok", label: "Draft ready" };
+    }
+    if (String(session?.draft_failure_reason || "").trim() || status === "draft_failed") {
+      return { tone: "bad", label: "Needs review" };
+    }
+    return { tone: "info", label: "Completed" };
+  }
+  if (status) {
+    return { tone: "info", label: status.replaceAll("_", " ") };
+  }
+  return { tone: "info", label: "Prepared" };
+}
+
+function renderInterpretationSessionShell(snapshot = interpretationSnapshot()) {
+  const shell = qs("interpretation-session-shell");
+  const result = qs("interpretation-session-result");
+  const statusNode = qs("interpretation-session-status");
+  const primaryButton = qs("interpretation-session-primary");
+  const activeSession = interpretationActiveSession();
+  const mode = interpretationWorkspaceMode(snapshot, activeSession);
+  const gmailModeActive = mode === "gmail_review" || mode === "gmail_completed";
+  document.body.dataset.interpretationWorkspaceMode = mode;
+  if (shell) {
+    shell.classList.toggle("hidden", !gmailModeActive);
+  }
+  for (const id of ["interpretation-intake-panel", "interpretation-seed-panel", "interpretation-action-rail"]) {
+    qs(id)?.classList.toggle("hidden", gmailModeActive);
+  }
+  if (!gmailModeActive || !result) {
+    return;
+  }
+  const chip = interpretationSessionChip(activeSession, mode);
+  const noticeFilename = interpretationNoticeFilename(activeSession) || "Notice PDF";
+  const locationSummary = interpretationLocationSummary(snapshot);
+  if (primaryButton) {
+    primaryButton.textContent = mode === "gmail_completed" ? "View Final Result" : "Review Interpretation";
+  }
+  if (statusNode) {
+    statusNode.textContent = mode === "gmail_completed"
+      ? "The Gmail interpretation result is ready. Open the bounded review surface to inspect the draft and exported files."
+      : "Keep this Gmail interpretation in one focused review surface. Resume the current step when you are ready.";
+  }
+  result.classList.remove("empty-state");
+  result.innerHTML = `
+    <div class="result-header">
+      <div>
+        <strong>${escapeHtml(mode === "gmail_completed" ? "Current interpretation result" : "Current interpretation step")}</strong>
+        <p>${escapeHtml(noticeFilename)}</p>
+      </div>
+      <span class="status-chip ${chip.tone}">${escapeHtml(chip.label)}</span>
+    </div>
+    <div class="result-grid">
+      <div><h3>Case Number</h3><p class="word-break">${escapeHtml(snapshot.caseNumber || "Not set yet")}</p></div>
+      <div><h3>Court Email</h3><p class="word-break">${escapeHtml(snapshot.courtEmail || "Not set yet")}</p></div>
+      <div><h3>Service Date</h3><p class="word-break">${escapeHtml(snapshot.serviceDate || "Not set yet")}</p></div>
+      <div><h3>Location</h3><p class="word-break">${escapeHtml(locationSummary)}</p></div>
+    </div>
+  `;
 }
 
 function renderInterpretationSeedCard(containerId) {
@@ -366,9 +614,273 @@ function renderInterpretationSeedCard(containerId) {
   `;
 }
 
+function renderInterpretationReviewSummary(snapshot = interpretationSnapshot()) {
+  const container = qs("interpretation-review-summary-card");
+  if (!container) {
+    return;
+  }
+  const activeSession = interpretationActiveSession();
+  const workspaceMode = interpretationWorkspaceMode(snapshot, activeSession);
+  const noticeFilename = interpretationNoticeFilename(activeSession);
+  if (!hasInterpretationReviewData(snapshot) && !noticeFilename) {
+    container.classList.add("empty-state");
+    container.textContent = "Recover the case data first, or start a blank review if you need to enter it manually.";
+    return;
+  }
+  const chip = interpretationSessionChip(activeSession, workspaceMode);
+  const title = activeSession?.kind === "interpretation"
+    ? workspaceMode === "gmail_completed"
+      ? "Gmail interpretation result is ready."
+      : "Gmail interpretation notice is staged for review."
+    : snapshot.rowId
+      ? `Saved interpretation row #${snapshot.rowId} is ready to review.`
+      : "Recovered interpretation seed is ready to review.";
+  const subtitle = activeSession?.kind === "interpretation"
+    ? workspaceMode === "gmail_completed"
+      ? "The draft and exported files are ready to inspect from this same bounded surface."
+      : noticeFilename || "Review the staged notice details and finish the Gmail step from this same surface."
+    : noticeFilename || "Review the recovered interpretation details before you continue.";
+  container.classList.remove("empty-state");
+  container.innerHTML = `
+    <div class="result-header">
+      <div>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(subtitle)}</p>
+      </div>
+      <span class="status-chip ${chip.tone}">${escapeHtml(chip.label)}</span>
+    </div>
+    <div class="result-grid">
+      <div><h3>Case Number</h3><p class="word-break">${escapeHtml(snapshot.caseNumber || "Not set yet")}</p></div>
+      <div><h3>Court Email</h3><p class="word-break">${escapeHtml(snapshot.courtEmail || "Not set yet")}</p></div>
+      <div><h3>Service Date</h3><p class="word-break">${escapeHtml(snapshot.serviceDate || "Not set yet")}</p></div>
+      <div><h3>Location</h3><p class="word-break">${escapeHtml(interpretationLocationSummary(snapshot))}</p></div>
+    </div>
+  `;
+}
+
+function renderInterpretationReviewContext(snapshot = interpretationSnapshot()) {
+  const container = qs("interpretation-review-context-card");
+  const result = qs("interpretation-gmail-result");
+  const titleNode = qs("interpretation-review-context-title");
+  const copyNode = qs("interpretation-review-context-copy");
+  const chipNode = qs("interpretation-review-context-chip");
+  if (!container) {
+    return;
+  }
+  const activeSession = interpretationActiveSession();
+  const workspaceMode = interpretationWorkspaceMode(snapshot, activeSession);
+  const reviewMode = workspaceMode === "gmail_review";
+  container.classList.toggle("hidden", !reviewMode);
+  if (!reviewMode) {
+    return;
+  }
+  if (titleNode) {
+    titleNode.textContent = "Keep the Gmail follow-up inside this review step.";
+  }
+  if (copyNode) {
+    copyNode.textContent = "Review the notice details here, then finalize the Gmail reply from this same bounded surface.";
+  }
+  if (chipNode) {
+    const chip = interpretationSessionChip(activeSession, workspaceMode);
+    chipNode.className = `status-chip ${chip.tone}`;
+    chipNode.textContent = chip.label;
+  }
+  if (result && result.classList.contains("empty-state")) {
+    result.textContent = "Gmail draft and final attachment details appear here after finalization.";
+  }
+}
+
+function syncInterpretationReviewDetailsShell(completed) {
+  const details = qs("interpretation-review-details");
+  if (!details) {
+    return;
+  }
+  const summaryNode = qs("interpretation-review-details-summary");
+  if (!completed) {
+    details.open = true;
+    delete details.dataset.autocollapsed;
+    if (summaryNode) {
+      summaryNode.textContent = "Case context and honorários controls are open";
+    }
+    return;
+  }
+  if (details.dataset.autocollapsed !== "done") {
+    details.open = false;
+    details.dataset.autocollapsed = "done";
+  }
+  if (summaryNode) {
+    summaryNode.textContent = "Review details stay collapsed after finalization until you reopen them";
+  }
+}
+
+function renderInterpretationCompletionCard(snapshot = interpretationSnapshot()) {
+  const container = qs("interpretation-completion-card");
+  if (!container) {
+    return;
+  }
+  const activeSession = interpretationActiveSession();
+  const workspaceMode = interpretationWorkspaceMode(snapshot, activeSession);
+  const payload = interpretationUiState.completionPayload?.normalized_payload || {};
+  const completed = workspaceMode === "gmail_completed";
+  container.classList.toggle("hidden", !completed);
+  syncInterpretationReviewDetailsShell(completed);
+  if (!completed) {
+    return;
+  }
+  const draftMessage = payload.gmail_draft_result?.message
+    || payload.draft_prereqs?.message
+    || activeSession?.draft_failure_reason
+    || (activeSession?.draft_created ? "Gmail draft created successfully." : "Gmail finalization details are available.");
+  const pdfPath = String(payload.pdf_path || payload.pdfPath || activeSession?.pdf_export?.pdf_path || activeSession?.pdf_export?.pdfPath || "").trim();
+  const docxPath = String(payload.docx_path || payload.docxPath || "").trim();
+  const chip = interpretationSessionChip(activeSession, workspaceMode);
+  container.classList.remove("empty-state");
+  container.innerHTML = `
+    <div class="result-header">
+      <div>
+        <strong>${escapeHtml(draftMessage)}</strong>
+        <p>${escapeHtml(interpretationNoticeFilename(activeSession) || "Notice PDF")}</p>
+      </div>
+      <span class="status-chip ${chip.tone}">${escapeHtml(chip.label)}</span>
+    </div>
+    <div class="result-grid">
+      <div><h3>DOCX</h3><p class="word-break">${escapeHtml(docxPath || "Unavailable in this session view")}</p></div>
+      <div><h3>PDF</h3><p class="word-break">${escapeHtml(pdfPath || "Unavailable")}</p></div>
+      <div><h3>Case Location</h3><p class="word-break">${escapeHtml(interpretationCaseLocation(snapshot))}</p></div>
+      <div><h3>Service Location</h3><p class="word-break">${escapeHtml(interpretationServiceLocation(snapshot))}</p></div>
+    </div>
+  `;
+}
+
+function setInterpretationFieldWarning(fieldName, message = "", tone = "warning") {
+  const node = qs(interpretationCityWarningId(fieldName));
+  if (!node) {
+    return;
+  }
+  const text = String(message || "").trim();
+  node.textContent = text;
+  node.classList.toggle("hidden", !text);
+  node.classList.toggle("is-warning", text && tone === "warning");
+  node.classList.toggle("is-danger", text && tone === "danger");
+}
+
+function setInterpretationLocationGuard(message = "", tone = "warning") {
+  const card = qs("interpretation-location-guard-card");
+  if (!card) {
+    return;
+  }
+  const text = String(message || "").trim();
+  if (!text) {
+    card.classList.add("hidden");
+    card.classList.add("empty-state");
+    card.textContent = "";
+    return;
+  }
+  card.classList.remove("hidden", "empty-state");
+  card.innerHTML = `
+    <div class="result-header">
+      <div><strong>${escapeHtml(text)}</strong></div>
+      <span class="status-chip ${tone === "danger" ? "bad" : "warn"}">${tone === "danger" ? "Action blocked" : "Needs review"}</span>
+    </div>
+  `;
+}
+
+function applyInterpretationCityValue(fieldName, rawValue) {
+  const fieldId = interpretationFieldId(fieldName);
+  const reference = currentInterpretationReference();
+  const resolved = resolveKnownCity(rawValue, reference.availableCities);
+  setFieldValue(fieldId, resolved || "");
+  setProvisionalCityValue(fieldName, resolved ? "" : rawValue);
+}
+
+function syncInterpretationDistanceFromReference() {
+  const guard = currentInterpretationGuardState();
+  const hint = qs("travel-km-hint");
+  const travelField = qs("travel-km-outbound");
+  if (!travelField || !hint) {
+    return;
+  }
+  const serviceCity = guard.effectiveServiceCity || "";
+  if (!guard.includeTransport) {
+    hint.textContent = "Transport sentence disabled for this honorarios export.";
+    return;
+  }
+  if (guard.parsedTravelDistanceState === "positive") {
+    interpretationCityState.autoDistanceCity = "";
+    interpretationCityState.manualDistance = true;
+    hint.textContent = guard.distanceHint || "Using the current one-way distance.";
+    return;
+  }
+  if (guard.knownDistance > 0 && serviceCity) {
+    if (!fieldValue("travel-km-outbound") || !interpretationCityState.manualDistance || interpretationCityState.autoDistanceCity !== serviceCity) {
+      setFieldValue("travel-km-outbound", String(guard.knownDistance));
+      interpretationCityState.autoDistanceCity = serviceCity;
+      interpretationCityState.manualDistance = false;
+    }
+    hint.textContent = guard.distanceHint || `Saved by city: ${guard.knownDistance} km one way.`;
+    return;
+  }
+  if (!fieldValue("travel-km-outbound")) {
+    interpretationCityState.autoDistanceCity = "";
+    interpretationCityState.manualDistance = false;
+  }
+  hint.textContent = guard.distanceHint || "Distance saved by city will appear here when available.";
+}
+
+function updateInterpretationActionAvailability() {
+  const guard = currentInterpretationGuardState();
+  const blocked = guard.blocked && (
+    guard.blockedCode === "unknown_case_city"
+    || guard.blockedCode === "unknown_service_city"
+    || guard.blockedCode === "distance_required"
+    || guard.blockedCode === "distance_must_be_positive"
+  );
+  for (const id of ["save-row", "export-honorarios", "interpretation-finalize-gmail"]) {
+    const button = qs(id);
+    if (!button) {
+      continue;
+    }
+    const keepHidden = button.classList.contains("hidden");
+    button.disabled = blocked || button.getAttribute("aria-busy") === "true";
+    if (keepHidden) {
+      button.classList.add("hidden");
+    }
+  }
+  const caseWarning = guard.provisionalCaseCity
+    ? `Imported city "${guard.provisionalCaseCity}" is not confirmed yet. Select a known city or add it first.`
+    : "";
+  const serviceWarning = !qs("service-same")?.checked && guard.provisionalServiceCity
+    ? `Imported city "${guard.provisionalServiceCity}" is not confirmed yet. Select a known city or add it first.`
+    : "";
+  setInterpretationFieldWarning("case_city", caseWarning, "warning");
+  setInterpretationFieldWarning("service_city", serviceWarning, "warning");
+  if (guard.blocked && (guard.blockedCode === "distance_required" || guard.blockedCode === "distance_must_be_positive")) {
+    setInterpretationLocationGuard(guard.blockedMessage, "danger");
+  } else if (guard.provisionalCaseCity || guard.provisionalServiceCity) {
+    setInterpretationLocationGuard(guard.blockedMessage || "Choose a known city or add the imported city before saving or exporting.", "warning");
+  } else {
+    setInterpretationLocationGuard("");
+  }
+  const caseAddButton = qs(interpretationCityAddButtonId("case_city"));
+  if (caseAddButton) {
+    caseAddButton.textContent = guard.provisionalCaseCity ? `Add “${guard.provisionalCaseCity}”` : "Add city...";
+  }
+  const serviceAddButton = qs(interpretationCityAddButtonId("service_city"));
+  if (serviceAddButton) {
+    serviceAddButton.textContent = guard.provisionalServiceCity ? `Add “${guard.provisionalServiceCity}”` : "Add city...";
+    serviceAddButton.disabled = qs("service-same")?.checked ?? false;
+  }
+}
+
+function syncInterpretationCityControls() {
+  syncInterpretationDistanceFromReference();
+  updateInterpretationActionAvailability();
+}
+
 function resetInterpretationExportResult() {
   const panel = qs("interpretation-review-export-panel");
   const result = qs("export-result");
+  interpretationUiState.completionPayload = null;
   if (panel) {
     panel.classList.add("hidden");
   }
@@ -376,6 +888,7 @@ function resetInterpretationExportResult() {
     result.classList.add("empty-state");
     result.textContent = "No export has been run yet.";
   }
+  notifyInterpretationUiStateChanged();
 }
 
 function setInterpretationReviewDrawerOpen(open) {
@@ -387,9 +900,10 @@ function setInterpretationReviewDrawerOpen(open) {
   backdrop.classList.toggle("hidden", !interpretationUiState.reviewDrawerOpen);
   backdrop.setAttribute("aria-hidden", interpretationUiState.reviewDrawerOpen ? "false" : "true");
   document.body.dataset.interpretationReviewDrawer = interpretationUiState.reviewDrawerOpen ? "open" : "closed";
+  notifyInterpretationUiStateChanged();
 }
 
-function openInterpretationReviewDrawer() {
+export function openInterpretationReviewDrawer() {
   setInterpretationReviewDrawerOpen(true);
 }
 
@@ -400,26 +914,339 @@ function closeInterpretationReviewDrawer() {
 function syncInterpretationReviewSurface() {
   const snapshot = interpretationSnapshot();
   const button = qs("interpretation-open-review");
-  const gmailButton = qs("interpretation-open-gmail-session");
-  const gmailCard = qs("interpretation-gmail-next-step-card");
+  const gmailButton = qs("interpretation-finalize-gmail");
+  const gmailResult = qs("interpretation-gmail-result");
+  const saveButton = qs("save-row");
+  const exportButton = qs("export-honorarios");
+  const clearButton = qs("interpretation-clear-review");
+  const closeFooterButton = qs("interpretation-close-review-footer");
   if (button) {
     button.textContent = interpretationReviewButtonLabel(snapshot);
   }
+  renderInterpretationSessionShell(snapshot);
   renderInterpretationSeedCard("interpretation-review-home-result");
-  renderInterpretationSeedCard("interpretation-review-result");
+  renderInterpretationReviewSummary(snapshot);
+  renderInterpretationReviewContext(snapshot);
+  renderInterpretationCompletionCard(snapshot);
   const hasGmailInterpretationSession = interpretationActiveSession()?.kind === "interpretation";
+  const drawerLayout = deriveInterpretationDrawerLayout({
+    workspaceMode: interpretationWorkspaceMode(snapshot, interpretationActiveSession()),
+    activeSession: interpretationActiveSession(),
+    serviceSame: qs("service-same")?.checked ?? true,
+    validationField: interpretationUiState.validationField,
+  });
   if (gmailButton) {
-    gmailButton.classList.toggle("hidden", !hasGmailInterpretationSession);
+    gmailButton.classList.toggle("hidden", !drawerLayout.actions.showFinalizeGmail);
   }
-  if (gmailCard) {
-    gmailCard.classList.toggle("hidden", !hasGmailInterpretationSession);
+  if (saveButton) {
+    saveButton.classList.toggle("hidden", !drawerLayout.actions.showSaveRow);
+  }
+  if (exportButton) {
+    exportButton.classList.toggle("hidden", !drawerLayout.actions.showGenerateDocxPdf);
+  }
+  if (clearButton) {
+    clearButton.classList.toggle("hidden", !drawerLayout.actions.showNewBlank);
+  }
+  if (closeFooterButton) {
+    closeFooterButton.classList.toggle("hidden", !drawerLayout.actions.showFooterClose);
+  }
+  if (gmailResult && !hasGmailInterpretationSession) {
+    gmailResult.classList.add("empty-state");
+    gmailResult.textContent = "Gmail draft and final attachment details appear here after finalization.";
   }
   const statusNode = qs("interpretation-review-status");
   if (statusNode) {
-    statusNode.textContent = hasInterpretationReviewData(snapshot)
-      ? "Review the recovered case data first, then save the row or generate honorários from this bounded review surface."
-      : "Autofill a notification or open a blank review surface to prepare the interpretation row, honorários export, and any Gmail follow-up.";
+    if (interpretationWorkspaceMode(snapshot, interpretationActiveSession()) === "gmail_completed") {
+      statusNode.textContent = "The Gmail interpretation draft and export are ready. Reopen Review details only if you need to inspect or adjust the completed form.";
+    } else if (drawerLayout.actions.showFinalizeGmail) {
+      statusNode.textContent = "Review the staged notice details here, then finish the Gmail reply from this same bounded surface.";
+    } else {
+      statusNode.textContent = hasInterpretationReviewData(snapshot)
+        ? "Review the recovered case data here, then save the row or generate the honorários export when you are ready."
+        : "Autofill a notification or open a blank review surface to prepare the interpretation row and honorários export.";
+    }
   }
+  syncInterpretationCityControls();
+  syncInterpretationDisclosureState();
+  notifyInterpretationUiStateChanged();
+}
+
+function focusInterpretationField(fieldName) {
+  interpretationUiState.validationField = String(fieldName || "").trim();
+  if (fieldName === "service_city" || fieldName === "service_entity" || fieldName === "service_date") {
+    qs("interpretation-service-section")?.setAttribute("open", "open");
+  }
+  if (fieldName === "travel_km_outbound") {
+    qs("interpretation-text-section")?.setAttribute("open", "open");
+  }
+  const targetId = fieldName === "case_city"
+    ? "case-city"
+    : fieldName === "service_city"
+      ? "service-city"
+      : fieldName === "travel_km_outbound"
+        ? "travel-km-outbound"
+        : fieldName;
+  qs(targetId)?.focus();
+}
+
+function setInterpretationCityDialogOpen(open) {
+  const backdrop = qs("interpretation-city-dialog-backdrop");
+  if (!backdrop) {
+    return;
+  }
+  interpretationCityState.dialogOpen = Boolean(open);
+  backdrop.classList.toggle("hidden", !interpretationCityState.dialogOpen);
+  backdrop.setAttribute("aria-hidden", interpretationCityState.dialogOpen ? "false" : "true");
+  document.body.dataset.interpretationCityDialog = interpretationCityState.dialogOpen ? "open" : "closed";
+}
+
+function closeInterpretationCityDialog(result = null) {
+  const resolver = interpretationCityState.dialogResolver;
+  interpretationCityState.dialogResolver = null;
+  setInterpretationCityDialogOpen(false);
+  if (typeof resolver === "function") {
+    resolver(result);
+  }
+}
+
+function openInterpretationCityDialog({
+  mode,
+  fieldName,
+  cityName = "",
+  requireDistance = false,
+  lockedCity = false,
+  confirmLabel = "Save City",
+} = {}) {
+  interpretationCityState.activeDialog = {
+    mode: mode || "add",
+    fieldName: fieldName || "service_city",
+    requireDistance: Boolean(requireDistance),
+  };
+  setFieldValue("interpretation-city-dialog-field-name", interpretationCityState.activeDialog.fieldName);
+  setFieldValue("interpretation-city-dialog-mode", interpretationCityState.activeDialog.mode);
+  setFieldValue("interpretation-city-dialog-name", cityName);
+  setFieldValue("interpretation-city-dialog-distance", "");
+  const title = qs("interpretation-city-dialog-title");
+  const status = qs("interpretation-city-dialog-status");
+  const cityInput = qs("interpretation-city-dialog-name");
+  const distanceShell = qs("interpretation-city-dialog-distance-shell");
+  const distanceHint = qs("interpretation-city-dialog-distance-hint");
+  const confirmButton = qs("interpretation-city-dialog-confirm");
+  const reference = currentInterpretationReference();
+  if (title) {
+    title.textContent = interpretationCityState.activeDialog.mode === "distance" ? "Confirm One-Way Distance" : "Add City";
+  }
+  if (status) {
+    status.textContent = interpretationCityState.activeDialog.mode === "distance"
+      ? `Enter the one-way distance from ${reference.travelOriginLabel || "your travel origin"} to ${cityName}.`
+      : "Confirm the city details before continuing.";
+  }
+  if (cityInput) {
+    cityInput.readOnly = Boolean(lockedCity);
+  }
+  if (distanceShell) {
+    distanceShell.classList.toggle("hidden", !interpretationCityState.activeDialog.requireDistance);
+  }
+  if (distanceHint) {
+    distanceHint.textContent = reference.travelOriginLabel
+      ? `Use the one-way distance from ${reference.travelOriginLabel}.`
+      : "Use the one-way distance from your profile travel origin.";
+  }
+  if (confirmButton) {
+    confirmButton.textContent = confirmLabel;
+  }
+  setInterpretationCityDialogOpen(true);
+  return new Promise((resolve) => {
+    interpretationCityState.dialogResolver = resolve;
+    window.setTimeout(() => {
+      (lockedCity ? qs("interpretation-city-dialog-distance") : qs("interpretation-city-dialog-name"))?.focus();
+    }, 0);
+  });
+}
+
+function applyInterpretationReferenceUpdate(interpretationReference, profileDistanceSummary = null) {
+  if (!appState.bootstrap?.normalized_payload) {
+    return;
+  }
+  if (interpretationReference) {
+    appState.bootstrap.normalized_payload.interpretation_reference = interpretationReference;
+  }
+  if (profileDistanceSummary?.profile_id) {
+    appState.bootstrap.normalized_payload.profiles = profileSummaries().map((profile) => {
+      if (String(profile.id || "") !== String(profileDistanceSummary.profile_id || "")) {
+        return profile;
+      }
+      return {
+        ...profile,
+        travel_origin_label: profileDistanceSummary.travel_origin_label || profile.travel_origin_label,
+        travel_distances_by_city: { ...(profileDistanceSummary.travel_distances_by_city || {}) },
+        distance_city_count: Object.keys(profileDistanceSummary.travel_distances_by_city || {}).length,
+      };
+    });
+  }
+}
+
+async function persistInterpretationCity({ fieldName, cityName, distanceValue = "" } = {}) {
+  const payload = await fetchJson("/api/interpretation/cities/add", appState, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      field_name: fieldName,
+      city: cityName,
+      profile_id: qs("profile-id")?.value || "",
+      include_transport_sentence_in_honorarios: qs("include-transport")?.checked ?? true,
+      travel_km_outbound: distanceValue,
+    }),
+  });
+  applyInterpretationReferenceUpdate(
+    payload.normalized_payload?.interpretation_reference || null,
+    payload.normalized_payload?.profile_distance_summary || null,
+  );
+  refreshInterpretationCitySelectors();
+  applyInterpretationCityValue(fieldName, payload.normalized_payload?.city || cityName);
+  if ((qs("service-same")?.checked ?? false) && fieldName === "case_city") {
+    applyInterpretationCityValue("service_city", payload.normalized_payload?.city || cityName);
+  }
+  if (String(distanceValue || "").trim()) {
+    setFieldValue("travel-km-outbound", distanceValue);
+    interpretationCityState.manualDistance = false;
+    interpretationCityState.autoDistanceCity = payload.normalized_payload?.city || cityName;
+  }
+  syncInterpretationCityControls();
+  setPanelStatus("form", "ok", payload.normalized_payload?.message || "City saved.");
+  setDiagnostics("form", payload, {
+    hint: payload.normalized_payload?.message || "City saved.",
+    open: false,
+  });
+  return payload;
+}
+
+async function promptToAddInterpretationCity(fieldName) {
+  const draftCity = provisionalCityValue(fieldName) || fieldValue(interpretationFieldId(fieldName));
+  const result = await openInterpretationCityDialog({
+    mode: "add",
+    fieldName,
+    cityName: draftCity,
+    requireDistance: qs("include-transport")?.checked ?? true,
+    confirmLabel: "Save City",
+  });
+  if (!result) {
+    return false;
+  }
+  await persistInterpretationCity({
+    fieldName,
+    cityName: result.cityName,
+    distanceValue: result.distanceValue,
+  });
+  return true;
+}
+
+export function recoverInterpretationValidationError(error) {
+  const validation = error?.payload?.normalized_payload?.validation_error || error?.payload?.diagnostics?.validation_error;
+  if (!validation || typeof validation !== "object") {
+    return false;
+  }
+  openInterpretationReviewDrawer();
+  const fieldName = String(validation.field || "").trim();
+  const city = String(validation.city || "").trim();
+  if (fieldName === "case_city") {
+    setFieldValue("case-city", "");
+    setProvisionalCityValue("case_city", city);
+    if (qs("service-same")?.checked ?? false) {
+      setFieldValue("service-city", "");
+      setProvisionalCityValue("service_city", city);
+    }
+  } else if (fieldName === "service_city") {
+    setFieldValue("service-city", "");
+    setProvisionalCityValue("service_city", city);
+    if (qs("service-same")?.checked ?? false) {
+      setFieldValue("case-city", "");
+      setProvisionalCityValue("case_city", city);
+    }
+  }
+  syncInterpretationCityControls();
+  setPanelStatus("form", "bad", error.message || "Interpretation validation failed.");
+  setDiagnostics("form", error, {
+    hint: error.message || "Interpretation validation failed.",
+    open: true,
+  });
+  focusInterpretationField(fieldName || "case-city");
+  return true;
+}
+
+export async function prepareInterpretationAction(actionName = "save") {
+  const guard = currentInterpretationGuardState();
+  if (guard.blocked) {
+    const fallbackError = new Error(guard.blockedMessage || `Interpretation ${actionName} is blocked.`);
+    fallbackError.payload = {
+      status: "failed",
+      normalized_payload: {
+        validation_error: {
+          code: guard.blockedCode,
+          field: guard.blockedField,
+          city: guard.blockedField === "case_city" ? guard.provisionalCaseCity : guard.provisionalServiceCity,
+          travel_origin_label: guard.reference.travelOriginLabel,
+          city_source: "current_selection",
+        },
+      },
+      diagnostics: {
+        error: guard.blockedMessage || `Interpretation ${actionName} is blocked.`,
+      },
+    };
+    if (guard.blockedField === "travel_km_outbound") {
+      qs("interpretation-text-section")?.setAttribute("open", "open");
+      setPanelStatus("form", "bad", fallbackError.message || `Interpretation ${actionName} is blocked.`);
+      setDiagnostics("form", fallbackError, {
+        hint: fallbackError.message || `Interpretation ${actionName} is blocked.`,
+        open: true,
+      });
+      focusInterpretationField("travel_km_outbound");
+    } else {
+      recoverInterpretationValidationError(fallbackError);
+    }
+    throw fallbackError;
+  }
+  if (guard.distancePromptNeeded) {
+    const result = await openInterpretationCityDialog({
+      mode: "distance",
+      fieldName: "service_city",
+      cityName: guard.effectiveServiceCity,
+      requireDistance: true,
+      lockedCity: true,
+      confirmLabel: "Use Distance",
+    });
+    if (!result) {
+      const message = guard.distanceHint || "A positive one-way distance is required before continuing.";
+      setPanelStatus("form", "bad", message);
+      setDiagnostics("form", { status: "failed", diagnostics: { error: message } }, { hint: message, open: true });
+      qs("interpretation-text-section")?.setAttribute("open", "open");
+      focusInterpretationField("travel_km_outbound");
+      throw new Error(message);
+    }
+    await persistInterpretationCity({
+      fieldName: "service_city",
+      cityName: guard.effectiveServiceCity,
+      distanceValue: result.distanceValue,
+    });
+  }
+}
+
+export function getInterpretationUiSnapshot() {
+  const exportPanel = qs("interpretation-review-export-panel");
+  const snapshot = interpretationSnapshot();
+  const activeSession = interpretationActiveSession();
+  return {
+    reviewDrawerOpen: interpretationUiState.reviewDrawerOpen,
+    hasSeedData: hasInterpretationReviewData(snapshot),
+    exportReady: Boolean(exportPanel && !exportPanel.classList.contains("hidden")),
+    rowId: String(appState.currentRowId || "").trim(),
+    workspaceMode: interpretationWorkspaceMode(snapshot, activeSession),
+    noticeFilename: interpretationNoticeFilename(activeSession),
+    caseNumber: snapshot.caseNumber,
+    courtEmail: snapshot.courtEmail,
+    serviceDate: snapshot.serviceDate,
+    locationSummary: interpretationLocationSummary(snapshot),
+  };
 }
 
 function shouldShowGmailNav(payload = appState.bootstrap) {
@@ -479,6 +1306,7 @@ function setNewJobTask(task) {
     button.classList.toggle("active", selected);
     button.setAttribute("aria-selected", selected ? "true" : "false");
   });
+  renderInterpretationSessionShell();
 }
 
 function syncShellChrome() {
@@ -512,9 +1340,12 @@ function syncOperatorChrome() {
 }
 
 function updateServiceFieldState() {
+  interpretationUiState.validationField = "";
   const serviceSame = qs("service-same").checked;
   if (serviceSame) {
     syncServiceFieldsFromCase();
+  } else if (!fieldValue("service-city") && provisionalCityValue("service_city") === provisionalCityValue("case_city")) {
+    setProvisionalCityValue("service_city", "");
   }
   qs("service-entity").disabled = serviceSame;
   qs("service-city").disabled = serviceSame;
@@ -522,6 +1353,11 @@ function updateServiceFieldState() {
     ? "Service entity and city will mirror the case fields for save and export."
     : "Use different service fields when the service location differs from the case.";
   syncInterpretationDisclosureState();
+  syncInterpretationCityControls();
+  renderInterpretationSeedCard("interpretation-review-home-result");
+  renderInterpretationReviewSummary();
+  renderInterpretationReviewContext();
+  notifyInterpretationUiStateChanged();
 }
 
 function cloneJson(value) {
@@ -666,9 +1502,9 @@ export function applyInterpretationSeed(seed, { activateTask = true, openReview 
   setFieldValue("case-number", seed.case_number);
   setFieldValue("court-email", seed.court_email);
   setFieldValue("case-entity", seed.case_entity);
-  setFieldValue("case-city", seed.case_city);
+  applyInterpretationCityValue("case_city", seed.case_city);
   setFieldValue("service-entity", seed.service_entity || seed.case_entity || "");
-  setFieldValue("service-city", seed.service_city || seed.case_city || "");
+  applyInterpretationCityValue("service_city", seed.service_city || seed.case_city || "");
   setFieldValue("service-date", seed.service_date);
   setFieldValue("travel-km-outbound", seed.travel_km_outbound ?? "");
   setFieldValue("pages", seed.pages ?? "");
@@ -683,6 +1519,8 @@ export function applyInterpretationSeed(seed, { activateTask = true, openReview 
   setCheckbox("include-transport", seed.include_transport_sentence_in_honorarios !== false);
   qs("recipient-block").value = "";
   updateServiceFieldState();
+  interpretationCityState.manualDistance = Boolean(fieldValue("travel-km-outbound"));
+  interpretationCityState.autoDistanceCity = "";
   resetInterpretationExportResult();
   syncInterpretationReviewSurface();
   if (openReview) {
@@ -698,9 +1536,9 @@ function applyHistoryItem(item) {
   setFieldValue("case-number", item.row.case_number || "");
   setFieldValue("court-email", item.row.court_email || "");
   setFieldValue("case-entity", item.row.case_entity || "");
-  setFieldValue("case-city", item.row.case_city || "");
+  applyInterpretationCityValue("case_city", item.row.case_city || "");
   setFieldValue("service-entity", item.row.service_entity || "");
-  setFieldValue("service-city", item.row.service_city || "");
+  applyInterpretationCityValue("service_city", item.row.service_city || "");
   setFieldValue("service-date", item.row.service_date || "");
   setFieldValue("travel-km-outbound", item.row.travel_km_outbound ?? "");
   setFieldValue("pages", item.row.pages ?? "");
@@ -715,6 +1553,8 @@ function applyHistoryItem(item) {
   setCheckbox("use-service-location", Boolean(item.row.use_service_location_in_honorarios));
   setCheckbox("include-transport", item.row.include_transport_sentence_in_honorarios !== 0);
   updateServiceFieldState();
+  interpretationCityState.manualDistance = Boolean(fieldValue("travel-km-outbound"));
+  interpretationCityState.autoDistanceCity = "";
   resetInterpretationExportResult();
   syncInterpretationReviewSurface();
   setPanelStatus("form", "ok", `Loaded row #${item.row.id} from the active job log.`);
@@ -792,6 +1632,15 @@ function renderShellVisibility() {
     moreShell.open = moreActive || moreShell.open;
     moreShell.classList.toggle("has-active-view", moreActive);
   }
+  const gmailFocusActive = routeShellMode() === "gmail-focus";
+  if (gmailFocusActive && !shellUiState.gmailFocusActive) {
+    closeSessionDrawer();
+    closeTranslationCompletionDrawer();
+    closeInterpretationReviewDrawer();
+    closeProfileEditorDrawer();
+    qs("gmail-intake-details")?.removeAttribute("open");
+  }
+  shellUiState.gmailFocusActive = gmailFocusActive;
   setNewJobTask(appState.newJobTask);
   syncInterpretationReviewSurface();
   syncShellChrome();
@@ -1024,6 +1873,39 @@ export function renderInterpretationExportResult(payload) {
     </div>
   `;
   openInterpretationReviewDrawer();
+  syncInterpretationReviewSurface();
+  notifyInterpretationUiStateChanged();
+}
+
+export function renderInterpretationGmailResult(payload) {
+  const container = qs("interpretation-gmail-result");
+  if (!container) {
+    return;
+  }
+  const result = payload.normalized_payload || {};
+  const status = payload.status || "ok";
+  const draftMessage = result.gmail_draft_result?.message || result.draft_prereqs?.message || "Gmail finalization details are available.";
+  const label = status === "ok" ? "Draft ready" : status === "local_only" ? "Local only" : status === "draft_unavailable" ? "Draft unavailable" : "Draft warning";
+  const tone = status === "ok" ? "ok" : status === "local_only" ? "warn" : "bad";
+  interpretationUiState.completionPayload = payload;
+  container.classList.remove("empty-state");
+  container.innerHTML = `
+    <div class="result-header">
+      <div>
+        <strong>${escapeHtml(draftMessage)}</strong>
+        <p>${escapeHtml(result.pdf_path || result.docx_path || "Final interpretation artifacts are available.")}</p>
+      </div>
+      <span class="status-chip ${tone === "ok" ? "ok" : tone === "warn" ? "warn" : "bad"}">${escapeHtml(label)}</span>
+    </div>
+    <div class="result-grid">
+      <div><h3>DOCX</h3><p class="word-break">${escapeHtml(result.docx_path || "Unavailable")}</p></div>
+      <div><h3>PDF</h3><p class="word-break">${escapeHtml(result.pdf_path || "Unavailable")}</p></div>
+      <div><h3>Draft</h3><p>${escapeHtml(draftMessage)}</p></div>
+    </div>
+  `;
+  openInterpretationReviewDrawer();
+  syncInterpretationReviewSurface();
+  notifyInterpretationUiStateChanged();
 }
 
 function renderDashboard(payload) {
@@ -1283,10 +2165,12 @@ function renderRuntimeModeSelector(payload) {
 
 function renderBootstrap(payload) {
   appState.bootstrap = payload;
+  const gmailBootstrap = payload.normalized_payload.gmail || {};
   renderNavigation(payload.normalized_payload.navigation || []);
   renderRuntimeModeSelector(payload);
   renderTopbar(payload);
   renderProfiles(payload.normalized_payload.profiles || [], payload.normalized_payload.primary_profile_id);
+  refreshInterpretationCitySelectors();
   renderHistory(payload.normalized_payload.history || [], payload.normalized_payload.runtime.runtime_mode_label);
   renderRecentJobs(
     payload.normalized_payload.recent_jobs || [],
@@ -1302,8 +2186,16 @@ function renderBootstrap(payload) {
   renderStatus(payload);
   renderTranslationBootstrap(payload);
   renderShellVisibility();
-  if (!appState.currentSeed && payload.normalized_payload.blank_seed) {
+  if (
+    !appState.currentSeed
+    && gmailBootstrap.active_session?.kind === "interpretation"
+    && gmailBootstrap.interpretation_seed
+  ) {
+    applyInterpretationSeed(gmailBootstrap.interpretation_seed, { activateTask: appState.activeView === "new-job" });
+  } else if (!appState.currentSeed && payload.normalized_payload.blank_seed) {
     applyInterpretationSeed(payload.normalized_payload.blank_seed, { activateTask: false });
+  } else {
+    refreshInterpretationCitySelectors();
   }
   syncInterpretationReviewSurface();
 }
@@ -1365,6 +2257,7 @@ async function handleUpload(formId, endpoint) {
 }
 
 async function handleSave() {
+  await prepareInterpretationAction("save");
   const payload = await fetchJson("/api/interpretation/save-row", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1388,6 +2281,7 @@ async function handleSave() {
 }
 
 async function handleExport() {
+  await prepareInterpretationAction("export");
   const payload = await fetchJson("/api/interpretation/export-honorarios", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1657,6 +2551,7 @@ function wireEvents() {
         setPanelStatus("form", "", "Saving the interpretation row...");
         await handleSave();
       } catch (error) {
+        recoverInterpretationValidationError(error);
         setPanelStatus("form", "bad", error.message || "Save failed.");
         setDiagnostics("form", error, { hint: error.message || "Save failed.", open: true });
       }
@@ -1669,19 +2564,17 @@ function wireEvents() {
         setPanelStatus("form", "", "Generating honorários DOCX and PDF...");
         await handleExport();
       } catch (error) {
+        recoverInterpretationValidationError(error);
         setPanelStatus("form", "bad", error.message || "Export failed.");
         setDiagnostics("form", error, { hint: error.message || "Export failed.", open: true });
       }
     });
   });
   qs("interpretation-open-review")?.addEventListener("click", openInterpretationReviewDrawer);
+  qs("interpretation-session-primary")?.addEventListener("click", openInterpretationReviewDrawer);
   qs("interpretation-close-review")?.addEventListener("click", closeInterpretationReviewDrawer);
   qs("interpretation-close-review-footer")?.addEventListener("click", closeInterpretationReviewDrawer);
   qs("interpretation-clear-review")?.addEventListener("click", resetFormToBlank);
-  qs("interpretation-open-gmail-session")?.addEventListener("click", () => {
-    closeInterpretationReviewDrawer();
-    window.dispatchEvent(new CustomEvent("legalpdf:open-gmail-session-drawer"));
-  });
   qs("interpretation-review-drawer-backdrop")?.addEventListener("click", (event) => {
     if (event.target === qs("interpretation-review-drawer-backdrop")) {
       closeInterpretationReviewDrawer();
@@ -1695,6 +2588,10 @@ function wireEvents() {
     }
   });
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && interpretationCityState.dialogOpen) {
+      closeInterpretationCityDialog(null);
+      return;
+    }
     if (event.key === "Escape" && interpretationUiState.reviewDrawerOpen) {
       closeInterpretationReviewDrawer();
       return;
@@ -1705,7 +2602,10 @@ function wireEvents() {
   });
 
   qs("use-service-location")?.addEventListener("change", syncInterpretationDisclosureState);
-  qs("include-transport")?.addEventListener("change", syncInterpretationDisclosureState);
+  qs("include-transport")?.addEventListener("change", () => {
+    syncInterpretationDisclosureState();
+    syncInterpretationCityControls();
+  });
   qs("recipient-block")?.addEventListener("input", syncInterpretationDisclosureState);
 
   qs("import-live-profiles").addEventListener("click", async () => {
@@ -1823,7 +2723,85 @@ function wireEvents() {
   qs("clear-form").addEventListener("click", resetFormToBlank);
   qs("service-same").addEventListener("change", updateServiceFieldState);
   qs("case-entity").addEventListener("input", updateServiceFieldState);
-  qs("case-city").addEventListener("input", updateServiceFieldState);
+  qs("service-entity").addEventListener("input", () => {
+    interpretationUiState.validationField = "";
+    syncInterpretationReviewSurface();
+  });
+  for (const id of ["case-number", "court-email", "service-date"]) {
+    qs(id).addEventListener("input", () => {
+      interpretationUiState.validationField = "";
+      syncInterpretationReviewSurface();
+    });
+  }
+  qs("case-city").addEventListener("change", () => {
+    interpretationUiState.validationField = "";
+    setProvisionalCityValue("case_city", "");
+    updateServiceFieldState();
+  });
+  qs("service-city").addEventListener("change", () => {
+    interpretationUiState.validationField = "";
+    setProvisionalCityValue("service_city", "");
+    syncInterpretationCityControls();
+    syncInterpretationReviewSurface();
+  });
+  qs("travel-km-outbound").addEventListener("input", () => {
+    interpretationUiState.validationField = "";
+    interpretationCityState.manualDistance = Boolean(fieldValue("travel-km-outbound"));
+    if (!interpretationCityState.manualDistance) {
+      interpretationCityState.autoDistanceCity = "";
+    }
+    syncInterpretationCityControls();
+    syncInterpretationReviewSurface();
+  });
+  qs("profile-id").addEventListener("change", () => {
+    refreshInterpretationCitySelectors();
+    applyInterpretationCityValue("case_city", displayedInterpretationCity("case_city"));
+    applyInterpretationCityValue("service_city", displayedInterpretationCity("service_city"));
+    syncInterpretationCityControls();
+  });
+  qs("case-city-add").addEventListener("click", async () => {
+    try {
+      await promptToAddInterpretationCity("case_city");
+    } catch (error) {
+      recoverInterpretationValidationError(error);
+      setPanelStatus("form", "bad", error.message || "Unable to save the city yet.");
+      setDiagnostics("form", error, { hint: error.message || "Unable to save the city yet.", open: true });
+    }
+  });
+  qs("service-city-add").addEventListener("click", async () => {
+    try {
+      await promptToAddInterpretationCity("service_city");
+    } catch (error) {
+      recoverInterpretationValidationError(error);
+      setPanelStatus("form", "bad", error.message || "Unable to save the city yet.");
+      setDiagnostics("form", error, { hint: error.message || "Unable to save the city yet.", open: true });
+    }
+  });
+  qs("interpretation-city-dialog-close")?.addEventListener("click", () => closeInterpretationCityDialog(null));
+  qs("interpretation-city-dialog-cancel")?.addEventListener("click", () => closeInterpretationCityDialog(null));
+  qs("interpretation-city-dialog-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === qs("interpretation-city-dialog-backdrop")) {
+      closeInterpretationCityDialog(null);
+    }
+  });
+  qs("interpretation-city-dialog-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const requireDistance = interpretationCityState.activeDialog.requireDistance;
+    const cityName = normalizeCityName(fieldValue("interpretation-city-dialog-name"));
+    const distanceValue = fieldValue("interpretation-city-dialog-distance");
+    if (!cityName) {
+      qs("interpretation-city-dialog-name")?.focus();
+      return;
+    }
+    if (requireDistance) {
+      const numeric = Number(String(distanceValue || "").trim().replace(",", "."));
+      if (!Number.isFinite(numeric) || numeric <= 0) {
+        qs("interpretation-city-dialog-distance")?.focus();
+        return;
+      }
+    }
+    closeInterpretationCityDialog({ cityName, distanceValue });
+  });
   qs("recipient-block").addEventListener("input", syncInterpretationDisclosureState);
 }
 
@@ -1835,10 +2813,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   initializeGmailUi({
     applyInterpretationSeed,
     collectInterpretationFormValues,
+    prepareInterpretationAction,
+    recoverInterpretationValidationError,
+    getInterpretationUiSnapshot,
     renderInterpretationExportResult,
+    renderInterpretationGmailResult,
     applyTranslationLaunch,
+    startTranslationLaunch,
+    closeTranslationCompletionDrawer,
     collectCurrentTranslationSaveValues,
+    getTranslationUiSnapshot,
     getCurrentTranslationJobId,
+    openInterpretationReviewDrawer,
+    openTranslationCompletionDrawer,
   });
   initializePowerToolsUi();
   setDiagnostics("runtime", { status: "pending", message: "Loading runtime metadata..." }, { hint: "Build identity, listener ownership, and runtime-mode provenance.", open: false });

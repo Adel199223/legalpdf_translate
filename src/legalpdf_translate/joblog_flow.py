@@ -360,9 +360,13 @@ def merge_payload_into_joblog_settings(
     payload: Mapping[str, Any],
     *,
     service_equals_case_by_default: bool,
+    locked_vocab_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     merged = dict(settings)
+    locked = {str(item).strip() for item in (locked_vocab_keys or set()) if str(item).strip()}
     for column, key in JOBLOG_VOCAB_SETTINGS_MAP.items():
+        if key in locked:
+            continue
         value = str(payload.get(column, "") or "").strip()
         if not value:
             continue

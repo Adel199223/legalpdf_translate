@@ -101,6 +101,7 @@ from legalpdf_translate.honorarios_docx import (
 from legalpdf_translate.interpretation_service import (
     autofill_interpretation_from_notification_pdf as shared_service_autofill_interpretation_from_notification_pdf,
     autofill_interpretation_from_photo as shared_service_autofill_interpretation_from_photo,
+    build_interpretation_honorarios_draft_from_form,
 )
 from legalpdf_translate.joblog_flow import (
     JobLogSavedResult as SharedJobLogSavedResult,
@@ -1875,8 +1876,8 @@ class QtHonorariosExportDialog(QDialog):
             numeric = float(cleaned)
         except ValueError as exc:
             raise ValueError(f"{label} must be a number.") from exc
-        if numeric < 0:
-            raise ValueError(f"{label} must be zero or greater.")
+        if numeric <= 0:
+            raise ValueError(f"{label} must be greater than 0.")
         return numeric
 
     def _resolve_interpretation_distance(self, *, profile: UserProfile, city: str, current_value: str, label: str) -> float:
@@ -1895,12 +1896,14 @@ class QtHonorariosExportDialog(QDialog):
             "Interpretation distance",
             f"One-way distance from {profile.travel_origin_label} to {city} (km):",
             0.0,
-            0.0,
+            0.01,
             1_000_000.0,
             2,
         )
         if not ok:
             raise ValueError(f"{label} is required.")
+        if distance_value <= 0:
+            raise ValueError(f"{label} must be greater than 0.")
         self._persist_profile_distance(profile, city, float(distance_value))
         return float(distance_value)
 
@@ -1956,9 +1959,7 @@ class QtHonorariosExportDialog(QDialog):
                 raise ValueError("Service city is required.")
             if service_entity_is_law_enforcement and (not use_service_location or not service_city):
                 raise ValueError("GNR/PSP interpretation rows require a confirmed service city in the honorários text.")
-            one_way_distance = self._initial_draft.travel_km_outbound
-            if one_way_distance <= 0 and self._initial_draft.travel_km_return > 0:
-                one_way_distance = self._initial_draft.travel_km_return
+            resolved_distance_text = self.travel_km_outbound_edit.text().strip()
             if include_transport_sentence:
                 effective_travel_city = service_city
                 if not effective_travel_city:
@@ -1966,7 +1967,7 @@ class QtHonorariosExportDialog(QDialog):
                 one_way_distance = self._resolve_interpretation_distance(
                     profile=selected_profile,
                     city=effective_travel_city,
-                    current_value=self.travel_km_outbound_edit.text(),
+                    current_value=resolved_distance_text,
                     label="KM (one way)",
                 )
                 self._set_interpretation_distance_text(
@@ -1975,31 +1976,29 @@ class QtHonorariosExportDialog(QDialog):
                     profile_id=selected_profile.id,
                     manual=False,
                 )
-            else:
-                try:
-                    current_distance = _parse_joblog_optional_float(
-                        self.travel_km_outbound_edit.text(),
-                        "KM (one way)",
-                    )
-                except ValueError:
-                    current_distance = None
-                if current_distance is not None:
-                    one_way_distance = current_distance
             recipient_block = self.recipient_block_edit.toPlainText().strip() or self._default_interpretation_recipient_block()
             self._set_recipient_block_text(recipient_block)
-            return build_interpretation_honorarios_draft(
-                case_number=case_number,
-                case_entity=case_entity,
-                case_city=case_city,
-                service_date=service_date,
-                service_entity=service_entity,
-                service_city=service_city,
-                use_service_location_in_honorarios=use_service_location,
-                include_transport_sentence_in_honorarios=include_transport_sentence,
-                travel_km_outbound=one_way_distance,
-                travel_km_return=one_way_distance,
-                recipient_block=recipient_block,
-                profile=selected_profile,
+            return build_interpretation_honorarios_draft_from_form(
+                form_values={
+                    "case_number": case_number,
+                    "case_entity": case_entity,
+                    "case_city": case_city,
+                    "service_date": service_date,
+                    "service_entity": service_entity,
+                    "service_city": service_city,
+                    "use_service_location_in_honorarios": use_service_location,
+                    "include_transport_sentence_in_honorarios": include_transport_sentence,
+                    "travel_km_outbound": (
+                        f"{one_way_distance:g}" if include_transport_sentence else resolved_distance_text
+                    ),
+                    "travel_km_return": (
+                        f"{one_way_distance:g}" if include_transport_sentence else resolved_distance_text
+                    ),
+                    "recipient_block": recipient_block,
+                },
+                settings_path=settings_path(),
+                profile_id=selected_profile.id,
+                service_same_checked=self.service_same_check.isChecked(),
             )
         try:
             word_count = int(self.word_count_edit.text().strip())
@@ -2373,6 +2372,52 @@ class QtSaveToJobLogDialog(QDialog):
         combo.setCurrentText(current.strip())
         return combo
 
+    def _available_interpretation_cities(self) -> list[str]:
+        values = [str(item or "") for item in list(self._settings.get("vocab_cities", []))]
+        try:
+            profile = _current_primary_profile()
+        except Exception:
+            return self._normalized_combo_values(values, "")
+        values.extend(profile.travel_distances_by_city.keys())
+        return self._normalized_combo_values(values, "")
+
+    def _canonical_interpretation_city(self, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if cleaned == "":
+            return ""
+        for candidate in self._available_interpretation_cities():
+            if candidate.casefold() == cleaned.casefold():
+                return candidate
+        return ""
+
+    def _initial_interpretation_city_value(self, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if cleaned == "" or not _is_interpretation_job_type(self._seed.job_type.strip()):
+            return cleaned
+        return self._canonical_interpretation_city(cleaned)
+
+    def _apply_imported_interpretation_city(self, combo: QComboBox, value: str, *, label: str) -> None:
+        cleaned = str(value or "").strip()
+        if cleaned == "":
+            return
+        if not _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self._ensure_in_vocab("vocab_cities", cleaned)
+            combo.setCurrentText(cleaned)
+            return
+        resolved = self._canonical_interpretation_city(cleaned)
+        if resolved:
+            combo.setCurrentText(resolved)
+            return
+        combo.blockSignals(True)
+        combo.setCurrentIndex(-1)
+        combo.blockSignals(False)
+        QMessageBox.warning(
+            self,
+            "Autofill",
+            f"{label} '{cleaned}' is not in the saved city list. "
+            "Choose an existing city or use + to add it.",
+        )
+
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -2447,8 +2492,10 @@ class QtSaveToJobLogDialog(QDialog):
 
         case_form.addWidget(self._field_label("Case city"), 0, 3)
         self.case_city_combo = self._selection_combo(
-            list(self._settings["vocab_cities"]),
-            self._seed.case_city,
+            self._available_interpretation_cities()
+            if _is_interpretation_job_type(self._seed.job_type.strip())
+            else list(self._settings["vocab_cities"]),
+            self._initial_interpretation_city_value(self._seed.case_city),
         )
         case_form.addWidget(self.case_city_combo, 0, 4)
         self.add_case_city_btn = build_compact_add_button(
@@ -2526,8 +2573,10 @@ class QtSaveToJobLogDialog(QDialog):
 
         service_grid.addWidget(self._field_label("Service city"), 1, 3)
         self.service_city_combo = self._selection_combo(
-            list(self._settings["vocab_cities"]),
-            self._seed.service_city,
+            self._available_interpretation_cities()
+            if _is_interpretation_job_type(self._seed.job_type.strip())
+            else list(self._settings["vocab_cities"]),
+            self._initial_interpretation_city_value(self._seed.service_city),
         )
         service_grid.addWidget(self.service_city_combo, 1, 4)
         self.add_service_city_btn = build_compact_add_button(
@@ -2736,10 +2785,15 @@ class QtSaveToJobLogDialog(QDialog):
         self._refresh_vocab_widgets()
 
     def _refresh_vocab_widgets(self) -> None:
+        city_values = (
+            self._available_interpretation_cities()
+            if _is_interpretation_job_type(self.job_type_combo.currentText().strip())
+            else list(self._settings["vocab_cities"])
+        )
         self._fill_combo(self.case_entity_combo, list(self._settings["vocab_case_entities"]))
         self._fill_combo(self.service_entity_combo, list(self._settings["vocab_service_entities"]))
-        self._fill_combo(self.case_city_combo, list(self._settings["vocab_cities"]))
-        self._fill_combo(self.service_city_combo, list(self._settings["vocab_cities"]))
+        self._fill_combo(self.case_city_combo, city_values)
+        self._fill_combo(self.service_city_combo, city_values)
         self._fill_combo(self.job_type_combo, list(self._settings["vocab_job_types"]))
         self._fill_combo(self.court_email_combo, list(self._settings["vocab_court_emails"]))
 
@@ -2844,8 +2898,11 @@ class QtSaveToJobLogDialog(QDialog):
             self._ensure_in_vocab("vocab_service_entities", resolved_service_entity)
             self.service_entity_combo.setCurrentText(resolved_service_entity)
         if resolved_service_city:
-            self._ensure_in_vocab("vocab_cities", resolved_service_city)
-            self.service_city_combo.setCurrentText(resolved_service_city)
+            self._apply_imported_interpretation_city(
+                self.service_city_combo,
+                resolved_service_city,
+                label="Service city",
+            )
         if distinct_service:
             self._refresh_service_section_state()
 
@@ -3007,33 +3064,24 @@ class QtSaveToJobLogDialog(QDialog):
         case_number = self.case_number_edit.text().strip()
         case_entity = self.case_entity_combo.currentText().strip()
         case_city = self.case_city_combo.currentText().strip()
-        profile = _current_primary_profile()
         if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
-            include_transport_sentence = self.include_transport_sentence_check.isChecked()
-            one_way_distance = 0.0
-            if include_transport_sentence:
-                one_way_distance = self._parse_optional_float(self.travel_km_outbound_edit.text(), "KM (one way)") or 0.0
-            else:
-                try:
-                    current_distance = self._parse_optional_float(self.travel_km_outbound_edit.text(), "KM (one way)")
-                except ValueError:
-                    current_distance = None
-                if current_distance is not None:
-                    one_way_distance = current_distance
-            return build_interpretation_honorarios_draft(
-                case_number=case_number,
-                case_entity=case_entity,
-                case_city=case_city,
-                service_date=self.translation_date_edit.text().strip(),
-                service_entity=self.service_entity_combo.currentText().strip(),
-                service_city=self.service_city_combo.currentText().strip(),
-                use_service_location_in_honorarios=self.use_service_location_check.isChecked(),
-                include_transport_sentence_in_honorarios=include_transport_sentence,
-                travel_km_outbound=one_way_distance,
-                travel_km_return=one_way_distance,
-                recipient_block=default_interpretation_recipient_block(case_entity, case_city),
-                profile=profile,
+            return build_interpretation_honorarios_draft_from_form(
+                form_values={
+                    "case_number": case_number,
+                    "case_entity": case_entity,
+                    "case_city": case_city,
+                    "service_date": self.translation_date_edit.text().strip(),
+                    "service_entity": self.service_entity_combo.currentText().strip(),
+                    "service_city": self.service_city_combo.currentText().strip(),
+                    "use_service_location_in_honorarios": self.use_service_location_check.isChecked(),
+                    "include_transport_sentence_in_honorarios": self.include_transport_sentence_check.isChecked(),
+                    "travel_km_outbound": self.travel_km_outbound_edit.text().strip(),
+                    "travel_km_return": self.travel_km_outbound_edit.text().strip(),
+                },
+                settings_path=settings_path(),
+                service_same_checked=self.service_same_check.isChecked(),
             )
+        profile = _current_primary_profile()
         return build_honorarios_draft(
             case_number=case_number,
             word_count=self._current_word_count_value(),
@@ -3215,7 +3263,12 @@ class QtSaveToJobLogDialog(QDialog):
     def _open_honorarios_dialog(self) -> None:
         if not self._allow_honorarios_export:
             return
-        draft = self._build_honorarios_draft()
+        try:
+            draft = self._build_honorarios_draft()
+        except ValueError as exc:
+            self._reveal_validation_context(str(exc))
+            QMessageBox.critical(self, "Invalid values", str(exc))
+            return
         dialog = QtHonorariosExportDialog(
             parent=self,
             draft=draft,
@@ -3251,8 +3304,11 @@ class QtSaveToJobLogDialog(QDialog):
             self._ensure_in_vocab("vocab_case_entities", suggestion.case_entity)
             self.case_entity_combo.setCurrentText(suggestion.case_entity)
         if suggestion.case_city:
-            self._ensure_in_vocab("vocab_cities", suggestion.case_city)
-            self.case_city_combo.setCurrentText(suggestion.case_city)
+            self._apply_imported_interpretation_city(
+                self.case_city_combo,
+                suggestion.case_city,
+                label="Case city",
+            )
         if suggestion.case_number:
             self.case_number_edit.setText(suggestion.case_number)
         if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
@@ -3293,7 +3349,7 @@ class QtSaveToJobLogDialog(QDialog):
     def _autofill_from_interpretation_notice_pdf(self, pdf_path: Path) -> None:
         result = extract_interpretation_notification_metadata_from_pdf_with_diagnostics(
             pdf_path,
-            vocab_cities=list(self._settings["vocab_cities"]),
+            vocab_cities=self._available_interpretation_cities(),
             config=self._metadata_config,
         )
         suggestion = result.suggestion
@@ -3454,11 +3510,18 @@ class QtSaveToJobLogDialog(QDialog):
             "Interpretation distance",
             f"One-way distance from {profile.travel_origin_label} to {city} (km):",
             0.0,
-            0.0,
+            0.01,
             1_000_000.0,
             2,
         )
         if not ok:
+            return
+        if distance_value <= 0:
+            QMessageBox.warning(
+                self,
+                "Interpretation distance",
+                "One-way distance must be greater than 0 km.",
+            )
             return
         self._distance_prompted_cities.add(city_key)
         profile.travel_distances_by_city[city] = float(distance_value)
@@ -3477,6 +3540,8 @@ class QtSaveToJobLogDialog(QDialog):
         distance_value = self._parse_optional_float(distance_text, "KM (one way)")
         if distance_value is None:
             return
+        if distance_value <= 0:
+            raise ValueError("KM (one way) must be greater than 0 when transport sentence is enabled.")
         profiles, primary_profile_id = load_profile_settings()
         profile = primary_profile(profiles, primary_profile_id)
         existing = distance_for_city(profile, city)
@@ -3493,7 +3558,7 @@ class QtSaveToJobLogDialog(QDialog):
         if _is_interpretation_job_type(self.job_type_combo.currentText()):
             suggestion = extract_interpretation_photo_metadata_from_image(
                 image_path,
-                vocab_cities=list(self._settings["vocab_cities"]),
+                vocab_cities=self._available_interpretation_cities(),
                 config=self._metadata_config,
             )
         else:
@@ -3523,8 +3588,11 @@ class QtSaveToJobLogDialog(QDialog):
             self._ensure_in_vocab("vocab_case_entities", suggestion.case_entity)
             self.case_entity_combo.setCurrentText(suggestion.case_entity)
         if suggestion.case_city:
-            self._ensure_in_vocab("vocab_cities", suggestion.case_city)
-            self.case_city_combo.setCurrentText(suggestion.case_city)
+            self._apply_imported_interpretation_city(
+                self.case_city_combo,
+                suggestion.case_city,
+                label="Case city",
+            )
         if suggestion.court_email:
             self._ensure_in_vocab("vocab_court_emails", suggestion.court_email)
             self.court_email_combo.setCurrentText(suggestion.court_email)
@@ -3547,8 +3615,15 @@ class QtSaveToJobLogDialog(QDialog):
             self.case_entity_combo.setCurrentText(case_entity)
             self._ensure_in_vocab("vocab_case_entities", case_entity)
         if case_city is not None and case_city != self.case_city_combo.currentText().strip():
-            self.case_city_combo.setCurrentText(case_city)
-            self._ensure_in_vocab("vocab_cities", case_city)
+            if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+                resolved_case_city = self._canonical_interpretation_city(case_city)
+                if resolved_case_city:
+                    self.case_city_combo.setCurrentText(resolved_case_city)
+                else:
+                    self.case_city_combo.setCurrentIndex(-1)
+            else:
+                self.case_city_combo.setCurrentText(case_city)
+                self._ensure_in_vocab("vocab_cities", case_city)
 
     def _parse_float(self, value: str, label: str) -> float:
         return _parse_joblog_float(value, label)

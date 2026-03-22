@@ -55,6 +55,10 @@ body[data-interpretation-review-drawer="open"] {
   overflow: hidden;
 }
 
+body[data-interpretation-city-dialog="open"] {
+  overflow: hidden;
+}
+
 .hidden {
   display: none !important;
 }
@@ -535,6 +539,31 @@ label {
   line-height: 1.4;
 }
 
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.field-inline > input,
+.field-inline > select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.compact-inline-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.field-hint.is-warning {
+  color: var(--warning);
+}
+
+.field-hint.is-danger {
+  color: var(--danger);
+}
+
 input,
 select,
 textarea {
@@ -675,6 +704,10 @@ textarea {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.gmail-handoff-actions {
+  justify-content: flex-start;
 }
 
 .attachment-start-page {
@@ -985,6 +1018,13 @@ body[data-profile-editor-drawer="open"] {
   margin-left: auto;
 }
 
+body[data-gmail-review-drawer="open"],
+body[data-gmail-preview-drawer="open"],
+body[data-gmail-session-drawer="open"],
+body[data-interpretation-city-dialog="open"] {
+  overflow: hidden;
+}
+
 .workspace-drawer-backdrop {
   position: fixed;
   inset: 0;
@@ -994,6 +1034,13 @@ body[data-profile-editor-drawer="open"] {
   padding: 18px;
   background: rgba(3, 10, 16, 0.72);
   backdrop-filter: blur(3px);
+}
+
+.workspace-dialog-backdrop {
+  z-index: 42;
+  justify-content: center;
+  align-items: center;
+  padding: 24px;
 }
 
 .workspace-drawer {
@@ -1009,8 +1056,24 @@ body[data-profile-editor-drawer="open"] {
   box-shadow: var(--shadow);
 }
 
+.interpretation-city-dialog {
+  width: min(520px, calc(100vw - 24px));
+}
+
 .workspace-drawer-wide {
   width: min(760px, calc(100vw - 24px));
+}
+
+.workspace-drawer-interpretation {
+  width: min(720px, calc(100vw - 24px));
+}
+
+#gmail-review-drawer.workspace-drawer-wide {
+  width: min(840px, calc(100vw - 24px));
+}
+
+#gmail-preview-drawer.workspace-drawer-wide {
+  width: min(1040px, calc(100vw - 24px));
 }
 
 .workspace-drawer-header {
@@ -1041,9 +1104,240 @@ body[data-profile-editor-drawer="open"] {
   position: sticky;
   bottom: 0;
   z-index: 2;
-  margin-top: 22px;
-  padding-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+  padding-top: 16px;
   background: linear-gradient(180deg, rgba(9, 28, 45, 0), rgba(9, 28, 45, 0.98) 28px);
+}
+
+#interpretation-location-guard-card {
+  margin-top: 16px;
+}
+
+#interpretation-review-context-card .result-card {
+  margin-top: 14px;
+}
+
+.interpretation-review-details-shell {
+  margin-top: 16px;
+}
+
+#interpretation-completion-card {
+  margin-top: 16px;
+}
+
+.gmail-preview-action-row {
+  margin-top: 20px;
+}
+
+.gmail-review-summary-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(0, auto));
+  align-items: start;
+  gap: 16px;
+}
+
+.gmail-review-summary-copy p {
+  margin: 6px 0 0;
+}
+
+.gmail-review-summary-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.gmail-review-summary-metrics h3 {
+  margin-bottom: 4px;
+}
+
+.gmail-review-table-shell {
+  overflow: auto;
+  max-height: min(34vh, 320px);
+  border-radius: 18px;
+  border: 1px solid rgba(117, 218, 255, 0.14);
+  background: rgba(4, 12, 20, 0.42);
+}
+
+.gmail-review-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.gmail-review-table th,
+.gmail-review-table td {
+  padding: 12px 14px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid rgba(117, 218, 255, 0.1);
+}
+
+.gmail-review-table th {
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.gmail-review-table th:nth-child(1),
+.gmail-review-table td:nth-child(1) {
+  width: 126px;
+}
+
+.gmail-review-table th:nth-child(3),
+.gmail-review-table td:nth-child(3) {
+  width: 150px;
+}
+
+.gmail-review-table th:nth-child(4),
+.gmail-review-table td:nth-child(4) {
+  width: 96px;
+}
+
+.gmail-review-table th:nth-child(5),
+.gmail-review-table td:nth-child(5) {
+  width: 108px;
+}
+
+.gmail-review-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.gmail-review-row {
+  cursor: pointer;
+  transition: background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.gmail-review-row:hover {
+  background: rgba(117, 218, 255, 0.08);
+}
+
+.gmail-review-row.is-focused {
+  box-shadow: inset 0 0 0 1px rgba(117, 218, 255, 0.24);
+  background: rgba(74, 170, 210, 0.08);
+}
+
+.gmail-review-row.is-selected {
+  background: rgba(117, 218, 255, 0.12);
+}
+
+.gmail-review-row td:first-child {
+  width: 132px;
+}
+
+.gmail-review-select {
+  font-weight: 700;
+}
+
+.gmail-review-row-label {
+  min-width: 52px;
+}
+
+.gmail-review-file-cell {
+  min-width: 0;
+}
+
+.gmail-review-file-name {
+  display: -webkit-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.gmail-review-start-static {
+  color: var(--muted);
+}
+
+.gmail-review-detail-strip {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.gmail-review-detail-primary {
+  min-width: 0;
+}
+
+.gmail-review-detail-meta {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.gmail-review-detail-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.gmail-review-start-field {
+  width: 124px;
+}
+
+.gmail-preview-toolbar {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.gmail-review-preview-pager {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.gmail-review-preview-pager input {
+  width: 92px;
+}
+
+.gmail-review-inline-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.gmail-inline-preview {
+  min-height: 280px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(117, 218, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(6, 18, 31, 0.9), rgba(4, 12, 20, 0.88)),
+    var(--panel);
+}
+
+.gmail-inline-preview.empty-state {
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.gmail-inline-preview-frame {
+  width: 100%;
+  min-height: min(62vh, 720px);
+  border: 0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.gmail-inline-preview-image-shell {
+  display: grid;
+  place-items: center;
+  min-height: 420px;
+}
+
+.gmail-inline-preview-image {
+  max-width: 100%;
+  max-height: min(60vh, 680px);
+  border-radius: 14px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .task-switcher {
@@ -1521,6 +1815,11 @@ body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="interpretation"] 
   grid-row: 1;
 }
 
+body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="interpretation"] .workspace-panel-interpretation-session {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
 body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="interpretation"] .workspace-panel-interpretation {
   grid-column: 1 / -1;
   grid-row: 2;
@@ -1585,6 +1884,7 @@ body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="interpretation"] 
   body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="translation"] .workspace-panel-status,
   body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="translation"] .workspace-action-rail,
   body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="translation"] .workspace-panel-save,
+  body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="interpretation"] .workspace-panel-interpretation-session,
   body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="interpretation"] .workspace-panel-autofill,
   body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="interpretation"] .workspace-panel-interpretation,
   body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="interpretation"] .workspace-panel-export,
@@ -1659,4 +1959,54 @@ body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="interpretation"] 
     width: 100%;
     margin-top: 10px;
   }
+}
+
+/* Keep the Gmail handoff shell as the final Qt layout override. */
+body[data-ui-variant="qt"][data-shell-mode="gmail-focus"] .app-shell {
+  grid-template-columns: minmax(0, 1fr);
+  width: min(calc(100vw - 32px), 980px);
+  gap: 0;
+  padding-top: 16px;
+}
+
+body[data-ui-variant="qt"][data-shell-mode="gmail-focus"] .sidebar,
+body[data-ui-variant="qt"][data-shell-mode="gmail-focus"] .topbar {
+  display: none;
+}
+
+body[data-ui-variant="qt"][data-shell-mode="gmail-focus"] .main-shell {
+  gap: 0;
+}
+
+body[data-ui-variant="qt"][data-shell-mode="gmail-focus"] [data-view="gmail-intake"].qt-workspace-view {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+body[data-ui-variant="qt"][data-shell-mode="gmail-focus"] [data-view="gmail-intake"].qt-workspace-view::before {
+  display: none;
+}
+
+body[data-ui-variant="qt"][data-shell-mode="gmail-focus"] [data-view="gmail-intake"].qt-workspace-view .workspace-hero {
+  display: none;
+}
+
+body[data-ui-variant="qt"][data-shell-mode="gmail-focus"] [data-view="gmail-intake"].qt-workspace-view .workspace-panel-gmail {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.workspace-panel-interpretation-session .panel-actions {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.workspace-panel-interpretation-session .panel-actions > * {
+  flex: 1 1 220px;
 }

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 if os.name != "nt" and "DISPLAY" not in os.environ:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
 from PySide6.QtCore import QBuffer, QDate, QEvent, QIODevice, QRect, QItemSelectionModel, Qt
 from PySide6.QtGui import QCloseEvent, QColor, QImage, QPainter, QPen
 from PySide6.QtTest import QTest
@@ -7619,6 +7620,39 @@ def test_edit_joblog_dialog_interpretation_service_city_switches_to_saved_distan
             app.quit()
 
 
+def test_edit_joblog_dialog_interpretation_city_combos_include_profile_distance_cities(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    profile = default_primary_profile()
+    profile.travel_distances_by_city = {"Beja": 39.0, "Cuba": 26.0}
+    monkeypatch.setattr(
+        dialogs_module,
+        "load_profile_settings",
+        lambda: ([profile], profile.id),
+    )
+
+    dialog = QtSaveToJobLogDialog(
+        parent=None,
+        db_path=tmp_path / "joblog.sqlite3",
+        seed=build_blank_interpretation_seed(),
+    )
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.case_city_combo.findText("Cuba") >= 0
+        assert dialog.service_city_combo.findText("Cuba") >= 0
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
 def test_edit_joblog_dialog_interpretation_service_section_expands_when_location_is_mentioned(
     tmp_path: Path,
 ) -> None:
@@ -7722,6 +7756,49 @@ def test_edit_joblog_dialog_interpretation_header_autofill_reveals_distinct_serv
         assert dialog.service_city_combo.currentText() == "Cuba"
         assert dialog.service_group.is_expanded() is True
         assert dialog.service_group.summary_label.text() == "Cuba"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_edit_joblog_dialog_interpretation_header_autofill_does_not_promote_unknown_city(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    warnings: list[str] = []
+
+    def _capture_warning(*args, **_kwargs):
+        warnings.append(str(args[2]))
+        return dialogs_module.QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(dialogs_module.QMessageBox, "warning", _capture_warning)
+
+    dialog = QtSaveToJobLogDialog(
+        parent=None,
+        db_path=tmp_path / "joblog.sqlite3",
+        seed=build_blank_interpretation_seed(),
+    )
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog._apply_header_suggestion(
+            dialogs_module.MetadataSuggestion(
+                case_entity="Case Entity",
+                case_city="Camões",
+                case_number="109/26.0PBBJA",
+            )
+        )
+        app.processEvents()
+        assert dialog.case_city_combo.currentText() == ""
+        assert dialog.case_city_combo.findText("Camões") == -1
+        assert "Camões" not in dialog._settings["vocab_cities"]
+        assert any("Camões" in message for message in warnings)
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -7939,6 +8016,123 @@ def test_edit_joblog_dialog_interpretation_save_persists_manual_distance_for_ser
         assert dialog.saved is True
         assert profile.travel_distances_by_city["Cuba"] == 26.0
         assert saved["primary_profile_id"] == profile.id
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_edit_joblog_dialog_interpretation_honorarios_rejects_zero_distance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(dialogs_module, "settings_path", lambda: settings_file)
+    user_settings.save_joblog_settings_to_path(
+        settings_file,
+        {
+            **user_settings.DEFAULT_JOBLOG_SETTINGS,
+            "vocab_cities": ["Beja", "Cuba"],
+        },
+    )
+    profile = default_primary_profile()
+    profile.travel_distances_by_city = {"Beja": 39.0}
+    user_settings.save_profile_settings_to_path(
+        settings_file,
+        profiles=[profile],
+        primary_profile_id=profile.id,
+    )
+    monkeypatch.setattr(
+        dialogs_module,
+        "load_profile_settings",
+        lambda: user_settings.load_profile_settings_from_path(settings_file),
+    )
+
+    seed = build_blank_interpretation_seed()
+    seed.case_entity = "Ministério Público de Beja"
+    seed.case_city = "Beja"
+    seed.service_entity = "GNR"
+    seed.service_city = "Cuba"
+    seed.translation_date = "2026-03-20"
+    seed.service_date = "2026-03-20"
+
+    dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog.service_same_check.setChecked(False)
+        dialog.case_number_edit.setText("305/23.2GCBJA")
+        dialog.travel_km_outbound_edit.setText("0")
+        with pytest.raises(ValueError, match="greater than 0"):
+            dialog._build_honorarios_draft()
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_export_dialog_interpretation_rejects_zero_distance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(dialogs_module, "settings_path", lambda: settings_file)
+    user_settings.save_joblog_settings_to_path(
+        settings_file,
+        {
+            **user_settings.DEFAULT_JOBLOG_SETTINGS,
+            "vocab_cities": ["Beja", "Cuba"],
+        },
+    )
+    profile = default_primary_profile(email="adel@example.com")
+    profile.travel_origin_label = "Marmelar"
+    profile.travel_distances_by_city = {"Beja": 39.0}
+    user_settings.save_profile_settings_to_path(
+        settings_file,
+        profiles=[profile],
+        primary_profile_id=profile.id,
+    )
+    monkeypatch.setattr(
+        dialogs_module,
+        "load_profile_settings",
+        lambda: user_settings.load_profile_settings_from_path(settings_file),
+    )
+
+    draft = dialogs_module.build_interpretation_honorarios_draft(
+        case_number="305/23.2GCBJA",
+        case_entity="Ministério Público de Beja",
+        case_city="Beja",
+        service_date="2026-03-20",
+        service_entity="GNR",
+        service_city="Cuba",
+        use_service_location_in_honorarios=True,
+        include_transport_sentence_in_honorarios=True,
+        travel_km_outbound=26.0,
+        travel_km_return=26.0,
+        recipient_block=dialogs_module.default_interpretation_recipient_block(
+            "Ministério Público de Beja",
+            "Beja",
+        ),
+        profile=profile,
+    )
+
+    dialog = dialogs_module.QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog.travel_km_outbound_edit.setText("0")
+        with pytest.raises(ValueError, match="greater than 0"):
+            dialog._build_draft()
     finally:
         dialog.close()
         dialog.deleteLater()
