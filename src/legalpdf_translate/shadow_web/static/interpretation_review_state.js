@@ -1,5 +1,5 @@
 export function normalizeCityName(value) {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
+  return String(value ?? "").normalize("NFC").replace(/\s+/g, " ").trim();
 }
 
 function dedupeCities(values) {

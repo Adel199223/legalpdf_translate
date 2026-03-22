@@ -53,6 +53,17 @@ const unknownImported = reviewModule.deriveInterpretationGuardState({{
   travelKmOutbound: "",
 }});
 
+const unknownImportedDecomposed = reviewModule.deriveInterpretationGuardState({{
+  reference,
+  caseCity: "",
+  serviceCity: "",
+  serviceSame: true,
+  provisionalCaseCity: "Camo\\u0303es",
+  provisionalServiceCity: "",
+  includeTransport: true,
+  travelKmOutbound: "",
+}});
+
 const knownNeedsPrompt = reviewModule.deriveInterpretationGuardState({{
   reference,
   caseCity: "Beja",
@@ -175,6 +186,7 @@ const drawerLayouts = {{
 console.log(JSON.stringify({{
   reference,
   unknownImported,
+  unknownImportedDecomposed,
   knownNeedsPrompt,
   knownSavedDistance,
   invalidDistance,
@@ -202,6 +214,7 @@ def test_interpretation_review_state_blocks_unknown_city_and_guides_distance_pro
     assert results["unknownImported"]["blocked"] is True
     assert results["unknownImported"]["blockedCode"] == "unknown_case_city"
     assert results["unknownImported"]["provisionalCaseCity"] == "Camões"
+    assert results["unknownImportedDecomposed"]["provisionalCaseCity"] == "Camões"
 
     assert results["knownNeedsPrompt"]["blocked"] is False
     assert results["knownNeedsPrompt"]["distancePromptNeeded"] is True
