@@ -26,6 +26,7 @@ EDGE_EXTENSION_ORIGIN = f"chrome-extension://{EDGE_EXTENSION_ID}/"
 _MAX_NATIVE_MESSAGE_BYTES = 1024 * 1024
 _EDGE_NATIVE_HOST_REGISTRY_SUBKEY = rf"Software\Microsoft\Edge\NativeMessagingHosts\{EDGE_NATIVE_HOST_NAME}"
 _EDGE_NATIVE_HOST_EXE = "LegalPDFGmailFocusHost.exe"
+_EDGE_NATIVE_HOST_WRAPPER = "LegalPDFGmailFocusHost.cmd"
 _AUTO_LAUNCH_WAIT_SECONDS = 15.0
 _AUTO_LAUNCH_POLL_INTERVAL_SECONDS = 0.25
 _AUTO_LAUNCH_LABELS = ("gmail-intake", "auto-launch")
@@ -127,12 +128,25 @@ def _resolve_repo_worktree_for_auto_launch(*, runtime_path: Path | None = None) 
     return None
 
 
+def _preferred_repo_worktree_for_auto_launch(*, runtime_path: Path | None = None) -> Path | None:
+    worktree = _resolve_repo_worktree_for_auto_launch(runtime_path=runtime_path)
+    if worktree is None:
+        return None
+    config = try_load_canonical_build_config(worktree)
+    if config is None:
+        return worktree
+    canonical_root = _coerce_repo_path(config.canonical_worktree_path).resolve()
+    if canonical_root != worktree and _looks_like_repo_worktree(canonical_root):
+        return canonical_root
+    return worktree
+
+
 def _browser_gmail_workspace_url(*, port: int = SHADOW_DEFAULT_PORT) -> str:
     return f"http://127.0.0.1:{int(port)}/?mode=live&workspace={_BROWSER_GMAIL_WORKSPACE_ID}#gmail-intake"
 
 
 def _resolve_qt_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaunchTarget:
-    worktree = _resolve_repo_worktree_for_auto_launch(runtime_path=runtime_path)
+    worktree = _preferred_repo_worktree_for_auto_launch(runtime_path=runtime_path)
     if worktree is None:
         return AutoLaunchTarget(
             ready=False,
@@ -176,7 +190,7 @@ def _resolve_qt_auto_launch_target(*, runtime_path: Path | None = None) -> AutoL
 
 
 def _resolve_browser_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaunchTarget:
-    worktree = _resolve_repo_worktree_for_auto_launch(runtime_path=runtime_path)
+    worktree = _preferred_repo_worktree_for_auto_launch(runtime_path=runtime_path)
     if worktree is None:
         return AutoLaunchTarget(
             ready=False,
@@ -444,6 +458,55 @@ def edge_native_host_manifest_path(base_dir: Path) -> Path:
     return base_dir / "native_messaging" / f"{EDGE_NATIVE_HOST_NAME}.edge.json"
 
 
+def _edge_native_host_wrapper_path(base_dir: Path) -> Path:
+    return base_dir / "native_messaging" / _EDGE_NATIVE_HOST_WRAPPER
+
+
+def _build_checkout_edge_native_host_wrapper(*, repo_root: Path, python_executable: Path) -> str:
+    resolved_repo = repo_root.expanduser().resolve()
+    resolved_python = python_executable.expanduser().resolve()
+    resolved_src = (resolved_repo / "src").resolve()
+    return (
+        "@echo off\r\n"
+        "setlocal\r\n"
+        f'set "PYTHONPATH={resolved_src};%PYTHONPATH%"\r\n'
+        f'cd /d "{resolved_repo}"\r\n'
+        f'"{resolved_python}" -m legalpdf_translate.gmail_focus_host %*\r\n'
+    )
+
+
+def _ensure_checkout_edge_native_host_wrapper(
+    *,
+    base_dir: Path,
+    runtime_path: Path | None = None,
+) -> Path | None:
+    worktree = _preferred_repo_worktree_for_auto_launch(runtime_path=runtime_path)
+    if worktree is None:
+        return None
+    python_executable = _python_executable_for_worktree(worktree)
+    if python_executable is None:
+        return None
+
+    wrapper_path = _edge_native_host_wrapper_path(base_dir).expanduser().resolve()
+    wrapper_text = _build_checkout_edge_native_host_wrapper(
+        repo_root=worktree,
+        python_executable=python_executable,
+    )
+    existing_wrapper_text = None
+    try:
+        existing_wrapper_text = wrapper_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        existing_wrapper_text = None
+    except OSError:
+        existing_wrapper_text = None
+    if existing_wrapper_text != wrapper_text:
+        wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = wrapper_path.with_suffix(".tmp")
+        temp_path.write_text(wrapper_text, encoding="utf-8")
+        temp_path.replace(wrapper_path)
+    return wrapper_path
+
+
 def resolve_edge_native_host_executable(*, repo_root: Path | None = None) -> Path | None:
     candidates: list[Path] = []
     if getattr(sys, "frozen", False):
@@ -505,11 +568,15 @@ def ensure_edge_native_host_registered(
             reason="unsupported_platform",
         )
 
-    resolved_host_exe = (
-        host_executable_path.expanduser().resolve()
-        if host_executable_path is not None
-        else resolve_edge_native_host_executable()
-    )
+    manifest_dir = (base_dir or app_data_dir()).expanduser().resolve()
+    if host_executable_path is not None:
+        resolved_host_exe = host_executable_path.expanduser().resolve()
+    else:
+        resolved_host_exe = _ensure_checkout_edge_native_host_wrapper(base_dir=manifest_dir)
+        if resolved_host_exe is None:
+            resolved_host_exe = resolve_edge_native_host_executable(
+                repo_root=_preferred_repo_worktree_for_auto_launch()
+            )
     if resolved_host_exe is None or not resolved_host_exe.exists():
         return NativeHostRegistrationResult(
             ok=False,
@@ -519,7 +586,6 @@ def ensure_edge_native_host_registered(
             reason="host_executable_missing",
         )
 
-    manifest_dir = (base_dir or app_data_dir()).expanduser().resolve()
     manifest_path = edge_native_host_manifest_path(manifest_dir).expanduser().resolve()
     manifest_payload = build_edge_native_host_manifest(resolved_host_exe)
     manifest_text = json.dumps(manifest_payload, ensure_ascii=False, indent=2) + "\n"

@@ -4,6 +4,68 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Convert-CodexPathToWindows {
+    param(
+        [string]$PathText
+    )
+
+    $trimmed = [string]$PathText
+    if ($null -eq $PathText) {
+        $trimmed = ""
+    }
+    $trimmed = $trimmed.Trim()
+    if ($trimmed -match '^/mnt/([A-Za-z])/(.*)$') {
+        return ($Matches[1].ToUpper() + ':\' + ($Matches[2] -replace '/', '\'))
+    }
+    return $trimmed
+}
+
+function Get-CanonicalRepoRoot {
+    param(
+        [string]$RepoRoot
+    )
+
+    $buildConfig = Join-Path $RepoRoot "docs\assistant\runtime\CANONICAL_BUILD.json"
+    if (-not (Test-Path -LiteralPath $buildConfig)) {
+        return $null
+    }
+    try {
+        $config = (Get-Content -LiteralPath $buildConfig -Raw | ConvertFrom-Json)
+    }
+    catch {
+        return $null
+    }
+    $candidate = Convert-CodexPathToWindows -PathText ([string]$config.canonical_worktree_path)
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        return $null
+    }
+    if (-not (Test-Path -LiteralPath $candidate)) {
+        return $null
+    }
+    return (Resolve-Path -LiteralPath $candidate).Path
+}
+
+function Resolve-RepoPython {
+    param(
+        [string]$RepoRoot
+    )
+
+    $candidateRoots = @($RepoRoot)
+    $canonicalRoot = Get-CanonicalRepoRoot -RepoRoot $RepoRoot
+    if ($canonicalRoot -and ($canonicalRoot -notin $candidateRoots)) {
+        $candidateRoots += $canonicalRoot
+    }
+    foreach ($root in $candidateRoots) {
+        foreach ($relativePath in @(".venv311\Scripts\python.exe", ".venv\Scripts\python.exe")) {
+            $candidate = Join-Path $root $relativePath
+            if (Test-Path -LiteralPath $candidate) {
+                return $candidate
+            }
+        }
+    }
+    return "python"
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $buildRoot = Join-Path $repoRoot "build"
 $distRoot = Join-Path $repoRoot "dist"
@@ -12,6 +74,8 @@ $registerHostScript = Join-Path $PSScriptRoot "register_edge_native_host.ps1"
 $refreshScript = Join-Path $PSScriptRoot "refresh_icon_cache.ps1"
 $icoPath = Join-Path $repoRoot "resources\icons\LegalPDFTranslate.ico"
 $cleanTargets = @()
+$pythonExe = Resolve-RepoPython -RepoRoot $repoRoot
+$sourcePath = Join-Path $repoRoot "src"
 
 if (Test-Path -LiteralPath $buildRoot) {
     $buildDirs = Get-ChildItem -LiteralPath $buildRoot -Directory
@@ -31,10 +95,20 @@ foreach ($target in $cleanTargets) {
 }
 
 Push-Location $repoRoot
+$previousPythonPath = $env:PYTHONPATH
 try {
-    python -m PyInstaller "build\pyinstaller_qt.spec" --clean --noconfirm
+    if (Test-Path -LiteralPath $sourcePath) {
+        if ([string]::IsNullOrWhiteSpace($previousPythonPath)) {
+            $env:PYTHONPATH = $sourcePath
+        }
+        else {
+            $env:PYTHONPATH = "$sourcePath;$previousPythonPath"
+        }
+    }
+    & $pythonExe -m PyInstaller "build\pyinstaller_qt.spec" --clean --noconfirm
 }
 finally {
+    $env:PYTHONPATH = $previousPythonPath
     Pop-Location
 }
 
@@ -50,7 +124,7 @@ if (-not (Test-Path -LiteralPath $icoPath)) {
     throw "Build completed but ICO was not found at: $icoPath"
 }
 
-& $registerHostScript -HostExePath $focusHostExePath
+& $registerHostScript
 $shortcutSummary = & $shortcutScript
 
 if (-not $SkipIconRefresh) {

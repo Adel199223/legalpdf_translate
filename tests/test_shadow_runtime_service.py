@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from zipfile import ZipFile
 
+import pytest
+
 import legalpdf_translate.browser_app_service as browser_app_service
 import legalpdf_translate.interpretation_service as interpretation_service
 import legalpdf_translate.power_tools_service as power_tools_service
@@ -377,6 +379,22 @@ def test_shadow_bootstrap_blank_seed_leaves_service_date_empty(tmp_path: Path) -
     assert response["normalized_payload"]["blank_seed"]["service_date"] == ""
 
 
+def test_shadow_bootstrap_exposes_interpretation_reference_from_vocab_and_profile_distances(tmp_path: Path) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+    db_path = tmp_path / "shadow" / "job_log.sqlite3"
+
+    response = interpretation_service.build_shadow_bootstrap(
+        settings_path=settings_file,
+        job_log_db_path=db_path,
+    )
+
+    reference = response["normalized_payload"]["interpretation_reference"]
+    assert reference["travel_origin_label"] == "Marmelar"
+    assert "Beja" in reference["available_cities"]
+    assert "Vidigueira" in reference["available_cities"]
+    assert reference["travel_distances_by_city"]["Beja"] == 39.0
+
+
 def test_save_interpretation_row_persists_to_isolated_settings_and_joblog(tmp_path: Path) -> None:
     settings_file = tmp_path / "shadow" / "settings.json"
     db_path = tmp_path / "shadow" / "job_log.sqlite3"
@@ -417,6 +435,110 @@ def test_save_interpretation_row_persists_to_isolated_settings_and_joblog(tmp_pa
     profiles, primary_profile_id = load_profile_settings_from_path(settings_file)
     profile = primary_profile(profiles, primary_profile_id)
     assert distance_for_city(profile, "Beja") == 39.0
+
+
+def test_save_interpretation_row_does_not_auto_grow_city_vocab_for_profile_known_city(tmp_path: Path) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+    db_path = tmp_path / "shadow" / "job_log.sqlite3"
+
+    response = interpretation_service.save_interpretation_row(
+        settings_path=settings_file,
+        job_log_db_path=db_path,
+        form_values={
+            "case_number": "305/23.2GCBJA",
+            "court_email": "beja.judicial@tribunais.org.pt",
+            "case_entity": "Ministério Público",
+            "case_city": "Vidigueira",
+            "service_entity": "Ministério Público",
+            "service_city": "Vidigueira",
+            "service_date": "2026-03-20",
+            "travel_km_outbound": "15",
+            "pages": "0",
+            "word_count": "0",
+            "rate_per_word": "0",
+            "expected_total": "0",
+            "amount_paid": "0",
+            "api_cost": "0",
+            "profit": "0",
+        },
+        service_same_checked=True,
+        include_transport_sentence_in_honorarios_checked=True,
+    )
+
+    assert response["status"] == "ok"
+    settings = load_joblog_settings_from_path(settings_file)
+    assert "Vidigueira" not in settings["vocab_cities"]
+
+
+def test_add_interpretation_city_persists_city_and_distance_for_browser_flow(tmp_path: Path) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+
+    response = interpretation_service.add_interpretation_city(
+        settings_path=settings_file,
+        city="Serpa",
+        profile_id="primary",
+        include_transport_sentence=True,
+        travel_km_outbound="32",
+        field_name="service_city",
+    )
+
+    assert response["status"] == "ok"
+    assert response["normalized_payload"]["city"] == "Serpa"
+    settings = load_joblog_settings_from_path(settings_file)
+    assert "Serpa" in settings["vocab_cities"]
+    profiles, primary_profile_id = load_profile_settings_from_path(settings_file)
+    profile = primary_profile(profiles, primary_profile_id)
+    assert distance_for_city(profile, "Serpa") == 32.0
+
+
+def test_add_interpretation_city_requires_positive_distance_when_transport_enabled(tmp_path: Path) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+
+    with pytest.raises(interpretation_service.InterpretationValidationError) as exc_info:
+        interpretation_service.add_interpretation_city(
+            settings_path=settings_file,
+            city="Serpa",
+            profile_id="primary",
+            include_transport_sentence=True,
+            travel_km_outbound="",
+            field_name="service_city",
+        )
+
+    assert exc_info.value.code == "distance_required"
+    assert exc_info.value.city == "Serpa"
+
+
+def test_save_interpretation_row_rejects_unknown_case_city(tmp_path: Path) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+    db_path = tmp_path / "shadow" / "job_log.sqlite3"
+
+    with pytest.raises(interpretation_service.InterpretationValidationError) as exc_info:
+        interpretation_service.save_interpretation_row(
+            settings_path=settings_file,
+            job_log_db_path=db_path,
+            form_values={
+                "case_number": "305/23.2GCBJA",
+                "court_email": "beja.judicial@tribunais.org.pt",
+                "case_entity": "Ministério Público",
+                "case_city": "Camões",
+                "service_entity": "Ministério Público",
+                "service_city": "Camões",
+                "service_date": "2026-03-20",
+                "travel_km_outbound": "39",
+                "pages": "0",
+                "word_count": "0",
+                "rate_per_word": "0",
+                "expected_total": "0",
+                "amount_paid": "0",
+                "api_cost": "0",
+                "profit": "0",
+            },
+            service_same_checked=True,
+            include_transport_sentence_in_honorarios_checked=True,
+        )
+
+    assert exc_info.value.code == "unknown_case_city"
+    assert exc_info.value.city == "Camões"
 
 
 def test_browser_profile_management_and_joblog_delete_helpers(tmp_path: Path) -> None:
@@ -664,6 +786,60 @@ def test_export_interpretation_honorarios_reports_local_only_when_pdf_fails(
     assert response["status"] == "local_only"
     assert Path(response["normalized_payload"]["docx_path"]).exists()
     assert response["diagnostics"]["pdf_export"]["failure_code"] == "timeout"
+
+
+def test_export_interpretation_honorarios_rejects_unknown_service_city(tmp_path: Path) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+    outputs_dir = tmp_path / "shadow" / "outputs"
+
+    with pytest.raises(interpretation_service.InterpretationValidationError) as exc_info:
+        interpretation_service.export_interpretation_honorarios(
+            settings_path=settings_file,
+            outputs_dir=outputs_dir,
+            form_values={
+                "case_number": "305/23.2GCBJA",
+                "case_entity": "Ministério Público",
+                "case_city": "Beja",
+                "service_entity": "Ministério Público",
+                "service_city": "Camões",
+                "service_date": "2026-03-20",
+                "travel_km_outbound": "39",
+                "recipient_block": "",
+                "include_transport_sentence_in_honorarios": True,
+                "use_service_location_in_honorarios": False,
+            },
+            service_same_checked=False,
+        )
+
+    assert exc_info.value.code == "unknown_service_city"
+    assert exc_info.value.city == "Camões"
+
+
+def test_export_interpretation_honorarios_rejects_zero_distance_with_transport_enabled(tmp_path: Path) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+    outputs_dir = tmp_path / "shadow" / "outputs"
+
+    with pytest.raises(interpretation_service.InterpretationValidationError) as exc_info:
+        interpretation_service.export_interpretation_honorarios(
+            settings_path=settings_file,
+            outputs_dir=outputs_dir,
+            form_values={
+                "case_number": "305/23.2GCBJA",
+                "case_entity": "Ministério Público",
+                "case_city": "Beja",
+                "service_entity": "Ministério Público",
+                "service_city": "Beja",
+                "service_date": "2026-03-20",
+                "travel_km_outbound": "0",
+                "recipient_block": "",
+                "include_transport_sentence_in_honorarios": True,
+                "use_service_location_in_honorarios": False,
+            },
+            service_same_checked=True,
+        )
+
+    assert exc_info.value.code == "distance_must_be_positive"
+    assert exc_info.value.city == "Beja"
 
 
 def test_simulate_extension_handoff_requires_message_and_thread_ids(tmp_path: Path, monkeypatch) -> None:

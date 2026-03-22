@@ -47,6 +47,10 @@ Before browser/app or bridge triage on Windows, verify any required localhost li
 
 For browser-shell review work, keep `8877` for the normal daily browser app and `8888` for the fixed feature-preview contract. If an old cached preview tab shows fetch failures on `8888`, relaunch the preview instead of treating it as a product-runtime regression on the daily app.
 
+For this local source checkout, Edge native-host registration should prefer the app-data wrapper `AppData\\Roaming\\LegalPDFTranslate\\native_messaging\\LegalPDFGmailFocusHost.cmd` instead of relying on `dist\\legalpdf_translate\\LegalPDFGmailFocusHost.exe`. Windows App Control on this machine can block the packaged host executable even when the repo venv/module path is healthy.
+
+Live Gmail bridge ownership must stay on the browser app listener at `8877`. Fixed review previews on `8888` are for branch review only and must not become the real live Gmail bridge owner.
+
 For the Arabic DOCX review gate, WSL-only validation is insufficient because Word automation, visible Word editing, and save-detection behavior are Windows-host runtime facts.
 
 ## Performance and Tolerance Guidance

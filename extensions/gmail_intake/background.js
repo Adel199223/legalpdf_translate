@@ -208,7 +208,16 @@ async function openOrFocusBrowserApp(browserUrl) {
     return false;
   }
   const candidates = await chrome.tabs.query({ url: `${url.origin}/*` });
-  const existing = candidates.find((tab) => urlsMatchForFocus(tab.url, targetUrl));
+  const exactMatch = candidates.find((tab) => urlsMatchForFocus(tab.url, targetUrl));
+  if (exactMatch && Number.isInteger(exactMatch.id)) {
+    await chrome.tabs.update(exactMatch.id, { active: true });
+    if (Number.isInteger(exactMatch.windowId)) {
+      await chrome.windows.update(exactMatch.windowId, { focused: true });
+    }
+    await chrome.tabs.reload(exactMatch.id, { bypassCache: true });
+    return true;
+  }
+  const existing = candidates.find((tab) => Number.isInteger(tab.id));
   if (existing && Number.isInteger(existing.id)) {
     await chrome.tabs.update(existing.id, { active: true, url: targetUrl });
     if (Number.isInteger(existing.windowId)) {
@@ -259,7 +268,7 @@ async function resolveBridgeConfigForClick() {
     ok: false,
     degradedMode: true,
     nativeResponse: null,
-    message: "Gmail bridge is not configured in LegalPDF Translate.",
+    message: "LegalPDF Translate native host is unavailable. Reload the extension or open the options page.",
   };
 }
 

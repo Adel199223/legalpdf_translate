@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 import legalpdf_translate.browser_app_service as browser_app_service
 import legalpdf_translate.shadow_web.app as shadow_app_module
 from legalpdf_translate.build_identity import RuntimeBuildIdentity
+from legalpdf_translate.interpretation_service import InterpretationValidationError
 from legalpdf_translate.shadow_runtime import BrowserDataPaths, ShadowRuntimePaths
 from legalpdf_translate.word_automation import WordAutomationResult
 
@@ -95,6 +96,9 @@ def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> 
         assert "settings_admin" in bootstrap_payload["normalized_payload"]
         assert "power_tools" in bootstrap_payload["normalized_payload"]
         assert bootstrap_payload["normalized_payload"]["parity_audit"]["promotion_recommendation"]["status"] == "ready_for_daily_use"
+        assert "interpretation_reference" in bootstrap_payload["normalized_payload"]
+        assert "Vidigueira" in bootstrap_payload["normalized_payload"]["interpretation_reference"]["available_cities"]
+        assert bootstrap_payload["normalized_payload"]["interpretation_reference"]["travel_origin_label"] == "Marmelar"
 
         save = client.post(
             "/api/interpretation/save-row",
@@ -155,9 +159,32 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert "Gmail Handoff" in text
         assert "Focused Intake Review" in text
         assert "Message Details and Overrides" in text
-        assert 'id="gmail-open-session"' in text
-        assert 'id="gmail-preview-session"' in text
-        assert 'id="gmail-session-banner"' in text
+        assert "Open Attachment Review" in text
+        assert 'id="gmail-resume-step"' in text
+        assert 'id="gmail-resume-result"' in text
+        assert 'id="gmail-open-full-workspace"' in text
+        assert 'id="gmail-open-session"' not in text
+        assert 'id="gmail-preview-session"' not in text
+        assert 'id="gmail-review-drawer"' in text
+        assert 'id="gmail-review-drawer-backdrop"' in text
+        assert 'id="gmail-close-review-drawer"' in text
+        assert 'id="gmail-review-summary"' in text
+        assert 'id="gmail-review-summary-details"' in text
+        assert 'id="gmail-review-summary-grid"' in text
+        assert 'id="gmail-review-detail"' in text
+        assert 'id="gmail-preview-drawer"' in text
+        assert 'id="gmail-preview-drawer-backdrop"' in text
+        assert 'id="gmail-close-preview-drawer"' in text
+        assert 'id="gmail-preview-frame"' in text
+        assert 'id="gmail-preview-page"' in text
+        assert 'id="gmail-preview-open-tab"' in text
+        assert 'id="gmail-preview-apply"' in text
+        assert "Gmail Attachment Review" in text
+        assert "Attachments" in text
+        assert "Current Attachment" in text
+        assert "Attachment Preview" in text
+        assert "Preview the selected attachment to inspect it here." not in text
+        assert 'id="gmail-session-banner"' not in text
         assert 'id="gmail-session-drawer"' in text
         assert 'id="gmail-session-drawer-backdrop"' in text
         assert 'id="gmail-close-session-drawer"' in text
@@ -169,22 +196,52 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="translation-completion-drawer"' in text
         assert 'id="translation-completion-drawer-backdrop"' in text
         assert 'id="translation-close-completion"' in text
+        assert 'id="translation-gmail-step-card"' in text
+        assert 'id="translation-gmail-confirm-current"' in text
+        assert '<select id="case-city"' in text
+        assert '<select id="service-city"' in text
+        assert 'id="case-city-add"' in text
+        assert 'id="service-city-add"' in text
+        assert 'id="interpretation-location-guard-card"' in text
+        assert 'id="travel-km-hint"' in text
+        assert 'id="interpretation-city-dialog-backdrop"' in text
+        assert 'id="interpretation-city-dialog-name"' in text
+        assert 'id="interpretation-city-dialog-distance"' in text
+        assert "Preview the selected attachment to inspect it here." not in text
         assert "Finish Translation" in text
         assert "Completion Surface" in text
         assert "Export Review Queue" in text
+        assert 'id="gmail-batch-finalize-drawer"' in text
+        assert 'id="gmail-batch-finalize-drawer-backdrop"' in text
+        assert 'id="gmail-batch-finalize-run"' in text
+        assert "Finalize Gmail Batch" in text
         assert "Run Metrics (auto-filled)" in text
         assert "Amounts (EUR)" in text
+        assert "Current Interpretation Step" in text
+        assert 'id="interpretation-session-shell"' in text
+        assert 'id="interpretation-session-result"' in text
+        assert 'id="interpretation-session-primary"' in text
+        assert 'id="interpretation-session-open-full-workspace"' in text
+        assert 'class="workspace-drawer workspace-drawer-interpretation"' in text
         assert "Interpretation Intake" in text
         assert "Seed Review" in text
         assert 'id="interpretation-open-review"' in text
         assert 'id="interpretation-review-drawer"' in text
         assert 'id="interpretation-review-drawer-backdrop"' in text
-        assert 'id="interpretation-open-gmail-session"' in text
+        assert 'id="interpretation-review-summary-card"' in text
+        assert 'id="interpretation-review-context-card"' in text
+        assert 'id="interpretation-review-context-title"' in text
+        assert 'id="interpretation-completion-card"' in text
+        assert 'id="interpretation-review-details"' in text
+        assert 'id="interpretation-review-details-summary"' in text
+        assert 'id="interpretation-finalize-gmail"' in text
+        assert 'id="interpretation-gmail-result"' in text
+        assert 'id="interpretation-gmail-next-step-card"' not in text
+        assert 'id="interpretation-open-gmail-session"' not in text
         assert "SERVICE" in text
         assert "RECIPIENT" in text
         assert "Continue In Translation" in text
         assert "Continue In Interpretation" in text
-        assert "Open Session Actions" in text
         assert 'data-view="recent-jobs"' in text
         assert "Bounded Review Flow" in text
         assert "Recent Translation Runs" in text
@@ -336,6 +393,8 @@ def test_shadow_web_bootstrap_includes_gmail_workspace_payload(tmp_path: Path, m
         assert response.status_code == 200
         assert "gmail" in payload["normalized_payload"]
         assert "defaults" in payload["normalized_payload"]["gmail"]
+        assert payload["normalized_payload"]["gmail"]["review_event_id"] == 0
+        assert payload["normalized_payload"]["gmail"]["message_signature"] == ""
         assert payload["normalized_payload"]["extension_lab"]["prepare_reason_catalog"]
 
 
@@ -436,6 +495,8 @@ def test_shadow_web_gmail_routes_delegate_to_session_manager(tmp_path: Path, mon
                     },
                 },
                 "message": {"message_id": "msg-1", "attachments": []},
+                "review_event_id": 4,
+                "message_signature": "sig-msg-1",
             },
             "diagnostics": {},
             "capability_flags": {},
@@ -506,6 +567,8 @@ def test_shadow_web_gmail_routes_delegate_to_session_manager(tmp_path: Path, mon
             "normalized_payload": {
                 "defaults": {"message_context": {}, "default_output_dir": str(outputs_dir)},
                 "active_session": {"kind": "translation", "completed": False},
+                "review_event_id": 4,
+                "message_signature": "sig-msg-1",
             },
             "diagnostics": {},
             "capability_flags": {},
@@ -531,6 +594,8 @@ def test_shadow_web_gmail_routes_delegate_to_session_manager(tmp_path: Path, mon
         load_payload = load_response.json()
         assert load_response.status_code == 200
         assert load_payload["normalized_payload"]["load_result"]["message"]["message_id"] == "msg-1"
+        assert load_payload["normalized_payload"]["review_event_id"] == 4
+        assert load_payload["normalized_payload"]["message_signature"] == "sig-msg-1"
         assert recorded["load_message"]["runtime_mode"] == "live"
         assert recorded["load_message"]["workspace_id"] == "gmail-ws-1"
 
@@ -553,6 +618,8 @@ def test_shadow_web_gmail_routes_delegate_to_session_manager(tmp_path: Path, mon
         current_payload = current_response.json()
         assert current_response.status_code == 200
         assert current_payload["normalized_payload"]["active_session"]["kind"] == "translation"
+        assert current_payload["normalized_payload"]["review_event_id"] == 4
+        assert current_payload["normalized_payload"]["message_signature"] == "sig-msg-1"
 
 
 def test_shadow_web_gmail_finalize_routes_and_attachment_file(tmp_path: Path, monkeypatch) -> None:
@@ -1098,7 +1165,16 @@ def test_shadow_web_export_route_returns_validation_json(tmp_path: Path, monkeyp
     monkeypatch.setattr(
         shadow_app_module,
         "export_interpretation_honorarios",
-        lambda **kwargs: (_ for _ in ()).throw(ValueError("Service date is required.")),
+        lambda **kwargs: (_ for _ in ()).throw(
+            InterpretationValidationError(
+                code="unknown_service_city",
+                message="Service city must be selected from a known city or added first.",
+                field="service_city",
+                city="Camões",
+                travel_origin_label="Marmelar",
+                city_source="imported_metadata",
+            )
+        ),
     )
 
     with _build_app(tmp_path, monkeypatch) as client:
@@ -1120,4 +1196,87 @@ def test_shadow_web_export_route_returns_validation_json(tmp_path: Path, monkeyp
     payload = response.json()
     assert response.status_code == 422
     assert payload["status"] == "failed"
-    assert payload["diagnostics"]["error"] == "Service date is required."
+    assert payload["diagnostics"]["error"] == "Service city must be selected from a known city or added first."
+    assert payload["diagnostics"]["validation_error"]["code"] == "unknown_service_city"
+    assert payload["diagnostics"]["validation_error"]["city"] == "Camões"
+    assert payload["normalized_payload"]["validation_error"]["travel_origin_label"] == "Marmelar"
+
+
+def test_shadow_web_gmail_interpretation_finalize_route_returns_structured_validation_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        client.app.state.shadow_context.gmail_sessions.finalize_interpretation = lambda **_kwargs: (_ for _ in ()).throw(
+            InterpretationValidationError(
+                code="distance_required",
+                message="One-way distance from Marmelar to Beja is required.",
+                field="travel_km_outbound",
+                city="Beja",
+                travel_origin_label="Marmelar",
+                city_source="current_selection",
+            )
+        )
+        response = client.post(
+            "/api/gmail/interpretation/finalize",
+            json={
+                "form_values": {
+                    "case_number": "305/23.2GCBJA",
+                    "case_entity": "Ministério Público",
+                    "case_city": "Beja",
+                    "service_city": "Beja",
+                    "service_date": "2026-03-20",
+                },
+                "service_same_checked": True,
+            },
+        )
+
+    payload = response.json()
+    assert response.status_code == 422
+    assert payload["status"] == "failed"
+    assert payload["diagnostics"]["validation_error"]["code"] == "distance_required"
+    assert payload["normalized_payload"]["validation_error"]["field"] == "travel_km_outbound"
+
+
+def test_shadow_web_add_interpretation_city_route_returns_updated_reference(tmp_path: Path, monkeypatch) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/api/interpretation/cities/add",
+            json={
+                "field_name": "service_city",
+                "city": "Serpa",
+                "profile_id": "primary",
+                "include_transport_sentence_in_honorarios": True,
+                "travel_km_outbound": "32",
+            },
+        )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["normalized_payload"]["city"] == "Serpa"
+    assert "Serpa" in payload["normalized_payload"]["interpretation_reference"]["available_cities"]
+    assert payload["normalized_payload"]["profile_distance_summary"]["travel_distances_by_city"]["Serpa"] == 32.0
+
+
+def test_shadow_web_add_interpretation_city_route_returns_structured_distance_validation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/api/interpretation/cities/add",
+            json={
+                "field_name": "service_city",
+                "city": "Serpa",
+                "profile_id": "primary",
+                "include_transport_sentence_in_honorarios": True,
+                "travel_km_outbound": "",
+            },
+        )
+
+    payload = response.json()
+    assert response.status_code == 422
+    assert payload["status"] == "failed"
+    assert payload["diagnostics"]["validation_error"]["code"] == "distance_required"
+    assert payload["diagnostics"]["validation_error"]["city"] == "Serpa"

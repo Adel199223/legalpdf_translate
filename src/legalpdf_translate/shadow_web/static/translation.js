@@ -13,6 +13,29 @@ const translationState = {
   lastAutoOpenedCompletionKey: "",
 };
 
+let lastTranslationUiSnapshotKey = "";
+
+function translationUiSnapshotKey() {
+  return JSON.stringify(getTranslationUiSnapshot());
+}
+
+function notifyTranslationUiStateChanged({ force = false } = {}) {
+  const nextKey = translationUiSnapshotKey();
+  if (!force && nextKey === lastTranslationUiSnapshotKey) {
+    return;
+  }
+  lastTranslationUiSnapshotKey = nextKey;
+  window.dispatchEvent(new CustomEvent("legalpdf:translation-ui-state-changed"));
+}
+
+function clearTranslationCompletionSeed() {
+  translationState.currentSeed = null;
+  translationState.currentRowId = null;
+  setFieldValue("translation-row-id", "");
+  syncTranslationCompletionSurface();
+  notifyTranslationUiStateChanged();
+}
+
 function qs(id) {
   return document.getElementById(id);
 }
@@ -310,9 +333,10 @@ function setTranslationCompletionDrawerOpen(open) {
   backdrop.classList.toggle("hidden", !translationState.completionDrawerOpen);
   backdrop.setAttribute("aria-hidden", translationState.completionDrawerOpen ? "false" : "true");
   document.body.dataset.translationCompletionDrawer = translationState.completionDrawerOpen ? "open" : "closed";
+  notifyTranslationUiStateChanged();
 }
 
-function openTranslationCompletionDrawer({ auto = false } = {}) {
+export function openTranslationCompletionDrawer({ auto = false } = {}) {
   if (!hasTranslationCompletionSurface()) {
     return;
   }
@@ -322,8 +346,29 @@ function openTranslationCompletionDrawer({ auto = false } = {}) {
   }
 }
 
-function closeTranslationCompletionDrawer() {
+export function closeTranslationCompletionDrawer() {
   setTranslationCompletionDrawerOpen(false);
+}
+
+export function getTranslationUiSnapshot() {
+  return {
+    currentJobStatus: translationState.currentJob?.status || "",
+    currentJobId: translationState.currentJobId || "",
+    hasCompletionSurface: hasTranslationCompletionSurface(),
+    completionDrawerOpen: translationState.completionDrawerOpen,
+    currentRowId: translationState.currentRowId || null,
+  };
+}
+
+export async function startTranslationLaunch(launch, { auto = false } = {}) {
+  if (!launch || typeof launch !== "object") {
+    return;
+  }
+  applyTranslationLaunch(launch);
+  setActiveView("new-job");
+  setPanelStatus("translation", "", auto ? "Starting Gmail translation run..." : "Starting translation run...");
+  await handleTranslate();
+  closeTranslationCompletionDrawer();
 }
 
 function completionButtonLabel() {
@@ -637,6 +682,7 @@ function renderTranslationJob(job) {
   } else {
     stopPolling();
   }
+  notifyTranslationUiStateChanged();
 }
 
 function renderTranslationHistory(history) {
@@ -801,6 +847,7 @@ async function handleAnalyze() {
     hint: "Analyze request completed.",
     open: false,
   });
+  clearTranslationCompletionSeed();
   renderTranslationJob(payload.normalized_payload.job || null);
   await refreshTranslationHistory();
 }
@@ -820,6 +867,7 @@ async function handleTranslate() {
     hint: "Translation run started.",
     open: false,
   });
+  clearTranslationCompletionSeed();
   renderTranslationJob(payload.normalized_payload.job || null);
   await refreshTranslationHistory();
 }

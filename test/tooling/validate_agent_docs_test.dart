@@ -114,11 +114,15 @@ void _replaceInFile(String root, String relPath, String from, String to) {
 void _replaceSessionResumeBranch(String root, String branchName) {
   final File file = File(_resolve(root, 'docs/assistant/SESSION_RESUME.md'));
   final String text = file.readAsStringSync();
+  final String expectedLine = '- Branch: `$branchName`';
   final String updated = text.replaceFirstMapped(
     RegExp(r'^- Branch:\s+`[^`]+`$', multiLine: true),
-    (Match _) => '- Branch: `$branchName`',
+    (Match _) => expectedLine,
   );
   if (identical(updated, text) || updated == text) {
+    if (text.contains(expectedLine)) {
+      return;
+    }
     throw _CaseFailure('SESSION_RESUME.md did not contain a branch line to replace.');
   }
   file.writeAsStringSync(updated);

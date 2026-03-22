@@ -5,6 +5,68 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Convert-CodexPathToWindows {
+    param(
+        [string]$PathText
+    )
+
+    $trimmed = [string]$PathText
+    if ($null -eq $PathText) {
+        $trimmed = ""
+    }
+    $trimmed = $trimmed.Trim()
+    if ($trimmed -match '^/mnt/([A-Za-z])/(.*)$') {
+        return ($Matches[1].ToUpper() + ':\' + ($Matches[2] -replace '/', '\'))
+    }
+    return $trimmed
+}
+
+function Get-CanonicalRepoRoot {
+    param(
+        [string]$RepoRoot
+    )
+
+    $buildConfig = Join-Path $RepoRoot "docs\assistant\runtime\CANONICAL_BUILD.json"
+    if (-not (Test-Path -LiteralPath $buildConfig)) {
+        return $null
+    }
+    try {
+        $config = (Get-Content -LiteralPath $buildConfig -Raw | ConvertFrom-Json)
+    }
+    catch {
+        return $null
+    }
+    $candidate = Convert-CodexPathToWindows -PathText ([string]$config.canonical_worktree_path)
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        return $null
+    }
+    if (-not (Test-Path -LiteralPath $candidate)) {
+        return $null
+    }
+    return (Resolve-Path -LiteralPath $candidate).Path
+}
+
+function Resolve-RepoPython {
+    param(
+        [string]$RepoRoot
+    )
+
+    $candidateRoots = @($RepoRoot)
+    $canonicalRoot = Get-CanonicalRepoRoot -RepoRoot $RepoRoot
+    if ($canonicalRoot -and ($canonicalRoot -notin $candidateRoots)) {
+        $candidateRoots += $canonicalRoot
+    }
+    foreach ($root in $candidateRoots) {
+        foreach ($relativePath in @(".venv311\Scripts\python.exe", ".venv\Scripts\python.exe")) {
+            $candidate = Join-Path $root $relativePath
+            if (Test-Path -LiteralPath $candidate) {
+                return $candidate
+            }
+        }
+    }
+    return "python"
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $sourcePath = Join-Path $repoRoot "extensions\gmail_intake"
 $edgeUserData = Join-Path $env:LOCALAPPDATA "Microsoft\Edge\User Data"
@@ -17,10 +79,8 @@ if (-not (Test-Path -LiteralPath $edgeUserData)) {
     throw "Edge user data directory not found at: $edgeUserData"
 }
 
-$pythonExe = Join-Path $repoRoot ".venv311\Scripts\python.exe"
-if (-not (Test-Path -LiteralPath $pythonExe)) {
-    $pythonExe = "python"
-}
+$pythonExe = Resolve-RepoPython -RepoRoot $repoRoot
+$repoSourcePath = Join-Path $repoRoot "src"
 
 $robocopyExe = Join-Path $env:SystemRoot "System32\robocopy.exe"
 if (-not (Test-Path -LiteralPath $robocopyExe)) {
@@ -29,11 +89,21 @@ if (-not (Test-Path -LiteralPath $robocopyExe)) {
 
 # The report is derived from Edge Secure Preferences entries for unpacked extensions/gmail_intake loads.
 Push-Location $repoRoot
+$previousPythonPath = $env:PYTHONPATH
 try {
+    if (Test-Path -LiteralPath $repoSourcePath) {
+        if ([string]::IsNullOrWhiteSpace($previousPythonPath)) {
+            $env:PYTHONPATH = $repoSourcePath
+        }
+        else {
+            $env:PYTHONPATH = "$repoSourcePath;$previousPythonPath"
+        }
+    }
     $reportPath = [System.IO.Path]::GetTempFileName()
     & $pythonExe -m legalpdf_translate.gmail_focus_host --edge-extension-report --edge-extension-report-file $reportPath
 }
 finally {
+    $env:PYTHONPATH = $previousPythonPath
     Pop-Location
 }
 try {

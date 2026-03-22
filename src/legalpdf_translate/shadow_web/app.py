@@ -37,6 +37,8 @@ from legalpdf_translate.gmail_browser_service import (
     extension_prepare_reason_catalog,
 )
 from legalpdf_translate.interpretation_service import (
+    InterpretationValidationError,
+    add_interpretation_city,
     autofill_interpretation_from_notification_pdf,
     autofill_interpretation_from_photo,
     build_interpretation_capability_flags,
@@ -308,16 +310,22 @@ def _validation_error_response(
     target: ActiveBrowserTarget,
     *,
     message: str,
+    validation_error: Mapping[str, Any] | None = None,
     status_code: int = 422,
 ) -> JSONResponse:
+    normalized_payload: dict[str, Any] = {}
+    diagnostics: dict[str, Any] = {"error": message}
+    if validation_error:
+        normalized_payload["validation_error"] = dict(validation_error)
+        diagnostics["validation_error"] = dict(validation_error)
     return JSONResponse(
         _merge_response(
             context,
             target,
             {
                 "status": "failed",
-                "normalized_payload": {},
-                "diagnostics": {"error": message},
+                "normalized_payload": normalized_payload,
+                "diagnostics": diagnostics,
             },
         ),
         status_code=status_code,
@@ -379,6 +387,11 @@ def create_shadow_app(
     app = FastAPI(title="LegalPDF Translate Browser Parity", version="0.2.0", lifespan=_lifespan)
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     app.state.shadow_context = shadow_context
+
+    def _structured_validation_payload(exc: Exception) -> dict[str, Any] | None:
+        if isinstance(exc, InterpretationValidationError):
+            return exc.to_payload()
+        return None
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
@@ -1123,7 +1136,12 @@ def create_shadow_app(
                 output_filename=str(payload.get("output_filename", "") or "").strip() or None,
             )
         except ValueError as exc:
-            return _validation_error_response(context, target, message=str(exc))
+            return _validation_error_response(
+                context,
+                target,
+                message=str(exc),
+                validation_error=_structured_validation_payload(exc),
+            )
         return JSONResponse(_merge_response(context, target, response))
 
     @app.post("/api/gmail/reset")
@@ -1475,7 +1493,12 @@ def create_shadow_app(
                 profile_id=str(payload.get("profile_id", "") or "").strip() or None,
             )
         except ValueError as exc:
-            return _validation_error_response(context, target, message=str(exc))
+            return _validation_error_response(
+                context,
+                target,
+                message=str(exc),
+                validation_error=_structured_validation_payload(exc),
+            )
         return JSONResponse(_merge_response(context, target, response))
 
     @app.post("/api/interpretation/export-honorarios")
@@ -1510,7 +1533,39 @@ def create_shadow_app(
                 service_same_checked=bool(payload.get("service_same_checked", True)),
             )
         except ValueError as exc:
-            return _validation_error_response(context, target, message=str(exc))
+            return _validation_error_response(
+                context,
+                target,
+                message=str(exc),
+                validation_error=_structured_validation_payload(exc),
+            )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/cities/add")
+    async def api_add_interpretation_city(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = add_interpretation_city(
+                settings_path=target.data_paths.settings_path,
+                city=str(payload.get("city", "") or "").strip(),
+                profile_id=str(payload.get("profile_id", "") or "").strip() or None,
+                include_transport_sentence=bool(payload.get("include_transport_sentence_in_honorarios", False)),
+                travel_km_outbound=payload.get("travel_km_outbound", ""),
+                field_name=str(payload.get("field_name", "") or "service_city").strip() or "service_city",
+            )
+        except ValueError as exc:
+            return _validation_error_response(
+                context,
+                target,
+                message=str(exc),
+                validation_error=_structured_validation_payload(exc),
+            )
         return JSONResponse(_merge_response(context, target, response))
 
     @app.get("/api/interpretation/history")
