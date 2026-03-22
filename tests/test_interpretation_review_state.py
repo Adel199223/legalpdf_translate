@@ -200,6 +200,7 @@ console.log(JSON.stringify({{
         input=script,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     return json.loads(completed.stdout)
