@@ -216,6 +216,9 @@ def test_gmail_extension_scripts_keep_stage_one_contract_markers() -> None:
     assert "LegalPDF Translate native host is unavailable. Reload the extension or open the options page." in background_js
     assert "chrome.tabs.reload" not in background_js
     assert "bypassCache: true" not in background_js
+    assert "waitForLaunchedBrowserAppTab" in background_js
+    assert "nativeResponse.launched === true" in background_js
+    assert "The browser app may still need manual focus." in background_js
     assert "candidates.find((tab) => Number.isInteger(tab.id))" in background_js
     assert "chrome.tabs.update(existing.id, { active: true, url: targetUrl })" in background_js
     assert "Bridge token is missing in extension options." not in background_js

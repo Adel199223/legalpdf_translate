@@ -87,10 +87,14 @@ Speed up Gmail browser handoff and replace raw attachment downloads with a Qt-st
   - added cached Gmail preview page metadata (`page_sizes`) and a unique preview filename strategy for browser downloads
   - added `/api/gmail/preview-attachment/{attachment_id}/pages/{page_number}` for rendered preview pages
   - replaced raw PDF iframe preview with an inline multi-page browser drawer using page cards, jump/go controls, per-page `Start from this page`, and page-aware start-page application
+  - extended the detached browser launcher with additive `--view` routing so cold-start browser app launches can target `#gmail-intake` directly without changing existing `#new-job` defaults
+  - changed native-host browser auto-launch to use the detached browser launcher with explicit live Gmail route intent instead of spawning the raw shadow-web server module directly
+  - split extension behavior between hot-path reuse and cold-start launch waits so the launched browser-app tab gets a short chance to appear before the extension falls back to a controlled exact-URL tab create
+  - tightened browser auto-launch target selection so the currently running worktree keeps its own launcher path while still borrowing canonical Python when needed
 - Verified locally:
   - JS syntax checks passed for touched browser modules
-  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests/test_gmail_intake.py tests/test_gmail_browser_service.py tests/test_shadow_web_api.py` -> `35 passed`
-  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests/test_browser_gmail_bridge.py tests/test_gmail_focus_host.py tests/test_gmail_review_state.py tests/test_shadow_web_server.py` -> `33 passed`
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests/test_launch_browser_app_live_detached.py tests/test_gmail_focus_host.py tests/test_gmail_intake.py` -> `39 passed`
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests/test_gmail_browser_service.py tests/test_shadow_web_api.py tests/test_browser_gmail_bridge.py tests/test_gmail_review_state.py tests/test_shadow_web_server.py` -> `35 passed`
   - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m compileall src tests` passed
   - `dart run tooling/validate_agent_docs.dart` passed
   - `dart run tooling/validate_workspace_hygiene.dart` passed

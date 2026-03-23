@@ -1,5 +1,7 @@
 const DEFAULT_BRIDGE_PORT = 8765;
 const NATIVE_FOCUS_HOST = "com.legalpdf.gmail_focus";
+const COLD_START_TAB_WAIT_MS = 2200;
+const COLD_START_TAB_POLL_MS = 150;
 
 function normalizePort(value) {
   const parsed = Number.parseInt(String(value ?? DEFAULT_BRIDGE_PORT), 10);
@@ -15,6 +17,10 @@ function normalizeToken(value) {
 
 function normalizeUrl(value) {
   return String(value ?? "").trim();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
 }
 
 async function getStoredBridgeConfig() {
@@ -231,6 +237,33 @@ async function openOrFocusBrowserApp(browserUrl) {
   return true;
 }
 
+async function waitForLaunchedBrowserAppTab(browserUrl, timeoutMs = COLD_START_TAB_WAIT_MS) {
+  const targetUrl = normalizeUrl(browserUrl);
+  if (targetUrl === "") {
+    return false;
+  }
+  let origin;
+  try {
+    origin = new URL(targetUrl).origin;
+  } catch (_error) {
+    return false;
+  }
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs || 0));
+  while (Date.now() <= deadline) {
+    const candidates = await chrome.tabs.query({ url: `${origin}/*` });
+    const exactMatch = candidates.find((tab) => urlsMatchForFocus(tab.url, targetUrl));
+    if (exactMatch && Number.isInteger(exactMatch.id)) {
+      await chrome.tabs.update(exactMatch.id, { active: true });
+      if (Number.isInteger(exactMatch.windowId)) {
+        await chrome.windows.update(exactMatch.windowId, { focused: true });
+      }
+      return true;
+    }
+    await sleep(COLD_START_TAB_POLL_MS);
+  }
+  return false;
+}
+
 async function resolveBridgeConfigForClick() {
   const nativePreparation = await requestNativePreparation();
   if (nativePreparation.ok) {
@@ -271,7 +304,28 @@ async function resolveBridgeConfigForClick() {
   };
 }
 
-async function postContext(tabId, context, config, nativeResponse, focusNotice, browserAppOpened = false) {
+async function settleBrowserAppHandoff(browserUrl, browserAppOpened, waitForLaunchedTab) {
+  let resolved = Boolean(browserAppOpened);
+  const targetUrl = normalizeUrl(browserUrl);
+  if (!resolved && waitForLaunchedTab && targetUrl !== "") {
+    resolved = await waitForLaunchedBrowserAppTab(targetUrl);
+  }
+  if (!resolved && targetUrl !== "") {
+    resolved = await openOrFocusBrowserApp(targetUrl);
+  }
+  return resolved;
+}
+
+async function postContext(
+  tabId,
+  context,
+  config,
+  nativeResponse,
+  focusNotice,
+  browserAppOpened = false,
+  browserUrl = "",
+  waitForLaunchedTab = false,
+) {
   const endpoint = `http://127.0.0.1:${config.bridgePort}/gmail-intake`;
   let response;
   try {
@@ -289,10 +343,13 @@ async function postContext(tabId, context, config, nativeResponse, focusNotice, 
       }),
     });
   } catch (_error) {
+    const resolvedBrowserOpen = await settleBrowserAppHandoff(browserUrl, browserAppOpened, waitForLaunchedTab);
     await notifyTab(
       tabId,
       "error",
-      `LegalPDF Translate is not listening on ${endpoint}.`
+      resolvedBrowserOpen
+        ? `LegalPDF Translate is not listening on ${endpoint}.`
+        : `LegalPDF Translate is not listening on ${endpoint}. The browser app may still need manual focus.`
     );
     return;
   }
@@ -305,14 +362,20 @@ async function postContext(tabId, context, config, nativeResponse, focusNotice, 
   }
 
   if (!response.ok) {
+    const resolvedBrowserOpen = await settleBrowserAppHandoff(browserUrl, browserAppOpened, waitForLaunchedTab);
     const message =
       typeof payload.message === "string" && payload.message.trim() !== ""
         ? payload.message.trim()
         : `LegalPDF Translate rejected the request (${response.status}).`;
-    await notifyTab(tabId, "error", message);
+    await notifyTab(
+      tabId,
+      "error",
+      resolvedBrowserOpen ? message : `${message} The browser app may still need manual focus.`,
+    );
     return;
   }
 
+  const resolvedBrowserOpen = await settleBrowserAppHandoff(browserUrl, browserAppOpened, waitForLaunchedTab);
   const baseMessage =
     typeof payload.message === "string" && payload.message.trim() !== ""
       ? payload.message.trim()
@@ -321,7 +384,7 @@ async function postContext(tabId, context, config, nativeResponse, focusNotice, 
   if (focusNotice !== "") {
     suffix.push(focusNotice);
   }
-  if (nativeResponse && nativeResponse.ui_owner === "browser_app" && !browserAppOpened) {
+  if (nativeResponse && nativeResponse.ui_owner === "browser_app" && !resolvedBrowserOpen) {
     suffix.push("The browser app may need manual focus.");
   }
   const message = suffix.length ? `${baseMessage} ${suffix.join(" ")}` : baseMessage;
@@ -367,12 +430,20 @@ chrome.action.onClicked.addListener(async (tab) => {
 
   const focusNotice = buildFocusNotice(bridgeResolution.nativeResponse, bridgeResolution.degradedMode);
   let browserAppOpened = false;
+  const browserUrl = normalizeUrl(bridgeResolution.nativeResponse?.browser_url);
+  const waitForLaunchedTab = Boolean(
+    bridgeResolution.nativeResponse
+    && bridgeResolution.nativeResponse.ui_owner === "browser_app"
+    && bridgeResolution.nativeResponse.launched === true
+    && browserUrl !== ""
+  );
   if (
     bridgeResolution.nativeResponse
     && bridgeResolution.nativeResponse.ui_owner === "browser_app"
-    && normalizeUrl(bridgeResolution.nativeResponse.browser_url) !== ""
+    && browserUrl !== ""
+    && !waitForLaunchedTab
   ) {
-    browserAppOpened = await openOrFocusBrowserApp(bridgeResolution.nativeResponse.browser_url);
+    browserAppOpened = await openOrFocusBrowserApp(browserUrl);
   }
   await postContext(
     tab.id,
@@ -381,5 +452,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     bridgeResolution.nativeResponse,
     focusNotice,
     browserAppOpened,
+    browserUrl,
+    waitForLaunchedTab,
   );
 });
