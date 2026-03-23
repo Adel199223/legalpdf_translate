@@ -11,6 +11,8 @@ import tempfile
 import threading
 from typing import Any, Mapping, Sequence
 
+import fitz
+
 from .gmail_batch import (
     DownloadedGmailAttachment,
     FetchedGmailMessage,
@@ -56,7 +58,7 @@ from .interpretation_service import (
     serialize_honorarios_draft,
 )
 from .output_paths import require_writable_output_dir
-from .source_document import get_source_page_count
+from .source_document import get_source_page_count, is_pdf_source, render_source_page_image_data_url
 from .translation_service import TranslationJobManager, save_translation_row
 from .user_settings import load_gui_settings_from_path
 
@@ -64,6 +66,9 @@ GMAIL_WORKFLOW_TRANSLATION = "translation"
 GMAIL_WORKFLOW_INTERPRETATION = "interpretation"
 
 _DEFAULT_GMAIL_OUTPUT_SUBDIR = "gmail_browser"
+_PREVIEW_RENDER_START_DPI = 110
+_PREVIEW_RENDER_MAX_DPI = 144
+_PREVIEW_RENDER_MAX_BYTES = 900_000
 _EMAIL_PATTERN = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.IGNORECASE)
 _REPLY_HINT_TERMS = (
     "reply",
@@ -255,6 +260,30 @@ def _serialize_attachment_candidate(attachment: GmailAttachmentCandidate) -> dic
         "size_bytes": int(attachment.size_bytes),
         "source_message_id": attachment.source_message_id,
     }
+
+
+def _gmail_preview_filename(attachment: GmailAttachmentCandidate) -> str:
+    source_name = Path(attachment.filename).name or "attachment"
+    stem = Path(source_name).stem or "attachment"
+    suffix = Path(source_name).suffix
+    token = attachment.attachment_id.strip()[:8] or "preview"
+    return f"{stem}_{token}{suffix}"
+
+
+def _preview_page_sizes(local_path: Path) -> list[dict[str, float]]:
+    if not is_pdf_source(local_path):
+        return []
+    sizes: list[dict[str, float]] = []
+    with fitz.open(local_path) as doc:
+        for page_index in range(doc.page_count):
+            rect = doc.load_page(page_index).rect
+            sizes.append(
+                {
+                    "width": max(1.0, float(rect.width)),
+                    "height": max(1.0, float(rect.height)),
+                }
+            )
+    return sizes
 
 
 def _serialize_downloaded_attachment(attachment: DownloadedGmailAttachment) -> dict[str, Any]:
@@ -714,6 +743,7 @@ class GmailBrowserSessionManager:
                     "attachment": _serialize_attachment_candidate(attachment),
                     "page_count": int(cached_page_count),
                     "preview_path": _path_text(cached_path),
+                    "page_sizes": _preview_page_sizes(cached_path),
                 },
                 "diagnostics": {"reused_preview_cache": True},
                 "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
@@ -726,7 +756,7 @@ class GmailBrowserSessionManager:
                 message_id=load_result.message.message_id,
                 attachment_id=attachment.attachment_id,
                 output_dir=preview_dir,
-                filename=attachment.filename,
+                filename=_gmail_preview_filename(attachment),
             )
         )
         if not result.ok or result.saved_path is None:
@@ -741,6 +771,7 @@ class GmailBrowserSessionManager:
                 "attachment": _serialize_attachment_candidate(attachment),
                 "page_count": page_count,
                 "preview_path": _path_text(saved_path),
+                "page_sizes": _preview_page_sizes(saved_path),
             },
             "diagnostics": {
                 "download_stdout": result.stdout,
@@ -748,6 +779,42 @@ class GmailBrowserSessionManager:
                 "download_payload": result.payload or {},
             },
             "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
+        }
+
+    def render_attachment_preview_page(
+        self,
+        *,
+        runtime_mode: str,
+        workspace_id: str,
+        attachment_id: str,
+        page_number: int,
+    ) -> dict[str, Any]:
+        local_path = self.current_attachment_file(
+            runtime_mode=runtime_mode,
+            workspace_id=workspace_id,
+            attachment_id=attachment_id,
+        )
+        if local_path is None or not local_path.exists():
+            raise ValueError("Preview the selected Gmail attachment first.")
+        workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
+        page_count = int(workspace.preview_page_counts.get(attachment_id) or get_source_page_count(local_path))
+        if page_count <= 0:
+            raise ValueError("Attachment preview page count is unavailable.")
+        resolved_page = min(max(1, int(page_number)), page_count)
+        rendered = render_source_page_image_data_url(
+            local_path,
+            resolved_page - 1,
+            start_dpi=_PREVIEW_RENDER_START_DPI,
+            max_dpi=_PREVIEW_RENDER_MAX_DPI,
+            max_data_url_bytes=_PREVIEW_RENDER_MAX_BYTES,
+        )
+        return {
+            "page_number": resolved_page,
+            "page_count": page_count,
+            "image_bytes": rendered.image_bytes,
+            "media_type": f"image/{rendered.image_format}",
+            "width_px": int(rendered.width_px),
+            "height_px": int(rendered.height_px),
         }
 
     def prepare_session(

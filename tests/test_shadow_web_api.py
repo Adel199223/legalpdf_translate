@@ -177,6 +177,7 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="gmail-close-preview-drawer"' in text
         assert 'id="gmail-preview-frame"' in text
         assert 'id="gmail-preview-page"' in text
+        assert 'id="gmail-preview-jump"' in text
         assert 'id="gmail-preview-open-tab"' in text
         assert 'id="gmail-preview-apply"' in text
         assert "Gmail Attachment Review" in text
@@ -716,10 +717,27 @@ def test_shadow_web_gmail_finalize_routes_and_attachment_file(tmp_path: Path, mo
         }
         return attachment_file
 
+    def _render_attachment_preview_page(self, *, runtime_mode, workspace_id, attachment_id, page_number):
+        recorded["preview_page"] = {
+            "runtime_mode": runtime_mode,
+            "workspace_id": workspace_id,
+            "attachment_id": attachment_id,
+            "page_number": page_number,
+        }
+        return {
+            "page_number": 3,
+            "page_count": 5,
+            "image_bytes": b"jpeg-bytes",
+            "media_type": "image/jpeg",
+            "width_px": 900,
+            "height_px": 1200,
+        }
+
     monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "confirm_current_batch_translation", _confirm_current)
     monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "finalize_batch", _finalize_batch)
     monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "finalize_interpretation", _finalize_interpretation)
     monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "current_attachment_file", _current_attachment_file)
+    monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "render_attachment_preview_page", _render_attachment_preview_page)
 
     with _build_app(tmp_path, monkeypatch) as client:
         confirm_response = client.post(
@@ -765,6 +783,14 @@ def test_shadow_web_gmail_finalize_routes_and_attachment_file(tmp_path: Path, mo
         assert attachment_response.status_code == 200
         assert attachment_response.headers["content-type"].startswith("application/pdf")
         assert recorded["attachment_file"]["attachment_id"] == "att-1"
+
+        preview_page_response = client.get("/api/gmail/preview-attachment/att-1/pages/3")
+        assert preview_page_response.status_code == 200
+        assert preview_page_response.headers["content-type"].startswith("image/jpeg")
+        assert preview_page_response.headers["x-legalpdf-page-number"] == "3"
+        assert preview_page_response.headers["x-legalpdf-page-count"] == "5"
+        assert recorded["preview_page"]["attachment_id"] == "att-1"
+        assert recorded["preview_page"]["page_number"] == 3
 
 
 def test_shadow_web_translation_bootstrap_and_save_history_flow(tmp_path: Path, monkeypatch) -> None:

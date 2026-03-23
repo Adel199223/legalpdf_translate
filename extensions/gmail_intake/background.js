@@ -214,7 +214,6 @@ async function openOrFocusBrowserApp(browserUrl) {
     if (Number.isInteger(exactMatch.windowId)) {
       await chrome.windows.update(exactMatch.windowId, { focused: true });
     }
-    await chrome.tabs.reload(exactMatch.id, { bypassCache: true });
     return true;
   }
   const existing = candidates.find((tab) => Number.isInteger(tab.id));
@@ -272,7 +271,7 @@ async function resolveBridgeConfigForClick() {
   };
 }
 
-async function postContext(tabId, context, config, nativeResponse, focusNotice) {
+async function postContext(tabId, context, config, nativeResponse, focusNotice, browserAppOpened = false) {
   const endpoint = `http://127.0.0.1:${config.bridgePort}/gmail-intake`;
   let response;
   try {
@@ -318,10 +317,6 @@ async function postContext(tabId, context, config, nativeResponse, focusNotice) 
     typeof payload.message === "string" && payload.message.trim() !== ""
       ? payload.message.trim()
       : "Gmail intake accepted.";
-  let browserAppOpened = false;
-  if (nativeResponse && nativeResponse.ui_owner === "browser_app" && normalizeUrl(nativeResponse.browser_url) !== "") {
-    browserAppOpened = await openOrFocusBrowserApp(nativeResponse.browser_url);
-  }
   const suffix = [];
   if (focusNotice !== "") {
     suffix.push(focusNotice);
@@ -371,11 +366,20 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 
   const focusNotice = buildFocusNotice(bridgeResolution.nativeResponse, bridgeResolution.degradedMode);
+  let browserAppOpened = false;
+  if (
+    bridgeResolution.nativeResponse
+    && bridgeResolution.nativeResponse.ui_owner === "browser_app"
+    && normalizeUrl(bridgeResolution.nativeResponse.browser_url) !== ""
+  ) {
+    browserAppOpened = await openOrFocusBrowserApp(bridgeResolution.nativeResponse.browser_url);
+  }
   await postContext(
     tab.id,
     extraction.context,
     bridgeResolution.config,
     bridgeResolution.nativeResponse,
     focusNotice,
+    browserAppOpened,
   );
 });

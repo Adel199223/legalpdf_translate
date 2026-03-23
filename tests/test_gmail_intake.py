@@ -214,12 +214,13 @@ def test_gmail_extension_scripts_keep_stage_one_contract_markers() -> None:
     assert "auto-launch is not available from this checkout" in background_js
     assert "Gmail bridge is not configured in LegalPDF Translate." in background_js
     assert "LegalPDF Translate native host is unavailable. Reload the extension or open the options page." in background_js
-    assert "chrome.tabs.reload" in background_js
-    assert "bypassCache: true" in background_js
+    assert "chrome.tabs.reload" not in background_js
+    assert "bypassCache: true" not in background_js
     assert "candidates.find((tab) => Number.isInteger(tab.id))" in background_js
     assert "chrome.tabs.update(existing.id, { active: true, url: targetUrl })" in background_js
     assert "Bridge token is missing in extension options." not in background_js
     assert background_js.index("chrome.runtime.sendNativeMessage") < background_js.index("await postContext")
+    assert background_js.index("browserAppOpened = await openOrFocusBrowserApp") < background_js.index("await postContext")
     assert "[data-message-id][data-legacy-message-id]" in content_js
     assert "data-legacy-thread-id" in content_js
     assert "h2.hP" in content_js
