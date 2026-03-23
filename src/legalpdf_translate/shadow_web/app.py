@@ -1014,6 +1014,37 @@ def create_shadow_app(
         response["normalized_payload"] = normalized
         return JSONResponse(_merge_response(context, target, response))
 
+    @app.get("/api/gmail/preview-attachment/{attachment_id}/pages/{page_number}")
+    async def api_gmail_preview_attachment_page(
+        request: Request,
+        attachment_id: str,
+        page_number: int,
+    ) -> Response:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = context.gmail_sessions.render_attachment_preview_page(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                attachment_id=str(attachment_id or "").strip(),
+                page_number=int(page_number),
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                {"status": "failed", "diagnostics": {"error": str(exc)}},
+                status_code=404,
+            )
+        return Response(
+            content=response["image_bytes"],
+            media_type=str(response["media_type"]),
+            headers={
+                "X-LegalPDF-Page-Number": str(response["page_number"]),
+                "X-LegalPDF-Page-Count": str(response["page_count"]),
+                "X-LegalPDF-Image-Width": str(response["width_px"]),
+                "X-LegalPDF-Image-Height": str(response["height_px"]),
+            },
+        )
+
     @app.get("/api/gmail/attachment/{attachment_id}")
     async def api_gmail_attachment_file(request: Request, attachment_id: str):
         context = _context(request)

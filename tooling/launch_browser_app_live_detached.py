@@ -20,6 +20,7 @@ DEFAULT_MODE = "live"
 DEFAULT_WORKSPACE = "workspace-1"
 DEFAULT_UI = "qt"
 DEFAULT_VIEW = "new-job"
+LEGACY_DEFAULT_VIEW = "dashboard"
 READY_TIMEOUT_SECONDS = 20.0
 READY_POLL_SECONDS = 0.5
 REQUEST_TIMEOUT_SECONDS = 2.0
@@ -34,6 +35,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--ui", choices=("qt", "legacy"), default=DEFAULT_UI)
+    parser.add_argument("--view", default=DEFAULT_VIEW)
     parser.add_argument(
         "--no-open",
         action="store_true",
@@ -70,7 +72,21 @@ def _launcher_env(repo_root: Path) -> dict[str, str]:
     return env
 
 
-def _browser_url(*, port: int, mode: str, workspace: str, ui: str = DEFAULT_UI) -> str:
+def _browser_hash(*, ui: str, view: str) -> str:
+    normalized_view = str(view or DEFAULT_VIEW).strip() or DEFAULT_VIEW
+    if str(ui) == "legacy" and normalized_view == DEFAULT_VIEW:
+        return LEGACY_DEFAULT_VIEW
+    return normalized_view
+
+
+def _browser_url(
+    *,
+    port: int,
+    mode: str,
+    workspace: str,
+    ui: str = DEFAULT_UI,
+    view: str = DEFAULT_VIEW,
+) -> str:
     params: dict[str, str] = {
         "mode": str(mode),
         "workspace": str(workspace),
@@ -78,7 +94,7 @@ def _browser_url(*, port: int, mode: str, workspace: str, ui: str = DEFAULT_UI) 
     if str(ui) == "legacy":
         params["ui"] = "legacy"
     query = urllib.parse.urlencode(params)
-    return f"http://{SHADOW_HOST}:{int(port)}/?{query}#{DEFAULT_VIEW if str(ui) != 'legacy' else 'dashboard'}"
+    return f"http://{SHADOW_HOST}:{int(port)}/?{query}#{_browser_hash(ui=str(ui), view=str(view))}"
 
 
 def _probe_browser_url(url: str) -> bool:
@@ -149,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         mode=str(args.mode),
         workspace=str(args.workspace),
         ui=str(args.ui),
+        view=str(args.view),
     )
 
     if not _probe_browser_url(target_url):

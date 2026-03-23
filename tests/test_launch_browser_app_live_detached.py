@@ -47,9 +47,16 @@ def test_browser_url_uses_mode_workspace_port_and_ui() -> None:
 
     qt_url = module._browser_url(port=9988, mode="shadow", workspace="workspace-preview")
     legacy_url = module._browser_url(port=9988, mode="shadow", workspace="workspace-preview", ui="legacy")
+    gmail_url = module._browser_url(
+        port=8877,
+        mode="live",
+        workspace="gmail-intake",
+        view="gmail-intake",
+    )
 
     assert qt_url == "http://127.0.0.1:9988/?mode=shadow&workspace=workspace-preview#new-job"
     assert legacy_url == "http://127.0.0.1:9988/?mode=shadow&workspace=workspace-preview&ui=legacy#dashboard"
+    assert gmail_url == "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake"
 
 
 def test_main_reuses_existing_server_and_opens_requested_preview_url(monkeypatch) -> None:
@@ -64,6 +71,22 @@ def test_main_reuses_existing_server_and_opens_requested_preview_url(monkeypatch
 
     assert result == 0
     assert seen["opened"] == "http://127.0.0.1:8888/?mode=shadow&workspace=workspace-preview#new-job"
+
+
+def test_main_opens_requested_gmail_intake_view(monkeypatch) -> None:
+    module = _load_module()
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(module, "_probe_browser_url", lambda url: True)
+    monkeypatch.setattr(module, "_spawn_server", lambda **kwargs: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(module, "_open_browser", lambda url: seen.setdefault("opened", url) or True)
+
+    result = module.main(
+        ["--mode", "live", "--workspace", "gmail-intake", "--port", "8877", "--view", "gmail-intake"]
+    )
+
+    assert result == 0
+    assert seen["opened"] == "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake"
 
 
 def test_main_launches_browser_server_with_no_open_and_src_pythonpath(

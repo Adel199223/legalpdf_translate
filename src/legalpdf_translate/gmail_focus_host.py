@@ -141,13 +141,24 @@ def _preferred_repo_worktree_for_auto_launch(*, runtime_path: Path | None = None
     return worktree
 
 
+def _auto_launch_worktree_candidates(*, runtime_path: Path | None = None) -> tuple[Path, ...]:
+    candidates: list[Path] = []
+    local_worktree = _resolve_repo_worktree_for_auto_launch(runtime_path=runtime_path)
+    if local_worktree is not None:
+        candidates.append(local_worktree)
+    preferred_worktree = _preferred_repo_worktree_for_auto_launch(runtime_path=runtime_path)
+    if preferred_worktree is not None and preferred_worktree not in candidates:
+        candidates.append(preferred_worktree)
+    return tuple(candidates)
+
+
 def _browser_gmail_workspace_url(*, port: int = SHADOW_DEFAULT_PORT) -> str:
     return f"http://127.0.0.1:{int(port)}/?mode=live&workspace={_BROWSER_GMAIL_WORKSPACE_ID}#gmail-intake"
 
 
 def _resolve_qt_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaunchTarget:
-    worktree = _preferred_repo_worktree_for_auto_launch(runtime_path=runtime_path)
-    if worktree is None:
+    candidates = _auto_launch_worktree_candidates(runtime_path=runtime_path)
+    if not candidates:
         return AutoLaunchTarget(
             ready=False,
             worktree_path=None,
@@ -157,41 +168,51 @@ def _resolve_qt_auto_launch_target(*, runtime_path: Path | None = None) -> AutoL
             ui_owner="qt_app",
         )
 
-    launcher_script = (worktree / "tooling" / "launch_qt_build.py").expanduser().resolve()
-    if not launcher_script.exists():
+    fallback_result: AutoLaunchTarget | None = None
+    for worktree in candidates:
+        launcher_script = (worktree / "tooling" / "launch_qt_build.py").expanduser().resolve()
+        python_executable = _python_executable_for_worktree(worktree)
+        if not launcher_script.exists():
+            fallback_result = AutoLaunchTarget(
+                ready=False,
+                worktree_path=str(worktree),
+                python_executable=str(python_executable) if python_executable is not None else None,
+                launcher_script=None,
+                reason="launch_helper_missing",
+                ui_owner="qt_app",
+            )
+            continue
+        if python_executable is None:
+            fallback_result = AutoLaunchTarget(
+                ready=False,
+                worktree_path=str(worktree),
+                python_executable=None,
+                launcher_script=str(launcher_script),
+                reason="launch_python_missing",
+                ui_owner="qt_app",
+            )
+            continue
         return AutoLaunchTarget(
-            ready=False,
+            ready=True,
             worktree_path=str(worktree),
-            python_executable=None,
-            launcher_script=None,
-            reason="launch_helper_missing",
-            ui_owner="qt_app",
-        )
-
-    python_executable = _python_executable_for_worktree(worktree)
-    if python_executable is None:
-        return AutoLaunchTarget(
-            ready=False,
-            worktree_path=str(worktree),
-            python_executable=None,
+            python_executable=str(python_executable),
             launcher_script=str(launcher_script),
-            reason="launch_python_missing",
+            reason="launch_target_ready",
             ui_owner="qt_app",
         )
-
-    return AutoLaunchTarget(
-        ready=True,
-        worktree_path=str(worktree),
-        python_executable=str(python_executable),
-        launcher_script=str(launcher_script),
-        reason="launch_target_ready",
+    return fallback_result or AutoLaunchTarget(
+        ready=False,
+        worktree_path=None,
+        python_executable=None,
+        launcher_script=None,
+        reason="launch_target_missing",
         ui_owner="qt_app",
     )
 
 
 def _resolve_browser_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaunchTarget:
-    worktree = _preferred_repo_worktree_for_auto_launch(runtime_path=runtime_path)
-    if worktree is None:
+    candidates = _auto_launch_worktree_candidates(runtime_path=runtime_path)
+    if not candidates:
         return AutoLaunchTarget(
             ready=False,
             worktree_path=None,
@@ -202,32 +223,60 @@ def _resolve_browser_auto_launch_target(*, runtime_path: Path | None = None) -> 
             browser_url=_browser_gmail_workspace_url(),
         )
 
-    python_executable = _python_executable_for_worktree(worktree)
-    if python_executable is None:
+    fallback_result: AutoLaunchTarget | None = None
+    for worktree in candidates:
+        python_executable = _python_executable_for_worktree(worktree)
+        launcher_script = (worktree / "tooling" / "launch_browser_app_live_detached.py").expanduser().resolve()
+        if not launcher_script.exists():
+            fallback_result = AutoLaunchTarget(
+                ready=False,
+                worktree_path=str(worktree),
+                python_executable=str(python_executable) if python_executable is not None else None,
+                launcher_script=None,
+                reason="launch_helper_missing",
+                ui_owner="browser_app",
+                browser_url=_browser_gmail_workspace_url(),
+            )
+            continue
+        if python_executable is None:
+            fallback_result = AutoLaunchTarget(
+                ready=False,
+                worktree_path=str(worktree),
+                python_executable=None,
+                launcher_script=str(launcher_script),
+                reason="launch_python_missing",
+                ui_owner="browser_app",
+                browser_url=_browser_gmail_workspace_url(),
+            )
+            continue
         return AutoLaunchTarget(
-            ready=False,
+            ready=True,
             worktree_path=str(worktree),
-            python_executable=None,
-            launcher_script=None,
-            reason="launch_python_missing",
+            python_executable=str(python_executable),
+            launcher_script=str(launcher_script),
+            reason="launch_target_ready",
             ui_owner="browser_app",
             browser_url=_browser_gmail_workspace_url(),
+            launch_args=(
+                str(launcher_script),
+                "--mode",
+                "live",
+                "--workspace",
+                _BROWSER_GMAIL_WORKSPACE_ID,
+                "--port",
+                str(SHADOW_DEFAULT_PORT),
+                "--view",
+                _BROWSER_GMAIL_WORKSPACE_ID,
+            ),
         )
-
-    return AutoLaunchTarget(
-        ready=True,
-        worktree_path=str(worktree),
-        python_executable=str(python_executable),
+    return fallback_result or AutoLaunchTarget(
+        ready=False,
+        worktree_path=None,
+        python_executable=None,
         launcher_script=None,
-        reason="launch_target_ready",
+        reason="launch_target_missing",
         ui_owner="browser_app",
         browser_url=_browser_gmail_workspace_url(),
-        launch_args=(
-            "-m",
-            "legalpdf_translate.shadow_web.server",
-            "--port",
-            str(SHADOW_DEFAULT_PORT),
-        ),
     )
 
 

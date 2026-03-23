@@ -26,6 +26,9 @@ def _ready_auto_launch_target(tmp_path: Path) -> host_module.AutoLaunchTarget:
 
 
 def test_launch_repo_worktree_detaches_browser_server(monkeypatch, tmp_path: Path) -> None:
+    launcher_script = tmp_path / "tooling" / "launch_browser_app_live_detached.py"
+    launcher_script.parent.mkdir(parents=True, exist_ok=True)
+    launcher_script.write_text("print('launch')\n", encoding="utf-8")
     target = host_module.AutoLaunchTarget(
         ready=True,
         worktree_path=str(tmp_path),
@@ -34,7 +37,17 @@ def test_launch_repo_worktree_detaches_browser_server(monkeypatch, tmp_path: Pat
         reason="launch_target_ready",
         ui_owner="browser_app",
         browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
-        launch_args=("-m", "legalpdf_translate.shadow_web.server", "--port", "8877"),
+        launch_args=(
+            str(launcher_script),
+            "--mode",
+            "live",
+            "--workspace",
+            "gmail-intake",
+            "--port",
+            "8877",
+            "--view",
+            "gmail-intake",
+        ),
     )
     recorded: dict[str, object] = {}
 
@@ -59,10 +72,15 @@ def test_launch_repo_worktree_detaches_browser_server(monkeypatch, tmp_path: Pat
     assert result == "launch_started"
     assert recorded["command"] == [
         str(tmp_path / ".venv311" / "Scripts" / "python.exe"),
-        "-m",
-        "legalpdf_translate.shadow_web.server",
+        str(launcher_script),
+        "--mode",
+        "live",
+        "--workspace",
+        "gmail-intake",
         "--port",
         "8877",
+        "--view",
+        "gmail-intake",
     ]
     assert recorded["kwargs"]["cwd"] == str(tmp_path)
     assert recorded["kwargs"]["stdout"] == host_module.subprocess.DEVNULL
@@ -70,7 +88,7 @@ def test_launch_repo_worktree_detaches_browser_server(monkeypatch, tmp_path: Pat
     assert recorded["kwargs"]["stdin"] == host_module.subprocess.DEVNULL
 
 
-def test_resolve_auto_launch_target_prefers_canonical_worktree_when_local_worktree_lacks_venv(
+def test_resolve_auto_launch_target_prefers_local_worktree_launcher_with_canonical_python_fallback(
     tmp_path: Path,
 ) -> None:
     worktree = tmp_path / "worktree"
@@ -82,8 +100,10 @@ def test_resolve_auto_launch_target_prefers_canonical_worktree_when_local_worktr
     (canonical / "src" / "legalpdf_translate").mkdir(parents=True)
     (canonical / ".venv311" / "Scripts").mkdir(parents=True)
     (worktree / "tooling" / "launch_qt_build.py").write_text("print('ok')\n", encoding="utf-8")
+    (worktree / "tooling" / "launch_browser_app_live_detached.py").write_text("print('browser')\n", encoding="utf-8")
     (worktree / "src" / "legalpdf_translate" / "qt_app.py").write_text("print('qt')\n", encoding="utf-8")
     (canonical / "tooling" / "launch_qt_build.py").write_text("print('canonical')\n", encoding="utf-8")
+    (canonical / "tooling" / "launch_browser_app_live_detached.py").write_text("print('canonical-browser')\n", encoding="utf-8")
     (canonical / "src" / "legalpdf_translate" / "qt_app.py").write_text("print('canonical-qt')\n", encoding="utf-8")
     python_exe = canonical / ".venv311" / "Scripts" / "python.exe"
     python_exe.write_text("", encoding="utf-8")
@@ -106,9 +126,21 @@ def test_resolve_auto_launch_target_prefers_canonical_worktree_when_local_worktr
     )
 
     assert target.ready is True
-    assert target.worktree_path == str(canonical.resolve())
+    assert target.worktree_path == str(worktree.resolve())
     assert target.python_executable == str(python_exe.resolve())
     assert target.reason == "launch_target_ready"
+    assert target.ui_owner == "browser_app"
+    assert target.launch_args == (
+        str((worktree / "tooling" / "launch_browser_app_live_detached.py").resolve()),
+        "--mode",
+        "live",
+        "--workspace",
+        "gmail-intake",
+        "--port",
+        "8877",
+        "--view",
+        "gmail-intake",
+    )
 
 
 def test_build_edge_native_host_manifest_uses_stable_origin(tmp_path: Path) -> None:

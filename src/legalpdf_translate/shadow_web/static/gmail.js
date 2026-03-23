@@ -17,6 +17,9 @@ import {
 
 const AUTO_REFRESH_DELAY_MS = 220;
 const AUTO_REFRESH_THROTTLE_MS = 1400;
+const PREVIEW_SCROLL_SYNC_DELAY_MS = 60;
+const PREVIEW_PAGE_FALLBACK_WIDTH = 595;
+const PREVIEW_PAGE_FALLBACK_HEIGHT = 842;
 
 const gmailState = {
   bootstrap: null,
@@ -29,6 +32,8 @@ const gmailState = {
   reviewFocusedAttachmentId: "",
   previewDrawerOpen: false,
   previewState: createClosedPreviewState(),
+  previewPageSizes: [],
+  previewScrollTimer: 0,
   sessionDrawerOpen: false,
   batchFinalizeDrawerOpen: false,
   batchFinalizeResult: null,
@@ -377,7 +382,12 @@ function activeSessionAttachmentId(activeSession) {
 }
 
 function resetPreviewState() {
+  if (gmailState.previewScrollTimer) {
+    window.clearTimeout(gmailState.previewScrollTimer);
+    gmailState.previewScrollTimer = 0;
+  }
   gmailState.previewState = createClosedPreviewState();
+  gmailState.previewPageSizes = [];
   setPreviewDrawerOpen(false);
 }
 
@@ -518,6 +528,137 @@ function resolvedPreviewHref() {
     return `${previewHref}#page=${previewPage()}`;
   }
   return previewHref;
+}
+
+function previewPageSizes() {
+  return Array.isArray(gmailState.previewPageSizes) ? gmailState.previewPageSizes : [];
+}
+
+function previewPageSize(pageNumber) {
+  const size = previewPageSizes()[Math.max(0, Number(pageNumber || 1) - 1)];
+  const width = Number(size?.width || 0);
+  const height = Number(size?.height || 0);
+  if (width > 0 && height > 0) {
+    return { width, height };
+  }
+  return {
+    width: PREVIEW_PAGE_FALLBACK_WIDTH,
+    height: PREVIEW_PAGE_FALLBACK_HEIGHT,
+  };
+}
+
+function buildPreviewPageHref(attachmentId, pageNumber) {
+  const normalizedAttachmentId = String(attachmentId || "").trim();
+  const nextPage = Math.max(1, Number(pageNumber || 1));
+  if (!normalizedAttachmentId) {
+    return "";
+  }
+  const params = new URLSearchParams({
+    mode: String(appState.runtimeMode || "live"),
+    workspace: String(appState.workspaceId || "workspace-1"),
+  });
+  return `/api/gmail/preview-attachment/${encodeURIComponent(normalizedAttachmentId)}/pages/${nextPage}?${params.toString()}`;
+}
+
+function currentPreviewSurfaceKey(previewAttachment) {
+  return [
+    previewAttachment?.attachment_id || "",
+    previewAttachment?.mime_type || "",
+    previewPageCount(),
+    previewPageSizes().length,
+  ].join("|");
+}
+
+function previewCardElements() {
+  return Array.from(document.querySelectorAll("[data-preview-page-card]"));
+}
+
+function previewCardForPage(pageNumber) {
+  return qs("gmail-preview-frame")?.querySelector?.(`[data-preview-page-card="${pageNumber}"]`) || null;
+}
+
+function markCurrentPreviewCard() {
+  const currentPage = previewPage();
+  for (const card of previewCardElements()) {
+    card.classList.toggle("is-current", Number(card.dataset.previewPageCard || 0) === currentPage);
+  }
+}
+
+function scrollPreviewToPage(pageNumber, { behavior = "smooth" } = {}) {
+  const container = qs("gmail-preview-frame");
+  const card = previewCardForPage(pageNumber);
+  if (!container || !card) {
+    return;
+  }
+  const nextTop = Math.max(0, card.offsetTop - 8);
+  container.scrollTo({ top: nextTop, behavior });
+}
+
+function schedulePreviewScrollSync() {
+  if (gmailState.previewScrollTimer) {
+    window.clearTimeout(gmailState.previewScrollTimer);
+  }
+  gmailState.previewScrollTimer = window.setTimeout(() => {
+    gmailState.previewScrollTimer = 0;
+    syncPreviewPageFromScroll();
+  }, PREVIEW_SCROLL_SYNC_DELAY_MS);
+}
+
+function syncPreviewPageFromScroll() {
+  if (!gmailState.previewDrawerOpen || !isPreviewStateOpen(gmailState.previewState)) {
+    return;
+  }
+  const previewAttachment = previewAttachmentRecord();
+  const container = qs("gmail-preview-frame");
+  if (!container || !previewAttachment || !isPdfAttachment(previewAttachment)) {
+    return;
+  }
+  const cards = previewCardElements();
+  if (!cards.length) {
+    return;
+  }
+  const visibleTop = container.scrollTop;
+  const visibleBottom = visibleTop + container.clientHeight;
+  let nextPage = previewPage();
+  for (const card of cards) {
+    const top = card.offsetTop;
+    const bottom = top + card.offsetHeight;
+    if (bottom >= visibleTop && top <= visibleBottom) {
+      nextPage = Number(card.dataset.previewPageCard || nextPage);
+      break;
+    }
+  }
+  gmailState.previewState = setPreviewStatePage(gmailState.previewState, nextPage);
+  markCurrentPreviewCard();
+  renderPreviewPanel();
+}
+
+function buildPdfPreviewMarkup(previewAttachment, pageCount, canApply) {
+  const cards = [];
+  for (let pageNumber = 1; pageNumber <= Math.max(1, pageCount); pageNumber += 1) {
+    const size = previewPageSize(pageNumber);
+    const ratioStyle = `--page-width:${size.width};--page-height:${size.height};`;
+    cards.push(`
+      <article class="gmail-preview-page-card" data-preview-page-card="${pageNumber}">
+        <div class="gmail-preview-page-card-header">
+          <strong>Page ${pageNumber}</strong>
+          ${canApply
+            ? `<button type="button" class="ghost-button" data-preview-select-page="${pageNumber}">Start from this page</button>`
+            : `<span class="status-chip ok">Inspect only</span>`}
+        </div>
+        <div class="gmail-preview-page-shell" data-preview-page-shell="${pageNumber}" style="${ratioStyle}">
+          <img
+            class="gmail-preview-page-image"
+            src="${escapeHtml(buildPreviewPageHref(previewAttachment.attachment_id, pageNumber))}"
+            alt="${escapeHtml(`${previewAttachment.filename || "Attachment preview"} page ${pageNumber}`)}"
+            loading="lazy"
+            decoding="async"
+          >
+        </div>
+      </article>
+    `);
+  }
+  return `<div class="gmail-preview-pages">${cards.join("")}</div>`;
 }
 
 function setReviewDrawerOpen(open) {
@@ -1020,18 +1161,23 @@ function renderPreviewPanel() {
   const prevButton = qs("gmail-preview-prev");
   const nextButton = qs("gmail-preview-next");
   const pageInput = qs("gmail-preview-page");
+  const jumpButton = qs("gmail-preview-jump");
   const attachment = focusedAttachment();
   const previewAttachment = previewAttachmentRecord();
   const previewHref = resolvedPreviewHref();
-  if (!container || !summary || !status || !openTab || !applyButton || !prevButton || !nextButton || !pageInput) {
+  if (!container || !summary || !status || !openTab || !applyButton || !prevButton || !nextButton || !pageInput || !jumpButton) {
     return;
   }
   if (!applyButton.dataset.defaultLabel) {
     applyButton.dataset.defaultLabel = applyButton.textContent;
   }
+  if (!jumpButton.dataset.defaultLabel) {
+    jumpButton.dataset.defaultLabel = jumpButton.textContent;
+  }
   pageInput.disabled = true;
   prevButton.disabled = true;
   nextButton.disabled = true;
+  jumpButton.disabled = true;
   pageInput.min = "1";
   pageInput.max = "1";
   pageInput.value = "1";
@@ -1039,11 +1185,13 @@ function renderPreviewPanel() {
   openTab.href = "#";
   applyButton.textContent = applyButton.dataset.defaultLabel;
   applyButton.disabled = true;
+  jumpButton.textContent = jumpButton.dataset.defaultLabel;
   if (!previewAttachment || !previewHref) {
     summary.className = "result-card empty-state";
     summary.textContent = "Choose Preview from the review drawer to inspect an attachment here.";
     container.className = "gmail-inline-preview empty-state";
     container.textContent = "Preview opens here when requested.";
+    container.dataset.previewKey = "";
     status.textContent = attachment
       ? `Preview ${attachment.filename || "the current attachment"} when you need to inspect it more closely.`
       : "Open preview when you need to inspect the current attachment more closely.";
@@ -1068,18 +1216,23 @@ function renderPreviewPanel() {
     pageInput.disabled = false;
     prevButton.disabled = page <= 1;
     nextButton.disabled = pageCount > 0 ? page >= pageCount : false;
+    jumpButton.disabled = false;
     pageInput.max = String(Math.max(1, pageCount || page));
     pageInput.value = String(page);
     applyButton.disabled = !canApply;
     applyButton.textContent = canApply ? applyButton.dataset.defaultLabel : "Preview only";
-    container.className = "gmail-inline-preview";
-    container.innerHTML = `
-      <iframe
-        class="gmail-inline-preview-frame"
-        src="${escapeHtml(previewHref)}"
-        title="${escapeHtml(`Preview for ${previewAttachment.filename || "attachment"}`)}"
-      ></iframe>
-    `;
+    const previewKey = currentPreviewSurfaceKey(previewAttachment);
+    container.className = "gmail-inline-preview gmail-inline-preview-pages";
+    if (container.dataset.previewKey !== previewKey) {
+      container.dataset.previewKey = previewKey;
+      container.innerHTML = buildPdfPreviewMarkup(previewAttachment, Math.max(1, pageCount || 1), canApply);
+      window.requestAnimationFrame(() => {
+        scrollPreviewToPage(page, { behavior: "auto" });
+        markCurrentPreviewCard();
+      });
+    } else {
+      markCurrentPreviewCard();
+    }
     status.textContent = canApply
       ? (pageCount > 0
         ? `Previewing page ${page} of ${pageCount}. Use current page when you want it to become the review start page.`
@@ -1090,6 +1243,7 @@ function renderPreviewPanel() {
     return;
   }
   container.className = "gmail-inline-preview";
+  container.dataset.previewKey = currentPreviewSurfaceKey(previewAttachment);
   if (isImageAttachment(previewAttachment)) {
     applyButton.disabled = true;
     applyButton.textContent = "Preview only";
@@ -1108,6 +1262,7 @@ function renderPreviewPanel() {
   applyButton.disabled = true;
   applyButton.textContent = "Preview only";
   container.className = "gmail-inline-preview empty-state";
+  container.dataset.previewKey = currentPreviewSurfaceKey(previewAttachment);
   container.innerHTML = `Open <strong>${escapeHtml(previewAttachment.filename || "the preview")}</strong> in a new tab for a full attachment view.`;
   status.textContent = "This attachment type is available through the new-tab fallback.";
 }
@@ -1455,6 +1610,9 @@ async function previewAttachment(attachmentId) {
     body: JSON.stringify({ attachment_id: attachmentId }),
   });
   applyPreviewPageCount(attachmentId, payload.normalized_payload.page_count || 0);
+  gmailState.previewPageSizes = Array.isArray(payload.normalized_payload.page_sizes)
+    ? payload.normalized_payload.page_sizes
+    : [];
   gmailState.previewState = openPreviewState({
     attachmentId,
     previewHref: payload.normalized_payload.preview_href || "",
@@ -1467,6 +1625,10 @@ async function previewAttachment(attachmentId) {
   renderReviewDetail();
   renderPreviewPanel();
   openPreviewDrawer();
+  window.requestAnimationFrame(() => {
+    scrollPreviewToPage(previewPage(), { behavior: "auto" });
+    markCurrentPreviewCard();
+  });
   setDiagnostics("gmail", payload, { hint: `Preview loaded for ${payload.normalized_payload.attachment?.filename || "attachment"}.`, open: false });
 }
 
@@ -1765,12 +1927,32 @@ export function initializeGmailUi(hooks) {
       closePreviewDrawer();
     }
   });
+  qs("gmail-preview-frame")?.addEventListener("scroll", () => {
+    schedulePreviewScrollSync();
+  });
+  qs("gmail-preview-frame")?.addEventListener("click", (event) => {
+    const trigger = event.target.closest("[data-preview-select-page]");
+    if (!trigger) {
+      return;
+    }
+    const attachment = previewAttachmentRecord();
+    if (!attachment || !isPreviewStateOpen(gmailState.previewState)) {
+      return;
+    }
+    const nextStartPage = Number(trigger.dataset.previewSelectPage || previewPage());
+    updateAttachmentStartPage(attachment.attachment_id, nextStartPage);
+    focusAttachment(attachment.attachment_id);
+    closePreviewDrawer();
+    renderAttachmentList(gmailState.loadResult);
+    renderReviewDetail();
+  });
 
   qs("gmail-preview-prev")?.addEventListener("click", () => {
     if (!isPreviewStateOpen(gmailState.previewState)) {
       return;
     }
     gmailState.previewState = setPreviewStatePage(gmailState.previewState, previewPage() - 1);
+    scrollPreviewToPage(previewPage());
     renderPreviewPanel();
   });
 
@@ -1781,6 +1963,7 @@ export function initializeGmailUi(hooks) {
     const upperBound = previewPageCount() > 0 ? previewPageCount() : previewPage() + 1;
     const next = Math.min(upperBound, previewPage() + 1);
     gmailState.previewState = setPreviewStatePage(gmailState.previewState, next);
+    scrollPreviewToPage(previewPage());
     renderPreviewPanel();
   });
 
@@ -1792,6 +1975,20 @@ export function initializeGmailUi(hooks) {
     gmailState.previewState = setPreviewStatePage(gmailState.previewState, input.value);
     const clamped = previewPage();
     input.value = String(clamped);
+    scrollPreviewToPage(clamped);
+    renderPreviewPanel();
+  });
+  qs("gmail-preview-jump")?.addEventListener("click", () => {
+    if (!isPreviewStateOpen(gmailState.previewState)) {
+      return;
+    }
+    const input = qs("gmail-preview-page");
+    gmailState.previewState = setPreviewStatePage(gmailState.previewState, input?.value || previewPage());
+    const clamped = previewPage();
+    if (input) {
+      input.value = String(clamped);
+    }
+    scrollPreviewToPage(clamped);
     renderPreviewPanel();
   });
 
