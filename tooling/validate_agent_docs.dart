@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -11,7 +12,21 @@ class ValidationIssue {
   String toString() => '$ruleId: $message';
 }
 
-const List<String> _requiredFiles = <String>[
+class _HarnessResolution {
+  const _HarnessResolution({
+    required this.hasProfile,
+    required this.usedState,
+    required this.resolvedModules,
+    required this.resolvedOutputs,
+  });
+
+  final bool hasProfile;
+  final bool usedState;
+  final Set<String> resolvedModules;
+  final Set<String> resolvedOutputs;
+}
+
+const List<String> _legacyRequiredFiles = <String>[
   'AGENTS.md',
   'agent.md',
   'APP_KNOWLEDGE.md',
@@ -74,6 +89,50 @@ const List<String> _requiredFiles = <String>[
   'tooling/cloud_eval_preflight.dart',
   'test/tooling/cloud_eval_preflight_test.dart',
 ];
+
+const List<String> _profileDrivenCoreFiles = <String>[
+  'docs/assistant/HARNESS_PROFILE.json',
+  'docs/assistant/schemas/HARNESS_PROFILE.schema.json',
+  'docs/assistant/templates/README.md',
+  'docs/assistant/templates/CHANGELOG.md',
+  'docs/assistant/templates/BOOTSTRAP_VERSION.json',
+  'docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json',
+  'docs/assistant/templates/BOOTSTRAP_PROFILE_RESOLUTION.md',
+  'docs/assistant/templates/NEW_PROJECT_BOOTSTRAP_WORKFLOW.md',
+  'docs/assistant/templates/examples/BOOTSTRAP_STATE.template.json',
+  'docs/assistant/templates/examples/DESKTOP_PYTHON_QT.profile.json',
+  'docs/assistant/templates/examples/FLUTTER_APP.profile.json',
+  'docs/assistant/templates/examples/HARNESS_PROFILE.template.json',
+  'docs/assistant/templates/archetypes/api_service.md',
+  'docs/assistant/templates/archetypes/browser_extension.md',
+  'docs/assistant/templates/archetypes/cli_tool.md',
+  'docs/assistant/templates/archetypes/desktop_python_qt.md',
+  'docs/assistant/templates/archetypes/flutter_app.md',
+  'docs/assistant/templates/archetypes/web_app.md',
+  'tooling/bootstrap_profile_wizard.py',
+  'tooling/check_harness_profile.py',
+  'tooling/harness_profile_lib.py',
+  'tooling/preview_harness_sync.py',
+  'tests/tooling/test_harness_tools.py',
+];
+
+const Map<String, List<String>> _profileDrivenFilesByModule =
+    <String, List<String>>{
+      'openai_docs_mcp': <String>[
+        'docs/assistant/CODEX_ENVIRONMENT.md',
+        '.vscode/mcp.json.example',
+      ],
+    };
+
+const Map<String, String> _compatibilityModuleAliases = <String, String>{
+  'core_docs': 'base_docs',
+  'worktree_build_identity': 'build_identity',
+  'host_integration_preflight': 'host_integration',
+  'roadmap': 'roadmap_governance',
+  'local_env': 'local_env_overlay',
+  'openai_docs': 'openai_docs_mcp',
+  'browser_integration': 'browser_bridge',
+};
 
 const List<String> _requiredWorkflowIds = <String>[
   'feature_workflow',
@@ -261,6 +320,16 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'bootstrap_harness_isolation_and_diagnostics.md',
     'host-bound workflows span browser/app/local bridge or fragile listeners',
     'read-on-demand',
+    'profile-first bootstrap resolution',
+    'docs/assistant/harness_profile.json',
+    'docs/assistant/runtime/bootstrap_state.json',
+    'bootstrap_version.json',
+    'bootstrap_archetype_registry.json',
+    'bootstrap_profile_resolution.md',
+    'enabled_modules',
+    'disabled_modules',
+    'openai_docs_mcp',
+    'desktop_launcher',
   ],
   'docs/assistant/templates/BOOTSTRAP_CORE_CONTRACT.md': <String>[
     'docs/assistant/issue_memory.md',
@@ -409,6 +478,55 @@ _requiredBootstrapMarkers = <String, List<String>>{
   ],
 };
 
+const Map<String, Map<String, String>> _requiredBootstrapTargets =
+    <String, Map<String, String>>{
+      'docs/assistant/HARNESS_PROFILE.json': <String, String>{
+        'template':
+            'docs/assistant/templates/examples/HARNESS_PROFILE.template.json',
+        'policy': 'copy_if_missing',
+      },
+      'docs/assistant/schemas/HARNESS_PROFILE.schema.json': <String, String>{
+        'template': 'docs/assistant/schemas/HARNESS_PROFILE.schema.json',
+        'policy': 'copy',
+      },
+      'docs/assistant/CODEX_ENVIRONMENT.md': <String, String>{
+        'template': 'docs/assistant/CODEX_ENVIRONMENT.md',
+        'policy': 'copy_if_missing',
+      },
+      '.vscode/mcp.json.example': <String, String>{
+        'template': '.vscode/mcp.json.example',
+        'policy': 'copy_if_missing',
+      },
+      'docs/assistant/runtime/BOOTSTRAP_STATE.json': <String, String>{
+        'template': 'docs/assistant/templates/examples/BOOTSTRAP_STATE.template.json',
+        'policy': 'generated',
+      },
+      'docs/assistant/templates/BOOTSTRAP_VERSION.json': <String, String>{
+        'template': 'docs/assistant/templates/BOOTSTRAP_VERSION.json',
+        'policy': 'copy',
+      },
+      'docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json':
+          <String, String>{
+            'template':
+                'docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json',
+            'policy': 'copy',
+          },
+    };
+
+const List<int> _sha256K = <int>[
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
+  0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+  0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
+  0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
+  0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+  0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+  0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+  0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+  0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
+
 const Map<String, List<String>> _requiredBootstrapTopicsByModule =
     <String, List<String>>{
       'core_contract': <String>[
@@ -457,8 +575,14 @@ List<ValidationIssue> validateAgentDocs({
     return file.readAsStringSync();
   }
 
+  final _HarnessResolution harnessResolution = _loadHarnessResolution(
+    issues,
+    exists,
+    readText,
+  );
+
   if (!localizationScope) {
-    final List<String> missing = _requiredFiles
+    final List<String> missing = _resolveRequiredFiles(harnessResolution)
         .where((String path) => !exists(path))
         .toList();
     if (missing.isNotEmpty) {
@@ -507,12 +631,506 @@ List<ValidationIssue> validateAgentDocs({
     _validateHarnessIsolationAndDiagnostics(manifest, issues, readText, exists);
     _validateTemplatePolicy(manifest, issues, readText);
     _validateBootstrapTemplateIntegrity(issues, readText, exists);
+    _validateProfileDrivenBootstrapFiles(
+      issues,
+      readText,
+      exists,
+      harnessResolution,
+    );
     _validateExternalSourceRegistry(issues, readText, exists);
   } else {
     _validateLocalizationScope(manifest, issues, readText, exists);
   }
 
   return issues;
+}
+
+Set<String> _resolveRequiredFiles(_HarnessResolution harnessResolution) {
+  final Set<String> required = <String>{..._legacyRequiredFiles};
+  if (!harnessResolution.hasProfile) {
+    return required;
+  }
+
+  required.addAll(_profileDrivenCoreFiles);
+  for (final String module in harnessResolution.resolvedModules) {
+    required.addAll(_profileDrivenFilesByModule[module] ?? const <String>[]);
+  }
+  return required;
+}
+
+_HarnessResolution _loadHarnessResolution(
+  List<ValidationIssue> issues,
+  bool Function(String relPath) exists,
+  String Function(String relPath) readText,
+) {
+  const String profilePath = 'docs/assistant/HARNESS_PROFILE.json';
+  const String registryPath =
+      'docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json';
+  const String statePath = 'docs/assistant/runtime/BOOTSTRAP_STATE.json';
+
+  if (!exists(profilePath)) {
+    return const _HarnessResolution(
+      hasProfile: false,
+      usedState: false,
+      resolvedModules: <String>{},
+      resolvedOutputs: <String>{},
+    );
+  }
+
+  final Map<String, dynamic>? profile = _loadJsonObject(
+    profilePath,
+    issues,
+    readText,
+    'AD048',
+    'Harness profile',
+  );
+  final Map<String, dynamic>? registry = _loadJsonObject(
+    registryPath,
+    issues,
+    readText,
+    'AD048',
+    'Bootstrap archetype registry',
+  );
+  final Map<String, dynamic>? state = exists(statePath)
+      ? _loadJsonObject(
+          statePath,
+          issues,
+          readText,
+          'AD048',
+          'Bootstrap state',
+        )
+      : null;
+
+  if (profile == null || registry == null) {
+    return const _HarnessResolution(
+      hasProfile: true,
+      usedState: false,
+      resolvedModules: <String>{},
+      resolvedOutputs: <String>{},
+    );
+  }
+
+  final String fingerprint = _profileFingerprint(profile);
+  if (state != null &&
+      (state['profile_fingerprint'] ?? '').toString() == fingerprint) {
+    final Set<String> stateModules = _resolveModulesFromState(state, registry);
+    if (stateModules.isNotEmpty) {
+      return _HarnessResolution(
+        hasProfile: true,
+        usedState: true,
+        resolvedModules: stateModules,
+        resolvedOutputs: _resolveOutputsForModules(stateModules, registry),
+      );
+    }
+  }
+
+  final Set<String> modules = _resolveModulesFromProfile(profile, registry);
+  return _HarnessResolution(
+    hasProfile: true,
+    usedState: false,
+    resolvedModules: modules,
+    resolvedOutputs: _resolveOutputsForModules(modules, registry),
+  );
+}
+
+Map<String, dynamic>? _loadJsonObject(
+  String relPath,
+  List<ValidationIssue> issues,
+  String Function(String relPath) readText,
+  String ruleId,
+  String label,
+) {
+  final String text = readText(relPath);
+  if (text.trim().isEmpty) {
+    return null;
+  }
+  try {
+    final dynamic decoded = jsonDecode(text);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+    if (decoded is Map) {
+      return decoded.map(
+        (dynamic key, dynamic value) => MapEntry(key.toString(), value),
+      );
+    }
+    issues.add(
+      ValidationIssue(
+        ruleId,
+        '$label at $relPath must decode to a JSON object.',
+      ),
+    );
+  } catch (error) {
+    issues.add(
+      ValidationIssue(
+        ruleId,
+        '$label JSON parse failed at $relPath: $error',
+      ),
+    );
+  }
+  return null;
+}
+
+Map<String, dynamic> _asObject(dynamic value) {
+  if (value is Map<String, dynamic>) {
+    return value;
+  }
+  if (value is Map) {
+    return value.map(
+      (dynamic key, dynamic item) => MapEntry(key.toString(), item),
+    );
+  }
+  return <String, dynamic>{};
+}
+
+List<dynamic> _asList(dynamic value) {
+  if (value is List<dynamic>) {
+    return value;
+  }
+  if (value is List) {
+    return List<dynamic>.from(value);
+  }
+  return <dynamic>[];
+}
+
+Map<String, String> _collectModuleAliases(Map<String, dynamic> registry) {
+  final Map<String, String> aliases = <String, String>{
+    ..._compatibilityModuleAliases,
+  };
+  final Map<String, dynamic> modules = _asObject(registry['modules']);
+  for (final MapEntry<String, dynamic> entry in modules.entries) {
+    aliases.putIfAbsent(entry.key, () => entry.key);
+    final Map<String, dynamic> meta = _asObject(entry.value);
+    for (final dynamic alias in _asList(meta['aliases'])) {
+      final String aliasText = alias.toString();
+      if (aliasText.isNotEmpty) {
+        aliases[aliasText] = entry.key;
+      }
+    }
+  }
+  return aliases;
+}
+
+String _canonicalizeModuleName(String module, Map<String, String> aliases) {
+  final String trimmed = module.trim();
+  if (trimmed.isEmpty) {
+    return '';
+  }
+  return aliases[trimmed] ?? trimmed;
+}
+
+void _addNormalizedModules(
+  Set<String> target,
+  dynamic rawModules,
+  Map<String, String> aliases,
+) {
+  for (final dynamic entry in _asList(rawModules)) {
+    final String canonical = _canonicalizeModuleName(
+      entry.toString(),
+      aliases,
+    );
+    if (canonical.isNotEmpty) {
+      target.add(canonical);
+    }
+  }
+}
+
+Set<String> _resolveModulesFromProfile(
+  Map<String, dynamic> profile,
+  Map<String, dynamic> registry,
+) {
+  final Map<String, String> aliases = _collectModuleAliases(registry);
+  final Map<String, dynamic> bootstrap = _asObject(profile['bootstrap']);
+  final Map<String, dynamic> operator = _asObject(profile['operator']);
+  final Map<String, dynamic> stack = _asObject(profile['stack']);
+  final Map<String, dynamic> archetypes = _asObject(registry['archetypes']);
+  final Map<String, dynamic> modes = _asObject(registry['modes']);
+  final Map<String, dynamic> featureFlags =
+      _asObject(registry['feature_flag_modules']);
+
+  final String archetypeName = (bootstrap['archetype'] ?? '').toString();
+  final String modeName = (bootstrap['mode'] ?? '').toString();
+  final Map<String, dynamic> archetype = _asObject(archetypes[archetypeName]);
+  final Map<String, dynamic> mode = _asObject(modes[modeName]);
+
+  final Set<String> modules = <String>{};
+  _addNormalizedModules(modules, archetype['include'], aliases);
+  _addNormalizedModules(modules, mode['include'], aliases);
+
+  if (bootstrap['uses_openai'] == true) {
+    _addNormalizedModules(modules, featureFlags['uses_openai'], aliases);
+  }
+  if (bootstrap['needs_codespaces'] == true) {
+    _addNormalizedModules(modules, featureFlags['needs_codespaces'], aliases);
+  }
+  if (bootstrap['has_browser_bridge'] == true) {
+    _addNormalizedModules(modules, featureFlags['has_browser_bridge'], aliases);
+  }
+
+  if ((operator['experience_level'] ?? '').toString() == 'beginner' ||
+      operator['needs_safe_commands'] == true) {
+    modules.add('beginner_support');
+  }
+  final bool hasDesktopSurface = _asList(
+    stack['surfaces'],
+  ).map((dynamic item) => item.toString()).contains('desktop');
+  if (hasDesktopSurface) {
+    modules.add('desktop_launcher');
+  }
+
+  _addNormalizedModules(modules, bootstrap['enabled_modules'], aliases);
+
+  final Set<String> excluded = <String>{};
+  _addNormalizedModules(excluded, archetype['exclude'], aliases);
+  _addNormalizedModules(excluded, mode['exclude'], aliases);
+  _addNormalizedModules(excluded, bootstrap['disabled_modules'], aliases);
+  modules.removeAll(excluded);
+  return modules;
+}
+
+Set<String> _resolveModulesFromState(
+  Map<String, dynamic> state,
+  Map<String, dynamic> registry,
+) {
+  final Map<String, String> aliases = _collectModuleAliases(registry);
+  final Map<String, dynamic> resolved = _asObject(state['resolved']);
+  final Set<String> modules = <String>{};
+  _addNormalizedModules(modules, resolved['modules'], aliases);
+  return modules;
+}
+
+Set<String> _resolveOutputsForModules(
+  Set<String> modules,
+  Map<String, dynamic> registry,
+) {
+  final Set<String> outputs = <String>{};
+  final Map<String, dynamic> moduleDefs = _asObject(registry['modules']);
+  for (final String module in modules) {
+    final Map<String, dynamic> meta = _asObject(moduleDefs[module]);
+    for (final dynamic output in _asList(meta['outputs'])) {
+      final String path = output.toString();
+      if (path.isNotEmpty) {
+        outputs.add(path);
+      }
+    }
+  }
+  return outputs;
+}
+
+dynamic _canonicalizeJson(dynamic value) {
+  if (value is Map) {
+    final SplayTreeMap<String, dynamic> sorted = SplayTreeMap<String, dynamic>();
+    final Map<String, dynamic> mapped = _asObject(value);
+    for (final String key in mapped.keys) {
+      sorted[key] = _canonicalizeJson(mapped[key]);
+    }
+    return sorted;
+  }
+  if (value is List) {
+    return _asList(value)
+        .map<dynamic>((dynamic item) => _canonicalizeJson(item))
+        .toList(growable: false);
+  }
+  return value;
+}
+
+String _profileFingerprint(Map<String, dynamic> profile) {
+  final String canonical = jsonEncode(_canonicalizeJson(profile));
+  return _sha256Hex(utf8.encode(canonical)).substring(0, 12);
+}
+
+int _rotateRight(int value, int shift) {
+  final int normalized = value & 0xffffffff;
+  return (((normalized >> shift) |
+              ((normalized << (32 - shift)) & 0xffffffff)) &
+          0xffffffff)
+      .toUnsigned(32);
+}
+
+String _sha256Hex(List<int> bytes) {
+  final List<int> message = List<int>.from(bytes);
+  final int bitLength = bytes.length * 8;
+  message.add(0x80);
+  while (message.length % 64 != 56) {
+    message.add(0);
+  }
+  for (int i = 7; i >= 0; i--) {
+    message.add((bitLength >> (i * 8)) & 0xff);
+  }
+
+  int h0 = 0x6a09e667;
+  int h1 = 0xbb67ae85;
+  int h2 = 0x3c6ef372;
+  int h3 = 0xa54ff53a;
+  int h4 = 0x510e527f;
+  int h5 = 0x9b05688c;
+  int h6 = 0x1f83d9ab;
+  int h7 = 0x5be0cd19;
+
+  final List<int> w = List<int>.filled(64, 0);
+  for (int chunkStart = 0; chunkStart < message.length; chunkStart += 64) {
+    for (int i = 0; i < 16; i++) {
+      final int j = chunkStart + (i * 4);
+      w[i] =
+          ((message[j] << 24) |
+                  (message[j + 1] << 16) |
+                  (message[j + 2] << 8) |
+                  message[j + 3]) &
+              0xffffffff;
+    }
+    for (int i = 16; i < 64; i++) {
+      final int s0 =
+          _rotateRight(w[i - 15], 7) ^
+          _rotateRight(w[i - 15], 18) ^
+          ((w[i - 15] & 0xffffffff) >> 3);
+      final int s1 =
+          _rotateRight(w[i - 2], 17) ^
+          _rotateRight(w[i - 2], 19) ^
+          ((w[i - 2] & 0xffffffff) >> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) & 0xffffffff;
+    }
+
+    int a = h0;
+    int b = h1;
+    int c = h2;
+    int d = h3;
+    int e = h4;
+    int f = h5;
+    int g = h6;
+    int h = h7;
+
+    for (int i = 0; i < 64; i++) {
+      final int s1 =
+          _rotateRight(e, 6) ^ _rotateRight(e, 11) ^ _rotateRight(e, 25);
+      final int ch = (e & f) ^ ((~e) & g);
+      final int temp1 = (h + s1 + ch + _sha256K[i] + w[i]) & 0xffffffff;
+      final int s0 =
+          _rotateRight(a, 2) ^ _rotateRight(a, 13) ^ _rotateRight(a, 22);
+      final int maj = (a & b) ^ (a & c) ^ (b & c);
+      final int temp2 = (s0 + maj) & 0xffffffff;
+
+      h = g;
+      g = f;
+      f = e;
+      e = (d + temp1) & 0xffffffff;
+      d = c;
+      c = b;
+      b = a;
+      a = (temp1 + temp2) & 0xffffffff;
+    }
+
+    h0 = (h0 + a) & 0xffffffff;
+    h1 = (h1 + b) & 0xffffffff;
+    h2 = (h2 + c) & 0xffffffff;
+    h3 = (h3 + d) & 0xffffffff;
+    h4 = (h4 + e) & 0xffffffff;
+    h5 = (h5 + f) & 0xffffffff;
+    h6 = (h6 + g) & 0xffffffff;
+    h7 = (h7 + h) & 0xffffffff;
+  }
+
+  return <int>[h0, h1, h2, h3, h4, h5, h6, h7]
+      .map((int value) => value.toUnsigned(32).toRadixString(16).padLeft(8, '0'))
+      .join();
+}
+
+void _validateProfileDrivenBootstrapFiles(
+  List<ValidationIssue> issues,
+  String Function(String relPath) readText,
+  bool Function(String relPath) exists,
+  _HarnessResolution harnessResolution,
+) {
+  if (!harnessResolution.hasProfile) {
+    return;
+  }
+
+  const Map<String, List<String>> requiredMarkers = <String, List<String>>{
+    'docs/assistant/templates/README.md': <String>[
+      'managed bootstrap template set',
+      'profile-driven resolution',
+      'compatibility during migration',
+    ],
+    'docs/assistant/templates/BOOTSTRAP_PROFILE_RESOLUTION.md': <String>[
+      'docs/assistant/harness_profile.json',
+      'docs/assistant/runtime/bootstrap_state.json',
+      'openai_docs_mcp',
+      'legacy repos may keep their current behavior until a profile is added',
+    ],
+    'docs/assistant/templates/NEW_PROJECT_BOOTSTRAP_WORKFLOW.md': <String>[
+      'bootstrap_profile_wizard.py',
+      'check_harness_profile.py',
+      'preview_harness_sync.py',
+    ],
+  };
+
+  final List<String> missingMarkers = <String>[];
+  for (final MapEntry<String, List<String>> entry in requiredMarkers.entries) {
+    final String relPath = entry.key;
+    if (!exists(relPath)) {
+      continue;
+    }
+    final String text = readText(relPath).toLowerCase();
+    for (final String marker in entry.value) {
+      if (!text.contains(marker)) {
+        missingMarkers.add('$relPath -> $marker');
+      }
+    }
+  }
+  if (missingMarkers.isNotEmpty) {
+    issues.add(
+      ValidationIssue(
+        'AD048',
+        'Profile-driven bootstrap docs are missing required markers: ${missingMarkers.join(' | ')}',
+      ),
+    );
+  }
+
+  if (exists('docs/assistant/templates/BOOTSTRAP_VERSION.json')) {
+    final Map<String, dynamic>? version = _loadJsonObject(
+      'docs/assistant/templates/BOOTSTRAP_VERSION.json',
+      issues,
+      readText,
+      'AD048',
+      'Bootstrap version metadata',
+    );
+    if (version != null) {
+      final List<dynamic> features = _asList(version['features']);
+      if ((version['migration_stage'] ?? '').toString() != 'additive' ||
+          !features.map((dynamic item) => item.toString()).contains(
+            'harness_profile',
+          )) {
+        issues.add(
+          ValidationIssue(
+            'AD048',
+            'docs/assistant/templates/BOOTSTRAP_VERSION.json must declare additive phase-1 profile-driven rollout metadata.',
+          ),
+        );
+      }
+    }
+  }
+
+  if (exists('docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json')) {
+    final Map<String, dynamic>? registry = _loadJsonObject(
+      'docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json',
+      issues,
+      readText,
+      'AD048',
+      'Bootstrap archetype registry',
+    );
+    if (registry != null) {
+      final Map<String, dynamic> modules = _asObject(registry['modules']);
+      final Map<String, dynamic> archetypes = _asObject(registry['archetypes']);
+      if (!modules.containsKey('openai_docs_mcp') ||
+          !archetypes.containsKey('desktop_python_qt')) {
+        issues.add(
+          ValidationIssue(
+            'AD048',
+            'docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json must include openai_docs_mcp and desktop_python_qt for phase 1.',
+          ),
+        );
+      }
+    }
+  }
 }
 
 void _validateQtLaunchIdentityDiscipline(
@@ -1953,6 +2571,11 @@ void _validateProjectHarnessAndRoadmapGovernance(
       'docs/assistant/templates/*',
       'update codex bootstrap',
       'continuity or merge cleanup behavior',
+      'resolution-first sync workflow',
+      'check_harness_profile.py',
+      'preview_harness_sync.py',
+      'bootstrap_state.json',
+      'legacy repo case',
       'commit_publish_workflow.md',
       'docs_maintenance_workflow.md',
       'separate logical commit scopes by default',
@@ -2698,6 +3321,16 @@ void _validateBootstrapTemplateIntegrity(
     return;
   }
 
+  final dynamic rawTargets = templateMap['targets'];
+  if (rawTargets is! List<dynamic>) {
+    issues.add(
+      ValidationIssue(
+        'AD039',
+        'Bootstrap template map must include a targets list for the phase-1 profile-driven rollout.',
+      ),
+    );
+  }
+
   final Set<String> moduleIds = <String>{};
   final Map<String, List<String>> moduleTopicsById = <String, List<String>>{};
   final List<String> invalidModuleRefs = <String>[];
@@ -2732,6 +3365,56 @@ void _validateBootstrapTemplateIntegrity(
         'Bootstrap template map is incomplete. Invalid refs: ${invalidModuleRefs.join(', ')}. Missing modules: ${missingModuleIds.join(', ')}',
       ),
     );
+  }
+
+  if (rawTargets is List<dynamic>) {
+    final Map<String, Map<String, String>> targetsByDestination =
+        <String, Map<String, String>>{};
+    final List<String> invalidTargets = <String>[];
+    for (final dynamic target in rawTargets) {
+      if (target is! Map<String, dynamic>) {
+        invalidTargets.add('target entry is not object');
+        continue;
+      }
+      final String destination = (target['destination'] ?? '').toString();
+      final String template = (target['template'] ?? '').toString();
+      final String policy = (target['policy'] ?? '').toString();
+      if (destination.isEmpty || template.isEmpty || policy.isEmpty) {
+        invalidTargets.add(
+          'target missing destination/template/policy: $destination',
+        );
+        continue;
+      }
+      targetsByDestination[destination] = <String, String>{
+        'template': template,
+        'policy': policy,
+      };
+    }
+
+    final List<String> missingTargets = <String>[];
+    for (final MapEntry<String, Map<String, String>> entry
+        in _requiredBootstrapTargets.entries) {
+      final Map<String, String>? actual = targetsByDestination[entry.key];
+      if (actual == null) {
+        missingTargets.add(entry.key);
+        continue;
+      }
+      if (actual['template'] != entry.value['template'] ||
+          actual['policy'] != entry.value['policy']) {
+        invalidTargets.add(
+          '${entry.key} -> template/policy mismatch (${actual['template']}, ${actual['policy']})',
+        );
+      }
+    }
+
+    if (invalidTargets.isNotEmpty || missingTargets.isNotEmpty) {
+      issues.add(
+        ValidationIssue(
+          'AD039',
+          'Bootstrap template map targets are incomplete. Invalid targets: ${invalidTargets.join(', ')}. Missing targets: ${missingTargets.join(', ')}',
+        ),
+      );
+    }
   }
 
   final List<String> missingTopicMarkers = <String>[];

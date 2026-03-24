@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-24T19:20:57.829590Z",
+  "bootstrap_version": "2026.03-profile-driven-phase1",
+  "profile_fingerprint": "451c8c6676ac",
+  "resolved": {
+    "project": "legalpdf_translate",
+    "archetype": "desktop_python_qt",
+    "mode": "standard",
+    "modules": [
+      "base_docs",
+      "beginner_support",
+      "build_identity",
+      "capability_discovery",
+      "desktop_launcher",
+      "diagnostics",
+      "host_integration",
+      "issue_memory",
+      "local_env_overlay",
+      "openai_docs_mcp",
+      "qa_checks",
+      "session_resume"
+    ],
+    "starter_files": [
+      "scripts/run_app.ps1",
+      "scripts/repair_env.ps1",
+      "scripts/validate.ps1"
+    ],
+    "notes": [
+      "prefer plain-language setup docs",
+      "favor stable local commands over cloud-only assumptions",
+      "Phase 1 profile stays desktop+CLI focused; browser bridge remains out of scope for now."
+    ]
+  }
+}

@@ -37,6 +37,36 @@ It is intentionally small. Detailed policy now lives in read-on-demand sub-boots
 10. Generate or update the project harness.
 11. Run validator coverage so the harness cannot silently drift.
 
+## Profile-first bootstrap resolution
+
+Before selecting or reapplying template modules, read these files in this order when they exist:
+
+1. `docs/assistant/HARNESS_PROFILE.json`
+2. `docs/assistant/runtime/BOOTSTRAP_STATE.json`
+3. `docs/assistant/templates/BOOTSTRAP_VERSION.json`
+4. `docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json`
+5. `docs/assistant/templates/BOOTSTRAP_PROFILE_RESOLUTION.md`
+6. the specific archetype file from `docs/assistant/templates/archetypes/`
+
+### Resolution rules
+
+- If `HARNESS_PROFILE.json` exists, treat it as the **source of truth** for archetype, mode, operator level, and explicit module overrides.
+- Do not silently infer a different archetype when the profile already names one.
+- Use the registry to resolve default modules for the chosen archetype and mode.
+- Then apply `enabled_modules`, then subtract `disabled_modules`.
+- If `uses_openai` is true, include `openai_docs_mcp`.
+- If `needs_codespaces` is true, include `codespaces`.
+- If `has_browser_bridge` is true, include `browser_bridge`.
+- If the operator is `beginner` or `needs_safe_commands` is true, include `beginner_support`.
+- If the project surface includes `desktop`, include `desktop_launcher` unless the profile explicitly disables it.
+
+### Safety rules
+
+- Preview the resolved changes before applying the harness.
+- Write the resolved result to `docs/assistant/runtime/BOOTSTRAP_STATE.json` after preview.
+- Treat `docs/assistant/templates/*` as vendored source material. Do not edit those files during normal repo work unless the user explicitly requests a bootstrap/template update.
+- During migration, preserve compatibility with legacy module names by consulting the registry aliases.
+
 ## Template Files
 - `BOOTSTRAP_CORE_CONTRACT.md`: universal governance, docs architecture, shorthand workflow semantics, OpenAI freshness routing.
 - `BOOTSTRAP_ISSUE_MEMORY_SYSTEM.md`: always-on issue memory generation, capture triggers, docs-sync wiring, and bootstrap filtering.

@@ -1,0 +1,31 @@
+{
+  "$schema": "./schemas/HARNESS_PROFILE.schema.json",
+  "schema_version": 1,
+  "project": {
+    "name": "legalpdf_translate",
+    "description": "Windows-first Python app for legal PDF translation with a Qt desktop GUI and CLI helpers."
+  },
+  "operator": {
+    "experience_level": "beginner",
+    "preferred_tone": "plain_english",
+    "needs_safe_commands": true
+  },
+  "stack": {
+    "primary_language": "python",
+    "framework": "pyside6",
+    "surfaces": ["desktop", "cli"],
+    "target_os": ["windows"]
+  },
+  "bootstrap": {
+    "archetype": "desktop_python_qt",
+    "mode": "standard",
+    "enabled_modules": [],
+    "disabled_modules": [],
+    "uses_openai": true,
+    "needs_codespaces": false,
+    "has_browser_bridge": false,
+    "notes": [
+      "Phase 1 profile stays desktop+CLI focused; browser bridge remains out of scope for now."
+    ]
+  }
+}

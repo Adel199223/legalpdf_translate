@@ -140,5 +140,42 @@
         "cleanup continuity promotion rule"
       ]
     }
+  ],
+  "targets": [
+    {
+      "destination": "docs/assistant/HARNESS_PROFILE.json",
+      "template": "docs/assistant/templates/examples/HARNESS_PROFILE.template.json",
+      "policy": "copy_if_missing"
+    },
+    {
+      "destination": "docs/assistant/schemas/HARNESS_PROFILE.schema.json",
+      "template": "docs/assistant/schemas/HARNESS_PROFILE.schema.json",
+      "policy": "copy"
+    },
+    {
+      "destination": "docs/assistant/CODEX_ENVIRONMENT.md",
+      "template": "docs/assistant/CODEX_ENVIRONMENT.md",
+      "policy": "copy_if_missing"
+    },
+    {
+      "destination": ".vscode/mcp.json.example",
+      "template": ".vscode/mcp.json.example",
+      "policy": "copy_if_missing"
+    },
+    {
+      "destination": "docs/assistant/runtime/BOOTSTRAP_STATE.json",
+      "template": "docs/assistant/templates/examples/BOOTSTRAP_STATE.template.json",
+      "policy": "generated"
+    },
+    {
+      "destination": "docs/assistant/templates/BOOTSTRAP_VERSION.json",
+      "template": "docs/assistant/templates/BOOTSTRAP_VERSION.json",
+      "policy": "copy"
+    },
+    {
+      "destination": "docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json",
+      "template": "docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json",
+      "policy": "copy"
+    }
   ]
 }
