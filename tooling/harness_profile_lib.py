@@ -209,6 +209,43 @@ def resolve_plan(profile: JsonObject, registry: JsonObject) -> JsonObject:
     }
 
 
+def resolve_sync_targets(plan: JsonObject, template_map: JsonObject | None = None) -> JsonObject:
+    """Map generic resolved outputs onto repo-local sync targets when configured."""
+
+    mappings: Dict[str, List[str]] = {}
+    if isinstance(template_map, dict):
+        for raw_mapping in template_map.get("output_mappings", []):
+            if not isinstance(raw_mapping, dict):
+                continue
+            resolved_output = raw_mapping.get("resolved_output")
+            raw_targets = raw_mapping.get("sync_targets", [])
+            if not isinstance(resolved_output, str) or not resolved_output.strip():
+                continue
+            if not isinstance(raw_targets, list):
+                continue
+            sync_targets = [
+                target.strip()
+                for target in raw_targets
+                if isinstance(target, str) and target.strip()
+            ]
+            if sync_targets:
+                mappings[resolved_output] = list(dict.fromkeys(sync_targets))
+
+    sync_targets: List[str] = []
+    mapped_outputs: Dict[str, List[str]] = {}
+    for output in plan.get("outputs", []):
+        if output in mappings:
+            mapped_outputs[output] = mappings[output]
+            sync_targets.extend(mappings[output])
+        else:
+            sync_targets.append(output)
+
+    return {
+        "sync_targets": list(dict.fromkeys(sync_targets)),
+        "mapped_outputs": mapped_outputs,
+    }
+
+
 def profile_fingerprint(profile: JsonObject) -> str:
     canonical = json.dumps(profile, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]

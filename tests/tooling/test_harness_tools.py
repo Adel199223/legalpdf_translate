@@ -14,6 +14,7 @@ PROFILE = ROOT / "docs/assistant/templates/examples/DESKTOP_PYTHON_QT.profile.js
 sys.path.insert(0, str(TOOLING))
 
 from harness_profile_lib import load_json, make_state, resolve_plan, validate_profile  # noqa: E402
+from harness_profile_lib import resolve_sync_targets  # noqa: E402
 
 
 class HarnessToolTests(unittest.TestCase):
@@ -38,6 +39,22 @@ class HarnessToolTests(unittest.TestCase):
         self.assertEqual(state["resolved"]["archetype"], "desktop_python_qt")
         self.assertTrue(state["profile_fingerprint"])
 
+    def test_sync_targets_apply_repo_output_mappings(self) -> None:
+        profile = load_json(PROFILE)
+        registry = load_json(REGISTRY)
+        template_map = load_json(ROOT / "docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json")
+        plan = resolve_plan(profile, registry)
+        sync_resolution = resolve_sync_targets(plan, template_map)
+        self.assertIn("README.md", sync_resolution["sync_targets"])
+        self.assertIn(
+            "docs/assistant/SESSION_RESUME.md",
+            sync_resolution["sync_targets"],
+        )
+        self.assertEqual(
+            sync_resolution["mapped_outputs"]["docs/assistant/START_HERE.md"],
+            ["README.md"],
+        )
+
     def test_cli_preview_json(self) -> None:
         result = subprocess.run(
             [
@@ -55,6 +72,8 @@ class HarnessToolTests(unittest.TestCase):
         )
         data = json.loads(result.stdout)
         self.assertEqual(data["archetype"], "desktop_python_qt")
+        self.assertIn("sync_targets", data)
+        self.assertEqual(data["missing_sync_targets"], [])
 
 
 if __name__ == "__main__":
