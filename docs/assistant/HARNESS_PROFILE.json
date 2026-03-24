@@ -3,7 +3,7 @@
   "schema_version": 1,
   "project": {
     "name": "legalpdf_translate",
-    "description": "Windows-first Python app for legal PDF translation with a Qt desktop GUI and CLI helpers."
+    "description": "Windows-first Python app for legal PDF translation with a primary local browser UI, a secondary Qt desktop shell, CLI helpers, and Gmail browser-extension/native-host bridge support."
   },
   "operator": {
     "experience_level": "beginner",
@@ -13,7 +13,7 @@
   "stack": {
     "primary_language": "python",
     "framework": "pyside6",
-    "surfaces": ["desktop", "cli"],
+    "surfaces": ["web", "desktop", "cli", "browser_extension"],
     "target_os": ["windows"]
   },
   "bootstrap": {
@@ -23,9 +23,10 @@
     "disabled_modules": [],
     "uses_openai": true,
     "needs_codespaces": false,
-    "has_browser_bridge": false,
+    "has_browser_bridge": true,
     "notes": [
-      "Phase 1 profile stays desktop+CLI focused; browser bridge remains out of scope for now."
+      "Phase 1 profile reflects the repo's hybrid browser-primary + desktop-secondary + CLI architecture.",
+      "The live Gmail browser extension/native-host bridge is part of the supported app surface."
     ]
   }
 }

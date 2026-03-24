@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-24T19:20:57.829590Z",
+  "generated_at": "2026-03-24T19:59:06.035738Z",
   "bootstrap_version": "2026.03-profile-driven-phase1",
-  "profile_fingerprint": "451c8c6676ac",
+  "profile_fingerprint": "f81e8d214d33",
   "resolved": {
     "project": "legalpdf_translate",
     "archetype": "desktop_python_qt",
@@ -10,6 +10,7 @@
     "modules": [
       "base_docs",
       "beginner_support",
+      "browser_bridge",
       "build_identity",
       "capability_discovery",
       "desktop_launcher",
@@ -29,7 +30,8 @@
     "notes": [
       "prefer plain-language setup docs",
       "favor stable local commands over cloud-only assumptions",
-      "Phase 1 profile stays desktop+CLI focused; browser bridge remains out of scope for now."
+      "Phase 1 profile reflects the repo's hybrid browser-primary + desktop-secondary + CLI architecture.",
+      "The live Gmail browser extension/native-host bridge is part of the supported app surface."
     ]
   }
 }
