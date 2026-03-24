@@ -43,8 +43,9 @@ class HarnessToolTests(unittest.TestCase):
         profile = load_json(PROFILE)
         registry = load_json(REGISTRY)
         template_map = load_json(ROOT / "docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json")
+        output_map = load_json(ROOT / "docs/assistant/HARNESS_OUTPUT_MAP.json")
         plan = resolve_plan(profile, registry)
-        sync_resolution = resolve_sync_targets(plan, template_map)
+        sync_resolution = resolve_sync_targets(plan, template_map, output_map)
         self.assertIn("README.md", sync_resolution["sync_targets"])
         self.assertIn(
             "docs/assistant/SESSION_RESUME.md",
@@ -53,6 +54,50 @@ class HarnessToolTests(unittest.TestCase):
         self.assertEqual(
             sync_resolution["mapped_outputs"]["docs/assistant/START_HERE.md"],
             ["README.md"],
+        )
+
+    def test_repo_output_map_overrides_legacy_template_mapping(self) -> None:
+        profile = load_json(PROFILE)
+        registry = load_json(REGISTRY)
+        plan = resolve_plan(profile, registry)
+        legacy_template_map = {
+            "output_mappings": [
+                {
+                    "resolved_output": "docs/assistant/START_HERE.md",
+                    "sync_targets": ["docs/assistant/START_HERE.md"],
+                }
+            ]
+        }
+        repo_output_map = {
+            "output_mappings": [
+                {
+                    "resolved_output": "docs/assistant/START_HERE.md",
+                    "sync_targets": ["README.md"],
+                }
+            ]
+        }
+        sync_resolution = resolve_sync_targets(plan, legacy_template_map, repo_output_map)
+        self.assertEqual(
+            sync_resolution["mapped_outputs"]["docs/assistant/START_HERE.md"],
+            ["README.md"],
+        )
+
+    def test_legacy_template_output_mappings_still_work_without_repo_overlay(self) -> None:
+        profile = load_json(PROFILE)
+        registry = load_json(REGISTRY)
+        plan = resolve_plan(profile, registry)
+        legacy_template_map = {
+            "output_mappings": [
+                {
+                    "resolved_output": "docs/assistant/START_HERE.md",
+                    "sync_targets": ["docs/assistant/START_HERE.md"],
+                }
+            ]
+        }
+        sync_resolution = resolve_sync_targets(plan, legacy_template_map)
+        self.assertEqual(
+            sync_resolution["mapped_outputs"]["docs/assistant/START_HERE.md"],
+            ["docs/assistant/START_HERE.md"],
         )
 
     def test_cli_preview_json(self) -> None:
@@ -64,6 +109,8 @@ class HarnessToolTests(unittest.TestCase):
                 str(PROFILE),
                 "--registry",
                 str(REGISTRY),
+                "--output-map",
+                str(ROOT / "docs/assistant/HARNESS_OUTPUT_MAP.json"),
                 "--json",
             ],
             check=True,
