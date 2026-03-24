@@ -1,54 +1,81 @@
 # Bootstrap Harness Kit
 
-This folder is a portable export of the reusable profile-driven harness source. Copy it into another repo when you want to seed the vendored bootstrap layer without bringing along app-specific outputs.
+`bootstrap_harness_kit/` is the portable reusable source for the profile-driven assistant harness. It is designed for **AI-assisted** adoption in a new or existing repo.
 
-## What Belongs In This Kit
+This phase does **not** claim a full scripted generator for every repo-local harness file. It does provide a self-contained seed path, profile/preview tooling, examples, and enough source material for Codex to create the repo-local harness without consulting files outside this kit.
+
+## What This Kit Includes
+
+Reusable source-of-truth files:
 
 - `docs/assistant/templates/**`
 - `docs/assistant/schemas/HARNESS_PROFILE.schema.json`
+- `docs/assistant/CODEX_ENVIRONMENT.md`
+- `.vscode/mcp.json.example`
 - `tooling/bootstrap_profile_wizard.py`
 - `tooling/check_harness_profile.py`
 - `tooling/preview_harness_sync.py`
 - `tooling/harness_profile_lib.py`
-- `.vscode/mcp.json.example`
+- `tooling/seed_bootstrap_harness.py`
 
-These files are the reusable source of truth.
+Canonical reusable examples live under:
 
-## What Does Not Belong In This Kit
+- `docs/assistant/templates/examples/`
 
-Do not treat repo-local outputs as reusable source. Generate or write these per repo:
+## What This Kit Does Not Include
+
+These are repo-local outputs and must be written or generated per repo:
 
 - `docs/assistant/HARNESS_PROFILE.json`
 - `docs/assistant/runtime/BOOTSTRAP_STATE.json`
-- repo-local `docs/assistant/BROWSER_BRIDGE.md`
-- app-specific `README.md`
-- app-specific `APP_KNOWLEDGE.md`
-- any repo-local `docs/assistant/HARNESS_OUTPUT_MAP.json`
+- `docs/assistant/HARNESS_OUTPUT_MAP.json`
+- `README.md`
+- `agent.md`
+- `docs/assistant/manifest.json`
+- `docs/assistant/START_HERE.md`
+- `docs/assistant/SAFE_COMMANDS.md`
+- `docs/assistant/TERMS_IN_PLAIN_ENGLISH.md`
+- `docs/assistant/DIAGNOSTICS.md`
+- `docs/assistant/QA_CHECKS.md`
+- `docs/assistant/runtime/CANONICAL_BUILD.json`
+- `docs/assistant/workflows/SESSION_RESUME.md`
+- app-specific files such as `APP_KNOWLEDGE.md` or `BROWSER_BRIDGE.md`
 
-## How To Copy It Into Another Repo
+## Recommended Adoption Order
 
-1. Copy the contents of this folder into the target repo root, preserving paths.
-2. Create `docs/assistant/HARNESS_PROFILE.json` for that repo.
-3. Run the preview flow to resolve modules and write `docs/assistant/runtime/BOOTSTRAP_STATE.json`.
-4. Apply the repo-local harness sync for that repo.
-5. Validate the result.
+1. Copy `bootstrap_harness_kit/` into the target repo.
+2. Seed the reusable source into the target repo.
+3. Create `docs/assistant/HARNESS_PROFILE.json`.
+4. Run preview and write `docs/assistant/runtime/BOOTSTRAP_STATE.json`.
+5. Run the AI-assisted local harness sync.
+6. Run validation.
+7. Add `docs/assistant/HARNESS_OUTPUT_MAP.json` only if the repo already has established local harness equivalents.
 
-## Recommended Order
+## Seed Command
 
-```text
-create HARNESS_PROFILE.json
--> preview
--> sync
--> validate
-```
-
-## Suggested Commands
+From the target repo root after copying this folder into it:
 
 ```bash
-python tooling/check_harness_profile.py --profile docs/assistant/HARNESS_PROFILE.json --registry docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json
-python tooling/preview_harness_sync.py --profile docs/assistant/HARNESS_PROFILE.json --registry docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json --write-state docs/assistant/runtime/BOOTSTRAP_STATE.json
+python bootstrap_harness_kit/tooling/seed_bootstrap_harness.py --repo-root .
 ```
 
-## Optional Repo-Local Overlay
+Use `--overwrite` only when you intentionally want to refresh kit-managed source files already copied into the repo.
 
-If a repo already has established local harness equivalents, add a repo-local `docs/assistant/HARNESS_OUTPUT_MAP.json`. Keep that overlay outside this kit so the reusable layer stays generic.
+## AI-Assisted Sync Boundary
+
+This kit is self-contained for:
+
+- seeding reusable source
+- creating and validating a harness profile
+- previewing the resolved module/output set
+- AI-guided sync of repo-local harness files
+- portable validation of the preview/state flow
+
+This kit is **not** yet a full scripted generator for every repo-local output in a blank repo.
+
+## Next Reading
+
+- `QUICKSTART_NEW_REPO.md`
+- `QUICKSTART_EXISTING_REPO.md`
+- `docs/assistant/templates/NEW_PROJECT_BOOTSTRAP_WORKFLOW.md`
+- `docs/assistant/templates/examples/`
