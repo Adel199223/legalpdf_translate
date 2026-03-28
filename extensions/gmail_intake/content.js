@@ -25,8 +25,16 @@
     banner.style.boxShadow = "0 10px 32px rgba(0, 0, 0, 0.25)";
     banner.style.font = "500 13px/1.4 Arial, sans-serif";
     banner.style.color = "#101828";
-    banner.style.background = kind === "success" ? "#D1FADF" : "#FEE4E2";
-    banner.style.border = `1px solid ${kind === "success" ? "#6CE9A6" : "#FDA29B"}`;
+    if (kind === "success") {
+      banner.style.background = "#D1FADF";
+      banner.style.border = "1px solid #6CE9A6";
+    } else if (kind === "info") {
+      banner.style.background = "#D9F0FF";
+      banner.style.border = "1px solid #84CAFF";
+    } else {
+      banner.style.background = "#FEE4E2";
+      banner.style.border = "1px solid #FDA29B";
+    }
     document.documentElement.appendChild(banner);
     window.setTimeout(() => banner.remove(), 4500);
   }
@@ -110,12 +118,19 @@
     }
 
     if (message.type === "gmail-intake-status") {
-      const kind = message.kind === "success" ? "success" : "error";
+      const kind =
+        message.kind === "success"
+          ? "success"
+          : message.kind === "info"
+            ? "info"
+            : "error";
       const text =
         typeof message.message === "string" && message.message.trim() !== ""
           ? message.message.trim()
           : kind === "success"
             ? "Gmail intake accepted."
+            : kind === "info"
+              ? "Gmail intake is still in progress."
             : "Gmail intake failed.";
       showBanner(text, kind);
       return false;

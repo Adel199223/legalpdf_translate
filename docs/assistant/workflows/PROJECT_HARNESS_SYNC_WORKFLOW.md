@@ -30,6 +30,34 @@ Instead use:
 - Do not auto-commit or auto-push at the end of a harness sync pass unless the user separately asks for commit/publish work.
 - Do not overwrite repo-specific adaptations unless they conflict with a bootstrap floor contract from the vendored template set.
 
+## Resolution-first sync workflow
+
+Before applying a harness sync, run the profile and registry resolution step:
+
+1. validate `docs/assistant/HARNESS_PROFILE.json`
+2. resolve the effective module set from:
+   - archetype defaults
+   - mode defaults
+   - boolean feature flags
+   - `enabled_modules`
+   - `disabled_modules`
+3. preview the proposed file surface and module set
+4. write `docs/assistant/runtime/BOOTSTRAP_STATE.json`
+5. apply the sync
+6. re-run validators and update any affected local docs or manifests
+
+### Recommended commands
+
+```bash
+python tooling/check_harness_profile.py   --profile docs/assistant/HARNESS_PROFILE.json   --registry docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json
+
+python tooling/preview_harness_sync.py   --profile docs/assistant/HARNESS_PROFILE.json   --registry docs/assistant/templates/BOOTSTRAP_ARCHETYPE_REGISTRY.json   --write-state docs/assistant/runtime/BOOTSTRAP_STATE.json
+```
+
+### Migration note
+
+During the first rollout, treat missing profile files as a legacy repo case and fall back to the current behavior. New or actively maintained repos should gain `HARNESS_PROFILE.json` as soon as possible.
+
 ## Primary Files
 - `agent.md`
 - `AGENTS.md`

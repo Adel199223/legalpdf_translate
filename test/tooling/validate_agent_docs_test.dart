@@ -41,14 +41,20 @@ String _fixtureRoot() {
     'agent.md',
     'README.md',
     'APP_KNOWLEDGE.md',
+    '.vscode/mcp.json.example',
     '.vscode/settings.json',
     'docs/assistant',
+    'tooling/bootstrap_profile_wizard.py',
+    'tooling/check_harness_profile.py',
+    'tooling/harness_profile_lib.py',
     'tooling/launch_qt_build.py',
+    'tooling/preview_harness_sync.py',
     'tooling/qt_render_review.py',
     'tooling/validate_agent_docs.dart',
     'tooling/validate_workspace_hygiene.dart',
     'tooling/automation_preflight.dart',
     'tooling/cloud_eval_preflight.dart',
+    'tests/tooling/test_harness_tools.py',
     'test/tooling/validate_agent_docs_test.dart',
     'test/tooling/validate_workspace_hygiene_test.dart',
     'test/tooling/automation_preflight_test.dart',
@@ -190,6 +196,62 @@ void main() {
     );
     _expect(issues.isEmpty, 'Expected no issues, got: $issues');
   }, failures);
+
+  _runCase(
+    'passes when HARNESS_PROFILE is absent and validator falls back to legacy behavior',
+    () {
+      final String root = _fixtureRoot();
+      _removePath(root, 'docs/assistant/HARNESS_PROFILE.json');
+      final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+        rootPath: root,
+      );
+      _expect(
+        !_hasRule(issues, 'AD001') && !_hasRule(issues, 'AD048'),
+        'Expected legacy fallback without profile-driven failures, got: $issues',
+      );
+    },
+    failures,
+  );
+
+  _runCase('fails when alias-enabled openai docs outputs are missing', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> profile = _readJson(
+      root,
+      'docs/assistant/HARNESS_PROFILE.json',
+    );
+    final Map<String, dynamic> bootstrap =
+        profile['bootstrap'] as Map<String, dynamic>;
+    bootstrap['uses_openai'] = false;
+    bootstrap['enabled_modules'] = <String>['openai_docs'];
+    _writeJson(root, 'docs/assistant/HARNESS_PROFILE.json', profile);
+    _removePath(root, 'docs/assistant/CODEX_ENVIRONMENT.md');
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD001'), 'Expected AD001');
+  }, failures);
+
+  _runCase(
+    'fails when stale bootstrap state is ignored in favor of live profile resolution',
+    () {
+      final String root = _fixtureRoot();
+      _writeJson(
+        root,
+        'docs/assistant/runtime/BOOTSTRAP_STATE.json',
+        <String, dynamic>{
+          'schema_version': 1,
+          'profile_fingerprint': 'deadbeef0000',
+          'resolved': <String, dynamic>{'modules': <String>[]},
+        },
+      );
+      _removePath(root, 'docs/assistant/CODEX_ENVIRONMENT.md');
+      final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+        rootPath: root,
+      );
+      _expect(_hasRule(issues, 'AD001'), 'Expected AD001');
+    },
+    failures,
+  );
 
   _runCase('fails when required workflow file missing', () {
     final String root = _fixtureRoot();
@@ -1167,6 +1229,20 @@ void main() {
     _expect(_hasRule(issues, 'AD039'), 'Expected AD039');
   }, failures);
 
+  _runCase('fails when bootstrap template map targets are missing', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> templateMap = _readJson(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json',
+    );
+    templateMap.remove('targets');
+    _writeJson(root, 'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json', templateMap);
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD039'), 'Expected AD039');
+  }, failures);
+
   _runCase('fails when project harness sync workflow missing', () {
     final String root = _fixtureRoot();
     _removePath(
@@ -1216,6 +1292,23 @@ void main() {
         'docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md',
         'continuity or merge cleanup behavior',
         'cleanup behavior',
+      );
+      final List<validator.ValidationIssue> issues = validator
+          .validateAgentDocs(rootPath: root);
+      _expect(_hasRule(issues, 'AD045'), 'Expected AD045');
+    },
+    failures,
+  );
+
+  _runCase(
+    'fails when project harness workflow loses resolution-first sync guidance',
+    () {
+      final String root = _fixtureRoot();
+      _replaceInFile(
+        root,
+        'docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md',
+        '## Resolution-first sync workflow',
+        '## Sync workflow',
       );
       final List<validator.ValidationIssue> issues = validator
           .validateAgentDocs(rootPath: root);
@@ -1386,5 +1479,5 @@ void main() {
     exit(1);
   }
 
-  stdout.writeln('All agent docs validator tests passed (67 cases).');
+  stdout.writeln('All agent docs validator tests passed (72 cases).');
 }

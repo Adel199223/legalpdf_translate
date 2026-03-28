@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import http.client
 import json
+import shutil
 import socket
+import subprocess
 import time
 from pathlib import Path
 
@@ -47,6 +49,167 @@ def _request(
             time.sleep(0.02)
         finally:
             connection.close()
+
+
+def _run_background_logic_probe() -> dict[str, object]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for Gmail extension background coverage.")
+
+    background_path = (
+        Path(__file__).resolve().parents[1]
+        / "extensions"
+        / "gmail_intake"
+        / "background.js"
+    )
+
+    script = f"""
+const fs = await import("node:fs");
+const vm = await import("node:vm");
+
+const backgroundPath = {json.dumps(str(background_path))};
+const backgroundSource = fs.readFileSync(backgroundPath, "utf8");
+
+function loadBackground(fetchImpl) {{
+  const tabOps = [];
+  const sentMessages = [];
+  const chrome = {{
+    action: {{
+      onClicked: {{
+        addListener(_handler) {{
+          // The probe calls test hooks directly.
+        }},
+      }},
+    }},
+    tabs: {{
+      sendMessage: async (tabId, payload) => {{
+        sentMessages.push({{ tabId, payload }});
+        return {{ ok: true }};
+      }},
+      query: async (query) => {{
+        tabOps.push({{ type: "query", query }});
+        return [];
+      }},
+      update: async (...args) => {{
+        tabOps.push({{ type: "update", args }});
+        return {{}};
+      }},
+      create: async (args) => {{
+        tabOps.push({{ type: "create", args }});
+        return {{ id: 91, windowId: 7 }};
+      }},
+    }},
+    windows: {{
+      update: async (...args) => {{
+        tabOps.push({{ type: "windowUpdate", args }});
+        return {{}};
+      }},
+    }},
+    runtime: {{
+      sendNativeMessage: async () => ({{}}),
+    }},
+    scripting: {{
+      executeScript: async () => undefined,
+    }},
+    storage: {{
+      local: {{
+        get: async () => ({{}}),
+        set: async () => undefined,
+      }},
+    }},
+  }};
+
+  const context = {{
+    console,
+    URL,
+    fetch: fetchImpl,
+    chrome,
+    setTimeout,
+    clearTimeout,
+    Date,
+  }};
+  context.globalThis = context;
+  context.__LEGALPDF_TEST__ = true;
+  vm.createContext(context);
+  new vm.Script(backgroundSource, {{ filename: backgroundPath }}).runInContext(context);
+  return {{
+    hooks: context.__legalPdfGmailIntakeBackgroundTestHooks,
+    tabOps,
+    sentMessages,
+  }};
+}}
+
+const browserUrl = "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake";
+const gmailContext = {{
+  message_id: "msg-1",
+  thread_id: "thread-1",
+  subject: "Subject",
+}};
+const config = {{
+  bridgePort: 8765,
+  bridgeToken: "shared-token",
+}};
+const nativeResponse = {{
+  ui_owner: "browser_app",
+  browser_url: browserUrl,
+}};
+
+const transport = loadBackground(async () => {{
+  throw new Error("offline");
+}});
+await transport.hooks.postContext(11, gmailContext, config, nativeResponse, "", false, browserUrl, false);
+
+const rejected = loadBackground(async () => ({{
+  ok: false,
+  status: 401,
+  json: async () => ({{ message: "Rejected by bridge." }}),
+}}));
+await rejected.hooks.postContext(12, gmailContext, config, nativeResponse, "", false, browserUrl, false);
+
+const lockRun = loadBackground(async () => ({{
+  ok: true,
+  status: 200,
+  json: async () => ({{ message: "ok" }}),
+}}));
+const hooks = lockRun.hooks;
+hooks.handoffInFlight.clear();
+const originalDateNow = Date.now;
+let now = 1000;
+Date.now = () => now;
+const first = hooks.claimHandoffLock(21, gmailContext);
+now = 1000 + hooks.LAUNCH_READINESS_WAIT_MS + 1;
+const afterLaunchBudget = hooks.claimHandoffLock(21, gmailContext);
+now = 1000 + hooks.HANDOFF_LOCK_MAX_AGE_MS + 1;
+const afterFullBudget = hooks.claimHandoffLock(21, gmailContext);
+Date.now = originalDateNow;
+
+console.log(JSON.stringify({{
+  transport: {{
+    tabOps: transport.tabOps,
+    sentMessages: transport.sentMessages,
+  }},
+  rejected: {{
+    tabOps: rejected.tabOps,
+    sentMessages: rejected.sentMessages,
+  }},
+  lock: {{
+    launchReadinessMs: hooks.LAUNCH_READINESS_WAIT_MS,
+    handoffLockMaxAgeMs: hooks.HANDOFF_LOCK_MAX_AGE_MS,
+    first,
+    afterLaunchBudget,
+    afterFullBudget,
+  }},
+}}));
+"""
+
+    completed = subprocess.run(
+        [node, "--input-type=module", "-"],
+        input=script,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(completed.stdout)
 
 
 def test_local_gmail_intake_bridge_accepts_valid_context() -> None:
@@ -214,8 +377,6 @@ def test_gmail_extension_scripts_keep_stage_one_contract_markers() -> None:
     assert "auto-launch is not available from this checkout" in background_js
     assert "Gmail bridge is not configured in LegalPDF Translate." in background_js
     assert "LegalPDF Translate native host is unavailable. Reload the extension or open the options page." in background_js
-    assert "chrome.tabs.reload" in background_js
-    assert "bypassCache: true" in background_js
     assert "candidates.find((tab) => Number.isInteger(tab.id))" in background_js
     assert "chrome.tabs.update(existing.id, { active: true, url: targetUrl })" in background_js
     assert "Bridge token is missing in extension options." not in background_js
@@ -225,6 +386,45 @@ def test_gmail_extension_scripts_keep_stage_one_contract_markers() -> None:
     assert "h2.hP" in content_js
     assert "__legalPdfGmailIntakeLoaded" in content_js
     assert 'message.type === "gmail-intake-ping"' in content_js
+
+
+def test_gmail_extension_background_preserves_failure_contract_and_lock_budget() -> None:
+    results = _run_background_logic_probe()
+
+    assert results["transport"]["tabOps"] == []
+    assert results["transport"]["sentMessages"] == [
+        {
+            "tabId": 11,
+            "payload": {
+                "type": "gmail-intake-status",
+                "kind": "error",
+                "message": "LegalPDF Translate is not listening on http://127.0.0.1:8765/gmail-intake.",
+            },
+        }
+    ]
+
+    assert results["rejected"]["tabOps"] == []
+    assert results["rejected"]["sentMessages"] == [
+        {
+            "tabId": 12,
+            "payload": {
+                "type": "gmail-intake-status",
+                "kind": "error",
+                "message": "Rejected by bridge.",
+            },
+        }
+    ]
+
+    assert results["lock"]["handoffLockMaxAgeMs"] > results["lock"]["launchReadinessMs"]
+    assert results["lock"]["first"]["ok"] is True
+    assert results["lock"]["afterLaunchBudget"] == {
+        "ok": False,
+        "key": "21:msg-1",
+        "staleRecovered": False,
+    }
+    assert results["lock"]["afterFullBudget"]["ok"] is True
+    assert results["lock"]["afterFullBudget"]["key"] == "21:msg-1"
+    assert results["lock"]["afterFullBudget"]["staleRecovered"] is True
 
 
 def test_gmail_extension_options_page_is_diagnostics_first() -> None:

@@ -109,7 +109,8 @@ Use this when you want to work on more than one translation job at the same time
 
 ### Gmail intake + workspaces
 - The browser app live server now owns the normal Gmail intake bridge for all live browser workspaces when the bridge is enabled.
-- The browser extension opens or focuses the fixed live browser workspace `gmail-intake`.
+- After a successful handoff, the browser extension opens or focuses the fixed live browser workspace `gmail-intake`.
+- Failed or rejected handoffs stay on the current Gmail tab and report the problem with the Gmail-page banner instead of opening a stale browser-app tab.
 - Gmail-related settings stay global in `live` mode, but `shadow` mode stays isolated on purpose and does not own the real Gmail bridge.
 
 ## Analyze + OCR Advisor
@@ -248,7 +249,7 @@ Use this when the source files already arrived in Gmail and you want one reply d
 ### Run the batch
 1. Open Gmail in Edge or Chromium.
 2. Expand exactly one message in the target thread.
-3. Click the extension toolbar action. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the current checkout and continue that same click.
+3. Click the extension toolbar action. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the current checkout and continue that same click. The browser app opens or focuses only after the localhost handoff succeeds; failed handoffs stay in Gmail with a banner error.
 4. Choose the Gmail intake mode in the review dialog:
    - `Translation` for the existing translation batch flow
    - `Interpretation notice` for one selected court-notice attachment that should not be translated
@@ -270,6 +271,7 @@ Use this when the source files already arrived in Gmail and you want one reply d
 ### Batch rules
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
 - In normal browser-first use, the live bridge owner should be the LegalPDF browser app server. Qt ownership is fallback/coexistence only.
+- If a second click arrives while the first Gmail handoff is still launching, the extension can show wait/focus guidance for the in-progress handoff, but it should not spawn an extra browser-app window or tab.
 - The app fetches only the exact intake message, not the whole thread.
 - The review list hides inline/signature/media junk and shows only supported source attachments from that exact message.
 - PDF preview uses a lazy continuous-scroll viewer so large documents can be inspected before translation without rendering every page up front.
@@ -325,9 +327,10 @@ Queue mode writes these sidecar files next to the manifest:
 17. If `Autofill from PDF header` is available on an interpretation row without an attached source PDF, that is expected. The app now asks you to choose the PDF manually for that autofill pass.
 18. If an interpretation row shows the wrong travel distance, check the `Service city` first. The saved KM value is keyed to that service city.
 19. If Gmail intake says the app is not listening, confirm the bridge is enabled in `live` mode. A normal toolbar click can auto-start the browser app, so repeated listener errors usually mean a bridge or launch-target problem instead of “app closed”.
-20. If the app shows `Gmail intake bridge unavailable`, treat that as a port/process conflict first. The listener on `127.0.0.1:<port>` should normally belong to the LegalPDF browser app live server, not `pytest`.
-21. If Gmail intake says auto-launch is unavailable from this checkout, refresh the extension diagnostics and verify the native host can still see this repo worktree.
-22. If Gmail intake says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
+20. If Gmail says the handoff is already in progress, wait for that launch or use its focus guidance. That status is meant to point you to the existing browser-app handoff, not to open another tab.
+21. If the app shows `Gmail intake bridge unavailable`, treat that as a port/process conflict first. The listener on `127.0.0.1:<port>` should normally belong to the LegalPDF browser app live server, not `pytest`.
+22. If Gmail intake says auto-launch is unavailable from this checkout, refresh the extension diagnostics and verify the native host can still see this repo worktree.
+23. If Gmail intake says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
 23. If Gmail intake cannot identify the open Gmail message, collapse extra messages and leave exactly one expanded message visible.
 24. If the Gmail review dialog shows no files, the email likely had no supported attachments or Gmail exposed only inline/signature/media parts.
 25. If you cancel `Save to Job Log` during a Gmail batch, the remaining attachments stop by design.
