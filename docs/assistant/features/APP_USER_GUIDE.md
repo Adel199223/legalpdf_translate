@@ -121,7 +121,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 2. Load `extensions/gmail_intake/` as an unpacked extension in Edge or Chrome.
 3. Normal use no longer requires manually copying the bridge token and port into the extension options page. Use that page only for diagnostics.
 4. Open Gmail in that same Windows browser and expand exactly one message.
-5. Click the extension toolbar button. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the current checkout and continue that same click. After a successful handoff, the extension opens or focuses the browser app in `live` mode.
+5. Click the extension toolbar button. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the current checkout and continue that same click. After a successful handoff, the extension opens or focuses the browser app in `live` mode. If the handoff fails or is rejected, Gmail stays on the current page and shows the error banner there instead of opening the app.
 6. The browser app opens the fixed live workspace `gmail-intake` and asks you to choose the Gmail intake mode:
    - `Translation` keeps the existing multi-attachment translation batch behavior and target-language review.
    - `Interpretation notice` is for one selected court-notice attachment that should not be translated.
@@ -147,9 +147,10 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 1. If the page says the app is not listening, confirm the bridge is enabled in `Settings` and that you are using the browser app in `live` mode. A normal toolbar click can auto-start the app, so a manual launch should only be needed after an auto-start failure.
 2. If the dashboard or Extension Lab says `Gmail intake bridge unavailable`, another process may already be using the bridge port or the live browser server may not own it yet.
 3. If Gmail shows `accepted` but the browser app stays idle, check that the listener on `127.0.0.1:<port>` belongs to the LegalPDF browser app live server and not to `pytest` or another stray process.
-4. If the extension says the native host is unavailable, reload the extension or open the extension options page and refresh diagnostics. Normal use should not require manually copying bridge tokens.
-5. If the page says auto-launch is unavailable from this checkout, open the extension options page and refresh diagnostics.
-6. If the page says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
+4. If Gmail says the handoff is already in progress, wait for the current launch or use the focus guidance it gives you. That message should help you find the existing browser-app handoff instead of opening another one.
+5. If the extension says the native host is unavailable, reload the extension or open the extension options page and refresh diagnostics. Normal use should not require manually copying bridge tokens.
+6. If the page says auto-launch is unavailable from this checkout, open the extension options page and refresh diagnostics.
+7. If the page says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
 7. If the page says the message is ambiguous, collapse extra Gmail messages and leave only one expanded.
 8. If the app shows no supported attachments, that email likely contains only inline or unsupported files.
 9. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.

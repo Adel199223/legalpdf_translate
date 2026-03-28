@@ -69,6 +69,12 @@
 - `tests/test_gmail_intake.py`
   - removed stale marker assertions for `chrome.tabs.reload` and `bypassCache: true`
   - added Node-backed regression coverage for failed POST non-opening behavior and full-budget stale-lock timing
+- touched-scope Assistant Docs Sync
+  - updated Gmail/browser-handoff docs to state the success-only browser-app open/focus contract
+  - documented fail-closed Gmail-page banner behavior for rejected handoffs
+  - documented in-progress duplicate-click focus guidance without extra browser-app windows
 
 ## Validation outcomes
 - `.\\.venv311\\Scripts\\python.exe -m pytest -q tests/test_gmail_intake.py` : passed (`9 passed`)
+- `dart run tooling/validate_agent_docs.dart` : passed
+- `dart run tooling/validate_workspace_hygiene.dart` : passed
