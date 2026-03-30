@@ -80,3 +80,9 @@
 - The current branch is the only publish target for this pass.
 - The March 28-30 active ExecPlans represent completed work and should be archived unless inspection proves otherwise.
 - The user-approved publish flow includes push, PR, merge, and current-branch cleanup.
+
+## Completion notes
+- PR #34 merged to `main` on 2026-03-30 with preserved non-squash commit history.
+- The branch-local CI regressions discovered during publish were fixed before merge, and the local Windows full pytest suite passed (`1112 passed`).
+- Assistant docs sync and docs-tooling validation were repaired and completed as part of the published wave.
+- Cleanup remained scoped to the authoritative worktree plus branch/ref hygiene; unrelated dirty side worktrees were intentionally left untouched.
