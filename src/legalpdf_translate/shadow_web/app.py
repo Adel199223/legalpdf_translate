@@ -174,9 +174,9 @@ def compute_browser_asset_version(static_dir: Path) -> str:
         relative = path.relative_to(static_root).as_posix()
         hasher.update(relative.encode("utf-8"))
         hasher.update(b"\0")
-        hasher.update(str(int(stat.st_mtime_ns)).encode("ascii"))
-        hasher.update(b":")
         hasher.update(str(int(stat.st_size)).encode("ascii"))
+        hasher.update(b"\0")
+        hasher.update(path.read_bytes())
         hasher.update(b"\n")
         tracked_count += 1
     if tracked_count == 0:

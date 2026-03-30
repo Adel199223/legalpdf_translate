@@ -603,6 +603,12 @@ def autofill_interpretation_from_notification_pdf(
         vocab_court_emails=list(joblog_settings["vocab_court_emails"]),
     )
     extracted = list(extraction.diagnostics.extracted_fields)
+    if not extracted:
+        extracted = [
+            field_name
+            for field_name in ("case_entity", "case_city", "case_number", "court_email", "service_date")
+            if str(getattr(extraction.suggestion, field_name, "") or "").strip()
+        ]
     return {
         "status": "ok" if extracted else "failed",
         "normalized_payload": serialize_joblog_seed(seed),

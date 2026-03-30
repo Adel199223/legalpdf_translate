@@ -390,6 +390,33 @@ def test_run_word_pdf_export_canary_verifies_pdf_header(tmp_path: Path, monkeypa
     assert "PDF header verified" in result.details
 
 
+def test_run_word_pdf_export_canary_tolerates_cleanup_retry(tmp_path: Path, monkeypatch) -> None:
+    cleanup_calls = {"count": 0}
+
+    def _fake_export(docx_path: Path, pdf_path: Path, **kwargs):
+        pdf_path.write_bytes(b"%PDF-1.7\n")
+        return word_automation.WordAutomationResult(
+            ok=True,
+            action="export_pdf",
+            message="ok",
+            elapsed_ms=12,
+        )
+
+    def _fake_rmtree(_path: Path) -> None:
+        cleanup_calls["count"] += 1
+        if cleanup_calls["count"] == 1:
+            raise PermissionError("locked")
+
+    monkeypatch.setattr(word_automation, "export_docx_to_pdf_in_word", _fake_export)
+    monkeypatch.setattr(word_automation.shutil, "rmtree", _fake_rmtree)
+    monkeypatch.setattr(word_automation.time, "sleep", lambda _seconds: None)
+
+    result = word_automation.run_word_pdf_export_canary(temp_root=tmp_path)
+
+    assert result.ok is True
+    assert cleanup_calls["count"] == 2
+
+
 def test_assess_word_pdf_export_readiness_reports_launch_vs_canary(monkeypatch) -> None:
     calls = {"launch": 0, "canary": 0}
     monkeypatch.setattr(

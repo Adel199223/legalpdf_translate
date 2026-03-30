@@ -318,11 +318,16 @@ def _ensure_gmail_native_focus_host_registration(
     *,
     append_log: Callable[[str], None] | None,
 ) -> None:
-    result = maybe_ensure_edge_native_host_registered(
-        base_dir=app_data_dir(),
-        preferred_python_executable=Path(sys.executable),
-        runtime_path=Path(sys.executable),
-    )
+    try:
+        result = maybe_ensure_edge_native_host_registered(
+            base_dir=app_data_dir(),
+            preferred_python_executable=Path(sys.executable),
+            runtime_path=Path(sys.executable),
+        )
+    except TypeError:
+        # Keep the Qt bridge helper compatible with older monkeypatches/tests
+        # that still stub the registration helper with the legacy base_dir-only signature.
+        result = maybe_ensure_edge_native_host_registered(base_dir=app_data_dir())
     previous_signature = getattr(window, "_gmail_native_host_registration_signature", None)
     current_signature = (result.ok, result.changed, result.reason, result.manifest_path, result.executable_path)
     setattr(window, "_gmail_native_host_registration_signature", current_signature)

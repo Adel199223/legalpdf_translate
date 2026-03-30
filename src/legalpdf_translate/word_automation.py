@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import os
 from pathlib import Path
+import shutil
 from shutil import which
 import subprocess
-from tempfile import TemporaryDirectory
+from tempfile import mkdtemp
 import time
 
 from docx import Document
@@ -555,6 +556,24 @@ def _terminate_windows_process_tree(pid: int) -> tuple[bool, str]:
     return success, details
 
 
+def _cleanup_working_tree_best_effort(
+    path: Path,
+    *,
+    retries: int = 10,
+    delay_seconds: float = 0.2,
+) -> None:
+    for attempt in range(max(1, int(retries))):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt >= max(1, int(retries)) - 1:
+                return
+            time.sleep(max(0.0, float(delay_seconds)))
+
+
 def serialize_word_automation_result(result: WordAutomationResult) -> dict[str, object]:
     return {
         "ok": bool(result.ok),
@@ -830,8 +849,8 @@ def _write_word_export_canary_docx(docx_path: Path) -> None:
 def run_word_pdf_export_canary(*, timeout_seconds: float = 45.0, temp_root: Path | None = None) -> WordAutomationResult:
     action = "pdf_export_canary"
     root = temp_root.expanduser().resolve() if isinstance(temp_root, Path) else None
-    with TemporaryDirectory(prefix="legalpdf_word_export_canary_", dir=str(root) if root else None) as temp_dir:
-        working_dir = Path(temp_dir).expanduser().resolve()
+    working_dir = Path(mkdtemp(prefix="legalpdf_word_export_canary_", dir=str(root) if root else None)).expanduser().resolve()
+    try:
         docx_path = working_dir / "honorarios_canary.docx"
         pdf_path = working_dir / "honorarios_canary.pdf"
         _write_word_export_canary_docx(docx_path)
@@ -875,6 +894,8 @@ def run_word_pdf_export_canary(*, timeout_seconds: float = 45.0, temp_root: Path
             elapsed_ms=export_result.elapsed_ms,
             helper_pid=export_result.helper_pid,
         )
+    finally:
+        _cleanup_working_tree_best_effort(working_dir)
 
 
 def assess_word_pdf_export_readiness(
