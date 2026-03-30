@@ -77,7 +77,14 @@ from .ocr_engine import (
     local_only_ocr_engine_config_from_run_config,
     ocr_engine_config_from_run_config,
 )
-from .openai_client import ApiCallError, OpenAIResponsesClient
+from .openai_client import (
+    ApiCallError,
+    OpenAIResponsesClient,
+    TranslationAuthTestResult,
+    is_openai_auth_failure,
+    resolve_openai_key_with_source,
+    run_translation_auth_test,
+)
 from .output_paths import require_writable_output_dir
 from .page_selection import resolve_page_selection
 from .prompt_builder import (
@@ -319,6 +326,36 @@ def _derive_cancel_halt_reason(run_state: RunState) -> str:
     return "cancelled_by_user"
 
 
+def _credential_source_payload(result: TranslationAuthTestResult) -> dict[str, str]:
+    source = result.credential_source
+    if source is None:
+        return {
+            "kind": "missing",
+            "name": "",
+        }
+    return source.to_payload()
+
+
+def _translation_auth_failure_context_from_result(result: TranslationAuthTestResult) -> dict[str, Any]:
+    return {
+        "scope": "preflight",
+        "page_number": None,
+        "error": "authentication_failure",
+        "status_code": result.status_code,
+        "exception_class": result.exception_class or ("AuthenticationError" if result.status == "unauthorized" else ""),
+        "retry_reason": "",
+        "validator_defect_reason": "",
+        "ar_violation_kind": "",
+        "ar_violation_samples": [],
+        "request_type": "preflight",
+        "request_timeout_budget_seconds": 0.0,
+        "request_elapsed_before_failure_seconds": 0.0,
+        "cancel_requested_before_failure": False,
+        "credential_source": _credential_source_payload(result),
+        "message": result.message,
+    }
+
+
 class TranslationWorkflow:
     def __init__(
         self,
@@ -511,6 +548,7 @@ class TranslationWorkflow:
         )
         run_state.run_status = "running"
         run_state.final_docx_path_abs = None
+        run_state.failure_context = {}
         run_state.finished_at = None
         save_run_state_atomic(paths.run_state_path, run_state)
         self._last_state = run_state
@@ -564,6 +602,7 @@ class TranslationWorkflow:
         state_lock = threading.Lock()
         failed_page: int | None = None
         compliance_failure = False
+        authentication_failure = False
         halt_reason: str | None = None
 
         thread_local = threading.local()
@@ -697,6 +736,64 @@ class TranslationWorkflow:
                 error="budget_cap_exceeded",
                 run_summary_path=run_summary_path,
             )
+
+        if pending_pages and not self._cancel_event.is_set():
+            auth_result: TranslationAuthTestResult | None = None
+            if isinstance(provided_client, OpenAIResponsesClient):
+                auth_result = provided_client.run_translation_auth_test()
+            elif provided_client is None:
+                auth_result = run_translation_auth_test()
+            elif hasattr(provided_client, "run_translation_auth_test"):
+                maybe_result = provided_client.run_translation_auth_test()  # type: ignore[attr-defined]
+                if isinstance(maybe_result, TranslationAuthTestResult):
+                    auth_result = maybe_result
+            if auth_result is not None and not auth_result.ok and auth_result.status in {"missing", "unauthorized"}:
+                authentication_failure = True
+                failure_context = _translation_auth_failure_context_from_result(auth_result)
+                halt_reason = "OpenAI translation authentication failed before page processing."
+                self._log(
+                    "translate_auth_preflight "
+                    f"status={auth_result.status} "
+                    f"credential_source={failure_context['credential_source']} "
+                    f"status_code={auth_result.status_code or 'none'} "
+                    f"exception_class={auth_result.exception_class or 'none'}"
+                )
+                self._record_event(
+                    event_type="translate_auth_preflight_failed",
+                    stage="run",
+                    error="authentication_failure",
+                    details={
+                        "status": auth_result.status,
+                        "status_code": auth_result.status_code,
+                        "exception_class": auth_result.exception_class,
+                        "credential_source": failure_context["credential_source"],
+                    },
+                )
+                with state_lock:
+                    run_state.run_status = "authentication_failure"
+                    run_state.finished_at = self._utc_now()
+                    run_state.final_docx_path_abs = None
+                    run_state.halt_reason = halt_reason
+                    run_state.failure_context = failure_context
+                    save_run_state_atomic(paths.run_state_path, run_state)
+                self._last_state = run_state
+                self._run_stage_timings_ms["run_total"] = round((time.perf_counter() - run_started_perf) * 1000.0, 3)
+                run_summary_path = self._write_run_summary(
+                    config=config,
+                    paths=paths,
+                    run_state=run_state,
+                )
+                return RunSummary(
+                    success=False,
+                    exit_code=2,
+                    output_docx=None,
+                    partial_docx=None,
+                    run_dir=paths.run_dir,
+                    completed_pages=0,
+                    failed_page=None,
+                    error="authentication_failure",
+                    run_summary_path=run_summary_path,
+                )
 
         if run_state.done_count > 0:
             self._progress(run_state.done_count, selection_page_count, f"Resumed {run_state.done_count} page(s)")
@@ -877,6 +974,7 @@ class TranslationWorkflow:
                             if failed_page is None:
                                 failed_page = page_number
                                 compliance_failure = outcome.error == "compliance_failure"
+                                authentication_failure = outcome.error == "authentication_failure"
                                 halt_reason = (
                                     f"Hard failure at page {page_number}: {outcome.error or 'unknown_failure'}"
                                 )
@@ -1077,7 +1175,11 @@ class TranslationWorkflow:
             )
 
         with state_lock:
-            run_state.run_status = "compliance_failure" if compliance_failure else "runtime_failure"
+            run_state.run_status = (
+                "authentication_failure"
+                if authentication_failure
+                else "compliance_failure" if compliance_failure else "runtime_failure"
+            )
             run_state.finished_at = self._utc_now()
             run_state.halt_reason = halt_reason or run_state.halt_reason or "hard_failure"
             save_run_state_atomic(paths.run_state_path, run_state)
@@ -1090,7 +1192,11 @@ class TranslationWorkflow:
         self._record_event(
             event_type="run_failed",
             stage="run",
-            error="compliance_failure" if compliance_failure else "runtime_failure",
+            error=(
+                "authentication_failure"
+                if authentication_failure
+                else "compliance_failure" if compliance_failure else "runtime_failure"
+            ),
             details={
                 "failed_page": failed_page,
                 "completed_pages": int(completed_pages),
@@ -1104,7 +1210,11 @@ class TranslationWorkflow:
             run_dir=paths.run_dir,
             completed_pages=completed_pages,
             failed_page=failed_page,
-            error="compliance_failure" if compliance_failure else "runtime_failure",
+            error=(
+                "authentication_failure"
+                if authentication_failure
+                else "compliance_failure" if compliance_failure else "runtime_failure"
+            ),
             run_summary_path=run_summary_path,
         )
 
@@ -1925,12 +2035,17 @@ class TranslationWorkflow:
                 error=exc.exception_class,
             )
             _finalize_page_metadata()
+            failure_error = (
+                "authentication_failure"
+                if is_openai_auth_failure(exception_class=exc.exception_class, status_code=exc.status_code)
+                else "runtime_failure"
+            )
             return _PageOutcome(
                 status=PageStatus.FAILED,
                 image_used=image_used,
                 retry_used=False,
                 usage=usage_payload,
-                error="runtime_failure",
+                error=failure_error,
                 page_metadata=page_metadata,
             )
         usage_payload["attempt_1"] = initial.usage
@@ -2122,12 +2237,17 @@ class TranslationWorkflow:
                 error=exc.exception_class,
             )
             _finalize_page_metadata()
+            failure_error = (
+                "authentication_failure"
+                if is_openai_auth_failure(exception_class=exc.exception_class, status_code=exc.status_code)
+                else "runtime_failure"
+            )
             return _PageOutcome(
                 status=PageStatus.FAILED,
                 image_used=image_used,
                 retry_used=True,
                 usage=usage_payload,
-                error="runtime_failure",
+                error=failure_error,
                 page_metadata=page_metadata,
             )
         usage_payload["attempt_2"] = retry.usage
@@ -2500,17 +2620,23 @@ class TranslationWorkflow:
             )
 
         effort_policy = self._resolve_effort_policy_label(config)
-        suspected_cause, evidence = self._classify_suspected_cause(
-            selected_pages_count=selected_pages_count,
-            pages_with_images=pages_with_images,
-            avg_image_bytes=avg_image_bytes,
-            total_reasoning_tokens=total_reasoning_tokens,
-            total_tokens=total_tokens,
-            effort_policy=effort_policy,
-            pages_with_retries=pages_with_retries,
-            rate_limit_hits=rate_limit_hits,
-            transport_retries_total=transport_retries_total,
-        )
+        auth_source = resolve_openai_key_with_source()[1]
+        auth_source_payload = auth_source.to_payload() if auth_source is not None else {"kind": "missing", "name": ""}
+        if str(run_state.run_status or "").strip().lower() == "authentication_failure":
+            suspected_cause = "authentication_failure"
+            evidence = ["authentication failure classified from run_status"]
+        else:
+            suspected_cause, evidence = self._classify_suspected_cause(
+                selected_pages_count=selected_pages_count,
+                pages_with_images=pages_with_images,
+                avg_image_bytes=avg_image_bytes,
+                total_reasoning_tokens=total_reasoning_tokens,
+                total_tokens=total_tokens,
+                effort_policy=effort_policy,
+                pages_with_retries=pages_with_retries,
+                rate_limit_hits=rate_limit_hits,
+                transport_retries_total=transport_retries_total,
+            )
 
         total_cost_estimate = self._estimate_cost_if_available(
             total_input_tokens=total_input_tokens,
@@ -2539,11 +2665,16 @@ class TranslationWorkflow:
         post_status = str(self._budget_post_run_packet.get("estimation_status", "unavailable") or "unavailable")
         cost_estimation_status = str(self._cost_estimation_status or "").strip() or post_status
         failure_context: dict[str, Any] = {}
-        if failed_rows:
+        if run_state.failure_context:
+            failure_context = dict(run_state.failure_context)
+            failure_context.setdefault("credential_source", auth_source_payload)
+        elif failed_rows:
             failed_page_number, failed_page = failed_rows[0]
             failure_context = {
+                "scope": "page",
                 "page_number": int(failed_page_number),
                 "error": str(failed_page.get("error", "") or ""),
+                "status_code": failed_page.get("status_code"),
                 "exception_class": str(failed_page.get("exception_class", "") or ""),
                 "retry_reason": str(failed_page.get("retry_reason", "") or ""),
                 "validator_defect_reason": str(failed_page.get("validator_defect_reason", "") or ""),
@@ -2563,6 +2694,8 @@ class TranslationWorkflow:
                 "cancel_requested_before_failure": bool(
                     failed_page.get("cancel_requested_before_failure", False)
                 ),
+                "credential_source": auth_source_payload,
+                "message": "",
             }
 
         payload: dict[str, Any] = {

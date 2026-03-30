@@ -661,8 +661,21 @@ def build_browser_capability_snapshot(
     flags = build_interpretation_capability_flags(settings_path=data_paths.settings_path)
     flags.update(build_translation_capability_flags(settings_path=data_paths.settings_path))
     flags.update(build_gmail_browser_capability_flags(settings_path=data_paths.settings_path))
-    flags.setdefault("word_pdf_export", {})
-    flags["word_pdf_export"]["preflight"] = dict(word_pdf_preflight)
+    word_pdf_payload = dict(word_pdf_preflight)
+    launch_preflight = word_pdf_payload.get("launch_preflight")
+    if not isinstance(launch_preflight, Mapping):
+        legacy_preflight = word_pdf_payload.get("preflight")
+        if isinstance(legacy_preflight, Mapping):
+            launch_preflight = dict(legacy_preflight)
+        else:
+            launch_preflight = dict(word_pdf_payload)
+    else:
+        launch_preflight = dict(launch_preflight)
+    word_pdf_payload.setdefault("launch_preflight", launch_preflight)
+    word_pdf_payload.setdefault("preflight", launch_preflight)
+    word_pdf_payload.setdefault("export_canary", {})
+    word_pdf_payload.setdefault("finalization_ready", bool(word_pdf_payload.get("ok")))
+    flags["word_pdf_export"] = word_pdf_payload
     flags["browser_automation"] = dict(automation_preflight)
     resolved_extension_summary = (
         extension_summary

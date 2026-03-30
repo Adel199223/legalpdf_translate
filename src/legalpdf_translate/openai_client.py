@@ -10,10 +10,17 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AuthenticationError,
+    OpenAI,
+    RateLimitError,
+)
 
 from .config import OPENAI_MODEL, OPENAI_STORE
-from .secrets_store import get_openai_key
+from .secrets_store import get_ocr_key, get_openai_key
 
 
 @dataclass(slots=True)
@@ -41,6 +48,93 @@ class ApiCallError(RuntimeError):
         return self.message
 
 
+@dataclass(slots=True, frozen=True)
+class OpenAICredentialSourceInfo:
+    kind: str
+    name: str = ""
+
+    def to_payload(self) -> dict[str, str]:
+        return {
+            "kind": self.kind,
+            "name": self.name,
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class TranslationAuthTestResult:
+    ok: bool
+    status: str
+    message: str
+    credential_source: OpenAICredentialSourceInfo | None
+    status_code: int | None = None
+    exception_class: str = ""
+    latency_ms: int | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "status": self.status,
+            "message": self.message,
+            "credential_source": (
+                self.credential_source.to_payload() if self.credential_source is not None else {"kind": "missing", "name": ""}
+            ),
+            "status_code": self.status_code,
+            "exception_class": self.exception_class,
+            "latency_ms": self.latency_ms,
+        }
+
+
+def resolve_openai_key_with_source(
+    api_key: str | None = None,
+) -> tuple[str | None, OpenAICredentialSourceInfo | None]:
+    resolved_api_key = (api_key or "").strip() or None
+    if resolved_api_key:
+        return resolved_api_key, OpenAICredentialSourceInfo(kind="inline", name="")
+    try:
+        stored_key = get_openai_key()
+    except RuntimeError:
+        stored_key = None
+    if stored_key:
+        return stored_key, OpenAICredentialSourceInfo(kind="stored", name="")
+    try:
+        stored_ocr_key = get_ocr_key()
+    except RuntimeError:
+        stored_ocr_key = None
+    if stored_ocr_key:
+        return stored_ocr_key, OpenAICredentialSourceInfo(kind="stored", name="ocr_api_key_fallback")
+    env_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if env_key:
+        return env_key, OpenAICredentialSourceInfo(kind="env", name="OPENAI_API_KEY")
+    return None, None
+
+
+def is_openai_auth_failure(*, exception_class: str, status_code: int | None) -> bool:
+    lowered = str(exception_class or "").strip()
+    return lowered == "AuthenticationError" or status_code in (401, 403)
+
+
+def run_translation_auth_test(
+    *,
+    api_key: str | None = None,
+    timeout_seconds: float = 20.0,
+) -> TranslationAuthTestResult:
+    resolved_api_key, credential_source = resolve_openai_key_with_source(api_key)
+    if not resolved_api_key:
+        return TranslationAuthTestResult(
+            ok=False,
+            status="missing",
+            message="OpenAI translation credentials are not configured.",
+            credential_source=None,
+        )
+
+    client = OpenAI(api_key=resolved_api_key, max_retries=0)
+    return _run_translation_auth_test_request(
+        client=client,
+        credential_source=credential_source,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 class OpenAIResponsesClient:
     def __init__(
         self,
@@ -53,24 +147,24 @@ class OpenAIResponsesClient:
         request_timeout_seconds: float = 180.0,
         logger: Callable[[str], None] | None = None,
     ) -> None:
-        resolved_api_key = (api_key or "").strip() or None
-        if not resolved_api_key:
-            try:
-                resolved_api_key = get_openai_key()
-            except RuntimeError:
-                resolved_api_key = None
-        if not resolved_api_key:
-            env_key = os.getenv("OPENAI_API_KEY", "").strip()
-            resolved_api_key = env_key or None
+        resolved_api_key, credential_source = resolve_openai_key_with_source(api_key)
         if not resolved_api_key:
             raise ValueError("OpenAI API key is not configured.")
         self._client = OpenAI(api_key=resolved_api_key, max_retries=0)
+        self._credential_source = credential_source
         self._max_transport_retries = max(0, int(max_transport_retries))
         self._base_backoff_seconds = base_backoff_seconds
         self._backoff_cap_seconds = max(1.0, backoff_cap_seconds)
         self._pre_call_jitter_seconds = max(0.0, pre_call_jitter_seconds)
         self._request_timeout_seconds = max(5.0, request_timeout_seconds)
         self._logger = logger
+
+    def run_translation_auth_test(self, *, timeout_seconds: float = 20.0) -> TranslationAuthTestResult:
+        return _run_translation_auth_test_request(
+            client=self._client,
+            credential_source=self._credential_source,
+            timeout_seconds=timeout_seconds,
+        )
 
     def create_page_response(
         self,
@@ -219,7 +313,55 @@ def _budget_exhausted_error(
     )
 
 
+def _run_translation_auth_test_request(
+    *,
+    client: OpenAI,
+    credential_source: OpenAICredentialSourceInfo | None,
+    timeout_seconds: float,
+) -> TranslationAuthTestResult:
+    started = time.perf_counter()
+    try:
+        client.responses.create(
+            model=OPENAI_MODEL,
+            input=[{"role": "user", "content": [{"type": "input_text", "text": "Reply exactly with OK."}]}],
+            max_output_tokens=16,
+            store=False,
+            timeout=max(5.0, float(timeout_seconds)),
+        )
+    except Exception as exc:  # noqa: BLE001
+        status_code = _status_code_from_exception(exc)
+        exception_class = type(exc).__name__
+        if is_openai_auth_failure(exception_class=exception_class, status_code=status_code):
+            return TranslationAuthTestResult(
+                ok=False,
+                status="unauthorized",
+                message="OpenAI authentication failed.",
+                credential_source=credential_source,
+                status_code=status_code,
+                exception_class=exception_class,
+            )
+        return TranslationAuthTestResult(
+            ok=False,
+            status="error",
+            message=f"Translation auth test failed: {exception_class}.",
+            credential_source=credential_source,
+            status_code=status_code,
+            exception_class=exception_class,
+        )
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    return TranslationAuthTestResult(
+        ok=True,
+        status="ok",
+        message="OpenAI translation auth test passed.",
+        credential_source=credential_source,
+        latency_ms=latency_ms,
+    )
+
+
 def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, AuthenticationError):
+        return False
     if isinstance(exc, (RateLimitError, APITimeoutError, APIConnectionError)):
         return True
     if isinstance(exc, APIStatusError):

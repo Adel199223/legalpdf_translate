@@ -6,7 +6,7 @@ from contextlib import closing
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from .honorarios_docx import (
     HonorariosDraft,
@@ -31,13 +31,6 @@ from .joblog_flow import (
     merge_payload_into_joblog_settings,
     normalize_joblog_payload,
 )
-from .metadata_autofill import (
-    MetadataAutofillConfig,
-    MetadataExtractionDiagnostics,
-    extract_interpretation_notification_metadata_from_pdf_with_diagnostics,
-    extract_interpretation_photo_metadata_from_image,
-    metadata_config_from_settings,
-)
 from .ocr_engine import OcrEngineConfig, candidate_ocr_api_env_names, local_ocr_available, resolve_ocr_api_key
 from .types import OcrApiProvider
 from .user_profile import PROFILE_FIELD_LABELS, PROFILE_REQUIRED_FIELDS, UserProfile, distance_for_city, primary_profile
@@ -49,6 +42,9 @@ from .user_settings import (
     save_profile_settings_to_path,
 )
 from .word_automation import WordAutomationResult, export_docx_to_pdf_in_word, probe_word_pdf_export_support
+
+if TYPE_CHECKING:
+    from .metadata_autofill import MetadataAutofillConfig, MetadataExtractionDiagnostics
 
 INITIAL_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS = 45.0
 RETRY_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS = 90.0
@@ -150,13 +146,41 @@ def _dedupe_casefolded(values: list[str]) -> list[str]:
     return deduped
 
 
-def _metadata_config_from_settings_path(settings_path: Path) -> tuple[dict[str, Any], MetadataAutofillConfig]:
+def _metadata_config_from_settings_path(settings_path: Path) -> tuple[dict[str, Any], "MetadataAutofillConfig"]:
     joblog_settings = load_joblog_settings_from_path(settings_path)
+    from .metadata_autofill import metadata_config_from_settings
+
     return joblog_settings, metadata_config_from_settings(joblog_settings)
+
+
+def extract_interpretation_notification_metadata_from_pdf_with_diagnostics(
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Compatibility wrapper that keeps interpretation_service monkeypatchable."""
+
+    from .metadata_autofill import (
+        extract_interpretation_notification_metadata_from_pdf_with_diagnostics as _impl,
+    )
+
+    return _impl(*args, **kwargs)
+
+
+def extract_interpretation_photo_metadata_from_image(
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Compatibility wrapper that keeps interpretation_service monkeypatchable."""
+
+    from .metadata_autofill import extract_interpretation_photo_metadata_from_image as _impl
+
+    return _impl(*args, **kwargs)
 
 
 def _capability_flags_from_settings_path(settings_path: Path) -> dict[str, Any]:
     joblog_settings = load_joblog_settings_from_path(settings_path)
+    from .metadata_autofill import metadata_config_from_settings
+
     metadata_config = metadata_config_from_settings(joblog_settings)
     ocr_engine_config = OcrEngineConfig(
         policy=metadata_config.ocr_engine_policy,
@@ -567,6 +591,7 @@ def autofill_interpretation_from_notification_pdf(
     settings_path: Path,
 ) -> dict[str, Any]:
     joblog_settings, metadata_config = _metadata_config_from_settings_path(settings_path)
+
     extraction = extract_interpretation_notification_metadata_from_pdf_with_diagnostics(
         pdf_path.expanduser().resolve(),
         vocab_cities=list(joblog_settings["vocab_cities"]),
@@ -595,6 +620,7 @@ def autofill_interpretation_from_photo(
     settings_path: Path,
 ) -> dict[str, Any]:
     joblog_settings, metadata_config = _metadata_config_from_settings_path(settings_path)
+
     suggestion = extract_interpretation_photo_metadata_from_image(
         image_path.expanduser().resolve(),
         vocab_cities=list(joblog_settings["vocab_cities"]),

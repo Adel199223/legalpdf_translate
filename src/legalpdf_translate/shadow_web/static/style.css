@@ -1326,6 +1326,23 @@ body[data-interpretation-city-dialog="open"] {
   background: rgba(255, 255, 255, 0.96);
 }
 
+.gmail-inline-preview-canvas-shell {
+  display: grid;
+  place-items: center;
+  min-height: min(62vh, 720px);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  overflow: auto;
+}
+
+.gmail-inline-preview-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
 .gmail-inline-preview-image-shell {
   display: grid;
   place-items: center;

@@ -3,12 +3,15 @@ from __future__ import annotations
 from contextlib import closing
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZipFile
 
 import pytest
 
 import legalpdf_translate.browser_app_service as browser_app_service
 import legalpdf_translate.interpretation_service as interpretation_service
+import legalpdf_translate.openai_client as openai_client
+import legalpdf_translate.ocr_engine as ocr_engine
 import legalpdf_translate.power_tools_service as power_tools_service
 import legalpdf_translate.shadow_runtime as shadow_runtime
 import legalpdf_translate.translation_service as translation_service
@@ -39,6 +42,75 @@ def _identity(*, head_sha: str = "abc1234") -> RuntimeBuildIdentity:
         canonical_head_floor="506dee6",
         reasons=("noncanonical",),
     )
+
+
+def _native_host_state(*, ready: bool = True, repairable: bool = True) -> dict[str, object]:
+    return {
+        "configured": True,
+        "ready": ready,
+        "reason": "native_host_ready" if ready else "native_host_manifest_drift",
+        "message": "Edge native host is registered and passed self-test." if ready else "Edge native host needs repair.",
+        "registry_key_path": r"HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.legalpdf.gmail_focus",
+        "registered_manifest_path": "C:/tmp/native_host.edge.json",
+        "expected_manifest_path": "C:/tmp/native_host.edge.json",
+        "manifest_exists": True,
+        "manifest_matches_expected": ready,
+        "registered_host_path": "C:/tmp/LegalPDFGmailFocusHost.cmd",
+        "host_exists": True,
+        "wrapper_path": "C:/tmp/LegalPDFGmailFocusHost.cmd",
+        "wrapper_exists": True,
+        "wrapper_target_python": "C:/tmp/python.exe",
+        "self_test_ok": ready,
+        "self_test_status": "ok" if ready else "failed",
+        "self_test_reason": "native_host_self_test_ok" if ready else "native_host_self_test_failed",
+        "self_test_payload": {"ok": ready},
+        "repair_supported": True,
+        "repairable": repairable,
+        "repair_reason": "packaged_host_ready" if repairable else "launch_runtime_broken",
+        "repair_target_kind": "checkout_wrapper",
+        "repair_target_python": "C:/tmp/python.exe",
+        "repair_recommended": not ready and repairable,
+        "current_runtime_python": "C:/tmp/python.exe",
+    }
+
+
+def _word_pdf_state(*, ready: bool = True) -> dict[str, object]:
+    message = "Word PDF export canary passed." if ready else "Word PDF export timed out."
+    failure_code = "" if ready else "timeout"
+    return {
+        "ok": ready,
+        "finalization_ready": ready,
+        "failure_code": failure_code,
+        "message": message,
+        "details": "" if ready else "Failure phase: export_pdf",
+        "elapsed_ms": 1,
+        "failure_phase": "" if ready else "export_pdf",
+        "launch_preflight": {
+            "ok": True,
+            "message": "Word PDF export preflight passed.",
+            "failure_code": "",
+            "details": "",
+            "elapsed_ms": 1,
+        },
+        "export_canary": {
+            "ok": ready,
+            "message": message,
+            "failure_code": failure_code,
+            "details": "" if ready else "Failure phase: export_pdf",
+            "elapsed_ms": 1,
+            "failure_phase": "" if ready else "export_pdf",
+        },
+        "preflight": {
+            "ok": True,
+            "message": "Word PDF export preflight passed.",
+            "failure_code": "",
+            "details": "",
+            "elapsed_ms": 1,
+        },
+        "last_checked_at": "2026-03-30T18:00:00+00:00",
+        "cache_ttl_seconds": 60,
+        "used_cache": False,
+    }
 
 
 def test_shadow_build_key_is_isolated_but_stable_across_head_updates(tmp_path: Path) -> None:
@@ -279,6 +351,338 @@ def test_power_tools_bootstrap_and_settings_save_persist_to_runtime_paths(tmp_pa
     assert gui["ocr_engine_default"] == "api"
     assert joblog["default_rate_per_word"]["FR"] == 0.09
     assert joblog["service_equals_case_by_default"] is False
+
+
+def test_provider_state_uses_stored_translation_key_for_openai_ocr_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+    power_tools_service.save_browser_settings(
+        settings_path=settings_file,
+        values={
+            "ocr_api_provider": "openai",
+            "ocr_api_provider_default": "openai",
+        },
+    )
+    monkeypatch.setattr(power_tools_service, "get_openai_key", lambda: "stored-openai-key")
+    monkeypatch.setattr(power_tools_service, "get_ocr_key", lambda: None)
+    monkeypatch.setattr(ocr_engine, "get_openai_key", lambda: "stored-openai-key")
+    monkeypatch.setattr(ocr_engine, "get_ocr_key", lambda: None)
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="Ready",
+            gog_path=None,
+            account_email="",
+            accounts=[],
+        ),
+    )
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_word_pdf_export_readiness",
+        lambda **_kwargs: _word_pdf_state(),
+    )
+    monkeypatch.setattr(power_tools_service, "inspect_edge_native_host", lambda **kwargs: _native_host_state())
+
+    provider_state = power_tools_service.run_settings_preflight(settings_path=settings_file)["normalized_payload"]
+
+    assert provider_state["translation"]["stored_credential_configured"] is True
+    assert provider_state["ocr"]["translation_fallback_configured"] is True
+    assert provider_state["ocr"]["effective_credential_source"] == {
+        "kind": "stored",
+        "name": "openai_api_key_fallback",
+    }
+
+
+def test_provider_state_uses_stored_ocr_key_for_translation_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+    power_tools_service.save_browser_settings(
+        settings_path=settings_file,
+        values={
+            "ocr_api_provider": "openai",
+            "ocr_api_provider_default": "openai",
+        },
+    )
+    monkeypatch.setattr(power_tools_service, "get_openai_key", lambda: None)
+    monkeypatch.setattr(power_tools_service, "get_ocr_key", lambda: "stored-ocr-key")
+    monkeypatch.setattr(openai_client, "get_openai_key", lambda: None)
+    monkeypatch.setattr(openai_client, "get_ocr_key", lambda: "stored-ocr-key")
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="Ready",
+            gog_path=None,
+            account_email="",
+            accounts=[],
+        ),
+    )
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_word_pdf_export_readiness",
+        lambda **_kwargs: _word_pdf_state(),
+    )
+    monkeypatch.setattr(power_tools_service, "inspect_edge_native_host", lambda **kwargs: _native_host_state())
+
+    provider_state = power_tools_service.run_settings_preflight(settings_path=settings_file)["normalized_payload"]
+
+    assert provider_state["translation"]["credentials_configured"] is True
+    assert provider_state["translation"]["stored_credential_configured"] is False
+    assert provider_state["translation"]["ocr_fallback_configured"] is True
+    assert provider_state["translation"]["effective_credential_source"] == {
+        "kind": "stored",
+        "name": "ocr_api_key_fallback",
+    }
+
+
+def test_browser_secret_save_and_clear_actions_return_safe_provider_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+    stored: dict[str, str] = {}
+    cleared_prefixes: list[str | None] = []
+
+    monkeypatch.setattr(power_tools_service, "set_openai_key", lambda value: stored.__setitem__("openai", value))
+    monkeypatch.setattr(power_tools_service, "get_openai_key", lambda: stored.get("openai"))
+    monkeypatch.setattr(power_tools_service, "delete_openai_key", lambda: stored.pop("openai", None))
+    monkeypatch.setattr(power_tools_service, "set_ocr_key", lambda value: stored.__setitem__("ocr", value))
+    monkeypatch.setattr(power_tools_service, "get_ocr_key", lambda: stored.get("ocr"))
+    monkeypatch.setattr(power_tools_service, "delete_ocr_key", lambda: stored.pop("ocr", None))
+    monkeypatch.setattr(
+        power_tools_service,
+        "clear_word_pdf_export_readiness_cache",
+        lambda *, scope_prefix=None: cleared_prefixes.append(str(scope_prefix) if scope_prefix is not None else None) or 1,
+    )
+    monkeypatch.setattr(
+        power_tools_service,
+        "_provider_state_payload",
+        lambda _settings_path: {
+            "translation": {
+                "credentials_configured": bool(stored.get("openai")),
+                "stored_credential_configured": bool(stored.get("openai")),
+                "effective_credential_source": {"kind": "stored", "name": ""},
+                "auth_test_supported": True,
+            },
+            "ocr": {
+                "provider": "openai",
+                "stored_credential_configured": bool(stored.get("ocr")),
+                "translation_fallback_configured": bool(stored.get("openai")),
+                "effective_credential_source": {"kind": "stored", "name": "ocr_api_key"},
+                "api_configured": bool(stored.get("ocr") or stored.get("openai")),
+                "local_available": False,
+                "auth_test_supported": True,
+            },
+            "gmail_draft": {"ready": True, "message": "Ready"},
+            "word_pdf_export": {"ok": True, "message": "Ready"},
+            "native_host": _native_host_state(),
+        },
+    )
+
+    save_translation = power_tools_service.save_browser_translation_key(
+        settings_path=settings_file,
+        key="  sk-translation  ",
+    )
+    save_ocr = power_tools_service.save_browser_ocr_key(
+        settings_path=settings_file,
+        key="  ocr-secret  ",
+    )
+    clear_translation = power_tools_service.clear_browser_translation_key(settings_path=settings_file)
+    clear_ocr = power_tools_service.clear_browser_ocr_key(settings_path=settings_file)
+
+    assert stored == {}
+    assert save_translation["status"] == "ok"
+    assert save_translation["normalized_payload"]["saved"] is True
+    assert save_translation["normalized_payload"]["provider_state"]["translation"]["stored_credential_configured"] is True
+    assert save_ocr["status"] == "ok"
+    assert save_ocr["normalized_payload"]["saved"] is True
+    assert save_ocr["normalized_payload"]["provider_state"]["ocr"]["stored_credential_configured"] is True
+    assert clear_translation["normalized_payload"]["cleared"] is True
+    assert clear_ocr["normalized_payload"]["cleared"] is True
+    resolved = str(settings_file.expanduser().resolve())
+    assert cleared_prefixes == [
+        f"provider_state::{resolved}",
+        f"gmail_batch_finalization::{resolved}",
+        f"provider_state::{resolved}",
+        f"gmail_batch_finalization::{resolved}",
+        f"provider_state::{resolved}",
+        f"gmail_batch_finalization::{resolved}",
+        f"provider_state::{resolved}",
+        f"gmail_batch_finalization::{resolved}",
+    ]
+
+
+def test_provider_state_includes_native_host_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+    monkeypatch.setattr(power_tools_service, "inspect_edge_native_host", lambda **kwargs: _native_host_state())
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="Ready",
+            gog_path=None,
+            account_email="",
+            accounts=[],
+        ),
+    )
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_word_pdf_export_readiness",
+        lambda **_kwargs: _word_pdf_state(),
+    )
+
+    provider_state = power_tools_service.build_browser_provider_state(settings_path=settings_file)
+
+    assert provider_state["native_host"]["ready"] is True
+    assert provider_state["native_host"]["self_test_status"] == "ok"
+    assert provider_state["native_host"]["wrapper_target_python"] == "C:/tmp/python.exe"
+
+
+def test_native_host_test_and_repair_return_provider_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+    call_count = {"inspect": 0}
+
+    def _inspect(**kwargs):
+        call_count["inspect"] += 1
+        return _native_host_state(ready=call_count["inspect"] >= 2, repairable=True)
+
+    monkeypatch.setattr(power_tools_service, "inspect_edge_native_host", _inspect)
+    monkeypatch.setattr(
+        power_tools_service,
+        "maybe_ensure_edge_native_host_registered",
+        lambda **kwargs: SimpleNamespace(
+            ok=True,
+            changed=True,
+            manifest_path="C:/tmp/native_host.edge.json",
+            executable_path="C:/tmp/LegalPDFGmailFocusHost.cmd",
+            reason="registered",
+        ),
+    )
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="Ready",
+            gog_path=None,
+            account_email="",
+            accounts=[],
+        ),
+    )
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_word_pdf_export_readiness",
+        lambda **_kwargs: _word_pdf_state(),
+    )
+
+    native_host_test = power_tools_service.run_native_host_test(settings_path=settings_file)
+    native_host_repair = power_tools_service.repair_browser_native_host(settings_path=settings_file)
+
+    assert native_host_test["status"] == "unavailable"
+    assert native_host_test["normalized_payload"]["native_host"]["repairable"] is True
+    assert native_host_repair["status"] == "ok"
+    assert native_host_repair["normalized_payload"]["repair_result"]["changed"] is True
+    assert native_host_repair["normalized_payload"]["provider_state"]["native_host"]["ready"] is True
+
+
+def test_run_word_pdf_export_test_returns_failed_when_canary_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+    cleared_prefixes: list[str | None] = []
+    monkeypatch.setattr(
+        power_tools_service,
+        "clear_word_pdf_export_readiness_cache",
+        lambda *, scope_prefix=None: cleared_prefixes.append(str(scope_prefix) if scope_prefix is not None else None) or 1,
+    )
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_word_pdf_export_readiness",
+        lambda **_kwargs: _word_pdf_state(ready=False),
+    )
+    monkeypatch.setattr(
+        power_tools_service,
+        "build_browser_provider_state",
+        lambda **_kwargs: {
+            "word_pdf_export": _word_pdf_state(ready=False),
+            "native_host": _native_host_state(),
+        },
+    )
+
+    response = power_tools_service.run_word_pdf_export_test(settings_path=settings_file)
+
+    resolved = str(settings_file.expanduser().resolve())
+    assert cleared_prefixes == [
+        f"provider_state::{resolved}",
+        f"gmail_batch_finalization::{resolved}",
+    ]
+    assert response["status"] == "failed"
+    assert response["normalized_payload"]["finalization_ready"] is False
+    assert response["normalized_payload"]["word_pdf_export"]["failure_code"] == "timeout"
+    assert response["normalized_payload"]["provider_state"]["word_pdf_export"]["finalization_ready"] is False
+
+
+def test_run_ocr_provider_test_returns_failed_payload_for_provider_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+    power_tools_service.save_browser_settings(
+        settings_path=settings_file,
+        values={
+            "ocr_api_provider": "openai",
+            "ocr_api_provider_default": "openai",
+        },
+    )
+    monkeypatch.setattr(power_tools_service, "get_openai_key", lambda: None)
+    monkeypatch.setattr(power_tools_service, "get_ocr_key", lambda: "stored-ocr-key")
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="Ready",
+            gog_path=None,
+            account_email="",
+            accounts=[],
+        ),
+    )
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_word_pdf_export_readiness",
+        lambda **_kwargs: _word_pdf_state(),
+    )
+    monkeypatch.setattr(power_tools_service, "inspect_edge_native_host", lambda **kwargs: _native_host_state())
+    monkeypatch.setattr(
+        power_tools_service,
+        "test_ocr_provider_connection",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    response = power_tools_service.run_ocr_provider_test(settings_path=settings_file)
+
+    assert response["status"] == "failed"
+    assert response["normalized_payload"]["status"] == "error"
+    assert response["normalized_payload"]["exception_class"] == "RuntimeError"
+    assert response["normalized_payload"]["source"] == {
+        "kind": "stored",
+        "name": "ocr_api_key",
+    }
 
 
 def test_run_browser_calibration_audit_uses_parsed_enum_settings(tmp_path: Path, monkeypatch) -> None:

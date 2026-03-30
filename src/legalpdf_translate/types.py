@@ -140,6 +140,7 @@ class RunState:
     done_count: int
     failed_count: int
     pending_count: int
+    failure_context: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -168,6 +169,7 @@ class RunState:
             "done_count": self.done_count,
             "failed_count": self.failed_count,
             "pending_count": self.pending_count,
+            "failure_context": dict(self.failure_context or {}),
         }
 
 

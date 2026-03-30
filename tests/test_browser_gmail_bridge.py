@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import legalpdf_translate.browser_gmail_bridge as browser_bridge_module
@@ -82,7 +83,7 @@ def test_browser_live_gmail_bridge_manager_starts_and_clears_runtime_metadata(mo
     monkeypatch.setattr(browser_bridge_module, "LocalGmailIntakeBridge", _FakeBridge)
     monkeypatch.setattr(
         browser_bridge_module,
-        "ensure_edge_native_host_registered",
+        "maybe_ensure_edge_native_host_registered",
         lambda **kwargs: SimpleNamespace(ok=True, reason="registered"),
     )
     monkeypatch.setattr(
@@ -144,7 +145,7 @@ def test_browser_live_gmail_bridge_manager_backs_off_for_existing_qt_owner(monke
     monkeypatch.setattr(browser_bridge_module, "LocalGmailIntakeBridge", _FakeBridge)
     monkeypatch.setattr(
         browser_bridge_module,
-        "ensure_edge_native_host_registered",
+        "maybe_ensure_edge_native_host_registered",
         lambda **kwargs: SimpleNamespace(ok=True, reason="registered"),
     )
     monkeypatch.setattr(
@@ -195,7 +196,7 @@ def test_browser_live_gmail_bridge_manager_disables_noncanonical_live_port(monke
     monkeypatch.setattr(browser_bridge_module, "LocalGmailIntakeBridge", _FakeBridge)
     monkeypatch.setattr(
         browser_bridge_module,
-        "ensure_edge_native_host_registered",
+        "maybe_ensure_edge_native_host_registered",
         lambda **kwargs: (_ for _ in ()).throw(
             AssertionError("registration should be skipped on noncanonical live ports")
         ),
@@ -217,3 +218,104 @@ def test_browser_live_gmail_bridge_manager_disables_noncanonical_live_port(monke
     assert result.registration_reason == "skipped_noncanonical_live_bridge_port"
     assert _FakeBridge.instances == []
     assert load_bridge_runtime_metadata(live_root) is None
+
+
+def test_browser_live_gmail_bridge_manager_skips_native_host_registration_in_pytest_runtime(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _FakeBridge.instances = []
+    live_root = tmp_path / "live"
+    live_root.mkdir(parents=True, exist_ok=True)
+    (live_root / "settings.json").write_text(
+        json.dumps(
+            {
+                "gmail_intake_bridge_enabled": True,
+                "gmail_intake_bridge_token": "shared-token",
+                "gmail_intake_port": 9011,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(browser_bridge_module, "detect_browser_data_paths", lambda **kwargs: _live_data_paths(live_root))
+    monkeypatch.setattr(browser_bridge_module, "LocalGmailIntakeBridge", _FakeBridge)
+    monkeypatch.setattr(
+        browser_bridge_module,
+        "validate_bridge_owner",
+        lambda **kwargs: SimpleNamespace(
+            ok=False,
+            pid=None,
+            hwnd=None,
+            reason="runtime_metadata_missing",
+            owner_kind="none",
+            browser_url=None,
+            workspace_id=None,
+            runtime_mode=None,
+        ),
+    )
+
+    manager = browser_bridge_module.BrowserLiveGmailBridgeManager(
+        repo_root=tmp_path,
+        build_identity=_identity(),
+        server_port=8877,
+        gmail_sessions=GmailBrowserSessionManager(),
+    )
+
+    result = manager.sync()
+
+    assert result.status == "ready"
+    assert result.registration_ok is False
+    assert result.registration_reason == "skipped_pytest_runtime"
+
+
+def test_browser_live_gmail_bridge_manager_prefers_current_runtime_for_registration(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    live_root = tmp_path / "live"
+    live_root.mkdir(parents=True, exist_ok=True)
+    (live_root / "settings.json").write_text(
+        json.dumps(
+            {
+                "gmail_intake_bridge_enabled": True,
+                "gmail_intake_bridge_token": "shared-token",
+                "gmail_intake_port": 9011,
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(browser_bridge_module, "detect_browser_data_paths", lambda **kwargs: _live_data_paths(live_root))
+    monkeypatch.setattr(browser_bridge_module, "LocalGmailIntakeBridge", _FakeBridge)
+    monkeypatch.setattr(
+        browser_bridge_module,
+        "validate_bridge_owner",
+        lambda **kwargs: SimpleNamespace(
+            ok=False,
+            pid=None,
+            hwnd=None,
+            reason="runtime_metadata_missing",
+            owner_kind="none",
+            browser_url=None,
+            workspace_id=None,
+            runtime_mode=None,
+        ),
+    )
+    monkeypatch.setattr(
+        browser_bridge_module,
+        "maybe_ensure_edge_native_host_registered",
+        lambda **kwargs: captured.update(kwargs) or SimpleNamespace(ok=True, reason="registered"),
+    )
+    monkeypatch.setattr(browser_bridge_module.sys, "executable", str(tmp_path / "current" / "Scripts" / "python.exe"))
+
+    manager = browser_bridge_module.BrowserLiveGmailBridgeManager(
+        repo_root=tmp_path,
+        build_identity=_identity(),
+        server_port=8877,
+        gmail_sessions=GmailBrowserSessionManager(),
+    )
+
+    manager.sync()
+
+    assert captured["preferred_python_executable"] == Path(browser_bridge_module.sys.executable)
+    assert captured["runtime_path"] == Path(browser_bridge_module.sys.executable)

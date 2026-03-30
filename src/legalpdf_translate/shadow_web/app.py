@@ -5,17 +5,25 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
+import sys
 from typing import Any, Mapping
+from urllib.parse import quote
 
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from legalpdf_translate.browser_gmail_bridge import BrowserLiveGmailBridgeManager
+from legalpdf_translate.browser_pdf_bundle import (
+    browser_pdf_bundle_manifest_path,
+    write_browser_pdf_bundle,
+)
 from legalpdf_translate.browser_app_service import (
     build_blank_browser_profile,
     build_browser_capability_snapshot,
@@ -36,6 +44,7 @@ from legalpdf_translate.gmail_browser_service import (
     GmailBrowserSessionManager,
     extension_prepare_reason_catalog,
 )
+from legalpdf_translate.gmail_focus_host import inspect_edge_native_host, prepare_gmail_intake
 from legalpdf_translate.interpretation_service import (
     InterpretationValidationError,
     add_interpretation_city,
@@ -49,16 +58,26 @@ from legalpdf_translate.interpretation_service import (
 )
 from legalpdf_translate.power_tools_service import (
     apply_builder_suggestions,
+    build_browser_provider_state,
     build_power_tools_bootstrap,
+    clear_browser_ocr_key,
+    clear_browser_translation_key,
     create_browser_debug_bundle,
+    document_runtime_state_payload,
     export_glossary_markdown,
     generate_browser_run_report,
+    repair_browser_native_host,
     run_browser_calibration_audit,
     run_gmail_draft_preflight,
     run_glossary_builder,
+    run_native_host_test,
     run_ocr_provider_test,
+    run_word_pdf_export_test,
+    run_translation_provider_test,
     run_settings_preflight,
     save_browser_settings,
+    save_browser_ocr_key,
+    save_browser_translation_key,
     save_glossary_workspace,
 )
 from legalpdf_translate.translation_service import (
@@ -82,19 +101,22 @@ from legalpdf_translate.shadow_runtime import (
     clear_shadow_runtime_metadata,
     detect_browser_data_paths,
     detect_shadow_runtime_paths,
+    load_shadow_runtime_metadata,
     normalize_workspace_id,
     run_browser_automation_preflight,
     write_shadow_runtime_metadata,
 )
-from legalpdf_translate.word_automation import probe_word_pdf_export_support
-
+from legalpdf_translate.user_settings import load_settings_from_path
 _SAFE_UPLOAD_TOKEN_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_PREPARE_REASON_MESSAGES = {item["reason"]: item["message"] for item in extension_prepare_reason_catalog()}
 
 
 @dataclass(frozen=True, slots=True)
 class ShadowWebContext:
     repo_root: Path
     port: int
+    static_dir: Path
+    asset_version: str
     server_runtime_paths: ShadowRuntimePaths
     build_identity: RuntimeBuildIdentity
     automation_preflight: dict[str, object]
@@ -128,6 +150,72 @@ async def _save_upload(upload: UploadFile, target_dir: Path, *, fallback_suffix:
     contents = await upload.read()
     target_path.write_bytes(contents)
     return target_path
+
+
+def _parse_browser_pdf_bundle_manifest(raw_manifest: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(str(raw_manifest or "").strip())
+    except json.JSONDecodeError as exc:
+        raise ValueError("Browser PDF bundle manifest must be valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Browser PDF bundle manifest must be an object.")
+    return payload
+
+
+def compute_browser_asset_version(static_dir: Path) -> str:
+    tracked_suffixes = {".js", ".mjs", ".css"}
+    hasher = hashlib.sha256()
+    static_root = static_dir.expanduser().resolve()
+    tracked_count = 0
+    for path in sorted(static_root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in tracked_suffixes:
+            continue
+        stat = path.stat()
+        relative = path.relative_to(static_root).as_posix()
+        hasher.update(relative.encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(str(int(stat.st_mtime_ns)).encode("ascii"))
+        hasher.update(b":")
+        hasher.update(str(int(stat.st_size)).encode("ascii"))
+        hasher.update(b"\n")
+        tracked_count += 1
+    if tracked_count == 0:
+        return "static-empty"
+    return hasher.hexdigest()[:12]
+
+
+def _versioned_static_base_url(request: Request, context: ShadowWebContext) -> str:
+    base_url = str(request.base_url).rstrip("/")
+    encoded_version = quote(context.asset_version, safe="")
+    return f"{base_url}/static-build/{encoded_version}/"
+
+
+def _versioned_static_url(request: Request, context: ShadowWebContext, asset_path: str) -> str:
+    relative_path = quote(str(asset_path or "").lstrip("/"), safe="/")
+    return f"{_versioned_static_base_url(request, context)}{relative_path}"
+
+
+def _resolve_static_asset(static_dir: Path, asset_path: str) -> Path | None:
+    candidate = (static_dir / str(asset_path or "")).expanduser().resolve()
+    root = static_dir.expanduser().resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    if not candidate.exists() or not candidate.is_file():
+        return None
+    return candidate
+
+
+async def _json_payload_or_empty(request: Request) -> dict[str, Any]:
+    content_length = str(request.headers.get("content-length", "") or "").strip()
+    if content_length in {"", "0"}:
+        return {}
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _context(request: Request) -> ShadowWebContext:
@@ -193,6 +281,7 @@ def _runtime_payload(context: ShadowWebContext, target: ActiveBrowserTarget) -> 
         "port": context.port,
         "build_branch": context.build_identity.branch,
         "build_sha": context.build_identity.head_sha,
+        "asset_version": context.asset_version,
         "runtime_mode": target.mode,
         "runtime_mode_label": target.data_paths.label,
         "workspace_id": target.workspace_id,
@@ -215,6 +304,13 @@ def _runtime_diagnostics(context: ShadowWebContext, target: ActiveBrowserTarget)
         automation_preflight=context.automation_preflight,
         capabilities={"runtime_mode": target.mode},
     )
+    existing_runtime_metadata = load_shadow_runtime_metadata(context.server_runtime_paths.runtime_metadata_path)
+    normalized_existing = dict(existing_runtime_metadata or {})
+    normalized_existing.pop("updated_at", None)
+    normalized_runtime_metadata = dict(runtime_metadata)
+    normalized_runtime_metadata.pop("updated_at", None)
+    if normalized_existing != normalized_runtime_metadata:
+        write_shadow_runtime_metadata(context.server_runtime_paths.runtime_metadata_path, runtime_metadata)
     return {
         "listener_ownership": asdict(listener),
         "runtime_metadata": runtime_metadata,
@@ -242,15 +338,87 @@ def _runtime_diagnostics(context: ShadowWebContext, target: ActiveBrowserTarget)
             "failed": "automation executed but flow assertions failed",
         },
     }
-
-
-def _word_pdf_preflight_payload(*, timeout_seconds: float = 8.0) -> dict[str, Any]:
-    preflight = probe_word_pdf_export_support(timeout_seconds=timeout_seconds)
+def _shell_bridge_mode_state(*, target: ActiveBrowserTarget) -> dict[str, Any]:
+    settings_payload = load_settings_from_path(target.data_paths.settings_path)
+    prepare_response = prepare_gmail_intake(
+        base_dir=target.data_paths.app_data_dir,
+        request_focus=False,
+        include_token=False,
+        settings_loader=lambda: load_settings_from_path(target.data_paths.settings_path),
+    )
+    bridge_port = prepare_response.get("bridgePort")
+    if not isinstance(bridge_port, int):
+        try:
+            bridge_port = int(settings_payload.get("gmail_intake_port", 0))
+        except (TypeError, ValueError):
+            bridge_port = None
+    reason = str(prepare_response.get("reason", "") or "").strip()
     return {
-        "ok": bool(preflight.ok),
-        "failure_code": str(preflight.failure_code or "").strip(),
-        "message": str(preflight.message or "").strip(),
-        "details": str(preflight.details or "").strip(),
+        "mode": target.data_paths.mode,
+        "label": target.data_paths.label,
+        "live_data": target.data_paths.live_data,
+        "bridge_enabled": bool(settings_payload.get("gmail_intake_bridge_enabled", False)),
+        "bridge_port": bridge_port if isinstance(bridge_port, int) and 1 <= int(bridge_port) <= 65535 else None,
+        "account_email": str(settings_payload.get("gmail_account_email", "") or "").strip(),
+        "ready": bool(prepare_response.get("ok")),
+        "reason": reason,
+        "reason_message": _PREPARE_REASON_MESSAGES.get(reason, reason.replace("_", " ").strip() or "Unknown state."),
+        "owner_kind": str(prepare_response.get("ui_owner", "") or "none").strip() or "none",
+        "browser_url": str(prepare_response.get("browser_url", "") or "").strip(),
+        "workspace_id": str(prepare_response.get("workspace_id", "") or target.workspace_id).strip() or target.workspace_id,
+        "runtime_mode": str(prepare_response.get("runtime_mode", "") or target.mode).strip() or target.mode,
+        "prepare_response": prepare_response,
+    }
+
+
+def _shell_bridge_capability_flags(
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+    *,
+    current_mode_bridge: Mapping[str, Any],
+    native_host_state: Mapping[str, Any],
+    document_runtime_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    bridge_sync = asdict(context.live_gmail_bridge.last_result)
+    reason = str(current_mode_bridge.get("reason", "") or "").strip() or str(bridge_sync.get("reason", "") or "").strip()
+    ready = bool(current_mode_bridge.get("ready"))
+    status = "ok" if ready else "bad" if reason in {"bridge_browser_mismatch", "split_brain_browser_owner"} else "warn"
+    label = "Ready" if ready else "Host issue" if status == "bad" else "Needs attention"
+    message = (
+        "The browser workspace is ready for Gmail handoff."
+        if ready
+        else str(current_mode_bridge.get("reason_message", "") or "The browser workspace is not ready for Gmail handoff.")
+    )
+    return {
+        "native_host": {
+            "status": "ok" if native_host_state.get("ready") else "warn" if native_host_state.get("repairable") else "bad",
+            "label": "Ready" if native_host_state.get("ready") else "Repairable" if native_host_state.get("repairable") else "Blocked",
+            "message": str(native_host_state.get("message", "") or "Edge native host status is unavailable."),
+            "reason": str(native_host_state.get("reason", "") or ""),
+            "repairable": bool(native_host_state.get("repairable")),
+            "self_test_status": str(native_host_state.get("self_test_status", "") or ""),
+            "current_runtime_python": str(native_host_state.get("current_runtime_python", "") or ""),
+        },
+        "gmail_bridge": {
+            "status": status,
+            "label": label,
+            "message": message,
+            "reason": reason,
+            "owner_kind": str(current_mode_bridge.get("owner_kind", "") or bridge_sync.get("owner_kind", "") or "none"),
+            "current_mode": dict(current_mode_bridge),
+            "live_desktop": None,
+            "shadow_isolation_active": bool(target.mode == RUNTIME_MODE_SHADOW and not current_mode_bridge.get("bridge_enabled")),
+            "live_desktop_ready_while_shadow_disabled": False,
+            "user_action_needed": not ready,
+        },
+        "document_runtime": {
+            "status": "ok" if document_runtime_state.get("native_pdf_available") else "warn",
+            "label": "Ready" if document_runtime_state.get("native_pdf_available") else "Browser-managed",
+            "message": str(document_runtime_state.get("message", "") or "Document runtime status is unavailable."),
+            "reason": str(document_runtime_state.get("reason", "") or ""),
+            "native_pdf_available": bool(document_runtime_state.get("native_pdf_available")),
+            "browser_pdf_bundle_supported": bool(document_runtime_state.get("browser_pdf_bundle_supported", False)),
+        },
     }
 
 
@@ -260,12 +428,33 @@ def _browser_capability_flags(
     *,
     extension_summary: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return build_browser_capability_snapshot(
+    provider_state = build_browser_provider_state(settings_path=target.data_paths.settings_path)
+    flags = build_browser_capability_snapshot(
         data_paths=target.data_paths,
         automation_preflight=context.automation_preflight,
-        word_pdf_preflight=_word_pdf_preflight_payload(),
+        word_pdf_preflight=provider_state.get("word_pdf_export", {}) if isinstance(provider_state, Mapping) else {},
         extension_summary=extension_summary,
     )
+    native_host_state = provider_state.get("native_host", {}) if isinstance(provider_state, Mapping) else {}
+    flags["native_host"] = {
+        "status": "ok" if native_host_state.get("ready") else "warn" if native_host_state.get("repairable") else "bad",
+        "label": "Ready" if native_host_state.get("ready") else "Repairable" if native_host_state.get("repairable") else "Blocked",
+        "message": str(native_host_state.get("message", "") or "Edge native host status is unavailable."),
+        "reason": str(native_host_state.get("reason", "") or ""),
+        "repairable": bool(native_host_state.get("repairable")),
+        "self_test_status": str(native_host_state.get("self_test_status", "") or ""),
+        "wrapper_target_python": str(native_host_state.get("wrapper_target_python", "") or ""),
+    }
+    document_runtime_state = provider_state.get("document_runtime", {}) if isinstance(provider_state, Mapping) else {}
+    flags["document_runtime"] = {
+        "status": "ok" if document_runtime_state.get("native_pdf_available") else "warn",
+        "label": "Ready" if document_runtime_state.get("native_pdf_available") else "Browser-managed",
+        "message": str(document_runtime_state.get("message", "") or "Document runtime status is unavailable."),
+        "reason": str(document_runtime_state.get("reason", "") or ""),
+        "native_pdf_available": bool(document_runtime_state.get("native_pdf_available")),
+        "browser_pdf_bundle_supported": bool(document_runtime_state.get("browser_pdf_bundle_supported", False)),
+    }
+    return flags
 
 
 def _merge_response(
@@ -289,14 +478,14 @@ def _merge_response(
             "runtime_mode_label": target.data_paths.label,
         },
     )
+    capability_flags = response.get("capability_flags")
+    if capability_flags is None:
+        capability_flags = _browser_capability_flags(context, target)
     merged = {
         "status": str(response.get("status", "ok") or "ok"),
         "normalized_payload": normalized_payload,
         "diagnostics": diagnostics,
-        "capability_flags": response.get(
-            "capability_flags",
-            _browser_capability_flags(context, target),
-        ),
+        "capability_flags": capability_flags,
     }
     for key, value in response.items():
         if key in merged or key in {"diagnostics", "capability_flags", "normalized_payload"}:
@@ -344,12 +533,15 @@ def create_shadow_app(
     automation_preflight = run_browser_automation_preflight(repo=root)
     templates_dir = Path(__file__).resolve().parent / "templates"
     static_dir = Path(__file__).resolve().parent / "static"
+    asset_version = compute_browser_asset_version(static_dir)
     templates = Jinja2Templates(directory=str(templates_dir))
     gmail_sessions = GmailBrowserSessionManager()
 
     shadow_context = ShadowWebContext(
         repo_root=root,
         port=int(port),
+        static_dir=static_dir,
+        asset_version=asset_version,
         server_runtime_paths=server_runtime_paths,
         build_identity=build_identity,
         automation_preflight=automation_preflight,
@@ -388,6 +580,21 @@ def create_shadow_app(
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     app.state.shadow_context = shadow_context
 
+    @app.get("/static-build/{asset_version}/{asset_path:path}", name="static_build")
+    async def versioned_static_asset(asset_version: str, asset_path: str) -> Response:
+        context = app.state.shadow_context
+        if str(asset_version or "").strip() != context.asset_version:
+            return Response(status_code=404)
+        asset = _resolve_static_asset(context.static_dir, asset_path)
+        if asset is None:
+            return Response(status_code=404)
+        return FileResponse(
+            asset,
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+            },
+        )
+
     def _structured_validation_payload(exc: Exception) -> dict[str, Any] | None:
         if isinstance(exc, InterpretationValidationError):
             return exc.to_payload()
@@ -396,7 +603,7 @@ def create_shadow_app(
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         context = _context(request)
-        return templates.TemplateResponse(
+        response = templates.TemplateResponse(
             request,
             "index.html",
             {
@@ -404,11 +611,17 @@ def create_shadow_app(
                 "shadow_port": context.port,
                 "build_branch": context.build_identity.branch,
                 "build_sha": context.build_identity.head_sha,
+                "asset_version": context.asset_version,
+                "static_base_url": _versioned_static_base_url(request, context),
+                "style_css_url": _versioned_static_url(request, context, "style.css"),
+                "app_js_url": _versioned_static_url(request, context, "app.js"),
                 "default_runtime_mode": _default_browser_mode(request.query_params.get("mode")),
                 "default_workspace_id": normalize_workspace_id(request.query_params.get("workspace")),
                 "ui_variant": _normalize_ui_variant(request.query_params.get("ui")),
             },
         )
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon() -> Response:
@@ -453,7 +666,62 @@ def create_shadow_app(
             extension_summary=extension_payload if isinstance(extension_payload, dict) else None,
         )
         response["normalized_payload"]["automation_preflight"] = context.automation_preflight
-        return JSONResponse(_merge_response(context, target, response))
+        payload = JSONResponse(_merge_response(context, target, response))
+        payload.headers["Cache-Control"] = "no-store"
+        return payload
+
+    @app.get("/api/bootstrap/shell")
+    async def api_bootstrap_shell(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        gmail_bootstrap = context.gmail_sessions.build_bootstrap(
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            settings_path=target.data_paths.settings_path,
+            outputs_dir=target.data_paths.outputs_dir,
+        )
+        current_mode_bridge = _shell_bridge_mode_state(target=target)
+        document_runtime_state = document_runtime_state_payload()
+        native_host_state = inspect_edge_native_host(
+            base_dir=target.data_paths.app_data_dir,
+            preferred_python_executable=Path(sys.executable),
+            runtime_path=Path(sys.executable),
+            run_self_test=False,
+        )
+        response = {
+            "status": "ok",
+            "normalized_payload": {
+                "shell": {
+                    "ready": bool(current_mode_bridge.get("ready")),
+                    "native_host_ready": bool(native_host_state.get("ready")),
+                    "asset_version": context.asset_version,
+                    "runtime_mode": target.mode,
+                    "workspace_id": target.workspace_id,
+                    "owner_kind": current_mode_bridge.get("owner_kind", "none"),
+                },
+                "gmail": gmail_bootstrap["normalized_payload"],
+                "document_runtime": document_runtime_state,
+                "native_host": native_host_state,
+                "extension_lab": {
+                    "prepare_response": current_mode_bridge["prepare_response"],
+                },
+            },
+            "diagnostics": {
+                "gmail_bridge_sync": asdict(context.live_gmail_bridge.last_result),
+                "document_runtime": document_runtime_state,
+                "native_host": native_host_state,
+            },
+            "capability_flags": _shell_bridge_capability_flags(
+                context,
+                target,
+                current_mode_bridge=current_mode_bridge,
+                native_host_state=native_host_state,
+                document_runtime_state=document_runtime_state,
+            ),
+        }
+        payload = JSONResponse(_merge_response(context, target, response))
+        payload.headers["Cache-Control"] = "no-store"
+        return payload
 
     @app.get("/api/capabilities")
     async def api_capabilities(request: Request) -> JSONResponse:
@@ -636,7 +904,7 @@ def create_shadow_app(
     @app.post("/api/settings/preflight")
     async def api_settings_preflight(request: Request) -> JSONResponse:
         context = _context(request)
-        payload = await request.json() if request.headers.get("content-length") else {}
+        payload = await _json_payload_or_empty(request)
         target = _active_target(
             request,
             mode_override=payload.get("mode") if isinstance(payload, dict) else None,
@@ -648,7 +916,7 @@ def create_shadow_app(
     @app.post("/api/settings/ocr-test")
     async def api_settings_ocr_test(request: Request) -> JSONResponse:
         context = _context(request)
-        payload = await request.json() if request.headers.get("content-length") else {}
+        payload = await _json_payload_or_empty(request)
         target = _active_target(
             request,
             mode_override=payload.get("mode") if isinstance(payload, dict) else None,
@@ -660,10 +928,127 @@ def create_shadow_app(
             return _validation_error_response(context, target, message=str(exc))
         return JSONResponse(_merge_response(context, target, response))
 
+    @app.post("/api/settings/translation-test")
+    async def api_settings_translation_test(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = run_translation_provider_test(settings_path=target.data_paths.settings_path)
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/native-host-test")
+    async def api_settings_native_host_test(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        response = run_native_host_test(settings_path=target.data_paths.settings_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/word-pdf-test")
+    async def api_settings_word_pdf_test(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        response = run_word_pdf_export_test(settings_path=target.data_paths.settings_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/native-host-repair")
+    async def api_settings_native_host_repair(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        response = repair_browser_native_host(settings_path=target.data_paths.settings_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/translation-key/save")
+    async def api_settings_translation_key_save(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = save_browser_translation_key(
+                settings_path=target.data_paths.settings_path,
+                key=payload.get("key") if isinstance(payload, dict) else "",
+            )
+        except (ValueError, RuntimeError) as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/translation-key/clear")
+    async def api_settings_translation_key_clear(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = clear_browser_translation_key(settings_path=target.data_paths.settings_path)
+        except RuntimeError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/ocr-key/save")
+    async def api_settings_ocr_key_save(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = save_browser_ocr_key(
+                settings_path=target.data_paths.settings_path,
+                key=payload.get("key") if isinstance(payload, dict) else "",
+            )
+        except (ValueError, RuntimeError) as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/ocr-key/clear")
+    async def api_settings_ocr_key_clear(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = clear_browser_ocr_key(settings_path=target.data_paths.settings_path)
+        except RuntimeError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
     @app.post("/api/settings/gmail-prereqs")
     async def api_settings_gmail_prereqs(request: Request) -> JSONResponse:
         context = _context(request)
-        payload = await request.json() if request.headers.get("content-length") else {}
+        payload = await _json_payload_or_empty(request)
         target = _active_target(
             request,
             mode_override=payload.get("mode") if isinstance(payload, dict) else None,
@@ -903,7 +1288,7 @@ def create_shadow_app(
     @app.post("/api/power-tools/diagnostics/debug-bundle")
     async def api_power_tools_debug_bundle(request: Request) -> JSONResponse:
         context = _context(request)
-        payload = await request.json() if request.headers.get("content-length") else {}
+        payload = await _json_payload_or_empty(request)
         target = _active_target(
             request,
             mode_override=payload.get("mode") if isinstance(payload, dict) else None,
@@ -920,17 +1305,19 @@ def create_shadow_app(
     @app.post("/api/power-tools/diagnostics/run-report")
     async def api_power_tools_run_report(request: Request) -> JSONResponse:
         context = _context(request)
-        payload = await request.json()
+        payload = await _json_payload_or_empty(request)
         target = _active_target(
             request,
-            mode_override=payload.get("mode"),
-            workspace_override=payload.get("workspace_id"),
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
         )
         try:
             response = generate_browser_run_report(
                 settings_path=target.data_paths.settings_path,
                 outputs_dir=target.data_paths.outputs_dir,
-                run_dir_text=payload.get("run_dir"),
+                run_dir_text=payload.get("run_dir") if isinstance(payload, dict) else None,
+                browser_failure_context=payload.get("browser_failure_context") if isinstance(payload, dict) else None,
+                gmail_finalization_context=payload.get("gmail_finalization_context") if isinstance(payload, dict) else None,
             )
         except ValueError as exc:
             return _validation_error_response(context, target, message=str(exc))
@@ -1029,11 +1416,103 @@ def create_shadow_app(
                 status_code=404,
             )
         media_type = "application/octet-stream"
+        content_disposition_type = "attachment"
         if path.suffix.lower() == ".pdf":
             media_type = "application/pdf"
+            content_disposition_type = "inline"
         elif path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
             media_type = f"image/{path.suffix.lower().lstrip('.')}"
-        return FileResponse(path, media_type=media_type, filename=path.name)
+            content_disposition_type = "inline"
+        # Gmail review preview embeds this route in an iframe/new tab, so previewable
+        # attachment types must not inherit the generic download disposition.
+        return FileResponse(
+            path,
+            media_type=media_type,
+            filename=path.name,
+            content_disposition_type=content_disposition_type,
+        )
+
+    @app.post("/api/browser-pdf/bundle")
+    async def api_browser_pdf_bundle(
+        request: Request,
+        manifest: str = Form(...),
+        page_images: list[UploadFile] = File(...),
+    ) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            manifest_payload = _parse_browser_pdf_bundle_manifest(manifest)
+            source_path_text = str(manifest_payload.get("source_path", "") or "").strip()
+            if source_path_text == "":
+                raise ValueError("Browser PDF bundle source_path is required.")
+            source_path = Path(source_path_text).expanduser().resolve()
+            if source_path.suffix.lower() != ".pdf":
+                raise ValueError("Browser PDF bundles are only supported for PDF sources.")
+            page_count = int(manifest_payload.get("page_count", 0) or 0)
+            if page_count <= 0:
+                raise ValueError("Browser PDF bundle page_count must be >= 1.")
+            raw_pages = manifest_payload.get("pages")
+            if not isinstance(raw_pages, list) or not raw_pages:
+                raise ValueError("Browser PDF bundle pages are required.")
+            uploads_by_name = {
+                str(upload.filename or "").strip(): upload
+                for upload in page_images
+                if str(upload.filename or "").strip()
+            }
+            if not uploads_by_name:
+                raise ValueError("Browser PDF bundle page images are required.")
+            pages: list[dict[str, Any]] = []
+            for item in raw_pages:
+                if not isinstance(item, dict):
+                    raise ValueError("Browser PDF bundle pages must be objects.")
+                upload_name = str(item.get("file_name", "") or "").strip()
+                if upload_name == "":
+                    raise ValueError("Browser PDF bundle page file_name is required.")
+                upload = uploads_by_name.get(upload_name)
+                if upload is None:
+                    raise ValueError(f"Browser PDF bundle upload is missing: {upload_name}")
+                image_bytes = await upload.read()
+                pages.append(
+                    {
+                        "page_number": item.get("page_number"),
+                        "mime_type": item.get("mime_type"),
+                        "width_px": item.get("width_px"),
+                        "height_px": item.get("height_px"),
+                        "image_bytes": image_bytes,
+                    }
+                )
+            written_manifest = write_browser_pdf_bundle(
+                source_path=source_path,
+                page_count=page_count,
+                pages=pages,
+            )
+            attachment_id = str(manifest_payload.get("attachment_id", "") or "").strip()
+            if attachment_id:
+                context.gmail_sessions.record_browser_pdf_bundle(
+                    runtime_mode=target.mode,
+                    workspace_id=target.workspace_id,
+                    attachment_id=attachment_id,
+                    source_path=source_path,
+                    page_count=page_count,
+                )
+            response = {
+                "status": "ok",
+                "normalized_payload": {
+                    "source_path": str(source_path),
+                    "source_name": source_path.name,
+                    "page_count": int(written_manifest.get("page_count", page_count) or page_count),
+                    "manifest_path": str(browser_pdf_bundle_manifest_path(source_path)),
+                    "attachment_id": attachment_id,
+                },
+                "diagnostics": {
+                    "page_upload_count": len(page_images),
+                    "workspace_cached": bool(attachment_id),
+                    "render_engine": "browser_pdf",
+                },
+            }
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
 
     @app.post("/api/gmail/prepare-session")
     async def api_gmail_prepare_session(request: Request) -> JSONResponse:
@@ -1116,6 +1595,26 @@ def create_shadow_app(
             return _validation_error_response(context, target, message=str(exc))
         return JSONResponse(_merge_response(context, target, response))
 
+    @app.post("/api/gmail/batch/finalize-preflight")
+    async def api_gmail_batch_finalize_preflight(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = context.gmail_sessions.preflight_batch_finalization(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                settings_path=target.data_paths.settings_path,
+                force_refresh=bool(payload.get("force_refresh")) if isinstance(payload, dict) else False,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
     @app.post("/api/gmail/interpretation/finalize")
     async def api_gmail_interpretation_finalize(request: Request) -> JSONResponse:
         context = _context(request)
@@ -1147,7 +1646,7 @@ def create_shadow_app(
     @app.post("/api/gmail/reset")
     async def api_gmail_reset(request: Request) -> JSONResponse:
         context = _context(request)
-        payload = await request.json() if request.headers.get("content-length") else {}
+        payload = await _json_payload_or_empty(request)
         target = _active_target(
             request,
             mode_override=payload.get("mode") if isinstance(payload, dict) else None,

@@ -21,6 +21,10 @@ const BRIDGE_INTEGRITY_FAILURE_REASONS = new Set([
 const EXTENSION_PROVENANCE_DRIFT_REASONS = new Set([
   "extension_source_drift",
 ]);
+const IS_EXTENSION_TEST = Boolean(globalThis && globalThis.__LEGALPDF_TEST__ === true);
+const CLIENT_HYDRATION_WAIT_MS = IS_EXTENSION_TEST ? 40 : 2600;
+const CLIENT_HYDRATION_RELOAD_WAIT_MS = IS_EXTENSION_TEST ? 60 : 3600;
+const CLIENT_HYDRATION_POLL_MS = IS_EXTENSION_TEST ? 1 : 140;
 
 const handoffInFlight = new Map();
 let handoffSequence = 0;
@@ -39,6 +43,10 @@ function normalizeToken(value) {
 
 function normalizeUrl(value) {
   return String(value ?? "").trim();
+}
+
+function buildBridgeEndpoint(config) {
+  return `http://127.0.0.1:${normalizePort(config && config.bridgePort)}/gmail-intake`;
 }
 
 function sleep(ms) {
@@ -264,6 +272,8 @@ function buildPrepareFailureMessage(response) {
       return "LegalPDF Translate found this checkout, but its local runtime is broken and could not be started safely.";
     case "launch_command_failed":
       return "LegalPDF Translate could not be started automatically.";
+    case "launch_in_progress":
+      return "LegalPDF Translate is already starting the browser app for this Gmail handoff.";
     case "launch_timeout":
       return "LegalPDF Translate was started, but the Gmail bridge did not become ready in time.";
     case "unsupported_platform":
@@ -286,6 +296,13 @@ function buildLaunchInProgressMessage(response) {
   return (
     "LegalPDF Translate is already starting the browser app for this Gmail handoff. "
     + `Please wait up to ${waitSeconds}s before clicking again; it will reuse the same launch instead of opening another window.`
+  );
+}
+
+function buildNativeHostAutoLaunchRepairMessage() {
+  return (
+    "LegalPDF Translate native host is unavailable, so the extension cannot open the app automatically right now. "
+    + "Open LegalPDF Translate once to repair the focus helper, then click the extension again."
   );
 }
 
@@ -568,6 +585,219 @@ function buildBrowserAppBootstrapUrl(browserUrl) {
   }
 }
 
+function defaultBrowserViewForWorkspace(workspaceId) {
+  return workspaceId === "gmail-intake" ? "gmail-intake" : "new-job";
+}
+
+function parseBrowserClientExpectation(browserUrl) {
+  const targetUrl = normalizeUrl(browserUrl);
+  if (targetUrl === "") {
+    return {
+      runtimeMode: "live",
+      workspaceId: "workspace-1",
+      activeView: "new-job",
+      assetVersion: "",
+    };
+  }
+  try {
+    const parsed = new URL(targetUrl);
+    const workspaceId = normalizeToken(parsed.searchParams.get("workspace")) || "workspace-1";
+    return {
+      runtimeMode: normalizeToken(parsed.searchParams.get("mode")) || "live",
+      workspaceId,
+      activeView: normalizeToken(parsed.hash.replace(/^#/, "")) || defaultBrowserViewForWorkspace(workspaceId),
+      assetVersion: "",
+    };
+  } catch (_error) {
+    return {
+      runtimeMode: "live",
+      workspaceId: "workspace-1",
+      activeView: "new-job",
+      assetVersion: "",
+    };
+  }
+}
+
+async function resolveBrowserAppTab(browserUrl) {
+  const targetUrl = normalizeUrl(browserUrl);
+  if (targetUrl === "") {
+    return null;
+  }
+  let url;
+  try {
+    url = new URL(targetUrl);
+  } catch (_error) {
+    return null;
+  }
+  const candidates = await chrome.tabs.query({ url: `${url.origin}/*` });
+  const exactMatch = candidates.find((tab) => urlsMatchForFocus(tab.url, targetUrl));
+  if (exactMatch && Number.isInteger(exactMatch.id)) {
+    return exactMatch;
+  }
+  const existing = candidates.find((tab) => Number.isInteger(tab.id));
+  return existing || null;
+}
+
+async function readBrowserClientHydrationState(tabId) {
+  if (!Number.isInteger(tabId)) {
+    return {
+      available: false,
+      status: "",
+      runtimeMode: "",
+      workspaceId: "",
+      activeView: "",
+      gmailHandoffState: "",
+      buildSha: "",
+      assetVersion: "",
+      bootstrappedAt: "",
+      url: "",
+    };
+  }
+  try {
+    const execution = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const marker = window.LEGALPDF_BROWSER_CLIENT_READY || null;
+        const dataset = document.body?.dataset || {};
+        return {
+          marker,
+          dataset: {
+            clientReady: dataset.clientReady || "",
+            clientWorkspace: dataset.clientWorkspace || "",
+            clientRuntimeMode: dataset.clientRuntimeMode || "",
+            clientActiveView: dataset.clientActiveView || "",
+            clientBuildSha: dataset.clientBuildSha || "",
+            clientAssetVersion: dataset.clientAssetVersion || "",
+          },
+          href: window.location.href,
+        };
+      },
+    });
+    const result = execution?.[0]?.result || {};
+    const marker = result.marker || {};
+    const dataset = result.dataset || {};
+    const status = normalizeToken(marker.status || dataset.clientReady).toLowerCase();
+    return {
+      available: true,
+      status,
+      runtimeMode: normalizeToken(marker.runtimeMode || dataset.clientRuntimeMode).toLowerCase(),
+      workspaceId: normalizeToken(marker.workspaceId || dataset.clientWorkspace),
+      activeView: normalizeToken(marker.activeView || dataset.clientActiveView),
+      gmailHandoffState: normalizeToken(marker.gmailHandoffState).toLowerCase(),
+      buildSha: normalizeToken(marker.buildSha || dataset.clientBuildSha),
+      assetVersion: normalizeToken(marker.assetVersion || dataset.clientAssetVersion),
+      bootstrappedAt: normalizeToken(marker.bootstrappedAt),
+      reason: normalizeToken(marker.reason),
+      message: normalizeToken(marker.message),
+      url: normalizeUrl(result.href),
+    };
+  } catch (_error) {
+    return {
+      available: false,
+      status: "",
+      runtimeMode: "",
+      workspaceId: "",
+      activeView: "",
+      gmailHandoffState: "",
+      buildSha: "",
+      assetVersion: "",
+      bootstrappedAt: "",
+      url: "",
+    };
+  }
+}
+
+function doesBrowserClientAssetVersionMatch(clientState, expectedAssetVersion) {
+  const expected = normalizeToken(expectedAssetVersion);
+  if (expected === "") {
+    return true;
+  }
+  return normalizeToken(clientState?.assetVersion) === expected;
+}
+
+function isBrowserClientReadyForExpectation(clientState, expected) {
+  return (
+    clientState.available === true
+    && clientState.status === "ready"
+    && clientState.runtimeMode === expected.runtimeMode
+    && clientState.workspaceId === expected.workspaceId
+    && clientState.activeView === expected.activeView
+    && doesBrowserClientAssetVersionMatch(clientState, expected.assetVersion)
+  );
+}
+
+async function waitForBrowserClientHydration(
+  browserUrl,
+  timeoutMs = CLIENT_HYDRATION_WAIT_MS,
+  expectedAssetVersion = "",
+) {
+  const expectation = {
+    ...parseBrowserClientExpectation(browserUrl),
+    assetVersion: normalizeToken(expectedAssetVersion),
+  };
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs || 0));
+  let lastState = {
+    available: false,
+    status: "",
+    runtimeMode: "",
+    workspaceId: "",
+    activeView: "",
+    gmailHandoffState: "",
+    buildSha: "",
+    assetVersion: "",
+    bootstrappedAt: "",
+    url: "",
+  };
+  while (Date.now() <= deadline) {
+    const tab = await resolveBrowserAppTab(browserUrl);
+    if (tab && Number.isInteger(tab.id)) {
+      const clientState = await readBrowserClientHydrationState(tab.id);
+      lastState = {
+        ...clientState,
+        tabId: tab.id,
+      };
+      if (isBrowserClientReadyForExpectation(lastState, expectation)) {
+        return {
+          ready: true,
+          tabId: tab.id,
+          expected: expectation,
+          clientState: lastState,
+        };
+      }
+      if (lastState.status === "client_boot_failed") {
+        return {
+          ready: false,
+          tabId: tab.id,
+          expected: expectation,
+          clientState: lastState,
+        };
+      }
+    }
+    await sleep(CLIENT_HYDRATION_POLL_MS);
+  }
+  return {
+    ready: false,
+    tabId: Number.isInteger(lastState.tabId) ? lastState.tabId : null,
+    expected: expectation,
+    clientState: lastState,
+  };
+}
+
+async function reloadBrowserAppTab(browserUrl) {
+  const tab = await resolveBrowserAppTab(browserUrl);
+  if (!tab || !Number.isInteger(tab.id)) {
+    return {
+      ok: false,
+      tabId: null,
+    };
+  }
+  await chrome.tabs.reload(tab.id, { bypassCache: true });
+  return {
+    ok: true,
+    tabId: tab.id,
+  };
+}
+
 async function waitForBrowserWorkspaceState(
   browserUrl,
   expectedContext,
@@ -582,11 +812,13 @@ async function waitForBrowserWorkspaceState(
       loaded: false,
       appBootstrapReady: false,
       workspaceRouteReachable: false,
+      assetVersion: "",
     };
   }
   const deadline = Date.now() + Math.max(0, Number(timeoutMs || 0));
   let appBootstrapReady = false;
   let workspaceRouteReachable = false;
+  let assetVersion = "";
   let integrityFailureReason = "";
   let integrityFailureProbeReason = "";
   let integrityFailureProbeDetail = "";
@@ -604,6 +836,10 @@ async function waitForBrowserWorkspaceState(
             appBootstrapPayload = {};
           }
           const appIntegrity = extractBridgeIntegrityState(appBootstrapPayload);
+          assetVersion = normalizeToken(
+            appBootstrapPayload?.normalized_payload?.shell?.asset_version
+            || appBootstrapPayload?.normalized_payload?.runtime?.asset_version,
+          );
           const appIntegrityReason = appIntegrity.reason;
           if (isBridgeIntegrityFailureReason(appIntegrityReason)) {
             return {
@@ -620,6 +856,7 @@ async function waitForBrowserWorkspaceState(
               integrityFailureTimedOut: appIntegrity.bridgeProbeTimedOut,
               appBootstrapReady,
               workspaceRouteReachable,
+              assetVersion,
             };
           }
         }
@@ -673,6 +910,7 @@ async function waitForBrowserWorkspaceState(
             integrityFailureTimedOut: integrityState.bridgeProbeTimedOut,
             appBootstrapReady,
             workspaceRouteReachable,
+            assetVersion,
           };
         }
         if (loaded) {
@@ -690,6 +928,7 @@ async function waitForBrowserWorkspaceState(
             integrityFailureTimedOut: integrityState.bridgeProbeTimedOut,
             appBootstrapReady,
             workspaceRouteReachable,
+            assetVersion,
           };
         }
         if (warming) {
@@ -707,6 +946,7 @@ async function waitForBrowserWorkspaceState(
             integrityFailureTimedOut: integrityState.bridgeProbeTimedOut,
             appBootstrapReady,
             workspaceRouteReachable,
+            assetVersion,
           };
         }
         if (loadFailed) {
@@ -724,6 +964,7 @@ async function waitForBrowserWorkspaceState(
             integrityFailureTimedOut: integrityState.bridgeProbeTimedOut,
             appBootstrapReady,
             workspaceRouteReachable,
+            assetVersion,
           };
         }
       }
@@ -746,6 +987,7 @@ async function waitForBrowserWorkspaceState(
     integrityFailureTimedOut,
     appBootstrapReady,
     workspaceRouteReachable,
+    assetVersion,
   };
 }
 
@@ -793,6 +1035,55 @@ function buildWorkspaceFailureMessage({ resolvedBrowserOpen, focusNotice }) {
     parts.push(focusNotice);
   } else if (!resolvedBrowserOpen) {
     parts.push("The browser app may still need manual focus.");
+  }
+  return parts.join(" ");
+}
+
+function buildClientShellNotHydratedMessage({ resolvedBrowserOpen, focusNotice, clientState }) {
+  const parts = [];
+  if (resolvedBrowserOpen) {
+    parts.push("LegalPDF Translate opened, but the browser tab stayed on the plain shell instead of hydrating the Gmail review UI.");
+  } else {
+    parts.push("LegalPDF Translate could not confirm that the browser tab hydrated the Gmail review UI.");
+  }
+  parts.push("The extension reloaded the localhost tab once automatically, but the page still did not finish loading.");
+  if (clientState?.status === "client_boot_failed" && clientState?.message) {
+    parts.push(clientState.message);
+  } else {
+    parts.push("Refresh the LegalPDF tab once manually if it is still open. If this keeps happening, restart the browser app and click the extension again.");
+  }
+  if (focusNotice !== "") {
+    parts.push(focusNotice);
+  }
+  return parts.join(" ");
+}
+
+function buildStaleBrowserAssetsMessage({
+  resolvedBrowserOpen,
+  focusNotice,
+  clientState,
+  expectedAssetVersion,
+}) {
+  const parts = [];
+  if (resolvedBrowserOpen) {
+    parts.push("LegalPDF Translate opened, but the browser tab is still running stale browser assets.");
+  } else {
+    parts.push("LegalPDF Translate could not confirm that the browser tab picked up the current browser assets.");
+  }
+  parts.push("The extension reloaded the localhost tab once automatically, but the tab still reported a different asset version than the live app expects.");
+  if (expectedAssetVersion) {
+    parts.push(`Expected asset version: ${expectedAssetVersion}.`);
+  }
+  if (clientState?.assetVersion) {
+    parts.push(`Tab asset version: ${clientState.assetVersion}.`);
+  }
+  if (clientState?.message) {
+    parts.push(clientState.message);
+  } else {
+    parts.push("Reload the LegalPDF tab once manually if it is still open. If this keeps happening, restart the browser app and click the extension again.");
+  }
+  if (focusNotice !== "") {
+    parts.push(focusNotice);
   }
   return parts.join(" ");
 }
@@ -855,11 +1146,30 @@ async function resolveBridgeConfigForClick() {
 
   const storedConfig = await getStoredBridgeConfig();
   if (storedConfig.bridgeToken !== "") {
+    try {
+      const probeResponse = await fetch(buildBridgeEndpoint(storedConfig), {
+        method: "GET",
+      });
+      if (probeResponse && typeof probeResponse.status === "number") {
+        return {
+          ok: true,
+          degradedMode: true,
+          nativeResponse: null,
+          config: storedConfig,
+        };
+      }
+    } catch (_error) {
+      // The native host is unavailable and the bridge is not already live.
+    }
+  }
+
+  if (storedConfig.bridgeToken !== "") {
     return {
-      ok: true,
+      ok: false,
       degradedMode: true,
       nativeResponse: null,
-      config: storedConfig,
+      messageKind: "error",
+      message: buildNativeHostAutoLaunchRepairMessage(),
     };
   }
 
@@ -879,7 +1189,7 @@ async function settleBrowserAppHandoff(browserUrl, browserAppOpened, waitForLaun
     resolved = await waitForLaunchedBrowserAppTab(targetUrl);
   }
   if (!resolved && targetUrl !== "") {
-    resolved = await openOrFocusBrowserApp(targetUrl);
+    resolved = await focusExistingBrowserAppWindow(targetUrl);
   }
   return resolved;
 }
@@ -894,7 +1204,7 @@ async function postContext(
   browserUrl = "",
   waitForLaunchedTab = false,
 ) {
-  const endpoint = `http://127.0.0.1:${config.bridgePort}/gmail-intake`;
+  const endpoint = buildBridgeEndpoint(config);
   let response;
   try {
     response = await fetch(endpoint, {
@@ -912,7 +1222,7 @@ async function postContext(
     });
   } catch (_error) {
     await notifyTab(tabId, "error", `LegalPDF Translate is not listening on ${endpoint}.`);
-    return;
+    return { holdLock: false, outcome: "bridge_unreachable" };
   }
 
   let payload = {};
@@ -928,7 +1238,7 @@ async function postContext(
         ? payload.message.trim()
         : `LegalPDF Translate rejected the request (${response.status}).`;
     await notifyTab(tabId, "error", message);
-    return;
+    return { holdLock: false, outcome: "bridge_rejected" };
   }
 
   const resolvedBrowserOpen = await settleBrowserAppHandoff(browserUrl, browserAppOpened, waitForLaunchedTab);
@@ -937,6 +1247,8 @@ async function postContext(
     context,
     waitForLaunchedTab ? COLD_START_WORKSPACE_READY_WAIT_MS : WORKSPACE_READY_WAIT_MS,
   );
+  let clientHydrationState = null;
+  let hydrationReloadAttempted = false;
   const baseMessage =
     typeof payload.message === "string" && payload.message.trim() !== ""
       ? payload.message.trim()
@@ -955,12 +1267,62 @@ async function postContext(
         parts.push(focusNotice);
       }
       await notifyTab(tabId, "error", parts.join(" "));
-      return;
+      return { holdLock: false, outcome: "integrity_failure" };
     }
     if (workspaceState.loaded) {
+      clientHydrationState = await waitForBrowserClientHydration(
+        browserUrl,
+        CLIENT_HYDRATION_WAIT_MS,
+        workspaceState.assetVersion,
+      );
+      if (!clientHydrationState.ready && browserUrl !== "") {
+        const canRetryHydration = (
+          hydrationReloadAttempted === false
+          && (
+            clientHydrationState.clientState?.status !== "client_boot_failed"
+            || clientHydrationState.clientState?.reason === "stale_browser_assets"
+          )
+        );
+        if (canRetryHydration) {
+          const reloadResult = await reloadBrowserAppTab(browserUrl);
+          hydrationReloadAttempted = reloadResult.ok === true;
+          if (hydrationReloadAttempted) {
+            clientHydrationState = await waitForBrowserClientHydration(
+              browserUrl,
+              CLIENT_HYDRATION_RELOAD_WAIT_MS,
+              workspaceState.assetVersion,
+            );
+          }
+        }
+      }
+      if (!clientHydrationState.ready) {
+        if (!doesBrowserClientAssetVersionMatch(clientHydrationState?.clientState || {}, workspaceState.assetVersion)) {
+          await notifyTab(
+            tabId,
+            "error",
+            buildStaleBrowserAssetsMessage({
+              resolvedBrowserOpen,
+              focusNotice,
+              clientState: clientHydrationState?.clientState || {},
+              expectedAssetVersion: workspaceState.assetVersion,
+            }),
+          );
+          return { holdLock: false, outcome: "stale_browser_assets" };
+        }
+        await notifyTab(
+          tabId,
+          "error",
+          buildClientShellNotHydratedMessage({
+            resolvedBrowserOpen,
+            focusNotice,
+            clientState: clientHydrationState?.clientState || {},
+          }),
+        );
+        return { holdLock: false, outcome: "client_shell_not_hydrated" };
+      }
       const message = suffix.length ? `${baseMessage} ${suffix.join(" ")}` : baseMessage;
       await notifyTab(tabId, "success", message);
-      return;
+      return { holdLock: false, outcome: "loaded" };
     }
     if (workspaceState.loadFailed) {
       const parts = [workspaceState.loadFailureMessage || "LegalPDF Translate could not load the exact Gmail message."];
@@ -968,7 +1330,7 @@ async function postContext(
         parts.push(focusNotice);
       }
       await notifyTab(tabId, "error", parts.join(" "));
-      return;
+      return { holdLock: false, outcome: "load_failed" };
     }
     if (workspaceState.warming || workspaceState.pending) {
       await notifyTab(
@@ -980,7 +1342,7 @@ async function postContext(
           resolvedBrowserOpen,
         }),
       );
-      return;
+      return { holdLock: true, outcome: "warming" };
     }
     if (workspaceState.workspaceRouteReachable || workspaceState.appBootstrapReady) {
       await notifyTab(
@@ -991,7 +1353,7 @@ async function postContext(
           focusNotice,
         }),
       );
-      return;
+      return { holdLock: false, outcome: "workspace_no_handoff" };
     }
     await notifyTab(
       tabId,
@@ -1001,10 +1363,11 @@ async function postContext(
         focusNotice,
       }),
     );
-    return;
+    return { holdLock: false, outcome: "workspace_failure" };
   }
   const message = suffix.length ? `${baseMessage} ${suffix.join(" ")}` : baseMessage;
   await notifyTab(tabId, "success", message);
+  return { holdLock: false, outcome: "accepted" };
 }
 
 chrome.action.onClicked.addListener(async (tab) => {
@@ -1056,6 +1419,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     );
   }
 
+  let shouldReleaseHandoffLock = true;
   try {
     const bridgeResolution = await resolveBridgeConfigForClick();
     if (!bridgeResolution.ok) {
@@ -1092,7 +1456,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     if (!isHandoffLockCurrent(handoffLock)) {
       return;
     }
-    await postContext(
+    const handoffResult = await postContext(
       tab.id,
       extraction.context,
       bridgeResolution.config,
@@ -1102,8 +1466,11 @@ chrome.action.onClicked.addListener(async (tab) => {
       browserUrl,
       waitForLaunchedTab,
     );
+    shouldReleaseHandoffLock = Boolean(handoffResult?.holdLock) === false;
   } finally {
-    releaseHandoffLock(handoffLock);
+    if (shouldReleaseHandoffLock) {
+      releaseHandoffLock(handoffLock);
+    }
   }
 });
 
@@ -1111,11 +1478,17 @@ if (globalThis && globalThis.__LEGALPDF_TEST__ === true) {
   globalThis.__legalPdfGmailIntakeBackgroundTestHooks = {
     LAUNCH_READINESS_WAIT_MS,
     HANDOFF_LOCK_MAX_AGE_MS,
+    CLIENT_HYDRATION_WAIT_MS,
+    CLIENT_HYDRATION_RELOAD_WAIT_MS,
     buildHandoffKey,
     claimHandoffLock,
     releaseHandoffLock,
     isHandoffLockCurrent,
     handoffInFlight,
+    resolveBridgeConfigForClick,
     postContext,
+    settleBrowserAppHandoff,
+    waitForBrowserClientHydration,
+    reloadBrowserAppTab,
   };
 }

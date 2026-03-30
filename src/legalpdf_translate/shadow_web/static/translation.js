@@ -1,5 +1,6 @@
 import { fetchJson } from "./api.js";
 import { appState, setActiveView } from "./state.js";
+import { ensureBrowserPdfBundleFromFile } from "./browser_pdf.js";
 
 const translationState = {
   currentSeed: null,
@@ -153,6 +154,14 @@ function sourceFileKey(file) {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
+function isPdfFile(file) {
+  if (!file) {
+    return false;
+  }
+  return String(file.type || "").trim().toLowerCase() === "application/pdf"
+    || String(file.name || "").trim().toLowerCase().endsWith(".pdf");
+}
+
 async function ensureUploadedSource() {
   const input = qs("translation-source-file");
   const file = input?.files?.[0];
@@ -171,14 +180,25 @@ async function ensureUploadedSource() {
   });
   translationState.uploadedSourceKey = key;
   translationState.uploadedSourcePath = payload.normalized_payload.source_path || "";
+  let resolvedPageCount = payload.normalized_payload.page_count ?? "?";
+  let sourceUploadHint = "Source upload complete.";
+  if (isPdfFile(file) && translationState.uploadedSourcePath) {
+    const browserBundle = await ensureBrowserPdfBundleFromFile({
+      appState,
+      sourcePath: translationState.uploadedSourcePath,
+      file,
+    });
+    resolvedPageCount = browserBundle.page_count ?? resolvedPageCount;
+    sourceUploadHint = "Source upload complete. Browser PDF staging is ready.";
+  }
   setFieldValue("translation-source-summary", [
     `Filename: ${payload.normalized_payload.source_filename || file.name}`,
     `Type: ${payload.normalized_payload.source_type || "unknown"}`,
-    `Pages: ${payload.normalized_payload.page_count ?? "?"}`,
+    `Pages: ${resolvedPageCount}`,
     `Saved path: ${payload.normalized_payload.source_path || ""}`,
   ].join("\n"));
   setDiagnostics("translation", payload, {
-    hint: "Source upload complete.",
+    hint: sourceUploadHint,
     open: false,
   });
   return translationState.uploadedSourcePath;
@@ -429,6 +449,7 @@ function syncTranslationCompletionSurface() {
   const emptyShell = qs("translation-completion-empty");
   const statusNode = qs("translation-completion-status");
   const reviewExportButton = qs("translation-review-export");
+  const runReportButton = qs("translation-generate-report");
   if (openButton) {
     openButton.classList.toggle("hidden", !available);
     openButton.textContent = completionButtonLabel();
@@ -436,6 +457,10 @@ function syncTranslationCompletionSurface() {
   if (!translationState.currentJob) {
     if (reviewExportButton) {
       reviewExportButton.disabled = true;
+    }
+    if (runReportButton) {
+      runReportButton.disabled = true;
+      runReportButton.classList.add("hidden");
     }
     clearDownloadLink("translation-download-docx");
     clearDownloadLink("translation-download-partial");
@@ -472,6 +497,41 @@ function maybeAutoOpenTranslationCompletion(job) {
   openTranslationCompletionDrawer({ auto: true });
 }
 
+function translationFailureContext(job) {
+  return job?.result?.failure_context || {};
+}
+
+function isAuthenticationFailure(job) {
+  return String(job?.result?.error || "").trim() === "authentication_failure";
+}
+
+function currentTranslationRunDir(job = translationState.currentJob) {
+  return String(
+    job?.result?.artifacts?.run_dir
+    || job?.artifacts?.run_dir
+    || job?.artifacts?.run_dir_text
+    || "",
+  ).trim();
+}
+
+function describeCredentialSource(source) {
+  const kind = String(source?.kind || "").trim();
+  const name = String(source?.name || "").trim();
+  if (kind === "stored") {
+    return "stored app key";
+  }
+  if (kind === "env") {
+    return name ? `env ${name}` : "environment variable";
+  }
+  if (kind === "inline") {
+    return "inline key";
+  }
+  if (kind === "missing") {
+    return "not configured";
+  }
+  return kind || "unknown";
+}
+
 function translationStatusSummary(job) {
   if (!job) {
     return "";
@@ -494,6 +554,9 @@ function translationStatusSummary(job) {
   }
   if (job.status === "cancelled") {
     return "Translation cancelled. You can resume or rebuild from the current run folder.";
+  }
+  if (job.status === "failed" && isAuthenticationFailure(job)) {
+    return "OpenAI authentication failed. Open Browser Settings, save a valid translation key, run Test Translation Auth, then start the translation again.";
   }
   if (job.status === "failed") {
     return job.status_text || "Translation failed.";
@@ -629,15 +692,34 @@ function renderTranslationResultCard(job, { containerId = "translation-result" }
   } else {
     const result = job.result || {};
     const metrics = result.metrics || {};
-    summaryLines.push(`Completed pages: ${result.completed_pages ?? 0}`);
-    if (metrics.run_id) {
-      summaryLines.push(`Run ID: ${metrics.run_id}`);
-    }
-    if (result.review_queue_count) {
-      summaryLines.push(`Flagged review pages: ${result.review_queue_count}`);
-    }
-    if (result.error) {
-      summaryLines.push(`Error: ${result.error}`);
+    if (isAuthenticationFailure(job)) {
+      const failureContext = translationFailureContext(job);
+      const credentialSource = describeCredentialSource(failureContext.credential_source);
+      summaryLines.push("Recovery: open Browser Settings, save a valid translation key, and run Test Translation Auth.");
+      summaryLines.push(`Credential source: ${credentialSource}`);
+      summaryLines.push(
+        `Failure scope: ${failureContext.scope === "preflight" ? "preflight before page processing" : "page translation"}`,
+      );
+      if (failureContext.status_code) {
+        summaryLines.push(`Status code: ${failureContext.status_code}`);
+      }
+      if (failureContext.exception_class) {
+        summaryLines.push(`Failure class: ${failureContext.exception_class}`);
+      }
+      if (failureContext.message) {
+        summaryLines.push(failureContext.message);
+      }
+    } else {
+      summaryLines.push(`Completed pages: ${result.completed_pages ?? 0}`);
+      if (metrics.run_id) {
+        summaryLines.push(`Run ID: ${metrics.run_id}`);
+      }
+      if (result.review_queue_count) {
+        summaryLines.push(`Flagged review pages: ${result.review_queue_count}`);
+      }
+      if (result.error) {
+        summaryLines.push(`Error: ${result.error}`);
+      }
     }
   }
   container.classList.remove("empty-state");
@@ -656,16 +738,29 @@ function renderTranslationJob(job) {
   translationState.currentJob = job || null;
   translationState.currentJobId = job?.job_id || "";
   setFieldValue("translation-job-id", translationState.currentJobId);
+  const runDir = currentTranslationRunDir(job);
+  if (runDir && qs("diagnostics-run-dir")) {
+    setFieldValue("diagnostics-run-dir", runDir);
+  }
   renderTranslationResultCard(job);
   setPanelStatus("translation", job ? (job.status === "failed" ? "bad" : "") : "", translationStatusSummary(job) || "Load a source file, then analyze or translate it in this browser workspace.");
+  const diagnosticsHint = isAuthenticationFailure(job)
+    ? "OpenAI authentication failed. Open Browser Settings, save a valid translation key, run Test Translation Auth, then start the translation again."
+    : "Latest progress, log tail, review queue, and failure context appear here.";
   setDiagnostics("translation-job", job || { status: "idle", message: "No translation job loaded." }, {
-    hint: "Latest progress, log tail, review queue, and failure context appear here.",
+    hint: diagnosticsHint,
     open: Boolean(job && job.status !== "completed"),
   });
   setDownloadLink("translation-download-docx", job?.actions?.download_output_docx ? `/api/translation/jobs/${job.job_id}/artifact/output_docx?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
   setDownloadLink("translation-download-partial", job?.actions?.download_partial_docx ? `/api/translation/jobs/${job.job_id}/artifact/partial_docx?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
   setDownloadLink("translation-download-summary", job?.actions?.download_run_summary ? `/api/translation/jobs/${job.job_id}/artifact/run_summary?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
   setDownloadLink("translation-download-analyze", job?.actions?.download_analyze_report ? `/api/translation/jobs/${job.job_id}/artifact/analyze_report?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
+  const reportButton = qs("translation-generate-report");
+  if (reportButton) {
+    const available = Boolean(runDir);
+    reportButton.disabled = !available;
+    reportButton.classList.toggle("hidden", !job);
+  }
   qs("translation-review-export").disabled = !job?.actions?.review_export;
   qs("translation-cancel").disabled = !job?.actions?.cancel;
   qs("translation-resume-btn").disabled = !job?.actions?.resume;
@@ -830,6 +925,23 @@ async function pollCurrentJob() {
     setPanelStatus("translation", "bad", error.message || "Translation job polling failed.");
     setDiagnostics("translation-job", error, { hint: error.message || "Translation job polling failed.", open: true });
   }
+}
+
+async function handleGenerateRunReport() {
+  const runDir = currentTranslationRunDir();
+  if (!runDir) {
+    throw new Error("No translation run directory is available for report generation yet.");
+  }
+  const payload = await fetchJson("/api/power-tools/diagnostics/run-report", appState, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run_dir: runDir }),
+  });
+  setPanelStatus("translation", "ok", "Run report generated.");
+  setDiagnostics("translation-job", payload, {
+    hint: payload.normalized_payload?.report_path || "Run report generated.",
+    open: true,
+  });
 }
 
 async function handleAnalyze() {
@@ -1033,6 +1145,19 @@ export function initializeTranslationUi() {
       } catch (error) {
         setPanelStatus("translation", "bad", error.message || "Review queue export failed.");
         setDiagnostics("translation-job", error, { hint: error.message || "Review queue export failed.", open: true });
+      }
+    });
+  });
+  qs("translation-generate-report")?.addEventListener("click", async () => {
+    await runWithBusy(["translation-generate-report"], { "translation-generate-report": "Generating..." }, async () => {
+      try {
+        await handleGenerateRunReport();
+      } catch (error) {
+        setPanelStatus("translation", "bad", error.message || "Run report generation failed.");
+        setDiagnostics("translation-job", error, {
+          hint: error.message || "Run report generation failed.",
+          open: true,
+        });
       }
     });
   });

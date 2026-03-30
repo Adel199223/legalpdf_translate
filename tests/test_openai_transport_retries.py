@@ -116,3 +116,71 @@ def test_timeout_budget_is_spent_across_transport_retries(monkeypatch) -> None:
     assert calls["count"] == 2
     assert exc_info.value.exception_class == "APITimeoutError"
     assert exc_info.value.transport_retries_count == 2
+
+
+def test_translation_auth_test_reports_missing_credentials(monkeypatch) -> None:
+    monkeypatch.setattr(openai_client, "get_openai_key", lambda: None)
+    monkeypatch.setattr(openai_client, "get_ocr_key", lambda: None)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    result = openai_client.run_translation_auth_test()
+
+    assert result.ok is False
+    assert result.status == "missing"
+    assert result.credential_source is None
+
+
+def test_translation_auth_test_reports_unauthorized(monkeypatch) -> None:
+    class AuthenticationError(Exception):
+        def __init__(self, message: str) -> None:
+            super().__init__(message)
+            self.status_code = 401
+
+    def _create_response(**kwargs):  # noqa: ANN003
+        _ = kwargs
+        raise AuthenticationError("bad key")
+
+    class _FakeOpenAI:
+        def __init__(self, api_key: str, max_retries: int = 99) -> None:
+            _ = api_key
+            assert max_retries == 0
+            self.responses = SimpleNamespace(create=_create_response)
+
+    monkeypatch.setattr(openai_client, "OpenAI", _FakeOpenAI)
+    monkeypatch.setattr(openai_client, "get_openai_key", lambda: "stored-key")
+    monkeypatch.setattr(openai_client, "get_ocr_key", lambda: None)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    result = openai_client.run_translation_auth_test()
+
+    assert result.ok is False
+    assert result.status == "unauthorized"
+    assert result.status_code == 401
+    assert result.exception_class == "AuthenticationError"
+    assert result.credential_source is not None
+    assert result.credential_source.to_payload() == {"kind": "stored", "name": ""}
+
+
+def test_translation_auth_test_reports_success(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _create_response(**kwargs):  # noqa: ANN003
+        calls.append(dict(kwargs))
+        return SimpleNamespace(id="resp-ok")
+
+    class _FakeOpenAI:
+        def __init__(self, api_key: str, max_retries: int = 99) -> None:
+            assert api_key == "inline-key"
+            assert max_retries == 0
+            self.responses = SimpleNamespace(create=_create_response)
+
+    monkeypatch.setattr(openai_client, "OpenAI", _FakeOpenAI)
+
+    result = openai_client.run_translation_auth_test(api_key="inline-key", timeout_seconds=7.0)
+
+    assert result.ok is True
+    assert result.status == "ok"
+    assert result.credential_source is not None
+    assert result.credential_source.to_payload() == {"kind": "inline", "name": ""}
+    assert result.latency_ms is not None
+    assert calls[0]["timeout"] == 7.0

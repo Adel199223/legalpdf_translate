@@ -11,7 +11,7 @@ from .config import (
     DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
     DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
 )
-from .ocr_engine import default_ocr_api_env_name
+from .ocr_defaults import default_ocr_api_env_name
 from .glossary import (
     default_ar_entries,
     entries_from_legacy_rules,
