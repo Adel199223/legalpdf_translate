@@ -445,14 +445,18 @@
     "browser_app_live_mode_policy": "Browser live mode uses the real settings, profiles, job log, outputs, and Gmail-linked workflows.",
     "browser_app_isolated_shadow_mode_policy": "Browser shadow mode is explicit isolated test mode with separate runtime roots, separate state, and no silent fallback into live data.",
     "browser_gmail_bridge_owner_policy": "When available, the browser app is the primary live Gmail bridge owner and the real extension opens or focuses the browser app workspace rather than relying on desktop-window focus helpers.",
+    "browser_asset_provenance_policy": "Browser app JS, CSS, and module-worker assets must be versioned as one graph, and localhost handoff should verify client/server asset_version agreement before declaring success.",
+    "browser_failure_report_policy": "When Gmail/browser preparation fails before a translation run exists, the browser UI should preserve selection state and offer a direct browser failure report instead of forcing Power Tools-only recovery.",
     "browser_extension_lab_companion_policy": "Extension Lab is a browser diagnostics and simulation companion for the real Gmail extension, not a replacement for the extension.",
     "template_sync_deferral_policy": "Project docs must capture reusable browser live-vs-isolated mode patterns before any later template-folder sync, but template updates still require explicit template-system intent.",
     "chromium_for_testing_conditional_install_policy": "Do not force browser install for API-only/non-UI tasks; allow conditional install only for automation reproducibility risk.",
     "automation_binary_provenance_packet_policy": "Automation packet must emit automation_browser_binary, automation_browser_version, automation_browser_source.",
+    "word_pdf_export_canary_policy": "Host-bound Gmail finalization that depends on Word PDF export must use launch_preflight plus a real export canary; launch-only readiness is insufficient.",
+    "gmail_finalization_report_policy": "Blocked or recoverable Gmail finalization states should offer a direct finalization report artifact rather than relying on a normal translation run report.",
     "cloud_heavy_scoring_default_policy": "Heavy machine evaluation runs default to cloud execution venue with local-only smoke/acceptance/apply checks.",
     "cloud_scoring_preflight_gate_policy": "Cloud evaluation requires dispatch/secrets/tooling preflight before heavy run start.",
     "cloud_scoring_failure_recovery_policy": "Cloud failure semantics use unavailable|failed and recovery order is cloud-fix-rerun before local-heavy fallback.",
     "cloud_local_apply_separation_policy": "Cloud evaluation outputs must not auto-apply runtime config/state; local manual acceptance gate is required before final apply."
   },
-  "last_updated": "2026-03-19"
+  "last_updated": "2026-03-30"
 }

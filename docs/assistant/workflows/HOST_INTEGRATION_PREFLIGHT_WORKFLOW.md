@@ -7,6 +7,7 @@ Use this workflow when a feature depends on a host-bound integration such as a l
 - A verified installation/auth/host preflight result before implementation proceeds
 - A clear `unavailable` vs `failed` classification when the integration is not ready
 - A verified localhost listener ownership result when the integration depends on a local bridge/listener
+- A verified real-path canary result when a launch-only probe is weaker than the user-visible operation
 - A minimal live smoke check result from the same host/runtime as the app
 
 ## When To Use
@@ -29,6 +30,7 @@ Instead use:
 - Do not assume WSL success proves the Windows app can use the same integration.
 - Do not treat installation-only as sufficient readiness.
 - Do not treat any process already listening on the expected port as proof the real integration is healthy.
+- Do not treat shell-only startup or launch-only Word readiness as sufficient when the user-visible path later loads browser module workers, opens documents, or exports PDFs.
 
 ## Primary Files
 - `docs/assistant/LOCAL_ENV_PROFILE.local.md`
@@ -63,8 +65,12 @@ dart run tooling/validate_workspace_hygiene.dart
 4. Localhost listener ownership is correct
    - when a localhost listener is part of the integration, verify the port is free or owned by the expected process
    - if the integration supports both live and isolated browser-app modes, verify which mode owns the listener and whether that owner is supposed to be live-capable
-5. Live smoke check passes
+5. live smoke check passes
    - run a minimal real operation before building the full feature
+   - if the integration has a lighter startup probe and a heavier real operation, prove the heavier path explicitly inside that live smoke
+   - examples in this repo:
+     - browser-app Gmail handoff should prove both shell readiness and client hydration on the opened localhost tab
+     - Gmail finalization should prove Word DOCX-to-PDF export through an export canary, not only Word launch/COM reachability
 
 ## Same-Host Validation Rule
 If the app runs on Windows and the integration depends on Windows-local auth or desktop state, validate it on Windows.
@@ -75,6 +81,11 @@ The browser app now makes this stricter for Gmail intake:
 - validate the browser app in `live` mode, not isolated `shadow` mode
 - confirm the live Gmail bridge owner and handoff URL, not just that some localhost listener is up
 - treat browser-owned bridge readiness as the normal green path and Qt ownership as fallback/coexistence, not the default assumption
+- when browser handoff depends on the opened localhost tab, prove the tab is hydrated and not running stale browser assets before treating the launch as successful
+
+For this repo's Gmail finalization path:
+- a shallow Word launch probe is not sufficient
+- `finalization_ready` must come from a real DOCX-to-PDF export canary that uses the same export path as the final reply step
 
 ## Failure Modes and Fallback Steps
 - `unavailable`
@@ -82,6 +93,7 @@ The browser app now makes this stricter for Gmail intake:
   - auth/account missing
   - wrong host/runtime
   - localhost bind conflict or unexpected listener ownership
+  - shell/launch probe passes but the real browser-document or Word-export canary fails
 - `failed`
   - preflight passed, but the feature behavior itself failed
 

@@ -59,6 +59,7 @@ It does not silently overwrite your saved defaults.
 - `Dashboard`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab` are still available, but they now behave as secondary/operator surfaces rather than the normal first screen.
 - `New Job`: the default daily shell. It stays focused on source PDF, target language, output folder, bounded advanced settings, run status, and the bottom action rail.
 - `Gmail`: a dedicated compact handoff screen for exact-message review and attachment selection. Deeper Gmail session/finalization work stays in same-tab drawers instead of appearing inline on the main shell.
+- `Settings` and `Dashboard` now surface the main operator checks for this browser-first flow: Translation Auth, OCR Provider, Native Host, and Word PDF export canary readiness.
 - `Recent Jobs`: the main secondary production page, with the latest saved rows visible first and deeper translation/interpretation history kept behind collapsible sections.
 - `Run Status`: progress bar, current task text, and page/image/error summary.
 - Bottom action rail: `Start Translate`, `Cancel`, and `...`.
@@ -267,6 +268,8 @@ Use this when the source files already arrived in Gmail and you want one reply d
 16. The honorários export saves the DOCX first and then attempts a sibling PDF with the same basename.
 17. If the translation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários PDF.
 18. If the interpretation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with the generated honorários PDF only.
+19. If preview or `Prepare selected attachments` fails before a translation run exists, the Gmail diagnostics area now preserves the current selection/start-page state and offers `Generate Failure Report`.
+20. Before `Finalize Gmail Batch Reply`, the app now checks whether the real Word PDF export path is ready. If it says blocked, fix that readiness issue first instead of rerunning translation.
 
 ### Batch rules
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
@@ -341,6 +344,9 @@ Queue mode writes these sidecar files next to the manifest:
 30. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
 31. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
 32. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
+33. If the browser app opens but a stale shell or old browser module graph appears, manual hard refresh should not be the normal fix. Reload the extension if needed and let the exact localhost tab recover first.
+34. If Gmail/browser preparation fails before a run exists, use `Generate Failure Report` from the Gmail diagnostics area. That is the right artifact for browser/PDF preparation failures that happen before `run_dir` exists.
+35. If Gmail finalization is blocked or ends in recoverable `local_only` / `draft_failed` state, use `Generate Finalization Report` from the finalization drawer. That report is more relevant than a normal run report for the last-mile reply step.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.

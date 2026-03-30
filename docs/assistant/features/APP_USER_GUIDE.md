@@ -32,9 +32,9 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 - `New Job`: the main beginner-first work area. Translation is the default view, and `Interpretation` is available through the in-page task switch.
 - `Gmail`: a dedicated Gmail handoff screen that starts as a compact review-first surface. Exact-message review and attachment choice are shown first; deeper Gmail session/finalization work opens later in same-tab drawers.
 - `More`: keeps `Dashboard`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab` reachable without making the everyday shell feel crowded.
-- `Dashboard`: an operator/status page under `More` that shows runtime mode, OCR, Word PDF export, browser automation, and Gmail bridge state when you need machine-level visibility.
+- `Dashboard`: an operator/status page under `More` that shows runtime mode, OCR, Word PDF export readiness, browser automation, Gmail bridge state, and other machine-level checks when you need machine-level visibility.
 - `Recent Jobs`: the main secondary production page. It shows the latest saved rows first and keeps deeper translation and interpretation history tucked into collapsible sections until you ask for them.
-- `Settings`: a bounded operator sheet for provider keys, Gmail bridge options, OCR checks, and other machine-level settings. The screen is grouped so defaults stay visible first and lower-frequency diagnostics stay tucked away.
+- `Settings`: a bounded operator sheet for provider keys, Gmail bridge options, OCR checks, translation-auth tests, native-host checks, Word PDF export canary checks, and other machine-level settings. The screen is grouped so defaults stay visible first and lower-frequency diagnostics stay tucked away.
 - `Profile`: your saved person/company details, addresses, distance defaults, and primary profile choice. The main page stays focused on the list and primary profile, while the full editor opens in a drawer.
 - `Power Tools`: a bounded operator stack for glossary, calibration, and diagnostics workflows.
 - `Extension Lab`: the browser-side diagnostics/simulator surface for Gmail handoff checks. The real browser extension stays canonical, and this lab remains an operator page rather than part of the normal daily flow.
@@ -142,6 +142,8 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 21. Interpretation Gmail drafts attach only the generated honorários PDF. They do not attach the original notice or any translated DOCX.
 22. When the original Gmail message explicitly names a reply email, the app now prefers that reply address for the Gmail draft instead of a weaker derived guess.
 23. The app creates a draft only. It does not send the email automatically.
+24. If preview or `Prepare selected` fails before translation starts, the Gmail diagnostics area now keeps your selection and offers `Generate Failure Report`.
+25. If `Finalize Gmail Batch Reply` is blocked, treat that as a Word PDF export readiness issue first. The app now checks the real export path before finalization and offers `Generate Finalization Report` when the last step is blocked or ends in recoverable local-only state.
 
 ## If Gmail Intake Stops Early
 1. If the page says the app is not listening, confirm the bridge is enabled in `Settings` and that you are using the browser app in `live` mode. A normal toolbar click can auto-start the app, so a manual launch should only be needed after an auto-start failure.
@@ -157,6 +159,9 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 10. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
 11. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
 12. If the honorários PDF cannot be generated, the export still keeps the local DOCX but Gmail draft creation stays blocked for that export.
+13. If the browser app opens but the page looks half-loaded or stale, the app should normally recover with one exact-tab reload. Manual hard refresh should not be the normal fix; check extension/native-host readiness instead.
+14. If Gmail/browser preparation fails before a run exists, use `Generate Failure Report` from the Gmail diagnostics area instead of searching for a run report that does not exist yet.
+15. If Gmail finalization is blocked before the draft step, use `Generate Finalization Report` from the finalization drawer. That report is the right artifact for blocked or recoverable `local_only` finalization states.
 
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.

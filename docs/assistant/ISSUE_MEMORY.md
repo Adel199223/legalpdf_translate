@@ -89,8 +89,8 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 ### workflow-wrong-build-under-test
 - Title: Wrong app/build under test because of mixed branches/worktrees and noncanonical launch
 - First seen timestamp: `2026-03-06T00:00:00Z`
-- Last seen timestamp: `2026-03-19T06:51:00Z`
-- Repeat count: `6`
+- Last seen timestamp: `2026-03-30T18:21:00Z`
+- Repeat count: `9`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
@@ -98,28 +98,38 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - accepted functionality appeared to be missing because it lived only on a side branch or the wrong worktree was launched
   - repeated user-visible confusion during Gemini/Gmail/UI follow-up testing
   - the user also needed extra support guidance about which sibling folder or workspace file should be the normal daily entry point
+  - the browser app could open on the right localhost URL while still running a stale module graph or stale extension/service-worker state
+  - native-host repair could point the launcher to a broken local runtime even though a healthy runtime was already running the visible browser app
 - Likely root cause:
   - feature work progressed on side branches after acceptance
   - the approved base was not promoted immediately
   - multiple runnable worktrees existed without strong enough canonical-build enforcement
+  - native-host runtime repair originally guessed from worktree state instead of validating the active runtime actually launching the browser app
+  - browser cache busting originally touched only the shell entrypoint, so imported modules could stay stale and recreate already-fixed Gmail/browser failures
 - Attempted fix history:
   - `2026-03-07T00:00:00Z` — added worktree baseline discipline docs; outcome: insufficient on its own
   - `2026-03-07T00:00:00Z` — added Qt build identity helper and noncanonical build markers; outcome: reduced ambiguity but did not solve accepted-feature promotion drift by itself
   - `2026-03-09T01:00:00Z` — added a saved multi-root VS Code workspace guide and archived a stale broken sibling folder out of the daily view; outcome: partial_only because it reduces navigation confusion but does not replace canonical build identity enforcement
   - `2026-03-19T06:51:00Z` — promoted the local browser app to the preferred daily-use surface, added explicit `live` versus isolated `shadow` mode routing, and documented the canonical live browser URL plus detached launcher; outcome: partial_only because it gives one stable human entrypoint, but branch/publish discipline still matters
+  - `2026-03-29T00:00:00Z` — added shell readiness, runtime metadata truthfulness, and single-flight Gmail handoff stabilization; outcome: partial_only because stale runtime selection and stale browser assets could still recreate the same old failures
+  - `2026-03-30T00:00:00Z` — changed native-host repair to validate the current runtime, split shell-safe startup from blocked document runtime imports, versioned the whole browser asset graph, and required client/server `asset_version` agreement before a handoff is treated as ready; outcome: stronger_mitigation
 - Accepted fix:
-  - `2026-03-19T06:51:00Z` — canonical build enforcement plus approved-base promotion discipline, launcher identity packet gating, noncanonical launch override rules, and one browser-app-first daily entrypoint with explicit `live` versus isolated `shadow` semantics
-- Regressed after accepted fix: `no`
+  - `2026-03-30T00:00:00Z` — canonical build enforcement now includes validated native-host runtime selection, shell-safe browser startup, whole-graph browser asset fingerprinting, client-ready/asset-version proof on the opened localhost tab, and one bounded stale-tab reload instead of trusting shell URL/open-state alone
+- Regressed after accepted fix: `yes`
 - Affected workflows/docs:
   - `docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md`
   - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
   - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
+  - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
   - `docs/assistant/runtime/CANONICAL_BUILD.json`
   - `docs/assistant/APP_KNOWLEDGE.md`
   - `docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md`
   - `docs/assistant/features/APP_USER_GUIDE.md`
   - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
   - `docs/assistant/SESSION_RESUME.md`
+  - `docs/assistant/LOCAL_ENV_PROFILE.local.md`
+  - `docs/assistant/LOCAL_CAPABILITIES.md`
 - Bootstrap relevance: `required`
 - Docs-sync relevance:
   - Priority: `high`
@@ -128,11 +138,15 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - approved-base promotion rules
     - canonical launch/default test target guidance
     - plain-language local workspace entry guidance
+    - validated runtime repair and whole-graph browser asset provenance
   - Evidence refs:
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_worktree_baseline_docs_sync.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_qt_build_identity_hardening.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_accepted_feature_promotion_canonical_enforcement.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-09_worktree_workspace_organization.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-29_cold_start_reliability_rebuild.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_browser_asset_provenance_gmail_prepare.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_first_open_gmail_hydration_recovery.md`
   - Branch: `feat/ai-docs-bootstrap`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
   - Workspace: `C:\Users\FA507\.codex\legalpdf_translate-worktrees.code-workspace`
@@ -184,26 +198,32 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 ### workflow-fragmented-multi-surface-diagnostics
 - Title: Fragmented diagnostics across handoff, per-run execution, and finalization slowed root-cause analysis
 - First seen timestamp: `2026-03-08T00:00:00Z`
-- Last seen timestamp: `2026-03-08T09:27:00Z`
-- Repeat count: `2`
+- Last seen timestamp: `2026-03-30T18:21:00Z`
+- Repeat count: `4`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
   - browser banners, app bridge state, run reports, and finalization/draft failures had to be correlated manually
   - repeated debugging required back-and-forth between transient UI evidence and durable run artifacts
   - support packets were inconsistent across handoff, execution, and finalization failures
+  - Gmail/browser preparation failures that happened before `run_dir` existed had no direct report artifact, so debugging stalled before the normal run-report path even began
+  - blocked or recoverable Gmail finalization states needed a dedicated artifact instead of being inferred from raw JSON pasted out of the drawer
 - Likely root cause:
   - project docs did not yet encode one support-packet order or one durable app-owned session-artifact pattern for multi-surface workflows
+  - browser-only pre-run failures and last-mile finalization failures were not treated as first-class report surfaces
 - Attempted fix history:
   - `2026-03-08T00:00:00Z` — feature-specific Gmail diagnostics were added; outcome: partial_only
+  - `2026-03-30T00:00:00Z` — added direct browser failure reports for pre-run Gmail/browser failures and direct Gmail finalization reports for blocked/local-only/draft-failed reply states; outcome: stronger_mitigation
 - Accepted fix:
-  - `2026-03-08T09:27:00Z` — project guidance now routes multi-surface debugging through per-run artifacts first, additive workflow context when needed, one app-owned session artifact, and a fixed support-packet order
+  - `2026-03-30T00:00:00Z` — project guidance now routes multi-surface debugging through browser/banner evidence first, direct browser/finalization report artifacts when no normal run report exists yet, per-run artifacts for execution issues, and one app-owned session artifact for batch/finalization state
 - Regressed after accepted fix: `no`
 - Affected workflows/docs:
   - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
   - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
   - `APP_KNOWLEDGE.md`
   - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
 - Bootstrap relevance: `required`
 - Docs-sync relevance:
   - Priority: `high`
@@ -211,10 +231,13 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - session-artifact layering guidance
     - support-packet order
     - multi-surface troubleshooting workflow routing
+    - direct browser/finalization report surfaces when no normal run report exists yet
 - Evidence refs:
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_intake`
   - Template: `docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md`
   - File: `C:\Users\FA507\Downloads\run_report.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_gmail_prepare_pdf_worker_reportability.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md`
 
 ### product-arabic-docx-word-right-alignment
 - Title: Arabic DOCX right alignment in Word could not be solved durably with OOXML-only writer changes
@@ -338,27 +361,31 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
 
 ### desktop-qt-honorarios-export-reliability
-- Title: Honorários PDF export and focus-sensitive Qt dialogs felt unstable because host-bound work blocked the UI and modal state leaked across paths
+- Title: Host-bound honorários PDF export and Gmail finalization readiness felt unstable because launch-only Word checks were too shallow
 - First seen timestamp: `2026-03-12T00:00:00Z`
-- Last seen timestamp: `2026-03-12T18:05:00Z`
-- Repeat count: `2`
+- Last seen timestamp: `2026-03-30T18:21:00Z`
+- Repeat count: `3`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
   - the visible LegalPDF window could show `No responde` while Word PDF export tried to launch or timed out
   - PDF failure warnings dumped raw PowerShell/COM text inline and could cascade into an extra Gmail missing-PDF warning
   - focus-sensitive Qt tests around Return/Delete shortcuts could fail intermittently because leaked dialogs or stale focus changed the active target
+  - the browser finalization drawer could show Word as apparently ready from a shallow probe even though the real DOCX-to-PDF export path still timed out and ended in `local_only`
 - Likely root cause:
   - host-bound Word PDF export originally ran on the GUI thread and failure handling spanned too many modal layers
   - the Qt harness did not yet enforce deterministic popup cleanup, activation, and shortcut targeting for focus-sensitive dialog tests
+  - launch-only Word readiness was too weak for the Gmail finalization path, which uses a heavier open/export/close cycle than a simple launch probe
 - Attempted fix history:
   - `2026-03-12T00:00:00Z` — added synchronous honorários DOCX-to-PDF export through Word automation; outcome: insufficient because the UI could freeze and the failure diagnostics were too noisy
+  - `2026-03-30T00:00:00Z` — browser/operator surfaces still treated launch-only Word readiness as sufficient proof for Gmail finalization; outcome: insufficient because the final reply path could still time out during export
 - Accepted fix:
-  - `2026-03-12T18:05:00Z` — moved honorários PDF export to a worker thread, replaced raw command dumps with concise warnings plus expandable details, added one retry/select-existing-PDF/local-only recovery flow, reduced duplicate warning cascades, and hardened Qt popup cleanup plus explicit activation for focus-sensitive dialog tests
+  - `2026-03-30T00:00:00Z` — Word export reliability now uses phase-aware diagnostics, bounded cleanup for app-owned stuck helpers, a real DOCX-to-PDF export canary, browser `finalization_ready` gating before Gmail reply finalization, and direct retry/report flows when export still fails after a passing canary
 - Regressed after accepted fix: `no`
 - Affected workflows/docs:
   - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
   - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
   - `APP_KNOWLEDGE.md`
   - `docs/assistant/APP_KNOWLEDGE.md`
   - `docs/assistant/features/APP_USER_GUIDE.md`
@@ -374,6 +401,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - explicit activation and leaked-popup cleanup for focus-sensitive Qt tests
 - Evidence refs:
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-12_desktop_stability_honorarios_qt.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md`
   - File: `src/legalpdf_translate/qt_gui/dialogs.py`
   - File: `src/legalpdf_translate/qt_gui/worker.py`
   - File: `src/legalpdf_translate/word_automation.py`

@@ -51,7 +51,11 @@ For this local source checkout, Edge native-host registration should prefer the 
 
 Live Gmail bridge ownership must stay on the browser app listener at `8877`. Fixed review previews on `8888` are for branch review only and must not become the real live Gmail bridge owner.
 
+If the Dart-based browser automation preflight fails here with `Unable to find AOT snapshot for dartdev`, treat that as host-tooling `unavailable` and switch to direct browser/manual or Node-backed validation. Do not treat that preflight failure alone as proof the browser app flow is broken.
+
 For the Arabic DOCX review gate, WSL-only validation is insufficient because Word automation, visible Word editing, and save-detection behavior are Windows-host runtime facts.
+
+For Gmail batch finalization, Windows validation must prove the real Word DOCX-to-PDF export path, not just that Word can launch. A launch-only preflight is insufficient for the last-mile reply step on this machine.
 
 ## Performance and Tolerance Guidance
 - This machine can tolerate local Qt/UI testing, OCR validation, and moderate local automation work.

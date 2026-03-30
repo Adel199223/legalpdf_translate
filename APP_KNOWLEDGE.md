@@ -53,6 +53,8 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - Browser workspace state is URL-scoped through `workspace=<id>`, so separate tabs can keep independent draft/progress state.
 - `mode=live` uses the real settings, profiles, job log, outputs, and Gmail workflow.
 - `mode=shadow` is the explicit isolated test mode for development and browser automation. It uses separate state roots and never silently falls back to live data.
+- Browser shell readiness is now two-stage: the server must be ready and the opened localhost tab must publish a hydrated client-ready marker before the extension treats Gmail handoff as successful.
+- Browser JS/CSS/module-worker assets now ship under one runtime `asset_version` so the whole module graph invalidates together. The extension compares server and client `asset_version` values and allows one exact-tab reload before declaring stale-browser-asset failure.
 - Port `8877` remains the canonical daily-use/live/Gmail browser port; port `8888` is reserved for fixed branch-review previews so stale review tabs and normal work tabs do not collide.
 - The preview port on `8888` never owns the real live Gmail bridge. Live Gmail extension handoff always points back to the canonical browser app on `8877`.
 - `Extension Lab` is a diagnostics and simulation companion for the real Gmail extension. It does not replace the extension itself.
@@ -182,6 +184,10 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - `live`: real settings, profiles, job log, outputs, and Gmail-linked flows
   - `shadow`: isolated test data keyed per build/worktree identity
 - Browser runtime metadata records the active mode, workspace, build identity, listener ownership, and bridge provenance so live vs isolated runs stay diagnosable.
+- Browser shell/bootstrap state now also records additive asset provenance:
+  - `build_sha` for build identity
+  - runtime `asset_version` for the served browser asset graph
+  - client-ready hydration markers that the extension can probe on the opened localhost tab
 - The job log SQLite schema now includes additive run-metric/risk columns: `run_id`, `target_lang`, `total_tokens`, `estimated_api_cost`, and `quality_risk_score`.
 - The job log also stores additive translation artifact paths for Gmail/honorarios reuse: `output_docx_path` and `partial_docx_path`.
 - Job-form draft edits are workspace-local session state. Shared settings now persist launch fields only when a task explicitly starts, so closing or resetting one workspace does not write another window's draft inputs back into `settings.json`.
@@ -197,6 +203,9 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Gmail intake interpretation notice runs now write one durable app-owned session report at `<effective_outdir>/_gmail_interpretation_sessions/<session_id>/gmail_interpretation_session.json`.
   - These reports are the main cross-run/debug bridge between browser handoff, Save-to-Job-Log confirmation, honorários export, and Gmail draft finalization.
   - The browser extension does not write its own report file.
+- Browser/operator diagnostics can now also generate:
+  - a browser failure report when Gmail/browser preparation fails before a translation run creates a `run_dir`
+  - a Gmail finalization report when finalization is blocked or ends in recoverable `local_only` / `draft_failed` state
 - Save-to-Job-Log pre-fills those values from `run_summary.json` when available, while preserving user edit control before save.
 - Save-to-Job-Log now also exposes `Open translated DOCX`, which reopens the resolved final or partial DOCX for the current run without leaving the dialog.
 - Save-to-Job-Log now uses a scrollable form body with a fixed action row so create/edit flows stay usable on smaller screens without hiding `Save`, `Cancel`, `Open translated DOCX`, or the honorários action.
@@ -274,9 +283,10 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - The Gmail browser flow no longer uses a persistent session control-center page as the normal path. After handoff, the user moves through one focused intake step and then bounded same-tab drawers for review, save, export, and Gmail finalization.
 - The attachment review step also includes the target-language selector for the whole Gmail batch, and the selected language is pushed back into the main app UI before preparation starts.
 - The review dialog now also supports per-attachment start-page selection and an in-app attachment preview before preparation begins.
-- PDF previews use a lazy continuous-scroll viewer so the user can inspect the document. Page `1` is always the default first page to translate; use `Start from this page` only when the batch should begin later. Image attachments remain single-page and always start at page `1`.
+- PDF previews use a lazy continuous-scroll viewer backed by the bundled browser PDF path (`pdf.js`) instead of server-startup `PyMuPDF`. Page `1` is always the default first page to translate; use `Start from this page` only when the batch should begin later. Image attachments remain single-page and always start at page `1`.
 - The Gmail attachment preview now coalesces resize-driven rescaling instead of recomputing scaled preview geometry on every live resize tick, which reduces visible jitter while dragging the window.
 - Previewed attachments are cached temporarily and reused during `Prepare selected attachments` when still valid so the batch does not redownload the same file unnecessarily.
+- If preview or `Prepare selected attachments` fails before a translation run exists, the Gmail browser surface preserves the current selection/start-page state, surfaces structured browser diagnostics, and offers a direct browser failure report action instead of requiring Power Tools-only recovery.
 - If the current output folder is stale or missing, Gmail batch startup recovers automatically in this order: current valid output folder, valid `default_outdir`, then `Downloads`.
 - Completed checkpoints with missing page artifacts are treated as stale and are not reused as resumable state.
 - Translation batches now auto-start from the reviewed Gmail selection, keep the main `#new-job` shell calm, and surface the case-save/export/review actions inside a bounded `Finish Translation` drawer instead of restacking Gmail and translation dashboards together.
@@ -287,6 +297,10 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - A Gmail batch remains valid only while every confirmed item resolves to the same `case_number`, `case_entity`, `case_city`, and `court_email`. Any mismatch stops the batch and tells the user to split it into separate replies.
 - After all selected attachments are translated and confirmed, the user may generate one honorários export for the batch and one Gmail reply draft in the original thread. The app saves the honorários DOCX locally, attempts a sibling PDF immediately, and attaches all translated DOCXs plus that single honorários PDF when draft creation succeeds. Interpretation-notice replies attach only the honorários PDF. The app never auto-sends.
 - When the original Gmail message contains an explicit reply destination, Gmail finalization now prefers that reply address over looser case-derived recipient guesses.
+- Gmail batch finalization now uses a two-tier Word readiness contract:
+  - `launch_preflight` proves Word/COM can be reached
+  - `export_canary` proves the same DOCX-to-PDF export path used by finalization can really produce a PDF
+  - Gmail draft creation stays blocked until that export-ready path is healthy and the honorários PDF exists
 - If the user picks an existing translated filename when saving honorários, the app auto-renames the honorários file instead of overwriting the translation.
 - Gmail draft creation now blocks duplicate attachment paths and contaminated translated artifacts (for example, a translated DOCX path that actually contains honorários content).
 - Arabic failures now surface additive diagnostics such as `validator_defect_reason`, `ar_violation_kind`, and limited sampled offending snippets in run artifacts and the stop dialog.
@@ -326,6 +340,10 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Host-bound workflows that add localhost listeners, browser/app bridges, or separate handoff/run/finalization failure surfaces should also route through `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`.
 - Gmail intake live validation must use the same Windows host for the signed-in Edge/Chromium Gmail tab, the browser app or Qt shell that owns the workflow, and Windows `gog`; a WSL-only smoke does not satisfy the final host-bound check.
 - If Gmail shows `accepted` but the app stays idle, check port ownership first. The listener on `127.0.0.1:<gmail_intake_port>` should normally belong to the browser app server process, not to `pytest`, a stale server, or another stray process.
+- If the browser app opens but only a shell or stale tab appears, treat that as a provenance/readiness issue first:
+  - confirm `asset_version` agreement between the shell payload and the loaded tab
+  - prefer one exact-tab reload or extension reload before treating it as a product regression
+- Before live Gmail finalization testing, use the browser operator surfaces to check Translation Auth, OCR Provider, Native Host, and Word PDF export canary readiness instead of assuming shell launch alone proves the last-mile reply path is healthy.
 - For future triage, the durable support packet is:
   1. Gmail banner text/screenshot when handoff failed before app intake
   2. browser dashboard or Qt window build identity plus visible bridge status
