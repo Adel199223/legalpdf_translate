@@ -141,6 +141,87 @@ console.log(JSON.stringify(results));
     return {entry["name"]: entry for entry in payload}
 
 
+def _run_bootstrap_hydration_probe() -> dict[str, dict[str, object]]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for shadow web recovery coverage.")
+
+    module_url = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+        / "bootstrap_hydration.js"
+    ).as_uri()
+
+    script = f"""
+const hydrationModule = await import({json.dumps(module_url)});
+
+const initial = hydrationModule.buildInitialClientReadyState({{
+  href: "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+  defaultRuntimeMode: "live",
+  defaultWorkspaceId: "gmail-intake",
+  defaultUiVariant: "qt",
+  buildSha: "5c9842e",
+}});
+
+const retryEvents = [];
+let gmailFullAttempts = 0;
+const stagedGmail = await hydrationModule.runStagedBootstrap({{
+  routeContext: {{
+    workspaceId: "gmail-intake",
+    activeView: "gmail-intake",
+  }},
+  fetchShell: async () => ({{ shell: "ready" }}),
+  fetchFull: async () => {{
+    gmailFullAttempts += 1;
+    if (gmailFullAttempts < 3) {{
+      throw new Error(`warmup-${{gmailFullAttempts}}`);
+    }}
+    return {{ status: "ok", attempts: gmailFullAttempts }};
+  }},
+  sleep: async () => undefined,
+  onRetry: (event) => retryEvents.push({{
+    attempt: event.attempt,
+    maxAttempts: event.maxAttempts,
+    delayMs: event.delayMs,
+    message: event.error.message,
+  }}),
+}});
+
+let standardFullAttempts = 0;
+const stagedStandard = await hydrationModule.runStagedBootstrap({{
+  routeContext: {{
+    workspaceId: "workspace-1",
+    activeView: "new-job",
+  }},
+  fetchShell: async () => ({{ shell: "ready" }}),
+  fetchFull: async () => {{
+    standardFullAttempts += 1;
+    return {{ status: "ok", attempts: standardFullAttempts }};
+  }},
+  sleep: async () => undefined,
+}});
+
+console.log(JSON.stringify({{
+  initial,
+  stagedGmail,
+  retryEvents,
+  stagedStandard,
+}}));
+"""
+
+    completed = subprocess.run(
+        [node, "--input-type=module", "-"],
+        input=script,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(completed.stdout)
+
+
 def test_shadow_web_fetch_json_normalizes_dead_preview_and_daily_ports() -> None:
     results = _run_api_probe()
 
@@ -173,3 +254,39 @@ def test_shadow_web_fetch_json_preserves_backend_failures() -> None:
     assert backend["message"] == "Backend says no."
     assert backend["isLocalServerUnavailable"] is False
     assert backend["diagnosticsError"] == "Backend says no."
+
+
+def test_shadow_web_bootstrap_hydration_uses_gmail_route_defaults_and_retry_budget() -> None:
+    results = _run_bootstrap_hydration_probe()
+
+    assert results["initial"] == {
+        "status": "warming",
+        "runtimeMode": "live",
+        "workspaceId": "gmail-intake",
+        "activeView": "gmail-intake",
+        "gmailHandoffState": "warming",
+        "buildSha": "5c9842e",
+        "assetVersion": "",
+        "bootstrappedAt": None,
+    }
+    assert results["stagedGmail"]["attempts"] == 3
+    assert results["stagedGmail"]["retries"] == 2
+    assert results["stagedGmail"]["shellPayload"] == {"shell": "ready"}
+    assert results["stagedGmail"]["fullPayload"] == {"status": "ok", "attempts": 3}
+    assert results["retryEvents"] == [
+        {
+            "attempt": 1,
+            "maxAttempts": 6,
+            "delayMs": 200,
+            "message": "warmup-1",
+        },
+        {
+            "attempt": 2,
+            "maxAttempts": 6,
+            "delayMs": 350,
+            "message": "warmup-2",
+        },
+    ]
+    assert results["stagedStandard"]["attempts"] == 1
+    assert results["stagedStandard"]["retries"] == 0
+    assert results["stagedStandard"]["fullPayload"] == {"status": "ok", "attempts": 1}

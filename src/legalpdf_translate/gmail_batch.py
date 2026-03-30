@@ -20,7 +20,7 @@ from legalpdf_translate.gmail_draft import (
     resolve_gog_path,
 )
 from legalpdf_translate.gmail_intake import InboundMailContext
-from legalpdf_translate.source_document import get_source_page_count, is_supported_source_file
+from legalpdf_translate.source_document import is_supported_source_file
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +36,7 @@ class GmailAttachmentCandidate:
 class GmailAttachmentSelection:
     candidate: GmailAttachmentCandidate
     start_page: int = 1
+    page_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +93,28 @@ GmailBatchConsistencySignature = tuple[str, str, str, str]
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _is_pdf_attachment(candidate: GmailAttachmentCandidate) -> bool:
+    filename = candidate.filename.strip().lower()
+    mime_type = candidate.mime_type.strip().lower()
+    return mime_type == "application/pdf" or filename.endswith(".pdf")
+
+
+def _selection_page_count(
+    *,
+    selection: GmailAttachmentSelection,
+    attachment: GmailAttachmentCandidate,
+    preview_page_counts: Mapping[str, int],
+) -> int | None:
+    if isinstance(selection.page_count, int) and int(selection.page_count) > 0:
+        return int(selection.page_count)
+    cached_page_count = preview_page_counts.get(attachment.attachment_id)
+    if isinstance(cached_page_count, int) and int(cached_page_count) > 0:
+        return int(cached_page_count)
+    if not _is_pdf_attachment(attachment):
+        return 1
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +204,8 @@ class GmailBatchSession:
     draft_failure_reason: str = ""
     final_attachment_basenames: tuple[str, ...] = ()
     pdf_export: dict[str, Any] = field(default_factory=dict)
+    finalization_state: str = ""
+    finalization_preflight: dict[str, Any] = field(default_factory=dict)
     _temp_dir: tempfile.TemporaryDirectory[str] | None = field(
         default=None,
         repr=False,
@@ -306,6 +331,8 @@ def build_gmail_batch_session_payload(session: GmailBatchSession) -> dict[str, A
         "draft_created": bool(session.draft_created),
         "draft_failure_reason": session.draft_failure_reason.strip(),
         "final_attachment_basenames": list(session.final_attachment_basenames),
+        "finalization_state": session.finalization_state.strip(),
+        "finalization_preflight": dict(session.finalization_preflight),
     }
     return {
         "session_id": session.session_id,
@@ -945,62 +972,20 @@ def _prepare_downloaded_attachment(
             f"{attachment.filename} -> {saved_path}"
         )
     try:
-        page_count = int(get_source_page_count(saved_path))
+        page_count = _selection_page_count(
+            selection=selection,
+            attachment=attachment,
+            preview_page_counts=preview_page_counts,
+        )
     except Exception:
-        if not reused_preview_cache:
-            raise
-        _log(
-            "Gmail intake: preview cache validation failed for "
-            f"{attachment.filename}; downloading fresh copy instead."
-        )
-        result = download_gmail_attachment_via_gog(
-            GmailAttachmentDownloadRequest(
-                gog_path=gog_path,
-                account_email=account_email,
-                message_id=attachment.source_message_id,
-                attachment_id=attachment.attachment_id,
-                output_dir=download_dir,
-                filename=requested_name,
-            )
-        )
-        if not result.ok or result.saved_path is None:
-            raise ValueError(f"Failed to download '{attachment.filename}': {result.message}")
-        saved_path = result.saved_path.expanduser().resolve()
-        reused_preview_cache = False
-        page_count = int(get_source_page_count(saved_path))
-        _log(
-            "Gmail intake: downloaded fresh Gmail copy for "
-            f"{attachment.filename} -> {saved_path}"
-        )
-    if page_count <= 0:
-        if reused_preview_cache:
-            _log(
-                "Gmail intake: preview cache page count was invalid for "
-                f"{attachment.filename}; downloading fresh copy instead."
-            )
-            result = download_gmail_attachment_via_gog(
-                GmailAttachmentDownloadRequest(
-                    gog_path=gog_path,
-                    account_email=account_email,
-                    message_id=attachment.source_message_id,
-                    attachment_id=attachment.attachment_id,
-                    output_dir=download_dir,
-                    filename=requested_name,
-                )
-            )
-            if not result.ok or result.saved_path is None:
-                raise ValueError(f"Failed to download '{attachment.filename}': {result.message}")
-            saved_path = result.saved_path.expanduser().resolve()
-            reused_preview_cache = False
-            page_count = int(get_source_page_count(saved_path))
-            _log(
-                "Gmail intake: downloaded fresh Gmail copy for "
-                f"{attachment.filename} -> {saved_path}"
-            )
-        if page_count <= 0:
+        page_count = None
+    if page_count is None or page_count <= 0:
+        if _is_pdf_attachment(attachment):
             raise ValueError(
-                f"Unable to determine page count for Gmail attachment '{attachment.filename}'."
+                "Page count is unavailable for Gmail attachment "
+                f"'{attachment.filename}'. Load the PDF in the browser preview first so the browser can stage its page metadata."
             )
+        page_count = 1
     if reused_preview_cache and isinstance(known_cached_page_count, int) and known_cached_page_count > 0:
         if int(known_cached_page_count) != page_count:
             _log(

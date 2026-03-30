@@ -4,19 +4,48 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>LegalPDF Translate Browser App</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+    <link rel="stylesheet" href="{{ style_css_url }}">
   </head>
   <body data-ui-variant="{{ ui_variant }}">
     <script>
-      window.LEGALPDF_BROWSER_BOOTSTRAP = {
-        buildBranch: {{ build_branch | tojson }},
-        buildSha: {{ build_sha | tojson }},
-        shadowHost: {{ shadow_host | tojson }},
-        shadowPort: {{ shadow_port | tojson }},
-        defaultRuntimeMode: {{ default_runtime_mode | tojson }},
-        defaultWorkspaceId: {{ default_workspace_id | tojson }},
-        defaultUiVariant: {{ ui_variant | tojson }}
-      };
+      (function () {
+        const bootstrap = {
+          buildBranch: {{ build_branch | tojson }},
+          buildSha: {{ build_sha | tojson }},
+          assetVersion: {{ asset_version | tojson }},
+          staticBasePath: {{ static_base_url | tojson }},
+          shadowHost: {{ shadow_host | tojson }},
+          shadowPort: {{ shadow_port | tojson }},
+          defaultRuntimeMode: {{ default_runtime_mode | tojson }},
+          defaultWorkspaceId: {{ default_workspace_id | tojson }},
+          defaultUiVariant: {{ ui_variant | tojson }}
+        };
+        const params = new URLSearchParams(window.location.search);
+        const workspaceId = String(params.get("workspace") || bootstrap.defaultWorkspaceId || "workspace-1").trim() || "workspace-1";
+        const runtimeMode = String(params.get("mode") || bootstrap.defaultRuntimeMode || "shadow").trim().toLowerCase() === "live" ? "live" : "shadow";
+        const uiVariant = String(params.get("ui") || bootstrap.defaultUiVariant || "qt").trim().toLowerCase() === "legacy" ? "legacy" : "qt";
+        const fallbackView = uiVariant === "legacy" ? "dashboard" : (workspaceId === "gmail-intake" ? "gmail-intake" : "new-job");
+        const activeView = String(window.location.hash || "").replace(/^#/, "").trim() || fallbackView;
+        window.LEGALPDF_BROWSER_BOOTSTRAP = bootstrap;
+        window.LEGALPDF_BROWSER_CLIENT_READY = {
+          status: "warming",
+          workspaceId,
+          runtimeMode,
+          activeView,
+          gmailHandoffState: workspaceId === "gmail-intake" ? "warming" : "idle",
+          buildSha: bootstrap.buildSha || "",
+          assetVersion: bootstrap.assetVersion || "",
+          bootstrappedAt: null
+        };
+        if (document.body && document.body.dataset) {
+          document.body.dataset.clientReady = "warming";
+          document.body.dataset.clientWorkspace = workspaceId;
+          document.body.dataset.clientRuntimeMode = runtimeMode;
+          document.body.dataset.clientActiveView = activeView;
+          document.body.dataset.clientBuildSha = bootstrap.buildSha || "";
+          document.body.dataset.clientAssetVersion = bootstrap.assetVersion || "";
+        }
+      }());
     </script>
 
     <div class="live-banner hidden" id="live-banner" aria-live="polite"></div>
@@ -677,6 +706,53 @@
                   </div>
                 </details>
 
+                <details class="shell-collapsible field-wide" id="settings-credentials-section">
+                  <summary>
+                    <span>Credential Recovery</span>
+                    <span class="details-hint">Save, clear, and test browser-side translation and OCR keys, and verify the native host, without exposing stored values.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <div class="field field-wide">
+                      <label for="settings-translation-key-input">OpenAI Translation Key (write-only)</label>
+                      <input id="settings-translation-key-input" type="password" autocomplete="off" placeholder="Paste a new OpenAI API key to save securely">
+                      <p class="field-hint" id="settings-translation-key-state">Browser credential status appears here after refresh.</p>
+                    </div>
+                    <div class="form-actions field-wide">
+                      <button type="button" id="settings-save-translation-key">Save Translation Key</button>
+                      <button type="button" id="settings-clear-translation-key">Clear Stored Translation Key</button>
+                      <button type="button" id="settings-test-translation">Test Translation Auth</button>
+                    </div>
+                    <div class="field field-wide">
+                      <label for="settings-ocr-key-input">OCR API Key (write-only)</label>
+                      <input id="settings-ocr-key-input" type="password" autocomplete="off" placeholder="Paste a provider key to save securely for OCR">
+                      <p class="field-hint" id="settings-ocr-key-state">OCR credential status appears here after refresh.</p>
+                    </div>
+                    <div class="form-actions field-wide">
+                      <button type="button" id="settings-save-ocr-key">Save OCR Key</button>
+                      <button type="button" id="settings-clear-ocr-key">Clear Stored OCR Key</button>
+                      <button type="button" id="settings-test-ocr">Test OCR Provider</button>
+                    </div>
+                    <div class="field field-wide">
+                      <label>Edge Native Host</label>
+                      <p class="field-hint" id="settings-native-host-state">Native-host status appears here after refresh.</p>
+                    </div>
+                    <div class="form-actions field-wide">
+                      <button type="button" id="settings-test-native-host">Test Native Host</button>
+                      <button type="button" id="settings-repair-native-host">Repair Native Host</button>
+                    </div>
+                    <div class="field field-wide">
+                      <label>Word PDF Finalization</label>
+                      <p class="field-hint" id="settings-word-pdf-export-state">Word export readiness appears here after refresh.</p>
+                    </div>
+                    <div class="form-actions field-wide">
+                      <button type="button" id="settings-test-word-pdf">Test Word PDF Export</button>
+                    </div>
+                    <p class="field-hint field-wide">
+                      Stored translation keys override <code>OPENAI_API_KEY</code>. When no translation key is stored, the browser can also reuse a stored OpenAI OCR key for translation. When OCR uses OpenAI and no dedicated OCR key is stored, the browser can fall back to the stored OpenAI translation key.
+                    </p>
+                  </div>
+                </details>
+
                 <details class="shell-collapsible field-wide" id="settings-ops-section">
                   <summary>
                     <span>Diagnostics and Job Log</span>
@@ -729,7 +805,6 @@
 
                 <div class="form-actions">
                   <button type="button" class="primary-button" id="settings-save">Save Settings</button>
-                  <button type="button" id="settings-test-ocr">Test OCR Provider</button>
                   <button type="button" id="settings-test-gmail">Check Gmail Draft Prereqs</button>
                 </div>
               </form>
@@ -743,7 +818,7 @@
               <details class="details-panel operator-only" id="settings-test-details">
                 <summary>
                   <span>Provider test output</span>
-                  <span class="details-hint" id="settings-test-hint">OCR and Gmail preflight checks appear here.</span>
+                  <span class="details-hint" id="settings-test-hint">Native-host, translation auth, OCR, Word PDF, and Gmail preflight checks appear here.</span>
                 </summary>
                 <pre class="diagnostics-box" id="settings-test-diagnostics"></pre>
               </details>
@@ -1217,6 +1292,7 @@
                 <div id="gmail-review-detail" class="result-card empty-state">Select an attachment row to inspect it, preview it, and set the starting page.</div>
               </div>
               <div class="form-actions drawer-action-row">
+                <button type="button" class="ghost-button hidden" id="gmail-generate-failure-report">Generate Failure Report</button>
                 <button type="submit" class="primary-button" id="gmail-prepare-session">Prepare selected</button>
               </div>
             </form>
@@ -1309,6 +1385,7 @@
             </div>
             <div class="panel-actions translation-completion-actions" id="translation-completion-actions">
               <button type="button" id="translation-review-export">Export Review Queue</button>
+              <button type="button" class="ghost-button" id="translation-generate-report">Generate Run Report</button>
               <a id="translation-download-docx" class="ghost-button" href="#" download>Download DOCX</a>
               <a id="translation-download-partial" class="ghost-button" href="#" download>Download Partial DOCX</a>
               <a id="translation-download-summary" class="ghost-button" href="#" download>Download Run Summary</a>
@@ -1456,6 +1533,7 @@
                 <input id="gmail-batch-final-output-filename" type="text" placeholder="Optional DOCX filename for Gmail batch finalization">
               </div>
               <div class="form-actions drawer-action-row">
+                <button type="button" class="ghost-button hidden" id="gmail-batch-finalize-report">Generate Finalization Report</button>
                 <button type="submit" class="primary-button" id="gmail-batch-finalize-run">Finalize Gmail Batch Reply</button>
               </div>
             </form>
@@ -1694,6 +1772,6 @@
       </section>
     </div>
 
-    <script type="module" src="{{ url_for('static', path='app.js') }}"></script>
+    <script type="module" src="{{ app_js_url }}"></script>
   </body>
 </html>

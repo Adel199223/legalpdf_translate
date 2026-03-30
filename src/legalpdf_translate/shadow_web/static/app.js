@@ -1,4 +1,5 @@
 import { describeLocalServerUnavailable, fetchJson, isLocalServerUnavailableError } from "./api.js";
+import { runStagedBootstrap } from "./bootstrap_hydration.js";
 import {
   appState,
   initializeRouteState,
@@ -85,6 +86,12 @@ const interpretationCityState = {
 
 const shellUiState = {
   gmailFocusActive: false,
+};
+const clientHydrationState = {
+  status: "warming",
+  bootstrappedAt: null,
+  reason: "",
+  message: "",
 };
 
 let lastInterpretationUiSnapshotKey = "";
@@ -175,6 +182,114 @@ function setTopbarStatus(message, tone) {
   }
 }
 
+function currentBuildSha() {
+  return String(globalThis.window?.LEGALPDF_BROWSER_BOOTSTRAP?.buildSha || "").trim();
+}
+
+function currentAssetVersion() {
+  return String(globalThis.window?.LEGALPDF_BROWSER_BOOTSTRAP?.assetVersion || "").trim();
+}
+
+function serverAssetVersionFromPayload(payload) {
+  return String(
+    payload?.normalized_payload?.shell?.asset_version
+    || payload?.normalized_payload?.runtime?.asset_version
+    || "",
+  ).trim();
+}
+
+function assertServerAssetVersionMatchesClient(payload) {
+  const clientAssetVersion = currentAssetVersion();
+  const serverAssetVersion = serverAssetVersionFromPayload(payload);
+  if (clientAssetVersion === "" || serverAssetVersion === "" || clientAssetVersion === serverAssetVersion) {
+    return;
+  }
+  const error = new Error(
+    "This LegalPDF browser tab is using stale browser assets. Reload the tab once to pick up the current local build.",
+  );
+  error.name = "StaleBrowserAssetsError";
+  error.payload = {
+    status: "failed",
+    diagnostics: {
+      error: "stale_browser_assets",
+      message: error.message,
+      client_asset_version: clientAssetVersion,
+      server_asset_version: serverAssetVersion,
+      build_sha: currentBuildSha(),
+    },
+  };
+  throw error;
+}
+
+function defaultClientGmailHandoffState() {
+  return appState.workspaceId === "gmail-intake" ? "warming" : "idle";
+}
+
+function deriveClientGmailHandoffState(payload = appState.bootstrap?.normalized_payload) {
+  const gmailPayload = payload?.gmail || {};
+  const loadResult = gmailPayload.load_result || {};
+  const pendingStatus = String(gmailPayload.pending_status || "").trim().toLowerCase();
+  if (gmailPayload.pending_review_open && pendingStatus !== "") {
+    return pendingStatus;
+  }
+  if (loadResult.ok === true) {
+    return "loaded";
+  }
+  if (loadResult.ok === false) {
+    return "load_failed";
+  }
+  return defaultClientGmailHandoffState();
+}
+
+function setClientHydrationMarker(status, { payload = null, reason = "", message = "" } = {}) {
+  const nextStatus = String(status || "warming").trim() || "warming";
+  const nextBootstrappedAt = nextStatus === "ready"
+    ? (clientHydrationState.status === "ready" && clientHydrationState.bootstrappedAt
+      ? clientHydrationState.bootstrappedAt
+      : new Date().toISOString())
+    : null;
+  const marker = {
+    status: nextStatus,
+    workspaceId: String(appState.workspaceId || "workspace-1"),
+    runtimeMode: String(appState.runtimeMode || "shadow"),
+    activeView: String(appState.activeView || ""),
+    gmailHandoffState: deriveClientGmailHandoffState(payload || appState.bootstrap?.normalized_payload),
+    buildSha: currentBuildSha(),
+    assetVersion: currentAssetVersion(),
+    bootstrappedAt: nextBootstrappedAt,
+  };
+  if (reason) {
+    marker.reason = String(reason);
+  }
+  if (message) {
+    marker.message = String(message);
+  }
+  clientHydrationState.status = marker.status;
+  clientHydrationState.bootstrappedAt = marker.bootstrappedAt;
+  clientHydrationState.reason = marker.reason || "";
+  clientHydrationState.message = marker.message || "";
+  if (globalThis.document?.body?.dataset) {
+    document.body.dataset.clientReady = marker.status;
+    document.body.dataset.clientWorkspace = marker.workspaceId;
+    document.body.dataset.clientRuntimeMode = marker.runtimeMode;
+    document.body.dataset.clientActiveView = marker.activeView;
+    document.body.dataset.clientBuildSha = marker.buildSha;
+    document.body.dataset.clientAssetVersion = marker.assetVersion;
+  }
+  if (globalThis.window) {
+    globalThis.window.LEGALPDF_BROWSER_CLIENT_READY = marker;
+  }
+  return marker;
+}
+
+function syncClientHydrationMarker({ payload = null } = {}) {
+  return setClientHydrationMarker(clientHydrationState.status || "warming", {
+    payload,
+    reason: clientHydrationState.reason,
+    message: clientHydrationState.message,
+  });
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -220,6 +335,23 @@ function renderRecoveryResult(containerId, details) {
 }
 
 function applyBootstrapFailureState(error) {
+  setClientHydrationMarker("client_boot_failed", {
+    reason: error?.payload?.diagnostics?.error || error?.name || "bootstrap_failed",
+    message: error?.message || "Browser app bootstrap failed.",
+  });
+  if (error?.payload?.diagnostics?.error === "stale_browser_assets") {
+    setTopbarStatus(error.message || "This LegalPDF browser tab is using stale browser assets.", "bad");
+    setPanelStatus(
+      "runtime",
+      "bad",
+      error.message || "This LegalPDF browser tab is using stale browser assets.",
+    );
+    setDiagnostics("runtime", error, {
+      hint: "The tab loaded an older browser asset version than the live server expects. Reload the LegalPDF tab once to pick up the current local build.",
+      open: true,
+    });
+    return;
+  }
   if (isLocalServerUnavailableError(error)) {
     const details = describeLocalServerUnavailable(error);
     qs("workspace-id-label").textContent = details.workspaceId;
@@ -1696,12 +1828,27 @@ function buildCapabilityCards(payload) {
   const capabilities = payload.capability_flags;
   const automation = capabilities.browser_automation || payload.normalized_payload.automation_preflight || {};
   const gmailBridge = capabilities.gmail_bridge || {};
-  const wordPreflight = capabilities.word_pdf_export?.preflight || {};
+  const nativeHost = capabilities.native_host || {};
+  const translation = capabilities.translation || {};
+  const wordState = capabilities.word_pdf_export || {};
+  const wordLaunch = wordState.launch_preflight || wordState.preflight || {};
+  const wordCanary = wordState.export_canary || {};
+  const wordReady = wordState.finalization_ready === true || wordState.ok === true;
+  const wordText = wordReady
+    ? "Launch preflight and export canary are passing for Gmail finalization PDF export."
+    : [
+        wordCanary.message ? `Export canary: ${wordCanary.message}` : "",
+        wordLaunch.message ? `Launch preflight: ${wordLaunch.message}` : "",
+      ].filter(Boolean).join("\n") || "Word PDF export readiness is unavailable.";
+  const wordStatus = wordReady ? "ok" : (wordCanary.failure_code || wordLaunch.failure_code) ? "bad" : "warn";
+  const wordLabel = wordReady ? "Ready" : wordState.finalization_ready === false ? "Blocked" : "Needs attention";
   const gmailBridgeText = [
     gmailBridge.message,
     gmailBridge.owner_kind ? `Owner: ${gmailBridge.owner_kind}` : "",
     ...(gmailBridge.detail_lines || []),
   ].filter(Boolean).join("\n");
+  const translationReady = translation.credentials_configured === true;
+  const translationSource = describeCredentialSource(translation.credential_source);
   return [
     {
       title: "Browser Runtime",
@@ -1710,16 +1857,32 @@ function buildCapabilityCards(payload) {
       label: runtime.live_data ? "Live Data" : "Isolated",
     },
     {
+      title: "Native Host",
+      text: [
+        nativeHost.message || "Native-host status is unavailable.",
+        nativeHost.self_test_status ? `Self-test: ${nativeHost.self_test_status}` : "",
+        nativeHost.wrapper_target_python ? `Wrapper target: ${nativeHost.wrapper_target_python}` : "",
+      ].filter(Boolean).join("\n"),
+      status: nativeHost.status || "warn",
+      label: nativeHost.label || "Unknown",
+    },
+    {
       title: "OCR",
       text: `Provider: ${capabilities.ocr.provider}\nLocal OCR: ${capabilities.ocr.local_available ? "available" : "missing"}\nAPI OCR: ${capabilities.ocr.api_configured ? "configured" : "not configured"}`,
       status: capabilities.ocr.api_configured || capabilities.ocr.local_available ? "ok" : "warn",
       label: capabilities.ocr.api_configured || capabilities.ocr.local_available ? "Usable" : "Unavailable",
     },
     {
+      title: "Translation Auth",
+      text: `Credentials: ${translationReady ? "configured" : "not configured"}\nSource: ${translationSource}\nAuth test: ${translation.auth_test_supported ? "available" : "unavailable"}`,
+      status: translationReady ? "ok" : "warn",
+      label: translationReady ? "Configured" : "Needs auth",
+    },
+    {
       title: "Word PDF Export",
-      text: wordPreflight.ok ? "Host preflight is passing for browser-triggered DOCX to PDF export." : wordPreflight.message || "Word PDF export preflight is unavailable.",
-      status: wordPreflight.ok ? "ok" : wordPreflight.failure_code ? "bad" : "warn",
-      label: wordPreflight.ok ? "Ready" : "Needs attention",
+      text: wordText,
+      status: wordStatus,
+      label: wordLabel,
     },
     {
       title: "Browser Automation",
@@ -1734,6 +1897,27 @@ function buildCapabilityCards(payload) {
       label: gmailBridge.label || "Unknown",
     },
   ];
+}
+
+function describeCredentialSource(source) {
+  const kind = String(source?.kind || "").trim();
+  const name = String(source?.name || "").trim();
+  if (kind === "stored" && name === "ocr_api_key_fallback") {
+    return "stored OCR key fallback";
+  }
+  if (kind === "stored") {
+    return "stored translation key";
+  }
+  if (kind === "env") {
+    return name ? `env ${name}` : "environment variable";
+  }
+  if (kind === "inline") {
+    return "inline key";
+  }
+  if (kind === "missing") {
+    return "not configured";
+  }
+  return kind || "unknown";
 }
 
 function renderCapabilityCards(containerId, cards) {
@@ -1957,13 +2141,19 @@ function renderParityAudit(payload) {
 function renderSettings(payload) {
   const summary = payload.normalized_payload.settings_summary || {};
   const providerState = payload.normalized_payload.settings_admin?.provider_state || {};
+  const translation = providerState.translation || {};
   const ocr = providerState.ocr || {};
   const gmailDraft = providerState.gmail_draft || {};
   const wordPdf = providerState.word_pdf_export || {};
+  const translationReady = translation.credentials_configured === true;
+  const translationSource = describeCredentialSource(
+    translation.effective_credential_source || translation.credential_source,
+  );
   const items = [
     { label: "Theme", value: summary.ui_theme || "Unknown" },
     { label: "Default Language", value: summary.default_lang || "Unknown" },
     { label: "Default Output Directory", value: summary.default_outdir || "Not configured" },
+    { label: "Translation Auth", value: translationReady ? `Configured via ${translationSource}` : "Not configured" },
     { label: "OCR Defaults", value: `${summary.ocr_mode_default || "?"} / ${summary.ocr_engine_default || "?"} / ${summary.ocr_api_provider_default || "?"}` },
     { label: "Gmail Bridge", value: summary.gmail_intake_bridge_enabled ? `Enabled on ${summary.gmail_intake_port}` : "Disabled" },
     { label: "Settings File", value: summary.settings_path || "Unavailable" },
@@ -1971,11 +2161,11 @@ function renderSettings(payload) {
     { label: "Outputs Root", value: summary.outputs_dir || "Unavailable" },
   ];
   renderSummaryGrid("settings-summary-grid", items);
-  const settingsTone = wordPdf.ok && (ocr.api_configured || ocr.local_available) ? "ok" : gmailDraft.ready ? "" : "warn";
+  const settingsTone = translationReady && wordPdf.ok && (ocr.api_configured || ocr.local_available) && gmailDraft.ready ? "ok" : "warn";
   setPanelStatus(
     "settings",
     settingsTone,
-    `Showing ${summary.runtime_label || "current"} settings with OCR ${ocr.provider || "provider"} ${ocr.api_configured || ocr.local_available ? "ready" : "not ready"}, Gmail drafts ${gmailDraft.ready ? "ready" : "not ready"}, and Word PDF export ${wordPdf.ok ? "ready" : "degraded"}.`,
+    `Showing ${summary.runtime_label || "current"} settings with translation auth ${translationReady ? `configured via ${translationSource}` : "not configured"}, OCR ${ocr.provider || "provider"} ${ocr.api_configured || ocr.local_available ? "ready" : "not ready"}, Gmail drafts ${gmailDraft.ready ? "ready" : "not ready"}, and Word PDF export ${wordPdf.ok ? "ready" : "degraded"}.`,
   );
 }
 
@@ -2198,11 +2388,64 @@ function renderBootstrap(payload) {
     refreshInterpretationCitySelectors();
   }
   syncInterpretationReviewSurface();
+  syncClientHydrationMarker({ payload: payload.normalized_payload });
 }
 
-async function loadBootstrap() {
-  const payload = await fetchJson("/api/bootstrap", appState);
-  renderBootstrap(payload);
+function applyShellBootstrapSnapshot(payload) {
+  const shellPayload = payload?.normalized_payload?.shell || {};
+  const runtimeMode = String(shellPayload.runtime_mode || appState.runtimeMode || "shadow").trim();
+  const workspaceId = String(shellPayload.workspace_id || appState.workspaceId || "workspace-1").trim();
+  const shellReady = shellPayload.ready === true;
+  qs("workspace-id-label").textContent = workspaceId || "workspace-1";
+  qs("runtime-mode-label").textContent = runtimeMode === "live" ? "Live App Data" : "Isolated Test Data";
+  if (workspaceId === "gmail-intake") {
+    setTopbarStatus(
+      shellReady
+        ? "Browser shell is ready. Finishing Gmail workspace hydration..."
+        : "Warming the browser shell, Gmail bridge, and workspace...",
+      shellReady ? "info" : "warn",
+    );
+    setPanelStatus(
+      "runtime",
+      shellReady ? "info" : "warn",
+      shellReady
+        ? "Browser shell is responding. Loading the Gmail workspace UI..."
+        : "Browser shell is still warming for the Gmail workspace.",
+    );
+    return;
+  }
+  setTopbarStatus(
+    shellReady
+      ? "Browser shell is ready. Finishing browser workspace hydration..."
+      : "Warming the browser shell and app capabilities...",
+    shellReady ? "info" : "warn",
+  );
+  setPanelStatus(
+    "runtime",
+    shellReady ? "info" : "warn",
+    shellReady
+      ? "Browser shell is responding. Loading the full workspace UI..."
+      : "Browser shell is still warming.",
+  );
+}
+
+function applyStagedBootstrapRetryStatus({ attempt, maxAttempts, error }) {
+  const target = appState.workspaceId === "gmail-intake" || appState.activeView === "gmail-intake"
+    ? "Gmail workspace"
+    : "browser workspace";
+  const detail = error?.message ? ` ${error.message}` : "";
+  setTopbarStatus(
+    `Finishing ${target} hydration (attempt ${attempt} of ${maxAttempts})...`,
+    "warn",
+  );
+  setPanelStatus(
+    "runtime",
+    "warn",
+    `The ${target} is still warming after the shell became ready.${detail}`,
+  );
+}
+
+function populateIdleDiagnostics() {
   if (!qs("autofill-diagnostics").textContent.trim()) {
     setDiagnostics("autofill", { status: "idle", message: "No upload has been run yet." }, { hint: "Metadata extraction details appear here after an upload.", open: false });
   }
@@ -2214,6 +2457,48 @@ async function loadBootstrap() {
   }
   if (!qs("simulator-diagnostics").textContent.trim()) {
     setDiagnostics("simulator", { status: "idle", message: "No simulator run has been executed yet." }, { hint: "Preview request payload, bridge endpoint, and readiness.", open: false });
+  }
+}
+
+async function loadBootstrap({ staged = false } = {}) {
+  setClientHydrationMarker("warming", {
+    payload: appState.bootstrap?.normalized_payload,
+  });
+  try {
+    let payload;
+    if (staged) {
+      const stagedResult = await runStagedBootstrap({
+        routeContext: {
+          workspaceId: appState.workspaceId,
+          activeView: appState.activeView,
+        },
+        fetchShell: async () => {
+          const shellPayload = await fetchJson("/api/bootstrap/shell", appState);
+          assertServerAssetVersionMatchesClient(shellPayload);
+          applyShellBootstrapSnapshot(shellPayload);
+          return shellPayload;
+        },
+        fetchFull: () => fetchJson("/api/bootstrap", appState),
+        onRetry: applyStagedBootstrapRetryStatus,
+      });
+      payload = stagedResult.fullPayload;
+    } else {
+      payload = await fetchJson("/api/bootstrap", appState);
+    }
+    assertServerAssetVersionMatchesClient(payload);
+    renderBootstrap(payload);
+    populateIdleDiagnostics();
+    setClientHydrationMarker("ready", {
+      payload: payload.normalized_payload,
+    });
+    return payload;
+  } catch (error) {
+    setClientHydrationMarker("client_boot_failed", {
+      payload: appState.bootstrap?.normalized_payload,
+      reason: error?.payload?.diagnostics?.error || error?.name || "bootstrap_failed",
+      message: error?.message || "Browser app bootstrap failed.",
+    });
+    throw error;
   }
 }
 
@@ -2467,6 +2752,7 @@ function wireEvents() {
       renderNavigation(appState.bootstrap.normalized_payload.navigation || []);
     }
     renderShellVisibility();
+    syncClientHydrationMarker();
   });
 
   window.addEventListener("legalpdf:route-state-changed", () => {
@@ -2474,6 +2760,7 @@ function wireEvents() {
       renderNavigation(appState.bootstrap.normalized_payload.navigation || []);
     }
     renderShellVisibility();
+    syncClientHydrationMarker();
   });
 
   window.addEventListener("legalpdf:set-new-job-task", (event) => {
@@ -2495,6 +2782,7 @@ function wireEvents() {
     }
     renderNavigation(appState.bootstrap.normalized_payload.navigation || []);
     renderShellVisibility();
+    syncClientHydrationMarker();
   });
 
   document.addEventListener("click", (event) => {
@@ -2807,6 +3095,7 @@ function wireEvents() {
 
 document.addEventListener("DOMContentLoaded", async () => {
   initializeRouteState(window.LEGALPDF_BROWSER_BOOTSTRAP || {});
+  setClientHydrationMarker("warming");
   renderShellVisibility();
   wireEvents();
   initializeTranslationUi();
@@ -2833,13 +3122,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   setDiagnostics("form", { status: "idle", message: "No save or export has been run yet." }, { hint: "Save/export responses and validation details appear here.", open: false });
   setDiagnostics("simulator", { status: "idle", message: "No simulator run has been executed yet." }, { hint: "Preview request payload, bridge endpoint, and readiness.", open: false });
   setDiagnostics("settings-admin", { status: "idle", message: "No settings save has been run yet." }, { hint: "Save responses and provider-state refresh details appear here.", open: false });
-  setDiagnostics("settings-test", { status: "idle", message: "No provider preflight has been run yet." }, { hint: "OCR and Gmail preflight checks appear here.", open: false });
+  setDiagnostics("settings-test", { status: "idle", message: "No provider preflight has been run yet." }, { hint: "Translation auth, OCR, Gmail, and Word preflight checks appear here.", open: false });
   setDiagnostics("power-tools-glossary", { status: "idle", message: "No glossary action has been run yet." }, { hint: "Glossary saves and markdown export details appear here.", open: false });
   setDiagnostics("power-tools-builder", { status: "idle", message: "No glossary builder run has been executed yet." }, { hint: "Glossary builder results and apply responses appear here.", open: false });
   setDiagnostics("power-tools-calibration", { status: "idle", message: "No calibration audit has been run yet." }, { hint: "Calibration audit report paths and suggestion details appear here.", open: false });
   setDiagnostics("power-tools-diagnostics", { status: "idle", message: "No debug bundle or run report has been generated yet." }, { hint: "Debug bundle and run report outputs appear here.", open: false });
   try {
-    await loadBootstrap();
+    await loadBootstrap({ staged: true });
   } catch (error) {
     applyBootstrapFailureState(error);
   }

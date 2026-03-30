@@ -94,7 +94,7 @@ from legalpdf_translate.gmail_focus import (
     validate_bridge_owner,
     write_bridge_runtime_metadata,
 )
-from legalpdf_translate.gmail_focus_host import ensure_edge_native_host_registered
+from legalpdf_translate.gmail_focus_host import maybe_ensure_edge_native_host_registered
 from legalpdf_translate.gmail_intake import InboundMailContext, LocalGmailIntakeBridge
 from legalpdf_translate.joblog_db import job_log_db_path, open_job_log, update_job_run
 from legalpdf_translate.honorarios_docx import (
@@ -318,7 +318,11 @@ def _ensure_gmail_native_focus_host_registration(
     *,
     append_log: Callable[[str], None] | None,
 ) -> None:
-    result = ensure_edge_native_host_registered(base_dir=app_data_dir())
+    result = maybe_ensure_edge_native_host_registered(
+        base_dir=app_data_dir(),
+        preferred_python_executable=Path(sys.executable),
+        runtime_path=Path(sys.executable),
+    )
     previous_signature = getattr(window, "_gmail_native_host_registration_signature", None)
     current_signature = (result.ok, result.changed, result.reason, result.manifest_path, result.executable_path)
     setattr(window, "_gmail_native_host_registration_signature", current_signature)
@@ -333,6 +337,10 @@ def _ensure_gmail_native_focus_host_registration(
     if result.ok:
         if previous_signature is None or previous_signature[0] is False:
             append_log(f"Edge Gmail focus helper ready: {result.manifest_path}")
+        return
+    if str(result.reason or "").startswith("skipped_"):
+        if previous_signature != current_signature:
+            append_log(f"Edge Gmail focus helper auto-registration skipped: {result.reason}.")
         return
     if previous_signature != current_signature:
         append_log(f"Edge Gmail focus helper unavailable: {result.reason}.")
@@ -456,8 +464,10 @@ def _load_run_failure_context(summary_path: Path) -> dict[str, object]:
     defaults: dict[str, object] = {
         "suspected_cause": "",
         "halt_reason": "",
+        "scope": "",
         "page_number": None,
         "error": "",
+        "status_code": None,
         "exception_class": "",
         "retry_reason": "",
         "validator_defect_reason": "",
@@ -467,6 +477,8 @@ def _load_run_failure_context(summary_path: Path) -> dict[str, object]:
         "request_timeout_budget_seconds": 0.0,
         "request_elapsed_before_failure_seconds": 0.0,
         "cancel_requested_before_failure": False,
+        "credential_source": {"kind": "missing", "name": ""},
+        "message": "",
     }
     if not summary_path.exists() or not summary_path.is_file():
         return defaults
@@ -482,8 +494,10 @@ def _load_run_failure_context(summary_path: Path) -> dict[str, object]:
     return {
         "suspected_cause": str(payload.get("suspected_cause", "") or ""),
         "halt_reason": str(payload.get("halt_reason", "") or ""),
+        "scope": str(failure.get("scope", "") or ""),
         "page_number": _coerce_int_or_none(failure.get("page_number")),
         "error": str(failure.get("error", "") or ""),
+        "status_code": _coerce_int_or_none(failure.get("status_code")),
         "exception_class": str(failure.get("exception_class", "") or ""),
         "retry_reason": str(failure.get("retry_reason", "") or ""),
         "validator_defect_reason": str(failure.get("validator_defect_reason", "") or ""),
@@ -505,6 +519,12 @@ def _load_run_failure_context(summary_path: Path) -> dict[str, object]:
         )
         or 0.0,
         "cancel_requested_before_failure": bool(failure.get("cancel_requested_before_failure", False)),
+        "credential_source": (
+            dict(failure.get("credential_source", {}))
+            if isinstance(failure.get("credential_source"), dict)
+            else {"kind": "missing", "name": ""}
+        ),
+        "message": str(failure.get("message", "") or ""),
     }
 
 
@@ -5459,6 +5479,8 @@ class QtMainWindow(QMainWindow):
                 failure_context = _load_run_failure_context(summary.run_summary_path.expanduser().resolve())
             suspected_cause = str(failure_context.get("suspected_cause", "") or "")
             halt_reason = str(failure_context.get("halt_reason", "") or "")
+            failure_scope = str(failure_context.get("scope", "") or "")
+            status_code = _coerce_int_or_none(failure_context.get("status_code"))
             request_type = str(failure_context.get("request_type", "") or "")
             request_timeout_budget_seconds = float(
                 failure_context.get("request_timeout_budget_seconds", 0.0) or 0.0
@@ -5470,6 +5492,14 @@ class QtMainWindow(QMainWindow):
                 failure_context.get("cancel_requested_before_failure", False)
             )
             exception_class = str(failure_context.get("exception_class", "") or "")
+            failure_message = str(failure_context.get("message", "") or "")
+            credential_source = (
+                dict(failure_context.get("credential_source", {}))
+                if isinstance(failure_context.get("credential_source"), dict)
+                else {}
+            )
+            credential_kind = str(credential_source.get("kind", "") or "")
+            credential_name = str(credential_source.get("name", "") or "")
             validator_defect_reason = str(failure_context.get("validator_defect_reason", "") or "")
             ar_violation_kind = str(failure_context.get("ar_violation_kind", "") or "")
             ar_violation_samples = [
@@ -5505,10 +5535,18 @@ class QtMainWindow(QMainWindow):
                 )
             else:
                 detail_lines = [details]
+                if summary.error == "authentication_failure":
+                    detail_lines.append(
+                        "Recovery: update the OpenAI key in Qt Settings or via the CLI with --set-openai-key, then start the translation again."
+                    )
                 if suspected_cause:
                     detail_lines.append(f"Suspected cause: {suspected_cause}")
                 if halt_reason:
                     detail_lines.append(f"Halt reason: {halt_reason}")
+                if failure_scope:
+                    detail_lines.append(f"Failure scope: {failure_scope}")
+                if status_code is not None:
+                    detail_lines.append(f"Status code: {status_code}")
                 if validator_defect_reason:
                     detail_lines.append(f"Validator reason: {validator_defect_reason}")
                 if ar_violation_kind:
@@ -5527,6 +5565,15 @@ class QtMainWindow(QMainWindow):
                     )
                 if exception_class:
                     detail_lines.append(f"Failure class: {exception_class}")
+                if credential_kind:
+                    source_label = credential_kind
+                    if credential_kind == "stored":
+                        source_label = "stored app key"
+                    elif credential_kind == "env":
+                        source_label = f"env {credential_name}" if credential_name else "environment variable"
+                    detail_lines.append(f"Credential source: {source_label}")
+                if failure_message:
+                    detail_lines.append(failure_message)
                 if request_type:
                     detail_lines.append(
                         "Cancel requested before failure: "

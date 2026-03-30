@@ -1,6 +1,11 @@
 import { fetchJson } from "./api.js";
 import { appState, setActiveView } from "./state.js";
 import {
+  browserPdfDiagnosticsFromError,
+  ensureBrowserPdfBundleFromUrl,
+  renderBrowserPdfPreviewToCanvas,
+} from "./browser_pdf.js";
+import {
   applyPreviewStateStartPage,
   clearConsumedReviewState,
   createClosedPreviewState,
@@ -17,6 +22,9 @@ import {
 
 const AUTO_REFRESH_DELAY_MS = 220;
 const AUTO_REFRESH_THROTTLE_MS = 1400;
+const PASSIVE_REFRESH_COOLDOWN_MS = 6000;
+const WARMUP_POLL_INTERVAL_MS = 900;
+const WARMUP_POLL_TIMEOUT_MS = 15000;
 
 const gmailState = {
   bootstrap: null,
@@ -31,11 +39,20 @@ const gmailState = {
   previewState: createClosedPreviewState(),
   sessionDrawerOpen: false,
   batchFinalizeDrawerOpen: false,
+  batchFinalizePreflight: null,
+  batchFinalizePreflightInFlight: false,
   batchFinalizeResult: null,
+  browserPdfState: new Map(),
   stage: "idle",
   refreshInFlight: false,
   refreshTimer: 0,
   lastRefreshAt: 0,
+  lastPassiveRefreshAt: 0,
+  warmupPollUntil: 0,
+  lastRouteView: "",
+  lastFailureReportContext: null,
+  lastFailureReportPayload: null,
+  lastFinalizationReportPayload: null,
   hooks: {},
 };
 
@@ -109,6 +126,195 @@ function setPanelStatus(slot, tone, message) {
   } else {
     delete panel.dataset.tone;
   }
+}
+
+function browserBootstrapConfig() {
+  return globalThis.window?.LEGALPDF_BROWSER_BOOTSTRAP || {};
+}
+
+function currentGmailFailureReportContext() {
+  return gmailState.lastFailureReportContext && typeof gmailState.lastFailureReportContext === "object"
+    ? { ...gmailState.lastFailureReportContext }
+    : null;
+}
+
+function currentBatchFinalizePreflight() {
+  if (gmailState.batchFinalizePreflight && typeof gmailState.batchFinalizePreflight === "object") {
+    return { ...gmailState.batchFinalizePreflight };
+  }
+  if (gmailState.activeSession?.finalization_preflight && typeof gmailState.activeSession.finalization_preflight === "object") {
+    return { ...gmailState.activeSession.finalization_preflight };
+  }
+  return null;
+}
+
+function currentBatchFinalizeState() {
+  const payloadState = String(gmailState.batchFinalizeResult?.normalized_payload?.finalization_state || "").trim();
+  if (payloadState) {
+    return payloadState;
+  }
+  const sessionState = String(gmailState.activeSession?.finalization_state || "").trim();
+  if (sessionState) {
+    return sessionState;
+  }
+  const preflight = currentBatchFinalizePreflight();
+  if (preflight) {
+    return preflight.finalization_ready ? "ready_to_finalize" : "blocked_word_pdf_export";
+  }
+  return "";
+}
+
+function currentGmailFinalizationReportContext() {
+  const preflight = currentBatchFinalizePreflight();
+  const payload = gmailState.batchFinalizeResult;
+  const normalized = payload?.normalized_payload || {};
+  const activeSession = gmailState.activeSession || {};
+  const message = activeSession.message || gmailState.loadResult?.message || {};
+  const status = String(payload?.status || "").trim()
+    || (preflight && !preflight.finalization_ready ? "blocked_word_pdf_export" : "");
+  if (!status || status === "ok") {
+    return null;
+  }
+  return {
+    kind: "gmail_finalization_report",
+    captured_at: new Date().toISOString(),
+    operation: "gmail_batch_finalize",
+    status,
+    finalization_state: currentBatchFinalizeState(),
+    retry_available: Boolean(
+      normalized.retry_available
+      || status === "local_only"
+      || status === "draft_failed"
+      || status === "draft_unavailable",
+    ),
+    runtime_mode: appState.runtimeMode,
+    workspace_id: appState.workspaceId,
+    active_view: appState.activeView,
+    build_sha: String(browserBootstrapConfig().buildSha || "").trim(),
+    asset_version: String(browserBootstrapConfig().assetVersion || "").trim(),
+    session: {
+      session_id: String(activeSession.session_id || "").trim(),
+      message_id: String(message.message_id || "").trim(),
+      thread_id: String(message.thread_id || "").trim(),
+      subject: String(message.subject || "").trim(),
+      account_email: String(message.account_email || "").trim(),
+      selected_target_lang: String(activeSession.selected_target_lang || "").trim(),
+      effective_output_dir: String(activeSession.effective_output_dir || "").trim(),
+      confirmed_items: Array.isArray(activeSession.confirmed_items) ? activeSession.confirmed_items : [],
+      session_report_path: String(activeSession.session_report_path || "").trim(),
+    },
+    word_pdf_export: preflight || {},
+    actual_export: payload?.diagnostics?.pdf_export && typeof payload.diagnostics.pdf_export === "object"
+      ? payload.diagnostics.pdf_export
+      : {},
+    outcome: {
+      docx_path: String(normalized.docx_path || "").trim(),
+      pdf_path: String(normalized.pdf_path || "").trim(),
+      draft_result: normalized.gmail_draft_result || {},
+      draft_prereqs: normalized.draft_prereqs || {},
+      draft_failure_reason: String(activeSession.draft_failure_reason || "").trim(),
+    },
+  };
+}
+
+function attachmentReportSnapshot(attachment) {
+  const state = attachmentState(attachment.attachment_id);
+  return {
+    attachment_id: attachment.attachment_id,
+    filename: attachment.filename || "",
+    mime_type: attachment.mime_type || "",
+    size_bytes: Number(attachment.size_bytes || 0),
+    selected: state.selected,
+    start_page: state.startPage,
+    page_count: state.pageCount,
+  };
+}
+
+function buildGmailFailureReportContext(error, { operation = "", attachment = null } = {}) {
+  const diagnostics = {
+    ...browserPdfDiagnosticsFromError(error),
+    ...(error?.payload?.diagnostics && typeof error.payload.diagnostics === "object" ? error.payload.diagnostics : {}),
+  };
+  const message = gmailState.loadResult?.message || {};
+  const previewState = isPreviewStateOpen(gmailState.previewState)
+    ? {
+      attachment_id: gmailState.previewState.attachmentId || "",
+      page: previewPage(),
+      page_count: previewPageCount(),
+      preview_href: String(gmailState.previewState.previewHref || "").trim(),
+    }
+    : {};
+  return {
+    kind: "gmail_browser_failure",
+    captured_at: new Date().toISOString(),
+    operation: String(operation || "").trim(),
+    runtime_mode: appState.runtimeMode,
+    workspace_id: appState.workspaceId,
+    active_view: appState.activeView,
+    build_sha: String(browserBootstrapConfig().buildSha || "").trim(),
+    asset_version: String(browserBootstrapConfig().assetVersion || "").trim(),
+    workflow_kind: currentWorkflowKind(),
+    focused_attachment_id: attachment?.attachment_id || gmailState.reviewFocusedAttachmentId || "",
+    message: {
+      message_id: message.message_id || "",
+      thread_id: message.thread_id || "",
+      subject: message.subject || "",
+      account_email: message.account_email || "",
+    },
+    attachments: gmailAttachments().map(attachmentReportSnapshot),
+    preview_state: previewState,
+    error: {
+      code: String(diagnostics.error || error?.name || "gmail_browser_failure").trim() || "gmail_browser_failure",
+      message: String(error?.message || diagnostics.message || "Gmail browser failure.").trim(),
+      diagnostics,
+    },
+  };
+}
+
+function clearGmailFailureReportContext() {
+  gmailState.lastFailureReportContext = null;
+  gmailState.lastFailureReportPayload = null;
+}
+
+function rememberGmailFailureReport(error, options = {}) {
+  gmailState.lastFailureReportContext = buildGmailFailureReportContext(error, options);
+  gmailState.lastFailureReportPayload = null;
+}
+
+function updateGmailFailureReportActionState() {
+  const button = qs("gmail-generate-failure-report");
+  if (!button) {
+    return;
+  }
+  const available = Boolean(gmailState.lastFailureReportContext);
+  button.classList.toggle("hidden", !available);
+  button.disabled = !available;
+  const defaultLabel = gmailState.lastFailureReportPayload ? "Generate Updated Failure Report" : "Generate Failure Report";
+  button.textContent = defaultLabel;
+  button.dataset.defaultLabel = defaultLabel;
+}
+
+function updateGmailFinalizationReportActionState() {
+  const button = qs("gmail-batch-finalize-report");
+  if (!button) {
+    return;
+  }
+  const available = Boolean(currentGmailFinalizationReportContext());
+  button.classList.toggle("hidden", !available);
+  button.disabled = !available;
+  const defaultLabel = gmailState.lastFinalizationReportPayload
+    ? "Generate Updated Finalization Report"
+    : "Generate Finalization Report";
+  button.textContent = defaultLabel;
+  button.dataset.defaultLabel = defaultLabel;
+}
+
+function gmailFailureHint(error, fallbackMessage) {
+  const diagnostics = browserPdfDiagnosticsFromError(error);
+  if (diagnostics.error === "browser_pdf_worker_load_failed") {
+    return "Browser PDF worker could not load. Generate a failure report here or review the Gmail diagnostics below for the exact worker URL.";
+  }
+  return fallbackMessage;
 }
 
 function translationUiSnapshot() {
@@ -305,6 +511,39 @@ function bootstrapMessageContext() {
   return gmailState.bootstrap?.defaults?.message_context || {};
 }
 
+function pendingIntakeContext() {
+  return gmailState.bootstrap?.pending_intake_context || {};
+}
+
+function pendingStatus() {
+  return String(gmailState.bootstrap?.pending_status || "").trim().toLowerCase();
+}
+
+function pendingReviewOpen() {
+  return gmailState.bootstrap?.pending_review_open === true;
+}
+
+function isWarmupPendingStatus(value) {
+  return value === "warming" || value === "delayed";
+}
+
+function workspaceNeedsWarmupPolling() {
+  return appState.activeView === "gmail-intake"
+    && pendingReviewOpen()
+    && isWarmupPendingStatus(pendingStatus());
+}
+
+function hasStableWorkspaceState() {
+  return Boolean(
+    appState.activeView === "gmail-intake"
+    && !workspaceNeedsWarmupPolling()
+    && (
+      (gmailState.loadResult?.ok && gmailState.loadResult?.message)
+      || gmailState.activeSession
+    )
+  );
+}
+
 function gmailAttachments() {
   return gmailState.loadResult?.message?.attachments || [];
 }
@@ -405,6 +644,24 @@ function attachmentState(attachmentId) {
     startPage: Number(existing.startPage || 1),
     pageCount: Number(existing.pageCount || 0),
   };
+}
+
+function browserPdfAttachmentState(attachmentId) {
+  return gmailState.browserPdfState.get(attachmentId) || {};
+}
+
+function setBrowserPdfAttachmentState(attachmentId, nextValue) {
+  if (!attachmentId) {
+    return;
+  }
+  const existing = browserPdfAttachmentState(attachmentId);
+  gmailState.browserPdfState.set(attachmentId, {
+    ...existing,
+    ...nextValue,
+    sourcePath: String(nextValue?.sourcePath ?? existing.sourcePath ?? "").trim(),
+    previewHref: String(nextValue?.previewHref ?? existing.previewHref ?? "").trim(),
+    pageCount: Math.max(0, Number(nextValue?.pageCount ?? existing.pageCount ?? 0)),
+  });
 }
 
 function setAttachmentState(attachmentId, nextValue) {
@@ -611,6 +868,13 @@ function openBatchFinalizeDrawer() {
   }
   renderBatchFinalizeSurface(gmailState.activeSession);
   setBatchFinalizeDrawerOpen(true);
+  void refreshBatchFinalizePreflight({ forceRefresh: false }).catch((error) => {
+    setPanelStatus("gmail-batch-finalize", "bad", error.message || "Gmail batch finalization preflight failed.");
+    setDiagnostics("gmail-batch-finalize", error, {
+      hint: error.message || "Gmail batch finalization preflight failed.",
+      open: true,
+    });
+  });
 }
 
 function closeBatchFinalizeDrawer() {
@@ -626,6 +890,24 @@ function renderBatchFinalizeSurface(activeSession) {
     return;
   }
   const available = Boolean(activeSession?.kind === "translation" && activeSession?.completed);
+  const preflight = currentBatchFinalizePreflight();
+  const payload = gmailState.batchFinalizeResult;
+  const normalized = payload?.normalized_payload || {};
+  const finalizationState = currentBatchFinalizeState();
+  const retryAvailable = Boolean(normalized.retry_available);
+  const stateLabel = ({
+    ready_to_finalize: "Ready",
+    blocked_word_pdf_export: "Blocked",
+    finalizing: "Finalizing",
+    local_artifacts_ready: "Local only",
+    draft_ready: "Draft ready",
+    draft_failed: "Draft failed",
+  })[finalizationState] || activeSession?.status || "confirmed";
+  button.textContent = payload?.status === "ok"
+    ? "Finalized"
+    : retryAvailable
+      ? "Retry finalization"
+      : "Finalize Gmail Batch Reply";
   button.disabled = !available;
   if (!available) {
     summary.className = "result-card empty-state";
@@ -633,6 +915,7 @@ function renderBatchFinalizeSurface(activeSession) {
     result.className = "result-card empty-state";
     result.textContent = "Draft, honorários, and Gmail reply details appear here after finalization.";
     status.textContent = "Confirm every selected Gmail attachment before finalizing the batch reply.";
+    updateGmailFinalizationReportActionState();
     closeBatchFinalizeDrawer();
     return;
   }
@@ -645,7 +928,7 @@ function renderBatchFinalizeSurface(activeSession) {
         <strong>${escapeHtml(activeSession.message?.subject || "Gmail batch ready to finalize.")}</strong>
         <p>${confirmedItems.length} confirmed attachment(s) are ready for the final Gmail reply.</p>
       </div>
-      <span class="status-chip ok">${escapeHtml(activeSession.status || "confirmed")}</span>
+      <span class="status-chip ${finalizationState === "blocked_word_pdf_export" || finalizationState === "local_artifacts_ready" ? "warn" : finalizationState === "draft_failed" ? "bad" : "ok"}">${escapeHtml(stateLabel)}</span>
     </div>
     <div class="result-grid">
       <div><h3>Target Language</h3><p>${escapeHtml(activeSession.selected_target_lang || "?")}</p></div>
@@ -653,29 +936,117 @@ function renderBatchFinalizeSurface(activeSession) {
       <div><h3>Output Folder</h3><p title="${escapeHtml(outputFolder)}">${escapeHtml(shortOutputFolderLabel(outputFolder))}</p></div>
     </div>
   `;
-  if (!gmailState.batchFinalizeResult) {
+  if (gmailState.batchFinalizePreflightInFlight && !payload) {
+    button.disabled = true;
     result.className = "result-card empty-state";
-    result.textContent = "Generate honorários and the Gmail reply draft when you are ready.";
-    status.textContent = "All selected attachments are confirmed. Finalize the Gmail batch reply from this bounded surface.";
+    result.textContent = "Checking Word PDF export readiness for Gmail finalization...";
+    status.textContent = "Running a real Word DOCX-to-PDF canary before the final Gmail reply step.";
+    updateGmailFinalizationReportActionState();
     return;
   }
-  const payload = gmailState.batchFinalizeResult;
-  const normalized = payload.normalized_payload || {};
+  if (!payload && preflight && !preflight.finalization_ready) {
+    button.disabled = true;
+    status.textContent = "Word PDF export is blocked before Gmail finalization. Review the diagnostics here before retrying.";
+    result.className = "result-card";
+    result.innerHTML = `
+      <div class="result-header">
+        <div>
+          <strong>${escapeHtml(preflight.message || "Word PDF export is unavailable.")}</strong>
+          <p>${escapeHtml(preflight.details || "The Word launch probe and export canary are shown below.")}</p>
+        </div>
+        <span class="status-chip warn">Blocked</span>
+      </div>
+      <div class="result-grid">
+        <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight.launch_preflight?.message || "Unavailable")}</p></div>
+        <div><h3>Export Canary</h3><p>${escapeHtml(preflight.export_canary?.message || "Unavailable")}</p></div>
+        <div><h3>Failure Phase</h3><p>${escapeHtml(preflight.failure_phase || preflight.export_canary?.failure_phase || "Unknown")}</p></div>
+      </div>
+    `;
+    updateGmailFinalizationReportActionState();
+    return;
+  }
+  if (!payload && ["local_artifacts_ready", "draft_failed", "draft_ready"].includes(finalizationState)) {
+    const draftCopy = finalizationState === "draft_ready"
+      ? "The Gmail draft is ready for this finalized batch."
+      : activeSession.draft_failure_reason || "The previous Gmail finalization attempt stayed recoverable in this workspace.";
+    status.textContent = finalizationState === "draft_ready"
+      ? "Gmail batch reply draft is ready."
+      : finalizationState === "draft_failed"
+        ? "Honorários were created, but the Gmail draft step failed. You can retry from this same surface."
+        : "Honorários were created locally, but the Gmail draft step stayed unavailable. You can retry from this same surface.";
+    button.disabled = finalizationState === "draft_ready" || (preflight && !preflight.finalization_ready);
+    result.className = "result-card";
+    result.innerHTML = `
+      <div class="result-header">
+        <div>
+          <strong>${escapeHtml(status.textContent)}</strong>
+          <p>${escapeHtml(activeSession.actual_honorarios_path || activeSession.actual_honorarios_pdf_path || draftCopy)}</p>
+        </div>
+        <span class="status-chip ${finalizationState === "draft_ready" ? "ok" : finalizationState === "draft_failed" ? "bad" : "warn"}">${escapeHtml(stateLabel)}</span>
+      </div>
+      <div class="result-grid">
+        <div><h3>DOCX</h3><p class="word-break">${escapeHtml(activeSession.actual_honorarios_path || "Unavailable")}</p></div>
+        <div><h3>PDF</h3><p class="word-break">${escapeHtml(activeSession.actual_honorarios_pdf_path || "Unavailable")}</p></div>
+        <div><h3>Draft</h3><p>${escapeHtml(draftCopy)}</p></div>
+        <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight?.launch_preflight?.message || "Unavailable")}</p></div>
+        <div><h3>Export Canary</h3><p>${escapeHtml(preflight?.export_canary?.message || "Unavailable")}</p></div>
+        <div><h3>Retry</h3><p>${finalizationState === "draft_ready" ? "No retry required." : "You can retry from this drawer."}</p></div>
+      </div>
+    `;
+    updateGmailFinalizationReportActionState();
+    return;
+  }
+  if (!payload && preflight?.finalization_ready) {
+    button.disabled = false;
+    result.className = "result-card";
+    result.innerHTML = `
+      <div class="result-header">
+        <div>
+          <strong>Word PDF export is ready for Gmail finalization.</strong>
+          <p>The same Word export path used by finalization passed a canary export on this machine.</p>
+        </div>
+        <span class="status-chip ok">Ready</span>
+      </div>
+      <div class="result-grid">
+        <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight.launch_preflight?.message || "Ready")}</p></div>
+        <div><h3>Export Canary</h3><p>${escapeHtml(preflight.export_canary?.message || "Ready")}</p></div>
+        <div><h3>Checked</h3><p>${escapeHtml(preflight.last_checked_at || "Just now")}</p></div>
+      </div>
+    `;
+    status.textContent = "All selected attachments are confirmed. Word PDF export is ready, so you can finalize the Gmail batch reply from this surface.";
+    updateGmailFinalizationReportActionState();
+    return;
+  }
+  if (!payload) {
+    button.disabled = true;
+    result.className = "result-card empty-state";
+    result.textContent = "Generate honorários and the Gmail reply draft when the Word PDF export preflight clears.";
+    status.textContent = "All selected attachments are confirmed. Word PDF export readiness will be checked from this bounded surface.";
+    updateGmailFinalizationReportActionState();
+    return;
+  }
   const draftStatus = normalized.gmail_draft_result?.ok
     ? "Draft ready"
-    : payload.status === "local_only"
+    : finalizationState === "local_artifacts_ready" || payload.status === "local_only"
       ? "Local only"
       : payload.status === "draft_unavailable"
         ? "Draft unavailable"
-        : payload.status === "draft_failed"
+        : finalizationState === "draft_failed" || payload.status === "draft_failed"
           ? "Draft failed"
           : "Ready";
-  const tone = payload.status === "ok" ? "ok" : payload.status === "local_only" ? "warn" : "bad";
+  const tone = payload.status === "ok" ? "ok" : finalizationState === "draft_failed" ? "bad" : "warn";
   status.textContent = payload.status === "ok"
     ? "Gmail batch reply draft is ready."
-    : payload.status === "local_only"
+    : finalizationState === "blocked_word_pdf_export"
+      ? "Word PDF export is blocked before Gmail finalization."
+      : payload.status === "local_only"
       ? "Honorários were created locally, but the Gmail draft step stayed unavailable."
-      : "Batch finalization completed with warnings. Review the result details here.";
+      : finalizationState === "draft_failed"
+        ? "Honorários were created, but the Gmail draft step failed. You can retry from this same surface."
+        : "Batch finalization completed with warnings. Review the result details here.";
+  button.disabled = gmailState.batchFinalizePreflightInFlight
+    || payload.status === "ok"
+    || (preflight && !preflight.finalization_ready);
   result.className = "result-card";
   result.innerHTML = `
     <div class="result-header">
@@ -689,8 +1060,12 @@ function renderBatchFinalizeSurface(activeSession) {
       <div><h3>DOCX</h3><p class="word-break">${escapeHtml(normalized.docx_path || "Unavailable")}</p></div>
       <div><h3>PDF</h3><p class="word-break">${escapeHtml(normalized.pdf_path || "Unavailable")}</p></div>
       <div><h3>Draft</h3><p>${escapeHtml(normalized.gmail_draft_result?.message || normalized.draft_prereqs?.message || draftStatus)}</p></div>
+      <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight?.launch_preflight?.message || "Unavailable")}</p></div>
+      <div><h3>Export Canary</h3><p>${escapeHtml(preflight?.export_canary?.message || "Unavailable")}</p></div>
+      <div><h3>Retry</h3><p>${retryAvailable ? "You can retry from this drawer." : "No retry required."}</p></div>
     </div>
   `;
+  updateGmailFinalizationReportActionState();
 }
 
 function renderTranslationCompletionGmailStepCard(activeSession) {
@@ -737,6 +1112,7 @@ function collectSelections() {
     selections.push({
       attachment_id: attachmentId,
       start_page: clampStartPage(attachment, item.startPage, item.pageCount),
+      page_count: Math.max(0, Number(item.pageCount || 0)) || undefined,
     });
   }
   return selections;
@@ -805,12 +1181,26 @@ function applyPreviewPageCount(attachmentId, pageCount) {
 function renderMessageResult(loadResult) {
   const container = qs("gmail-message-result");
   const defaults = bootstrapMessageContext();
+  const pendingContext = pendingIntakeContext();
+  const currentPendingStatus = pendingStatus();
+  const pendingWarming = isWarmupPendingStatus(currentPendingStatus);
   const detailsHint = qs("gmail-intake-details-summary");
   if (!container) {
     return;
   }
   if (!loadResult) {
-    const hasContext = Boolean(defaults.message_id || defaults.thread_id || defaults.subject || defaults.account_email);
+    const resolvedContext = {
+      message_id: defaults.message_id || pendingContext.message_id || "",
+      thread_id: defaults.thread_id || pendingContext.thread_id || "",
+      subject: defaults.subject || pendingContext.subject || "",
+      account_email: defaults.account_email || pendingContext.account_email || "",
+    };
+    const hasContext = Boolean(
+      resolvedContext.message_id
+      || resolvedContext.thread_id
+      || resolvedContext.subject
+      || resolvedContext.account_email
+    );
     if (!hasContext) {
       container.classList.add("empty-state");
       container.textContent = "No Gmail message is loaded in this browser workspace yet.";
@@ -823,18 +1213,34 @@ function renderMessageResult(loadResult) {
     container.innerHTML = `
       <div class="result-header">
         <div>
-          <strong>Extension handoff detected for this workspace.</strong>
-          <p>${escapeHtml(defaults.subject || "Subject unavailable")}<br>${escapeHtml(defaults.account_email || "Account unavailable")}</p>
+          <strong>${
+            currentPendingStatus === "failed"
+              ? "The last Gmail handoff did not finish loading."
+              : pendingWarming
+                ? "The browser app is warming this Gmail handoff."
+                : "Extension handoff detected for this workspace."
+          }</strong>
+          <p>${escapeHtml(resolvedContext.subject || "Subject unavailable")}<br>${escapeHtml(resolvedContext.account_email || "Account unavailable")}</p>
         </div>
-        <span class="status-chip info">Pending load</span>
+        <span class="status-chip ${
+          currentPendingStatus === "failed" ? "bad" : "info"
+        }">${
+          currentPendingStatus === "failed"
+            ? "Failed load"
+            : pendingWarming
+              ? "Warming"
+              : "Pending load"
+        }</span>
       </div>
       <div class="result-grid">
-        <div><h3>Message ID</h3><p class="word-break">${escapeHtml(defaults.message_id || "Unavailable")}</p></div>
-        <div><h3>Thread ID</h3><p class="word-break">${escapeHtml(defaults.thread_id || "Unavailable")}</p></div>
+        <div><h3>Message ID</h3><p class="word-break">${escapeHtml(resolvedContext.message_id || "Unavailable")}</p></div>
+        <div><h3>Thread ID</h3><p class="word-break">${escapeHtml(resolvedContext.thread_id || "Unavailable")}</p></div>
       </div>
     `;
     if (detailsHint) {
-      detailsHint.textContent = "Extension defaults are ready; expand only if you need manual overrides.";
+      detailsHint.textContent = pendingWarming
+        ? "The browser workspace is still loading the exact Gmail message; manual overrides stay collapsed unless you need them."
+        : "Extension defaults are ready; expand only if you need manual overrides.";
     }
     return;
   }
@@ -1074,11 +1480,13 @@ function renderPreviewPanel() {
     applyButton.textContent = canApply ? applyButton.dataset.defaultLabel : "Preview only";
     container.className = "gmail-inline-preview";
     container.innerHTML = `
-      <iframe
-        class="gmail-inline-preview-frame"
-        src="${escapeHtml(previewHref)}"
-        title="${escapeHtml(`Preview for ${previewAttachment.filename || "attachment"}`)}"
-      ></iframe>
+      <div class="gmail-inline-preview-canvas-shell">
+        <canvas
+          id="gmail-preview-canvas"
+          class="gmail-inline-preview-canvas"
+          aria-label="${escapeHtml(`Preview for ${previewAttachment.filename || "attachment"}`)}"
+        ></canvas>
+      </div>
     `;
     status.textContent = canApply
       ? (pageCount > 0
@@ -1087,6 +1495,7 @@ function renderPreviewPanel() {
       : (pageCount > 0
         ? `Previewing page ${page} of ${pageCount}. This workflow still prepares from page 1.`
         : `Previewing page ${page}. This workflow still prepares from page 1.`);
+    void renderActivePdfPreviewCanvas(previewAttachment);
     return;
   }
   container.className = "gmail-inline-preview";
@@ -1282,10 +1691,14 @@ function syncShellState() {
       active_session: gmailState.activeSession,
       interpretation_seed: gmailState.interpretationSeed,
       suggested_translation_launch: gmailState.suggestedTranslationLaunch,
+      pending_status: gmailState.bootstrap?.pending_status || "",
+      pending_intake_context: gmailState.bootstrap?.pending_intake_context || {},
+      pending_review_open: gmailState.bootstrap?.pending_review_open === true,
       stage: gmailState.stage,
     };
   }
   renderWorkspaceStrip();
+  syncRefreshSchedule();
   window.dispatchEvent(new CustomEvent("legalpdf:shell-state-updated"));
 }
 
@@ -1320,6 +1733,7 @@ function renderReviewSurface() {
   renderReviewDetail();
   renderPreviewPanel();
   updatePrepareActionState();
+  updateGmailFailureReportActionState();
 }
 
 function maybeAutoOpenReview() {
@@ -1354,6 +1768,10 @@ export function renderGmailBootstrap(payload) {
   mergeBootstrapPayload(gmailPayload);
   gmailState.loadResult = gmailPayload.load_result || null;
   gmailState.activeSession = gmailPayload.active_session || null;
+  gmailState.batchFinalizePreflight = gmailState.activeSession?.finalization_preflight || null;
+  if (!gmailState.loadResult && !gmailState.activeSession) {
+    gmailState.browserPdfState = new Map();
+  }
   gmailState.interpretationSeed = gmailPayload.interpretation_seed || null;
   gmailState.suggestedTranslationLaunch = gmailPayload.suggested_translation_launch || null;
   applyBootstrapDefaults(gmailPayload);
@@ -1366,6 +1784,8 @@ export function renderGmailBootstrap(payload) {
   renderTranslationCompletionGmailStepCard(gmailState.activeSession);
   renderBatchFinalizeSurface(gmailState.activeSession);
   updateSessionButtons();
+  updateGmailFailureReportActionState();
+  updateGmailFinalizationReportActionState();
   maybeAutoOpenReview();
   setPanelStatus(
     "gmail",
@@ -1417,13 +1837,17 @@ async function loadMessage() {
     review_event_id: payload.normalized_payload.review_event_id,
     message_signature: payload.normalized_payload.message_signature,
   });
+  gmailState.browserPdfState = new Map();
   gmailState.loadResult = payload.normalized_payload.load_result || null;
   gmailState.activeSession = null;
   gmailState.interpretationSeed = null;
   gmailState.suggestedTranslationLaunch = null;
+  gmailState.batchFinalizePreflight = null;
+  clearGmailFailureReportContext();
   ensureSelectionState(gmailState.loadResult, null);
   resetPreviewState();
   gmailState.batchFinalizeResult = null;
+  gmailState.lastFinalizationReportPayload = null;
   renderMessageResult(gmailState.loadResult);
   renderReviewSurface();
   renderResumeCard(null);
@@ -1443,18 +1867,121 @@ async function loadMessage() {
   syncShellState();
 }
 
+async function fetchAttachmentPreviewPayload(attachmentId) {
+  const payload = await fetchJson("/api/gmail/preview-attachment", appState, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ attachment_id: attachmentId }),
+  });
+  const normalized = payload.normalized_payload || {};
+  setBrowserPdfAttachmentState(attachmentId, {
+    sourcePath: normalized.preview_path || "",
+    previewHref: normalized.preview_href || "",
+    pageCount: normalized.page_count || 0,
+  });
+  if (normalized.page_count) {
+    applyPreviewPageCount(attachmentId, normalized.page_count);
+  }
+  return payload;
+}
+
+async function ensureBrowserPdfBundleForAttachment(attachment, { previewPayload = null } = {}) {
+  if (!attachment || !isPdfAttachment(attachment)) {
+    return {
+      pageCount: 1,
+      sourcePath: "",
+      previewHref: "",
+    };
+  }
+  let payload = previewPayload;
+  let browserState = browserPdfAttachmentState(attachment.attachment_id);
+  if (!payload && (!browserState.sourcePath || !browserState.previewHref)) {
+    payload = await fetchAttachmentPreviewPayload(attachment.attachment_id);
+    browserState = browserPdfAttachmentState(attachment.attachment_id);
+  }
+  const sourcePath = String(browserState.sourcePath || payload?.normalized_payload?.preview_path || "").trim();
+  const previewHref = String(browserState.previewHref || payload?.normalized_payload?.preview_href || "").trim();
+  if (!sourcePath || !previewHref) {
+    throw new Error(`Preview download for ${attachment.filename || "the PDF attachment"} is unavailable.`);
+  }
+  const bundlePayload = await ensureBrowserPdfBundleFromUrl({
+    appState,
+    sourcePath,
+    url: previewHref,
+    attachmentId: attachment.attachment_id,
+  });
+  const pageCount = Math.max(1, Number(bundlePayload.page_count || browserState.pageCount || 0));
+  applyPreviewPageCount(attachment.attachment_id, pageCount);
+  setBrowserPdfAttachmentState(attachment.attachment_id, {
+    sourcePath,
+    previewHref,
+    pageCount,
+  });
+  return {
+    pageCount,
+    sourcePath,
+    previewHref,
+  };
+}
+
+async function ensureBrowserPdfBundlesForSelections() {
+  const selectedAttachments = gmailAttachments().filter((attachment) => attachmentState(attachment.attachment_id).selected);
+  for (const attachment of selectedAttachments) {
+    if (!isPdfAttachment(attachment)) {
+      continue;
+    }
+    await ensureBrowserPdfBundleForAttachment(attachment);
+  }
+}
+
+async function renderActivePdfPreviewCanvas(previewAttachment) {
+  const container = qs("gmail-preview-frame");
+  const canvas = qs("gmail-preview-canvas");
+  const status = qs("gmail-preview-status");
+  if (!previewAttachment || !container || !canvas || !status) {
+    return;
+  }
+  const browserState = browserPdfAttachmentState(previewAttachment.attachment_id);
+  const sourcePath = String(browserState.sourcePath || "").trim();
+  const previewHref = String(browserState.previewHref || gmailState.previewState.previewHref || "").trim();
+  if (!sourcePath || !previewHref) {
+    container.className = "gmail-inline-preview empty-state";
+    container.textContent = "Preview download is not ready for this PDF yet.";
+    status.textContent = "Preview download is not ready yet. Try preview again.";
+    return;
+  }
+  try {
+    await renderBrowserPdfPreviewToCanvas({
+      sourcePath,
+      url: previewHref,
+      attachmentId: previewAttachment.attachment_id,
+      pageNumber: previewPage(),
+      canvas,
+      preferredWidth: Math.max(0, container.clientWidth - 32),
+    });
+  } catch (error) {
+    rememberGmailFailureReport(error, {
+      operation: "gmail_preview_render",
+      attachment: previewAttachment,
+    });
+    container.className = "gmail-inline-preview empty-state";
+    container.textContent = "Preview rendering failed for this PDF.";
+    status.textContent = error.message || "Preview rendering failed.";
+    setDiagnostics("gmail", error, { hint: gmailFailureHint(error, error.message || "Preview rendering failed."), open: true });
+    updateGmailFailureReportActionState();
+  }
+}
+
 async function previewAttachment(attachmentId) {
   const attachment = focusAttachment(attachmentId);
   if (!attachment) {
     return;
   }
   const currentState = attachmentState(attachmentId);
-  const payload = await fetchJson("/api/gmail/preview-attachment", appState, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ attachment_id: attachmentId }),
-  });
-  applyPreviewPageCount(attachmentId, payload.normalized_payload.page_count || 0);
+  const payload = await fetchAttachmentPreviewPayload(attachmentId);
+  if (isPdfAttachment(attachment)) {
+    await ensureBrowserPdfBundleForAttachment(attachment, { previewPayload: payload });
+  }
   gmailState.previewState = openPreviewState({
     attachmentId,
     previewHref: payload.normalized_payload.preview_href || "",
@@ -1467,10 +1994,13 @@ async function previewAttachment(attachmentId) {
   renderReviewDetail();
   renderPreviewPanel();
   openPreviewDrawer();
+  clearGmailFailureReportContext();
   setDiagnostics("gmail", payload, { hint: `Preview loaded for ${payload.normalized_payload.attachment?.filename || "attachment"}.`, open: false });
+  updateGmailFailureReportActionState();
 }
 
 async function prepareSession() {
+  await ensureBrowserPdfBundlesForSelections();
   const payload = await fetchJson("/api/gmail/prepare-session", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1484,7 +2014,9 @@ async function prepareSession() {
   gmailState.activeSession = payload.normalized_payload.active_session || null;
   gmailState.interpretationSeed = payload.normalized_payload.interpretation_seed || null;
   gmailState.suggestedTranslationLaunch = payload.normalized_payload.suggested_translation_launch || null;
+  gmailState.batchFinalizePreflight = gmailState.activeSession?.finalization_preflight || null;
   gmailState.batchFinalizeResult = null;
+  gmailState.lastFinalizationReportPayload = null;
   ensureSelectionState(gmailState.loadResult, gmailState.activeSession);
   resetPreviewState();
   renderReviewSurface();
@@ -1493,6 +2025,8 @@ async function prepareSession() {
   renderTranslationCompletionGmailStepCard(gmailState.activeSession);
   renderBatchFinalizeSurface(gmailState.activeSession);
   updateSessionButtons();
+  clearGmailFailureReportContext();
+  updateGmailFinalizationReportActionState();
   setDiagnostics("gmail", payload, { hint: "Gmail session prepared.", open: false });
   closePreviewDrawer();
   closeReviewDrawer();
@@ -1506,7 +2040,90 @@ async function prepareSession() {
   }
   gmailState.stage = currentGmailStage();
   setPanelStatus("gmail", "ok", gmailHomeStatusMessage());
+  updateGmailFailureReportActionState();
   syncShellState();
+}
+
+async function handleGmailFailureReport() {
+  const reportContext = currentGmailFailureReportContext();
+  if (!reportContext) {
+    throw new Error("No Gmail browser failure is available to report yet.");
+  }
+  const payload = await fetchJson("/api/power-tools/diagnostics/run-report", appState, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      browser_failure_context: reportContext,
+    }),
+  });
+  gmailState.lastFailureReportPayload = payload;
+  setPanelStatus("gmail", "ok", "Gmail browser failure report generated.");
+  setDiagnostics("gmail", payload, {
+    hint: payload.normalized_payload?.report_path || "Gmail browser failure report generated.",
+    open: true,
+  });
+  updateGmailFailureReportActionState();
+}
+
+async function handleGmailFinalizationReport() {
+  const reportContext = currentGmailFinalizationReportContext();
+  if (!reportContext) {
+    throw new Error("No Gmail finalization failure is available to report yet.");
+  }
+  const payload = await fetchJson("/api/power-tools/diagnostics/run-report", appState, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      gmail_finalization_context: reportContext,
+    }),
+  });
+  gmailState.lastFinalizationReportPayload = payload;
+  setPanelStatus("gmail-batch-finalize", "ok", "Gmail finalization report generated.");
+  setDiagnostics("gmail-batch-finalize", payload, {
+    hint: payload.normalized_payload?.report_path || "Gmail finalization report generated.",
+    open: true,
+  });
+  updateGmailFinalizationReportActionState();
+}
+
+async function refreshBatchFinalizePreflight({ forceRefresh = false } = {}) {
+  if (!(gmailState.activeSession?.kind === "translation" && gmailState.activeSession?.completed)) {
+    gmailState.batchFinalizePreflight = null;
+    renderBatchFinalizeSurface(gmailState.activeSession);
+    return null;
+  }
+  gmailState.batchFinalizePreflightInFlight = true;
+  renderBatchFinalizeSurface(gmailState.activeSession);
+  try {
+    const payload = await fetchJson("/api/gmail/batch/finalize-preflight", appState, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force_refresh: forceRefresh }),
+    });
+    gmailState.activeSession = payload.normalized_payload.active_session || gmailState.activeSession;
+    gmailState.batchFinalizePreflight = payload.normalized_payload.finalization_preflight || null;
+    renderResumeCard(gmailState.activeSession);
+    renderSessionResult(gmailState.activeSession);
+    renderBatchFinalizeSurface(gmailState.activeSession);
+    updateSessionButtons();
+    setDiagnostics("gmail-batch-finalize", payload, {
+      hint: payload.status === "ok"
+        ? "Word PDF export canary passed for Gmail finalization."
+        : payload.normalized_payload?.finalization_preflight?.message || "Word PDF export is blocked before Gmail finalization.",
+      open: payload.status !== "ok",
+    });
+    return payload;
+  } catch (error) {
+    setPanelStatus("gmail-batch-finalize", "bad", error.message || "Gmail batch finalization preflight failed.");
+    setDiagnostics("gmail-batch-finalize", error, {
+      hint: error.message || "Gmail batch finalization preflight failed.",
+      open: true,
+    });
+    throw error;
+  } finally {
+    gmailState.batchFinalizePreflightInFlight = false;
+    renderBatchFinalizeSurface(gmailState.activeSession);
+  }
 }
 
 async function confirmCurrentTranslation() {
@@ -1525,6 +2142,7 @@ async function confirmCurrentTranslation() {
   });
   gmailState.activeSession = payload.normalized_payload.active_session || null;
   gmailState.suggestedTranslationLaunch = payload.normalized_payload.suggested_translation_launch || null;
+  gmailState.batchFinalizePreflight = gmailState.activeSession?.finalization_preflight || null;
   ensureSelectionState(gmailState.loadResult, gmailState.activeSession);
   renderReviewSurface();
   renderResumeCard(gmailState.activeSession);
@@ -1544,6 +2162,17 @@ async function confirmCurrentTranslation() {
 }
 
 async function finalizeBatch() {
+  const preflightPayload = await refreshBatchFinalizePreflight({ forceRefresh: false });
+  const preflight = preflightPayload?.normalized_payload?.finalization_preflight || currentBatchFinalizePreflight();
+  if (!preflight?.finalization_ready) {
+    setPanelStatus(
+      "gmail-batch-finalize",
+      "warn",
+      preflight?.message || "Word PDF export is blocked before Gmail finalization.",
+    );
+    updateGmailFinalizationReportActionState();
+    return;
+  }
   const payload = await fetchJson("/api/gmail/batch/finalize", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1553,12 +2182,14 @@ async function finalizeBatch() {
     }),
   });
   gmailState.activeSession = payload.normalized_payload.active_session || null;
+  gmailState.batchFinalizePreflight = payload.normalized_payload.finalization_preflight || gmailState.batchFinalizePreflight;
   gmailState.batchFinalizeResult = payload;
   renderResumeCard(gmailState.activeSession);
   renderSessionResult(gmailState.activeSession);
   renderBatchFinalizeSurface(gmailState.activeSession);
   updateSessionButtons();
   setDiagnostics("gmail-batch-finalize", payload, { hint: payload.status === "ok" ? "Gmail batch reply draft is ready." : "Gmail batch finalization completed with warnings.", open: payload.status !== "ok" });
+  updateGmailFinalizationReportActionState();
   syncShellState();
 }
 
@@ -1592,14 +2223,23 @@ function clearScheduledRefresh() {
   }
 }
 
-function scheduleFocusedRefresh() {
+function stopWarmupPolling() {
+  gmailState.warmupPollUntil = 0;
+  clearScheduledRefresh();
+}
+
+function scheduleAutoRefresh(delayMs, { replace = false } = {}) {
   if (appState.activeView !== "gmail-intake") {
-    clearScheduledRefresh();
+    stopWarmupPolling();
     return;
   }
-  clearScheduledRefresh();
-  const elapsed = Date.now() - gmailState.lastRefreshAt;
-  const delay = Math.max(AUTO_REFRESH_DELAY_MS, AUTO_REFRESH_THROTTLE_MS - elapsed);
+  if (replace) {
+    clearScheduledRefresh();
+  }
+  if (gmailState.refreshTimer || gmailState.refreshInFlight) {
+    return;
+  }
+  const nextDelay = Math.max(0, Number(delayMs || 0));
   gmailState.refreshTimer = window.setTimeout(async () => {
     gmailState.refreshTimer = 0;
     try {
@@ -1607,11 +2247,57 @@ function scheduleFocusedRefresh() {
     } catch {
       // Silent auto-refresh failures should not steal focus from the operator.
     }
-  }, delay);
+  }, nextDelay);
+}
+
+function syncRefreshSchedule() {
+  if (appState.activeView !== "gmail-intake") {
+    stopWarmupPolling();
+    return;
+  }
+  if (!workspaceNeedsWarmupPolling()) {
+    stopWarmupPolling();
+    return;
+  }
+  const now = Date.now();
+  if (!gmailState.warmupPollUntil || gmailState.warmupPollUntil < now) {
+    gmailState.warmupPollUntil = now + WARMUP_POLL_TIMEOUT_MS;
+  }
+  if (now >= gmailState.warmupPollUntil) {
+    stopWarmupPolling();
+    return;
+  }
+  const elapsed = now - gmailState.lastRefreshAt;
+  const delay = Math.max(AUTO_REFRESH_DELAY_MS, WARMUP_POLL_INTERVAL_MS - Math.max(0, elapsed));
+  scheduleAutoRefresh(delay);
+}
+
+function maybeSchedulePassiveRefresh() {
+  if (appState.activeView !== "gmail-intake") {
+    stopWarmupPolling();
+    return;
+  }
+  if (workspaceNeedsWarmupPolling()) {
+    syncRefreshSchedule();
+    return;
+  }
+  if (hasStableWorkspaceState()) {
+    stopWarmupPolling();
+    return;
+  }
+  const now = Date.now();
+  if (now - gmailState.lastPassiveRefreshAt < PASSIVE_REFRESH_COOLDOWN_MS) {
+    return;
+  }
+  gmailState.lastPassiveRefreshAt = now;
+  const elapsed = Date.now() - gmailState.lastRefreshAt;
+  const delay = Math.max(AUTO_REFRESH_DELAY_MS, AUTO_REFRESH_THROTTLE_MS - elapsed);
+  scheduleAutoRefresh(delay, { replace: true });
 }
 
 export function initializeGmailUi(hooks) {
   gmailState.hooks = hooks || {};
+  gmailState.lastRouteView = appState.activeView;
   setDiagnostics("gmail", { status: "idle", message: "No Gmail action has run yet." }, { hint: "Exact-message load, attachment preview, and session preparation details appear here.", open: false });
   setDiagnostics("gmail-session", { status: "idle", message: "No Gmail batch or interpretation finalization has run yet." }, { hint: "Batch progression, staged attachments, export status, and Gmail draft details appear here.", open: false });
   setDiagnostics("gmail-batch-finalize", { status: "idle", message: "No Gmail batch finalization has run yet." }, { hint: "Final draft request details and honorários export diagnostics appear here.", open: false });
@@ -1753,8 +2439,16 @@ export function initializeGmailUi(hooks) {
       try {
         await previewAttachment(attachment.attachment_id);
       } catch (error) {
+        rememberGmailFailureReport(error, {
+          operation: "gmail_preview_attachment",
+          attachment,
+        });
         setPanelStatus("gmail", "bad", error.message || "Attachment preview failed.");
-        setDiagnostics("gmail", error, { hint: error.message || "Attachment preview failed.", open: true });
+        setDiagnostics("gmail", error, {
+          hint: gmailFailureHint(error, error.message || "Attachment preview failed."),
+          open: true,
+        });
+        updateGmailFailureReportActionState();
       }
     });
   });
@@ -1817,8 +2511,44 @@ export function initializeGmailUi(hooks) {
       try {
         await prepareSession();
       } catch (error) {
+        rememberGmailFailureReport(error, {
+          operation: "gmail_prepare_session",
+          attachment: focusedAttachment(),
+        });
         setPanelStatus("gmail", "bad", error.message || "Gmail session preparation failed.");
-        setDiagnostics("gmail", error, { hint: error.message || "Gmail session preparation failed.", open: true });
+        setDiagnostics("gmail", error, {
+          hint: gmailFailureHint(error, error.message || "Gmail session preparation failed."),
+          open: true,
+        });
+        updateGmailFailureReportActionState();
+      }
+    });
+  });
+
+  qs("gmail-generate-failure-report")?.addEventListener("click", async () => {
+    await runWithBusy(["gmail-generate-failure-report"], { "gmail-generate-failure-report": "Generating..." }, async () => {
+      try {
+        await handleGmailFailureReport();
+      } catch (error) {
+        setPanelStatus("gmail", "bad", error.message || "Gmail browser failure report generation failed.");
+        setDiagnostics("gmail", error, {
+          hint: error.message || "Gmail browser failure report generation failed.",
+          open: true,
+        });
+      }
+    });
+  });
+
+  qs("gmail-batch-finalize-report")?.addEventListener("click", async () => {
+    await runWithBusy(["gmail-batch-finalize-report"], { "gmail-batch-finalize-report": "Generating..." }, async () => {
+      try {
+        await handleGmailFinalizationReport();
+      } catch (error) {
+        setPanelStatus("gmail-batch-finalize", "bad", error.message || "Gmail finalization report generation failed.");
+        setDiagnostics("gmail-batch-finalize", error, {
+          hint: error.message || "Gmail finalization report generation failed.",
+          open: true,
+        });
       }
     });
   });
@@ -1926,7 +2656,10 @@ export function initializeGmailUi(hooks) {
         });
         forgetConsumedReviewEvent();
         resetPreviewState();
+        gmailState.batchFinalizePreflight = null;
         gmailState.batchFinalizeResult = null;
+        clearGmailFailureReportContext();
+        gmailState.lastFinalizationReportPayload = null;
         closeReviewDrawer();
         closeBatchFinalizeDrawer();
         renderGmailBootstrap({ normalized_payload: { gmail: payload.normalized_payload } });
@@ -1970,7 +2703,7 @@ export function initializeGmailUi(hooks) {
     }
   });
 
-  window.addEventListener("focus", scheduleFocusedRefresh);
+  window.addEventListener("focus", maybeSchedulePassiveRefresh);
   window.addEventListener("legalpdf:translation-ui-state-changed", () => {
     renderResumeCard(gmailState.activeSession);
     renderTranslationCompletionGmailStepCard(gmailState.activeSession);
@@ -1983,18 +2716,25 @@ export function initializeGmailUi(hooks) {
   });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-      scheduleFocusedRefresh();
+      maybeSchedulePassiveRefresh();
     }
   });
   window.addEventListener("legalpdf:route-state-changed", () => {
+    const previousView = gmailState.lastRouteView;
+    gmailState.lastRouteView = appState.activeView;
     if (appState.activeView === "gmail-intake") {
       renderResumeCard(gmailState.activeSession);
       renderTranslationCompletionGmailStepCard(gmailState.activeSession);
       renderBatchFinalizeSurface(gmailState.activeSession);
       renderWorkspaceStrip();
-      scheduleFocusedRefresh();
+      if (previousView !== "gmail-intake") {
+        maybeSchedulePassiveRefresh();
+      } else {
+        syncRefreshSchedule();
+      }
       return;
     }
+    stopWarmupPolling();
     closePreviewDrawer();
     closeReviewDrawer();
   });

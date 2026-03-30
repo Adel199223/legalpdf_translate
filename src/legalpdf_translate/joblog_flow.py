@@ -5,17 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
-from .metadata_autofill import (
-    MetadataExtractionDiagnostics,
-    MetadataSuggestion,
-    choose_court_email_suggestion,
-)
 from .ocr_engine import default_ocr_api_env_name
 from .types import OcrApiProvider
+
+if TYPE_CHECKING:
+    from .metadata_autofill import MetadataExtractionDiagnostics, MetadataSuggestion
 
 JOBLOG_VOCAB_SETTINGS_MAP = {
     "job_type": "vocab_job_types",
@@ -570,9 +568,11 @@ def build_blank_interpretation_seed() -> JobLogSeed:
 def build_interpretation_seed_from_notification_pdf(
     *,
     pdf_path: Path,
-    suggestion: MetadataSuggestion,
+    suggestion: "MetadataSuggestion",
     vocab_court_emails: list[str],
 ) -> JobLogSeed:
+    from .metadata_autofill import choose_court_email_suggestion
+
     now = datetime.now()
     service_date = str(getattr(suggestion, "service_date", "") or "").strip()
     case_entity = str(getattr(suggestion, "case_entity", "") or "").strip()
@@ -621,9 +621,11 @@ def build_interpretation_seed_from_notification_pdf(
 
 def build_interpretation_seed_from_photo_screenshot(
     *,
-    suggestion: MetadataSuggestion,
+    suggestion: "MetadataSuggestion",
     vocab_court_emails: list[str],
 ) -> JobLogSeed:
+    from .metadata_autofill import choose_court_email_suggestion
+
     now = datetime.now()
     service_date = str(getattr(suggestion, "service_date", "") or "").strip()
     case_entity = str(getattr(suggestion, "case_entity", "") or "").strip()
@@ -670,7 +672,7 @@ def build_interpretation_seed_from_photo_screenshot(
     )
 
 
-def build_interpretation_notice_diagnostics_text(diagnostics: MetadataExtractionDiagnostics) -> str:
+def build_interpretation_notice_diagnostics_text(diagnostics: "MetadataExtractionDiagnostics") -> str:
     page_label = ", ".join(str(page) for page in diagnostics.page_numbers) or "1"
     embedded_label = (
         f"found on page(s) {', '.join(str(page) for page in diagnostics.embedded_text_pages)}"

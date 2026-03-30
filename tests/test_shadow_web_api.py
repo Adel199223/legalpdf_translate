@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import io
+import json
 from pathlib import Path
+import re
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 import legalpdf_translate.browser_app_service as browser_app_service
+from legalpdf_translate.browser_gmail_bridge import BrowserLiveBridgeSyncResult
+from legalpdf_translate.power_tools_service import generate_browser_run_report
 import legalpdf_translate.shadow_web.app as shadow_app_module
 from legalpdf_translate.build_identity import RuntimeBuildIdentity
 from legalpdf_translate.interpretation_service import InterpretationValidationError
-from legalpdf_translate.shadow_runtime import BrowserDataPaths, ShadowRuntimePaths
-from legalpdf_translate.word_automation import WordAutomationResult
+from legalpdf_translate.shadow_runtime import BrowserDataPaths, ShadowListenerOwnership, ShadowRuntimePaths
+
+
+_ORIGINAL_BUILD_BROWSER_PROVIDER_STATE = shadow_app_module.build_browser_provider_state
 
 
 def _identity() -> RuntimeBuildIdentity:
@@ -55,6 +63,36 @@ def _browser_data_paths(tmp_path: Path, mode: str) -> BrowserDataPaths:
     )
 
 
+def _native_host_state(*, ready: bool = True, repairable: bool = True) -> dict[str, object]:
+    return {
+        "configured": True,
+        "ready": ready,
+        "reason": "native_host_ready" if ready else "native_host_manifest_drift",
+        "message": "Edge native host is registered and passed self-test." if ready else "Edge native host needs repair.",
+        "registry_key_path": r"HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.legalpdf.gmail_focus",
+        "registered_manifest_path": "C:/tmp/native_host.edge.json",
+        "expected_manifest_path": "C:/tmp/native_host.edge.json",
+        "manifest_exists": True,
+        "manifest_matches_expected": ready,
+        "registered_host_path": "C:/tmp/LegalPDFGmailFocusHost.cmd",
+        "host_exists": True,
+        "wrapper_path": "C:/tmp/LegalPDFGmailFocusHost.cmd",
+        "wrapper_exists": True,
+        "wrapper_target_python": "C:/tmp/python.exe",
+        "self_test_ok": ready,
+        "self_test_status": "ok" if ready else "failed",
+        "self_test_reason": "native_host_self_test_ok" if ready else "native_host_self_test_failed",
+        "self_test_payload": {"ok": ready},
+        "repair_supported": True,
+        "repairable": repairable,
+        "repair_reason": "packaged_host_ready" if repairable else "launch_runtime_broken",
+        "repair_target_kind": "checkout_wrapper",
+        "repair_target_python": "C:/tmp/python.exe",
+        "repair_recommended": not ready and repairable,
+        "current_runtime_python": "C:/tmp/python.exe",
+    }
+
+
 def _build_app(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setattr(shadow_app_module, "detect_runtime_build_identity", lambda **kwargs: _identity())
     monkeypatch.setattr(
@@ -77,14 +115,32 @@ def _build_app(tmp_path: Path, monkeypatch) -> TestClient:
         "detect_browser_data_paths",
         lambda mode, **kwargs: _browser_data_paths(tmp_path, mode),
     )
+    if shadow_app_module.build_browser_provider_state is _ORIGINAL_BUILD_BROWSER_PROVIDER_STATE:
+        monkeypatch.setattr(
+            shadow_app_module,
+            "build_browser_provider_state",
+            lambda **kwargs: {"native_host": _native_host_state()},
+        )
     app = shadow_app_module.create_shadow_app(repo_root=tmp_path, port=8877, enable_live_gmail_bridge=False)
     return TestClient(app)
+
+
+def test_compute_browser_asset_version_changes_for_dirty_static_edits(tmp_path: Path) -> None:
+    static_dir = tmp_path / "static"
+    static_dir.mkdir(parents=True, exist_ok=True)
+    target = static_dir / "browser_pdf.js"
+    target.write_text("console.log('one');\n", encoding="utf-8")
+    version_one = shadow_app_module.compute_browser_asset_version(static_dir)
+    target.write_text("console.log('two');\n", encoding="utf-8")
+    version_two = shadow_app_module.compute_browser_asset_version(static_dir)
+    assert version_one != version_two
 
 
 def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> None:
     with _build_app(tmp_path, monkeypatch) as client:
         bootstrap = client.get("/api/bootstrap")
         assert bootstrap.status_code == 200
+        assert bootstrap.headers["cache-control"] == "no-store"
         bootstrap_payload = bootstrap.json()
         assert bootstrap_payload["status"] == "ok"
         assert bootstrap_payload["normalized_payload"]["runtime"]["port"] == 8877
@@ -140,9 +196,19 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
     with _build_app(tmp_path, monkeypatch) as client:
         response = client.get("/")
         assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
         text = response.text
+        match = re.search(r'assetVersion: "([^"]+)"', text)
+        assert match is not None
+        asset_version = match.group(1)
+        assert f'href="http://testserver/static-build/{asset_version}/style.css"' in text
+        assert f'src="http://testserver/static-build/{asset_version}/app.js"' in text
+        assert f'staticBasePath: "http://testserver/static-build/{asset_version}/"' in text
         assert 'defaultRuntimeMode: "live"' in text
         assert 'defaultUiVariant: "qt"' in text
+        assert "LEGALPDF_BROWSER_CLIENT_READY" in text
+        assert 'document.body.dataset.clientReady = "warming"' in text
+        assert 'document.body.dataset.clientWorkspace = workspaceId' in text
         assert "Simple Workspace Shell" in text
         assert 'data-view="gmail-intake"' in text
         assert 'data-view="new-job"' in text
@@ -211,9 +277,23 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert "Finish Translation" in text
         assert "Completion Surface" in text
         assert "Export Review Queue" in text
+        assert 'id="settings-credentials-section"' in text
+        assert 'id="settings-translation-key-input"' in text
+        assert 'id="settings-save-translation-key"' in text
+        assert 'id="settings-clear-translation-key"' in text
+        assert 'id="settings-ocr-key-input"' in text
+        assert 'id="settings-save-ocr-key"' in text
+        assert 'id="settings-clear-ocr-key"' in text
+        assert 'id="settings-native-host-state"' in text
+        assert 'id="settings-test-native-host"' in text
+        assert 'id="settings-repair-native-host"' in text
+        assert 'id="settings-word-pdf-export-state"' in text
+        assert 'id="settings-test-word-pdf"' in text
+        assert "Credential Recovery" in text
         assert 'id="gmail-batch-finalize-drawer"' in text
         assert 'id="gmail-batch-finalize-drawer-backdrop"' in text
         assert 'id="gmail-batch-finalize-run"' in text
+        assert 'id="gmail-batch-finalize-report"' in text
         assert "Finalize Gmail Batch" in text
         assert "Run Metrics (auto-filled)" in text
         assert "Amounts (EUR)" in text
@@ -398,6 +478,138 @@ def test_shadow_web_bootstrap_includes_gmail_workspace_payload(tmp_path: Path, m
         assert payload["normalized_payload"]["extension_lab"]["prepare_reason_catalog"]
 
 
+def test_shadow_web_shell_bootstrap_returns_gmail_bridge_state_and_refreshes_runtime_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    listener_state = {
+        "current": ShadowListenerOwnership(
+            host="127.0.0.1",
+            port=8877,
+            status="available",
+            pid=None,
+            reason="no_listener",
+        )
+    }
+
+    def _classify_listener(**_kwargs):
+        return listener_state["current"]
+
+    monkeypatch.setattr(shadow_app_module, "classify_shadow_listener", _classify_listener)
+    monkeypatch.setattr(
+        shadow_app_module,
+        "prepare_gmail_intake",
+        lambda **_kwargs: {
+            "ok": True,
+            "reason": "browser_bridge_owner_ready",
+            "ui_owner": "browser_app",
+            "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+            "workspace_id": "gmail-intake",
+            "runtime_mode": "live",
+            "bridgePort": 8765,
+        },
+    )
+    monkeypatch.setattr(
+        shadow_app_module,
+        "inspect_edge_native_host",
+        lambda **kwargs: _native_host_state(),
+    )
+    monkeypatch.setattr(
+        shadow_app_module,
+        "document_runtime_state_payload",
+        lambda: {
+            "status": "browser_bundle_only",
+            "native_pdf_available": False,
+            "browser_pdf_bundle_supported": True,
+            "reason": "native_pdf_runtime_blocked",
+            "message": "Native PDF helpers are unavailable in this runtime, but browser PDF staging remains available.",
+        },
+    )
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        runtime_metadata_path = _runtime_paths(tmp_path).runtime_metadata_path
+        initial_payload = json.loads(runtime_metadata_path.read_text(encoding="utf-8"))
+        assert initial_payload["listener_ownership"]["status"] == "available"
+
+        client.app.state.shadow_context.live_gmail_bridge._last_result = BrowserLiveBridgeSyncResult(
+            status="ready",
+            reason="browser_bridge_owner_ready",
+            bridge_enabled=True,
+            bridge_port=8765,
+            owner_kind="browser_app",
+            browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+            workspace_id="gmail-intake",
+            started=False,
+            registration_ok=True,
+            registration_reason="already_registered",
+        )
+        listener_state["current"] = ShadowListenerOwnership(
+            host="127.0.0.1",
+            port=8877,
+            status="owned_by_self",
+            pid=4242,
+            reason="listener_owned_by_current_process",
+        )
+
+        response = client.get("/api/bootstrap/shell", params={"mode": "live", "workspace": "gmail-intake"})
+        payload = response.json()
+
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert payload["status"] == "ok"
+        assert payload["normalized_payload"]["shell"]["ready"] is True
+        assert payload["normalized_payload"]["shell"]["native_host_ready"] is True
+        assert payload["normalized_payload"]["shell"]["asset_version"]
+        assert payload["normalized_payload"]["gmail"]["defaults"]["workflow_kind"] == "translation"
+        assert payload["normalized_payload"]["document_runtime"]["browser_pdf_bundle_supported"] is True
+        assert payload["normalized_payload"]["native_host"]["ready"] is True
+        assert payload["capability_flags"]["native_host"]["status"] == "ok"
+        assert payload["capability_flags"]["document_runtime"]["status"] == "warn"
+        assert payload["capability_flags"]["gmail_bridge"]["reason"] == "browser_bridge_owner_ready"
+        assert payload["capability_flags"]["gmail_bridge"]["current_mode"]["prepare_response"]["browser_url"].startswith(
+            "http://127.0.0.1:8877/"
+        )
+        assert payload["diagnostics"]["gmail_bridge_sync"]["reason"] == "browser_bridge_owner_ready"
+        assert payload["diagnostics"]["native_host"]["self_test_status"] == "ok"
+
+        refreshed_payload = json.loads(runtime_metadata_path.read_text(encoding="utf-8"))
+        assert refreshed_payload["listener_ownership"]["status"] == "owned_by_self"
+        assert refreshed_payload["listener_ownership"]["reason"] == "listener_owned_by_current_process"
+
+
+def test_merge_response_uses_explicit_capability_flags_without_recomputing(tmp_path: Path, monkeypatch) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        context = client.app.state.shadow_context
+        target = shadow_app_module.ActiveBrowserTarget(
+            mode="live",
+            workspace_id="gmail-intake",
+            data_paths=_browser_data_paths(tmp_path, "live"),
+        )
+        monkeypatch.setattr(
+            shadow_app_module,
+            "_runtime_diagnostics",
+            lambda *_args, **_kwargs: {"listener_ownership": {"status": "owned_by_self"}},
+        )
+        monkeypatch.setattr(
+            shadow_app_module,
+            "_browser_capability_flags",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("capability flags should not be recomputed")),
+        )
+
+        merged = shadow_app_module._merge_response(
+            context,
+            target,
+            {
+                "status": "ok",
+                "normalized_payload": {"sample": True},
+                "diagnostics": {},
+                "capability_flags": {"native_host": {"status": "ok"}},
+            },
+        )
+
+        assert merged["capability_flags"] == {"native_host": {"status": "ok"}}
+
+
 def test_shadow_web_bootstrap_and_capabilities_share_hydrated_capability_snapshot(tmp_path: Path, monkeypatch) -> None:
     shadow_paths = _browser_data_paths(tmp_path, "shadow")
     live_paths = _browser_data_paths(tmp_path, "live")
@@ -434,15 +646,37 @@ def test_shadow_web_bootstrap_and_capabilities_share_hydrated_capability_snapsho
         lambda mode, **kwargs: live_paths if mode == "live" else shadow_paths,
     )
     monkeypatch.setattr(
+        browser_app_service,
+        "build_translation_capability_flags",
+        lambda **kwargs: {
+            "translation": {
+                "status": "ready",
+                "credentials_configured": True,
+                "credential_source": {"kind": "stored", "name": ""},
+                "auth_test_supported": True,
+            }
+        },
+    )
+    monkeypatch.setattr(
         shadow_app_module,
-        "probe_word_pdf_export_support",
-        lambda **kwargs: WordAutomationResult(
-            ok=True,
-            action="probe",
-            message="Word PDF export is ready.",
-            failure_code="",
-            details="",
-        ),
+        "build_browser_provider_state",
+        lambda **kwargs: {
+            "native_host": _native_host_state(),
+            "word_pdf_export": {
+                "ok": True,
+                "finalization_ready": True,
+                "message": "Word PDF export canary passed.",
+                "failure_code": "",
+                "details": "",
+                "elapsed_ms": 1,
+                "launch_preflight": {"ok": True, "message": "Launch ready", "failure_code": "", "details": ""},
+                "export_canary": {"ok": True, "message": "Canary ready", "failure_code": "", "details": ""},
+                "preflight": {"ok": True, "message": "Launch ready", "failure_code": "", "details": ""},
+                "last_checked_at": "2026-03-30T18:00:00+00:00",
+                "cache_ttl_seconds": 60,
+                "used_cache": False,
+            },
+        },
     )
 
     with _build_app(tmp_path, monkeypatch) as client:
@@ -454,11 +688,18 @@ def test_shadow_web_bootstrap_and_capabilities_share_hydrated_capability_snapsho
         assert bootstrap.status_code == 200
         assert capabilities.status_code == 200
         assert bootstrap_payload["capability_flags"]["word_pdf_export"]["preflight"]["ok"] is True
+        assert bootstrap_payload["capability_flags"]["word_pdf_export"]["launch_preflight"]["ok"] is True
+        assert bootstrap_payload["capability_flags"]["word_pdf_export"]["export_canary"]["ok"] is True
+        assert bootstrap_payload["capability_flags"]["word_pdf_export"]["finalization_ready"] is True
         assert capabilities_payload["capability_flags"]["word_pdf_export"]["preflight"]["ok"] is True
         assert bootstrap_payload["capability_flags"]["browser_automation"] == capabilities_payload["capability_flags"]["browser_automation"]
         assert bootstrap_payload["capability_flags"]["gmail_bridge"]["status"] == "info"
         assert capabilities_payload["capability_flags"]["gmail_bridge"]["status"] == "info"
         assert bootstrap_payload["capability_flags"]["gmail_bridge"]["message"] == "Disabled in isolated test mode; the live app Gmail bridge is ready."
+        assert bootstrap_payload["capability_flags"]["translation"]["credentials_configured"] is True
+        assert capabilities_payload["capability_flags"]["translation"]["credential_source"] == {"kind": "stored", "name": ""}
+        assert bootstrap_payload["capability_flags"]["native_host"]["status"] == "ok"
+        assert capabilities_payload["capability_flags"]["native_host"]["self_test_status"] == "ok"
         assert capabilities_payload["normalized_payload"]["extension_lab"]["bridge_context"]["live_desktop"]["ready"] is True
 
 
@@ -677,6 +918,27 @@ def test_shadow_web_gmail_finalize_routes_and_attachment_file(tmp_path: Path, mo
             "capability_flags": {},
         }
 
+    def _preflight_batch_finalization(self, *, runtime_mode, workspace_id, settings_path, force_refresh):
+        recorded["preflight_batch_finalization"] = {
+            "runtime_mode": runtime_mode,
+            "workspace_id": workspace_id,
+            "settings_path": str(settings_path),
+            "force_refresh": force_refresh,
+        }
+        return {
+            "status": "blocked_word_pdf_export" if force_refresh else "ok",
+            "normalized_payload": {
+                "finalization_state": "blocked_word_pdf_export" if force_refresh else "ready_to_finalize",
+                "finalization_preflight": {
+                    "finalization_ready": not force_refresh,
+                    "message": "Word export canary passed." if not force_refresh else "Word PDF export canary timed out.",
+                },
+                "active_session": {"kind": "translation", "completed": True},
+            },
+            "diagnostics": {"word_pdf_export": {"finalization_ready": not force_refresh}},
+            "capability_flags": {},
+        }
+
     def _finalize_interpretation(
         self,
         *,
@@ -718,6 +980,7 @@ def test_shadow_web_gmail_finalize_routes_and_attachment_file(tmp_path: Path, mo
 
     monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "confirm_current_batch_translation", _confirm_current)
     monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "finalize_batch", _finalize_batch)
+    monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "preflight_batch_finalization", _preflight_batch_finalization)
     monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "finalize_interpretation", _finalize_interpretation)
     monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "current_attachment_file", _current_attachment_file)
 
@@ -744,6 +1007,16 @@ def test_shadow_web_gmail_finalize_routes_and_attachment_file(tmp_path: Path, mo
         assert batch_payload["normalized_payload"]["gmail_draft_result"]["ok"] is True
         assert recorded["finalize_batch"]["output_filename"] == "gmail_batch.docx"
 
+        preflight_response = client.post(
+            "/api/gmail/batch/finalize-preflight",
+            json={"force_refresh": True},
+        )
+        preflight_payload = preflight_response.json()
+        assert preflight_response.status_code == 200
+        assert preflight_payload["status"] == "blocked_word_pdf_export"
+        assert preflight_payload["normalized_payload"]["finalization_preflight"]["finalization_ready"] is False
+        assert recorded["preflight_batch_finalization"]["force_refresh"] is True
+
         interpretation_response = client.post(
             "/api/gmail/interpretation/finalize",
             json={
@@ -764,7 +1037,123 @@ def test_shadow_web_gmail_finalize_routes_and_attachment_file(tmp_path: Path, mo
         attachment_response = client.get("/api/gmail/attachment/att-1")
         assert attachment_response.status_code == 200
         assert attachment_response.headers["content-type"].startswith("application/pdf")
+        assert attachment_response.headers["content-disposition"].startswith("inline;")
         assert recorded["attachment_file"]["attachment_id"] == "att-1"
+
+
+def test_shadow_web_gmail_preview_route_keeps_inline_pdf_contract(tmp_path: Path, monkeypatch) -> None:
+    preview_file = tmp_path / "preview.pdf"
+    preview_file.write_bytes(b"%PDF-1.7\n")
+    recorded: dict[str, object] = {}
+
+    def _preview_attachment(self, *, runtime_mode, workspace_id, settings_path, attachment_id):
+        recorded["preview_attachment"] = {
+            "runtime_mode": runtime_mode,
+            "workspace_id": workspace_id,
+            "settings_path": str(settings_path),
+            "attachment_id": attachment_id,
+        }
+        return {
+            "status": "ok",
+            "normalized_payload": {
+                "attachment": {
+                    "attachment_id": attachment_id,
+                    "filename": "preview.pdf",
+                    "mime_type": "application/pdf",
+                    "size_bytes": preview_file.stat().st_size,
+                },
+                "page_count": 5,
+                "preview_path": str(preview_file),
+            },
+            "diagnostics": {},
+            "capability_flags": {},
+        }
+
+    def _current_attachment_file(self, *, runtime_mode, workspace_id, attachment_id):
+        recorded["current_attachment_file"] = {
+            "runtime_mode": runtime_mode,
+            "workspace_id": workspace_id,
+            "attachment_id": attachment_id,
+        }
+        return preview_file
+
+    monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "preview_attachment", _preview_attachment)
+    monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "current_attachment_file", _current_attachment_file)
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        preview_response = client.post("/api/gmail/preview-attachment", json={"attachment_id": "att-preview"})
+        preview_payload = preview_response.json()
+        assert preview_response.status_code == 200
+        assert preview_payload["normalized_payload"]["preview_href"].startswith("/api/gmail/attachment/att-preview?")
+        assert recorded["preview_attachment"]["attachment_id"] == "att-preview"
+
+        attachment_response = client.get(preview_payload["normalized_payload"]["preview_href"])
+        assert attachment_response.status_code == 200
+        assert attachment_response.headers["content-type"].startswith("application/pdf")
+        assert attachment_response.headers["content-disposition"].startswith("inline;")
+        assert recorded["current_attachment_file"]["attachment_id"] == "att-preview"
+
+
+def test_shadow_web_gmail_image_attachment_route_is_inline(tmp_path: Path, monkeypatch) -> None:
+    image_file = tmp_path / "preview.png"
+    image_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    monkeypatch.setattr(
+        shadow_app_module.GmailBrowserSessionManager,
+        "current_attachment_file",
+        lambda self, **kwargs: image_file,
+    )
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.get("/api/gmail/attachment/att-image")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("image/png")
+        assert response.headers["content-disposition"].startswith("inline;")
+
+
+def test_shadow_web_browser_pdf_bundle_route_writes_bundle_and_updates_gmail_cache(tmp_path: Path, monkeypatch) -> None:
+    source_pdf = tmp_path / "bundle-source.pdf"
+    source_pdf.write_bytes(b"%PDF-1.7\n")
+    image = Image.new("RGB", (24, 18), color=(255, 255, 255))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/api/browser-pdf/bundle",
+            data={
+                "manifest": json.dumps(
+                    {
+                        "source_path": str(source_pdf),
+                        "attachment_id": "att-bundle",
+                        "page_count": 1,
+                        "pages": [
+                            {
+                                "page_number": 1,
+                                "file_name": "page_0001.png",
+                                "mime_type": "image/png",
+                                "width_px": 24,
+                                "height_px": 18,
+                            }
+                        ],
+                    }
+                ),
+            },
+            files={
+                "page_images": ("page_0001.png", buffer.getvalue(), "image/png"),
+            },
+        )
+        payload = response.json()
+        assert response.status_code == 200
+        assert payload["normalized_payload"]["page_count"] == 1
+        manifest_path = Path(payload["normalized_payload"]["manifest_path"])
+        assert manifest_path.exists()
+        workspace = client.app.state.shadow_context.gmail_sessions._workspace(
+            runtime_mode="live",
+            workspace_id="workspace-1",
+        )
+        assert workspace.preview_page_counts["att-bundle"] == 1
+        assert workspace.preview_paths["att-bundle"] == source_pdf.resolve()
 
 
 def test_shadow_web_translation_bootstrap_and_save_history_flow(tmp_path: Path, monkeypatch) -> None:
@@ -833,7 +1222,15 @@ def test_shadow_web_settings_and_power_tools_routes(tmp_path: Path, monkeypatch)
         return {
             "settings_admin": {
                 "form_values": {"default_lang": "EN", "ocr_api_provider": "openai"},
-                "provider_state": {"ocr": {"provider": "openai", "api_configured": True}},
+                "provider_state": {
+                    "translation": {
+                        "credentials_configured": True,
+                        "effective_credential_source": {"kind": "stored", "name": ""},
+                        "auth_test_supported": True,
+                    },
+                    "ocr": {"provider": "openai", "api_configured": True},
+                    "native_host": _native_host_state(),
+                },
             },
             "power_tools": {
                 "glossary": {"project_glossary_path": str(data_paths.app_data_dir / "project.json")},
@@ -850,7 +1247,64 @@ def test_shadow_web_settings_and_power_tools_routes(tmp_path: Path, monkeypatch)
         lambda **kwargs: {
             "status": "ok",
             "normalized_payload": {"saved": True, "form_values": {"default_lang": "FR"}},
-            "diagnostics": {"provider_state": {"ocr": {"provider": "openai", "api_configured": True}}},
+            "diagnostics": {
+                "provider_state": {
+                    "translation": {
+                        "credentials_configured": True,
+                        "effective_credential_source": {"kind": "stored", "name": ""},
+                        "auth_test_supported": True,
+                    },
+                    "ocr": {"provider": "openai", "api_configured": True},
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        shadow_app_module,
+        "run_settings_preflight",
+        lambda **kwargs: {
+            "status": "ok",
+            "normalized_payload": {
+                "translation": {
+                    "credentials_configured": True,
+                    "effective_credential_source": {"kind": "stored", "name": ""},
+                    "auth_test_supported": True,
+                },
+                "ocr": {"provider": "openai", "api_configured": True, "local_available": False},
+                "gmail_draft": {"ready": True, "message": "Ready"},
+                "word_pdf_export": {"ok": True, "message": "Ready"},
+                "native_host": _native_host_state(),
+            },
+            "diagnostics": {},
+        },
+    )
+    monkeypatch.setattr(
+        shadow_app_module,
+        "run_translation_provider_test",
+        lambda **kwargs: {
+            "status": "failed",
+            "normalized_payload": {
+                "ok": False,
+                "status": "unauthorized",
+                "message": "OpenAI authentication failed.",
+                "credential_source": {"kind": "env", "name": "OPENAI_API_KEY"},
+                "status_code": 401,
+                "exception_class": "AuthenticationError",
+            },
+            "diagnostics": {},
+        },
+    )
+    monkeypatch.setattr(
+        shadow_app_module,
+        "run_ocr_provider_test",
+        lambda **kwargs: {
+            "status": "ok",
+            "normalized_payload": {
+                "provider": "openai",
+                "source": {"kind": "stored", "name": "ocr_api_key"},
+                "message": "OCR provider test passed.",
+            },
+            "diagnostics": {},
         },
     )
     monkeypatch.setattr(
@@ -868,12 +1322,40 @@ def test_shadow_web_settings_and_power_tools_routes(tmp_path: Path, monkeypatch)
         settings_payload = settings_admin.json()
         assert settings_admin.status_code == 200
         assert settings_payload["normalized_payload"]["form_values"]["default_lang"] == "EN"
+        assert settings_payload["normalized_payload"]["provider_state"]["translation"]["credentials_configured"] is True
+        assert settings_payload["capability_flags"]["native_host"]["status"] == "ok"
 
         settings_save = client.post("/api/settings/save", json={"form_values": {"default_lang": "FR"}})
         save_payload = settings_save.json()
         assert settings_save.status_code == 200
         assert save_payload["normalized_payload"]["saved"] is True
         assert save_payload["normalized_payload"]["form_values"]["default_lang"] == "FR"
+        assert save_payload["diagnostics"]["provider_state"]["translation"]["auth_test_supported"] is True
+
+        settings_preflight = client.post("/api/settings/preflight", json={})
+        preflight_payload = settings_preflight.json()
+        assert settings_preflight.status_code == 200
+        assert preflight_payload["normalized_payload"]["translation"]["effective_credential_source"] == {"kind": "stored", "name": ""}
+        assert preflight_payload["normalized_payload"]["native_host"]["ready"] is True
+
+        translation_test = client.post("/api/settings/translation-test", json={})
+        translation_test_payload = translation_test.json()
+        assert translation_test.status_code == 200
+        assert translation_test_payload["status"] == "failed"
+        assert translation_test_payload["normalized_payload"]["status"] == "unauthorized"
+        assert translation_test_payload["normalized_payload"]["status_code"] == 401
+
+        translation_test_empty = client.post("/api/settings/translation-test")
+        translation_test_empty_payload = translation_test_empty.json()
+        assert translation_test_empty.status_code == 200
+        assert translation_test_empty_payload["status"] == "failed"
+        assert translation_test_empty_payload["normalized_payload"]["status"] == "unauthorized"
+
+        ocr_test_empty = client.post("/api/settings/ocr-test")
+        ocr_test_empty_payload = ocr_test_empty.json()
+        assert ocr_test_empty.status_code == 200
+        assert ocr_test_empty_payload["status"] == "ok"
+        assert ocr_test_empty_payload["normalized_payload"]["provider"] == "openai"
 
         power_bootstrap = client.get("/api/power-tools/bootstrap")
         power_payload = power_bootstrap.json()
@@ -884,6 +1366,165 @@ def test_shadow_web_settings_and_power_tools_routes(tmp_path: Path, monkeypatch)
         bundle_payload = debug_bundle.json()
         assert debug_bundle.status_code == 200
         assert bundle_payload["normalized_payload"]["bundle_path"].endswith(".zip")
+
+
+def test_shadow_web_settings_key_routes_delegate_to_secure_store_services(tmp_path: Path, monkeypatch) -> None:
+    recorded: dict[str, object] = {}
+
+    def _provider_state() -> dict[str, object]:
+        return {
+            "translation": {
+                "credentials_configured": True,
+                "stored_credential_configured": True,
+                "effective_credential_source": {"kind": "stored", "name": ""},
+                "auth_test_supported": True,
+            },
+            "ocr": {
+                "provider": "openai",
+                "stored_credential_configured": True,
+                "translation_fallback_configured": True,
+                "effective_credential_source": {"kind": "stored", "name": "ocr_api_key"},
+                "api_configured": True,
+                "local_available": False,
+                "auth_test_supported": True,
+            },
+            "gmail_draft": {"ready": True, "message": "Ready"},
+            "word_pdf_export": {"ok": True, "message": "Ready"},
+            "native_host": _native_host_state(),
+        }
+
+    def _save_translation(**kwargs):
+        recorded["save_translation"] = kwargs
+        return {
+            "status": "ok",
+            "normalized_payload": {"saved": True, "provider_state": _provider_state(), "message": "saved translation"},
+            "diagnostics": {"provider_state": _provider_state()},
+        }
+
+    def _clear_translation(**kwargs):
+        recorded["clear_translation"] = kwargs
+        return {
+            "status": "ok",
+            "normalized_payload": {"cleared": True, "provider_state": _provider_state(), "message": "cleared translation"},
+            "diagnostics": {"provider_state": _provider_state()},
+        }
+
+    def _save_ocr(**kwargs):
+        recorded["save_ocr"] = kwargs
+        return {
+            "status": "ok",
+            "normalized_payload": {"saved": True, "provider_state": _provider_state(), "message": "saved ocr"},
+            "diagnostics": {"provider_state": _provider_state()},
+        }
+
+    def _clear_ocr(**kwargs):
+        recorded["clear_ocr"] = kwargs
+        return {
+            "status": "ok",
+            "normalized_payload": {"cleared": True, "provider_state": _provider_state(), "message": "cleared ocr"},
+            "diagnostics": {"provider_state": _provider_state()},
+        }
+
+    def _native_host_test(**kwargs):
+        recorded["native_host_test"] = kwargs
+        return {
+            "status": "ok",
+            "normalized_payload": {"native_host": _native_host_state(), "provider_state": _provider_state(), "message": "tested native host"},
+            "diagnostics": {"provider_state": _provider_state()},
+        }
+
+    def _native_host_repair(**kwargs):
+        recorded["native_host_repair"] = kwargs
+        return {
+            "status": "ok",
+            "normalized_payload": {
+                "native_host": _native_host_state(),
+                "repair_result": {"ok": True, "changed": True, "reason": "registered"},
+                "provider_state": _provider_state(),
+                "message": "repaired native host",
+            },
+            "diagnostics": {"provider_state": _provider_state()},
+        }
+
+    def _word_pdf_test(**kwargs):
+        recorded["word_pdf_test"] = kwargs
+        return {
+            "status": "ok",
+            "normalized_payload": {
+                "word_pdf_export": {"finalization_ready": True, "message": "Word PDF export canary passed."},
+                "finalization_ready": True,
+                "provider_state": _provider_state(),
+                "message": "tested word pdf",
+            },
+            "diagnostics": {"provider_state": _provider_state()},
+        }
+
+    monkeypatch.setattr(
+        shadow_app_module,
+        "save_browser_translation_key",
+        _save_translation,
+    )
+    monkeypatch.setattr(
+        shadow_app_module,
+        "clear_browser_translation_key",
+        _clear_translation,
+    )
+    monkeypatch.setattr(
+        shadow_app_module,
+        "save_browser_ocr_key",
+        _save_ocr,
+    )
+    monkeypatch.setattr(
+        shadow_app_module,
+        "clear_browser_ocr_key",
+        _clear_ocr,
+    )
+    monkeypatch.setattr(
+        shadow_app_module,
+        "run_native_host_test",
+        _native_host_test,
+    )
+    monkeypatch.setattr(
+        shadow_app_module,
+        "repair_browser_native_host",
+        _native_host_repair,
+    )
+    monkeypatch.setattr(
+        shadow_app_module,
+        "run_word_pdf_export_test",
+        _word_pdf_test,
+    )
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        save_translation = client.post("/api/settings/translation-key/save", json={"key": "sk-browser"})
+        clear_translation = client.post("/api/settings/translation-key/clear", json={})
+        save_ocr = client.post("/api/settings/ocr-key/save", json={"key": "ocr-browser"})
+        clear_ocr = client.post("/api/settings/ocr-key/clear", json={})
+        native_host_test = client.post("/api/settings/native-host-test", json={})
+        word_pdf_test = client.post("/api/settings/word-pdf-test", json={})
+        native_host_repair = client.post("/api/settings/native-host-repair", json={})
+
+    assert save_translation.status_code == 200
+    assert clear_translation.status_code == 200
+    assert save_ocr.status_code == 200
+    assert clear_ocr.status_code == 200
+    assert native_host_test.status_code == 200
+    assert word_pdf_test.status_code == 200
+    assert native_host_repair.status_code == 200
+    assert recorded["save_translation"]["key"] == "sk-browser"
+    assert recorded["save_translation"]["settings_path"].name == "settings.json"
+    assert recorded["save_ocr"]["key"] == "ocr-browser"
+    assert recorded["save_ocr"]["settings_path"].name == "settings.json"
+    assert recorded["native_host_test"]["settings_path"].name == "settings.json"
+    assert recorded["word_pdf_test"]["settings_path"].name == "settings.json"
+    assert recorded["native_host_repair"]["settings_path"].name == "settings.json"
+    assert save_translation.json()["normalized_payload"]["saved"] is True
+    assert clear_translation.json()["normalized_payload"]["cleared"] is True
+    assert save_ocr.json()["normalized_payload"]["saved"] is True
+    assert clear_ocr.json()["normalized_payload"]["cleared"] is True
+    assert native_host_test.json()["normalized_payload"]["native_host"]["ready"] is True
+    assert word_pdf_test.json()["normalized_payload"]["finalization_ready"] is True
+    assert native_host_repair.json()["normalized_payload"]["repair_result"]["changed"] is True
 
 
 def test_shadow_web_stage_four_action_routes_delegate_to_services(tmp_path: Path, monkeypatch) -> None:
@@ -909,7 +1550,7 @@ def test_shadow_web_stage_four_action_routes_delegate_to_services(tmp_path: Path
         recorded["report"] = kwargs
         return {
             "status": "ok",
-            "normalized_payload": {"report_path": "C:/tmp/run_report.md", "preview": "# report"},
+            "normalized_payload": {"report_kind": "run_report", "report_path": "C:/tmp/run_report.md", "preview": "# report"},
             "diagnostics": {},
         }
 
@@ -957,8 +1598,172 @@ def test_shadow_web_stage_four_action_routes_delegate_to_services(tmp_path: Path
         report = client.post("/api/power-tools/diagnostics/run-report", json={"run_dir": "C:/tmp/run-5"})
         report_payload = report.json()
         assert report.status_code == 200
+        assert report_payload["normalized_payload"]["report_kind"] == "run_report"
         assert report_payload["normalized_payload"]["report_path"] == "C:/tmp/run_report.md"
         assert recorded["report"]["run_dir_text"] == "C:/tmp/run-5"
+
+        browser_failure_report = client.post(
+            "/api/power-tools/diagnostics/run-report",
+            json={
+                "browser_failure_context": {
+                    "kind": "gmail_browser_failure",
+                    "operation": "gmail_prepare_session",
+                    "runtime_mode": "live",
+                    "workspace_id": "gmail-intake",
+                    "error": {
+                        "code": "browser_pdf_worker_load_failed",
+                        "message": "Browser PDF worker could not load.",
+                    },
+                },
+            },
+        )
+        browser_failure_payload = browser_failure_report.json()
+        assert browser_failure_report.status_code == 200
+        assert browser_failure_payload["normalized_payload"]["report_kind"] == "run_report"
+        assert recorded["report"]["browser_failure_context"]["operation"] == "gmail_prepare_session"
+
+        gmail_finalization_report = client.post(
+            "/api/power-tools/diagnostics/run-report",
+            json={
+                "gmail_finalization_context": {
+                    "kind": "gmail_finalization_report",
+                    "operation": "gmail_batch_finalize",
+                    "status": "local_only",
+                    "runtime_mode": "live",
+                    "workspace_id": "gmail-intake",
+                },
+            },
+        )
+        gmail_finalization_payload = gmail_finalization_report.json()
+        assert gmail_finalization_report.status_code == 200
+        assert gmail_finalization_payload["normalized_payload"]["report_kind"] == "run_report"
+        assert recorded["report"]["gmail_finalization_context"]["operation"] == "gmail_batch_finalize"
+
+
+def test_generate_browser_run_report_supports_browser_failure_context_without_run_dir(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+
+    payload = generate_browser_run_report(
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+        run_dir_text="",
+        browser_failure_context={
+            "kind": "gmail_browser_failure",
+            "operation": "gmail_prepare_session",
+            "runtime_mode": "live",
+            "workspace_id": "gmail-intake",
+            "build_sha": "6e823b2",
+            "asset_version": "asset-20260330",
+            "error": {
+                "code": "browser_pdf_worker_load_failed",
+                "message": "Browser PDF worker could not load.",
+                "diagnostics": {
+                    "attempted_url": "http://127.0.0.1:8877/static/vendor/pdfjs/vendor/pdfjs/pdf.worker.mjs?v=6e823b2",
+                    "worker_url": "http://127.0.0.1:8877/static/vendor/pdfjs/pdf.worker.mjs?v=6e823b2",
+                },
+            },
+            "attachments": [
+                {
+                    "attachment_id": "att-1",
+                    "filename": "sentenca.pdf",
+                    "selected": True,
+                    "start_page": 1,
+                },
+            ],
+        },
+    )
+
+    normalized = payload["normalized_payload"]
+    assert normalized["report_kind"] == "browser_failure_report"
+    report_path = Path(normalized["report_path"])
+    assert report_path.exists()
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "# Browser Failure Report" in report_text
+    assert '"operation": "gmail_prepare_session"' in report_text
+    assert '"browser_pdf_worker_load_failed"' in report_text
+    assert '"asset_version": "asset-20260330"' in report_text
+
+
+def test_generate_browser_run_report_supports_gmail_finalization_context_without_run_dir(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+
+    payload = generate_browser_run_report(
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+        run_dir_text="",
+        gmail_finalization_context={
+            "kind": "gmail_finalization_report",
+            "operation": "gmail_batch_finalize",
+            "status": "local_only",
+            "finalization_state": "local_artifacts_ready",
+            "runtime_mode": "live",
+            "workspace_id": "gmail-intake",
+            "build_sha": "6e823b2",
+            "asset_version": "asset-20260330",
+            "session": {
+                "session_id": "gmail_batch_04dc6f86b2de",
+                "message_id": "19d0bf7e8dccffc0",
+                "thread_id": "19d0bf7e8dccffc0",
+            },
+            "word_pdf_export": {
+                "finalization_ready": True,
+                "launch_preflight": {"ok": True, "message": "Word launched."},
+                "export_canary": {"ok": True, "message": "Word export canary passed."},
+            },
+            "actual_export": {
+                "failure_code": "timeout",
+                "failure_message": "Word PDF export timed out.",
+            },
+            "outcome": {
+                "docx_path": "C:/Users/FA507/Downloads/Requerimento_Honorarios_305_23.2GCBJA_20260330.docx",
+                "pdf_path": "",
+            },
+        },
+    )
+
+    normalized = payload["normalized_payload"]
+    assert normalized["report_kind"] == "gmail_finalization_report"
+    report_path = Path(normalized["report_path"])
+    assert report_path.exists()
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "# Gmail Finalization Report" in report_text
+    assert '"operation": "gmail_batch_finalize"' in report_text
+    assert '"finalization_state": "local_artifacts_ready"' in report_text
+    assert '"failure_code": "timeout"' in report_text
+
+
+def test_shadow_web_index_renders_static_base_bootstrap(tmp_path: Path, monkeypatch) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.get("/?mode=live&workspace=gmail-intake")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        body = response.text
+        match = re.search(r'assetVersion: "([^"]+)"', body)
+        assert match is not None
+        asset_version = match.group(1)
+        assert f'staticBasePath: "http://testserver/static-build/{asset_version}/"' in body
+        assert f'href="http://testserver/static-build/{asset_version}/style.css"' in body
+        assert f'src="http://testserver/static-build/{asset_version}/app.js"' in body
+
+
+def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tmp_path: Path, monkeypatch) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        shell = client.get("/api/bootstrap/shell", params={"mode": "live", "workspace": "gmail-intake"})
+        assert shell.status_code == 200
+        asset_version = shell.json()["normalized_payload"]["shell"]["asset_version"]
+        browser_pdf = client.get(f"/static-build/{asset_version}/browser_pdf.js")
+        assert browser_pdf.status_code == 200
+        assert "resolveBrowserPdfAssetUrls" in browser_pdf.text
+        worker = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.worker.mjs")
+        assert worker.status_code == 200
+        stale = client.get("/static-build/stale/browser_pdf.js")
+        assert stale.status_code == 404
 
 
 def test_shadow_web_translation_job_routes_use_manager_methods(tmp_path: Path, monkeypatch) -> None:
@@ -1086,6 +1891,74 @@ def test_shadow_web_translation_job_routes_use_manager_methods(tmp_path: Path, m
         assert rebuild.status_code == 200
         assert rebuild_payload["normalized_payload"]["job"]["job_kind"] == "rebuild"
         assert recorded["rebuild_job"]["job_id"] == "tx-stage2"
+
+
+def test_shadow_web_translation_route_surfaces_auth_failure_payload(tmp_path: Path, monkeypatch) -> None:
+    def _start_translate(self, *, runtime_mode, workspace_id, form_values, settings_path):
+        _ = form_values, settings_path
+        return {
+            "job_id": "tx-auth",
+            "job_kind": "translate",
+            "status": "failed",
+            "status_text": "OpenAI authentication failed",
+            "runtime_mode": runtime_mode,
+            "workspace_id": workspace_id,
+            "config": {"source_path": "C:/tmp/source.pdf"},
+            "progress": {"selected_index": 0, "selected_total": 1, "real_page": 0},
+            "diagnostics": {"kind": "translate"},
+            "logs": [],
+            "artifacts": {"run_summary_path": "C:/tmp/run_summary.json"},
+            "result": {
+                "success": False,
+                "error": "authentication_failure",
+                "failure_context": {
+                    "scope": "preflight",
+                    "status_code": 401,
+                    "credential_source": {"kind": "stored", "name": ""},
+                },
+            },
+            "actions": {"resume": True, "rebuild": True, "download_run_summary": True},
+        }
+
+    monkeypatch.setattr(shadow_app_module.TranslationJobManager, "start_translate", _start_translate)
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        start = client.post(
+            "/api/translation/jobs/translate",
+            json={
+                "mode": "live",
+                "workspace_id": "gmail-intake",
+                "form_values": {
+                    "source_path": "C:/tmp/source.pdf",
+                    "output_dir": str((tmp_path / "live" / "outputs").resolve()),
+                    "target_lang": "EN",
+                },
+            },
+        )
+        payload = start.json()
+
+        assert start.status_code == 200
+        assert payload["normalized_payload"]["job"]["status"] == "failed"
+        assert payload["normalized_payload"]["job"]["status_text"] == "OpenAI authentication failed"
+        assert payload["normalized_payload"]["job"]["result"]["error"] == "authentication_failure"
+        assert payload["normalized_payload"]["job"]["result"]["failure_context"]["scope"] == "preflight"
+
+
+def test_shadow_web_translation_artifact_route_keeps_download_headers(tmp_path: Path, monkeypatch) -> None:
+    artifact = tmp_path / "run_summary.json"
+    artifact.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        shadow_app_module.TranslationJobManager,
+        "job_artifact_path",
+        lambda self, **kwargs: artifact,
+    )
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.get("/api/translation/jobs/tx-artifact/artifact/run_summary")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/json")
+        assert response.headers["content-disposition"].startswith("attachment;")
 
 
 def test_shadow_web_notification_upload_route_uses_service_response(tmp_path: Path, monkeypatch) -> None:

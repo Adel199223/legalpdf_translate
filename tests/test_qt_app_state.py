@@ -1559,7 +1559,7 @@ def test_gmail_intake_bridge_starts_when_enabled(monkeypatch) -> None:
     monkeypatch.setattr(app_window_module, "LocalGmailIntakeBridge", _FakeBridge)
     monkeypatch.setattr(
         app_window_module,
-        "ensure_edge_native_host_registered",
+        "maybe_ensure_edge_native_host_registered",
         lambda *, base_dir: registration_calls.append(base_dir) or SimpleNamespace(
             ok=True,
             changed=True,
@@ -1580,6 +1580,33 @@ def test_gmail_intake_bridge_starts_when_enabled(monkeypatch) -> None:
         assert len(registration_calls) == 1
         assert "Gmail intake bridge listening on http://127.0.0.1:9011/gmail-intake." in window.log_text.toPlainText()
         assert "Edge Gmail focus helper registered for this user:" in window.log_text.toPlainText()
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_gmail_intake_bridge_skips_native_host_registration_in_pytest_runtime(monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    _FakeBridge.instances = []
+    settings = _base_gui_settings(
+        gmail_intake_bridge_enabled=True,
+        gmail_intake_bridge_token="stage-one-token",
+        gmail_intake_port=9011,
+    )
+    monkeypatch.setattr(app_window_module, "LocalGmailIntakeBridge", _FakeBridge)
+    monkeypatch.setattr(app_window_module, "load_gui_settings", lambda: dict(settings))
+    monkeypatch.setattr(app_window_module, "save_gui_settings", lambda _values: None)
+
+    window = QtMainWindow()
+    try:
+        assert len(_FakeBridge.instances) == 1
+        assert "Edge Gmail focus helper auto-registration skipped: skipped_pytest_runtime." in window.log_text.toPlainText()
     finally:
         window.close()
         window.deleteLater()
@@ -1841,7 +1868,7 @@ def test_workspace_controller_gmail_intake_reuses_last_active_pristine_workspace
     monkeypatch.setattr(app_window_module, "app_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
         app_window_module,
-        "ensure_edge_native_host_registered",
+        "maybe_ensure_edge_native_host_registered",
         lambda *, base_dir: SimpleNamespace(
             ok=True,
             changed=False,
@@ -1918,7 +1945,7 @@ def test_workspace_controller_gmail_intake_opens_new_window_for_occupied_workspa
     monkeypatch.setattr(app_window_module, "app_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
         app_window_module,
-        "ensure_edge_native_host_registered",
+        "maybe_ensure_edge_native_host_registered",
         lambda *, base_dir: SimpleNamespace(
             ok=True,
             changed=False,
@@ -1991,7 +2018,7 @@ def test_workspace_controller_reconfigures_gmail_bridge_without_overwriting_othe
     monkeypatch.setattr(app_window_module, "app_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
         app_window_module,
-        "ensure_edge_native_host_registered",
+        "maybe_ensure_edge_native_host_registered",
         lambda *, base_dir: SimpleNamespace(
             ok=True,
             changed=False,

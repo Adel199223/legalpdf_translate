@@ -155,6 +155,29 @@ async function runWithBusy(buttonIds, busyLabels, action) {
   }
 }
 
+async function fetchJsonAllowFailed(path, options = {}) {
+  try {
+    return await fetchJson(path, appState, options);
+  } catch (error) {
+    if (error?.isLocalServerUnavailable || Number(error?.status || 0) >= 500) {
+      throw error;
+    }
+    if (error?.payload && typeof error.payload === "object") {
+      return error.payload;
+    }
+    throw error;
+  }
+}
+
+function resolvePayloadMessage(payload, fallback) {
+  return String(
+    payload?.normalized_payload?.message
+    || payload?.diagnostics?.error
+    || payload?.diagnostics?.message
+    || fallback,
+  ).trim();
+}
+
 const settingsFieldMap = {
   "settings-default-lang": "default_lang",
   "settings-default-effort": "default_effort",
@@ -199,26 +222,152 @@ function renderProviderState(providerState, { preserveStatus = false } = {}) {
   if (!providerState) {
     return;
   }
-  const ocr = providerState.ocr || {};
-  const gmail = providerState.gmail_draft || {};
-  const word = providerState.word_pdf_export || {};
+  renderCredentialRecoveryState(providerState);
+  const readiness = buildSettingsReadinessSummary(providerState);
   if (!preserveStatus) {
-    const ocrReady = ocr.api_configured || ocr.local_available;
-    const wordReady = word.ok;
-    const tone = ocrReady && wordReady ? "ok" : "warn";
-    const parts = [
-      `OCR ${ocr.provider || "provider"} is ${ocrReady ? "usable" : "not ready"}.`,
-      `Gmail drafts are ${gmail.ready ? "ready" : "not ready"}.`,
-      `Word PDF export is ${wordReady ? "ready" : "degraded"}.`,
-    ];
-    setPanelStatus("settings", tone, parts.join(" "));
+    setPanelStatus("settings", readiness.tone, readiness.message);
   }
   if (!preserveStatus) {
     setDiagnostics("settings-test", providerState, {
-      hint: "Current OCR, Gmail draft, and Word host readiness.",
+      hint: readiness.hint,
       open: false,
     });
   }
+}
+
+function describeTranslationCredentialSource(translation = {}) {
+  const source = translation.effective_credential_source || translation.credential_source || {};
+  const kind = String(source.kind || "").trim();
+  const name = String(source.name || "").trim();
+  if (kind === "stored" && name === "ocr_api_key_fallback") {
+    return "stored OCR key fallback";
+  }
+  if (kind === "stored") {
+    return "stored translation key";
+  }
+  if (kind === "env") {
+    return name ? `env ${name}` : "environment variable";
+  }
+  if (kind === "inline") {
+    return "inline key";
+  }
+  if (kind === "missing") {
+    return "missing credentials";
+  }
+  return kind || "unknown source";
+}
+
+function describeOcrCredentialSource(ocr = {}) {
+  const source = ocr.effective_credential_source || {};
+  const kind = String(source.kind || "").trim();
+  const name = String(source.name || "").trim();
+  if (kind === "stored" && name === "openai_api_key_fallback") {
+    return "stored OpenAI translation key fallback";
+  }
+  if (kind === "stored") {
+    return "stored OCR key";
+  }
+  if (kind === "env") {
+    return name ? `env ${name}` : "environment variable";
+  }
+  if (kind === "missing") {
+    return "missing credentials";
+  }
+  return kind || "unknown source";
+}
+
+function describeNativeHostState(nativeHost = {}) {
+  if (nativeHost.ready === true) {
+    return "ready";
+  }
+  if (nativeHost.repairable === true) {
+    return "repairable from this browser runtime";
+  }
+  return "not repairable from this browser runtime";
+}
+
+function renderCredentialRecoveryState(providerState) {
+  const translation = providerState.translation || {};
+  const ocr = providerState.ocr || {};
+  const nativeHost = providerState.native_host || {};
+  const word = providerState.word_pdf_export || {};
+  const translationNode = qs("settings-translation-key-state");
+  if (translationNode) {
+    const storedState = translation.stored_credential_configured ? "yes" : "no";
+    const fallbackState = translation.ocr_fallback_configured ? "available" : "not available";
+    translationNode.textContent = [
+      `Stored translation key: ${storedState}.`,
+      `Stored OCR fallback: ${fallbackState}.`,
+      `Effective source: ${describeTranslationCredentialSource(translation)}.`,
+      "The browser never shows the stored key value.",
+    ].join(" ");
+  }
+  const ocrNode = qs("settings-ocr-key-state");
+  if (ocrNode) {
+    const storedState = ocr.stored_credential_configured ? "yes" : "no";
+    const fallbackState = ocr.translation_fallback_configured ? "available" : "not available";
+    ocrNode.textContent = [
+      `Stored OCR key: ${storedState}.`,
+      `OpenAI translation fallback: ${fallbackState}.`,
+      `Effective source: ${describeOcrCredentialSource(ocr)}.`,
+      "The browser never shows the stored key value.",
+    ].join(" ");
+  }
+  const nativeHostNode = qs("settings-native-host-state");
+  if (nativeHostNode) {
+    const wrapperTarget = String(nativeHost.wrapper_target_python || "").trim();
+    nativeHostNode.textContent = [
+      `Native host is ${describeNativeHostState(nativeHost)}.`,
+      `Self-test: ${nativeHost.self_test_status || "not run"}.`,
+      wrapperTarget ? `Wrapper target: ${wrapperTarget}.` : "",
+      nativeHost.message ? nativeHost.message : "",
+    ].filter(Boolean).join(" ");
+  }
+  const wordNode = qs("settings-word-pdf-export-state");
+  if (wordNode) {
+    const launchPreflight = word.launch_preflight || word.preflight || {};
+    const exportCanary = word.export_canary || {};
+    const lastCheckedAt = String(word.last_checked_at || "").trim();
+    wordNode.textContent = [
+      `Launch preflight: ${launchPreflight.ok === true ? "passed" : launchPreflight.ok === false ? "failed" : "not run"}.`,
+      `Export canary: ${exportCanary.ok === true ? "passed" : exportCanary.ok === false ? "failed" : "not run"}.`,
+      `Finalization ready: ${word.finalization_ready === true ? "yes" : "no"}.`,
+      lastCheckedAt ? `Checked at: ${lastCheckedAt}.` : "",
+      word.used_cache === true ? "Current view reused a cached readiness result." : "Current view is showing a fresh readiness result or no cached result.",
+      word.message ? String(word.message).trim() : "",
+    ].filter(Boolean).join(" ");
+  }
+}
+
+function buildSettingsReadinessSummary(providerState) {
+  const translation = providerState.translation || {};
+  const ocr = providerState.ocr || {};
+  const gmail = providerState.gmail_draft || {};
+  const word = providerState.word_pdf_export || {};
+  const wordLaunch = word.launch_preflight || word.preflight || {};
+  const wordCanary = word.export_canary || {};
+  const nativeHost = providerState.native_host || {};
+  const translationReady = translation.credentials_configured === true;
+  const ocrReady = ocr.api_configured || ocr.local_available;
+  const gmailReady = gmail.ready === true;
+  const wordReady = word.finalization_ready === true || word.ok === true;
+  const nativeHostReady = nativeHost.ready === true;
+  const tone = translationReady && ocrReady && gmailReady && wordReady && nativeHostReady ? "ok" : "warn";
+  const translationSource = describeTranslationCredentialSource(translation);
+  const ocrSource = describeOcrCredentialSource(ocr);
+  return {
+    tone,
+    message: [
+      `Native host is ${nativeHostReady ? "ready" : describeNativeHostState(nativeHost)}.`,
+      `Translation auth is ${translationReady ? `configured via ${translationSource}` : "not configured"}.`,
+      `OCR ${ocr.provider || "provider"} is ${ocrReady ? `usable via ${ocrSource}` : "not ready"}.`,
+      `Gmail drafts are ${gmailReady ? "ready" : "not ready"}.`,
+      `Word PDF export is ${wordReady ? "ready" : "degraded"}.`,
+      !wordReady && wordCanary.message ? `Export canary: ${wordCanary.message}.` : "",
+      !wordReady && wordLaunch.message ? `Launch preflight: ${wordLaunch.message}.` : "",
+    ].join(" "),
+    hint: "Current native-host, translation auth, OCR credential source, Gmail draft, and Word host readiness.",
+  };
 }
 
 function renderSettingsAdminPayload(settingsAdmin, { preserveStatus = false } = {}) {
@@ -480,34 +629,208 @@ async function handleSettingsSave() {
   });
 }
 
+async function handleTranslationKeySave() {
+  const payload = await fetchJsonAllowFailed("/api/settings/translation-key/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: fieldValue("settings-translation-key-input") }),
+  });
+  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
+  if (Object.keys(providerState).length) {
+    renderProviderState(providerState, { preserveStatus: true });
+  }
+  const message = resolvePayloadMessage(payload, "Translation key save completed.");
+  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
+  setPanelStatus("settings", tone, message);
+  setDiagnostics("settings-admin", payload, {
+    hint: message,
+    open: payload.status !== "ok",
+  });
+  if (payload.status === "ok") {
+    setFieldValue("settings-translation-key-input", "");
+    window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
+  }
+}
+
+async function handleTranslationKeyClear() {
+  const payload = await fetchJsonAllowFailed("/api/settings/translation-key/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
+  if (Object.keys(providerState).length) {
+    renderProviderState(providerState, { preserveStatus: true });
+  }
+  const message = resolvePayloadMessage(payload, "Translation key clear completed.");
+  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
+  setPanelStatus("settings", tone, message);
+  setDiagnostics("settings-admin", payload, {
+    hint: message,
+    open: payload.status !== "ok",
+  });
+  if (payload.status === "ok") {
+    setFieldValue("settings-translation-key-input", "");
+    window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
+  }
+}
+
+async function handleOcrKeySave() {
+  const payload = await fetchJsonAllowFailed("/api/settings/ocr-key/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: fieldValue("settings-ocr-key-input") }),
+  });
+  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
+  if (Object.keys(providerState).length) {
+    renderProviderState(providerState, { preserveStatus: true });
+  }
+  const message = resolvePayloadMessage(payload, "OCR key save completed.");
+  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
+  setPanelStatus("settings", tone, message);
+  setDiagnostics("settings-admin", payload, {
+    hint: message,
+    open: payload.status !== "ok",
+  });
+  if (payload.status === "ok") {
+    setFieldValue("settings-ocr-key-input", "");
+    window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
+  }
+}
+
+async function handleOcrKeyClear() {
+  const payload = await fetchJsonAllowFailed("/api/settings/ocr-key/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
+  if (Object.keys(providerState).length) {
+    renderProviderState(providerState, { preserveStatus: true });
+  }
+  const message = resolvePayloadMessage(payload, "OCR key clear completed.");
+  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
+  setPanelStatus("settings", tone, message);
+  setDiagnostics("settings-admin", payload, {
+    hint: message,
+    open: payload.status !== "ok",
+  });
+  if (payload.status === "ok") {
+    setFieldValue("settings-ocr-key-input", "");
+    window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
+  }
+}
+
 async function handleSettingsPreflight() {
   const payload = await fetchJson("/api/settings/preflight", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  renderProviderState(payload.normalized_payload || {}, { preserveStatus: true });
-  setPanelStatus(
-    "settings",
-    payload.normalized_payload?.word_pdf_export?.ok ? "ok" : "warn",
-    "Provider and host preflight refreshed for the active runtime mode.",
-  );
+  const providerState = payload.normalized_payload || {};
+  renderProviderState(providerState, { preserveStatus: true });
+  const readiness = buildSettingsReadinessSummary(providerState);
+  setPanelStatus("settings", readiness.tone, `Provider and host preflight refreshed. ${readiness.message}`);
   setDiagnostics("settings-test", payload, {
-    hint: "OCR, Gmail draft, and Word export host status.",
+    hint: readiness.hint,
     open: false,
   });
 }
 
 async function handleOcrTest() {
-  const payload = await fetchJson("/api/settings/ocr-test", appState, {
+  const payload = await fetchJsonAllowFailed("/api/settings/ocr-test", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  const tone = payload.status === "ok" ? "ok" : "warn";
-  setPanelStatus("settings", tone, payload.normalized_payload?.message || "OCR provider test completed.");
+  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
+  if (Object.keys(providerState).length) {
+    renderProviderState(providerState, { preserveStatus: true });
+  }
+  const message = resolvePayloadMessage(payload, "OCR provider test completed.");
+  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
+  setPanelStatus("settings", tone, message);
   setDiagnostics("settings-test", payload, {
-    hint: payload.normalized_payload?.message || "OCR provider test completed.",
+    hint: message,
+    open: payload.status !== "ok",
+  });
+}
+
+async function handleTranslationTest() {
+  const payload = await fetchJsonAllowFailed("/api/settings/translation-test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
+  if (Object.keys(providerState).length) {
+    renderProviderState(providerState, { preserveStatus: true });
+  }
+  const message = resolvePayloadMessage(payload, "Translation auth test completed.");
+  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
+  setPanelStatus("settings", tone, message);
+  setDiagnostics("settings-test", payload, {
+    hint: message,
+    open: payload.status !== "ok",
+  });
+}
+
+async function handleNativeHostTest() {
+  const payload = await fetchJsonAllowFailed("/api/settings/native-host-test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
+  if (Object.keys(providerState).length) {
+    renderProviderState(providerState, { preserveStatus: true });
+  }
+  const message = resolvePayloadMessage(payload, "Native-host diagnostics refreshed.");
+  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
+  setPanelStatus("settings", tone, message);
+  setDiagnostics("settings-test", payload, {
+    hint: message,
+    open: payload.status !== "ok",
+  });
+}
+
+async function handleNativeHostRepair() {
+  const payload = await fetchJsonAllowFailed("/api/settings/native-host-repair", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
+  if (Object.keys(providerState).length) {
+    renderProviderState(providerState, { preserveStatus: true });
+  }
+  const message = resolvePayloadMessage(payload, "Native-host repair completed.");
+  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
+  setPanelStatus("settings", tone, message);
+  setDiagnostics("settings-admin", payload, {
+    hint: message,
+    open: payload.status !== "ok",
+  });
+  if (payload.status === "ok") {
+    window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
+  }
+}
+
+async function handleWordPdfExportTest() {
+  const payload = await fetchJsonAllowFailed("/api/settings/word-pdf-test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
+  if (Object.keys(providerState).length) {
+    renderProviderState(providerState, { preserveStatus: true });
+  }
+  const message = resolvePayloadMessage(payload, "Word PDF export test completed.");
+  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
+  setPanelStatus("settings", tone, message);
+  setDiagnostics("settings-test", payload, {
+    hint: message,
     open: payload.status !== "ok",
   });
 }
@@ -638,6 +961,20 @@ async function handleRunReport() {
 }
 
 export function initializePowerToolsUi() {
+  const settingsActionButtons = [
+    "settings-save",
+    "settings-save-translation-key",
+    "settings-clear-translation-key",
+    "settings-save-ocr-key",
+    "settings-clear-ocr-key",
+    "settings-test-native-host",
+    "settings-repair-native-host",
+    "settings-test-translation",
+    "settings-test-ocr",
+    "settings-test-word-pdf",
+    "settings-test-gmail",
+  ];
+
   qs("builder-source-mode")?.addEventListener("change", syncBuilderSourceMode);
 
   qs("settings-refresh-admin")?.addEventListener("click", async () => {
@@ -664,7 +1001,7 @@ export function initializePowerToolsUi() {
 
   qs("settings-save")?.addEventListener("click", async () => {
     await runWithBusy(
-      ["settings-save", "settings-test-ocr", "settings-test-gmail"],
+      settingsActionButtons,
       { "settings-save": "Saving..." },
       async () => {
         try {
@@ -677,9 +1014,69 @@ export function initializePowerToolsUi() {
     );
   });
 
+  qs("settings-save-translation-key")?.addEventListener("click", async () => {
+    await runWithBusy(
+      settingsActionButtons,
+      { "settings-save-translation-key": "Saving..." },
+      async () => {
+        try {
+          await handleTranslationKeySave();
+        } catch (error) {
+          setPanelStatus("settings", "bad", error.message || "Saving the translation key failed.");
+          setDiagnostics("settings-admin", error, { hint: error.message || "Saving the translation key failed.", open: true });
+        }
+      },
+    );
+  });
+
+  qs("settings-clear-translation-key")?.addEventListener("click", async () => {
+    await runWithBusy(
+      settingsActionButtons,
+      { "settings-clear-translation-key": "Clearing..." },
+      async () => {
+        try {
+          await handleTranslationKeyClear();
+        } catch (error) {
+          setPanelStatus("settings", "bad", error.message || "Clearing the translation key failed.");
+          setDiagnostics("settings-admin", error, { hint: error.message || "Clearing the translation key failed.", open: true });
+        }
+      },
+    );
+  });
+
+  qs("settings-save-ocr-key")?.addEventListener("click", async () => {
+    await runWithBusy(
+      settingsActionButtons,
+      { "settings-save-ocr-key": "Saving..." },
+      async () => {
+        try {
+          await handleOcrKeySave();
+        } catch (error) {
+          setPanelStatus("settings", "bad", error.message || "Saving the OCR key failed.");
+          setDiagnostics("settings-admin", error, { hint: error.message || "Saving the OCR key failed.", open: true });
+        }
+      },
+    );
+  });
+
+  qs("settings-clear-ocr-key")?.addEventListener("click", async () => {
+    await runWithBusy(
+      settingsActionButtons,
+      { "settings-clear-ocr-key": "Clearing..." },
+      async () => {
+        try {
+          await handleOcrKeyClear();
+        } catch (error) {
+          setPanelStatus("settings", "bad", error.message || "Clearing the OCR key failed.");
+          setDiagnostics("settings-admin", error, { hint: error.message || "Clearing the OCR key failed.", open: true });
+        }
+      },
+    );
+  });
+
   qs("settings-test-ocr")?.addEventListener("click", async () => {
     await runWithBusy(
-      ["settings-save", "settings-test-ocr", "settings-test-gmail"],
+      settingsActionButtons,
       { "settings-test-ocr": "Testing..." },
       async () => {
         try {
@@ -692,9 +1089,69 @@ export function initializePowerToolsUi() {
     );
   });
 
+  qs("settings-test-translation")?.addEventListener("click", async () => {
+    await runWithBusy(
+      settingsActionButtons,
+      { "settings-test-translation": "Testing..." },
+      async () => {
+        try {
+          await handleTranslationTest();
+        } catch (error) {
+          setPanelStatus("settings", "bad", error.message || "Translation auth test failed.");
+          setDiagnostics("settings-test", error, { hint: error.message || "Translation auth test failed.", open: true });
+        }
+      },
+    );
+  });
+
+  qs("settings-test-native-host")?.addEventListener("click", async () => {
+    await runWithBusy(
+      settingsActionButtons,
+      { "settings-test-native-host": "Testing..." },
+      async () => {
+        try {
+          await handleNativeHostTest();
+        } catch (error) {
+          setPanelStatus("settings", "bad", error.message || "Native-host test failed.");
+          setDiagnostics("settings-test", error, { hint: error.message || "Native-host test failed.", open: true });
+        }
+      },
+    );
+  });
+
+  qs("settings-repair-native-host")?.addEventListener("click", async () => {
+    await runWithBusy(
+      settingsActionButtons,
+      { "settings-repair-native-host": "Repairing..." },
+      async () => {
+        try {
+          await handleNativeHostRepair();
+        } catch (error) {
+          setPanelStatus("settings", "bad", error.message || "Native-host repair failed.");
+          setDiagnostics("settings-admin", error, { hint: error.message || "Native-host repair failed.", open: true });
+        }
+      },
+    );
+  });
+
+  qs("settings-test-word-pdf")?.addEventListener("click", async () => {
+    await runWithBusy(
+      settingsActionButtons,
+      { "settings-test-word-pdf": "Testing..." },
+      async () => {
+        try {
+          await handleWordPdfExportTest();
+        } catch (error) {
+          setPanelStatus("settings", "bad", error.message || "Word PDF export test failed.");
+          setDiagnostics("settings-test", error, { hint: error.message || "Word PDF export test failed.", open: true });
+        }
+      },
+    );
+  });
+
   qs("settings-test-gmail")?.addEventListener("click", async () => {
     await runWithBusy(
-      ["settings-save", "settings-test-ocr", "settings-test-gmail"],
+      settingsActionButtons,
       { "settings-test-gmail": "Checking..." },
       async () => {
         try {

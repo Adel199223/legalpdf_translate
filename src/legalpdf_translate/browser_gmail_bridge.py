@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import sys
 from typing import Any
 
 from .build_identity import RuntimeBuildIdentity
@@ -15,7 +16,7 @@ from .gmail_focus import (
     validate_bridge_owner,
     write_bridge_runtime_metadata,
 )
-from .gmail_focus_host import ensure_edge_native_host_registered
+from .gmail_focus_host import maybe_ensure_edge_native_host_registered
 from .gmail_intake import InboundMailContext, LocalGmailIntakeBridge
 from .shadow_runtime import (
     RUNTIME_MODE_LIVE,
@@ -167,7 +168,11 @@ class BrowserLiveGmailBridgeManager:
         )
 
     def _registration_state(self) -> tuple[bool, str]:
-        result = ensure_edge_native_host_registered(base_dir=self._data_paths.app_data_dir)
+        result = maybe_ensure_edge_native_host_registered(
+            base_dir=self._data_paths.app_data_dir,
+            preferred_python_executable=Path(sys.executable),
+            runtime_path=Path(sys.executable),
+        )
         return bool(result.ok), str(result.reason or "").strip()
 
     def _handle_inbound_context(self, context: InboundMailContext) -> None:

@@ -8,8 +8,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Iterable
 
-import fitz
-
 from .config import BOTTOM_ZONE_RATIO, TOP_ZONE_RATIO
 
 
@@ -81,6 +79,8 @@ BARCODE_PATTERNS = [
 
 
 def get_page_count(pdf_path: Path) -> int:
+    import fitz
+
     with fitz.open(pdf_path) as doc:
         return doc.page_count
 
@@ -236,6 +236,8 @@ def _fragmented_heuristic(text: str) -> bool:
 
 def extract_ordered_page_text(pdf_path: Path, page_index: int) -> OrderedPageText:
     try:
+        import fitz
+
         with fitz.open(pdf_path) as doc:
             page = doc.load_page(page_index)
             page_dict = page.get_text("dict")

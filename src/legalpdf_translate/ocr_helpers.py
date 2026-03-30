@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
-import fitz
 from PIL import Image
 
 from .ocr_engine import OCREngine, OcrResult, invoke_ocr_image
@@ -13,6 +12,8 @@ from .types import OcrMode
 
 
 def _page_to_png_bytes(page: fitz.Page, *, dpi: int) -> bytes:
+    import fitz
+
     zoom = dpi / 72.0
     pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
     image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
@@ -25,6 +26,8 @@ def render_page_png(pdf_path: Path, page_number: int, dpi: int = 200) -> bytes:
     page_index = int(page_number) - 1
     if page_index < 0:
         raise ValueError("page_number must be >= 1")
+    import fitz
+
     with fitz.open(pdf_path) as doc:
         page = doc.load_page(page_index)
         return _page_to_png_bytes(page, dpi=dpi)

@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import threading
 import uuid
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from .checkpoint import (
     bool_from_text,
@@ -34,11 +34,6 @@ from .joblog_flow import (
     merge_payload_into_joblog_settings,
     normalize_joblog_payload,
 )
-from .metadata_autofill import (
-    choose_court_email_suggestion,
-    extract_pdf_header_metadata_priority_pages,
-    metadata_config_from_settings,
-)
 from .ocr_engine import (
     OcrEngineConfig,
     candidate_ocr_api_env_names,
@@ -47,7 +42,7 @@ from .ocr_engine import (
     normalize_ocr_api_provider,
     resolve_ocr_api_key,
 )
-from .openai_client import OpenAIResponsesClient
+from .openai_client import OpenAIResponsesClient, resolve_openai_key_with_source
 from .output_paths import require_writable_output_dir
 from .review_export import export_review_queue
 from .source_document import get_source_page_count, is_pdf_source, is_supported_source_file
@@ -57,7 +52,9 @@ from .user_settings import (
     load_joblog_settings_from_path,
     save_joblog_settings_to_path,
 )
-from .workflow import TranslationWorkflow
+
+if TYPE_CHECKING:
+    from .workflow import TranslationWorkflow
 
 _PAGE_LOG_RE = re.compile(
     r"page=(?P<page>\d+)\s+image_used=(?P<image>True|False)\s+retry_used=(?P<retry>True|False)\s+status=(?P<status>[a-z_]+)"
@@ -266,6 +263,10 @@ def build_translation_capability_flags(*, settings_path: Path) -> dict[str, Any]
         api_key_env_name=ocr_env_name,
         api_timeout_seconds=float(gui_settings.get("ocr_api_timeout_seconds", 60.0) or 60.0),
     )
+    translation_key, translation_source = resolve_openai_key_with_source()
+    translation_source_payload = (
+        translation_source.to_payload() if translation_source is not None else {"kind": "missing", "name": ""}
+    )
     return {
         "ocr": {
             "mode": str(gui_settings.get("ocr_mode", gui_settings.get("ocr_mode_default", "auto")) or "auto"),
@@ -277,7 +278,10 @@ def build_translation_capability_flags(*, settings_path: Path) -> dict[str, Any]
             "default_env_name": ocr_env_name,
         },
         "translation": {
-            "status": "ready",
+            "status": "ready" if translation_key is not None else "needs_auth",
+            "credentials_configured": translation_key is not None,
+            "credential_source": translation_source_payload,
+            "auth_test_supported": True,
             "supports_analyze": True,
             "supports_translate": True,
             "supports_cancel": True,
@@ -511,8 +515,10 @@ def _load_run_failure_context(summary_path: Path | None) -> dict[str, object]:
         return {
             "suspected_cause": "",
             "halt_reason": "",
+            "scope": "",
             "page_number": None,
             "error": "",
+            "status_code": None,
             "exception_class": "",
             "retry_reason": "",
             "validator_defect_reason": "",
@@ -522,14 +528,18 @@ def _load_run_failure_context(summary_path: Path | None) -> dict[str, object]:
             "request_timeout_budget_seconds": 0.0,
             "request_elapsed_before_failure_seconds": 0.0,
             "cancel_requested_before_failure": False,
+            "credential_source": {"kind": "missing", "name": ""},
+            "message": "",
         }
     failure_obj = payload.get("failure_context")
     failure = failure_obj if isinstance(failure_obj, dict) else {}
     return {
         "suspected_cause": str(payload.get("suspected_cause", "") or ""),
         "halt_reason": str(payload.get("halt_reason", "") or ""),
+        "scope": str(failure.get("scope", "") or ""),
         "page_number": _coerce_int_or_none(failure.get("page_number")),
         "error": str(failure.get("error", "") or ""),
+        "status_code": _coerce_int_or_none(failure.get("status_code")),
         "exception_class": str(failure.get("exception_class", "") or ""),
         "retry_reason": str(failure.get("retry_reason", "") or ""),
         "validator_defect_reason": str(failure.get("validator_defect_reason", "") or ""),
@@ -551,6 +561,12 @@ def _load_run_failure_context(summary_path: Path | None) -> dict[str, object]:
         )
         or 0.0,
         "cancel_requested_before_failure": bool(failure.get("cancel_requested_before_failure", False)),
+        "credential_source": (
+            dict(failure.get("credential_source", {}))
+            if isinstance(failure.get("credential_source"), Mapping)
+            else {"kind": "missing", "name": ""}
+        ),
+        "message": str(failure.get("message", "") or ""),
     }
 
 
@@ -585,6 +601,12 @@ def _build_translation_seed_from_run_summary(
         seed.profit = round(seed.expected_total - seed.api_cost, 2)
 
     try:
+        from .metadata_autofill import (
+            choose_court_email_suggestion,
+            extract_pdf_header_metadata_priority_pages,
+            metadata_config_from_settings,
+        )
+
         suggestion = extract_pdf_header_metadata_priority_pages(
             seed.pdf_path,
             vocab_cities=list(settings["vocab_cities"]),
@@ -757,13 +779,17 @@ def upload_translation_source(
         raise ValueError(f"Uploaded source file was not saved correctly: {resolved}")
     if not is_supported_source_file(resolved):
         raise ValueError("Source file must be a PDF or supported image.")
+    try:
+        page_count = int(get_source_page_count(resolved))
+    except Exception:  # noqa: BLE001
+        page_count = None
     return {
         "status": "ok",
         "normalized_payload": {
             "source_path": str(resolved),
             "source_filename": resolved.name,
             "source_type": "pdf" if is_pdf_source(resolved) else "image",
-            "page_count": int(get_source_page_count(resolved)),
+            "page_count": page_count,
         },
         "diagnostics": {},
         "capability_flags": build_translation_capability_flags(settings_path=settings_path),
@@ -905,7 +931,7 @@ class _ManagedTranslationJob:
     result_payload: dict[str, Any] = field(default_factory=dict)
     artifacts_payload: dict[str, Any] = field(default_factory=dict)
     _config: RunConfig | None = field(default=None, repr=False)
-    _workflow: TranslationWorkflow | None = field(default=None, repr=False)
+    _workflow: "TranslationWorkflow | None" = field(default=None, repr=False)
     _reservation_key: str = field(default="", repr=False)
     _page_flags: dict[int, tuple[bool, bool]] = field(default_factory=dict, repr=False)
 
@@ -1029,7 +1055,7 @@ class TranslationJobManager:
             job.status_text = str(status)
             job.updated_at = _utc_now_iso()
 
-    def _mark_running(self, job_id: str, workflow: TranslationWorkflow | None, status_text: str) -> None:
+    def _mark_running(self, job_id: str, workflow: "TranslationWorkflow | None", status_text: str) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -1131,6 +1157,8 @@ class TranslationJobManager:
                         backoff_cap_seconds=backoff_cap,
                         logger=lambda message: self._append_log(job_id, message),
                     )
+                    from .workflow import TranslationWorkflow
+
                     workflow = TranslationWorkflow(
                         client=client,
                         log_callback=lambda message: self._append_log(job_id, message),
@@ -1145,6 +1173,9 @@ class TranslationJobManager:
                         if str(summary.error or "") == "cancelled":
                             status = "cancelled"
                             status_text = "Translation cancelled"
+                        elif str(summary.error or "") == "authentication_failure":
+                            status = "failed"
+                            status_text = "OpenAI authentication failed"
                         else:
                             status = "failed"
                             status_text = f"Translation failed ({summary.error or 'runtime_failure'})"
@@ -1159,6 +1190,8 @@ class TranslationJobManager:
                     return
 
                 if job_kind == "analyze":
+                    from .workflow import TranslationWorkflow
+
                     workflow = TranslationWorkflow(log_callback=lambda message: self._append_log(job_id, message))
                     self._mark_running(job_id, workflow, "Analyzing...")
                     summary = workflow.analyze(config)
@@ -1178,6 +1211,8 @@ class TranslationJobManager:
                         },
                     )
                     return
+
+                from .workflow import TranslationWorkflow
 
                 workflow = TranslationWorkflow(log_callback=lambda message: self._append_log(job_id, message))
                 self._mark_running(job_id, workflow, "Rebuilding DOCX...")

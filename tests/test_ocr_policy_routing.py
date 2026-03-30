@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 import legalpdf_translate.ocr_engine as ocr_engine
@@ -10,6 +12,8 @@ from legalpdf_translate.ocr_engine import (
     OcrEngineConfig,
     OcrResult,
     build_ocr_engine,
+    resolve_ocr_api_key,
+    resolve_ocr_api_key_source,
     test_ocr_provider_connection,
 )
 from legalpdf_translate.types import OcrApiProvider, OcrEnginePolicy
@@ -174,6 +178,23 @@ def test_local_then_api_with_gemini_key_enables_gemini_fallback(monkeypatch: pyt
     assert isinstance(engine.api_engine, GeminiApiOcrEngine)
 
 
+def test_openai_ocr_uses_stored_translation_key_fallback_when_dedicated_key_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ocr_engine, "get_ocr_key", lambda: None)
+    monkeypatch.setattr(ocr_engine, "get_openai_key", lambda: "stored-openai-key")
+    _clear_openai_ocr_env(monkeypatch)
+    config = OcrEngineConfig(
+        policy=OcrEnginePolicy.API,
+        api_provider=OcrApiProvider.OPENAI,
+        api_model="gpt-4o-mini",
+        api_key_env_name="OPENAI_API_KEY",
+    )
+
+    assert resolve_ocr_api_key_source(config) == ("stored", "openai_api_key_fallback")
+    assert resolve_ocr_api_key(config) == "stored-openai-key"
+
+
 def test_test_ocr_provider_connection_uses_gemini_ping(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
@@ -198,6 +219,38 @@ def test_test_ocr_provider_connection_uses_gemini_ping(monkeypatch: pytest.Monke
 
     assert captured["api_key"] == "gem-key"
     assert captured["model"] == "gemini-3.1-flash-lite-preview"
+
+
+def test_test_ocr_provider_connection_uses_openai_minimum_output_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeResponses:
+        def create(self, **kwargs: object) -> object:
+            captured.update(kwargs)
+            return SimpleNamespace(output_text="OK")
+
+    class _FakeOpenAI:
+        def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+            captured["api_key"] = api_key
+            captured["base_url"] = base_url
+            self.responses = _FakeResponses()
+
+    monkeypatch.setattr(ocr_engine, "OpenAI", _FakeOpenAI)
+
+    test_ocr_provider_connection(
+        OcrEngineConfig(
+            policy=OcrEnginePolicy.API,
+            api_provider=OcrApiProvider.OPENAI,
+            api_model="gpt-4o-mini",
+            api_key_env_name="OPENAI_API_KEY",
+        ),
+        api_key="ocr-key",
+    )
+
+    assert captured["api_key"] == "ocr-key"
+    assert captured["max_output_tokens"] == 16
 
 
 def test_gemini_media_resolution_uses_pdf_medium_and_image_high(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import re
+import sys
+from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from .checkpoint import (
@@ -14,7 +17,6 @@ from .checkpoint import (
     parse_ocr_engine_policy,
     parse_ocr_mode,
 )
-from .calibration_audit import run_calibration_audit
 from .glossary import (
     GlossaryEntry,
     build_consistency_glossary_markdown,
@@ -39,6 +41,7 @@ from .glossary_builder import (
     update_builder_stats_from_page,
 )
 from .gmail_draft import assess_gmail_draft_prereqs
+from .gmail_focus_host import inspect_edge_native_host, maybe_ensure_edge_native_host_registered
 from .lemma_normalizer import LemmaCache, batch_normalize_lemmas
 from .ocr_engine import (
     OcrEngineConfig,
@@ -51,12 +54,24 @@ from .ocr_engine import (
     resolve_ocr_api_key_source,
     test_ocr_provider_connection,
 )
-from .openai_client import OpenAIResponsesClient
+from .openai_client import (
+    OpenAIResponsesClient,
+    is_openai_auth_failure,
+    resolve_openai_key_with_source,
+    run_translation_auth_test,
+)
 from .output_paths import require_writable_output_dir
-from .pdf_text_order import extract_ordered_page_text, get_page_count
 from .run_report import build_run_report_markdown
+from .secrets_store import (
+    delete_ocr_key,
+    delete_openai_key,
+    get_ocr_key,
+    get_openai_key,
+    set_ocr_key,
+    set_openai_key,
+)
 from .shadow_runtime import BrowserDataPaths
-from .types import OcrEnginePolicy, RunConfig, TargetLang
+from .types import OcrApiProvider, OcrEnginePolicy, RunConfig, TargetLang
 from .user_settings import (
     app_data_dir_from_settings_path,
     load_gui_settings_from_path,
@@ -64,23 +79,57 @@ from .user_settings import (
     save_gui_settings_to_path,
     save_joblog_settings_to_path,
 )
-from .word_automation import probe_word_pdf_export_support
+from .word_automation import (
+    assess_word_pdf_export_readiness,
+    clear_word_pdf_export_readiness_cache,
+)
 
 _GLOSSARY_TITLE_DEFAULT = "AI Glossary"
 _DEBUG_BUNDLE_PREFIX = "browser_debug_bundle"
 _RUN_REPORT_PREFIX = "browser_run_report"
+_BROWSER_FAILURE_REPORT_PREFIX = "browser_failure_report"
+_GMAIL_FINALIZATION_REPORT_PREFIX = "gmail_finalization_report"
 _GLOSSARY_BUILDER_PREFIX = "glossary_builder"
 _POWER_TOOLS_SUBDIR = "power_tools"
+_BROWSER_REPORT_SECRET_PATTERNS = (
+    re.compile(r"\bsk-[A-Za-z0-9_\-]{8,}\b"),
+    re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._\-]{8,}\b"),
+)
+_BROWSER_REPORT_FORBIDDEN_KEYS = {
+    "authorization",
+    "api_key",
+    "openai_api_key",
+    "ocr_api_key",
+    "translation_key",
+    "ocr_key",
+}
 
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+def _word_pdf_cache_scope_token(settings_path: Path) -> str:
+    return str(settings_path.expanduser().resolve())
+
+
+def _clear_word_pdf_export_cache_for_settings(*, settings_path: Path) -> int:
+    scope_token = _word_pdf_cache_scope_token(settings_path)
+    removed = clear_word_pdf_export_readiness_cache(scope_prefix=f"provider_state::{scope_token}")
+    removed += clear_word_pdf_export_readiness_cache(scope_prefix=f"gmail_batch_finalization::{scope_token}")
+    return removed
+
+
 def _safe_path_text(path: Path | None) -> str:
     if path is None:
         return ""
     return str(path.expanduser().resolve())
+
+
+def run_calibration_audit(*args, **kwargs):
+    from .calibration_audit import run_calibration_audit as _run_calibration_audit
+
+    return _run_calibration_audit(*args, **kwargs)
 
 
 def _dedupe_paths(paths: list[Path]) -> list[Path]:
@@ -104,6 +153,183 @@ def _power_tools_output_dir(outputs_dir: Path) -> Path:
 
 def _timestamp_slug() -> str:
     return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+
+
+def _sanitize_browser_report_text(value: str) -> str:
+    cleaned = value
+    for pattern in _BROWSER_REPORT_SECRET_PATTERNS:
+        cleaned = pattern.sub("[REDACTED]", cleaned)
+    if len(cleaned) > 4000:
+        return f"{cleaned[:3997]}..."
+    return cleaned
+
+
+def _sanitize_browser_report_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _sanitize_browser_report_text(value)
+    if isinstance(value, dict):
+        output: dict[str, Any] = {}
+        for key, nested in value.items():
+            key_text = str(key)
+            if key_text.strip().casefold() in _BROWSER_REPORT_FORBIDDEN_KEYS:
+                continue
+            output[key_text] = _sanitize_browser_report_value(nested)
+        return output
+    if isinstance(value, list):
+        return [_sanitize_browser_report_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_browser_report_value(item) for item in value]
+    return value
+
+
+def _normalize_browser_failure_context(raw_context: object) -> dict[str, Any]:
+    if isinstance(raw_context, str):
+        cleaned = raw_context.strip()
+        if cleaned == "":
+            return {}
+        try:
+            raw_context = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Browser failure context must be valid JSON.") from exc
+    if raw_context in (None, ""):
+        return {}
+    if not isinstance(raw_context, dict):
+        raise ValueError("Browser failure context must be an object.")
+    sanitized = _sanitize_browser_report_value(raw_context)
+    return sanitized if isinstance(sanitized, dict) else {}
+
+
+def _build_browser_failure_report_markdown(
+    *,
+    context: dict[str, Any],
+    settings_path: Path,
+) -> str:
+    gui = load_gui_settings_from_path(settings_path)
+    runtime_summary = {
+        "generated_at": _utc_now_iso(),
+        "report_kind": "browser_failure_report",
+        "runtime_mode": str(context.get("runtime_mode", "") or ""),
+        "workspace_id": str(context.get("workspace_id", "") or ""),
+        "active_view": str(context.get("active_view", "") or ""),
+        "build_sha": str(context.get("build_sha", "") or ""),
+        "asset_version": str(context.get("asset_version", "") or ""),
+        "ui_theme": str(gui.get("ui_theme", "") or ""),
+    }
+    selected_attachments = [
+        item for item in context.get("attachments", [])
+        if isinstance(item, dict) and item.get("selected")
+    ]
+    lines = [
+        "# Browser Failure Report",
+        "",
+        "## Runtime",
+        "```json",
+        json.dumps(runtime_summary, ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "## Workflow Context",
+        "```json",
+        json.dumps(
+            {
+                "kind": str(context.get("kind", "") or "browser_failure"),
+                "operation": str(context.get("operation", "") or ""),
+                "workflow_kind": str(context.get("workflow_kind", "") or ""),
+                "focused_attachment_id": str(context.get("focused_attachment_id", "") or ""),
+                "message": context.get("message", {}),
+                "preview_state": context.get("preview_state", {}),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        "```",
+        "",
+        "## Selected Attachments",
+        "```json",
+        json.dumps(selected_attachments, ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "## Failure",
+        "```json",
+        json.dumps(context.get("error", {}), ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "## Full Captured Context",
+        "```json",
+        json.dumps(context, ensure_ascii=False, indent=2),
+        "```",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _normalize_gmail_finalization_context(raw_context: object) -> dict[str, Any]:
+    return _normalize_browser_failure_context(raw_context)
+
+
+def _build_gmail_finalization_report_markdown(
+    *,
+    context: dict[str, Any],
+    settings_path: Path,
+) -> str:
+    gui = load_gui_settings_from_path(settings_path)
+    runtime_summary = {
+        "generated_at": _utc_now_iso(),
+        "report_kind": "gmail_finalization_report",
+        "runtime_mode": str(context.get("runtime_mode", "") or ""),
+        "workspace_id": str(context.get("workspace_id", "") or ""),
+        "active_view": str(context.get("active_view", "") or ""),
+        "build_sha": str(context.get("build_sha", "") or ""),
+        "asset_version": str(context.get("asset_version", "") or ""),
+        "ui_theme": str(gui.get("ui_theme", "") or ""),
+    }
+    lines = [
+        "# Gmail Finalization Report",
+        "",
+        "## Runtime",
+        "```json",
+        json.dumps(runtime_summary, ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "## Session",
+        "```json",
+        json.dumps(
+            {
+                "kind": str(context.get("kind", "") or "gmail_finalization"),
+                "operation": str(context.get("operation", "") or ""),
+                "status": str(context.get("status", "") or ""),
+                "finalization_state": str(context.get("finalization_state", "") or ""),
+                "retry_available": bool(context.get("retry_available")),
+                "session": context.get("session", {}),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        "```",
+        "",
+        "## Word Readiness",
+        "```json",
+        json.dumps(context.get("word_pdf_export", {}), ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "## Export Outcome",
+        "```json",
+        json.dumps(
+            {
+                "actual_export": context.get("actual_export", {}),
+                "outcome": context.get("outcome", {}),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        "```",
+        "",
+        "## Full Captured Context",
+        "```json",
+        json.dumps(context, ensure_ascii=False, indent=2),
+        "```",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def _default_project_glossary_path(settings_path: Path) -> Path:
@@ -233,6 +459,80 @@ def _settings_form_payload(settings_path: Path) -> dict[str, object]:
     }
 
 
+def _stored_translation_key_available() -> bool:
+    try:
+        return bool(get_openai_key())
+    except RuntimeError:
+        return False
+
+
+def _stored_ocr_key_available() -> bool:
+    try:
+        return bool(get_ocr_key())
+    except RuntimeError:
+        return False
+
+
+def _provider_state_response(
+    *,
+    settings_path: Path,
+    status: str = "ok",
+    message: str,
+    normalized_payload: dict[str, object] | None = None,
+    provider_state: dict[str, object] | None = None,
+) -> dict[str, object]:
+    resolved_provider_state = provider_state or build_browser_provider_state(settings_path=settings_path)
+    payload = {"provider_state": resolved_provider_state}
+    if normalized_payload:
+        payload.update(normalized_payload)
+    payload["message"] = message
+    return {
+        "status": status,
+        "normalized_payload": payload,
+        "diagnostics": {
+            "provider_state": resolved_provider_state,
+        },
+    }
+
+
+def _native_host_state_payload(settings_path: Path) -> dict[str, object]:
+    current_runtime = Path(sys.executable).expanduser().resolve()
+    return inspect_edge_native_host(
+        base_dir=app_data_dir_from_settings_path(settings_path),
+        preferred_python_executable=current_runtime,
+        runtime_path=current_runtime,
+    )
+
+
+def document_runtime_state_payload() -> dict[str, object]:
+    try:
+        import fitz  # noqa: F401
+
+        return {
+            "status": "native_ready",
+            "native_pdf_available": True,
+            "browser_pdf_bundle_supported": True,
+            "reason": "",
+            "message": "Native PDF helpers and browser PDF staging are available.",
+        }
+    except Exception as exc:  # noqa: BLE001
+        message = str(exc) or "Native PDF helpers are unavailable in this runtime."
+        lowered = message.casefold()
+        reason = (
+            "native_pdf_runtime_blocked"
+            if "application control policy" in lowered or "blocked this file" in lowered
+            else "native_pdf_runtime_unavailable"
+        )
+        return {
+            "status": "browser_bundle_only",
+            "native_pdf_available": False,
+            "browser_pdf_bundle_supported": True,
+            "reason": reason,
+            "message": "Native PDF helpers are unavailable in this runtime, but browser PDF staging remains available.",
+            "details": message,
+        }
+
+
 def _provider_state_payload(settings_path: Path) -> dict[str, object]:
     gui = load_gui_settings_from_path(settings_path)
     provider = normalize_ocr_api_provider(gui.get("ocr_api_provider", gui.get("ocr_api_provider_default", "openai")))
@@ -243,6 +543,8 @@ def _provider_state_payload(settings_path: Path) -> dict[str, object]:
         api_model=str(gui.get("ocr_api_model", "") or "") or None,
         api_key_env_name=str(gui.get("ocr_api_key_env_name", "") or "") or default_ocr_api_env_name(provider),
     )
+    stored_translation_key = _stored_translation_key_available()
+    stored_ocr_key = _stored_ocr_key_available()
     source = resolve_ocr_api_key_source(config)
     if source is None:
         source_payload: dict[str, object] = {"kind": "missing", "name": ""}
@@ -252,17 +554,36 @@ def _provider_state_payload(settings_path: Path) -> dict[str, object]:
         configured_gog_path=str(gui.get("gmail_gog_path", "") or ""),
         configured_account_email=str(gui.get("gmail_account_email", "") or ""),
     )
-    word = probe_word_pdf_export_support(timeout_seconds=8.0)
+    word = assess_word_pdf_export_readiness(
+        cache_scope=f"provider_state::{_word_pdf_cache_scope_token(settings_path)}",
+        launch_timeout_seconds=8.0,
+        export_timeout_seconds=45.0,
+    )
+    translation_key, translation_source = resolve_openai_key_with_source()
+    if translation_source is None:
+        translation_source_payload: dict[str, object] = {"kind": "missing", "name": ""}
+    else:
+        translation_source_payload = translation_source.to_payload()
     return {
+        "translation": {
+            "credentials_configured": translation_key is not None,
+            "stored_credential_configured": stored_translation_key,
+            "ocr_fallback_configured": stored_ocr_key,
+            "effective_credential_source": translation_source_payload,
+            "auth_test_supported": True,
+        },
         "ocr": {
             "provider": provider.value,
             "default_model": default_ocr_api_model(provider),
             "configured_model": str(gui.get("ocr_api_model", "") or "") or default_ocr_api_model(provider),
             "configured_env_name": config.api_key_env_name,
             "env_candidates": list(candidate_ocr_api_env_names(config)),
+            "stored_credential_configured": stored_ocr_key,
+            "translation_fallback_configured": bool(provider == OcrApiProvider.OPENAI and stored_translation_key),
             "effective_credential_source": source_payload,
             "local_available": local_ocr_available(),
             "api_configured": source is not None,
+            "auth_test_supported": True,
             "base_url": str(gui.get("ocr_api_base_url", "") or "") or default_ocr_api_base_url(provider),
         },
         "gmail_draft": {
@@ -273,13 +594,15 @@ def _provider_state_payload(settings_path: Path) -> dict[str, object]:
             "accounts": list(prereqs.accounts),
         },
         "word_pdf_export": {
-            "ok": bool(word.ok),
-            "failure_code": str(word.failure_code or ""),
-            "message": str(word.message or ""),
-            "details": str(word.details or ""),
-            "elapsed_ms": int(word.elapsed_ms),
+            **dict(word),
         },
+        "document_runtime": document_runtime_state_payload(),
+        "native_host": _native_host_state_payload(settings_path),
     }
+
+
+def build_browser_provider_state(*, settings_path: Path) -> dict[str, object]:
+    return _provider_state_payload(settings_path)
 
 
 def _latest_run_dirs(outputs_dir: Path, *, limit: int = 20) -> list[dict[str, object]]:
@@ -332,7 +655,7 @@ def build_power_tools_bootstrap(
     return {
         "settings_admin": {
             "form_values": _settings_form_payload(settings_path),
-            "provider_state": _provider_state_payload(settings_path),
+            "provider_state": build_browser_provider_state(settings_path=settings_path),
         },
         "power_tools": {
             "glossary": {
@@ -439,6 +762,7 @@ def save_browser_settings(*, settings_path: Path, values: dict[str, object]) -> 
         "ocr_api_key_env_name": gui_values["ocr_api_key_env_name"],
     }
     save_joblog_settings_to_path(settings_path, joblog_values)
+    _clear_word_pdf_export_cache_for_settings(settings_path=settings_path)
     return {
         "status": "ok",
         "normalized_payload": {
@@ -446,7 +770,7 @@ def save_browser_settings(*, settings_path: Path, values: dict[str, object]) -> 
             "form_values": _settings_form_payload(settings_path),
         },
         "diagnostics": {
-            "provider_state": _provider_state_payload(settings_path),
+            "provider_state": build_browser_provider_state(settings_path=settings_path),
         },
     }
 
@@ -454,9 +778,91 @@ def save_browser_settings(*, settings_path: Path, values: dict[str, object]) -> 
 def run_settings_preflight(*, settings_path: Path) -> dict[str, object]:
     return {
         "status": "ok",
-        "normalized_payload": _provider_state_payload(settings_path),
+        "normalized_payload": build_browser_provider_state(settings_path=settings_path),
         "diagnostics": {},
     }
+
+
+def run_word_pdf_export_test(*, settings_path: Path) -> dict[str, object]:
+    _clear_word_pdf_export_cache_for_settings(settings_path=settings_path)
+    readiness = assess_word_pdf_export_readiness(
+        cache_scope=f"provider_state::{_word_pdf_cache_scope_token(settings_path)}",
+        launch_timeout_seconds=8.0,
+        export_timeout_seconds=45.0,
+        force_refresh=True,
+    )
+    provider_state = build_browser_provider_state(settings_path=settings_path)
+    provider_state["word_pdf_export"] = dict(readiness)
+    launch_ok = bool(dict(readiness.get("launch_preflight") or {}).get("ok"))
+    status = "ok" if bool(readiness.get("finalization_ready")) else ("unavailable" if not launch_ok else "failed")
+    message = str(readiness.get("message") or "").strip()
+    if status == "ok":
+        message = message or "Word PDF export canary passed. Gmail batch finalization is ready."
+    elif status == "unavailable":
+        message = message or "Microsoft Word could not be started for PDF export."
+    else:
+        message = message or "Word PDF export canary failed. Gmail batch finalization is not ready yet."
+    return _provider_state_response(
+        settings_path=settings_path,
+        status=status,
+        message=message,
+        normalized_payload={
+            "word_pdf_export": dict(readiness),
+            "finalization_ready": bool(readiness.get("finalization_ready")),
+        },
+        provider_state=provider_state,
+    )
+
+
+def run_native_host_test(*, settings_path: Path) -> dict[str, object]:
+    native_host = _native_host_state_payload(settings_path)
+    status = "ok" if native_host.get("ready") else "unavailable" if native_host.get("repairable") else "failed"
+    provider_state = build_browser_provider_state(settings_path=settings_path)
+    provider_state["native_host"] = native_host
+    return _provider_state_response(
+        settings_path=settings_path,
+        status=status,
+        message=str(native_host.get("message", "") or "Edge native host diagnostics refreshed."),
+        normalized_payload={
+            "native_host": native_host,
+        },
+        provider_state=provider_state,
+    )
+
+
+def repair_browser_native_host(*, settings_path: Path) -> dict[str, object]:
+    current_runtime = Path(sys.executable).expanduser().resolve()
+    result = maybe_ensure_edge_native_host_registered(
+        base_dir=app_data_dir_from_settings_path(settings_path),
+        preferred_python_executable=current_runtime,
+        runtime_path=current_runtime,
+    )
+    native_host = _native_host_state_payload(settings_path)
+    status = "ok" if native_host.get("ready") else "unavailable" if native_host.get("repairable") else "failed"
+    provider_state = build_browser_provider_state(settings_path=settings_path)
+    provider_state["native_host"] = native_host
+    if native_host.get("ready"):
+        message = "Edge native host registration is ready for cold-start launches."
+    elif result.ok:
+        message = str(native_host.get("message", "") or "Edge native host repair needs attention.")
+    else:
+        message = str(native_host.get("message", "") or result.reason or "Edge native host repair failed.")
+    return _provider_state_response(
+        settings_path=settings_path,
+        status=status,
+        message=message,
+        normalized_payload={
+            "native_host": native_host,
+            "repair_result": {
+                "ok": bool(result.ok),
+                "changed": bool(result.changed),
+                "manifest_path": str(result.manifest_path or ""),
+                "executable_path": str(result.executable_path or ""),
+                "reason": str(result.reason or ""),
+            },
+        },
+        provider_state=provider_state,
+    )
 
 
 def run_ocr_provider_test(*, settings_path: Path) -> dict[str, object]:
@@ -471,30 +877,80 @@ def run_ocr_provider_test(*, settings_path: Path) -> dict[str, object]:
     )
     source = resolve_ocr_api_key_source(config)
     if source is None:
-        return {
-            "status": "unavailable",
-            "normalized_payload": {
+        env_candidates = ", ".join(candidate_ocr_api_env_names(config))
+        fallback_text = (
+            "stored OpenAI translation key fallback, "
+            if provider == OcrApiProvider.OPENAI
+            else ""
+        )
+        return _provider_state_response(
+            settings_path=settings_path,
+            status="unavailable",
+            message=(
+                "OCR credentials are not configured. "
+                f"Checked the stored OCR key, {fallback_text}and env var(s): {env_candidates}."
+            ).replace(", and", " and"),
+            normalized_payload={
                 "provider": provider.value,
-                "message": "OCR credentials are not configured.",
                 "source": None,
             },
-            "diagnostics": {
-                "env_candidates": list(candidate_ocr_api_env_names(config)),
+        )
+    source_name = (
+        "stored OpenAI translation key fallback"
+        if source == ("stored", "openai_api_key_fallback")
+        else "stored OCR key"
+        if source[0] == "stored"
+        else f"env {source[1]}"
+    )
+    try:
+        test_ocr_provider_connection(config)
+    except Exception as exc:  # noqa: BLE001
+        status_code = getattr(exc, "status_code", None)
+        exception_class = type(exc).__name__
+        if provider == OcrApiProvider.OPENAI and is_openai_auth_failure(
+            exception_class=exception_class,
+            status_code=status_code,
+        ):
+            if source == ("stored", "openai_api_key_fallback"):
+                message = (
+                    "OpenAI OCR authentication failed while using the stored OpenAI translation-key fallback. "
+                    "Save a valid translation or OCR key in Browser Settings, then test again."
+                )
+            else:
+                message = "OpenAI OCR authentication failed. Save or update the OCR key in Browser Settings, then test again."
+            return _provider_state_response(
+                settings_path=settings_path,
+                status="failed",
+                message=message,
+                normalized_payload={
+                    "provider": provider.value,
+                    "source": {"kind": source[0], "name": source[1]},
+                    "status": "unauthorized",
+                    "status_code": status_code,
+                    "exception_class": exception_class,
+                },
+            )
+        failure_detail = f"HTTP {status_code}" if status_code else exception_class
+        return _provider_state_response(
+            settings_path=settings_path,
+            status="failed",
+            message=f"OCR provider test failed for {provider.value} via {source_name} ({failure_detail}).",
+            normalized_payload={
+                "provider": provider.value,
+                "source": {"kind": source[0], "name": source[1]},
+                "status": "error",
+                "status_code": status_code,
+                "exception_class": exception_class,
             },
-        }
-    source_name = "stored OCR key" if source[0] == "stored" else f"env {source[1]}"
-    test_ocr_provider_connection(config)
-    return {
-        "status": "ok",
-        "normalized_payload": {
+        )
+    return _provider_state_response(
+        settings_path=settings_path,
+        message=f"OCR provider test passed for {provider.value} via {source_name}.",
+        normalized_payload={
             "provider": provider.value,
-            "message": f"OCR provider test passed for {provider.value} via {source_name}.",
             "source": {"kind": source[0], "name": source[1]},
         },
-        "diagnostics": {
-            "env_candidates": list(candidate_ocr_api_env_names(config)),
-        },
-    }
+    )
 
 
 def run_gmail_draft_preflight(*, settings_path: Path) -> dict[str, object]:
@@ -514,6 +970,70 @@ def run_gmail_draft_preflight(*, settings_path: Path) -> dict[str, object]:
         },
         "diagnostics": {},
     }
+
+
+def run_translation_provider_test(*, settings_path: Path) -> dict[str, object]:
+    result = run_translation_auth_test()
+    status = "ok" if result.ok else ("unavailable" if result.status == "missing" else "failed")
+    message = result.message
+    if status == "failed" and result.status == "unauthorized":
+        message = "OpenAI authentication failed. Save a valid key in Browser Settings, test it, then start the translation again."
+    return _provider_state_response(
+        settings_path=settings_path,
+        status=status,
+        message=message,
+        normalized_payload=result.to_payload(),
+    )
+
+
+def save_browser_translation_key(*, settings_path: Path, key: object) -> dict[str, object]:
+    cleaned = str(key or "").strip()
+    if cleaned == "":
+        raise ValueError("OpenAI API key cannot be empty.")
+    set_openai_key(cleaned)
+    if not get_openai_key():
+        raise RuntimeError("Secure credential storage is unavailable on this system.")
+    _clear_word_pdf_export_cache_for_settings(settings_path=settings_path)
+    return _provider_state_response(
+        settings_path=settings_path,
+        message="Saved the OpenAI translation key to secure app storage for this machine. Run Test Translation Auth to confirm it.",
+        normalized_payload={"saved": True},
+    )
+
+
+def clear_browser_translation_key(*, settings_path: Path) -> dict[str, object]:
+    delete_openai_key()
+    _clear_word_pdf_export_cache_for_settings(settings_path=settings_path)
+    return _provider_state_response(
+        settings_path=settings_path,
+        message="Cleared the stored OpenAI translation key from secure app storage for this machine.",
+        normalized_payload={"cleared": True},
+    )
+
+
+def save_browser_ocr_key(*, settings_path: Path, key: object) -> dict[str, object]:
+    cleaned = str(key or "").strip()
+    if cleaned == "":
+        raise ValueError("OCR API key cannot be empty.")
+    set_ocr_key(cleaned)
+    if not get_ocr_key():
+        raise RuntimeError("Secure credential storage is unavailable on this system.")
+    _clear_word_pdf_export_cache_for_settings(settings_path=settings_path)
+    return _provider_state_response(
+        settings_path=settings_path,
+        message="Saved the OCR API key to secure app storage for this machine. Run Test OCR Provider to confirm it.",
+        normalized_payload={"saved": True},
+    )
+
+
+def clear_browser_ocr_key(*, settings_path: Path) -> dict[str, object]:
+    delete_ocr_key()
+    _clear_word_pdf_export_cache_for_settings(settings_path=settings_path)
+    return _provider_state_response(
+        settings_path=settings_path,
+        message="Cleared the stored OCR API key from secure app storage for this machine.",
+        normalized_payload={"cleared": True},
+    )
 
 
 def save_glossary_workspace(
@@ -594,6 +1114,8 @@ def export_glossary_markdown(
 
 
 def _builder_pages_from_run_dir(run_dir: Path) -> list[tuple[str, int, str]]:
+    from .pdf_text_order import extract_ordered_page_text
+
     run_state_path = run_dir / "run_state.json"
     if not run_state_path.exists():
         return []
@@ -641,6 +1163,8 @@ def _builder_pages_from_run_dir(run_dir: Path) -> list[tuple[str, int, str]]:
 
 
 def _builder_pages_from_pdf(pdf_path: Path) -> list[tuple[str, int, str]]:
+    from .pdf_text_order import extract_ordered_page_text, get_page_count
+
     rows: list[tuple[str, int, str]] = []
     try:
         page_total = int(get_page_count(pdf_path))
@@ -1007,26 +1531,70 @@ def generate_browser_run_report(
     settings_path: Path,
     outputs_dir: Path,
     run_dir_text: object,
+    browser_failure_context: object | None = None,
+    gmail_finalization_context: object | None = None,
 ) -> dict[str, object]:
-    run_dir = Path(str(run_dir_text or "").strip()).expanduser().resolve()
-    if not run_dir.exists() or not run_dir.is_dir():
-        raise ValueError("Run report path must point to an existing run directory.")
-    gui = load_gui_settings_from_path(settings_path)
-    admin_mode = bool(gui.get("diagnostics_admin_mode", True))
-    include_snippets = bool(gui.get("diagnostics_include_sanitized_snippets", False))
-    markdown = build_run_report_markdown(
-        run_dir=run_dir,
-        admin_mode=admin_mode,
-        include_sanitized_snippets=include_snippets,
-    )
-    report_path = _power_tools_output_dir(outputs_dir) / f"{_RUN_REPORT_PREFIX}_{_timestamp_slug()}.md"
+    cleaned_run_dir = str(run_dir_text or "").strip()
+    if cleaned_run_dir:
+        run_dir = Path(cleaned_run_dir).expanduser().resolve()
+        if not run_dir.exists() or not run_dir.is_dir():
+            raise ValueError("Run report path must point to an existing run directory.")
+        gui = load_gui_settings_from_path(settings_path)
+        admin_mode = bool(gui.get("diagnostics_admin_mode", True))
+        include_snippets = bool(gui.get("diagnostics_include_sanitized_snippets", False))
+        markdown = build_run_report_markdown(
+            run_dir=run_dir,
+            admin_mode=admin_mode,
+            include_sanitized_snippets=include_snippets,
+        )
+        report_path = _power_tools_output_dir(outputs_dir) / f"{_RUN_REPORT_PREFIX}_{_timestamp_slug()}.md"
+        report_path.write_text(markdown, encoding="utf-8")
+        return {
+            "status": "ok",
+            "normalized_payload": {
+                "report_kind": "run_report",
+                "run_dir": _safe_path_text(run_dir),
+                "report_path": _safe_path_text(report_path),
+                "preview": markdown[:6000],
+            },
+            "diagnostics": {},
+        }
+
+    finalization_context = _normalize_gmail_finalization_context(gmail_finalization_context)
+    if finalization_context:
+        markdown = _build_gmail_finalization_report_markdown(
+            context=finalization_context,
+            settings_path=settings_path,
+        )
+        report_path = _power_tools_output_dir(outputs_dir) / f"{_GMAIL_FINALIZATION_REPORT_PREFIX}_{_timestamp_slug()}.md"
+        report_path.write_text(markdown, encoding="utf-8")
+        return {
+            "status": "ok",
+            "normalized_payload": {
+                "report_kind": "gmail_finalization_report",
+                "run_dir": "",
+                "report_path": _safe_path_text(report_path),
+                "preview": markdown[:6000],
+                "operation": str(finalization_context.get("operation", "") or ""),
+                "status_label": str(finalization_context.get("status", "") or ""),
+            },
+            "diagnostics": {},
+        }
+
+    context = _normalize_browser_failure_context(browser_failure_context)
+    if not context:
+        raise ValueError("Run report generation requires run_dir, browser_failure_context, or gmail_finalization_context.")
+    markdown = _build_browser_failure_report_markdown(context=context, settings_path=settings_path)
+    report_path = _power_tools_output_dir(outputs_dir) / f"{_BROWSER_FAILURE_REPORT_PREFIX}_{_timestamp_slug()}.md"
     report_path.write_text(markdown, encoding="utf-8")
     return {
         "status": "ok",
         "normalized_payload": {
-            "run_dir": _safe_path_text(run_dir),
+            "report_kind": "browser_failure_report",
+            "run_dir": "",
             "report_path": _safe_path_text(report_path),
             "preview": markdown[:6000],
+            "operation": str(context.get("operation", "") or ""),
         },
         "diagnostics": {},
     }
@@ -1034,15 +1602,25 @@ def generate_browser_run_report(
 
 __all__ = [
     "apply_builder_suggestions",
+    "build_browser_provider_state",
     "build_power_tools_bootstrap",
+    "clear_browser_ocr_key",
+    "clear_browser_translation_key",
     "create_browser_debug_bundle",
+    "document_runtime_state_payload",
     "export_glossary_markdown",
     "generate_browser_run_report",
+    "repair_browser_native_host",
     "run_browser_calibration_audit",
     "run_glossary_builder",
     "run_gmail_draft_preflight",
+    "run_native_host_test",
     "run_ocr_provider_test",
+    "run_word_pdf_export_test",
+    "run_translation_provider_test",
     "run_settings_preflight",
     "save_browser_settings",
+    "save_browser_ocr_key",
+    "save_browser_translation_key",
     "save_glossary_workspace",
 ]

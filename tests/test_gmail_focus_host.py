@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 from io import BytesIO
 from pathlib import Path
+import tempfile
 
+from legalpdf_translate.gmail_focus import BridgeOwnerValidationResult
 import legalpdf_translate.gmail_focus_host as host_module
 
 
@@ -71,6 +74,7 @@ def test_launch_repo_worktree_detaches_browser_server(monkeypatch, tmp_path: Pat
 
 
 def test_resolve_auto_launch_target_prefers_canonical_worktree_when_local_worktree_lacks_venv(
+    monkeypatch,
     tmp_path: Path,
 ) -> None:
     worktree = tmp_path / "worktree"
@@ -87,6 +91,17 @@ def test_resolve_auto_launch_target_prefers_canonical_worktree_when_local_worktr
     (canonical / "src" / "legalpdf_translate" / "qt_app.py").write_text("print('canonical-qt')\n", encoding="utf-8")
     python_exe = canonical / ".venv311" / "Scripts" / "python.exe"
     python_exe.write_text("", encoding="utf-8")
+    monkeypatch.setattr(host_module, "_looks_like_pytest_or_temp_runtime_path", lambda path: path != python_exe.resolve())
+    monkeypatch.setattr(
+        host_module,
+        "_python_runtime_supports_native_host",
+        lambda executable, *, repo_root: executable == python_exe.resolve(),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_python_runtime_supports_browser_runtime",
+        lambda executable, *, repo_root: executable == python_exe.resolve(),
+    )
     (worktree / "docs" / "assistant" / "runtime" / "CANONICAL_BUILD.json").write_text(
         host_module.json.dumps(
             {
@@ -109,6 +124,114 @@ def test_resolve_auto_launch_target_prefers_canonical_worktree_when_local_worktr
     assert target.worktree_path == str(canonical.resolve())
     assert target.python_executable == str(python_exe.resolve())
     assert target.reason == "launch_target_ready"
+
+
+def test_resolve_repo_worktree_preserves_runtime_path_identity(monkeypatch, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    runtime_path = repo / ".venv311" / "Scripts" / "python.exe"
+    (repo / "tooling").mkdir(parents=True)
+    (repo / "src" / "legalpdf_translate").mkdir(parents=True)
+    runtime_path.parent.mkdir(parents=True)
+    (repo / "tooling" / "launch_qt_build.py").write_text("print('ok')\n", encoding="utf-8")
+    (repo / "src" / "legalpdf_translate" / "qt_app.py").write_text("print('qt')\n", encoding="utf-8")
+    runtime_path.write_text("", encoding="utf-8")
+
+    original_resolve = host_module.Path.resolve
+
+    def fake_resolve(self: Path, *args, **kwargs) -> Path:
+        if self == runtime_path:
+            return Path(r"C:\Users\FA507\AppData\Local\Programs\Python\Python311\python.exe")
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(host_module.Path, "resolve", fake_resolve)
+
+    resolved = host_module._resolve_repo_worktree_for_auto_launch(runtime_path=runtime_path)
+
+    assert resolved == repo.resolve()
+
+
+def test_validated_python_executable_preserves_runtime_path_identity(monkeypatch, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    runtime_path = repo / ".venv311" / "Scripts" / "python.exe"
+    (repo / "tooling").mkdir(parents=True)
+    (repo / "src" / "legalpdf_translate").mkdir(parents=True)
+    runtime_path.parent.mkdir(parents=True)
+    (repo / "tooling" / "launch_qt_build.py").write_text("print('ok')\n", encoding="utf-8")
+    (repo / "src" / "legalpdf_translate" / "qt_app.py").write_text("print('qt')\n", encoding="utf-8")
+    runtime_path.write_text("", encoding="utf-8")
+
+    original_resolve = host_module.Path.resolve
+
+    def fake_resolve(self: Path, *args, **kwargs) -> Path:
+        if self == runtime_path:
+            return Path(r"C:\Users\FA507\AppData\Local\Programs\Python\Python311\python.exe")
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(host_module.Path, "resolve", fake_resolve)
+    monkeypatch.setattr(host_module, "_looks_like_pytest_or_temp_runtime_path", lambda path: False)
+    monkeypatch.setattr(
+        host_module,
+        "_python_runtime_supports_native_host",
+        lambda executable, *, repo_root: executable == runtime_path,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_python_runtime_supports_browser_runtime",
+        lambda executable, *, repo_root: executable == runtime_path,
+    )
+
+    resolved, reason = host_module._validated_python_executable_for_worktree(
+        repo,
+        preferred_python_executable=runtime_path,
+    )
+
+    assert resolved == runtime_path
+    assert reason == "launch_target_ready"
+
+
+def test_looks_like_pytest_runtime_uses_nonresolved_temp_path(monkeypatch) -> None:
+    runtime_path = Path(tempfile.gettempdir()) / "pytest-of-fa507" / "Scripts" / "python.exe"
+
+    original_resolve = host_module.Path.resolve
+
+    def fake_resolve(self: Path, *args, **kwargs) -> Path:
+        if self == runtime_path:
+            return Path(r"C:\Users\FA507\AppData\Local\Programs\Python\Python311\python.exe")
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(host_module.Path, "resolve", fake_resolve)
+
+    assert host_module._looks_like_pytest_or_temp_runtime_path(runtime_path) is True
+
+
+def test_wait_for_bridge_owner_after_launch_tolerates_transient_owner_mismatch(monkeypatch, tmp_path: Path) -> None:
+    states = iter(
+        [
+            BridgeOwnerValidationResult(
+                ok=False,
+                pid=999,
+                hwnd=None,
+                reason="bridge_port_owner_mismatch",
+                owner_kind="external",
+            ),
+            BridgeOwnerValidationResult(
+                ok=True,
+                pid=1001,
+                hwnd=None,
+                reason="bridge_owner_ready",
+                owner_kind="browser_app",
+            ),
+        ]
+    )
+    monotonic_values = iter([0.0, 0.1, 0.2, 0.3])
+
+    monkeypatch.setattr(host_module, "validate_bridge_owner", lambda **_kwargs: next(states))
+    monkeypatch.setattr(host_module.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(host_module.time, "monotonic", lambda: next(monotonic_values))
+
+    result = host_module._wait_for_bridge_owner_after_launch(bridge_port=8765, base_dir=tmp_path)
+
+    assert result == "launch_ready"
 
 
 def test_build_edge_native_host_manifest_uses_stable_origin(tmp_path: Path) -> None:
@@ -297,6 +420,17 @@ def test_ensure_edge_native_host_registered_prefers_checkout_wrapper_when_availa
         "_preferred_repo_worktree_for_auto_launch",
         lambda runtime_path=None: repo_root,
     )
+    monkeypatch.setattr(host_module, "_looks_like_pytest_or_temp_runtime_path", lambda _path: False)
+    monkeypatch.setattr(
+        host_module,
+        "_python_runtime_supports_native_host",
+        lambda executable, *, repo_root: executable == python_exe.resolve(),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_python_runtime_supports_browser_runtime",
+        lambda executable, *, repo_root: executable == python_exe.resolve(),
+    )
 
     result = host_module.ensure_edge_native_host_registered(
         base_dir=tmp_path,
@@ -320,6 +454,95 @@ def test_ensure_edge_native_host_registered_prefers_checkout_wrapper_when_availa
     assert 'legalpdf_translate.gmail_focus_host' in wrapper_text
     assert str((repo_root / "src").resolve()) in wrapper_text
     assert str(python_exe.resolve()) in wrapper_text
+
+
+def test_validated_python_executable_for_worktree_falls_back_when_first_runtime_is_broken(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    broken_python = repo_root / ".venv311" / "Scripts" / "python.exe"
+    healthy_python = repo_root / ".venv" / "Scripts" / "python.exe"
+    healthy_python.parent.mkdir(parents=True, exist_ok=True)
+    broken_python.parent.mkdir(parents=True, exist_ok=True)
+    broken_python.write_text("", encoding="utf-8")
+    healthy_python.write_text("", encoding="utf-8")
+    monkeypatch.setattr(host_module, "_looks_like_pytest_or_temp_runtime_path", lambda _path: False)
+    monkeypatch.setattr(
+        host_module,
+        "_python_runtime_supports_native_host",
+        lambda executable, *, repo_root: executable == broken_python.resolve() or executable == healthy_python.resolve(),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_python_runtime_supports_browser_runtime",
+        lambda executable, *, repo_root: executable == healthy_python.resolve(),
+    )
+
+    executable, reason = host_module._validated_python_executable_for_worktree(repo_root)
+
+    assert executable == healthy_python.resolve()
+    assert reason == "launch_target_ready"
+
+
+def test_cli_self_test_returns_ok_payload(capsys) -> None:
+    result = host_module.cli(["--self-test"])
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert payload["ok"] is True
+    assert payload["reason"] == "native_host_self_test_ok"
+
+
+def test_maybe_ensure_edge_native_host_registered_skips_pytest_runtime(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_gmail_focus_host.py::test_case")
+
+    result = host_module.maybe_ensure_edge_native_host_registered(
+        base_dir=tmp_path,
+        host_executable_path=tmp_path / "LegalPDFGmailFocusHost.exe",
+        read_registry_value=lambda: (_ for _ in ()).throw(AssertionError("registry read should be skipped")),
+        write_registry_value=lambda _value: (_ for _ in ()).throw(AssertionError("registry write should be skipped")),
+    )
+
+    assert result == host_module.NativeHostRegistrationResult(
+        ok=False,
+        changed=False,
+        manifest_path=None,
+        executable_path=None,
+        reason="skipped_pytest_runtime",
+    )
+
+
+def test_maybe_ensure_edge_native_host_registered_allows_real_registration_outside_pytest(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(host_module, "_looks_like_pytest_temp_base_dir", lambda _path: False)
+    monkeypatch.setattr(host_module, "_is_windows", lambda: True)
+    host_exe = tmp_path / "LegalPDFGmailFocusHost.exe"
+    host_exe.write_text("host", encoding="utf-8")
+    registry: dict[str, str] = {}
+
+    result = host_module.maybe_ensure_edge_native_host_registered(
+        base_dir=tmp_path,
+        host_executable_path=host_exe,
+        read_registry_value=lambda: registry.get("value"),
+        write_registry_value=lambda value: registry.__setitem__("value", value),
+    )
+
+    manifest_path = tmp_path / "native_messaging" / "com.legalpdf.gmail_focus.edge.json"
+    assert result == host_module.NativeHostRegistrationResult(
+        ok=True,
+        changed=True,
+        manifest_path=str(manifest_path.resolve()),
+        executable_path=str(host_exe.resolve()),
+        reason="registered",
+    )
 
 
 def test_native_message_round_trip() -> None:
@@ -908,11 +1131,87 @@ def test_prepare_gmail_intake_returns_browser_owner_context_without_focus(monkey
         "launchTargetReason": "launch_target_ready",
         "ui_owner": "browser_app",
         "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+        "browser_open_owned_by": "extension",
         "workspace_id": "gmail-intake",
         "runtime_mode": "live",
         "bridgePort": 9011,
         "bridgeToken": "shared-token",
         "reason": "bridge_owner_ready",
+    }
+
+
+def test_prepare_gmail_intake_reports_browser_launch_in_progress(monkeypatch, tmp_path: Path) -> None:
+    browser_target = host_module.AutoLaunchTarget(
+        ready=True,
+        worktree_path=str(tmp_path),
+        python_executable=str(tmp_path / ".venv311" / "Scripts" / "python.exe"),
+        launcher_script=None,
+        reason="launch_target_ready",
+        ui_owner="browser_app",
+        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+        launch_args=("-m", "legalpdf_translate.shadow_web.server", "--port", "8877"),
+    )
+    monkeypatch.setattr(host_module, "_resolve_auto_launch_target", lambda: browser_target)
+    monkeypatch.setattr(
+        host_module,
+        "load_gui_settings",
+        lambda: {
+            "gmail_intake_bridge_enabled": True,
+            "gmail_intake_bridge_token": "shared-token",
+            "gmail_intake_port": 9011,
+        },
+    )
+    monkeypatch.setattr(
+        host_module,
+        "validate_bridge_owner",
+        lambda *, bridge_port, base_dir: type(
+            "Result",
+            (),
+            {
+                "ok": False,
+                "pid": None,
+                "hwnd": None,
+                "reason": "runtime_metadata_missing",
+                "owner_kind": "none",
+                "browser_url": None,
+                "workspace_id": None,
+                "runtime_mode": None,
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_read_browser_auto_launch_lock",
+        lambda _base_dir: {
+            "remaining_ms": 4200,
+            "ui_owner": "browser_app",
+            "browser_url": browser_target.browser_url,
+            "workspace_id": "gmail-intake",
+            "runtime_mode": "live",
+            "browser_open_owned_by": "extension",
+        },
+    )
+
+    payload = host_module.prepare_gmail_intake(base_dir=tmp_path)
+
+    assert payload == {
+        "ok": False,
+        "focused": False,
+        "flashed": False,
+        "bridgeTokenPresent": True,
+        "launched": False,
+        "autoLaunchReady": True,
+        "launchTarget": str(tmp_path),
+        "launchTargetReason": "launch_target_ready",
+        "ui_owner": "browser_app",
+        "browser_url": browser_target.browser_url,
+        "browser_open_owned_by": "extension",
+        "workspace_id": "gmail-intake",
+        "runtime_mode": "live",
+        "bridgePort": 9011,
+        "reason": "launch_in_progress",
+        "launch_in_progress": True,
+        "launch_lock_ttl_ms": 4200,
     }
 
 

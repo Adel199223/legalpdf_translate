@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import tempfile
 import threading
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from .gmail_batch import (
     DownloadedGmailAttachment,
@@ -41,24 +41,15 @@ from .gmail_draft import (
     validate_translated_docx_artifacts_for_gmail_draft,
 )
 from .gmail_intake import InboundMailContext
-from .honorarios_docx import (
-    HonorariosKind,
-    build_honorarios_draft,
-    default_honorarios_filename,
-    generate_honorarios_docx,
-)
-from .interpretation_service import (
-    _current_profile,
-    _profile_missing_fields,
-    _run_pdf_export_with_retry,
-    autofill_interpretation_from_notification_pdf,
-    export_interpretation_honorarios,
-    serialize_honorarios_draft,
-)
 from .output_paths import require_writable_output_dir
-from .source_document import get_source_page_count
-from .translation_service import TranslationJobManager, save_translation_row
 from .user_settings import load_gui_settings_from_path
+from .word_automation import (
+    assess_word_pdf_export_readiness,
+    clear_word_pdf_export_readiness_cache,
+)
+
+if TYPE_CHECKING:
+    from .translation_service import TranslationJobManager
 
 GMAIL_WORKFLOW_TRANSLATION = "translation"
 GMAIL_WORKFLOW_INTERPRETATION = "interpretation"
@@ -94,9 +85,23 @@ _PREPARE_REASON_MESSAGES = {
     "launch_helper_missing": "LegalPDF Translate auto-launch is not available from this checkout.",
     "launch_python_missing": "LegalPDF Translate auto-launch is not available from this checkout.",
     "launch_command_failed": "LegalPDF Translate could not be started automatically.",
+    "launch_in_progress": "LegalPDF Translate is already starting the browser app for this Gmail handoff.",
     "launch_timeout": "LegalPDF Translate was started, but the Gmail bridge did not become ready in time.",
     "unsupported_platform": "Foreground activation is only supported on Windows for this extension.",
 }
+
+
+def _word_pdf_cache_scope_token(settings_path: Path) -> str:
+    return str(settings_path.expanduser().resolve())
+
+
+def _clear_word_pdf_export_cache_for_session(*, settings_path: Path, session_id: str) -> int:
+    scope_token = _word_pdf_cache_scope_token(settings_path)
+    removed = clear_word_pdf_export_readiness_cache(
+        scope_prefix=f"gmail_batch_finalization::{scope_token}::{str(session_id or '').strip()}",
+    )
+    removed += clear_word_pdf_export_readiness_cache(scope_prefix=f"provider_state::{scope_token}")
+    return removed
 
 
 def _clean_text(value: object) -> str:
@@ -130,6 +135,24 @@ def _configured_gmail_values(settings_path: Path) -> tuple[str, str]:
         str(gui_settings.get("gmail_gog_path", "") or "").strip(),
         str(gui_settings.get("gmail_account_email", "") or "").strip(),
     )
+
+
+def autofill_interpretation_from_notification_pdf(*args, **kwargs):
+    from .interpretation_service import autofill_interpretation_from_notification_pdf as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def export_interpretation_honorarios(*args, **kwargs):
+    from .interpretation_service import export_interpretation_honorarios as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def _current_profile(*args, **kwargs):
+    from .interpretation_service import _current_profile as _impl
+
+    return _impl(*args, **kwargs)
 
 
 def _default_output_dir(settings_path: Path, outputs_dir: Path) -> Path:
@@ -257,6 +280,12 @@ def _serialize_attachment_candidate(attachment: GmailAttachmentCandidate) -> dic
     }
 
 
+def _is_pdf_attachment(candidate: GmailAttachmentCandidate) -> bool:
+    filename = candidate.filename.strip().lower()
+    mime_type = candidate.mime_type.strip().lower()
+    return mime_type == "application/pdf" or filename.endswith(".pdf")
+
+
 def _serialize_downloaded_attachment(attachment: DownloadedGmailAttachment) -> dict[str, Any]:
     return {
         "attachment": _serialize_attachment_candidate(attachment.candidate),
@@ -295,6 +324,44 @@ def _serialize_load_result(result: GmailMessageLoadResult) -> dict[str, Any]:
             "account_email": result.intake_context.account_email or "",
         },
     }
+
+
+def _serialize_inbound_context(context: InboundMailContext | Mapping[str, Any] | None) -> dict[str, str]:
+    if context is None:
+        return {}
+    if isinstance(context, InboundMailContext):
+        return {
+            "message_id": context.message_id,
+            "thread_id": context.thread_id,
+            "subject": context.subject,
+            "account_email": context.account_email or "",
+        }
+    if isinstance(context, Mapping):
+        return {
+            "message_id": _clean_text(context.get("message_id")),
+            "thread_id": _clean_text(context.get("thread_id")),
+            "subject": _clean_text(context.get("subject")),
+            "account_email": _clean_text(context.get("account_email")),
+        }
+    return {}
+
+
+def _gmail_context_matches(
+    left: InboundMailContext | Mapping[str, Any] | None,
+    right: InboundMailContext | Mapping[str, Any] | None,
+) -> bool:
+    left_payload = _serialize_inbound_context(left)
+    right_payload = _serialize_inbound_context(right)
+    comparisons: list[bool] = []
+    left_message_id = _clean_text(left_payload.get("message_id"))
+    right_message_id = _clean_text(right_payload.get("message_id"))
+    if left_message_id and right_message_id:
+        comparisons.append(left_message_id == right_message_id)
+    left_thread_id = _clean_text(left_payload.get("thread_id"))
+    right_thread_id = _clean_text(right_payload.get("thread_id"))
+    if left_thread_id and right_thread_id:
+        comparisons.append(left_thread_id == right_thread_id)
+    return bool(comparisons) and all(comparisons)
 
 
 def _message_signature(result: GmailMessageLoadResult) -> str:
@@ -376,6 +443,8 @@ def _serialize_translation_launch(
     return {
         "source_path": _path_text(attachment.saved_path),
         "source_filename": attachment.candidate.filename,
+        "attachment_id": attachment.candidate.attachment_id,
+        "source_type": "pdf" if _is_pdf_attachment(attachment.candidate) else "image",
         "start_page": int(attachment.start_page),
         "page_count": int(attachment.page_count),
         "output_dir": _path_text(output_dir),
@@ -416,7 +485,16 @@ def _serialize_batch_session(
         "session_report_path": _path_text(session.session_report_path),
         "final_attachment_basenames": list(session.final_attachment_basenames),
         "draft_created": bool(session.draft_created),
+        "draft_preflight_result": session.draft_preflight_result,
         "draft_failure_reason": session.draft_failure_reason,
+        "requested_honorarios_path": _path_text(session.requested_honorarios_path),
+        "requested_honorarios_pdf_path": _path_text(session.requested_honorarios_pdf_path),
+        "actual_honorarios_path": _path_text(session.actual_honorarios_path),
+        "actual_honorarios_pdf_path": _path_text(session.actual_honorarios_pdf_path),
+        "honorarios_auto_renamed": bool(session.honorarios_auto_renamed),
+        "pdf_export": dict(session.pdf_export),
+        "finalization_state": session.finalization_state,
+        "finalization_preflight": dict(session.finalization_preflight),
     }
 
 
@@ -468,6 +546,9 @@ class _WorkspaceState:
     review_event_id: int = 0
     message_signature: str = ""
     preferred_reply_email: str = ""
+    pending_status: str = ""
+    pending_intake_context: dict[str, str] = field(default_factory=dict, repr=False)
+    pending_review_open: bool = False
     preview_paths: dict[str, Path] = field(default_factory=dict, repr=False)
     preview_page_counts: dict[str, int] = field(default_factory=dict, repr=False)
     _preview_temp_dir: tempfile.TemporaryDirectory[str] | None = field(default=None, repr=False)
@@ -485,6 +566,9 @@ class _WorkspaceState:
         self.preview_page_counts = {}
         self.interpretation_seed_response = None
         self.preferred_reply_email = ""
+        self.pending_status = ""
+        self.pending_intake_context = {}
+        self.pending_review_open = False
         self.current_batch_index = 0
         if preview_dir is not None:
             preview_dir.cleanup()
@@ -538,6 +622,23 @@ class GmailBrowserSessionManager:
                 return attachment.saved_path.expanduser().resolve()
         return None
 
+    def record_browser_pdf_bundle(
+        self,
+        *,
+        runtime_mode: str,
+        workspace_id: str,
+        attachment_id: str,
+        source_path: Path,
+        page_count: int,
+    ) -> None:
+        workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
+        attachment_key = _clean_text(attachment_id)
+        if not attachment_key:
+            return
+        resolved_source = source_path.expanduser().resolve()
+        workspace.preview_paths[attachment_key] = resolved_source
+        workspace.preview_page_counts[attachment_key] = max(1, int(page_count))
+
     def build_bootstrap(
         self,
         *,
@@ -565,6 +666,13 @@ class GmailBrowserSessionManager:
         }
         if workspace.loaded_result is not None:
             defaults["message_context"] = dict(_serialize_load_result(workspace.loaded_result)["intake_context"])
+        elif workspace.pending_intake_context:
+            defaults["message_context"] = dict(workspace.pending_intake_context)
+        handoff_state = "idle"
+        if workspace.pending_review_open and workspace.pending_status:
+            handoff_state = workspace.pending_status
+        elif workspace.loaded_result is not None:
+            handoff_state = "loaded"
         payload: dict[str, Any] = {
             "defaults": defaults,
             "load_result": _serialize_load_result(workspace.loaded_result) if workspace.loaded_result is not None else None,
@@ -581,6 +689,10 @@ class GmailBrowserSessionManager:
             "draft_prereqs": _serialize_draft_prereqs(prereqs),
             "review_event_id": int(workspace.review_event_id),
             "message_signature": workspace.message_signature,
+            "pending_status": workspace.pending_status,
+            "pending_intake_context": dict(workspace.pending_intake_context),
+            "pending_review_open": bool(workspace.pending_review_open),
+            "handoff_state": handoff_state,
         }
         if workspace.batch_session is not None:
             payload["active_session"] = _serialize_batch_session(
@@ -601,6 +713,35 @@ class GmailBrowserSessionManager:
             "diagnostics": {},
             "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
         }
+
+    def _set_pending_intake(
+        self,
+        *,
+        runtime_mode: str,
+        workspace_id: str,
+        context: InboundMailContext,
+        status: str = "warming",
+        review_open: bool = True,
+    ) -> None:
+        workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
+        workspace.pending_status = _clean_text(status).lower() or "warming"
+        workspace.pending_intake_context = _serialize_inbound_context(context)
+        workspace.pending_review_open = bool(review_open)
+
+    def _mark_pending_failure(
+        self,
+        *,
+        runtime_mode: str,
+        workspace_id: str,
+        context: InboundMailContext,
+    ) -> None:
+        self._set_pending_intake(
+            runtime_mode=runtime_mode,
+            workspace_id=workspace_id,
+            context=context,
+            status="failed",
+            review_open=False,
+        )
 
     def _store_loaded_result(
         self,
@@ -631,11 +772,24 @@ class GmailBrowserSessionManager:
     ) -> dict[str, Any]:
         intake_context = InboundMailContext.from_payload(dict(context_payload))
         configured_gog_path, configured_account_email = _configured_gmail_values(settings_path)
-        result = load_gmail_message_from_intake(
-            intake_context=intake_context,
-            configured_gog_path=configured_gog_path,
-            configured_account_email=configured_account_email,
+        self._set_pending_intake(
+            runtime_mode=runtime_mode,
+            workspace_id=workspace_id,
+            context=intake_context,
         )
+        try:
+            result = load_gmail_message_from_intake(
+                intake_context=intake_context,
+                configured_gog_path=configured_gog_path,
+                configured_account_email=configured_account_email,
+            )
+        except Exception:
+            self._mark_pending_failure(
+                runtime_mode=runtime_mode,
+                workspace_id=workspace_id,
+                context=intake_context,
+            )
+            raise
         review_state = self._store_loaded_result(
             runtime_mode=runtime_mode,
             workspace_id=workspace_id,
@@ -661,12 +815,84 @@ class GmailBrowserSessionManager:
         settings_path: Path,
         context: InboundMailContext,
     ) -> dict[str, Any]:
+        workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
+        if (
+            workspace.pending_review_open
+            and workspace.pending_status in {"warming", "delayed"}
+            and _gmail_context_matches(workspace.pending_intake_context, context)
+        ):
+            return {
+                "status": workspace.pending_status,
+                "normalized_payload": {
+                    "load_result": (
+                        _serialize_load_result(workspace.loaded_result)
+                        if workspace.loaded_result is not None
+                        else None
+                    ),
+                    "message": (
+                        _serialize_message(workspace.loaded_result.message)
+                        if workspace.loaded_result is not None and workspace.loaded_result.message is not None
+                        else None
+                    ),
+                    "workspace_id": workspace_id,
+                    "runtime_mode": runtime_mode,
+                    "review_event_id": int(workspace.review_event_id),
+                    "message_signature": workspace.message_signature,
+                    "pending_status": workspace.pending_status,
+                    "pending_intake_context": dict(workspace.pending_intake_context),
+                    "pending_review_open": bool(workspace.pending_review_open),
+                    "handoff_state": "pending_reused",
+                },
+                "diagnostics": {
+                    "bridge_ingest": True,
+                    "handoff_reused": True,
+                },
+                "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
+            }
+        if (
+            workspace.loaded_result is not None
+            and _gmail_context_matches(workspace.loaded_result.intake_context, context)
+        ):
+            result = workspace.loaded_result
+            return {
+                "status": "ok" if result.ok else result.classification or "failed",
+                "normalized_payload": {
+                    "load_result": _serialize_load_result(result),
+                    "message": _serialize_message(result.message) if result.message is not None else None,
+                    "workspace_id": workspace_id,
+                    "runtime_mode": runtime_mode,
+                    "review_event_id": int(workspace.review_event_id),
+                    "message_signature": workspace.message_signature,
+                    "pending_status": workspace.pending_status,
+                    "pending_intake_context": dict(workspace.pending_intake_context),
+                    "pending_review_open": bool(workspace.pending_review_open),
+                    "handoff_state": "loaded_reused",
+                },
+                "diagnostics": {
+                    "bridge_ingest": True,
+                    "handoff_reused": True,
+                },
+                "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
+            }
         configured_gog_path, configured_account_email = _configured_gmail_values(settings_path)
-        result = load_gmail_message_from_intake(
-            intake_context=context,
-            configured_gog_path=configured_gog_path,
-            configured_account_email=configured_account_email,
+        self._set_pending_intake(
+            runtime_mode=runtime_mode,
+            workspace_id=workspace_id,
+            context=context,
         )
+        try:
+            result = load_gmail_message_from_intake(
+                intake_context=context,
+                configured_gog_path=configured_gog_path,
+                configured_account_email=configured_account_email,
+            )
+        except Exception:
+            self._mark_pending_failure(
+                runtime_mode=runtime_mode,
+                workspace_id=workspace_id,
+                context=context,
+            )
+            raise
         review_state = self._store_loaded_result(
             runtime_mode=runtime_mode,
             workspace_id=workspace_id,
@@ -679,6 +905,7 @@ class GmailBrowserSessionManager:
                 "message": _serialize_message(result.message) if result.message is not None else None,
                 "workspace_id": workspace_id,
                 "runtime_mode": runtime_mode,
+                "handoff_state": "new",
                 **review_state,
             },
             "diagnostics": {
@@ -732,14 +959,15 @@ class GmailBrowserSessionManager:
         if not result.ok or result.saved_path is None:
             raise ValueError(result.message or "Failed to preview the selected Gmail attachment.")
         saved_path = result.saved_path.expanduser().resolve()
-        page_count = int(get_source_page_count(saved_path))
         workspace.preview_paths[attachment.attachment_id] = saved_path
-        workspace.preview_page_counts[attachment.attachment_id] = page_count
+        page_count = 1 if not _is_pdf_attachment(attachment) else 0
+        if page_count > 0:
+            workspace.preview_page_counts[attachment.attachment_id] = page_count
         return {
             "status": "ok",
             "normalized_payload": {
                 "attachment": _serialize_attachment_candidate(attachment),
-                "page_count": page_count,
+                "page_count": page_count if page_count > 0 else None,
                 "preview_path": _path_text(saved_path),
             },
             "diagnostics": {
@@ -784,11 +1012,30 @@ class GmailBrowserSessionManager:
             if attachment is None:
                 raise ValueError(f"Unknown Gmail attachment selection: {attachment_id or '(blank)'}.")
             start_page = int(item.get("start_page", 1) or 1)
+            raw_page_count = item.get("page_count")
+            page_count = None
+            if raw_page_count not in (None, ""):
+                try:
+                    page_count = int(raw_page_count)
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        f"Page count must be an integer for Gmail attachment '{attachment.filename}'."
+                    ) from None
             if workflow == GMAIL_WORKFLOW_INTERPRETATION:
                 start_page = 1
             if start_page <= 0:
                 raise ValueError(f"Start page must be >= 1 for Gmail attachment '{attachment.filename}'.")
-            selections.append(GmailAttachmentSelection(candidate=attachment, start_page=start_page))
+            if page_count is not None and page_count <= 0:
+                raise ValueError(
+                    f"Page count must be >= 1 for Gmail attachment '{attachment.filename}'."
+                )
+            selections.append(
+                GmailAttachmentSelection(
+                    candidate=attachment,
+                    start_page=start_page,
+                    page_count=page_count,
+                )
+            )
         if not selections:
             raise ValueError("Select at least one Gmail attachment first.")
 
@@ -875,7 +1122,7 @@ class GmailBrowserSessionManager:
         workspace_id: str,
         settings_path: Path,
         job_log_db_path: Path,
-        translation_jobs: TranslationJobManager,
+        translation_jobs: "TranslationJobManager",
         job_id: str,
         form_values: Mapping[str, Any],
         row_id: object | None = None,
@@ -905,6 +1152,8 @@ class GmailBrowserSessionManager:
         save_seed = result.get("save_seed")
         if not isinstance(save_seed, dict):
             raise ValueError("The selected translation job does not have a Save-to-Job-Log seed yet.")
+        from .translation_service import save_translation_row
+
         save_response = save_translation_row(
             settings_path=settings_path,
             job_log_db_path=job_log_db_path,
@@ -976,12 +1225,40 @@ class GmailBrowserSessionManager:
         output_filename: str | None,
         profile_id: str | None,
     ) -> dict[str, Any]:
+        preflight_response = self.preflight_batch_finalization(
+            runtime_mode=runtime_mode,
+            workspace_id=workspace_id,
+            settings_path=settings_path,
+            force_refresh=False,
+        )
+        preflight_payload = dict(preflight_response.get("normalized_payload", {}))
+        finalization_preflight = (
+            dict(preflight_payload.get("finalization_preflight", {}))
+            if isinstance(preflight_payload.get("finalization_preflight"), Mapping)
+            else {}
+        )
+        if not bool(finalization_preflight.get("finalization_ready")):
+            return preflight_response
+
         workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
         session = workspace.batch_session
         if session is None:
             raise ValueError("No Gmail translation batch is active in this workspace.")
         if len(session.confirmed_items) != len(session.downloaded_attachments):
             raise ValueError("Confirm every selected Gmail attachment before finalizing the batch reply.")
+        from .honorarios_docx import (
+            HonorariosKind,
+            build_honorarios_draft,
+            default_honorarios_filename,
+            generate_honorarios_docx,
+        )
+        from .interpretation_service import (
+            _current_profile,
+            _profile_missing_fields,
+            _run_pdf_export_with_retry,
+            serialize_honorarios_draft,
+        )
+
         _profiles, _primary_profile_id, profile = _current_profile(settings_path=settings_path, profile_id=profile_id)
         missing_profile_fields = _profile_missing_fields(profile)
         if missing_profile_fields:
@@ -994,6 +1271,12 @@ class GmailBrowserSessionManager:
             case_city=session.confirmed_items[0].case_city,
             court_email=session.confirmed_items[0].court_email,
         )
+        session.finalization_preflight = finalization_preflight
+        session.finalization_state = "finalizing"
+        session.draft_created = False
+        session.draft_failure_reason = ""
+        session.final_attachment_basenames = ()
+        write_gmail_batch_session_report(session)
         draft = build_honorarios_draft(
             case_number=signature[0],
             word_count=sum(int(item.translated_word_count) for item in session.confirmed_items),
@@ -1014,6 +1297,7 @@ class GmailBrowserSessionManager:
         session.requested_honorarios_path = requested_path
         session.requested_honorarios_pdf_path = requested_path.with_suffix(".pdf")
         session.actual_honorarios_path = docx_path
+        session.pdf_export = dict(pdf_export)
         session.actual_honorarios_pdf_path = (
             Path(_clean_text(pdf_export.get("pdf_path"))).expanduser().resolve()
             if _clean_text(pdf_export.get("pdf_path"))
@@ -1021,7 +1305,9 @@ class GmailBrowserSessionManager:
         )
         session.honorarios_auto_renamed = docx_path != requested_path
         if not pdf_export.get("ok"):
-            session.draft_preflight_result = "blocked"
+            _clear_word_pdf_export_cache_for_session(settings_path=settings_path, session_id=session.session_id)
+            session.draft_preflight_result = "passed"
+            session.finalization_state = "local_artifacts_ready"
             session.draft_created = False
             session.draft_failure_reason = _clean_text(pdf_export.get("failure_message")) or "Honorários PDF is unavailable."
             write_gmail_batch_session_report(session)
@@ -1031,9 +1317,15 @@ class GmailBrowserSessionManager:
                     "docx_path": _path_text(docx_path),
                     "pdf_path": "",
                     "draft": serialize_honorarios_draft(draft),
+                    "finalization_state": session.finalization_state,
+                    "finalization_preflight": dict(session.finalization_preflight),
+                    "retry_available": True,
                     "active_session": _serialize_batch_session(session, current_index=workspace.current_batch_index),
                 },
-                "diagnostics": {"pdf_export": pdf_export},
+                "diagnostics": {
+                    "word_pdf_export": dict(session.finalization_preflight),
+                    "pdf_export": pdf_export,
+                },
                 "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
             }
 
@@ -1044,6 +1336,7 @@ class GmailBrowserSessionManager:
         )
         if not prereqs.ready:
             session.draft_preflight_result = "failed"
+            session.finalization_state = "draft_failed"
             session.draft_created = False
             session.draft_failure_reason = prereqs.message
             write_gmail_batch_session_report(session)
@@ -1054,9 +1347,15 @@ class GmailBrowserSessionManager:
                     "pdf_path": _clean_text(pdf_export.get("pdf_path")),
                     "draft": serialize_honorarios_draft(draft),
                     "draft_prereqs": _serialize_draft_prereqs(prereqs),
+                    "finalization_state": session.finalization_state,
+                    "finalization_preflight": dict(session.finalization_preflight),
+                    "retry_available": True,
                     "active_session": _serialize_batch_session(session, current_index=workspace.current_batch_index),
                 },
-                "diagnostics": {"pdf_export": pdf_export},
+                "diagnostics": {
+                    "word_pdf_export": dict(session.finalization_preflight),
+                    "pdf_export": pdf_export,
+                },
                 "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
             }
 
@@ -1079,6 +1378,7 @@ class GmailBrowserSessionManager:
         session.final_attachment_basenames = tuple(path.name for path in request.attachments)
         session.draft_created = bool(result.ok)
         session.draft_failure_reason = "" if result.ok else _clean_text(result.message)
+        session.finalization_state = "draft_ready" if result.ok else "draft_failed"
         session.status = "draft_ready" if result.ok else "draft_failed"
         write_gmail_batch_session_report(session)
         return {
@@ -1090,9 +1390,59 @@ class GmailBrowserSessionManager:
                 "draft_prereqs": _serialize_draft_prereqs(prereqs),
                 "gmail_draft_request": _serialize_draft_request(request),
                 "gmail_draft_result": _serialize_draft_result(result),
+                "finalization_state": session.finalization_state,
+                "finalization_preflight": dict(session.finalization_preflight),
+                "retry_available": not bool(result.ok),
                 "active_session": _serialize_batch_session(session, current_index=workspace.current_batch_index),
             },
-            "diagnostics": {"pdf_export": pdf_export},
+            "diagnostics": {
+                "word_pdf_export": dict(session.finalization_preflight),
+                "pdf_export": pdf_export,
+            },
+            "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
+        }
+
+    def preflight_batch_finalization(
+        self,
+        *,
+        runtime_mode: str,
+        workspace_id: str,
+        settings_path: Path,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
+        session = workspace.batch_session
+        if session is None:
+            raise ValueError("No Gmail translation batch is active in this workspace.")
+        if len(session.confirmed_items) != len(session.downloaded_attachments):
+            raise ValueError("Confirm every selected Gmail attachment before finalizing the batch reply.")
+        readiness = assess_word_pdf_export_readiness(
+            cache_scope=f"gmail_batch_finalization::{_word_pdf_cache_scope_token(settings_path)}::{session.session_id}",
+            launch_timeout_seconds=8.0,
+            export_timeout_seconds=45.0,
+            force_refresh=force_refresh,
+        )
+        previous_state = session.finalization_state.strip()
+        session.finalization_preflight = dict(readiness)
+        if bool(readiness.get("finalization_ready")):
+            if previous_state not in {"local_artifacts_ready", "draft_failed", "draft_ready"}:
+                session.finalization_state = "ready_to_finalize"
+        elif previous_state not in {"local_artifacts_ready", "draft_failed", "draft_ready"}:
+            session.finalization_state = "blocked_word_pdf_export"
+        if not bool(readiness.get("finalization_ready")):
+            session.draft_preflight_result = "blocked_word_pdf_export"
+            session.draft_created = False
+            session.draft_failure_reason = _clean_text(readiness.get("message")) or "Word PDF export is unavailable."
+        write_gmail_batch_session_report(session)
+        return {
+            "status": "ok" if bool(readiness.get("finalization_ready")) else "blocked_word_pdf_export",
+            "normalized_payload": {
+                "finalization_state": session.finalization_state,
+                "finalization_preflight": dict(readiness),
+                "retry_available": False,
+                "active_session": _serialize_batch_session(session, current_index=workspace.current_batch_index),
+            },
+            "diagnostics": {"word_pdf_export": dict(readiness)},
             "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
         }
 

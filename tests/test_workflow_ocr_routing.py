@@ -8,7 +8,12 @@ import pytest
 
 import legalpdf_translate.workflow as workflow_module
 from legalpdf_translate.ocr_engine import OcrResult
-from legalpdf_translate.openai_client import ApiCallError, ApiCallResult
+from legalpdf_translate.openai_client import (
+    ApiCallError,
+    ApiCallResult,
+    OpenAICredentialSourceInfo,
+    TranslationAuthTestResult,
+)
 from legalpdf_translate.types import ImageMode, OcrEnginePolicy, OcrMode, ReasoningEffort, RunConfig, TargetLang
 from legalpdf_translate.workflow import (
     TranslationWorkflow,
@@ -50,6 +55,45 @@ class _FailingClient:
             transport_retries_count=2,
             last_backoff_seconds=0.0,
             total_backoff_seconds=1.5,
+            rate_limit_hit=False,
+        )
+
+
+class _UnauthorizedPreflightClient:
+    def run_translation_auth_test(self) -> TranslationAuthTestResult:
+        return TranslationAuthTestResult(
+            ok=False,
+            status="unauthorized",
+            message="OpenAI authentication failed.",
+            credential_source=OpenAICredentialSourceInfo(kind="stored", name=""),
+            status_code=401,
+            exception_class="AuthenticationError",
+        )
+
+    def create_page_response(self, **kwargs) -> ApiCallResult:  # noqa: ANN003
+        _ = kwargs
+        raise AssertionError("create_page_response should not run when auth preflight fails")
+
+
+class _AuthFailingPageClient:
+    def run_translation_auth_test(self) -> TranslationAuthTestResult:
+        return TranslationAuthTestResult(
+            ok=True,
+            status="ok",
+            message="OpenAI translation auth test passed.",
+            credential_source=OpenAICredentialSourceInfo(kind="stored", name=""),
+            latency_ms=5,
+        )
+
+    def create_page_response(self, **kwargs) -> ApiCallResult:  # noqa: ANN003
+        _ = kwargs
+        raise ApiCallError(
+            message="AuthenticationError: invalid key",
+            status_code=401,
+            exception_class="AuthenticationError",
+            transport_retries_count=0,
+            last_backoff_seconds=0.0,
+            total_backoff_seconds=0.0,
             rate_limit_hit=False,
         )
 
@@ -587,6 +631,131 @@ def test_failed_run_summary_includes_failure_context(
     assert failure_context["request_timeout_budget_seconds"] == 480.0
     assert failure_context["exception_class"] == "APITimeoutError"
     assert failure_context["cancel_requested_before_failure"] is False
+
+
+def test_translate_auth_preflight_failure_stops_before_page_processing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(
+        workflow_module,
+        "load_gui_settings",
+        lambda: {"perf_timeout_text_seconds": 480, "perf_timeout_image_seconds": 720},
+    )
+
+    def _extract_should_not_run(_pdf, _idx):  # type: ignore[no-untyped-def]
+        raise AssertionError("Page extraction should not run when translation auth preflight fails")
+
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", _extract_should_not_run)
+
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.OFF,
+        max_pages=1,
+        workers=1,
+        resume=False,
+        page_breaks=True,
+        keep_intermediates=True,
+        ocr_mode=OcrMode.AUTO,
+        ocr_engine=OcrEnginePolicy.LOCAL_THEN_API,
+        diagnostics_admin_mode=True,
+    )
+
+    summary = TranslationWorkflow(client=_UnauthorizedPreflightClient()).run(config)
+
+    assert summary.success is False
+    assert summary.failed_page is None
+    assert summary.error == "authentication_failure"
+    assert summary.run_summary_path is not None
+    payload = json.loads(summary.run_summary_path.read_text(encoding="utf-8"))
+    assert payload["run_status"] == "authentication_failure"
+    assert payload["suspected_cause"] == "authentication_failure"
+    failure_context = payload["failure_context"]
+    assert failure_context["scope"] == "preflight"
+    assert failure_context["status_code"] == 401
+    assert failure_context["exception_class"] == "AuthenticationError"
+    assert failure_context["credential_source"] == {"kind": "stored", "name": ""}
+    assert failure_context["message"] == "OpenAI authentication failed."
+    event_types = {str(item.get("event_type", "")) for item in _events(summary.run_dir / "run_events.jsonl")}
+    assert "translate_auth_preflight_failed" in event_types
+
+
+def test_page_level_auth_failure_is_classified_as_authentication_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(
+        workflow_module,
+        "load_gui_settings",
+        lambda: {"perf_timeout_text_seconds": 480, "perf_timeout_image_seconds": 720},
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "extract_ordered_page_text",
+        lambda _pdf, _idx: _ordered_text_result(
+            "This page has enough extracted text to stay on the direct-text route."
+        ),
+    )
+    monkeypatch.setattr(workflow_module, "should_include_image", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_openai_key_with_source",
+        lambda *_args, **_kwargs: (
+            "stored-key",
+            OpenAICredentialSourceInfo(kind="stored", name=""),
+        ),
+    )
+
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.OFF,
+        max_pages=1,
+        workers=1,
+        resume=False,
+        page_breaks=True,
+        keep_intermediates=True,
+        ocr_mode=OcrMode.AUTO,
+        ocr_engine=OcrEnginePolicy.LOCAL_THEN_API,
+        diagnostics_admin_mode=True,
+    )
+
+    summary = TranslationWorkflow(client=_AuthFailingPageClient()).run(config)
+
+    assert summary.success is False
+    assert summary.failed_page == 1
+    assert summary.error == "authentication_failure"
+    payload = json.loads((summary.run_dir / "run_summary.json").read_text(encoding="utf-8"))
+    assert payload["run_status"] == "authentication_failure"
+    assert payload["suspected_cause"] == "authentication_failure"
+    failure_context = payload["failure_context"]
+    assert failure_context["scope"] == "page"
+    assert failure_context["page_number"] == 1
+    assert failure_context["error"] == "authentication_failure"
+    assert failure_context["status_code"] == 401
+    assert failure_context["exception_class"] == "AuthenticationError"
+    assert failure_context["credential_source"] == {"kind": "stored", "name": ""}
 
 
 def test_cancel_halt_reason_prefers_timeout_after_cancel() -> None:
