@@ -27,6 +27,7 @@ Instead use:
 ## What Not To Do
 - Do not let tests reuse live roaming/profile settings, authenticated machine state, or default production ports unless the test explicitly opts in.
 - Do not treat any process listening on the expected port as proof the real runtime is healthy.
+- Do not let stale browser module assets, stale extension service workers, or old localhost tabs masquerade as the current browser build under test.
 - Do not replace per-run reports with a session artifact; layer them.
 - Do not create separate browser or extension report files by default when transient banner/UI/console evidence is enough.
 
@@ -64,6 +65,7 @@ dart run tooling/validate_agent_docs.dart
 - Classify unexpected listener ownership or bind conflicts as preflight `unavailable`, not as product `failed`.
 - Runtime listener startup failures must surface visible status, not silent logs only.
 - If one browser app serves both live and isolated modes, diagnostics must show the active mode, data root, workspace, and listener owner so shadow/test state cannot be mistaken for live readiness.
+- If a localhost browser tab is part of the handoff contract, diagnostics must also prove client hydration and client/server `asset_version` agreement so stale tabs or stale assets are not mistaken for a fresh successful launch.
 
 ## Durable Diagnostics and Support Packet Rules
 - Keep existing per-run artifacts as the main run evidence.
@@ -78,9 +80,10 @@ dart run tooling/validate_agent_docs.dart
   - finalization state
   - final output names when relevant
 - Browser-side failures remain transient UI/banner/console evidence unless the feature has a strong reason to persist them.
+- When a browser/Gmail failure happens before a run directory exists, a compact browser failure report is an acceptable additive artifact. It should capture the browser/build context, `asset_version`, and the attempted browser-module or worker URL that failed.
 
 ## Support Packet Order
-1. User-visible browser/banner/UI error if handoff failed before app intake.
+1. User-visible browser/banner/UI error if handoff failed before app intake, plus a browser failure report when the flow failed before `run_dir` existed and the UI offered one.
 2. App build identity and visible runtime status.
 3. Per-run report plus machine-readable run summary for the affected execution.
 4. App-owned session artifact for multi-stage or finalization issues.
@@ -88,6 +91,7 @@ dart run tooling/validate_agent_docs.dart
 ## Targeted Tests
 - test isolation from live settings, auth, caches, and default ports
 - listener ownership and bind-conflict handling
+- stale browser asset-version mismatch detection and bounded exact-tab reload recovery
 - focus-sensitive dialog shortcut paths with explicit activation/cleanup
 - long-running host automation staying off the GUI thread when the feature is user-facing
 - per-run artifact integrity
@@ -103,6 +107,10 @@ dart run tooling/validate_agent_docs.dart
 - Expected localhost port is owned by the wrong process:
   - classify as `unavailable`
   - stop feature debugging until ownership is corrected
+- Browser shell is up but the tab is stale or only partially hydrated:
+  - classify stale client/server asset-version or hydration mismatch as preflight `unavailable`
+  - allow one exact localhost tab reload when the product contract supports it
+  - if the mismatch persists, preserve the browser failure packet instead of masking it as a generic product error
 - Multi-surface issue lacks enough evidence:
   - collect the support packet in the documented order
   - add or repair `workflow_context` / session-artifact linkage rather than inventing ad hoc notes

@@ -34,6 +34,9 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
   - interpretation continuation stays in one compact current-step shell plus a bounded same-tab review drawer
   - secondary/browser-operator routes stay reachable, but no longer dominate the normal path
 - Local source-checkout Edge native-host registration now prefers the app-data wrapper `LegalPDFGmailFocusHost.cmd` so Gmail handoff does not depend on a packaged host executable that Windows App Control may block.
+- Browser Gmail handoff now requires both shell readiness and hydrated client readiness, with client/server `asset_version` agreement on the opened localhost tab so stale browser assets do not masquerade as a fresh launch.
+- Browser-managed Gmail PDF preview/prepare now uses the bundled browser `pdf.js` path instead of depending on `PyMuPDF` during browser startup.
+- Gmail batch finalization readiness now depends on a real Word export canary, not a launch-only Word probe.
 - Browser-app live vs isolated-test mode remains a deliberate reusable system that should be preserved in later template-sync work.
 
 ## Authoritative Worktree
@@ -46,6 +49,16 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - No active roadmap currently open on this worktree.
 - No active roadmap tracker is currently authoritative.
 - Recent completed Gmail/browser closeout history for reference:
+  - `docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md`
+  - `docs/assistant/exec_plans/completed/2026-03-30_browser_asset_provenance_gmail_prepare.md`
+  - `docs/assistant/exec_plans/completed/2026-03-30_first_open_gmail_hydration_recovery.md`
+  - `docs/assistant/exec_plans/completed/2026-03-30_gmail_prepare_pdf_worker_reportability.md`
+  - `docs/assistant/exec_plans/completed/2026-03-30_windows_blocked_pdf_browser_recovery.md`
+  - `docs/assistant/exec_plans/completed/2026-03-29_web_app_end_to_end_stabilization.md`
+  - `docs/assistant/exec_plans/completed/2026-03-29_gmail_inline_preview_regression.md`
+  - `docs/assistant/exec_plans/completed/2026-03-29_cold_start_reliability_rebuild.md`
+  - `docs/assistant/exec_plans/completed/2026-03-28_browser_translation_auth_diagnostics.md`
+  - `docs/assistant/exec_plans/completed/2026-03-28_browser_gmail_autostart_repair.md`
   - `docs/assistant/exec_plans/completed/2026-03-28_gmail_intake_regression_fixes.md`
   - `docs/assistant/exec_plans/completed/2026-03-21_gmail_focus_shell_layout_fix.md`
   - `docs/assistant/exec_plans/completed/2026-03-21_gmail_review_parity_stage1.md`
