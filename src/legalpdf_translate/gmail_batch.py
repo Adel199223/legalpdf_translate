@@ -20,7 +20,7 @@ from legalpdf_translate.gmail_draft import (
     resolve_gog_path,
 )
 from legalpdf_translate.gmail_intake import InboundMailContext
-from legalpdf_translate.source_document import is_supported_source_file
+from legalpdf_translate.source_document import get_source_page_count, is_supported_source_file
 
 
 @dataclass(frozen=True, slots=True)
@@ -979,15 +979,30 @@ def _prepare_downloaded_attachment(
         )
     except Exception:
         page_count = None
-    if page_count is None or page_count <= 0:
-        if _is_pdf_attachment(attachment):
-            raise ValueError(
-                "Page count is unavailable for Gmail attachment "
-                f"'{attachment.filename}'. Load the PDF in the browser preview first so the browser can stage its page metadata."
+    actual_page_count: int | None = None
+    try:
+        actual_page_count = int(get_source_page_count(saved_path))
+    except Exception:
+        actual_page_count = None
+    if isinstance(actual_page_count, int) and actual_page_count > 0:
+        if page_count is not None and int(page_count) != actual_page_count:
+            _log(
+                "Gmail intake: preview cache page-count mismatch for "
+                f"{attachment.filename} (cached={int(page_count)}, actual={actual_page_count})."
             )
-        page_count = 1
+        page_count = actual_page_count
+    if page_count is None or page_count <= 0:
+        try:
+            page_count = int(get_source_page_count(saved_path))
+        except Exception:
+            if _is_pdf_attachment(attachment):
+                raise ValueError(
+                    "Page count is unavailable for Gmail attachment "
+                    f"'{attachment.filename}'. Load the PDF in the browser preview first so the browser can stage its page metadata."
+                )
+            page_count = 1
     if reused_preview_cache and isinstance(known_cached_page_count, int) and known_cached_page_count > 0:
-        if int(known_cached_page_count) != page_count:
+        if int(known_cached_page_count) != page_count and actual_page_count is None:
             _log(
                 "Gmail intake: preview cache page-count mismatch for "
                 f"{attachment.filename} (cached={int(known_cached_page_count)}, actual={page_count})."

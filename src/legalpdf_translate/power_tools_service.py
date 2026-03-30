@@ -473,6 +473,26 @@ def _stored_ocr_key_available() -> bool:
         return False
 
 
+def _resolve_ocr_api_key_source_for_browser(
+    config: OcrEngineConfig,
+) -> tuple[str, str] | None:
+    try:
+        stored_ocr_key = get_ocr_key()
+    except RuntimeError:
+        stored_ocr_key = None
+    if stored_ocr_key:
+        return ("stored", "ocr_api_key")
+    provider = normalize_ocr_api_provider(config.api_provider)
+    if provider == OcrApiProvider.OPENAI:
+        try:
+            shared_openai_key = get_openai_key()
+        except RuntimeError:
+            shared_openai_key = None
+        if shared_openai_key:
+            return ("stored", "openai_api_key_fallback")
+    return resolve_ocr_api_key_source(config)
+
+
 def _provider_state_response(
     *,
     settings_path: Path,
@@ -545,7 +565,7 @@ def _provider_state_payload(settings_path: Path) -> dict[str, object]:
     )
     stored_translation_key = _stored_translation_key_available()
     stored_ocr_key = _stored_ocr_key_available()
-    source = resolve_ocr_api_key_source(config)
+    source = _resolve_ocr_api_key_source_for_browser(config)
     if source is None:
         source_payload: dict[str, object] = {"kind": "missing", "name": ""}
     else:
@@ -875,7 +895,7 @@ def run_ocr_provider_test(*, settings_path: Path) -> dict[str, object]:
         api_model=str(gui.get("ocr_api_model", "") or "") or None,
         api_key_env_name=str(gui.get("ocr_api_key_env_name", "") or "") or default_ocr_api_env_name(provider),
     )
-    source = resolve_ocr_api_key_source(config)
+    source = _resolve_ocr_api_key_source_for_browser(config)
     if source is None:
         env_candidates = ", ".join(candidate_ocr_api_env_names(config))
         fallback_text = (
