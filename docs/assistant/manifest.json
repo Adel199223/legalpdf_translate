@@ -226,10 +226,10 @@
         "docs/assistant/workflows/BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/automation_preflight_test.dart"
+        "dart test/tooling/automation_preflight_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/automation_preflight.dart",
+        "dart tooling/automation_preflight.dart",
         "dart run tooling/validate_agent_docs.dart"
       ]
     },
@@ -398,8 +398,9 @@
     "python -m compileall src tests",
     "dart run tooling/validate_agent_docs.dart",
     "dart run tooling/validate_workspace_hygiene.dart",
-    "dart run tooling/automation_preflight.dart",
-    "dart run tooling/cloud_eval_preflight.dart"
+    "dart tooling/automation_preflight.dart",
+    "dart run tooling/cloud_eval_preflight.dart",
+    "python tooling/render_docx.py --help"
   ],
   "contracts": {
     "template_read_policy": "docs/assistant/templates/* is read-on-demand only unless explicitly requested.",
@@ -458,5 +459,5 @@
     "cloud_scoring_failure_recovery_policy": "Cloud failure semantics use unavailable|failed and recovery order is cloud-fix-rerun before local-heavy fallback.",
     "cloud_local_apply_separation_policy": "Cloud evaluation outputs must not auto-apply runtime config/state; local manual acceptance gate is required before final apply."
   },
-  "last_updated": "2026-03-30"
+  "last_updated": "2026-04-01"
 }

@@ -346,7 +346,7 @@ Queue mode writes these sidecar files next to the manifest:
 32. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
 33. If the browser app opens but a stale shell or old browser module graph appears, manual hard refresh should not be the normal fix. Reload the extension if needed and let the exact localhost tab recover first.
 34. If Gmail/browser preparation fails before a run exists, use `Generate Failure Report` from the Gmail diagnostics area. That is the right artifact for browser/PDF preparation failures that happen before `run_dir` exists.
-35. If Gmail finalization is blocked or ends in recoverable `local_only` / `draft_failed` state, use `Generate Finalization Report` from the finalization drawer. That report is more relevant than a normal run report for the last-mile reply step.
+35. If Gmail finalization is blocked or already completed and you want the last-step operator artifact, use `Generate Finalization Report` from the finalization drawer. That report stays available for blocked states, recoverable warning states, and successful draft creation.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.

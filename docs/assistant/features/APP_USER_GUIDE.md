@@ -143,7 +143,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 22. When the original Gmail message explicitly names a reply email, the app now prefers that reply address for the Gmail draft instead of a weaker derived guess.
 23. The app creates a draft only. It does not send the email automatically.
 24. If preview or `Prepare selected` fails before translation starts, the Gmail diagnostics area now keeps your selection and offers `Generate Failure Report`.
-25. If `Finalize Gmail Batch Reply` is blocked, treat that as a Word PDF export readiness issue first. The app now checks the real export path before finalization and offers `Generate Finalization Report` when the last step is blocked or ends in recoverable local-only state.
+25. If `Finalize Gmail Batch Reply` is blocked, treat that as a Word PDF export readiness issue first. The app now checks the real export path before finalization and offers `Generate Finalization Report` whenever the last-step Gmail finalization state is blocked or completed, including a successful draft-ready finish.
 
 ## If Gmail Intake Stops Early
 1. If the page says the app is not listening, confirm the bridge is enabled in `Settings` and that you are using the browser app in `live` mode. A normal toolbar click can auto-start the app, so a manual launch should only be needed after an auto-start failure.
@@ -161,7 +161,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 12. If the honorários PDF cannot be generated, the export still keeps the local DOCX but Gmail draft creation stays blocked for that export.
 13. If the browser app opens but the page looks half-loaded or stale, the app should normally recover with one exact-tab reload. Manual hard refresh should not be the normal fix; check extension/native-host readiness instead.
 14. If Gmail/browser preparation fails before a run exists, use `Generate Failure Report` from the Gmail diagnostics area instead of searching for a run report that does not exist yet.
-15. If Gmail finalization is blocked before the draft step, use `Generate Finalization Report` from the finalization drawer. That report is the right artifact for blocked or recoverable `local_only` finalization states.
+15. If Gmail finalization is blocked or completes and you still want a full last-step artifact, use `Generate Finalization Report` from the finalization drawer. That report now stays available for blocked states and completed states, including successful draft creation.
 
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.
