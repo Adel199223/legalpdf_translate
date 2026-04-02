@@ -64,6 +64,7 @@
 - `tooling/validate_workspace_hygiene.dart`
 - `tooling/automation_preflight.dart`
 - `tooling/cloud_eval_preflight.dart`
+- `tooling/render_docx.py` (canonical DOCX -> PDF -> PNG review helper using local LibreOffice + Poppler when available)
 - `tooling/qt_render_review.py` (deterministic wide/medium/narrow Qt renders for reference-locked UI review)
 - `tooling/launch_browser_app_live_detached.py` (detached Windows launcher for the browser app in `live` mode)
 - `tooling/launch_qt_build.py` (canonical multi-worktree Qt launch helper that emits a build identity packet)

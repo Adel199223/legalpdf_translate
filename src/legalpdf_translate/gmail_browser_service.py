@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from hashlib import sha1
 import json
 from pathlib import Path
@@ -89,6 +90,9 @@ _PREPARE_REASON_MESSAGES = {
     "launch_timeout": "LegalPDF Translate was started, but the Gmail bridge did not become ready in time.",
     "unsupported_platform": "Foreground activation is only supported on Windows for this extension.",
 }
+_TERMINAL_BATCH_FINALIZATION_STATES = frozenset({"local_artifacts_ready", "draft_failed", "draft_ready"})
+_REPORTABLE_BATCH_FINALIZATION_STATES = _TERMINAL_BATCH_FINALIZATION_STATES | frozenset({"blocked_word_pdf_export"})
+_RESTORED_BATCH_SESSION_MAX_AGE = timedelta(hours=24)
 
 
 def _word_pdf_cache_scope_token(settings_path: Path) -> str:
@@ -120,6 +124,67 @@ def _path_text(path: Path | None) -> str:
     if path is None:
         return ""
     return str(path.expanduser().resolve())
+
+
+def _normalize_batch_finalization_state(value: object) -> str:
+    return _clean_text(value).lower().replace(" ", "_")
+
+
+def _batch_finalization_status_and_retry(
+    *,
+    finalization_state: object,
+    draft_preflight_result: object = "",
+) -> tuple[str, bool]:
+    normalized_state = _normalize_batch_finalization_state(finalization_state)
+    normalized_preflight = _normalize_batch_finalization_state(draft_preflight_result)
+    if normalized_state == "draft_ready":
+        return ("ok", False)
+    if normalized_state == "local_artifacts_ready":
+        return ("local_only", True)
+    if normalized_state == "draft_failed":
+        return ("draft_unavailable" if normalized_preflight == "failed" else "draft_failed", True)
+    if normalized_state == "blocked_word_pdf_export":
+        return ("blocked_word_pdf_export", False)
+    return (normalized_state or "ok", False)
+
+
+def _has_complete_batch_finalization_report_context(raw_context: object) -> bool:
+    if not isinstance(raw_context, Mapping):
+        return False
+    return (
+        _clean_text(raw_context.get("kind")) == "gmail_finalization_report"
+        and _clean_text(raw_context.get("operation")) == "gmail_batch_finalize"
+        and _clean_text(raw_context.get("status")) != ""
+        and _clean_text(raw_context.get("finalization_state")) != ""
+        and _clean_text(raw_context.get("build_sha")) != ""
+        and _clean_text(raw_context.get("asset_version")) != ""
+        and isinstance(raw_context.get("session"), Mapping)
+    )
+
+
+def _merge_batch_finalization_report_context(
+    *,
+    base_context: Mapping[str, Any],
+    existing_context: object,
+) -> dict[str, Any]:
+    merged = dict(base_context)
+    if not isinstance(existing_context, Mapping):
+        return merged
+    captured_at = _clean_text(existing_context.get("captured_at"))
+    active_view = _clean_text(existing_context.get("active_view"))
+    if captured_at:
+        merged["captured_at"] = captured_at
+    if active_view:
+        merged["active_view"] = active_view
+    raw_outcome = existing_context.get("outcome")
+    if isinstance(raw_outcome, Mapping):
+        outcome = dict(merged.get("outcome", {}))
+        for key in ("draft", "draft_prereqs", "gmail_draft_request", "gmail_draft_result"):
+            value = raw_outcome.get(key)
+            if isinstance(value, Mapping) and value:
+                outcome[key] = dict(value)
+        merged["outcome"] = outcome
+    return merged
 
 
 def _resolve_workflow_kind(value: object) -> str:
@@ -387,9 +452,18 @@ def _message_signature(result: GmailMessageLoadResult) -> str:
 
 
 def _serialize_confirmed_item(item: GmailBatchConfirmedItem) -> dict[str, Any]:
+    durable_path = _path_text(item.translated_docx_path)
+    staged_path = _path_text(item.staged_translated_docx_path)
+    primary_path = durable_path or staged_path
     return {
         "attachment_filename": item.downloaded_attachment.candidate.filename,
-        "translated_docx_path": _path_text(item.translated_docx_path),
+        "translated_docx_path": primary_path,
+        "durable_translated_docx_path": durable_path,
+        "staged_translated_docx_path": staged_path,
+        "translated_docx_path_source": "durable" if durable_path else ("staged_fallback" if staged_path else ""),
+        "translated_docx_path_exists": bool(primary_path and ((durable_path and item.translated_docx_path.exists()) or (staged_path and item.staged_translated_docx_path.exists()))),
+        "durable_translated_docx_path_exists": bool(durable_path and item.translated_docx_path.exists()),
+        "staged_translated_docx_path_exists": bool(staged_path and item.staged_translated_docx_path.exists()),
         "run_dir": _path_text(item.run_dir),
         "translated_word_count": int(item.translated_word_count),
         "joblog_row_id": int(item.joblog_row_id),
@@ -495,6 +569,7 @@ def _serialize_batch_session(
         "pdf_export": dict(session.pdf_export),
         "finalization_state": session.finalization_state,
         "finalization_preflight": dict(session.finalization_preflight),
+        "finalization_report_context": dict(session.finalization_report_context),
     }
 
 
@@ -536,6 +611,601 @@ def build_gmail_browser_capability_flags(*, settings_path: Path) -> dict[str, An
     }
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _build_batch_finalization_report_context(
+    *,
+    runtime_mode: str,
+    workspace_id: str,
+    build_sha: str,
+    asset_version: str,
+    session: GmailBatchSession,
+    status: str,
+    retry_available: bool,
+    draft_payload: Mapping[str, Any] | None = None,
+    draft_prereqs: GmailPrereqStatus | None = None,
+    draft_request: GmailDraftRequest | None = None,
+    draft_result: GmailDraftResult | None = None,
+    actual_export: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    message = session.message
+    return {
+        "kind": "gmail_finalization_report",
+        "captured_at": _utc_now_iso(),
+        "operation": "gmail_batch_finalize",
+        "status": str(status or "").strip(),
+        "finalization_state": str(session.finalization_state or "").strip(),
+        "retry_available": bool(retry_available),
+        "runtime_mode": str(runtime_mode or "").strip(),
+        "workspace_id": str(workspace_id or "").strip(),
+        "active_view": "",
+        "build_sha": str(build_sha or "").strip(),
+        "asset_version": str(asset_version or "").strip(),
+        "session": {
+            "session_id": session.session_id,
+            "message_id": message.message_id,
+            "thread_id": message.thread_id,
+            "subject": message.subject,
+            "account_email": message.account_email,
+            "selected_target_lang": session.selected_target_lang.strip(),
+            "effective_output_dir": _path_text(session.effective_output_dir),
+            "confirmed_items": [_serialize_confirmed_item(item) for item in session.confirmed_items],
+            "session_report_path": _path_text(session.session_report_path),
+            "final_attachment_basenames": list(session.final_attachment_basenames),
+        },
+        "word_pdf_export": dict(session.finalization_preflight),
+        "actual_export": dict(actual_export or session.pdf_export),
+        "outcome": {
+            "draft": dict(draft_payload or {}),
+            "draft_prereqs": _serialize_draft_prereqs(draft_prereqs) if draft_prereqs is not None else {},
+            "gmail_draft_request": _serialize_draft_request(draft_request) if draft_request is not None else {},
+            "gmail_draft_result": _serialize_draft_result(draft_result) if draft_result is not None else {},
+            "docx_path": _path_text(session.actual_honorarios_path),
+            "docx_path_exists": bool(session.actual_honorarios_path and session.actual_honorarios_path.exists()),
+            "pdf_path": _path_text(session.actual_honorarios_pdf_path),
+            "pdf_path_exists": bool(session.actual_honorarios_pdf_path and session.actual_honorarios_pdf_path.exists()),
+            "requested_docx_path": _path_text(session.requested_honorarios_path),
+            "requested_pdf_path": _path_text(session.requested_honorarios_pdf_path),
+            "draft_failure_reason": session.draft_failure_reason.strip(),
+            "draft_created": bool(session.draft_created),
+            "honorarios_auto_renamed": bool(session.honorarios_auto_renamed),
+        },
+    }
+
+
+def _persist_batch_finalization_report_context(
+    *,
+    runtime_mode: str,
+    workspace_id: str,
+    build_sha: str,
+    asset_version: str,
+    session: GmailBatchSession,
+    status: str,
+    retry_available: bool,
+    draft_payload: Mapping[str, Any] | None = None,
+    draft_prereqs: GmailPrereqStatus | None = None,
+    draft_request: GmailDraftRequest | None = None,
+    draft_result: GmailDraftResult | None = None,
+    actual_export: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    context = _build_batch_finalization_report_context(
+        runtime_mode=runtime_mode,
+        workspace_id=workspace_id,
+        build_sha=build_sha,
+        asset_version=asset_version,
+        session=session,
+        status=status,
+        retry_available=retry_available,
+        draft_payload=draft_payload,
+        draft_prereqs=draft_prereqs,
+        draft_request=draft_request,
+        draft_result=draft_result,
+        actual_export=actual_export,
+    )
+    session.finalization_report_context = dict(context)
+    return context
+
+
+def _backfill_batch_finalization_report_context(
+    *,
+    runtime_mode: str,
+    workspace_id: str,
+    build_sha: str,
+    asset_version: str,
+    session: GmailBatchSession,
+) -> dict[str, Any] | None:
+    state = _normalize_batch_finalization_state(session.finalization_state or session.status)
+    if state not in _REPORTABLE_BATCH_FINALIZATION_STATES:
+        return None
+    status, retry_available = _batch_finalization_status_and_retry(
+        finalization_state=state,
+        draft_preflight_result=session.draft_preflight_result,
+    )
+    canonical_context = _build_batch_finalization_report_context(
+        runtime_mode=runtime_mode,
+        workspace_id=workspace_id,
+        build_sha=build_sha,
+        asset_version=asset_version,
+        session=session,
+        status=status,
+        retry_available=retry_available,
+        actual_export=session.pdf_export,
+    )
+    repaired_context = _merge_batch_finalization_report_context(
+        base_context=canonical_context,
+        existing_context=session.finalization_report_context,
+    )
+    session.finalization_report_context = dict(repaired_context)
+    return repaired_context
+
+
+def _candidate_existing_path(path_text: object) -> str:
+    cleaned = _clean_text(path_text)
+    if not cleaned:
+        return ""
+    try:
+        path = Path(cleaned).expanduser().resolve()
+    except OSError:
+        return cleaned
+    return str(path) if path.exists() else cleaned
+
+
+def _report_confirmed_item_from_sources(
+    *,
+    raw_item: Mapping[str, Any] | None,
+    run_payload: Mapping[str, Any] | None,
+    effective_output_dir_text: str = "",
+) -> dict[str, Any]:
+    raw_item = raw_item if isinstance(raw_item, Mapping) else {}
+    run_payload = run_payload if isinstance(run_payload, Mapping) else {}
+
+    run_dir_text = _clean_text(run_payload.get("run_dir")) or _clean_text(raw_item.get("run_dir"))
+    translated_basename = _clean_text(run_payload.get("translated_docx_basename"))
+    effective_output_dir_text = _clean_text(effective_output_dir_text)
+    staged_path_text = (
+        _clean_text(raw_item.get("staged_translated_docx_path"))
+        or _clean_text(run_payload.get("staged_translated_docx_path"))
+    )
+    raw_primary_path = _clean_text(raw_item.get("translated_docx_path"))
+    raw_durable_path = (
+        _clean_text(raw_item.get("durable_translated_docx_path"))
+        or _clean_text(run_payload.get("durable_translated_docx_path"))
+    )
+
+    durable_from_run = ""
+    if run_dir_text and translated_basename:
+        durable_from_run = str((Path(run_dir_text).expanduser().resolve() / translated_basename))
+    durable_from_output_dir = ""
+    if effective_output_dir_text and translated_basename:
+        durable_from_output_dir = str(
+            (Path(effective_output_dir_text).expanduser().resolve() / translated_basename)
+        )
+
+    inferred_staged_path = ""
+    if raw_primary_path and durable_from_run:
+        try:
+            if Path(raw_primary_path).expanduser().resolve() != Path(durable_from_run).expanduser().resolve():
+                inferred_staged_path = raw_primary_path
+        except OSError:
+            if raw_primary_path != durable_from_run:
+                inferred_staged_path = raw_primary_path
+
+    durable_candidates = [
+        durable_from_run,
+        durable_from_output_dir,
+        raw_durable_path,
+    ]
+    if raw_primary_path and not inferred_staged_path:
+        durable_candidates.append(raw_primary_path)
+    durable_path = ""
+    for candidate in durable_candidates:
+        if not candidate:
+            continue
+        resolved = _candidate_existing_path(candidate)
+        if resolved and Path(resolved).expanduser().resolve().exists():
+            durable_path = resolved
+            break
+    if not durable_path:
+        fallback_durable_candidates = [raw_durable_path]
+        if raw_primary_path and not inferred_staged_path:
+            fallback_durable_candidates.append(raw_primary_path)
+        fallback_durable_candidates.extend([durable_from_output_dir, durable_from_run])
+        for candidate in fallback_durable_candidates:
+            resolved = _candidate_existing_path(candidate)
+            if resolved:
+                durable_path = resolved
+                break
+
+    staged_candidates = [staged_path_text, inferred_staged_path]
+    staged_path = ""
+    for candidate in staged_candidates:
+        if not candidate:
+            continue
+        resolved = _candidate_existing_path(candidate)
+        if resolved and Path(resolved).expanduser().resolve().exists():
+            staged_path = resolved
+            break
+    if not staged_path:
+        for candidate in staged_candidates:
+            resolved = _candidate_existing_path(candidate)
+            if resolved:
+                staged_path = resolved
+                break
+
+    primary_path = durable_path or staged_path
+    path_source = "durable" if durable_path else ("staged_fallback" if staged_path else "")
+
+    primary_exists = False
+    durable_exists = False
+    staged_exists = False
+    if primary_path:
+        try:
+            primary_exists = Path(primary_path).expanduser().resolve().exists()
+        except OSError:
+            primary_exists = False
+    if durable_path:
+        try:
+            durable_exists = Path(durable_path).expanduser().resolve().exists()
+        except OSError:
+            durable_exists = False
+    if staged_path:
+        try:
+            staged_exists = Path(staged_path).expanduser().resolve().exists()
+        except OSError:
+            staged_exists = False
+
+    return {
+        "attachment_filename": _clean_text(raw_item.get("attachment_filename")) or _clean_text(run_payload.get("attachment_filename")),
+        "translated_docx_path": primary_path,
+        "durable_translated_docx_path": durable_path,
+        "staged_translated_docx_path": staged_path,
+        "translated_docx_path_source": path_source,
+        "translated_docx_path_exists": bool(primary_exists),
+        "durable_translated_docx_path_exists": bool(durable_exists),
+        "staged_translated_docx_path_exists": bool(staged_exists),
+        "run_dir": run_dir_text,
+        "translated_word_count": int(raw_item.get("translated_word_count") or 0),
+        "joblog_row_id": int(raw_item.get("joblog_row_id") or run_payload.get("joblog_row_id") or 0),
+        "run_id": _clean_text(raw_item.get("run_id")) or _clean_text(run_payload.get("run_id")),
+        "case_number": _clean_text(raw_item.get("case_number")),
+        "case_entity": _clean_text(raw_item.get("case_entity")),
+        "case_city": _clean_text(raw_item.get("case_city")),
+        "court_email": _clean_text(raw_item.get("court_email")),
+        "consistency_signature": [str(item or "") for item in raw_item.get("consistency_signature", [])] if isinstance(raw_item.get("consistency_signature"), list) else [],
+    }
+
+
+def _restored_confirmed_items_from_session_report(report_payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    run_payloads: list[Mapping[str, Any]] = [
+        run for run in report_payload.get("runs", []) if isinstance(run, Mapping)
+    ]
+    effective_output_dir_text = _clean_text(report_payload.get("effective_output_dir"))
+    run_by_attachment: dict[str, Mapping[str, Any]] = {}
+    run_by_run_id: dict[str, Mapping[str, Any]] = {}
+    for run_payload in run_payloads:
+        attachment_filename = _clean_text(run_payload.get("attachment_filename"))
+        run_id = _clean_text(run_payload.get("run_id"))
+        if attachment_filename and attachment_filename not in run_by_attachment:
+            run_by_attachment[attachment_filename] = run_payload
+        if run_id and run_id not in run_by_run_id:
+            run_by_run_id[run_id] = run_payload
+
+    report_context = report_payload.get("finalization_report_context")
+    if isinstance(report_context, Mapping):
+        session_payload = report_context.get("session")
+        if isinstance(session_payload, Mapping):
+            confirmed_items = session_payload.get("confirmed_items")
+            if isinstance(confirmed_items, list):
+                restored = []
+                for item in confirmed_items:
+                    if not isinstance(item, Mapping):
+                        continue
+                    run_payload = run_by_run_id.get(_clean_text(item.get("run_id"))) or run_by_attachment.get(
+                        _clean_text(item.get("attachment_filename"))
+                    )
+                    restored.append(
+                        _report_confirmed_item_from_sources(
+                            raw_item=item,
+                            run_payload=run_payload,
+                            effective_output_dir_text=effective_output_dir_text,
+                        )
+                    )
+                if restored:
+                    return restored
+    restored: list[dict[str, Any]] = []
+    for run in report_payload.get("runs", []):
+        if not isinstance(run, Mapping):
+            continue
+        restored.append(
+            _report_confirmed_item_from_sources(
+                raw_item=None,
+                run_payload=run,
+                effective_output_dir_text=effective_output_dir_text,
+            )
+        )
+    return restored
+
+
+def _build_batch_finalization_report_context_from_session_report(
+    *,
+    report_payload: Mapping[str, Any],
+    report_path: Path,
+    runtime_mode: str,
+    workspace_id: str,
+    build_sha: str,
+    asset_version: str,
+) -> dict[str, Any] | None:
+    finalization = report_payload.get("finalization")
+    intake_context = report_payload.get("intake_context")
+    if not isinstance(finalization, Mapping) or not isinstance(intake_context, Mapping):
+        return None
+    finalization_state = _normalize_batch_finalization_state(
+        finalization.get("finalization_state") or report_payload.get("status")
+    )
+    if finalization_state not in _REPORTABLE_BATCH_FINALIZATION_STATES:
+        return None
+    status, retry_available = _batch_finalization_status_and_retry(
+        finalization_state=finalization_state,
+        draft_preflight_result=finalization.get("draft_preflight_result"),
+    )
+    draft_created = bool(finalization.get("draft_created"))
+    draft_failure_reason = _clean_text(finalization.get("draft_failure_reason"))
+    gmail_draft_result: dict[str, Any] = {}
+    if draft_created or draft_failure_reason:
+        gmail_draft_result = {
+            "ok": draft_created,
+            "message": "Gmail draft created successfully." if draft_created else draft_failure_reason,
+            "stdout": "",
+            "stderr": "",
+            "payload": {},
+        }
+    return {
+        "kind": "gmail_finalization_report",
+        "captured_at": _utc_now_iso(),
+        "operation": "gmail_batch_finalize",
+        "status": status,
+        "finalization_state": finalization_state,
+        "retry_available": bool(retry_available),
+        "runtime_mode": _clean_text(runtime_mode),
+        "workspace_id": _clean_text(workspace_id),
+        "active_view": "",
+        "build_sha": _clean_text(build_sha),
+        "asset_version": _clean_text(asset_version),
+        "session": {
+            "session_id": _clean_text(report_payload.get("session_id")),
+            "message_id": _clean_text(intake_context.get("message_id")),
+            "thread_id": _clean_text(intake_context.get("thread_id")),
+            "subject": _clean_text(intake_context.get("subject")),
+            "account_email": _clean_text(intake_context.get("account_email")),
+            "selected_target_lang": _clean_text(intake_context.get("selected_target_lang")),
+            "effective_output_dir": _clean_text(report_payload.get("effective_output_dir")),
+            "confirmed_items": _restored_confirmed_items_from_session_report(report_payload),
+            "session_report_path": _path_text(report_path),
+            "final_attachment_basenames": list(finalization.get("final_attachment_basenames", [])),
+        },
+        "word_pdf_export": dict(finalization.get("finalization_preflight", {})),
+        "actual_export": dict(report_payload.get("pdf_export", {})),
+        "outcome": {
+            "draft": {},
+            "draft_prereqs": {},
+            "gmail_draft_request": {},
+            "gmail_draft_result": gmail_draft_result,
+            "docx_path": _clean_text(finalization.get("actual_saved_path")),
+            "docx_path_exists": bool(_clean_text(finalization.get("actual_saved_path")) and Path(_clean_text(finalization.get("actual_saved_path"))).expanduser().resolve().exists()),
+            "pdf_path": _clean_text(finalization.get("actual_pdf_saved_path")),
+            "pdf_path_exists": bool(_clean_text(finalization.get("actual_pdf_saved_path")) and Path(_clean_text(finalization.get("actual_pdf_saved_path"))).expanduser().resolve().exists()),
+            "requested_docx_path": _clean_text(finalization.get("requested_save_path")),
+            "requested_pdf_path": _clean_text(finalization.get("requested_pdf_save_path")),
+            "draft_failure_reason": draft_failure_reason,
+            "draft_created": draft_created,
+            "honorarios_auto_renamed": bool(finalization.get("auto_renamed")),
+        },
+    }
+
+
+def _repair_batch_finalization_report_context_from_session_report(
+    *,
+    raw_context: object,
+    report_payload: Mapping[str, Any],
+    report_path: Path,
+    runtime_mode: str,
+    workspace_id: str,
+    build_sha: str,
+    asset_version: str,
+) -> dict[str, Any] | None:
+    canonical_context = _build_batch_finalization_report_context_from_session_report(
+        report_payload=report_payload,
+        report_path=report_path,
+        runtime_mode=runtime_mode,
+        workspace_id=workspace_id,
+        build_sha=build_sha,
+        asset_version=asset_version,
+    )
+    if canonical_context is None:
+        return None
+    return _merge_batch_finalization_report_context(
+        base_context=canonical_context,
+        existing_context=raw_context,
+    )
+
+
+def _write_batch_session_report_payload(report_path: Path, payload: Mapping[str, Any]) -> None:
+    tmp_path = report_path.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(dict(payload), ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(report_path)
+
+
+def _restored_attachment_payloads_from_session_report(report_payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    intake_context = report_payload.get("intake_context")
+    if not isinstance(intake_context, Mapping):
+        return []
+    message_id = _clean_text(intake_context.get("message_id"))
+    session_id = _clean_text(report_payload.get("session_id")) or "batch"
+    attachments: list[dict[str, Any]] = []
+    for index, raw_item in enumerate(intake_context.get("selected_attachments", []), start=1):
+        if not isinstance(raw_item, Mapping):
+            continue
+        filename = _clean_text(raw_item.get("filename"))
+        mime_type = "application/pdf" if filename.lower().endswith(".pdf") else ""
+        attachments.append(
+            {
+                "attachment": {
+                    "attachment_id": f"restored-{session_id}-{index}",
+                    "filename": filename,
+                    "mime_type": mime_type,
+                    "size_bytes": 0,
+                    "source_message_id": message_id,
+                },
+                "saved_path": "",
+                "start_page": max(1, int(raw_item.get("start_page") or 1)),
+                "page_count": max(1, int(raw_item.get("page_count") or 1)),
+            }
+        )
+    return attachments
+
+
+def _build_restored_batch_session_payload_from_report(
+    *,
+    report_payload: Mapping[str, Any],
+    report_path: Path,
+    report_context: Mapping[str, Any],
+) -> dict[str, Any]:
+    finalization = report_payload.get("finalization")
+    intake_context = report_payload.get("intake_context")
+    if not isinstance(finalization, Mapping) or not isinstance(intake_context, Mapping):
+        raise ValueError("Restored Gmail batch session report is missing required sections.")
+    attachments = _restored_attachment_payloads_from_session_report(report_payload)
+    confirmed_items = _restored_confirmed_items_from_session_report(report_payload)
+    total_items = max(len(attachments), len(confirmed_items))
+    completed = _normalize_batch_finalization_state(finalization.get("finalization_state")) in _TERMINAL_BATCH_FINALIZATION_STATES
+    current_attachment = attachments[min(len(attachments) - 1, max(total_items - 1, 0))] if attachments else None
+    consistency_signature: list[str] = []
+    if confirmed_items:
+        first_signature = confirmed_items[0].get("consistency_signature")
+        if isinstance(first_signature, list):
+            consistency_signature = [str(item or "") for item in first_signature]
+    return {
+        "kind": GMAIL_WORKFLOW_TRANSLATION,
+        "session_id": _clean_text(report_payload.get("session_id")),
+        "status": _clean_text(report_payload.get("status"))
+        or _normalize_batch_finalization_state(finalization.get("finalization_state")),
+        "halt_reason": _clean_text(report_payload.get("halt_reason")),
+        "started_at": _clean_text(report_payload.get("started_at")),
+        "message": {
+            "message_id": _clean_text(intake_context.get("message_id")),
+            "thread_id": _clean_text(intake_context.get("thread_id")),
+            "subject": _clean_text(intake_context.get("subject")),
+            "from_header": "",
+            "account_email": _clean_text(intake_context.get("account_email")),
+            "attachments": [dict(item.get("attachment", {})) for item in attachments],
+        },
+        "download_dir": "",
+        "effective_output_dir": _clean_text(report_payload.get("effective_output_dir")),
+        "selected_target_lang": _clean_text(intake_context.get("selected_target_lang")),
+        "attachments": attachments,
+        "confirmed_items": confirmed_items,
+        "current_index": max(total_items - 1, 0) if total_items else 0,
+        "current_item_number": total_items,
+        "total_items": total_items,
+        "current_attachment": current_attachment,
+        "completed": completed,
+        "consistency_signature": consistency_signature,
+        "session_report_path": _path_text(report_path),
+        "final_attachment_basenames": list(finalization.get("final_attachment_basenames", [])),
+        "draft_created": bool(finalization.get("draft_created")),
+        "draft_preflight_result": _clean_text(finalization.get("draft_preflight_result")),
+        "draft_failure_reason": _clean_text(finalization.get("draft_failure_reason")),
+        "requested_honorarios_path": _clean_text(finalization.get("requested_save_path")),
+        "requested_honorarios_pdf_path": _clean_text(finalization.get("requested_pdf_save_path")),
+        "actual_honorarios_path": _clean_text(finalization.get("actual_saved_path")),
+        "actual_honorarios_pdf_path": _clean_text(finalization.get("actual_pdf_saved_path")),
+        "honorarios_auto_renamed": bool(finalization.get("auto_renamed")),
+        "pdf_export": dict(report_payload.get("pdf_export", {})),
+        "finalization_state": _normalize_batch_finalization_state(finalization.get("finalization_state")),
+        "finalization_preflight": dict(finalization.get("finalization_preflight", {})),
+        "finalization_report_context": dict(report_context),
+        "restored_from_report": True,
+    }
+
+
+def _latest_restorable_batch_session_report_path(outputs_dir: Path) -> Path | None:
+    report_root = outputs_dir.expanduser().resolve() / "_gmail_batch_sessions"
+    if not report_root.exists():
+        return None
+    candidates: list[tuple[float, Path]] = []
+    for report_path in report_root.glob("*/gmail_batch_session.json"):
+        try:
+            stat = report_path.stat()
+        except OSError:
+            continue
+        modified_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
+        if datetime.now(UTC) - modified_at > _RESTORED_BATCH_SESSION_MAX_AGE:
+            continue
+        candidates.append((stat.st_mtime, report_path))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def _restore_batch_session_payload_from_report(
+    *,
+    outputs_dir: Path,
+    runtime_mode: str,
+    workspace_id: str,
+    build_sha: str,
+    asset_version: str,
+) -> dict[str, Any] | None:
+    report_path = _latest_restorable_batch_session_report_path(outputs_dir)
+    if report_path is None:
+        return None
+    try:
+        raw_payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw_payload, Mapping):
+        return None
+    finalization = raw_payload.get("finalization")
+    if not isinstance(finalization, Mapping):
+        return None
+    finalization_state = _normalize_batch_finalization_state(
+        finalization.get("finalization_state") or raw_payload.get("status")
+    )
+    if finalization_state not in _REPORTABLE_BATCH_FINALIZATION_STATES:
+        return None
+    report_context_raw = raw_payload.get("finalization_report_context")
+    repaired_context = _repair_batch_finalization_report_context_from_session_report(
+        raw_context=report_context_raw,
+        report_payload=raw_payload,
+        report_path=report_path,
+        runtime_mode=runtime_mode,
+        workspace_id=workspace_id,
+        build_sha=build_sha,
+        asset_version=asset_version,
+    )
+    if repaired_context is None:
+        return None
+    report_context = repaired_context
+    if not isinstance(report_context_raw, Mapping) or dict(report_context_raw) != report_context:
+        updated_payload = dict(raw_payload)
+        updated_payload["finalization_report_context"] = dict(report_context)
+        try:
+            _write_batch_session_report_payload(report_path, updated_payload)
+        except OSError:
+            pass
+        raw_payload = updated_payload
+    try:
+        return _build_restored_batch_session_payload_from_report(
+            report_payload=raw_payload,
+            report_path=report_path,
+            report_context=report_context,
+        )
+    except ValueError:
+        return None
+
+
 @dataclass(slots=True)
 class _WorkspaceState:
     loaded_result: GmailMessageLoadResult | None = None
@@ -549,6 +1219,7 @@ class _WorkspaceState:
     pending_status: str = ""
     pending_intake_context: dict[str, str] = field(default_factory=dict, repr=False)
     pending_review_open: bool = False
+    allow_report_restore: bool = True
     preview_paths: dict[str, Path] = field(default_factory=dict, repr=False)
     preview_page_counts: dict[str, int] = field(default_factory=dict, repr=False)
     _preview_temp_dir: tempfile.TemporaryDirectory[str] | None = field(default=None, repr=False)
@@ -600,6 +1271,8 @@ class GmailBrowserSessionManager:
             workspace = self._workspaces.pop(key, None)
         if workspace is not None:
             workspace.cleanup()
+        with self._lock:
+            self._workspaces[key] = _WorkspaceState(allow_report_restore=False)
 
     def current_attachment_file(
         self,
@@ -646,6 +1319,8 @@ class GmailBrowserSessionManager:
         workspace_id: str,
         settings_path: Path,
         outputs_dir: Path,
+        build_sha: str = "",
+        asset_version: str = "",
     ) -> dict[str, Any]:
         workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
         configured_gog_path, configured_account_email = _configured_gmail_values(settings_path)
@@ -695,6 +1370,15 @@ class GmailBrowserSessionManager:
             "handoff_state": handoff_state,
         }
         if workspace.batch_session is not None:
+            report_context = _backfill_batch_finalization_report_context(
+                runtime_mode=runtime_mode,
+                workspace_id=workspace_id,
+                build_sha=build_sha,
+                asset_version=asset_version,
+                session=workspace.batch_session,
+            )
+            if report_context is not None:
+                write_gmail_batch_session_report(workspace.batch_session)
             payload["active_session"] = _serialize_batch_session(
                 workspace.batch_session,
                 current_index=workspace.current_batch_index,
@@ -707,6 +1391,20 @@ class GmailBrowserSessionManager:
                 )
         elif workspace.interpretation_session is not None:
             payload["active_session"] = _serialize_interpretation_session(workspace.interpretation_session)
+        elif (
+            workspace.allow_report_restore
+            and workspace.loaded_result is None
+            and workspace.interpretation_session is None
+            and not workspace.pending_intake_context
+            and not workspace.pending_status
+        ):
+            payload["active_session"] = _restore_batch_session_payload_from_report(
+                outputs_dir=outputs_dir,
+                runtime_mode=runtime_mode,
+                workspace_id=workspace_id,
+                build_sha=build_sha,
+                asset_version=asset_version,
+            )
         return {
             "status": "ok",
             "normalized_payload": payload,
@@ -754,6 +1452,7 @@ class GmailBrowserSessionManager:
         next_event_id = max(0, int(workspace.review_event_id)) + 1
         workspace.cleanup()
         workspace.loaded_result = result
+        workspace.allow_report_restore = True
         workspace.review_event_id = next_event_id
         workspace.message_signature = _message_signature(result)
         workspace.preferred_reply_email = _preferred_reply_email_from_load_result(result)
@@ -1099,6 +1798,7 @@ class GmailBrowserSessionManager:
             cached_preview_page_counts=workspace.preview_page_counts,
         )
         workspace.batch_session = session
+        workspace.allow_report_restore = True
         workspace.current_batch_index = 0
         workspace.interpretation_seed_response = None
         return {
@@ -1177,7 +1877,8 @@ class GmailBrowserSessionManager:
         run_dir = Path(run_dir_text).expanduser().resolve() if run_dir_text else translated_docx_path.parent
         confirmed_item = GmailBatchConfirmedItem(
             downloaded_attachment=current_attachment,
-            translated_docx_path=staged_docx,
+            translated_docx_path=translated_docx_path,
+            staged_translated_docx_path=staged_docx,
             run_dir=run_dir,
             translated_word_count=int(saved_result.get("word_count", 0) or 0),
             joblog_row_id=int(saved_result.get("row_id", 0) or 0),
@@ -1224,12 +1925,16 @@ class GmailBrowserSessionManager:
         settings_path: Path,
         output_filename: str | None,
         profile_id: str | None,
+        build_sha: str = "",
+        asset_version: str = "",
     ) -> dict[str, Any]:
         preflight_response = self.preflight_batch_finalization(
             runtime_mode=runtime_mode,
             workspace_id=workspace_id,
             settings_path=settings_path,
             force_refresh=False,
+            build_sha=build_sha,
+            asset_version=asset_version,
         )
         preflight_payload = dict(preflight_response.get("normalized_payload", {}))
         finalization_preflight = (
@@ -1276,6 +1981,7 @@ class GmailBrowserSessionManager:
         session.draft_created = False
         session.draft_failure_reason = ""
         session.final_attachment_basenames = ()
+        session.finalization_report_context = {}
         write_gmail_batch_session_report(session)
         draft = build_honorarios_draft(
             case_number=signature[0],
@@ -1310,6 +2016,17 @@ class GmailBrowserSessionManager:
             session.finalization_state = "local_artifacts_ready"
             session.draft_created = False
             session.draft_failure_reason = _clean_text(pdf_export.get("failure_message")) or "Honorários PDF is unavailable."
+            report_context = _persist_batch_finalization_report_context(
+                runtime_mode=runtime_mode,
+                workspace_id=workspace_id,
+                build_sha=build_sha,
+                asset_version=asset_version,
+                session=session,
+                status="local_only",
+                retry_available=True,
+                draft_payload=serialize_honorarios_draft(draft),
+                actual_export=pdf_export,
+            )
             write_gmail_batch_session_report(session)
             return {
                 "status": "local_only",
@@ -1319,6 +2036,7 @@ class GmailBrowserSessionManager:
                     "draft": serialize_honorarios_draft(draft),
                     "finalization_state": session.finalization_state,
                     "finalization_preflight": dict(session.finalization_preflight),
+                    "finalization_report_context": report_context,
                     "retry_available": True,
                     "active_session": _serialize_batch_session(session, current_index=workspace.current_batch_index),
                 },
@@ -1339,6 +2057,18 @@ class GmailBrowserSessionManager:
             session.finalization_state = "draft_failed"
             session.draft_created = False
             session.draft_failure_reason = prereqs.message
+            report_context = _persist_batch_finalization_report_context(
+                runtime_mode=runtime_mode,
+                workspace_id=workspace_id,
+                build_sha=build_sha,
+                asset_version=asset_version,
+                session=session,
+                status="draft_unavailable",
+                retry_available=True,
+                draft_payload=serialize_honorarios_draft(draft),
+                draft_prereqs=prereqs,
+                actual_export=pdf_export,
+            )
             write_gmail_batch_session_report(session)
             return {
                 "status": "draft_unavailable",
@@ -1349,6 +2079,7 @@ class GmailBrowserSessionManager:
                     "draft_prereqs": _serialize_draft_prereqs(prereqs),
                     "finalization_state": session.finalization_state,
                     "finalization_preflight": dict(session.finalization_preflight),
+                    "finalization_report_context": report_context,
                     "retry_available": True,
                     "active_session": _serialize_batch_session(session, current_index=workspace.current_batch_index),
                 },
@@ -1360,7 +2091,7 @@ class GmailBrowserSessionManager:
             }
 
         translated_docxs = validate_translated_docx_artifacts_for_gmail_draft(
-            translated_docxs=[item.translated_docx_path for item in session.confirmed_items],
+            translated_docxs=[item.staged_translated_docx_path for item in session.confirmed_items],
             honorarios_pdf=Path(_clean_text(pdf_export.get("pdf_path"))).expanduser().resolve(),
         )
         request = build_gmail_batch_reply_request(
@@ -1380,6 +2111,20 @@ class GmailBrowserSessionManager:
         session.draft_failure_reason = "" if result.ok else _clean_text(result.message)
         session.finalization_state = "draft_ready" if result.ok else "draft_failed"
         session.status = "draft_ready" if result.ok else "draft_failed"
+        report_context = _persist_batch_finalization_report_context(
+            runtime_mode=runtime_mode,
+            workspace_id=workspace_id,
+            build_sha=build_sha,
+            asset_version=asset_version,
+            session=session,
+            status="ok" if result.ok else "draft_failed",
+            retry_available=not bool(result.ok),
+            draft_payload=serialize_honorarios_draft(draft),
+            draft_prereqs=prereqs,
+            draft_request=request,
+            draft_result=result,
+            actual_export=pdf_export,
+        )
         write_gmail_batch_session_report(session)
         return {
             "status": "ok" if result.ok else "draft_failed",
@@ -1392,6 +2137,7 @@ class GmailBrowserSessionManager:
                 "gmail_draft_result": _serialize_draft_result(result),
                 "finalization_state": session.finalization_state,
                 "finalization_preflight": dict(session.finalization_preflight),
+                "finalization_report_context": report_context,
                 "retry_available": not bool(result.ok),
                 "active_session": _serialize_batch_session(session, current_index=workspace.current_batch_index),
             },
@@ -1409,6 +2155,8 @@ class GmailBrowserSessionManager:
         workspace_id: str,
         settings_path: Path,
         force_refresh: bool = False,
+        build_sha: str = "",
+        asset_version: str = "",
     ) -> dict[str, Any]:
         workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
         session = workspace.batch_session
@@ -1427,21 +2175,37 @@ class GmailBrowserSessionManager:
         if bool(readiness.get("finalization_ready")):
             if previous_state not in {"local_artifacts_ready", "draft_failed", "draft_ready"}:
                 session.finalization_state = "ready_to_finalize"
+                session.finalization_report_context = {}
         elif previous_state not in {"local_artifacts_ready", "draft_failed", "draft_ready"}:
             session.finalization_state = "blocked_word_pdf_export"
         if not bool(readiness.get("finalization_ready")):
             session.draft_preflight_result = "blocked_word_pdf_export"
             session.draft_created = False
             session.draft_failure_reason = _clean_text(readiness.get("message")) or "Word PDF export is unavailable."
+            report_context = _persist_batch_finalization_report_context(
+                runtime_mode=runtime_mode,
+                workspace_id=workspace_id,
+                build_sha=build_sha,
+                asset_version=asset_version,
+                session=session,
+                status="blocked_word_pdf_export",
+                retry_available=False,
+                actual_export=session.pdf_export,
+            )
+        else:
+            report_context = None
         write_gmail_batch_session_report(session)
+        normalized_payload = {
+            "finalization_state": session.finalization_state,
+            "finalization_preflight": dict(readiness),
+            "retry_available": False,
+            "active_session": _serialize_batch_session(session, current_index=workspace.current_batch_index),
+        }
+        if report_context:
+            normalized_payload["finalization_report_context"] = report_context
         return {
             "status": "ok" if bool(readiness.get("finalization_ready")) else "blocked_word_pdf_export",
-            "normalized_payload": {
-                "finalization_state": session.finalization_state,
-                "finalization_preflight": dict(readiness),
-                "retry_available": False,
-                "active_session": _serialize_batch_session(session, current_index=workspace.current_batch_index),
-            },
+            "normalized_payload": normalized_payload,
             "diagnostics": {"word_pdf_export": dict(readiness)},
             "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
         }

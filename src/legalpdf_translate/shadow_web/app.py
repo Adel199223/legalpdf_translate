@@ -457,6 +457,56 @@ def _browser_capability_flags(
     return flags
 
 
+def _augment_finalization_report_context(
+    raw_context: object,
+    *,
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+) -> dict[str, Any] | None:
+    if not isinstance(raw_context, Mapping):
+        return None
+    report_context = dict(raw_context)
+    report_context["runtime_mode"] = str(report_context.get("runtime_mode") or target.mode).strip() or target.mode
+    report_context["workspace_id"] = (
+        str(report_context.get("workspace_id") or target.workspace_id).strip() or target.workspace_id
+    )
+    report_context["build_sha"] = (
+        str(report_context.get("build_sha") or context.build_identity.head_sha).strip()
+        or context.build_identity.head_sha
+    )
+    report_context["asset_version"] = (
+        str(report_context.get("asset_version") or context.asset_version).strip() or context.asset_version
+    )
+    report_context["active_view"] = str(report_context.get("active_view") or "").strip()
+    return report_context
+
+
+def _augment_gmail_finalization_report_payloads(
+    normalized_payload: dict[str, Any],
+    *,
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+) -> None:
+    top_level_context = _augment_finalization_report_context(
+        normalized_payload.get("finalization_report_context"),
+        context=context,
+        target=target,
+    )
+    if top_level_context is not None:
+        normalized_payload["finalization_report_context"] = top_level_context
+    active_session = normalized_payload.get("active_session")
+    if isinstance(active_session, Mapping):
+        active_session_payload = dict(active_session)
+        session_report_context = _augment_finalization_report_context(
+            active_session_payload.get("finalization_report_context"),
+            context=context,
+            target=target,
+        )
+        if session_report_context is not None:
+            active_session_payload["finalization_report_context"] = session_report_context
+        normalized_payload["active_session"] = active_session_payload
+
+
 def _merge_response(
     context: ShadowWebContext,
     target: ActiveBrowserTarget,
@@ -477,6 +527,11 @@ def _merge_response(
             "runtime_mode": target.mode,
             "runtime_mode_label": target.data_paths.label,
         },
+    )
+    _augment_gmail_finalization_report_payloads(
+        normalized_payload,
+        context=context,
+        target=target,
     )
     capability_flags = response.get("capability_flags")
     if capability_flags is None:
@@ -654,6 +709,8 @@ def create_shadow_app(
             workspace_id=target.workspace_id,
             settings_path=target.data_paths.settings_path,
             outputs_dir=target.data_paths.outputs_dir,
+            build_sha=context.build_identity.head_sha,
+            asset_version=context.asset_version,
         )
         response["normalized_payload"]["gmail"] = gmail_bootstrap["normalized_payload"]
         extension_payload = response["normalized_payload"].get("extension_lab", {})
@@ -679,6 +736,8 @@ def create_shadow_app(
             workspace_id=target.workspace_id,
             settings_path=target.data_paths.settings_path,
             outputs_dir=target.data_paths.outputs_dir,
+            build_sha=context.build_identity.head_sha,
+            asset_version=context.asset_version,
         )
         current_mode_bridge = _shell_bridge_mode_state(target=target)
         document_runtime_state = document_runtime_state_payload()
@@ -1311,13 +1370,18 @@ def create_shadow_app(
             mode_override=payload.get("mode") if isinstance(payload, dict) else None,
             workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
         )
+        gmail_finalization_context = _augment_finalization_report_context(
+            payload.get("gmail_finalization_context") if isinstance(payload, dict) else None,
+            context=context,
+            target=target,
+        )
         try:
             response = generate_browser_run_report(
                 settings_path=target.data_paths.settings_path,
                 outputs_dir=target.data_paths.outputs_dir,
                 run_dir_text=payload.get("run_dir") if isinstance(payload, dict) else None,
                 browser_failure_context=payload.get("browser_failure_context") if isinstance(payload, dict) else None,
-                gmail_finalization_context=payload.get("gmail_finalization_context") if isinstance(payload, dict) else None,
+                gmail_finalization_context=gmail_finalization_context,
             )
         except ValueError as exc:
             return _validation_error_response(context, target, message=str(exc))
@@ -1350,6 +1414,8 @@ def create_shadow_app(
             workspace_id=target.workspace_id,
             settings_path=target.data_paths.settings_path,
             outputs_dir=target.data_paths.outputs_dir,
+            build_sha=context.build_identity.head_sha,
+            asset_version=context.asset_version,
         )
         return JSONResponse(_merge_response(context, target, response))
 
@@ -1547,6 +1613,8 @@ def create_shadow_app(
             workspace_id=target.workspace_id,
             settings_path=target.data_paths.settings_path,
             outputs_dir=target.data_paths.outputs_dir,
+            build_sha=context.build_identity.head_sha,
+            asset_version=context.asset_version,
         )
         return JSONResponse(_merge_response(context, target, response))
 
@@ -1590,6 +1658,8 @@ def create_shadow_app(
                 settings_path=target.data_paths.settings_path,
                 output_filename=str(payload.get("output_filename", "") or "").strip() or None,
                 profile_id=str(payload.get("profile_id", "") or "").strip() or None,
+                build_sha=context.build_identity.head_sha,
+                asset_version=context.asset_version,
             )
         except ValueError as exc:
             return _validation_error_response(context, target, message=str(exc))
@@ -1610,6 +1680,8 @@ def create_shadow_app(
                 workspace_id=target.workspace_id,
                 settings_path=target.data_paths.settings_path,
                 force_refresh=bool(payload.get("force_refresh")) if isinstance(payload, dict) else False,
+                build_sha=context.build_identity.head_sha,
+                asset_version=context.asset_version,
             )
         except ValueError as exc:
             return _validation_error_response(context, target, message=str(exc))
@@ -1658,6 +1730,8 @@ def create_shadow_app(
             workspace_id=target.workspace_id,
             settings_path=target.data_paths.settings_path,
             outputs_dir=target.data_paths.outputs_dir,
+            build_sha=context.build_identity.head_sha,
+            asset_version=context.asset_version,
         )
         return JSONResponse(_merge_response(context, target, response))
 

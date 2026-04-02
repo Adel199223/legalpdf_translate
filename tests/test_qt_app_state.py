@@ -268,6 +268,7 @@ def _build_gmail_batch_confirmed_item(
     return GmailBatchConfirmedItem(
         downloaded_attachment=session.downloaded_attachments[index],
         translated_docx_path=translated_docx_path,
+        staged_translated_docx_path=translated_docx_path,
         run_dir=resolved_run_dir,
         translated_word_count=translated_word_count,
         joblog_row_id=joblog_row_id or (index + 1),
@@ -4060,10 +4061,13 @@ def test_record_gmail_batch_saved_result_stages_translated_docx_copy(tmp_path: P
     assert consistent is True
     assert len(session.confirmed_items) == 1
     item = session.confirmed_items[0]
-    assert item.translated_docx_path != original.resolve()
-    assert item.translated_docx_path.parent == session.download_dir / "_draft_attachments"
+    assert item.translated_docx_path == original.resolve()
     assert item.translated_docx_path.name == original.name
     assert item.translated_docx_path.read_bytes() == b"translated-bytes"
+    assert item.staged_translated_docx_path != original.resolve()
+    assert item.staged_translated_docx_path.parent == session.download_dir / "_draft_attachments"
+    assert item.staged_translated_docx_path.name == original.name
+    assert item.staged_translated_docx_path.read_bytes() == b"translated-bytes"
     assert item.run_dir == (tmp_path / "21-25_AR_run").resolve()
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["status"] == "joblog_saved"

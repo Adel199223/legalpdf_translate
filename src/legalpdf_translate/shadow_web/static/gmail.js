@@ -132,6 +132,29 @@ function browserBootstrapConfig() {
   return globalThis.window?.LEGALPDF_BROWSER_BOOTSTRAP || {};
 }
 
+function currentGmailBuildProvenance() {
+  const bootstrap = browserBootstrapConfig();
+  const runtime = appState.bootstrap?.normalized_payload?.runtime || {};
+  const branch = String(runtime.build_branch || bootstrap.buildBranch || "").trim();
+  const buildSha = String(runtime.build_sha || bootstrap.buildSha || "").trim();
+  const assetVersion = String(runtime.asset_version || bootstrap.assetVersion || "").trim();
+  const pieces = [];
+  if (branch && buildSha) {
+    pieces.push(`${branch}@${buildSha}`);
+  } else if (buildSha || branch) {
+    pieces.push(buildSha || branch);
+  }
+  if (assetVersion) {
+    pieces.push(`assets ${assetVersion}`);
+  }
+  return {
+    branch,
+    buildSha,
+    assetVersion,
+    label: pieces.join(" | ") || "Unavailable",
+  };
+}
+
 function currentGmailFailureReportContext() {
   return gmailState.lastFailureReportContext && typeof gmailState.lastFailureReportContext === "object"
     ? { ...gmailState.lastFailureReportContext }
@@ -165,55 +188,28 @@ function currentBatchFinalizeState() {
 }
 
 function currentGmailFinalizationReportContext() {
-  const preflight = currentBatchFinalizePreflight();
-  const payload = gmailState.batchFinalizeResult;
-  const normalized = payload?.normalized_payload || {};
-  const activeSession = gmailState.activeSession || {};
-  const message = activeSession.message || gmailState.loadResult?.message || {};
-  const status = String(payload?.status || "").trim()
-    || (preflight && !preflight.finalization_ready ? "blocked_word_pdf_export" : "");
-  if (!status || status === "ok") {
+  const normalized = gmailState.batchFinalizeResult?.normalized_payload || {};
+  const rawContext = (
+    normalized.finalization_report_context
+    && typeof normalized.finalization_report_context === "object"
+  )
+    ? normalized.finalization_report_context
+    : (
+      gmailState.activeSession?.finalization_report_context
+      && typeof gmailState.activeSession.finalization_report_context === "object"
+    )
+      ? gmailState.activeSession.finalization_report_context
+      : null;
+  if (!rawContext) {
     return null;
   }
   return {
-    kind: "gmail_finalization_report",
-    captured_at: new Date().toISOString(),
-    operation: "gmail_batch_finalize",
-    status,
-    finalization_state: currentBatchFinalizeState(),
-    retry_available: Boolean(
-      normalized.retry_available
-      || status === "local_only"
-      || status === "draft_failed"
-      || status === "draft_unavailable",
-    ),
-    runtime_mode: appState.runtimeMode,
-    workspace_id: appState.workspaceId,
-    active_view: appState.activeView,
-    build_sha: String(browserBootstrapConfig().buildSha || "").trim(),
-    asset_version: String(browserBootstrapConfig().assetVersion || "").trim(),
-    session: {
-      session_id: String(activeSession.session_id || "").trim(),
-      message_id: String(message.message_id || "").trim(),
-      thread_id: String(message.thread_id || "").trim(),
-      subject: String(message.subject || "").trim(),
-      account_email: String(message.account_email || "").trim(),
-      selected_target_lang: String(activeSession.selected_target_lang || "").trim(),
-      effective_output_dir: String(activeSession.effective_output_dir || "").trim(),
-      confirmed_items: Array.isArray(activeSession.confirmed_items) ? activeSession.confirmed_items : [],
-      session_report_path: String(activeSession.session_report_path || "").trim(),
-    },
-    word_pdf_export: preflight || {},
-    actual_export: payload?.diagnostics?.pdf_export && typeof payload.diagnostics.pdf_export === "object"
-      ? payload.diagnostics.pdf_export
-      : {},
-    outcome: {
-      docx_path: String(normalized.docx_path || "").trim(),
-      pdf_path: String(normalized.pdf_path || "").trim(),
-      draft_result: normalized.gmail_draft_result || {},
-      draft_prereqs: normalized.draft_prereqs || {},
-      draft_failure_reason: String(activeSession.draft_failure_reason || "").trim(),
-    },
+    ...rawContext,
+    runtime_mode: String(rawContext.runtime_mode || appState.runtimeMode || "").trim(),
+    workspace_id: String(rawContext.workspace_id || appState.workspaceId || "").trim(),
+    active_view: String(rawContext.active_view || appState.activeView || "").trim(),
+    build_sha: String(rawContext.build_sha || browserBootstrapConfig().buildSha || "").trim(),
+    asset_version: String(rawContext.asset_version || browserBootstrapConfig().assetVersion || "").trim(),
   };
 }
 
@@ -895,6 +891,7 @@ function renderBatchFinalizeSurface(activeSession) {
   const normalized = payload?.normalized_payload || {};
   const finalizationState = currentBatchFinalizeState();
   const retryAvailable = Boolean(normalized.retry_available);
+  const provenance = currentGmailBuildProvenance();
   const stateLabel = ({
     ready_to_finalize: "Ready",
     blocked_word_pdf_export: "Blocked",
@@ -909,6 +906,7 @@ function renderBatchFinalizeSurface(activeSession) {
       ? "Retry finalization"
       : "Finalize Gmail Batch Reply";
   button.disabled = !available;
+  button.classList.remove("hidden");
   if (!available) {
     summary.className = "result-card empty-state";
     summary.textContent = "Finish every Gmail attachment first to open the final reply step.";
@@ -934,6 +932,7 @@ function renderBatchFinalizeSurface(activeSession) {
       <div><h3>Target Language</h3><p>${escapeHtml(activeSession.selected_target_lang || "?")}</p></div>
       <div><h3>Confirmed Rows</h3><p>${confirmedItems.length}</p></div>
       <div><h3>Output Folder</h3><p title="${escapeHtml(outputFolder)}">${escapeHtml(shortOutputFolderLabel(outputFolder))}</p></div>
+      <div><h3>Build Provenance</h3><p class="word-break">${escapeHtml(provenance.label)}</p></div>
     </div>
   `;
   if (gmailState.batchFinalizePreflightInFlight && !payload) {
@@ -970,11 +969,14 @@ function renderBatchFinalizeSurface(activeSession) {
       ? "The Gmail draft is ready for this finalized batch."
       : activeSession.draft_failure_reason || "The previous Gmail finalization attempt stayed recoverable in this workspace.";
     status.textContent = finalizationState === "draft_ready"
-      ? "Gmail batch reply draft is ready."
+      ? "Gmail batch reply draft is ready. Generate the finalization report from this drawer whenever you need the full operator artifact."
       : finalizationState === "draft_failed"
         ? "Honorários were created, but the Gmail draft step failed. You can retry from this same surface."
         : "Honorários were created locally, but the Gmail draft step stayed unavailable. You can retry from this same surface.";
-    button.disabled = finalizationState === "draft_ready" || (preflight && !preflight.finalization_ready);
+    const showRetryAction = finalizationState !== "draft_ready";
+    button.classList.toggle("hidden", !showRetryAction);
+    button.disabled = !showRetryAction || (preflight && !preflight.finalization_ready);
+    button.textContent = showRetryAction ? "Retry finalization" : button.textContent;
     result.className = "result-card";
     result.innerHTML = `
       <div class="result-header">
@@ -985,14 +987,15 @@ function renderBatchFinalizeSurface(activeSession) {
         <span class="status-chip ${finalizationState === "draft_ready" ? "ok" : finalizationState === "draft_failed" ? "bad" : "warn"}">${escapeHtml(stateLabel)}</span>
       </div>
       <div class="result-grid">
-        <div><h3>DOCX</h3><p class="word-break">${escapeHtml(activeSession.actual_honorarios_path || "Unavailable")}</p></div>
-        <div><h3>PDF</h3><p class="word-break">${escapeHtml(activeSession.actual_honorarios_pdf_path || "Unavailable")}</p></div>
-        <div><h3>Draft</h3><p>${escapeHtml(draftCopy)}</p></div>
-        <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight?.launch_preflight?.message || "Unavailable")}</p></div>
-        <div><h3>Export Canary</h3><p>${escapeHtml(preflight?.export_canary?.message || "Unavailable")}</p></div>
-        <div><h3>Retry</h3><p>${finalizationState === "draft_ready" ? "No retry required." : "You can retry from this drawer."}</p></div>
-      </div>
-    `;
+      <div><h3>DOCX</h3><p class="word-break">${escapeHtml(activeSession.actual_honorarios_path || "Unavailable")}</p></div>
+      <div><h3>PDF</h3><p class="word-break">${escapeHtml(activeSession.actual_honorarios_pdf_path || "Unavailable")}</p></div>
+      <div><h3>Draft</h3><p>${escapeHtml(draftCopy)}</p></div>
+      <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight?.launch_preflight?.message || "Unavailable")}</p></div>
+      <div><h3>Export Canary</h3><p>${escapeHtml(preflight?.export_canary?.message || "Unavailable")}</p></div>
+      <div><h3>Retry</h3><p>${showRetryAction ? "You can retry from this drawer." : "No retry required."}</p></div>
+      <div><h3>Build Provenance</h3><p class="word-break">${escapeHtml(provenance.label)}</p></div>
+    </div>
+  `;
     updateGmailFinalizationReportActionState();
     return;
   }
@@ -1047,6 +1050,7 @@ function renderBatchFinalizeSurface(activeSession) {
   button.disabled = gmailState.batchFinalizePreflightInFlight
     || payload.status === "ok"
     || (preflight && !preflight.finalization_ready);
+  button.classList.toggle("hidden", payload.status === "ok");
   result.className = "result-card";
   result.innerHTML = `
     <div class="result-header">
@@ -1063,6 +1067,7 @@ function renderBatchFinalizeSurface(activeSession) {
       <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight?.launch_preflight?.message || "Unavailable")}</p></div>
       <div><h3>Export Canary</h3><p>${escapeHtml(preflight?.export_canary?.message || "Unavailable")}</p></div>
       <div><h3>Retry</h3><p>${retryAvailable ? "You can retry from this drawer." : "No retry required."}</p></div>
+      <div><h3>Build Provenance</h3><p class="word-break">${escapeHtml(provenance.label)}</p></div>
     </div>
   `;
   updateGmailFinalizationReportActionState();
@@ -2068,7 +2073,7 @@ async function handleGmailFailureReport() {
 async function handleGmailFinalizationReport() {
   const reportContext = currentGmailFinalizationReportContext();
   if (!reportContext) {
-    throw new Error("No Gmail finalization failure is available to report yet.");
+    throw new Error("No Gmail finalization result is available to report yet.");
   }
   const payload = await fetchJson("/api/power-tools/diagnostics/run-report", appState, {
     method: "POST",

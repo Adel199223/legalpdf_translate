@@ -44,7 +44,7 @@ python3 -m pytest -q
 ## Targeted Tests
 - `dart run test/tooling/validate_agent_docs_test.dart`
 - `dart run test/tooling/validate_workspace_hygiene_test.dart`
-- `dart run test/tooling/automation_preflight_test.dart`
+- `dart test/tooling/automation_preflight_test.dart`
 - `dart run test/tooling/cloud_eval_preflight_test.dart`
 
 ## Failure Modes and Fallback Steps

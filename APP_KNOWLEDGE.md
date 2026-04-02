@@ -205,7 +205,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - The browser extension does not write its own report file.
 - Browser/operator diagnostics can now also generate:
   - a browser failure report when Gmail/browser preparation fails before a translation run creates a `run_dir`
-  - a Gmail finalization report when finalization is blocked or ends in recoverable `local_only` / `draft_failed` state
+  - a Gmail finalization report whenever the last-step Gmail finalization state is blocked or completed, including successful `draft_ready` completion
 - Save-to-Job-Log pre-fills those values from `run_summary.json` when available, while preserving user edit control before save.
 - Save-to-Job-Log now also exposes `Open translated DOCX`, which reopens the resolved final or partial DOCX for the current run without leaving the dialog.
 - Save-to-Job-Log now uses a scrollable form body with a fixed action row so create/edit flows stay usable on smaller screens without hiding `Save`, `Cancel`, `Open translated DOCX`, or the honorários action.

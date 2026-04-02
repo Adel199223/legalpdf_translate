@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import threading
 from types import SimpleNamespace
 
 from legalpdf_translate.gmail_browser_service import GmailBrowserSessionManager
 from legalpdf_translate.gmail_batch import (
+    build_gmail_batch_session_payload,
     DownloadedGmailAttachment,
     FetchedGmailMessage,
     GmailAttachmentCandidate,
@@ -73,10 +75,14 @@ def _translation_batch_session(tmp_path: Path) -> GmailBatchSession:
     attachment = load_result.message.attachments[0]
     saved_pdf = tmp_path / "sentenca.pdf"
     saved_pdf.write_bytes(b"%PDF-1.7\n")
-    translated_docx = tmp_path / "sentenca_EN.docx"
-    translated_docx.write_text("docx", encoding="utf-8")
     run_dir = tmp_path / "sentenca_EN_run"
     run_dir.mkdir()
+    translated_docx = run_dir / "sentenca_EN.docx"
+    translated_docx.write_text("docx", encoding="utf-8")
+    staged_dir = tmp_path / "_draft_attachments"
+    staged_dir.mkdir()
+    staged_docx = staged_dir / "sentenca_EN.docx"
+    staged_docx.write_text("staged-docx", encoding="utf-8")
     downloaded = DownloadedGmailAttachment(
         candidate=attachment,
         saved_path=saved_pdf,
@@ -86,6 +92,7 @@ def _translation_batch_session(tmp_path: Path) -> GmailBatchSession:
     confirmed = GmailBatchConfirmedItem(
         downloaded_attachment=downloaded,
         translated_docx_path=translated_docx,
+        staged_translated_docx_path=staged_docx,
         run_dir=run_dir,
         translated_word_count=1269,
         joblog_row_id=73,
@@ -137,6 +144,400 @@ def test_gmail_browser_bootstrap_review_metadata_defaults(tmp_path: Path, monkey
     assert payload["status"] == "ok"
     assert payload["normalized_payload"]["review_event_id"] == 0
     assert payload["normalized_payload"]["message_signature"] == ""
+
+
+def test_build_bootstrap_backfills_missing_finalization_report_context_for_completed_batch_session(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    session = _translation_batch_session(tmp_path)
+    session.status = "draft_ready"
+    session.finalization_state = "draft_ready"
+    session.draft_created = True
+    session.draft_preflight_result = "passed"
+    session.final_attachment_basenames = ("sentenca_EN.docx", "honorarios.pdf")
+    session.actual_honorarios_path = outputs_dir / "honorarios.docx"
+    session.actual_honorarios_pdf_path = outputs_dir / "honorarios.pdf"
+    session.actual_honorarios_path.write_text("honorarios", encoding="utf-8")
+    session.actual_honorarios_pdf_path.write_bytes(b"%PDF-1.7\n")
+    session.pdf_export = {
+        "ok": True,
+        "docx_path": str(session.actual_honorarios_path),
+        "pdf_path": str(session.actual_honorarios_pdf_path),
+    }
+    session.finalization_preflight = {
+        "finalization_ready": True,
+        "launch_preflight": {"ok": True, "message": "Word launched."},
+        "export_canary": {"ok": True, "message": "Canary passed."},
+    }
+    session.finalization_report_context = {}
+
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path("C:/tmp/gog.exe"),
+            account_email="adel@example.com",
+            accounts=("adel@example.com",),
+        ),
+    )
+
+    manager = GmailBrowserSessionManager()
+    workspace = manager._workspace(runtime_mode="live", workspace_id="gmail-intake")
+    workspace.batch_session = session
+
+    payload = manager.build_bootstrap(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+        build_sha="18be21e",
+        asset_version="7052858987bd",
+    )
+
+    active_session = payload["normalized_payload"]["active_session"]
+    assert active_session["finalization_report_context"]["status"] == "ok"
+    assert active_session["finalization_report_context"]["finalization_state"] == "draft_ready"
+    assert active_session["finalization_report_context"]["build_sha"] == "18be21e"
+    assert active_session["finalization_report_context"]["asset_version"] == "7052858987bd"
+    assert session.finalization_report_context["status"] == "ok"
+    written = json.loads(session.session_report_path.read_text(encoding="utf-8"))
+    assert written["finalization_report_context"]["status"] == "ok"
+    assert written["finalization_report_context"]["build_sha"] == "18be21e"
+    assert written["finalization_report_context"]["asset_version"] == "7052858987bd"
+
+
+def test_build_bootstrap_restores_latest_completed_batch_session_report_with_backfilled_success_context(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    session = _translation_batch_session(tmp_path)
+    session.status = "draft_ready"
+    session.finalization_state = "draft_ready"
+    session.draft_created = True
+    session.draft_preflight_result = "passed"
+    session.final_attachment_basenames = ("sentenca_EN.docx", "honorarios.pdf")
+    session.actual_honorarios_path = outputs_dir / "honorarios.docx"
+    session.actual_honorarios_pdf_path = outputs_dir / "honorarios.pdf"
+    session.actual_honorarios_path.write_text("honorarios", encoding="utf-8")
+    session.actual_honorarios_pdf_path.write_bytes(b"%PDF-1.7\n")
+    session.pdf_export = {
+        "ok": True,
+        "docx_path": str(session.actual_honorarios_path),
+        "pdf_path": str(session.actual_honorarios_pdf_path),
+    }
+    session.finalization_preflight = {
+        "finalization_ready": True,
+        "message": "Word export canary passed.",
+        "launch_preflight": {"ok": True, "message": "Word launched."},
+        "export_canary": {"ok": True, "message": "Canary passed."},
+    }
+    report_dir = outputs_dir / "_gmail_batch_sessions" / session.session_id
+    report_dir.mkdir(parents=True, exist_ok=True)
+    session.session_report_path = report_dir / "gmail_batch_session.json"
+    session.session_report_path.write_text(
+        json.dumps(build_gmail_batch_session_payload(session), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path("C:/tmp/gog.exe"),
+            account_email="adel@example.com",
+            accounts=("adel@example.com",),
+        ),
+    )
+
+    manager = GmailBrowserSessionManager()
+    payload = manager.build_bootstrap(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+        build_sha="18be21e",
+        asset_version="7052858987bd",
+    )
+
+    active_session = payload["normalized_payload"]["active_session"]
+    assert active_session["restored_from_report"] is True
+    assert active_session["status"] == "draft_ready"
+    assert active_session["completed"] is True
+    assert active_session["finalization_report_context"]["status"] == "ok"
+    assert active_session["finalization_report_context"]["build_sha"] == "18be21e"
+    assert active_session["finalization_report_context"]["asset_version"] == "7052858987bd"
+    assert active_session["finalization_report_context"]["session"]["session_report_path"] == str(
+        session.session_report_path.expanduser().resolve()
+    )
+    restored_item = active_session["finalization_report_context"]["session"]["confirmed_items"][0]
+    assert restored_item["translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
+    assert restored_item["durable_translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
+    assert restored_item["staged_translated_docx_path"] == str(session.confirmed_items[0].staged_translated_docx_path)
+    assert restored_item["translated_docx_path_source"] == "durable"
+    written = json.loads(session.session_report_path.read_text(encoding="utf-8"))
+    assert written["finalization_report_context"]["status"] == "ok"
+    assert written["finalization_report_context"]["build_sha"] == "18be21e"
+    assert written["finalization_report_context"]["asset_version"] == "7052858987bd"
+    written_item = written["finalization_report_context"]["session"]["confirmed_items"][0]
+    assert written_item["translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
+    assert written_item["durable_translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
+    assert written_item["staged_translated_docx_path"] == str(session.confirmed_items[0].staged_translated_docx_path)
+    assert written_item["translated_docx_path_source"] == "durable"
+
+
+def test_build_bootstrap_rebuilds_legacy_success_context_when_provenance_is_blank(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    session = _translation_batch_session(tmp_path)
+    session.status = "draft_ready"
+    session.finalization_state = "draft_ready"
+    session.draft_created = True
+    session.draft_preflight_result = "passed"
+    session.final_attachment_basenames = ("sentenca_EN.docx", "honorarios.pdf")
+    session.actual_honorarios_path = outputs_dir / "honorarios.docx"
+    session.actual_honorarios_pdf_path = outputs_dir / "honorarios.pdf"
+    session.actual_honorarios_path.write_text("honorarios", encoding="utf-8")
+    session.actual_honorarios_pdf_path.write_bytes(b"%PDF-1.7\n")
+    session.pdf_export = {
+        "ok": True,
+        "docx_path": str(session.actual_honorarios_path),
+        "pdf_path": str(session.actual_honorarios_pdf_path),
+    }
+    session.finalization_preflight = {
+        "finalization_ready": True,
+        "message": "Word export canary passed.",
+        "launch_preflight": {"ok": True, "message": "Word launched."},
+        "export_canary": {"ok": True, "message": "Canary passed."},
+    }
+    session.finalization_report_context = {
+        "kind": "gmail_finalization_report",
+        "operation": "gmail_batch_finalize",
+        "status": "ok",
+        "finalization_state": "draft_ready",
+        "runtime_mode": "live",
+        "workspace_id": "gmail-intake",
+        "build_sha": "",
+        "asset_version": "",
+        "session": {"session_id": session.session_id},
+    }
+
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path("C:/tmp/gog.exe"),
+            account_email="adel@example.com",
+            accounts=("adel@example.com",),
+        ),
+    )
+
+    manager = GmailBrowserSessionManager()
+    workspace = manager._workspace(runtime_mode="live", workspace_id="gmail-intake")
+    workspace.batch_session = session
+
+    payload = manager.build_bootstrap(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+        build_sha="18be21e",
+        asset_version="7052858987bd",
+    )
+
+    active_session = payload["normalized_payload"]["active_session"]
+    assert active_session["finalization_report_context"]["build_sha"] == "18be21e"
+    assert active_session["finalization_report_context"]["asset_version"] == "7052858987bd"
+    restored_item = active_session["finalization_report_context"]["session"]["confirmed_items"][0]
+    assert restored_item["translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
+    assert restored_item["durable_translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
+    assert restored_item["staged_translated_docx_path"] == str(session.confirmed_items[0].staged_translated_docx_path)
+    assert restored_item["translated_docx_path_source"] == "durable"
+
+
+def test_build_bootstrap_repairs_completed_report_context_to_prefer_durable_translated_docx(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    session = _translation_batch_session(tmp_path)
+    original_item = session.confirmed_items[0]
+    legacy_run_docx = original_item.run_dir / original_item.translated_docx_path.name
+    if legacy_run_docx.exists():
+        legacy_run_docx.unlink()
+    durable_docx = outputs_dir / original_item.translated_docx_path.name
+    durable_docx.write_text("durable-docx", encoding="utf-8")
+    session.confirmed_items = [
+        GmailBatchConfirmedItem(
+            downloaded_attachment=original_item.downloaded_attachment,
+            translated_docx_path=durable_docx,
+            staged_translated_docx_path=original_item.staged_translated_docx_path,
+            run_dir=original_item.run_dir,
+            translated_word_count=original_item.translated_word_count,
+            joblog_row_id=original_item.joblog_row_id,
+            run_id=original_item.run_id,
+            case_number=original_item.case_number,
+            case_entity=original_item.case_entity,
+            case_city=original_item.case_city,
+            court_email=original_item.court_email,
+        )
+    ]
+    session.status = "draft_ready"
+    session.finalization_state = "draft_ready"
+    session.draft_created = True
+    session.draft_preflight_result = "passed"
+    session.final_attachment_basenames = ("sentenca_EN.docx", "honorarios.pdf")
+    session.actual_honorarios_path = outputs_dir / "honorarios.docx"
+    session.actual_honorarios_pdf_path = outputs_dir / "honorarios.pdf"
+    session.actual_honorarios_path.write_text("honorarios", encoding="utf-8")
+    session.actual_honorarios_pdf_path.write_bytes(b"%PDF-1.7\n")
+    session.pdf_export = {
+        "ok": True,
+        "docx_path": str(session.actual_honorarios_path),
+        "pdf_path": str(session.actual_honorarios_pdf_path),
+    }
+    session.finalization_preflight = {
+        "finalization_ready": True,
+        "message": "Word export canary passed.",
+        "launch_preflight": {"ok": True, "message": "Word launched."},
+        "export_canary": {"ok": True, "message": "Canary passed."},
+    }
+    session.finalization_report_context = {
+        "kind": "gmail_finalization_report",
+        "operation": "gmail_batch_finalize",
+        "status": "ok",
+        "finalization_state": "draft_ready",
+        "runtime_mode": "live",
+        "workspace_id": "gmail-intake",
+        "build_sha": "18be21e",
+        "asset_version": "7052858987bd",
+        "session": {
+            "session_id": session.session_id,
+            "message_id": session.message.message_id,
+            "thread_id": session.message.thread_id,
+            "subject": session.message.subject,
+            "account_email": session.message.account_email,
+            "confirmed_items": [
+                {
+                    "attachment_filename": session.confirmed_items[0].downloaded_attachment.candidate.filename,
+                    "translated_docx_path": str(session.confirmed_items[0].staged_translated_docx_path),
+                    "run_dir": str(session.confirmed_items[0].run_dir),
+                    "translated_word_count": session.confirmed_items[0].translated_word_count,
+                    "joblog_row_id": session.confirmed_items[0].joblog_row_id,
+                    "run_id": session.confirmed_items[0].run_id,
+                }
+            ],
+        },
+        "outcome": {
+            "docx_path": str(session.actual_honorarios_path),
+            "pdf_path": str(session.actual_honorarios_pdf_path),
+            "draft_created": True,
+        },
+    }
+    report_dir = outputs_dir / "_gmail_batch_sessions" / session.session_id
+    report_dir.mkdir(parents=True, exist_ok=True)
+    session.session_report_path = report_dir / "gmail_batch_session.json"
+    report_payload = build_gmail_batch_session_payload(session)
+    report_payload["runs"][0].pop("durable_translated_docx_path", None)
+    session.session_report_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path("C:/tmp/gog.exe"),
+            account_email="adel@example.com",
+            accounts=("adel@example.com",),
+        ),
+    )
+
+    manager = GmailBrowserSessionManager()
+    payload = manager.build_bootstrap(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+        build_sha="18be21e",
+        asset_version="7052858987bd",
+    )
+
+    active_session = payload["normalized_payload"]["active_session"]
+    restored_item = active_session["finalization_report_context"]["session"]["confirmed_items"][0]
+    assert restored_item["translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
+    assert restored_item["durable_translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
+    assert restored_item["staged_translated_docx_path"] == str(session.confirmed_items[0].staged_translated_docx_path)
+    assert restored_item["translated_docx_path_source"] == "durable"
+    assert restored_item["durable_translated_docx_path_exists"] is True
+    written = json.loads(session.session_report_path.read_text(encoding="utf-8"))
+    written_item = written["finalization_report_context"]["session"]["confirmed_items"][0]
+    assert written_item["translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
+    assert written_item["durable_translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
+    assert written_item["staged_translated_docx_path"] == str(session.confirmed_items[0].staged_translated_docx_path)
+    assert written_item["translated_docx_path_source"] == "durable"
+    assert written_item["durable_translated_docx_path_exists"] is True
+
+
+def test_clear_workspace_suppresses_completed_report_restore_until_new_activity(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    session = _translation_batch_session(tmp_path)
+    session.status = "draft_ready"
+    session.finalization_state = "draft_ready"
+    report_dir = outputs_dir / "_gmail_batch_sessions" / session.session_id
+    report_dir.mkdir(parents=True, exist_ok=True)
+    session.session_report_path = report_dir / "gmail_batch_session.json"
+    session.session_report_path.write_text(
+        json.dumps(build_gmail_batch_session_payload(session), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path("C:/tmp/gog.exe"),
+            account_email="adel@example.com",
+            accounts=("adel@example.com",),
+        ),
+    )
+
+    manager = GmailBrowserSessionManager()
+    manager.clear_workspace(runtime_mode="live", workspace_id="gmail-intake")
+
+    payload = manager.build_bootstrap(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+    )
+
+    assert payload["normalized_payload"]["active_session"] is None
 
 
 def test_gmail_browser_review_event_increments_for_manual_and_bridge_loads(tmp_path: Path, monkeypatch) -> None:
@@ -695,7 +1096,13 @@ def test_preflight_batch_finalization_blocks_when_word_export_canary_fails(tmp_p
     assert payload["status"] == "blocked_word_pdf_export"
     assert payload["normalized_payload"]["finalization_state"] == "blocked_word_pdf_export"
     assert payload["normalized_payload"]["finalization_preflight"]["failure_phase"] == "export_pdf"
+    assert payload["normalized_payload"]["finalization_report_context"]["status"] == "blocked_word_pdf_export"
+    assert (
+        payload["normalized_payload"]["finalization_report_context"]["finalization_state"]
+        == "blocked_word_pdf_export"
+    )
     assert session.finalization_state == "blocked_word_pdf_export"
+    assert session.finalization_report_context["status"] == "blocked_word_pdf_export"
     assert session.draft_failure_reason == "Word PDF export canary timed out."
 
 
@@ -789,16 +1196,154 @@ def test_finalize_batch_returns_retryable_local_only_after_export_failure(tmp_pa
     assert payload["status"] == "local_only"
     assert payload["normalized_payload"]["retry_available"] is True
     assert payload["normalized_payload"]["finalization_state"] == "local_artifacts_ready"
+    assert payload["normalized_payload"]["finalization_report_context"]["status"] == "local_only"
+    assert payload["normalized_payload"]["finalization_report_context"]["retry_available"] is True
     assert payload["diagnostics"]["word_pdf_export"]["finalization_ready"] is True
     assert payload["diagnostics"]["pdf_export"]["failure_code"] == "timeout"
     assert payload["normalized_payload"]["active_session"]["actual_honorarios_path"] == str(docx_path)
     assert session.finalization_state == "local_artifacts_ready"
+    assert session.finalization_report_context["status"] == "local_only"
     assert session.draft_failure_reason == "Word PDF export timed out."
     resolved = str(settings_path.expanduser().resolve())
     assert cleared_prefixes == [
         f"gmail_batch_finalization::{resolved}::{session.session_id}",
         f"provider_state::{resolved}",
     ]
+
+
+def test_finalize_batch_success_returns_persisted_finalization_report_context(tmp_path: Path, monkeypatch) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    session = _translation_batch_session(tmp_path)
+    session.effective_output_dir.mkdir(parents=True, exist_ok=True)
+    docx_path = session.effective_output_dir / "Requerimento_Honorarios_305_23.2GCBJA_20260401.docx"
+    pdf_path = session.effective_output_dir / "Requerimento_Honorarios_305_23.2GCBJA_20260401.pdf"
+    docx_path.write_text("honorarios", encoding="utf-8")
+    pdf_path.write_bytes(b"%PDF-1.7\n")
+    validation_calls: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.assess_word_pdf_export_readiness",
+        lambda **_kwargs: {
+            "ok": True,
+            "finalization_ready": True,
+            "message": "Word export canary passed.",
+            "launch_preflight": {"ok": True, "message": "Word launched."},
+            "export_canary": {"ok": True, "message": "Canary passed."},
+        },
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.write_gmail_batch_session_report",
+        lambda _session: None,
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path("C:/tmp/gog.exe"),
+            account_email="adel@example.com",
+            accounts=("adel@example.com",),
+        ),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.honorarios_docx.default_honorarios_filename",
+        lambda *_args, **_kwargs: "Requerimento_Honorarios_305_23.2GCBJA_20260401.docx",
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.honorarios_docx.generate_honorarios_docx",
+        lambda _draft, _path: docx_path,
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.interpretation_service._current_profile",
+        lambda **_kwargs: ([], "primary", SimpleNamespace(display_name="Adel")),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.interpretation_service._profile_missing_fields",
+        lambda _profile: [],
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.interpretation_service.serialize_honorarios_draft",
+        lambda _draft: {"case_number": "305/23.2GCBJA"},
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.honorarios_docx.build_honorarios_draft",
+        lambda **_kwargs: SimpleNamespace(case_number="305/23.2GCBJA"),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.interpretation_service._run_pdf_export_with_retry",
+        lambda **_kwargs: {
+            "docx_path": str(docx_path),
+            "pdf_path": str(pdf_path),
+            "ok": True,
+        },
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.validate_translated_docx_artifacts_for_gmail_draft",
+        lambda *, translated_docxs, honorarios_pdf: (
+            validation_calls.setdefault("translated_docxs", list(translated_docxs)),
+            validation_calls.setdefault("honorarios_pdf", honorarios_pdf),
+            list(translated_docxs),
+        )[-1],
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.build_gmail_batch_reply_request",
+        lambda **_kwargs: SimpleNamespace(
+            gog_path=Path("C:/tmp/gog.exe"),
+            account_email="adel@example.com",
+            to_email="beja.judicial@tribunais.org.pt",
+            subject=_kwargs["subject"],
+            body="Body preview",
+            attachments=tuple(_kwargs["translated_docxs"]) + (_kwargs["honorarios_pdf"],),
+            reply_to_message_id=_kwargs["reply_to_message_id"],
+        ),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.create_gmail_draft_via_gog",
+        lambda _request: SimpleNamespace(
+            ok=True,
+            message="Draft ready",
+            stdout="",
+            stderr="",
+            payload={"draft_id": "draft-123", "thread_id": "thr-1"},
+        ),
+    )
+
+    manager = GmailBrowserSessionManager()
+    workspace = manager._workspace(runtime_mode="live", workspace_id="gmail-intake")
+    workspace.batch_session = session
+
+    payload = manager.finalize_batch(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        output_filename="",
+        profile_id=None,
+    )
+
+    report_context = payload["normalized_payload"]["finalization_report_context"]
+    assert payload["status"] == "ok"
+    assert payload["normalized_payload"]["finalization_state"] == "draft_ready"
+    assert report_context["status"] == "ok"
+    assert report_context["finalization_state"] == "draft_ready"
+    assert report_context["retry_available"] is False
+    assert report_context["session"]["session_id"] == session.session_id
+    confirmed_item = report_context["session"]["confirmed_items"][0]
+    assert confirmed_item["translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
+    assert confirmed_item["durable_translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
+    assert confirmed_item["staged_translated_docx_path"] == str(session.confirmed_items[0].staged_translated_docx_path)
+    assert confirmed_item["translated_docx_path_source"] == "durable"
+    assert confirmed_item["durable_translated_docx_path_exists"] is True
+    assert confirmed_item["staged_translated_docx_path_exists"] is True
+    assert report_context["outcome"]["pdf_path"] == str(pdf_path)
+    assert report_context["outcome"]["draft_created"] is True
+    assert report_context["outcome"]["docx_path_exists"] is True
+    assert report_context["outcome"]["pdf_path_exists"] is True
+    assert validation_calls["translated_docxs"] == [session.confirmed_items[0].staged_translated_docx_path]
+    assert validation_calls["honorarios_pdf"] == pdf_path
+    assert payload["normalized_payload"]["active_session"]["finalization_report_context"]["status"] == "ok"
+    assert session.finalization_report_context["status"] == "ok"
+    assert session.finalization_report_context["finalization_state"] == "draft_ready"
 
 
 def test_finalize_interpretation_propagates_structured_validation_errors(tmp_path: Path, monkeypatch) -> None:
