@@ -206,7 +206,9 @@ void main() {
   _runCase('falls back to Windows file version when browser reports session text', () {
     final Map<String, dynamic> result = preflight.runAutomationPreflight(
       runner: _runnerWindowsEdgeSessionMessage,
-      environment: <String, String>{},
+      environment: <String, String>{
+        'AUTOMATION_PREFLIGHT_ASSUME_WINDOWS': '1',
+      },
     );
     _expect(result['preferred_host_status'] == 'available', 'Expected available host status');
     _expect(
