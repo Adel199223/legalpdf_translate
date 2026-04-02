@@ -2868,7 +2868,7 @@ class QtMainWindow(QMainWindow):
         first_item = session.confirmed_items[0]
         try:
             translated_docxs = validate_translated_docx_artifacts_for_gmail_draft(
-                translated_docxs=tuple(item.translated_docx_path for item in session.confirmed_items),
+                translated_docxs=tuple(item.staged_translated_docx_path for item in session.confirmed_items),
                 honorarios_pdf=honorarios_pdf,
             )
             session.draft_preflight_result = "passed"
@@ -3607,7 +3607,8 @@ class QtMainWindow(QMainWindow):
         )
         confirmed_item = GmailBatchConfirmedItem(
             downloaded_attachment=attachment,
-            translated_docx_path=staged_translated_docx,
+            translated_docx_path=original_translated_docx,
+            staged_translated_docx_path=staged_translated_docx,
             run_dir=run_dir.expanduser().resolve(),
             translated_word_count=int(saved_result.word_count),
             joblog_row_id=int(saved_result.row_id),

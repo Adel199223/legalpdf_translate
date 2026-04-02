@@ -120,8 +120,10 @@ def _selection_page_count(
 @dataclass(frozen=True, slots=True)
 class GmailBatchConfirmedItem:
     downloaded_attachment: DownloadedGmailAttachment
-    # Stored as the immutable staged copy used for Gmail draft attachments.
+    # Durable translated DOCX produced by the translation/save flow.
     translated_docx_path: Path
+    # Immutable staged copy used only for Gmail draft attachments.
+    staged_translated_docx_path: Path
     run_dir: Path
     translated_word_count: int
     joblog_row_id: int
@@ -206,6 +208,7 @@ class GmailBatchSession:
     pdf_export: dict[str, Any] = field(default_factory=dict)
     finalization_state: str = ""
     finalization_preflight: dict[str, Any] = field(default_factory=dict)
+    finalization_report_context: dict[str, Any] = field(default_factory=dict)
     _temp_dir: tempfile.TemporaryDirectory[str] | None = field(
         default=None,
         repr=False,
@@ -300,7 +303,10 @@ def build_gmail_batch_session_payload(session: GmailBatchSession) -> dict[str, A
             "run_id": item.run_id,
             "run_dir": str(item.run_dir.expanduser().resolve()),
             "joblog_row_id": int(item.joblog_row_id),
+            "durable_translated_docx_path": str(item.translated_docx_path.expanduser().resolve()),
             "translated_docx_basename": item.translated_docx_path.name,
+            "staged_translated_docx_path": str(item.staged_translated_docx_path.expanduser().resolve()),
+            "staged_translated_docx_basename": item.staged_translated_docx_path.name,
         }
         for item in session.confirmed_items
     ]
@@ -365,6 +371,7 @@ def build_gmail_batch_session_payload(session: GmailBatchSession) -> dict[str, A
         "runs": run_items,
         "pdf_export": dict(session.pdf_export),
         "finalization": finalization,
+        "finalization_report_context": dict(session.finalization_report_context),
     }
 
 

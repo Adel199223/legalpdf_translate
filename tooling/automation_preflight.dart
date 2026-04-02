@@ -54,6 +54,14 @@ String _firstLine(String text) {
       .firstWhere((String line) => line.isNotEmpty, orElse: () => '');
 }
 
+bool _looksLikeVersionLine(String text) {
+  final String line = _firstLine(text);
+  if (line.isEmpty) {
+    return false;
+  }
+  return RegExp(r'\d+\.\d+').hasMatch(line);
+}
+
 String _resolveOnPath(String command, CommandRunner runner) {
   final List<String> probe = Platform.isWindows
       ? <String>['where', command]
@@ -151,6 +159,9 @@ Map<String, dynamic> runAutomationPreflight({
     browserBinary = envBinary;
     final _ToolCheck bin = _checkToolVersion(envBinary, <String>['--version'], run);
     browserVersion = bin.version;
+    if (!_looksLikeVersionLine(browserVersion) && windowsFallbackAllowed) {
+      browserVersion = _readWindowsFileVersion(envBinary, run);
+    }
     browserSource = 'system';
   } else {
     const List<String> candidates = <String>[
@@ -171,7 +182,7 @@ Map<String, dynamic> runAutomationPreflight({
       browserBinary = resolved;
       final _ToolCheck bin = _checkToolVersion(resolved, <String>['--version'], run);
       browserVersion = bin.version;
-      if (browserVersion.isEmpty && windowsFallbackAllowed) {
+      if (!_looksLikeVersionLine(browserVersion) && windowsFallbackAllowed) {
         browserVersion = _readWindowsFileVersion(resolved, run);
       }
       browserSource = 'system';
@@ -197,7 +208,7 @@ Map<String, dynamic> runAutomationPreflight({
       if (browserBinary.isNotEmpty) {
         final _ToolCheck bin = _checkToolVersion(browserBinary, <String>['--version'], run);
         browserVersion = bin.version;
-        if (browserVersion.isEmpty) {
+        if (!_looksLikeVersionLine(browserVersion)) {
           browserVersion = _readWindowsFileVersion(browserBinary, run);
         }
         browserSource = 'system';

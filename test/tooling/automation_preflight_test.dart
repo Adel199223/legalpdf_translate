@@ -123,6 +123,38 @@ preflight.CommandResult _runnerWindowsEdgeFallback(List<String> command) {
   return preflight.CommandResult(exitCode: 1, stdout: '', stderr: 'unsupported: $key');
 }
 
+preflight.CommandResult _runnerWindowsEdgeSessionMessage(List<String> command) {
+  final String key = command.join(' ');
+  if (key == 'node --version' || key == 'npm --version' || key == 'npx --version') {
+    return preflight.CommandResult(exitCode: 0, stdout: 'ok\n', stderr: '');
+  }
+  if (key == 'npx playwright --version') {
+    return preflight.CommandResult(exitCode: 0, stdout: 'Version 1.59.0\n', stderr: '');
+  }
+  if (command.length >= 2 && (command.first == 'which' || command.first == 'where')) {
+    if (command[1] == 'msedge') {
+      return preflight.CommandResult(
+        exitCode: 0,
+        stdout: r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' '\n',
+        stderr: '',
+      );
+    }
+    return preflight.CommandResult(exitCode: 1, stdout: '', stderr: '');
+  }
+  if (key == r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe --version') {
+    return preflight.CommandResult(
+      exitCode: 0,
+      stdout: 'Opening in existing browser session.\n',
+      stderr: '',
+    );
+  }
+  if (key ==
+      "powershell -NoProfile -Command (Get-Item 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe').VersionInfo.ProductVersion") {
+    return preflight.CommandResult(exitCode: 0, stdout: '136.0.3240.92\n', stderr: '');
+  }
+  return preflight.CommandResult(exitCode: 1, stdout: '', stderr: 'unsupported: $key');
+}
+
 void main() {
   final List<String> failures = <String>[];
 
@@ -171,6 +203,18 @@ void main() {
     );
   }, failures);
 
+  _runCase('falls back to Windows file version when browser reports session text', () {
+    final Map<String, dynamic> result = preflight.runAutomationPreflight(
+      runner: _runnerWindowsEdgeSessionMessage,
+      environment: <String, String>{},
+    );
+    _expect(result['preferred_host_status'] == 'available', 'Expected available host status');
+    _expect(
+      result['automation_browser_version'] == '136.0.3240.92',
+      'Expected Windows file-version fallback when --version reports session text',
+    );
+  }, failures);
+
   _runCase('marks host unavailable when toolchain incomplete', () {
     final Map<String, dynamic> result = preflight.runAutomationPreflight(
       runner: _runnerNodeMissing,
@@ -188,5 +232,5 @@ void main() {
     exit(1);
   }
 
-  stdout.writeln('All automation preflight tests passed (4 cases).');
+  stdout.writeln('All automation preflight tests passed (5 cases).');
 }

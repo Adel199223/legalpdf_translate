@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import closing
 import json
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 from zipfile import ZipFile
 
@@ -152,6 +153,87 @@ def test_classify_shadow_listener_reports_self_or_other(monkeypatch) -> None:
     owned = shadow_runtime.classify_shadow_listener(port=8877, expected_pid=4242)
     assert owned.status == "owned_by_self"
     assert owned.pid == 4242
+
+
+def test_run_browser_automation_preflight_prefers_direct_dart_invocation(monkeypatch, tmp_path: Path) -> None:
+    commands: list[list[str]] = []
+
+    def _fake_run(command, **kwargs):
+        commands.append(list(command))
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "automation_host_selected": "local",
+                    "preferred_host_status": "available",
+                    "toolchain": {"playwright_available": True},
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(shadow_runtime, "_resolve_dart_bin", lambda: r"C:\tmp\dart.bat")
+    monkeypatch.setattr(shadow_runtime.subprocess, "run", _fake_run)
+
+    payload = shadow_runtime.run_browser_automation_preflight(repo=tmp_path)
+
+    assert commands == [[r"C:\tmp\dart.bat", "tooling/automation_preflight.dart"]]
+    assert payload["preferred_host_status"] == "available"
+    assert payload["toolchain"]["playwright_available"] is True
+    assert payload["launcher_mode"] == "direct"
+    assert payload["command"] == [r"C:\tmp\dart.bat", "tooling/automation_preflight.dart"]
+
+
+def test_run_browser_automation_preflight_recovers_from_dartdev_launcher_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    responses = [
+        subprocess.CompletedProcess(
+            [r"C:\tmp\dart.bat", "tooling/automation_preflight.dart"],
+            1,
+            stdout="",
+            stderr="temporary direct failure",
+        ),
+        subprocess.CompletedProcess(
+            [r"C:\tmp\dart.bat", "run", "tooling/automation_preflight.dart"],
+            1,
+            stdout="",
+            stderr="Unable to find AOT snapshot for dartdev",
+        ),
+        subprocess.CompletedProcess(
+            [r"C:\tmp\dart.bat", "tooling/automation_preflight.dart"],
+            0,
+            stdout=json.dumps(
+                {
+                    "automation_host_selected": "local",
+                    "preferred_host_status": "available",
+                    "toolchain": {"playwright_available": True},
+                }
+            ),
+            stderr="",
+        ),
+    ]
+    commands: list[list[str]] = []
+
+    def _fake_run(command, **kwargs):
+        commands.append(list(command))
+        return responses.pop(0)
+
+    monkeypatch.setattr(shadow_runtime, "_resolve_dart_bin", lambda: r"C:\tmp\dart.bat")
+    monkeypatch.setattr(shadow_runtime.subprocess, "run", _fake_run)
+
+    payload = shadow_runtime.run_browser_automation_preflight(repo=tmp_path)
+
+    assert commands == [
+        [r"C:\tmp\dart.bat", "tooling/automation_preflight.dart"],
+        [r"C:\tmp\dart.bat", "run", "tooling/automation_preflight.dart"],
+        [r"C:\tmp\dart.bat", "tooling/automation_preflight.dart"],
+    ]
+    assert payload["preferred_host_status"] == "available"
+    assert payload["launcher_mode"] == "direct"
+    assert "dartdev" in payload["launcher_failure"]
 
 
 def test_autofill_interpretation_notification_pdf_returns_seed_and_diagnostics(

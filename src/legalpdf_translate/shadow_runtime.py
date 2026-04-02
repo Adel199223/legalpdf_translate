@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -31,6 +32,14 @@ RUNTIME_MODE_SHADOW = "shadow"
 RUNTIME_MODE_LIVE = "live"
 RUNTIME_MODE_CHOICES = (RUNTIME_MODE_SHADOW, RUNTIME_MODE_LIVE)
 _SHADOW_SAFE_TOKEN_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_AUTOMATION_FAILURE_SEMANTICS = {
+    "unavailable": "host/toolchain cannot execute automation preflight or flow",
+    "failed": "automation executed but flow assertions failed",
+}
+_DARTDEV_AOT_MARKERS = (
+    "Unable to find AOT snapshot for dartdev",
+    "Could not find a command named",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,9 +240,52 @@ def clear_shadow_runtime_metadata(path: Path) -> None:
         return
 
 
-def run_browser_automation_preflight(*, repo: Path | None = None) -> dict[str, Any]:
-    repo_root = (repo or Path(__file__).resolve().parents[2]).expanduser().resolve()
-    command = ["dart", "run", "tooling/automation_preflight.dart"]
+def _automation_preflight_error_payload(
+    *,
+    error: str,
+    command: list[str] | tuple[str, ...] | None = None,
+    raw_output: str = "",
+    launcher_failure: str = "",
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "automation_host_selected": "local",
+        "preferred_host_status": "unavailable",
+        "fallback_host_status": "n/a",
+        "failure_semantics": dict(_AUTOMATION_FAILURE_SEMANTICS),
+        "toolchain": {
+            "playwright_available": False,
+        },
+        "error": str(error or "automation preflight failed").strip(),
+    }
+    if command:
+        payload["command"] = list(command)
+    if raw_output.strip():
+        payload["raw_output"] = raw_output.strip()
+    if launcher_failure.strip():
+        payload["launcher_failure"] = launcher_failure.strip()
+    return payload
+
+
+def _resolve_dart_bin() -> str | None:
+    override = str(os.environ.get("LEGALPDF_DART_BIN", "") or "").strip()
+    if override:
+        override_path = Path(override).expanduser()
+        if override_path.exists():
+            return str(override_path.resolve())
+        discovered_override = shutil.which(override)
+        if discovered_override:
+            return discovered_override
+    discovered = shutil.which("dart")
+    if discovered:
+        return discovered
+    return None
+
+
+def _run_automation_preflight_command(
+    *,
+    command: list[str],
+    repo_root: Path,
+) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, Any] | None]:
     try:
         completed = subprocess.run(
             command,
@@ -243,66 +295,135 @@ def run_browser_automation_preflight(*, repo: Path | None = None) -> dict[str, A
             check=False,
         )
     except OSError as exc:
-        return {
-            "automation_host_selected": "local",
-            "preferred_host_status": "unavailable",
-            "fallback_host_status": "n/a",
-            "failure_semantics": {
-                "unavailable": "host/toolchain cannot execute automation preflight or flow",
-                "failed": "automation executed but flow assertions failed",
-            },
-            "toolchain": {
-                "playwright_available": False,
-            },
-            "error": f"automation preflight launch failed: {exc}",
-        }
+        return None, _automation_preflight_error_payload(
+            error=f"automation preflight launch failed: {exc}",
+            command=command,
+        )
+    return completed, None
+
+
+def _parse_automation_preflight_payload(
+    *,
+    completed: subprocess.CompletedProcess[str],
+    command: list[str],
+) -> dict[str, Any] | None:
     stdout = str(completed.stdout or "").strip()
     if completed.returncode != 0:
-        return {
-            "automation_host_selected": "local",
-            "preferred_host_status": "unavailable",
-            "fallback_host_status": "n/a",
-            "failure_semantics": {
-                "unavailable": "host/toolchain cannot execute automation preflight or flow",
-                "failed": "automation executed but flow assertions failed",
-            },
-            "toolchain": {
-                "playwright_available": False,
-            },
-            "error": str(completed.stderr or stdout or "automation preflight failed").strip(),
-        }
+        return None
     try:
         payload = json.loads(stdout)
     except json.JSONDecodeError:
-        return {
-            "automation_host_selected": "local",
-            "preferred_host_status": "unavailable",
-            "fallback_host_status": "n/a",
-            "failure_semantics": {
-                "unavailable": "host/toolchain cannot execute automation preflight or flow",
-                "failed": "automation executed but flow assertions failed",
-            },
-            "toolchain": {
-                "playwright_available": False,
-            },
-            "error": "automation preflight returned invalid JSON",
-            "raw_output": stdout,
-        }
+        raise ValueError("automation preflight returned invalid JSON") from None
     if not isinstance(payload, dict):
-        return {
-            "automation_host_selected": "local",
-            "preferred_host_status": "unavailable",
-            "fallback_host_status": "n/a",
-            "failure_semantics": {
-                "unavailable": "host/toolchain cannot execute automation preflight or flow",
-                "failed": "automation executed but flow assertions failed",
-            },
-            "toolchain": {
-                "playwright_available": False,
-            },
-            "error": "automation preflight returned a non-object payload",
-        }
+        raise TypeError("automation preflight returned a non-object payload")
+    payload.setdefault("automation_host_selected", "local")
+    payload.setdefault("failure_semantics", dict(_AUTOMATION_FAILURE_SEMANTICS))
+    payload.setdefault("toolchain", {})
+    payload["command"] = list(command)
     return payload
+
+
+def _looks_like_dartdev_launcher_failure(*parts: str) -> bool:
+    combined = "\n".join(str(part or "") for part in parts).strip()
+    if not combined:
+        return False
+    return any(marker.casefold() in combined.casefold() for marker in _DARTDEV_AOT_MARKERS)
+
+
+def run_browser_automation_preflight(*, repo: Path | None = None) -> dict[str, Any]:
+    repo_root = (repo or Path(__file__).resolve().parents[2]).expanduser().resolve()
+    dart_bin = _resolve_dart_bin()
+    if dart_bin is None:
+        return _automation_preflight_error_payload(
+            error="automation preflight launch failed: Dart is unavailable.",
+        )
+
+    direct_command = [dart_bin, "tooling/automation_preflight.dart"]
+    direct_completed, direct_error = _run_automation_preflight_command(
+        command=direct_command,
+        repo_root=repo_root,
+    )
+    if direct_error is not None:
+        return direct_error
+    assert direct_completed is not None
+    try:
+        direct_payload = _parse_automation_preflight_payload(
+            completed=direct_completed,
+            command=direct_command,
+        )
+    except (TypeError, ValueError) as exc:
+        return _automation_preflight_error_payload(
+            error=str(exc),
+            command=direct_command,
+            raw_output=str(direct_completed.stdout or "").strip(),
+        )
+    if direct_payload is not None:
+        direct_payload.setdefault("launcher_mode", "direct")
+        return direct_payload
+
+    fallback_command = [dart_bin, "run", "tooling/automation_preflight.dart"]
+    fallback_completed, fallback_error = _run_automation_preflight_command(
+        command=fallback_command,
+        repo_root=repo_root,
+    )
+    if fallback_error is not None:
+        return _automation_preflight_error_payload(
+            error=str(fallback_error.get("error") or "automation preflight failed"),
+            command=direct_command,
+            launcher_failure=str(fallback_error.get("error") or ""),
+        )
+    assert fallback_completed is not None
+    fallback_stdout = str(fallback_completed.stdout or "").strip()
+    fallback_stderr = str(fallback_completed.stderr or "").strip()
+    if _looks_like_dartdev_launcher_failure(fallback_stdout, fallback_stderr):
+        retry_completed, retry_error = _run_automation_preflight_command(
+            command=direct_command,
+            repo_root=repo_root,
+        )
+        if retry_error is None and retry_completed is not None:
+            try:
+                retry_payload = _parse_automation_preflight_payload(
+                    completed=retry_completed,
+                    command=direct_command,
+                )
+            except (TypeError, ValueError) as exc:
+                return _automation_preflight_error_payload(
+                    error=str(exc),
+                    command=direct_command,
+                    raw_output=str(retry_completed.stdout or "").strip(),
+                    launcher_failure=fallback_stderr or fallback_stdout,
+                )
+            if retry_payload is not None:
+                retry_payload["launcher_mode"] = "direct"
+                retry_payload["launcher_failure"] = fallback_stderr or fallback_stdout
+                return retry_payload
+        return _automation_preflight_error_payload(
+            error="automation preflight launcher failed, but direct Dart script execution is the supported fallback.",
+            command=direct_command,
+            raw_output=str(retry_completed.stdout or "").strip() if retry_completed is not None else "",
+            launcher_failure=fallback_stderr or fallback_stdout,
+        )
+
+    try:
+        fallback_payload = _parse_automation_preflight_payload(
+            completed=fallback_completed,
+            command=fallback_command,
+        )
+    except (TypeError, ValueError) as exc:
+        return _automation_preflight_error_payload(
+            error=str(exc),
+            command=fallback_command,
+            raw_output=fallback_stdout,
+        )
+    if fallback_payload is not None:
+        fallback_payload.setdefault("launcher_mode", "run")
+        return fallback_payload
+
+    return _automation_preflight_error_payload(
+        error=str(fallback_stderr or fallback_stdout or "automation preflight failed").strip(),
+        command=direct_command,
+        launcher_failure=fallback_stderr or fallback_stdout,
+    )
 
 
 def runtime_build_identity_payload(identity: RuntimeBuildIdentity) -> dict[str, Any]:

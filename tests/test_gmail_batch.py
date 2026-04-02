@@ -785,6 +785,7 @@ def test_gmail_batch_confirmed_item_exposes_consistency_signature(tmp_path: Path
             saved_path=tmp_path / "court.pdf",
         ),
         translated_docx_path=tmp_path / "court_FR.docx",
+        staged_translated_docx_path=tmp_path / "court_FR.docx",
         run_dir=tmp_path / "court_FR_run",
         translated_word_count=240,
         joblog_row_id=11,
@@ -878,6 +879,7 @@ def test_build_gmail_batch_session_payload_includes_run_linkage_and_finalization
         GmailBatchConfirmedItem(
             downloaded_attachment=session.downloaded_attachments[0],
             translated_docx_path=translated,
+            staged_translated_docx_path=translated,
             run_dir=tmp_path / "translated_run",
             translated_word_count=264,
             joblog_row_id=77,
@@ -900,6 +902,16 @@ def test_build_gmail_batch_session_payload_includes_run_linkage_and_finalization
         "21-25_AR_20260308.docx",
         "Requerimento_Honorarios_21-25.pdf",
     )
+    session.finalization_report_context = {
+        "kind": "gmail_finalization_report",
+        "status": "ok",
+        "finalization_state": "draft_ready",
+        "session": {
+            "session_id": session.session_id,
+            "message_id": session.message.message_id,
+            "thread_id": session.message.thread_id,
+        },
+    }
 
     payload = build_gmail_batch_session_payload(session)
 
@@ -910,6 +922,9 @@ def test_build_gmail_batch_session_payload_includes_run_linkage_and_finalization
     ]
     assert payload["runs"][0]["run_id"] == "run-77"
     assert payload["runs"][0]["joblog_row_id"] == 77
+    assert payload["runs"][0]["durable_translated_docx_path"].endswith("translated.docx")
+    assert payload["runs"][0]["translated_docx_basename"] == "translated.docx"
+    assert payload["runs"][0]["staged_translated_docx_path"].endswith("translated.docx")
     assert payload["finalization"]["requested_pdf_save_path"].endswith("21-25_AR_20260308.pdf")
     assert payload["finalization"]["actual_saved_path"].endswith("Requerimento_Honorarios_21-25.docx")
     assert payload["finalization"]["actual_pdf_saved_path"].endswith("Requerimento_Honorarios_21-25.pdf")
@@ -919,6 +934,8 @@ def test_build_gmail_batch_session_payload_includes_run_linkage_and_finalization
         "21-25_AR_20260308.docx",
         "Requerimento_Honorarios_21-25.pdf",
     ]
+    assert payload["finalization_report_context"]["status"] == "ok"
+    assert payload["finalization_report_context"]["finalization_state"] == "draft_ready"
 
 
 def test_write_gmail_batch_session_report_persists_json(tmp_path: Path) -> None:

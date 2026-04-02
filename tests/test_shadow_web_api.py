@@ -796,12 +796,14 @@ def test_shadow_web_gmail_routes_delegate_to_session_manager(tmp_path: Path, mon
             "capability_flags": {},
         }
 
-    def _build_bootstrap(self, *, runtime_mode, workspace_id, settings_path, outputs_dir):
+    def _build_bootstrap(self, *, runtime_mode, workspace_id, settings_path, outputs_dir, build_sha="", asset_version=""):
         recorded["build_bootstrap"] = {
             "runtime_mode": runtime_mode,
             "workspace_id": workspace_id,
             "settings_path": str(settings_path),
             "outputs_dir": str(outputs_dir),
+            "build_sha": build_sha,
+            "asset_version": asset_version,
         }
         return {
             "status": "ok",
@@ -898,32 +900,70 @@ def test_shadow_web_gmail_finalize_routes_and_attachment_file(tmp_path: Path, mo
             "capability_flags": {},
         }
 
-    def _finalize_batch(self, *, runtime_mode, workspace_id, settings_path, output_filename, profile_id):
+    def _finalize_batch(
+        self,
+        *,
+        runtime_mode,
+        workspace_id,
+        settings_path,
+        output_filename,
+        profile_id,
+        build_sha="",
+        asset_version="",
+    ):
         recorded["finalize_batch"] = {
             "runtime_mode": runtime_mode,
             "workspace_id": workspace_id,
             "settings_path": str(settings_path),
             "output_filename": output_filename,
             "profile_id": profile_id,
+            "build_sha": build_sha,
+            "asset_version": asset_version,
         }
         return {
             "status": "ok",
             "normalized_payload": {
                 "docx_path": "C:/tmp/honorarios.docx",
                 "pdf_path": "C:/tmp/honorarios.pdf",
-                "active_session": {"kind": "translation", "completed": True},
+                "finalization_report_context": {
+                    "kind": "gmail_finalization_report",
+                    "operation": "gmail_batch_finalize",
+                    "status": "ok",
+                    "finalization_state": "draft_ready",
+                },
+                "active_session": {
+                    "kind": "translation",
+                    "completed": True,
+                    "finalization_report_context": {
+                        "kind": "gmail_finalization_report",
+                        "operation": "gmail_batch_finalize",
+                        "status": "ok",
+                        "finalization_state": "draft_ready",
+                    },
+                },
                 "gmail_draft_result": {"ok": True, "message": "Draft ready"},
             },
             "diagnostics": {"pdf_export": {"ok": True}},
             "capability_flags": {},
         }
 
-    def _preflight_batch_finalization(self, *, runtime_mode, workspace_id, settings_path, force_refresh):
+    def _preflight_batch_finalization(
+        self,
+        *,
+        runtime_mode,
+        workspace_id,
+        settings_path,
+        force_refresh,
+        build_sha="",
+        asset_version="",
+    ):
         recorded["preflight_batch_finalization"] = {
             "runtime_mode": runtime_mode,
             "workspace_id": workspace_id,
             "settings_path": str(settings_path),
             "force_refresh": force_refresh,
+            "build_sha": build_sha,
+            "asset_version": asset_version,
         }
         return {
             "status": "blocked_word_pdf_export" if force_refresh else "ok",
@@ -1005,6 +1045,13 @@ def test_shadow_web_gmail_finalize_routes_and_attachment_file(tmp_path: Path, mo
         batch_payload = batch_response.json()
         assert batch_response.status_code == 200
         assert batch_payload["normalized_payload"]["gmail_draft_result"]["ok"] is True
+        assert batch_payload["normalized_payload"]["finalization_report_context"]["status"] == "ok"
+        assert batch_payload["normalized_payload"]["finalization_report_context"]["build_sha"] != ""
+        assert batch_payload["normalized_payload"]["finalization_report_context"]["asset_version"] != ""
+        assert (
+            batch_payload["normalized_payload"]["active_session"]["finalization_report_context"]["status"]
+            == "ok"
+        )
         assert recorded["finalize_batch"]["output_filename"] == "gmail_batch.docx"
 
         preflight_response = client.post(
@@ -1638,6 +1685,8 @@ def test_shadow_web_stage_four_action_routes_delegate_to_services(tmp_path: Path
         assert gmail_finalization_report.status_code == 200
         assert gmail_finalization_payload["normalized_payload"]["report_kind"] == "run_report"
         assert recorded["report"]["gmail_finalization_context"]["operation"] == "gmail_batch_finalize"
+        assert recorded["report"]["gmail_finalization_context"]["build_sha"] != ""
+        assert recorded["report"]["gmail_finalization_context"]["asset_version"] != ""
 
 
 def test_generate_browser_run_report_supports_browser_failure_context_without_run_dir(tmp_path: Path) -> None:
@@ -1700,8 +1749,8 @@ def test_generate_browser_run_report_supports_gmail_finalization_context_without
         gmail_finalization_context={
             "kind": "gmail_finalization_report",
             "operation": "gmail_batch_finalize",
-            "status": "local_only",
-            "finalization_state": "local_artifacts_ready",
+            "status": "ok",
+            "finalization_state": "draft_ready",
             "runtime_mode": "live",
             "workspace_id": "gmail-intake",
             "build_sha": "6e823b2",
@@ -1710,6 +1759,18 @@ def test_generate_browser_run_report_supports_gmail_finalization_context_without
                 "session_id": "gmail_batch_04dc6f86b2de",
                 "message_id": "19d0bf7e8dccffc0",
                 "thread_id": "19d0bf7e8dccffc0",
+                "confirmed_items": [
+                    {
+                        "attachment_filename": "sentença 305.pdf",
+                        "translated_docx_path": "C:/Users/FA507/Downloads/sentença 305_EN_20260401_141119.docx",
+                        "durable_translated_docx_path": "C:/Users/FA507/Downloads/sentença 305_EN_20260401_141119.docx",
+                        "staged_translated_docx_path": "C:/Users/FA507/AppData/Local/Temp/legalpdf_gmail_batch/_draft_attachments/sentença 305_EN_20260401_141119.docx",
+                        "translated_docx_path_source": "durable",
+                        "translated_docx_path_exists": True,
+                        "durable_translated_docx_path_exists": True,
+                        "staged_translated_docx_path_exists": True,
+                    }
+                ],
             },
             "word_pdf_export": {
                 "finalization_ready": True,
@@ -1717,12 +1778,14 @@ def test_generate_browser_run_report_supports_gmail_finalization_context_without
                 "export_canary": {"ok": True, "message": "Word export canary passed."},
             },
             "actual_export": {
-                "failure_code": "timeout",
-                "failure_message": "Word PDF export timed out.",
+                "ok": True,
             },
             "outcome": {
                 "docx_path": "C:/Users/FA507/Downloads/Requerimento_Honorarios_305_23.2GCBJA_20260330.docx",
-                "pdf_path": "",
+                "pdf_path": "C:/Users/FA507/Downloads/Requerimento_Honorarios_305_23.2GCBJA_20260330.pdf",
+                "docx_path_exists": True,
+                "pdf_path_exists": True,
+                "draft_created": True,
             },
         },
     )
@@ -1734,8 +1797,11 @@ def test_generate_browser_run_report_supports_gmail_finalization_context_without
     report_text = report_path.read_text(encoding="utf-8")
     assert "# Gmail Finalization Report" in report_text
     assert '"operation": "gmail_batch_finalize"' in report_text
-    assert '"finalization_state": "local_artifacts_ready"' in report_text
-    assert '"failure_code": "timeout"' in report_text
+    assert '"finalization_state": "draft_ready"' in report_text
+    assert '"status": "ok"' in report_text
+    assert '"draft_created": true' in report_text
+    assert '"translated_docx_path_source": "durable"' in report_text
+    assert '"durable_translated_docx_path"' in report_text
 
 
 def test_shadow_web_index_renders_static_base_bootstrap(tmp_path: Path, monkeypatch) -> None:

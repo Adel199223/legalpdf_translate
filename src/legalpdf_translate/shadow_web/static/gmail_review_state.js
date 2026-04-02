@@ -157,6 +157,36 @@ export function deriveGmailHomeCta({ stage, activeSession }) {
         tone: "ok",
       };
     case "translation_finalize":
+      if (activeSession?.finalization_state === "draft_ready") {
+        return {
+          visible: true,
+          label: "Open Finalization Result",
+          action: "resume-translation-finalize",
+          title: "Batch finalization is complete.",
+          description: "The Gmail draft is already ready. Open the finalization drawer to review the artifacts or generate a finalization report.",
+          tone: "ok",
+        };
+      }
+      if (activeSession?.finalization_state === "draft_failed") {
+        return {
+          visible: true,
+          label: "Resume Current Step",
+          action: "resume-translation-finalize",
+          title: "Batch finalization needs attention.",
+          description: "Honorários were created, but the Gmail draft step failed. Open the finalization drawer to retry or generate a finalization report.",
+          tone: "info",
+        };
+      }
+      if (activeSession?.finalization_state === "local_artifacts_ready") {
+        return {
+          visible: true,
+          label: "Resume Current Step",
+          action: "resume-translation-finalize",
+          title: "Batch finalization is recoverable.",
+          description: "Honorários were created locally, but the Gmail draft step is still pending. Open the finalization drawer to retry or generate a finalization report.",
+          tone: "info",
+        };
+      }
       return {
         visible: true,
         label: "Resume Current Step",
