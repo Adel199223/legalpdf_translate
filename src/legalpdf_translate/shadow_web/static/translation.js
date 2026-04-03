@@ -10,11 +10,61 @@ const translationState = {
   uploadedSourcePath: "",
   uploadedSourceKey: "",
   pollTimer: null,
+  arabicReviewPollTimer: null,
   completionDrawerOpen: false,
   lastAutoOpenedCompletionKey: "",
+  arabicReview: null,
 };
 
 let lastTranslationUiSnapshotKey = "";
+
+function blankArabicReviewState() {
+  return {
+    required: false,
+    resolved: true,
+    resolution: "",
+    status: "not_required",
+    message: "",
+    docx_path: "",
+    fingerprint_changed: false,
+    save_detected: false,
+    fallback_used: false,
+    job_id: "",
+    completion_key: "",
+    poll_interval_ms: 500,
+    quiet_period_ms: 1500,
+    auto_open_pending: false,
+  };
+}
+
+function normalizeArabicReviewState(value) {
+  const base = blankArabicReviewState();
+  if (!value || typeof value !== "object") {
+    return base;
+  }
+  return {
+    ...base,
+    ...value,
+    required: Boolean(value.required),
+    resolved: Boolean(value.required ? value.resolved : true),
+    fingerprint_changed: Boolean(value.fingerprint_changed),
+    save_detected: Boolean(value.save_detected),
+    fallback_used: Boolean(value.fallback_used),
+    auto_open_pending: Boolean(value.auto_open_pending),
+    poll_interval_ms: Number.isFinite(Number(value.poll_interval_ms)) ? Math.max(100, Number(value.poll_interval_ms)) : 500,
+    quiet_period_ms: Number.isFinite(Number(value.quiet_period_ms)) ? Math.max(100, Number(value.quiet_period_ms)) : 1500,
+    job_id: String(value.job_id || "").trim(),
+    completion_key: String(value.completion_key || "").trim(),
+    status: String(value.status || base.status).trim() || base.status,
+    resolution: String(value.resolution || "").trim(),
+    message: String(value.message || "").trim(),
+    docx_path: String(value.docx_path || "").trim(),
+  };
+}
+
+function currentArabicReviewState() {
+  return normalizeArabicReviewState(translationState.arabicReview);
+}
 
 function translationUiSnapshotKey() {
   return JSON.stringify(getTranslationUiSnapshot());
@@ -33,6 +83,7 @@ function clearTranslationCompletionSeed() {
   translationState.currentSeed = null;
   translationState.currentRowId = null;
   setFieldValue("translation-row-id", "");
+  clearArabicReviewState();
   syncTranslationCompletionSurface();
   notifyTranslationUiStateChanged();
 }
@@ -57,6 +108,15 @@ function setCheckbox(id, value) {
   if (node) {
     node.checked = Boolean(value);
   }
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function formatDiagnosticValue(value) {
@@ -148,6 +208,24 @@ function stopPolling() {
     window.clearTimeout(translationState.pollTimer);
     translationState.pollTimer = null;
   }
+}
+
+function stopArabicReviewPolling() {
+  if (translationState.arabicReviewPollTimer !== null) {
+    window.clearTimeout(translationState.arabicReviewPollTimer);
+    translationState.arabicReviewPollTimer = null;
+  }
+}
+
+function setArabicReviewState(value, { forceNotify = false } = {}) {
+  translationState.arabicReview = normalizeArabicReviewState(value);
+  syncTranslationCompletionSurface();
+  notifyTranslationUiStateChanged({ force: forceNotify });
+}
+
+function clearArabicReviewState({ forceNotify = false } = {}) {
+  stopArabicReviewPolling();
+  setArabicReviewState(blankArabicReviewState(), { forceNotify });
 }
 
 function sourceFileKey(file) {
@@ -344,6 +422,26 @@ function currentTranslationCompletionKey() {
   return "";
 }
 
+function currentTranslationSeed() {
+  return translationState.currentSeed || {};
+}
+
+function currentCompletedTranslationJobRequiresArabicReview() {
+  const job = translationState.currentJob;
+  if (!job || job.job_kind !== "translate" || job.status !== "completed") {
+    return false;
+  }
+  const seed = job.result?.save_seed || {};
+  const targetLang = String(seed.target_lang || job.config?.target_lang || "").trim().toUpperCase();
+  const outputDocx = String(seed.output_docx || "").trim();
+  return targetLang === "AR" && Boolean(outputDocx);
+}
+
+function currentArabicReviewIsBlocking() {
+  const review = currentArabicReviewState();
+  return Boolean(review.required && !review.resolved);
+}
+
 function setTranslationCompletionDrawerOpen(open) {
   const backdrop = qs("translation-completion-drawer-backdrop");
   if (!backdrop) {
@@ -371,12 +469,26 @@ export function closeTranslationCompletionDrawer() {
 }
 
 export function getTranslationUiSnapshot() {
+  const review = currentArabicReviewState();
+  const recovery = deriveTranslationRecoveryState(translationState.currentJob);
   return {
+    currentJobKind: translationState.currentJob?.job_kind || "",
     currentJobStatus: translationState.currentJob?.status || "",
     currentJobId: translationState.currentJobId || "",
+    currentJobHasSaveSeed: Boolean(translationState.currentJob?.result?.save_seed),
     hasCompletionSurface: hasTranslationCompletionSurface(),
     completionDrawerOpen: translationState.completionDrawerOpen,
     currentRowId: translationState.currentRowId || null,
+    currentJobFailed: Boolean(translationState.currentJob?.status === "failed"),
+    currentJobFailureReason: recovery.failureReason || "",
+    currentJobFailurePage: recovery.failurePage ?? null,
+    currentJobRecoveryRecommendedAction: recovery.recommendedAction || "",
+    currentJobRecoveryRequired: Boolean(recovery.visible),
+    requiresArabicReview: Boolean(review.required),
+    arabicReviewResolved: !review.required || Boolean(review.resolved),
+    arabicReviewState: review.status || "",
+    arabicReviewMessage: review.message || "",
+    arabicReviewCompletionKey: review.completion_key || currentTranslationCompletionKey(),
   };
 }
 
@@ -402,9 +514,13 @@ function completionButtonLabel() {
 }
 
 function completionSurfaceSummary() {
+  const review = currentArabicReviewState();
   const job = translationState.currentJob;
   if (job?.job_kind === "analyze" && job.status === "completed") {
     return "Analyze-only preflight is complete. Export the report or other artifacts here, or start the full translation when you are ready to create a job-log row.";
+  }
+  if (review.required && !review.resolved) {
+    return review.message || "Arabic DOCX review is required before Save-to-Job-Log can continue.";
   }
   if (translationState.currentRowId) {
     return `Loaded translation row #${translationState.currentRowId}. Review the case fields first, then save any edits back to the active job log.`;
@@ -442,6 +558,39 @@ function renderTranslationCompletionResultCard() {
   `;
 }
 
+function renderArabicReviewCard() {
+  const card = qs("translation-arabic-review-card");
+  const title = qs("translation-arabic-review-title");
+  const copy = qs("translation-arabic-review-copy");
+  const chip = qs("translation-arabic-review-chip");
+  const docxPath = qs("translation-arabic-review-docx-path");
+  const openButton = qs("translation-arabic-review-open");
+  const continueNowButton = qs("translation-arabic-review-continue-now");
+  const continueWithoutChangesButton = qs("translation-arabic-review-continue-without-changes");
+  if (!card || !title || !copy || !chip || !docxPath || !openButton || !continueNowButton || !continueWithoutChangesButton) {
+    return;
+  }
+  const review = currentArabicReviewState();
+  const show = Boolean(review.required || currentCompletedTranslationJobRequiresArabicReview());
+  card.classList.toggle("hidden", !show);
+  if (!show) {
+    return;
+  }
+  const resolved = Boolean(review.required && review.resolved);
+  title.textContent = "Arabic DOCX Review";
+  copy.textContent = review.message || (
+    resolved
+      ? "Arabic DOCX review is resolved. You can continue with Save-to-Job-Log or Gmail confirmation."
+      : "Open the durable translated DOCX in Word, align or edit it manually, then save it to continue automatically."
+  );
+  docxPath.textContent = review.docx_path || String(currentTranslationSeed().output_docx || "").trim() || "Durable DOCX unavailable.";
+  chip.textContent = resolved ? "Resolved" : review.status === "waiting_for_save" ? "Waiting" : "Required";
+  chip.className = `status-chip ${resolved ? "ok" : review.status === "attention" || review.status === "missing" ? "warn" : "info"}`;
+  openButton.disabled = !Boolean(review.docx_path || currentTranslationSeed().output_docx);
+  continueNowButton.disabled = resolved;
+  continueWithoutChangesButton.disabled = resolved;
+}
+
 function syncTranslationCompletionSurface() {
   const available = hasTranslationCompletionSurface();
   const openButton = qs("translation-open-completion");
@@ -450,6 +599,8 @@ function syncTranslationCompletionSurface() {
   const statusNode = qs("translation-completion-status");
   const reviewExportButton = qs("translation-review-export");
   const runReportButton = qs("translation-generate-report");
+  const saveButton = qs("translation-save-row");
+  const review = currentArabicReviewState();
   if (openButton) {
     openButton.classList.toggle("hidden", !available);
     openButton.textContent = completionButtonLabel();
@@ -474,6 +625,7 @@ function syncTranslationCompletionSurface() {
       statusNode.textContent = "Complete a translation run or load a saved translation row to review the case fields, artifacts, and finish-the-job actions here.";
     }
     renderTranslationCompletionResultCard();
+    renderArabicReviewCard();
     closeTranslationCompletionDrawer();
     return;
   }
@@ -483,7 +635,20 @@ function syncTranslationCompletionSurface() {
   const hasSaveSurface = hasTranslationSaveSeed();
   formShell?.classList.toggle("hidden", !hasSaveSurface);
   emptyShell?.classList.toggle("hidden", hasSaveSurface);
+  if (saveButton) {
+    saveButton.disabled = !hasSaveSurface || currentArabicReviewIsBlocking();
+  }
+  if (hasSaveSurface && !translationState.currentRowId && review.required) {
+    setPanelStatus(
+      "translation-save",
+      review.resolved ? "" : "warn",
+      review.resolved
+        ? "Arabic DOCX review resolved. Review the case fields before saving."
+        : (review.message || "Arabic DOCX review is required before Save-to-Job-Log can continue."),
+    );
+  }
   renderTranslationCompletionResultCard();
+  renderArabicReviewCard();
 }
 
 function maybeAutoOpenTranslationCompletion(job) {
@@ -532,6 +697,148 @@ function describeCredentialSource(source) {
   return kind || "unknown";
 }
 
+function normalizeRecoverySamples(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+function normalizeAdvisorRecommendation(value) {
+  if (!value || typeof value !== "object") {
+    return {
+      recommended_ocr_mode: "",
+      recommended_image_mode: "",
+      recommendation_reasons: [],
+      confidence: 0,
+    };
+  }
+  return {
+    recommended_ocr_mode: String(value.recommended_ocr_mode || "").trim().toLowerCase(),
+    recommended_image_mode: String(value.recommended_image_mode || "").trim().toLowerCase(),
+    recommendation_reasons: normalizeRecoverySamples(value.recommendation_reasons),
+    confidence: Number(value.confidence || 0),
+  };
+}
+
+function modeStrength(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "always") {
+    return 2;
+  }
+  if (normalized === "auto") {
+    return 1;
+  }
+  return 0;
+}
+
+function advisorRerunHint(job) {
+  const advisor = normalizeAdvisorRecommendation(job?.result?.advisor_recommendation);
+  const retryReason = String(job?.result?.failure_context?.retry_reason || "").trim();
+  const targetLang = String(job?.config?.target_lang || job?.result?.metrics?.target_lang || "").trim().toUpperCase();
+  const currentOcrMode = String(job?.config?.ocr_mode || "").trim().toLowerCase();
+  const currentImageMode = String(job?.config?.image_mode || "").trim().toLowerCase();
+  const strongerOcr = modeStrength(advisor.recommended_ocr_mode) > modeStrength(currentOcrMode);
+  const strongerImage = modeStrength(advisor.recommended_image_mode) > modeStrength(currentImageMode);
+  const stronger = targetLang === "AR" && retryReason === "ar_token_violation" && (strongerOcr || strongerImage);
+  if (!stronger) {
+    return {
+      stronger: false,
+      message: "",
+      recommendation: advisor,
+    };
+  }
+  const settings = [];
+  if (strongerOcr) {
+    settings.push(`OCR ${advisor.recommended_ocr_mode}`);
+  }
+  if (strongerImage) {
+    settings.push(`Images ${advisor.recommended_image_mode}`);
+  }
+  return {
+    stronger: true,
+    message: `Recommended rerun settings: ${settings.join(" / ")}. Change the setup, then use Start Translate for a new run.`,
+    recommendation: advisor,
+  };
+}
+
+export function deriveTranslationRecoveryState(job) {
+  const base = {
+    visible: false,
+    statusMessage: "",
+    diagnosticsHint: "",
+    summaryLines: [],
+    guidanceLines: [],
+    advisorMessage: "",
+    failureReason: "",
+    failurePage: null,
+    recommendedAction: "",
+  };
+  if (!job || job.job_kind !== "translate" || !["failed", "cancelled"].includes(String(job.status || "").trim())) {
+    return base;
+  }
+  const result = job.result && typeof job.result === "object" ? job.result : {};
+  const failure = result.failure_context && typeof result.failure_context === "object" ? result.failure_context : {};
+  const tokenDetails = failure.ar_token_details && typeof failure.ar_token_details === "object"
+    ? failure.ar_token_details
+    : {};
+  const missingSamples = normalizeRecoverySamples(tokenDetails.missing_token_samples);
+  const unexpectedSamples = normalizeRecoverySamples(tokenDetails.unexpected_token_samples);
+  const violationSamples = normalizeRecoverySamples(failure.ar_violation_samples);
+  const retryReason = String(failure.retry_reason || "").trim();
+  const validatorReason = String(failure.validator_defect_reason || "").trim();
+  const failureReason = validatorReason || String(result.error || job.status_text || "").trim();
+  const failurePageRaw = Number.parseInt(String(result.failed_page ?? failure.page_number ?? ""), 10);
+  const failurePage = Number.isFinite(failurePageRaw) && failurePageRaw > 0 ? failurePageRaw : null;
+  const reviewQueueCountRaw = Number.parseInt(String(result.review_queue_count ?? 0), 10);
+  const reviewQueueCount = Number.isFinite(reviewQueueCountRaw) && reviewQueueCountRaw > 0 ? reviewQueueCountRaw : 0;
+  const advisor = advisorRerunHint(job);
+  const summaryLines = [];
+  if (failurePage !== null) {
+    summaryLines.push(`Failed page: ${failurePage}`);
+  }
+  if (failureReason) {
+    summaryLines.push(`Validator reason: ${failureReason}`);
+  }
+  if (retryReason) {
+    summaryLines.push(`Retry reason: ${retryReason}`);
+  }
+  if (reviewQueueCount > 0) {
+    summaryLines.push(`Flagged review pages: ${reviewQueueCount}`);
+  }
+  if (missingSamples.length) {
+    summaryLines.push(`Missing protected tokens after retry: ${missingSamples.join(", ")}`);
+  }
+  if (unexpectedSamples.length) {
+    summaryLines.push(`Unexpected or altered protected tokens: ${unexpectedSamples.join(", ")}`);
+  } else if (violationSamples.length) {
+    summaryLines.push(`Arabic token samples: ${violationSamples.join(", ")}`);
+  }
+  const guidanceLines = [
+    "Resume Translation reruns the same config against the same source.",
+    "Change OCR or image settings first, then use Start Translate for a new run.",
+    "Rebuild DOCX only assembles completed pages and does not make this Gmail item confirmable.",
+  ];
+  const statusMessage = job.status === "cancelled"
+    ? "Translation stopped before this Gmail attachment could be confirmed. Resume reruns the same config, and Start Translate is the path for changed OCR/image settings."
+    : "Translation needs recovery before this Gmail attachment can continue. Resume reruns the same config, and Start Translate is the path for changed OCR/image settings.";
+  const diagnosticsHint = advisor.message || `${guidanceLines[0]} ${guidanceLines[1]} ${guidanceLines[2]}`;
+  return {
+    visible: true,
+    statusMessage,
+    diagnosticsHint,
+    summaryLines,
+    guidanceLines,
+    advisorMessage: advisor.message,
+    failureReason,
+    failurePage,
+    recommendedAction: advisor.stronger ? "start_translate_with_advisor" : "resume_translation",
+  };
+}
+
 function translationStatusSummary(job) {
   if (!job) {
     return "";
@@ -552,14 +859,12 @@ function translationStatusSummary(job) {
   if (job.status === "cancel_requested") {
     return "Cancellation requested. Waiting for the current page task to stop cleanly.";
   }
-  if (job.status === "cancelled") {
-    return "Translation cancelled. You can resume or rebuild from the current run folder.";
-  }
   if (job.status === "failed" && isAuthenticationFailure(job)) {
     return "OpenAI authentication failed. Open Browser Settings, save a valid translation key, run Test Translation Auth, then start the translation again.";
   }
-  if (job.status === "failed") {
-    return job.status_text || "Translation failed.";
+  const recovery = deriveTranslationRecoveryState(job);
+  if (recovery.visible) {
+    return recovery.statusMessage;
   }
   return job.status_text || "Translation job is running.";
 }
@@ -589,6 +894,121 @@ function applyTranslationSeed(seed, { rowId = null } = {}) {
   setFieldValue("translation-profit", resolved.profit ?? "");
   collapseTranslationCompletionSections();
   syncTranslationCompletionSurface();
+}
+
+function currentArabicReviewRequestPayload(extra = {}) {
+  const review = currentArabicReviewState();
+  const completionKey = currentTranslationCompletionKey() || review.completion_key || "";
+  return {
+    job_id: translationState.currentJobId || review.job_id || "",
+    completion_key: completionKey,
+    ...extra,
+  };
+}
+
+function scheduleArabicReviewPoll(delayMs = 500) {
+  stopArabicReviewPolling();
+  translationState.arabicReviewPollTimer = window.setTimeout(() => {
+    refreshArabicReviewState().catch((error) => {
+      setPanelStatus("translation-save", "bad", error.message || "Arabic DOCX review refresh failed.");
+      setDiagnostics("translation-save", error, {
+        hint: error.message || "Arabic DOCX review refresh failed.",
+        open: true,
+      });
+    });
+  }, Math.max(100, Number(delayMs) || 500));
+}
+
+async function refreshArabicReviewState({ allowRestore = false } = {}) {
+  stopArabicReviewPolling();
+  const reviewTargetKnown = currentCompletedTranslationJobRequiresArabicReview()
+    || Boolean(currentArabicReviewState().completion_key)
+    || allowRestore;
+  if (!reviewTargetKnown) {
+    clearArabicReviewState();
+    return currentArabicReviewState();
+  }
+  const request = currentArabicReviewRequestPayload();
+  const params = new URLSearchParams();
+  if (request.job_id) {
+    params.set("job_id", request.job_id);
+  }
+  if (request.completion_key) {
+    params.set("completion_key", request.completion_key);
+  }
+  const url = params.size
+    ? `/api/translation/arabic-review/state?${params.toString()}`
+    : "/api/translation/arabic-review/state";
+  const payload = await fetchJson(url, appState);
+  const review = normalizeArabicReviewState(payload.normalized_payload?.arabic_review);
+  if (allowRestore && !translationState.currentJobId && review.required && !review.resolved && review.job_id) {
+    const restored = await fetchJson(`/api/translation/jobs/${review.job_id}`, appState);
+    renderTranslationJob(restored.normalized_payload?.job || null);
+    return currentArabicReviewState();
+  }
+  setArabicReviewState(review);
+  if (review.required && !review.resolved) {
+    if (review.auto_open_pending && review.job_id && review.job_id === translationState.currentJobId) {
+      try {
+        await openArabicReviewInWord({ auto: true });
+        return currentArabicReviewState();
+      } catch (error) {
+        setPanelStatus("translation-save", "warn", error.message || "Arabic DOCX review open failed.");
+        setDiagnostics("translation-save", error, {
+          hint: error.message || "Arabic DOCX review open failed.",
+          open: true,
+        });
+      }
+    }
+    scheduleArabicReviewPoll(review.poll_interval_ms || 500);
+  }
+  return review;
+}
+
+async function openArabicReviewInWord({ auto = false } = {}) {
+  const payload = await fetchJson("/api/translation/arabic-review/open", appState, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(currentArabicReviewRequestPayload()),
+  });
+  const review = normalizeArabicReviewState(payload.normalized_payload?.arabic_review);
+  setArabicReviewState(review);
+  setDiagnostics("translation-save", payload, {
+    hint: review.message || (auto ? "Arabic DOCX review opened automatically." : "Arabic DOCX review opened in Word."),
+    open: false,
+  });
+  if (review.required && !review.resolved) {
+    scheduleArabicReviewPoll(review.poll_interval_ms || 500);
+  }
+  return review;
+}
+
+async function continueArabicReview(continuation) {
+  const payload = await fetchJson("/api/translation/arabic-review/continue", appState, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(currentArabicReviewRequestPayload({ continuation })),
+  });
+  const review = normalizeArabicReviewState(payload.normalized_payload?.arabic_review);
+  setArabicReviewState(review);
+  setDiagnostics("translation-save", payload, {
+    hint: review.message || "Arabic DOCX review continuation recorded.",
+    open: false,
+  });
+  return review;
+}
+
+async function restorePendingArabicReview() {
+  try {
+    await refreshArabicReviewState({ allowRestore: true });
+  } catch (error) {
+    clearArabicReviewState();
+    setPanelStatus("translation-save", "bad", error.message || "Arabic DOCX review restore failed.");
+    setDiagnostics("translation-save", error, {
+      hint: error.message || "Arabic DOCX review restore failed.",
+      open: true,
+    });
+  }
 }
 
 async function deleteTranslationJobLogRow(rowId) {
@@ -709,6 +1129,13 @@ function renderTranslationResultCard(job, { containerId = "translation-result" }
       if (failureContext.message) {
         summaryLines.push(failureContext.message);
       }
+    } else if (deriveTranslationRecoveryState(job).visible) {
+      const recovery = deriveTranslationRecoveryState(job);
+      summaryLines.push(...recovery.summaryLines);
+      if (recovery.advisorMessage) {
+        summaryLines.push(recovery.advisorMessage);
+      }
+      summaryLines.push(...recovery.guidanceLines);
     } else {
       summaryLines.push(`Completed pages: ${result.completed_pages ?? 0}`);
       if (metrics.run_id) {
@@ -726,10 +1153,10 @@ function renderTranslationResultCard(job, { containerId = "translation-result" }
   container.innerHTML = `
     <div class="result-header">
       <div>
-        <strong>${job.status_text || "Translation job state available."}</strong>
-        <p>${summaryLines.join("<br>")}</p>
+        <strong>${escapeHtml(job.status_text || "Translation job state available.")}</strong>
+        <p>${summaryLines.map((line) => escapeHtml(line)).join("<br>")}</p>
       </div>
-      <span class="status-chip ${job.status === "completed" ? "ok" : job.status === "failed" ? "bad" : job.status === "cancelled" ? "warn" : "info"}">${job.status}</span>
+      <span class="status-chip ${job.status === "completed" ? "ok" : job.status === "failed" ? "bad" : job.status === "cancelled" ? "warn" : "info"}">${escapeHtml(job.status)}</span>
     </div>
   `;
 }
@@ -742,11 +1169,20 @@ function renderTranslationJob(job) {
   if (runDir && qs("diagnostics-run-dir")) {
     setFieldValue("diagnostics-run-dir", runDir);
   }
+  const recovery = deriveTranslationRecoveryState(job);
   renderTranslationResultCard(job);
-  setPanelStatus("translation", job ? (job.status === "failed" ? "bad" : "") : "", translationStatusSummary(job) || "Load a source file, then analyze or translate it in this browser workspace.");
+  setPanelStatus(
+    "translation",
+    job
+      ? (job.status === "failed" ? "bad" : job.status === "cancelled" ? "warn" : "")
+      : "",
+    translationStatusSummary(job) || "Load a source file, then analyze or translate it in this browser workspace.",
+  );
   const diagnosticsHint = isAuthenticationFailure(job)
     ? "OpenAI authentication failed. Open Browser Settings, save a valid translation key, run Test Translation Auth, then start the translation again."
-    : "Latest progress, log tail, review queue, and failure context appear here.";
+    : recovery.visible
+      ? recovery.diagnosticsHint
+      : "Latest progress, log tail, review queue, and failure context appear here.";
   setDiagnostics("translation-job", job || { status: "idle", message: "No translation job loaded." }, {
     hint: diagnosticsHint,
     open: Boolean(job && job.status !== "completed"),
@@ -768,6 +1204,10 @@ function renderTranslationJob(job) {
   if (job?.result?.save_seed) {
     applyTranslationSeed(job.result.save_seed);
     setPanelStatus("translation-save", "", "Translation seed loaded from the completed run. Review the fields before saving.");
+  } else if (!job) {
+    clearArabicReviewState();
+  } else if (!currentCompletedTranslationJobRequiresArabicReview()) {
+    clearArabicReviewState();
   }
   syncTranslationCompletionSurface();
   maybeAutoOpenTranslationCompletion(job);
@@ -776,6 +1216,16 @@ function renderTranslationJob(job) {
     translationState.pollTimer = window.setTimeout(pollCurrentJob, 1500);
   } else {
     stopPolling();
+  }
+  if (currentCompletedTranslationJobRequiresArabicReview()) {
+    refreshArabicReviewState().catch((error) => {
+      clearArabicReviewState();
+      setPanelStatus("translation-save", "bad", error.message || "Arabic DOCX review refresh failed.");
+      setDiagnostics("translation-save", error, {
+        hint: error.message || "Arabic DOCX review refresh failed.",
+        open: true,
+      });
+    });
   }
   notifyTranslationUiStateChanged();
 }
@@ -824,6 +1274,9 @@ function renderTranslationHistory(history) {
 
 function loadTranslationHistoryItem(item) {
   const row = item?.row || {};
+  translationState.currentJob = null;
+  translationState.currentJobId = "";
+  clearArabicReviewState();
   applyTranslationSeed(item?.seed || blankSaveSeed(), { rowId: row.id || null });
   setActiveView("new-job");
   dispatchNewJobTask("translation");
@@ -894,6 +1347,7 @@ function renderTranslationBootstrap(payload) {
     applyTranslationSeed(blankSaveSeed());
   }
   syncTranslationCompletionSurface();
+  restorePendingArabicReview();
 }
 
 async function refreshTranslationBootstrap() {
@@ -1029,6 +1483,9 @@ async function handleReviewExport() {
 }
 
 async function handleTranslationSave() {
+  if (currentArabicReviewIsBlocking()) {
+    throw new Error(currentArabicReviewState().message || "Arabic DOCX review is still required before saving.");
+  }
   const payload = await fetchJson("/api/translation/save-row", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1036,6 +1493,8 @@ async function handleTranslationSave() {
       form_values: collectTranslationSaveValues(),
       seed_payload: translationState.currentSeed,
       row_id: translationState.currentRowId,
+      job_id: translationState.currentJobId || "",
+      completion_key: currentTranslationCompletionKey(),
     }),
   });
   translationState.currentRowId = payload.saved_result.row_id;
@@ -1070,6 +1529,7 @@ export function initializeTranslationUi() {
   clearDownloadLink("translation-download-partial");
   clearDownloadLink("translation-download-summary");
   clearDownloadLink("translation-download-analyze");
+  clearArabicReviewState();
   syncTranslationCompletionSurface();
 
   qs("translation-refresh")?.addEventListener("click", async () => {
@@ -1168,6 +1628,45 @@ export function initializeTranslationUi() {
       } catch (error) {
         setPanelStatus("translation-save", "bad", error.message || "Translation save failed.");
         setDiagnostics("translation-save", error, { hint: error.message || "Translation save failed.", open: true });
+      }
+    });
+  });
+  qs("translation-arabic-review-open")?.addEventListener("click", async () => {
+    await runWithBusy(["translation-arabic-review-open"], { "translation-arabic-review-open": "Opening..." }, async () => {
+      try {
+        await openArabicReviewInWord();
+      } catch (error) {
+        setPanelStatus("translation-save", "bad", error.message || "Arabic DOCX review open failed.");
+        setDiagnostics("translation-save", error, {
+          hint: error.message || "Arabic DOCX review open failed.",
+          open: true,
+        });
+      }
+    });
+  });
+  qs("translation-arabic-review-continue-now")?.addEventListener("click", async () => {
+    await runWithBusy(["translation-arabic-review-continue-now"], { "translation-arabic-review-continue-now": "Continuing..." }, async () => {
+      try {
+        await continueArabicReview("continue_now");
+      } catch (error) {
+        setPanelStatus("translation-save", "bad", error.message || "Arabic DOCX review continuation failed.");
+        setDiagnostics("translation-save", error, {
+          hint: error.message || "Arabic DOCX review continuation failed.",
+          open: true,
+        });
+      }
+    });
+  });
+  qs("translation-arabic-review-continue-without-changes")?.addEventListener("click", async () => {
+    await runWithBusy(["translation-arabic-review-continue-without-changes"], { "translation-arabic-review-continue-without-changes": "Continuing..." }, async () => {
+      try {
+        await continueArabicReview("continue_without_changes");
+      } catch (error) {
+        setPanelStatus("translation-save", "bad", error.message || "Arabic DOCX review continuation failed.");
+        setDiagnostics("translation-save", error, {
+          hint: error.message || "Arabic DOCX review continuation failed.",
+          open: true,
+        });
       }
     });
   });

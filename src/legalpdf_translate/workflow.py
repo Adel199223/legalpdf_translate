@@ -2111,7 +2111,10 @@ class TranslationWorkflow:
             retry_prompt = build_ar_token_retry_prompt(
                 initial.raw_output,
                 expected_ar_tokens or [],
+                source_text=source_text,
                 violation_kind=initial_eval.ar_violation_kind,
+                defect_reason=initial_eval.defect_reason,
+                token_details=initial_eval.ar_token_details,
             )
             if initial_eval.ar_violation_kind == "latin_or_digits_outside_wrapped_tokens":
                 page_metadata["retry_prompt_type"] = "ar_wrap_correction"
@@ -2123,7 +2126,11 @@ class TranslationWorkflow:
         else:
             retry_prompt = build_retry_prompt(config.target_lang, initial.raw_output)
             page_metadata["retry_prompt_type"] = "formatting"
-        retry_effort = self._resolve_retry_effort(config=config)
+        retry_effort = self._resolve_retry_effort(
+            config=config,
+            retry_reason=retry_reason,
+            attempt1_effort=attempt1_effort,
+        )
         page_metadata["attempt2_effort"] = retry_effort.value
         remaining_retry_budget = self._remaining_request_budget_seconds(
             started_at=page_request_started,
@@ -2684,6 +2691,11 @@ class TranslationWorkflow:
                     for item in failed_page.get("ar_violation_samples", [])
                     if str(item or "").strip() != ""
                 ],
+                "ar_token_details": (
+                    dict(failed_page.get("ar_token_details", {}))
+                    if isinstance(failed_page.get("ar_token_details"), dict)
+                    else {}
+                ),
                 "request_type": str(failed_page.get("request_type", "") or ""),
                 "request_timeout_budget_seconds": float(
                     failed_page.get("request_timeout_budget_seconds", 0.0) or 0.0
@@ -2911,9 +2923,21 @@ class TranslationWorkflow:
             return ReasoningEffort.XHIGH
         return base
 
-    def _resolve_retry_effort(self, *, config: RunConfig) -> ReasoningEffort:
+    def _resolve_retry_effort(
+        self,
+        *,
+        config: RunConfig,
+        retry_reason: str | None = None,
+        attempt1_effort: ReasoningEffort | None = None,
+    ) -> ReasoningEffort:
         policy = self._resolve_effort_policy_label(config)
         if policy == "adaptive" and config.target_lang in (TargetLang.EN, TargetLang.FR):
+            return ReasoningEffort.HIGH
+        if config.target_lang == TargetLang.AR and retry_reason == "ar_token_violation":
+            if attempt1_effort in (ReasoningEffort.HIGH, ReasoningEffort.XHIGH):
+                return attempt1_effort
+            if config.effort in (ReasoningEffort.HIGH, ReasoningEffort.XHIGH):
+                return config.effort
             return ReasoningEffort.HIGH
         return ReasoningEffort.MEDIUM
 

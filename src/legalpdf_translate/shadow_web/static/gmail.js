@@ -5,6 +5,7 @@ import {
   ensureBrowserPdfBundleFromUrl,
   renderBrowserPdfPreviewToCanvas,
 } from "./browser_pdf.js";
+import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
   applyPreviewStateStartPage,
   clearConsumedReviewState,
@@ -132,12 +133,46 @@ function browserBootstrapConfig() {
   return globalThis.window?.LEGALPDF_BROWSER_BOOTSTRAP || {};
 }
 
-function currentGmailBuildProvenance() {
+function currentGmailRuntimePayload() {
   const bootstrap = browserBootstrapConfig();
   const runtime = appState.bootstrap?.normalized_payload?.runtime || {};
-  const branch = String(runtime.build_branch || bootstrap.buildBranch || "").trim();
-  const buildSha = String(runtime.build_sha || bootstrap.buildSha || "").trim();
-  const assetVersion = String(runtime.asset_version || bootstrap.assetVersion || "").trim();
+  return {
+    ...runtime,
+    build_branch: String(runtime.build_branch || bootstrap.buildBranch || "").trim(),
+    build_sha: String(runtime.build_sha || bootstrap.buildSha || "").trim(),
+    asset_version: String(runtime.asset_version || bootstrap.assetVersion || "").trim(),
+    live_data: runtime.live_data === true || appState.runtimeMode === "live",
+  };
+}
+
+function currentGmailBuildIdentity() {
+  const runtime = currentGmailRuntimePayload();
+  const bootstrap = browserBootstrapConfig();
+  const identity = (
+    runtime.build_identity
+    && typeof runtime.build_identity === "object"
+    ? runtime.build_identity
+    : appState.bootstrap?.normalized_payload?.shell?.build_identity
+      && typeof appState.bootstrap.normalized_payload.shell.build_identity === "object"
+      ? appState.bootstrap.normalized_payload.shell.build_identity
+      : bootstrap.buildIdentity
+        && typeof bootstrap.buildIdentity === "object"
+        ? bootstrap.buildIdentity
+        : {}
+  );
+  return {
+    ...identity,
+    branch: String(identity.branch || runtime.build_branch || "").trim(),
+    head_sha: String(identity.head_sha || runtime.build_sha || "").trim(),
+  };
+}
+
+function currentGmailBuildProvenance() {
+  const runtime = currentGmailRuntimePayload();
+  const buildIdentity = currentGmailBuildIdentity();
+  const branch = String(buildIdentity.branch || runtime.build_branch || "").trim();
+  const buildSha = String(buildIdentity.head_sha || runtime.build_sha || "").trim();
+  const assetVersion = String(runtime.asset_version || "").trim();
   const pieces = [];
   if (branch && buildSha) {
     pieces.push(`${branch}@${buildSha}`);
@@ -152,6 +187,63 @@ function currentGmailBuildProvenance() {
     buildSha,
     assetVersion,
     label: pieces.join(" | ") || "Unavailable",
+  };
+}
+
+function gmailRuntimeGuardSessionKey(buildIdentity = currentGmailBuildIdentity()) {
+  const branch = String(buildIdentity.branch || "unknown-branch").trim() || "unknown-branch";
+  const buildSha = String(buildIdentity.head_sha || "unknown-sha").trim() || "unknown-sha";
+  return `legalpdf.gmail.noncanonical.${appState.runtimeMode}.${appState.workspaceId}.${branch}.${buildSha}`;
+}
+
+function gmailRuntimeGuardAcknowledged(buildIdentity = currentGmailBuildIdentity()) {
+  const handle = sessionStorageHandle();
+  if (!handle) {
+    return false;
+  }
+  try {
+    return handle.getItem(gmailRuntimeGuardSessionKey(buildIdentity)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setGmailRuntimeGuardAcknowledged(value, buildIdentity = currentGmailBuildIdentity()) {
+  const handle = sessionStorageHandle();
+  if (!handle) {
+    return;
+  }
+  try {
+    const key = gmailRuntimeGuardSessionKey(buildIdentity);
+    if (value) {
+      handle.setItem(key, "1");
+    } else {
+      handle.removeItem(key);
+    }
+  } catch {
+    // Session storage is best effort only.
+  }
+}
+
+function currentGmailRuntimeGuard() {
+  const buildIdentity = currentGmailBuildIdentity();
+  return deriveGmailLiveRuntimeGuard({
+    runtime: currentGmailRuntimePayload(),
+    buildIdentity,
+    acknowledged: gmailRuntimeGuardAcknowledged(buildIdentity),
+  });
+}
+
+function gmailRuntimeGuardDiagnostics(guard = currentGmailRuntimeGuard(), operation = "") {
+  return {
+    error: "noncanonical_live_runtime",
+    message: guard.message,
+    operation: String(operation || "").trim(),
+    build_label: guard.buildLabel,
+    build_identity: currentGmailBuildIdentity(),
+    runtime: currentGmailRuntimePayload(),
+    details: guard.details,
+    acknowledged: Boolean(guard.acknowledged),
   };
 }
 
@@ -227,6 +319,7 @@ function attachmentReportSnapshot(attachment) {
 }
 
 function buildGmailFailureReportContext(error, { operation = "", attachment = null } = {}) {
+  const runtime = currentGmailRuntimePayload();
   const diagnostics = {
     ...browserPdfDiagnosticsFromError(error),
     ...(error?.payload?.diagnostics && typeof error.payload.diagnostics === "object" ? error.payload.diagnostics : {}),
@@ -247,8 +340,9 @@ function buildGmailFailureReportContext(error, { operation = "", attachment = nu
     runtime_mode: appState.runtimeMode,
     workspace_id: appState.workspaceId,
     active_view: appState.activeView,
-    build_sha: String(browserBootstrapConfig().buildSha || "").trim(),
-    asset_version: String(browserBootstrapConfig().assetVersion || "").trim(),
+    build_sha: String(runtime.build_sha || "").trim(),
+    asset_version: String(runtime.asset_version || "").trim(),
+    build_identity: currentGmailBuildIdentity(),
     workflow_kind: currentWorkflowKind(),
     focused_attachment_id: attachment?.attachment_id || gmailState.reviewFocusedAttachmentId || "",
     message: {
@@ -285,7 +379,7 @@ function updateGmailFailureReportActionState() {
   const available = Boolean(gmailState.lastFailureReportContext);
   button.classList.toggle("hidden", !available);
   button.disabled = !available;
-  const defaultLabel = gmailState.lastFailureReportPayload ? "Generate Updated Failure Report" : "Generate Failure Report";
+  const defaultLabel = "Generate Failure Report";
   button.textContent = defaultLabel;
   button.dataset.defaultLabel = defaultLabel;
 }
@@ -307,10 +401,99 @@ function updateGmailFinalizationReportActionState() {
 
 function gmailFailureHint(error, fallbackMessage) {
   const diagnostics = browserPdfDiagnosticsFromError(error);
-  if (diagnostics.error === "browser_pdf_worker_load_failed") {
-    return "Browser PDF worker could not load. Generate a failure report here or review the Gmail diagnostics below for the exact worker URL.";
+  if (
+    diagnostics.error === "browser_pdf_worker_load_failed"
+    || diagnostics.error === "browser_pdf_module_load_failed"
+  ) {
+    const phase = String(diagnostics.worker_boot_phase || diagnostics.phase || "worker_boot").trim().replaceAll("_", " ");
+    const attemptedUrl = String(diagnostics.attempted_url || diagnostics.worker_url || diagnostics.module_url || "").trim();
+    const rawBrowserError = String(diagnostics.raw_browser_error || diagnostics.raw_message || "").trim();
+    const location = attemptedUrl ? ` at ${attemptedUrl}` : "";
+    const rawDetail = rawBrowserError ? ` Browser error: ${rawBrowserError}` : "";
+    return `Browser PDF ${phase} failed${location}.${rawDetail} Generate a failure report here or review the Gmail diagnostics below for the exact asset details.`;
   }
   return fallbackMessage;
+}
+
+function renderGmailNoncanonicalRuntimeGuard() {
+  const card = qs("gmail-noncanonical-runtime-guard");
+  const title = qs("gmail-noncanonical-runtime-title");
+  const message = qs("gmail-noncanonical-runtime-message");
+  const details = qs("gmail-noncanonical-runtime-details");
+  const restartButton = qs("gmail-restart-canonical-runtime");
+  const continueButton = qs("gmail-continue-noncanonical-runtime");
+  const chip = card?.querySelector(".status-chip");
+  if (!card || !title || !message || !details || !restartButton || !continueButton || !chip) {
+    return;
+  }
+  const guard = currentGmailRuntimeGuard();
+  card.classList.toggle("hidden", !guard.active);
+  if (!guard.active) {
+    details.innerHTML = "";
+    continueButton.disabled = false;
+    continueButton.textContent = guard.secondaryLabel || "Continue Anyway";
+    return;
+  }
+  title.textContent = guard.title;
+  message.textContent = guard.blocked
+    ? guard.message
+    : `Continuing with ${guard.buildLabel} for this Gmail workspace session. Restart from canonical main when you are ready.`;
+  details.innerHTML = guard.details.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  restartButton.textContent = guard.primaryLabel || "Restart from Canonical Main";
+  continueButton.textContent = guard.acknowledged ? "Continue Enabled" : (guard.secondaryLabel || "Continue Anyway");
+  continueButton.disabled = guard.acknowledged;
+  chip.className = `status-chip ${guard.blocked ? "warn" : "info"}`;
+  chip.textContent = guard.blocked ? "Review Paused" : "Override Active";
+}
+
+function maybeBlockGmailReviewAction(operation) {
+  const guard = currentGmailRuntimeGuard();
+  if (!guard.blocked) {
+    return false;
+  }
+  setPanelStatus("gmail", "warn", guard.message);
+  setDiagnostics("gmail", {
+    status: "blocked",
+    diagnostics: gmailRuntimeGuardDiagnostics(guard, operation),
+  }, {
+    hint: guard.message,
+    open: true,
+  });
+  renderReviewSurface();
+  return true;
+}
+
+function restartCanonicalRuntimeGuidance() {
+  const buildIdentity = currentGmailBuildIdentity();
+  setGmailRuntimeGuardAcknowledged(false, buildIdentity);
+  const guard = currentGmailRuntimeGuard();
+  setPanelStatus("gmail", "warn", guard.message);
+  setDiagnostics("gmail", {
+    status: "blocked",
+    diagnostics: {
+      ...gmailRuntimeGuardDiagnostics(guard, "gmail_restart_canonical_runtime"),
+      restart_steps: guard.details,
+    },
+  }, {
+    hint: "Close this browser app and relaunch from canonical main before retrying Preview or Prepare.",
+    open: true,
+  });
+  renderReviewSurface();
+}
+
+function continueNoncanonicalRuntimeForWorkspace() {
+  const buildIdentity = currentGmailBuildIdentity();
+  setGmailRuntimeGuardAcknowledged(true, buildIdentity);
+  const guard = currentGmailRuntimeGuard();
+  setPanelStatus("gmail", "warn", `Continuing with ${guard.buildLabel} for this Gmail workspace session.`);
+  setDiagnostics("gmail", {
+    status: "warn",
+    diagnostics: gmailRuntimeGuardDiagnostics(guard, "gmail_continue_noncanonical_runtime"),
+  }, {
+    hint: `Preview and Prepare are re-enabled for ${guard.buildLabel} in this workspace session.`,
+    open: true,
+  });
+  renderReviewSurface();
 }
 
 function translationUiSnapshot() {
@@ -354,6 +537,8 @@ function currentHomeCta() {
 
 function gmailHomeStatusMessage() {
   switch (gmailState.stage || currentGmailStage()) {
+    case "translation_recovery":
+      return "The current Gmail attachment needs recovery before the batch can continue. Resume Recovery to rerun, rebuild, or adjust translation settings from the translation workspace.";
     case "translation_running":
     case "translation_save":
     case "translation_finalize":
@@ -387,6 +572,7 @@ async function maybeAutoStartSuggestedTranslation(reason) {
 
 function runStageAction(action) {
   switch (action) {
+    case "resume-translation-recovery":
     case "resume-translation-running":
       if (gmailState.suggestedTranslationLaunch) {
         gmailState.hooks.applyTranslationLaunch?.(gmailState.suggestedTranslationLaunch);
@@ -1089,7 +1275,8 @@ function renderTranslationCompletionGmailStepCard(activeSession) {
     && (translationUi.currentJobStatus === "completed" || translationUi.hasCompletionSurface),
   );
   card.classList.toggle("hidden", !show);
-  button.disabled = !show;
+  const blockedOnArabicReview = Boolean(translationUi.requiresArabicReview && !translationUi.arabicReviewResolved);
+  button.disabled = !show || blockedOnArabicReview;
   if (!show) {
     return;
   }
@@ -1097,10 +1284,14 @@ function renderTranslationCompletionGmailStepCard(activeSession) {
   const batchLabel = activeSession.total_items
     ? `${activeSession.current_item_number || "?"}/${activeSession.total_items}`
     : "Batch step";
-  title.textContent = `Gmail attachment ${batchLabel} is ready to confirm.`;
-  copy.textContent = activeSession.current_item_number < activeSession.total_items
-    ? `${filename} will be saved to the job log and the next attachment will start automatically.`
-    : `${filename} will be saved to the job log and the final Gmail batch step will open next.`;
+  title.textContent = blockedOnArabicReview
+    ? `Arabic DOCX review required before Gmail attachment ${batchLabel} can continue.`
+    : `Gmail attachment ${batchLabel} is ready to confirm.`;
+  copy.textContent = blockedOnArabicReview
+    ? (translationUi.arabicReviewMessage || `${filename} must finish Arabic DOCX review before Gmail confirmation can continue.`)
+    : activeSession.current_item_number < activeSession.total_items
+      ? `${filename} will be saved to the job log and the next attachment will start automatically.`
+      : `${filename} will be saved to the job log and the final Gmail batch step will open next.`;
   chip.textContent = batchLabel;
 }
 
@@ -1399,6 +1590,7 @@ function renderReviewDetail() {
   const state = attachmentState(attachment.attachment_id);
   const canEditStart = canEditStartPage(attachment);
   const previewLoaded = isPreviewStateOpen(gmailState.previewState) && gmailState.previewState.attachmentId === attachment.attachment_id;
+  const runtimeGuard = currentGmailRuntimeGuard();
   const pageCountText = state.pageCount > 0
     ? `${state.pageCount} ${state.pageCount === 1 ? "page" : "pages"}`
     : "Page count loads when you preview";
@@ -1416,7 +1608,7 @@ function renderReviewDetail() {
               <input id="gmail-review-detail-start" type="number" min="1" step="1" value="${escapeHtml(String(clampStartPage(attachment, state.startPage, state.pageCount)))}" data-detail-start-page="${escapeHtml(attachment.attachment_id)}">
             </div>`
           : ""}
-        <button type="button" class="ghost-button" id="gmail-preview-selected" data-preview-selected="${escapeHtml(attachment.attachment_id)}">Preview</button>
+        <button type="button" class="ghost-button" id="gmail-preview-selected" data-preview-selected="${escapeHtml(attachment.attachment_id)}" ${runtimeGuard.blocked ? "disabled" : ""}>Preview</button>
       </div>
     </div>
   `;
@@ -1668,6 +1860,7 @@ function updatePrepareActionState() {
     return;
   }
   const selections = collectSelections();
+  const runtimeGuard = currentGmailRuntimeGuard();
   let label = currentWorkflowKind() === "interpretation"
     ? "Prepare notice"
     : "Prepare selected";
@@ -1680,10 +1873,16 @@ function updatePrepareActionState() {
       ? "Select One Notice To Continue"
       : "Select Attachments To Continue";
     disabled = true;
+  } else if (runtimeGuard.blocked) {
+    label = currentWorkflowKind() === "interpretation"
+      ? "Continue Anyway To Prepare Notice"
+      : "Continue Anyway To Prepare";
+    disabled = true;
   }
   button.textContent = label;
   button.dataset.defaultLabel = label;
   button.disabled = disabled;
+  button.title = runtimeGuard.blocked ? runtimeGuard.message : "";
 }
 
 function syncShellState() {
@@ -1734,6 +1933,7 @@ function updateSessionButtons() {
 
 function renderReviewSurface() {
   renderReviewSummary(gmailState.loadResult);
+  renderGmailNoncanonicalRuntimeGuard();
   renderAttachmentList(gmailState.loadResult);
   renderReviewDetail();
   renderPreviewPanel();
@@ -2062,7 +2262,7 @@ async function handleGmailFailureReport() {
     }),
   });
   gmailState.lastFailureReportPayload = payload;
-  setPanelStatus("gmail", "ok", "Gmail browser failure report generated.");
+  setPanelStatus("gmail", "ok", "Gmail browser failure report generated for the current preview or prepare failure.");
   setDiagnostics("gmail", payload, {
     hint: payload.normalized_payload?.report_path || "Gmail browser failure report generated.",
     open: true,
@@ -2132,6 +2332,26 @@ async function refreshBatchFinalizePreflight({ forceRefresh = false } = {}) {
 }
 
 async function confirmCurrentTranslation() {
+  const translationUi = translationUiSnapshot();
+  if (translationUi.requiresArabicReview && !translationUi.arabicReviewResolved) {
+    throw new Error(translationUi.arabicReviewMessage || "Arabic DOCX review is still required before Gmail confirmation can continue.");
+  }
+  if (translationUi.currentJobRecoveryRequired || translationUi.currentJobStatus === "failed" || translationUi.currentJobStatus === "cancelled") {
+    const failurePage = Number.isFinite(Number(translationUi.currentJobFailurePage))
+      ? ` on page ${Number(translationUi.currentJobFailurePage)}`
+      : "";
+    const failureReason = String(translationUi.currentJobFailureReason || "").trim();
+    throw new Error(
+      failureReason
+        ? `This Gmail attachment still needs translation recovery${failurePage}: ${failureReason}`
+        : `This Gmail attachment still needs translation recovery${failurePage} before Gmail confirmation can continue.`,
+    );
+  }
+  if (translationUi.currentJobKind === "rebuild" || !translationUi.currentJobHasSaveSeed) {
+    throw new Error(
+      "Only a completed translation with a durable reviewed DOCX can be confirmed for Gmail. Rebuild DOCX does not make this attachment confirmable.",
+    );
+  }
   const jobId = gmailState.hooks.getCurrentTranslationJobId?.() || "";
   if (!jobId) {
     throw new Error("Run a translation job for the current Gmail attachment first.");
@@ -2141,6 +2361,7 @@ async function confirmCurrentTranslation() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       job_id: jobId,
+      completion_key: translationUi.arabicReviewCompletionKey || "",
       form_values: gmailState.hooks.collectCurrentTranslationSaveValues?.() || {},
       row_id: qs("translation-row-id")?.value || null,
     }),
@@ -2343,6 +2564,14 @@ export function initializeGmailUi(hooks) {
     openReviewDrawer();
   });
 
+  qs("gmail-restart-canonical-runtime")?.addEventListener("click", () => {
+    restartCanonicalRuntimeGuidance();
+  });
+
+  qs("gmail-continue-noncanonical-runtime")?.addEventListener("click", () => {
+    continueNoncanonicalRuntimeForWorkspace();
+  });
+
   qs("gmail-close-review-drawer")?.addEventListener("click", closeReviewDrawer);
   qs("gmail-review-drawer-backdrop")?.addEventListener("click", (event) => {
     if (event.target === qs("gmail-review-drawer-backdrop")) {
@@ -2389,6 +2618,9 @@ export function initializeGmailUi(hooks) {
     }
     const attachmentId = row.dataset.attachmentRow || "";
     if (!attachmentId) {
+      return;
+    }
+    if (maybeBlockGmailReviewAction("gmail_preview_attachment")) {
       return;
     }
     await runWithBusy(["gmail-preview-selected"], { "gmail-preview-selected": "Loading..." }, async () => {
@@ -2438,6 +2670,9 @@ export function initializeGmailUi(hooks) {
     }
     const attachment = focusedAttachment();
     if (!attachment) {
+      return;
+    }
+    if (maybeBlockGmailReviewAction("gmail_preview_attachment")) {
       return;
     }
     await runWithBusy(["gmail-preview-selected"], { "gmail-preview-selected": "Loading..." }, async () => {
@@ -2512,6 +2747,9 @@ export function initializeGmailUi(hooks) {
 
   qs("gmail-prepare-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (maybeBlockGmailReviewAction("gmail_prepare_session")) {
+      return;
+    }
     await runWithBusy(["gmail-prepare-session"], { "gmail-prepare-session": "Preparing..." }, async () => {
       try {
         await prepareSession();

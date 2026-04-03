@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 import hashlib
 import json
+import mimetypes
 import os
 from pathlib import Path
 import re
@@ -19,6 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from legalpdf_translate.browser_arabic_review import ArabicDocxReviewManager, job_requires_arabic_review
 from legalpdf_translate.browser_gmail_bridge import BrowserLiveGmailBridgeManager
 from legalpdf_translate.browser_pdf_bundle import (
     browser_pdf_bundle_manifest_path,
@@ -104,6 +106,7 @@ from legalpdf_translate.shadow_runtime import (
     load_shadow_runtime_metadata,
     normalize_workspace_id,
     run_browser_automation_preflight,
+    runtime_build_identity_payload,
     write_shadow_runtime_metadata,
 )
 from legalpdf_translate.user_settings import load_settings_from_path
@@ -121,6 +124,7 @@ class ShadowWebContext:
     build_identity: RuntimeBuildIdentity
     automation_preflight: dict[str, object]
     translation_jobs: TranslationJobManager
+    arabic_reviews: ArabicDocxReviewManager
     gmail_sessions: GmailBrowserSessionManager
     live_gmail_bridge: BrowserLiveGmailBridgeManager
     enable_live_gmail_bridge: bool
@@ -207,6 +211,16 @@ def _resolve_static_asset(static_dir: Path, asset_path: str) -> Path | None:
     return candidate
 
 
+def _static_asset_media_type(asset_path: str) -> str | None:
+    suffix = Path(str(asset_path or "")).suffix.lower()
+    if suffix in {".js", ".mjs"}:
+        return "application/javascript"
+    if suffix == ".css":
+        return "text/css"
+    guessed, _encoding = mimetypes.guess_type(str(asset_path or ""))
+    return guessed
+
+
 async def _json_payload_or_empty(request: Request) -> dict[str, Any]:
     content_length = str(request.headers.get("content-length", "") or "").strip()
     if content_length in {"", "0"}:
@@ -281,6 +295,7 @@ def _runtime_payload(context: ShadowWebContext, target: ActiveBrowserTarget) -> 
         "port": context.port,
         "build_branch": context.build_identity.branch,
         "build_sha": context.build_identity.head_sha,
+        "build_identity": runtime_build_identity_payload(context.build_identity),
         "asset_version": context.asset_version,
         "runtime_mode": target.mode,
         "runtime_mode_label": target.data_paths.label,
@@ -481,6 +496,31 @@ def _augment_finalization_report_context(
     return report_context
 
 
+def _augment_browser_failure_report_context(
+    raw_context: object,
+    *,
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+) -> dict[str, Any] | None:
+    if not isinstance(raw_context, Mapping):
+        return None
+    report_context = dict(raw_context)
+    report_context["runtime_mode"] = str(report_context.get("runtime_mode") or target.mode).strip() or target.mode
+    report_context["workspace_id"] = (
+        str(report_context.get("workspace_id") or target.workspace_id).strip() or target.workspace_id
+    )
+    report_context["build_sha"] = (
+        str(report_context.get("build_sha") or context.build_identity.head_sha).strip()
+        or context.build_identity.head_sha
+    )
+    report_context["asset_version"] = (
+        str(report_context.get("asset_version") or context.asset_version).strip() or context.asset_version
+    )
+    report_context["active_view"] = str(report_context.get("active_view") or "").strip()
+    report_context["build_identity"] = runtime_build_identity_payload(context.build_identity)
+    return report_context
+
+
 def _augment_gmail_finalization_report_payloads(
     normalized_payload: dict[str, Any],
     *,
@@ -576,6 +616,37 @@ def _validation_error_response(
     )
 
 
+def _translation_job_or_error(
+    context: ShadowWebContext,
+    *,
+    job_id: str,
+) -> dict[str, Any]:
+    cleaned_job_id = str(job_id or "").strip()
+    if cleaned_job_id == "":
+        raise ValueError("Arabic DOCX review requires the current browser translation job id.")
+    job = context.translation_jobs.get_job(cleaned_job_id)
+    if job is None:
+        raise ValueError("Browser translation job was not found for Arabic DOCX review.")
+    return job
+
+
+def _arabic_review_validation_payload(
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+    *,
+    job: Mapping[str, Any] | None = None,
+    completion_key: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "arabic_review": context.arabic_reviews.state_for_workspace(
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            job=job,
+            completion_key=completion_key,
+        )
+    }
+
+
 def create_shadow_app(
     *,
     repo_root: Path | None = None,
@@ -601,6 +672,7 @@ def create_shadow_app(
         build_identity=build_identity,
         automation_preflight=automation_preflight,
         translation_jobs=TranslationJobManager(),
+        arabic_reviews=ArabicDocxReviewManager(),
         gmail_sessions=gmail_sessions,
         live_gmail_bridge=BrowserLiveGmailBridgeManager(
             repo_root=root,
@@ -645,6 +717,7 @@ def create_shadow_app(
             return Response(status_code=404)
         return FileResponse(
             asset,
+            media_type=_static_asset_media_type(asset_path),
             headers={
                 "Cache-Control": "public, max-age=31536000, immutable",
             },
@@ -666,6 +739,7 @@ def create_shadow_app(
                 "shadow_port": context.port,
                 "build_branch": context.build_identity.branch,
                 "build_sha": context.build_identity.head_sha,
+                "build_identity": runtime_build_identity_payload(context.build_identity),
                 "asset_version": context.asset_version,
                 "static_base_url": _versioned_static_base_url(request, context),
                 "style_css_url": _versioned_static_url(request, context, "style.css"),
@@ -754,6 +828,7 @@ def create_shadow_app(
                     "ready": bool(current_mode_bridge.get("ready")),
                     "native_host_ready": bool(native_host_state.get("ready")),
                     "asset_version": context.asset_version,
+                    "build_identity": runtime_build_identity_payload(context.build_identity),
                     "runtime_mode": target.mode,
                     "workspace_id": target.workspace_id,
                     "owner_kind": current_mode_bridge.get("owner_kind", "none"),
@@ -1375,12 +1450,17 @@ def create_shadow_app(
             context=context,
             target=target,
         )
+        browser_failure_context = _augment_browser_failure_report_context(
+            payload.get("browser_failure_context") if isinstance(payload, dict) else None,
+            context=context,
+            target=target,
+        )
         try:
             response = generate_browser_run_report(
                 settings_path=target.data_paths.settings_path,
                 outputs_dir=target.data_paths.outputs_dir,
                 run_dir_text=payload.get("run_dir") if isinstance(payload, dict) else None,
-                browser_failure_context=payload.get("browser_failure_context") if isinstance(payload, dict) else None,
+                browser_failure_context=browser_failure_context,
                 gmail_finalization_context=gmail_finalization_context,
             )
         except ValueError as exc:
@@ -1627,6 +1707,30 @@ def create_shadow_app(
             mode_override=payload.get("mode"),
             workspace_override=payload.get("workspace_id"),
         )
+        job_id = str(payload.get("job_id", "") or "").strip()
+        completion_key = str(payload.get("completion_key", "") or "").strip() or None
+        if job_id:
+            job = context.translation_jobs.get_job(job_id)
+            if job_requires_arabic_review(job):
+                try:
+                    context.arabic_reviews.require_resolved(
+                        runtime_mode=target.mode,
+                        workspace_id=target.workspace_id,
+                        job=job,
+                        completion_key=completion_key,
+                    )
+                except ValueError as exc:
+                    return _validation_error_response(
+                        context,
+                        target,
+                        message=str(exc),
+                        validation_error=_arabic_review_validation_payload(
+                            context,
+                            target,
+                            job=job,
+                            completion_key=completion_key,
+                        ),
+                    )
         try:
             response = context.gmail_sessions.confirm_current_batch_translation(
                 runtime_mode=target.mode,
@@ -1634,7 +1738,7 @@ def create_shadow_app(
                 settings_path=target.data_paths.settings_path,
                 job_log_db_path=target.data_paths.job_log_db_path,
                 translation_jobs=context.translation_jobs,
-                job_id=str(payload.get("job_id", "") or "").strip(),
+                job_id=job_id,
                 form_values=dict(payload.get("form_values", {})),
                 row_id=payload.get("row_id"),
             )
@@ -1965,17 +2069,170 @@ def create_shadow_app(
             mode_override=payload.get("mode"),
             workspace_override=payload.get("workspace_id"),
         )
+        job_id = str(payload.get("job_id", "") or "").strip()
+        completion_key = str(payload.get("completion_key", "") or "").strip() or None
+        row_id = payload.get("row_id")
+        if job_id and row_id in (None, ""):
+            job = context.translation_jobs.get_job(job_id)
+            if job_requires_arabic_review(job):
+                try:
+                    context.arabic_reviews.require_resolved(
+                        runtime_mode=target.mode,
+                        workspace_id=target.workspace_id,
+                        job=job,
+                        completion_key=completion_key,
+                    )
+                except ValueError as exc:
+                    return _validation_error_response(
+                        context,
+                        target,
+                        message=str(exc),
+                        validation_error=_arabic_review_validation_payload(
+                            context,
+                            target,
+                            job=job,
+                            completion_key=completion_key,
+                        ),
+                    )
         try:
             response = save_translation_row(
                 settings_path=target.data_paths.settings_path,
                 job_log_db_path=target.data_paths.job_log_db_path,
                 form_values=dict(payload.get("form_values", {})),
                 seed_payload=payload.get("seed_payload"),
-                row_id=payload.get("row_id"),
+                row_id=row_id,
             )
         except ValueError as exc:
             return _validation_error_response(context, target, message=str(exc))
         return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/translation/arabic-review/state")
+    async def api_translation_arabic_review_state(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        job_id = str(request.query_params.get("job_id", "") or "").strip()
+        completion_key = str(request.query_params.get("completion_key", "") or "").strip() or None
+        try:
+            job = _translation_job_or_error(context, job_id=job_id) if job_id else None
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc), status_code=404)
+        try:
+            payload = context.arabic_reviews.state_for_workspace(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                job=job,
+                completion_key=completion_key,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"arabic_review": payload},
+                    "diagnostics": {},
+                },
+            )
+        )
+
+    @app.post("/api/translation/arabic-review/open")
+    async def api_translation_arabic_review_open(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        completion_key = str(payload.get("completion_key", "") or "").strip() or None
+        try:
+            job = _translation_job_or_error(context, job_id=str(payload.get("job_id", "") or "").strip())
+            arabic_review, diagnostics = context.arabic_reviews.open_review(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                job=job,
+                completion_key=completion_key,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"arabic_review": arabic_review},
+                    "diagnostics": diagnostics,
+                },
+            )
+        )
+
+    @app.post("/api/translation/arabic-review/align-right-save")
+    async def api_translation_arabic_review_align_right_save(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        completion_key = str(payload.get("completion_key", "") or "").strip() or None
+        try:
+            job = _translation_job_or_error(context, job_id=str(payload.get("job_id", "") or "").strip())
+            arabic_review, diagnostics = context.arabic_reviews.align_right_and_save(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                job=job,
+                completion_key=completion_key,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"arabic_review": arabic_review},
+                    "diagnostics": diagnostics,
+                },
+            )
+        )
+
+    @app.post("/api/translation/arabic-review/continue")
+    async def api_translation_arabic_review_continue(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        completion_key = str(payload.get("completion_key", "") or "").strip() or None
+        try:
+            job = _translation_job_or_error(context, job_id=str(payload.get("job_id", "") or "").strip())
+            arabic_review = context.arabic_reviews.continue_review(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                job=job,
+                continuation=str(payload.get("continuation", "") or "").strip(),
+                completion_key=completion_key,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"arabic_review": arabic_review},
+                    "diagnostics": {},
+                },
+            )
+        )
 
     @app.get("/api/translation/history")
     async def api_translation_history(request: Request) -> JSONResponse:

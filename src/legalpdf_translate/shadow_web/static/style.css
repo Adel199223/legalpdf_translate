@@ -1094,6 +1094,14 @@ body[data-interpretation-city-dialog="open"] {
   flex: 1 1 180px;
 }
 
+.translation-arabic-review-actions {
+  margin-top: 18px;
+}
+
+.translation-arabic-review-actions > * {
+  flex: 1 1 220px;
+}
+
 .settings-route-sheet .secondary-route-main form,
 .profile-route-sheet .secondary-route-main,
 .secondary-route-side {
@@ -1129,6 +1137,15 @@ body[data-interpretation-city-dialog="open"] {
 
 .gmail-preview-action-row {
   margin-top: 20px;
+}
+
+.gmail-runtime-guard-actions {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gmail-runtime-guard-actions > * {
+  flex: 1 1 220px;
 }
 
 .gmail-review-summary-card {

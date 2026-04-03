@@ -98,6 +98,7 @@ function normalizeGmailStage(value) {
   const allowed = new Set([
     "idle",
     "review",
+    "translation_recovery",
     "translation_running",
     "translation_save",
     "translation_finalize",
@@ -120,6 +121,16 @@ export function deriveGmailStage({
       return "translation_finalize";
     }
     const currentJobStatus = String(translationUi.currentJobStatus || "").trim();
+    const currentJobKind = String(translationUi.currentJobKind || "").trim();
+    const hasSaveSeed = Boolean(translationUi.currentJobHasSaveSeed);
+    if (
+      translationUi.currentJobRecoveryRequired
+      || currentJobStatus === "failed"
+      || currentJobStatus === "cancelled"
+      || (currentJobKind === "rebuild" && !hasSaveSeed)
+    ) {
+      return "translation_recovery";
+    }
     if (translationUi.completionDrawerOpen || translationUi.hasCompletionSurface || currentJobStatus === "completed") {
       return "translation_save";
     }
@@ -136,6 +147,17 @@ export function deriveGmailStage({
 
 export function deriveGmailHomeCta({ stage, activeSession }) {
   switch (normalizeGmailStage(stage)) {
+    case "translation_recovery":
+      return {
+        visible: true,
+        label: "Resume Recovery",
+        action: "resume-translation-recovery",
+        title: "Current Gmail attachment needs recovery.",
+        description: activeSession?.current_attachment?.attachment?.filename
+          ? `${activeSession.current_attachment.attachment.filename} failed on translation compliance and must be rerun or rebuilt before the Gmail batch can continue.`
+          : "The current Gmail attachment failed on translation compliance and must be rerun or rebuilt before the batch can continue.",
+        tone: "warn",
+      };
     case "translation_running":
       return {
         visible: true,

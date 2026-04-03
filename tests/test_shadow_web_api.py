@@ -8,6 +8,7 @@ import re
 from fastapi.testclient import TestClient
 from PIL import Image
 
+import legalpdf_translate.browser_arabic_review as browser_arabic_review
 import legalpdf_translate.browser_app_service as browser_app_service
 from legalpdf_translate.browser_gmail_bridge import BrowserLiveBridgeSyncResult
 from legalpdf_translate.power_tools_service import generate_browser_run_report
@@ -15,6 +16,7 @@ import legalpdf_translate.shadow_web.app as shadow_app_module
 from legalpdf_translate.build_identity import RuntimeBuildIdentity
 from legalpdf_translate.interpretation_service import InterpretationValidationError
 from legalpdf_translate.shadow_runtime import BrowserDataPaths, ShadowListenerOwnership, ShadowRuntimePaths
+from legalpdf_translate.word_automation import WordAutomationResult
 
 
 _ORIGINAL_BUILD_BROWSER_PROVIDER_STATE = shadow_app_module.build_browser_provider_state
@@ -125,6 +127,43 @@ def _build_app(tmp_path: Path, monkeypatch) -> TestClient:
     return TestClient(app)
 
 
+def _completed_ar_job(docx_path: Path, *, job_id: str = "tx-ar-001") -> dict[str, object]:
+    return {
+        "job_id": job_id,
+        "job_kind": "translate",
+        "status": "completed",
+        "config": {
+            "source_path": str(docx_path.with_name("source.pdf")),
+            "target_lang": "AR",
+            "start_page": 1,
+        },
+        "result": {
+            "save_seed": {
+                "translation_date": "2026-04-02",
+                "case_number": "305/23.2GCBJA",
+                "case_entity": "Juizo Local Criminal de Beja",
+                "case_city": "Beja",
+                "court_email": "beja.judicial@tribunais.org.pt",
+                "run_id": "20260402_164400",
+                "target_lang": "AR",
+                "pages": 5,
+                "word_count": 980,
+                "rate_per_word": 0.08,
+                "expected_total": 78.4,
+                "amount_paid": 0,
+                "api_cost": 3.2,
+                "profit": 75.2,
+                "output_docx": str(docx_path),
+            },
+            "run_dir": str(docx_path.parent / "run"),
+        },
+        "artifacts": {
+            "output_docx": str(docx_path),
+            "run_dir": str(docx_path.parent / "run"),
+        },
+    }
+
+
 def test_compute_browser_asset_version_changes_for_dirty_static_edits(tmp_path: Path) -> None:
     static_dir = tmp_path / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
@@ -145,6 +184,8 @@ def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> 
         assert bootstrap_payload["status"] == "ok"
         assert bootstrap_payload["normalized_payload"]["runtime"]["port"] == 8877
         assert bootstrap_payload["normalized_payload"]["runtime"]["runtime_mode"] == "live"
+        assert bootstrap_payload["normalized_payload"]["runtime"]["build_identity"]["is_canonical"] is False
+        assert bootstrap_payload["normalized_payload"]["runtime"]["build_identity"]["reasons"] == ["noncanonical"]
         assert bootstrap_payload["normalized_payload"]["blank_seed"]["service_date"] == ""
         assert any(item["id"] == "gmail-intake" for item in bootstrap_payload["normalized_payload"]["navigation"])
         assert any(item["id"] == "extension-lab" for item in bootstrap_payload["normalized_payload"]["navigation"])
@@ -204,6 +245,7 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert f'href="http://testserver/static-build/{asset_version}/style.css"' in text
         assert f'src="http://testserver/static-build/{asset_version}/app.js"' in text
         assert f'staticBasePath: "http://testserver/static-build/{asset_version}/"' in text
+        assert "buildIdentity:" in text
         assert 'defaultRuntimeMode: "live"' in text
         assert 'defaultUiVariant: "qt"' in text
         assert "LEGALPDF_BROWSER_CLIENT_READY" in text
@@ -237,6 +279,9 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="gmail-review-summary"' in text
         assert 'id="gmail-review-summary-details"' in text
         assert 'id="gmail-review-summary-grid"' in text
+        assert 'id="gmail-noncanonical-runtime-guard"' in text
+        assert 'id="gmail-restart-canonical-runtime"' in text
+        assert 'id="gmail-continue-noncanonical-runtime"' in text
         assert 'id="gmail-review-detail"' in text
         assert 'id="gmail-preview-drawer"' in text
         assert 'id="gmail-preview-drawer-backdrop"' in text
@@ -262,6 +307,11 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="translation-completion-drawer"' in text
         assert 'id="translation-completion-drawer-backdrop"' in text
         assert 'id="translation-close-completion"' in text
+        assert 'id="translation-arabic-review-card"' in text
+        assert 'id="translation-arabic-review-open"' in text
+        assert 'id="translation-arabic-review-continue-now"' in text
+        assert 'id="translation-arabic-review-continue-without-changes"' in text
+        assert "align or edit it manually" in text
         assert 'id="translation-gmail-step-card"' in text
         assert 'id="translation-gmail-confirm-current"' in text
         assert '<select id="case-city"' in text
@@ -1264,6 +1314,183 @@ def test_shadow_web_translation_bootstrap_and_save_history_flow(tmp_path: Path, 
         assert history_payload["normalized_payload"]["history"][0]["seed"]["run_id"] == "run-456"
 
 
+def test_shadow_web_arabic_review_routes_block_save_until_resolved(tmp_path: Path, monkeypatch) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        docx_path = tmp_path / "translated_ar.docx"
+        docx_path.write_bytes(b"docx")
+        job = _completed_ar_job(docx_path)
+        monkeypatch.setattr(
+            client.app.state.shadow_context.translation_jobs,
+            "get_job",
+            lambda job_id: job if job_id == "tx-ar-001" else None,
+        )
+
+        state = client.get("/api/translation/arabic-review/state?job_id=tx-ar-001")
+        state_payload = state.json()
+        assert state.status_code == 200
+        assert state_payload["normalized_payload"]["arabic_review"]["required"] is True
+        assert state_payload["normalized_payload"]["arabic_review"]["resolved"] is False
+
+        restored = client.get("/api/translation/arabic-review/state")
+        restored_payload = restored.json()
+        assert restored.status_code == 200
+        assert restored_payload["normalized_payload"]["arabic_review"]["job_id"] == "tx-ar-001"
+        assert restored_payload["normalized_payload"]["arabic_review"]["completion_key"] == "job:tx-ar-001:translate"
+
+        blocked_save = client.post(
+            "/api/translation/save-row",
+            json={
+                "job_id": "tx-ar-001",
+                "completion_key": "job:tx-ar-001:translate",
+                "seed_payload": job["result"]["save_seed"],
+                "form_values": {
+                    "translation_date": "2026-04-02",
+                    "case_number": "305/23.2GCBJA",
+                    "court_email": "beja.judicial@tribunais.org.pt",
+                    "case_entity": "Juizo Local Criminal de Beja",
+                    "case_city": "Beja",
+                    "run_id": "20260402_164400",
+                    "target_lang": "AR",
+                    "pages": "5",
+                    "word_count": "980",
+                    "rate_per_word": "0.08",
+                    "expected_total": "78.4",
+                    "amount_paid": "0",
+                    "api_cost": "3.2",
+                    "profit": "75.2",
+                },
+            },
+        )
+        blocked_payload = blocked_save.json()
+        assert blocked_save.status_code == 422
+        assert blocked_payload["diagnostics"]["error"] == (
+            "Arabic DOCX review is required before Save-to-Job-Log or Gmail confirmation can continue. "
+            "Open the durable DOCX in Word, align or edit it manually, then save."
+        )
+        assert blocked_payload["normalized_payload"]["validation_error"]["arabic_review"]["required"] is True
+
+        continued = client.post(
+            "/api/translation/arabic-review/continue",
+            json={
+                "job_id": "tx-ar-001",
+                "completion_key": "job:tx-ar-001:translate",
+                "continuation": "continue_without_changes",
+            },
+        )
+        continued_payload = continued.json()
+        assert continued.status_code == 200
+        assert continued_payload["normalized_payload"]["arabic_review"]["resolved"] is True
+        assert continued_payload["normalized_payload"]["arabic_review"]["resolution"] == "continue_without_changes"
+
+        saved = client.post(
+            "/api/translation/save-row",
+            json={
+                "job_id": "tx-ar-001",
+                "completion_key": "job:tx-ar-001:translate",
+                "seed_payload": job["result"]["save_seed"],
+                "form_values": {
+                    "translation_date": "2026-04-02",
+                    "case_number": "305/23.2GCBJA",
+                    "court_email": "beja.judicial@tribunais.org.pt",
+                    "case_entity": "Juizo Local Criminal de Beja",
+                    "case_city": "Beja",
+                    "run_id": "20260402_164400",
+                    "target_lang": "AR",
+                    "pages": "5",
+                    "word_count": "980",
+                    "rate_per_word": "0.08",
+                    "expected_total": "78.4",
+                    "amount_paid": "0",
+                    "api_cost": "3.2",
+                    "profit": "75.2",
+                },
+            },
+        )
+        saved_payload = saved.json()
+        assert saved.status_code == 200
+        assert saved_payload["saved_result"]["row_id"] > 0
+
+
+def test_shadow_web_arabic_review_open_reports_fallback_used(tmp_path: Path, monkeypatch) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        docx_path = tmp_path / "translated_ar.docx"
+        docx_path.write_bytes(b"docx")
+        job = _completed_ar_job(docx_path)
+        monkeypatch.setattr(
+            client.app.state.shadow_context.translation_jobs,
+            "get_job",
+            lambda job_id: job if job_id == "tx-ar-001" else None,
+        )
+        monkeypatch.setattr(
+            browser_arabic_review,
+            "open_docx_in_word",
+            lambda path: WordAutomationResult(
+                ok=False,
+                action="open_docx",
+                message="Word automation failed.",
+            ),
+        )
+        monkeypatch.setattr(browser_arabic_review.os, "name", "nt", raising=False)
+        opened: list[str] = []
+        monkeypatch.setattr(
+            browser_arabic_review.os,
+            "startfile",
+            lambda path: opened.append(str(path)),
+            raising=False,
+        )
+
+        response = client.post(
+            "/api/translation/arabic-review/open",
+            json={
+                "job_id": "tx-ar-001",
+                "completion_key": "job:tx-ar-001:translate",
+            },
+        )
+        payload = response.json()
+
+        assert response.status_code == 200
+        assert payload["normalized_payload"]["arabic_review"]["fallback_used"] is True
+        assert opened == [str(docx_path.resolve())]
+
+
+def test_shadow_web_gmail_confirm_is_blocked_by_unresolved_arabic_review(tmp_path: Path, monkeypatch) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        docx_path = tmp_path / "translated_ar.docx"
+        docx_path.write_bytes(b"docx")
+        job = _completed_ar_job(docx_path)
+        monkeypatch.setattr(
+            client.app.state.shadow_context.translation_jobs,
+            "get_job",
+            lambda job_id: job if job_id == "tx-ar-001" else None,
+        )
+        called = {"value": False}
+
+        def _unexpected_confirm(**kwargs):
+            called["value"] = True
+            return {"status": "ok", "normalized_payload": {"active_session": None}, "diagnostics": {}}
+
+        monkeypatch.setattr(
+            client.app.state.shadow_context.gmail_sessions,
+            "confirm_current_batch_translation",
+            _unexpected_confirm,
+        )
+
+        response = client.post(
+            "/api/gmail/batch/confirm-current",
+            json={
+                "job_id": "tx-ar-001",
+                "completion_key": "job:tx-ar-001:translate",
+                "form_values": {},
+                "row_id": None,
+            },
+        )
+        payload = response.json()
+
+        assert response.status_code == 422
+        assert payload["normalized_payload"]["validation_error"]["arabic_review"]["required"] is True
+        assert called["value"] is False
+
+
 def test_shadow_web_settings_and_power_tools_routes(tmp_path: Path, monkeypatch) -> None:
     def _fake_power_bootstrap(*, data_paths, runtime_metadata_path=None):
         return {
@@ -1668,6 +1895,10 @@ def test_shadow_web_stage_four_action_routes_delegate_to_services(tmp_path: Path
         assert browser_failure_report.status_code == 200
         assert browser_failure_payload["normalized_payload"]["report_kind"] == "run_report"
         assert recorded["report"]["browser_failure_context"]["operation"] == "gmail_prepare_session"
+        assert recorded["report"]["browser_failure_context"]["build_identity"]["branch"] == "codex/beginner-first-primary-flow-ux"
+        assert recorded["report"]["browser_failure_context"]["build_identity"]["is_canonical"] is False
+        assert recorded["report"]["browser_failure_context"]["build_sha"] == "5c9842e"
+        assert recorded["report"]["browser_failure_context"]["asset_version"] != ""
 
         gmail_finalization_report = client.post(
             "/api/power-tools/diagnostics/run-report",
@@ -1706,12 +1937,20 @@ def test_generate_browser_run_report_supports_browser_failure_context_without_ru
             "workspace_id": "gmail-intake",
             "build_sha": "6e823b2",
             "asset_version": "asset-20260330",
+            "build_identity": {
+                "branch": "feat/lichtfeld-wsl-setup",
+                "head_sha": "6e823b2",
+                "is_canonical": False,
+                "reasons": ["branch mismatch"],
+            },
             "error": {
                 "code": "browser_pdf_worker_load_failed",
                 "message": "Browser PDF worker could not load.",
                 "diagnostics": {
                     "attempted_url": "http://127.0.0.1:8877/static/vendor/pdfjs/vendor/pdfjs/pdf.worker.mjs?v=6e823b2",
                     "worker_url": "http://127.0.0.1:8877/static/vendor/pdfjs/pdf.worker.mjs?v=6e823b2",
+                    "raw_browser_error": "TypeError: Failed to fetch dynamically imported module",
+                    "worker_boot_phase": "worker_bootstrap_blob_wrapper",
                 },
             },
             "attachments": [
@@ -1734,6 +1973,8 @@ def test_generate_browser_run_report_supports_browser_failure_context_without_ru
     assert '"operation": "gmail_prepare_session"' in report_text
     assert '"browser_pdf_worker_load_failed"' in report_text
     assert '"asset_version": "asset-20260330"' in report_text
+    assert '"raw_browser_error": "TypeError: Failed to fetch dynamically imported module"' in report_text
+    assert '"is_canonical": false' in report_text
 
 
 def test_generate_browser_run_report_supports_gmail_finalization_context_without_run_dir(tmp_path: Path) -> None:
@@ -1822,12 +2063,19 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
     with _build_app(tmp_path, monkeypatch) as client:
         shell = client.get("/api/bootstrap/shell", params={"mode": "live", "workspace": "gmail-intake"})
         assert shell.status_code == 200
-        asset_version = shell.json()["normalized_payload"]["shell"]["asset_version"]
+        shell_payload = shell.json()
+        asset_version = shell_payload["normalized_payload"]["shell"]["asset_version"]
+        assert shell_payload["normalized_payload"]["shell"]["build_identity"]["branch"] == "codex/beginner-first-primary-flow-ux"
         browser_pdf = client.get(f"/static-build/{asset_version}/browser_pdf.js")
         assert browser_pdf.status_code == 200
+        assert browser_pdf.headers["content-type"].startswith("application/javascript")
         assert "resolveBrowserPdfAssetUrls" in browser_pdf.text
+        module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
+        assert module_asset.status_code == 200
+        assert module_asset.headers["content-type"].startswith("application/javascript")
         worker = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.worker.mjs")
         assert worker.status_code == 200
+        assert worker.headers["content-type"].startswith("application/javascript")
         stale = client.get("/static-build/stale/browser_pdf.js")
         assert stale.status_code == 404
 

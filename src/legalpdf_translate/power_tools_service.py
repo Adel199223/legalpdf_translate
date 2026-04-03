@@ -235,6 +235,7 @@ def _build_browser_failure_report_markdown(
                 "operation": str(context.get("operation", "") or ""),
                 "workflow_kind": str(context.get("workflow_kind", "") or ""),
                 "focused_attachment_id": str(context.get("focused_attachment_id", "") or ""),
+                "build_identity": context.get("build_identity", {}),
                 "message": context.get("message", {}),
                 "preview_state": context.get("preview_state", {}),
             },
