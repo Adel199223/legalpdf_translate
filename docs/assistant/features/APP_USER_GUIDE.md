@@ -121,7 +121,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 2. Load `extensions/gmail_intake/` as an unpacked extension in Edge or Chrome.
 3. Normal use no longer requires manually copying the bridge token and port into the extension options page. Use that page only for diagnostics.
 4. Open Gmail in that same Windows browser and expand exactly one message.
-5. Click the extension toolbar button. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the current checkout and continue that same click. After a successful handoff, the extension opens or focuses the browser app in `live` mode. If the handoff fails or is rejected, Gmail stays on the current page and shows the error banner there instead of opening the app.
+5. Click the extension toolbar button. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the current checkout and continue that same click. After a successful handoff, the extension opens or focuses the browser app in `live` mode. If the handoff fails or is rejected, Gmail stays on the current page and shows the error banner there instead of opening the app. If the browser later warns that live Gmail is running from a noncanonical build, restart from canonical `main` for normal work unless you intentionally launched a feature worktree for validation.
 6. The browser app opens the fixed live workspace `gmail-intake` and asks you to choose the Gmail intake mode:
    - `Translation` keeps the existing multi-attachment translation batch behavior and target-language review.
    - `Interpretation notice` is for one selected court-notice attachment that should not be translated.
@@ -134,34 +134,36 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 13. Translation mode now keeps the Gmail and translation flow calmer than before: the reviewed files auto-start, then the save/export/review work appears in one bounded `Finish Translation` surface instead of stacking large Gmail and translation pages together.
 14. Interpretation-notice mode stages the original notice, then moves into one compact `Current Interpretation Step` view plus a bounded `Review Interpretation` drawer instead of a long mixed admin page.
 15. If the interpretation city or distance is invalid, the browser now blocks finalization and asks you to correct the city/distance before saving, exporting, or finalizing the Gmail reply.
-16. Arabic translation files pause in a Word review step before `Save to Job Log`. Save the DOCX there and the app continues automatically; if save detection misses, use `Continue now` after saving.
+16. Arabic translation files pause in a Word review step before `Save to Job Log`. The app opens the durable DOCX in Word for you; align or edit it manually, save it, and the app continues automatically. If save detection misses, use `Continue now` after saving.
 17. Translation mode requires each file to be saved before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
-18. If one translation file resolves to a different case or court, stop and split the work into separate batches.
-19. After the last translation file, or after the interpretation honorários export generates its PDF, the app can create one Gmail reply draft in the original thread.
-20. Translation Gmail drafts attach the translated DOCX files plus the generated honorários PDF.
-21. Interpretation Gmail drafts attach only the generated honorários PDF. They do not attach the original notice or any translated DOCX.
-22. When the original Gmail message explicitly names a reply email, the app now prefers that reply address for the Gmail draft instead of a weaker derived guess.
-23. The app creates a draft only. It does not send the email automatically.
-24. If preview or `Prepare selected` fails before translation starts, the Gmail diagnostics area now keeps your selection and offers `Generate Failure Report`.
-25. If `Finalize Gmail Batch Reply` is blocked, treat that as a Word PDF export readiness issue first. The app now checks the real export path before finalization and offers `Generate Finalization Report` whenever the last-step Gmail finalization state is blocked or completed, including a successful draft-ready finish.
+18. If a translation file fails, the current attachment moves into a recovery state. `Resume Translation` reruns the same config; if you want different OCR or image settings, start a fresh translation from the current form instead.
+19. If one translation file resolves to a different case or court, stop and split the work into separate batches.
+20. After the last translation file, or after the interpretation honorários export generates its PDF, the app can create one Gmail reply draft in the original thread.
+21. Translation Gmail drafts attach the translated DOCX files plus the generated honorários PDF.
+22. Interpretation Gmail drafts attach only the generated honorários PDF. They do not attach the original notice or any translated DOCX.
+23. When the original Gmail message explicitly names a reply email, the app now prefers that reply address for the Gmail draft instead of a weaker derived guess.
+24. The app creates a draft only. It does not send the email automatically.
+25. If preview or `Prepare selected` fails before translation starts, the Gmail diagnostics area now keeps your selection and offers `Generate Failure Report`.
+26. If `Finalize Gmail Batch Reply` is blocked, treat that as a Word PDF export readiness issue first. The app now checks the real export path before finalization and offers `Generate Finalization Report` whenever the last-step Gmail finalization state is blocked or completed, including a successful draft-ready finish.
 
 ## If Gmail Intake Stops Early
 1. If the page says the app is not listening, confirm the bridge is enabled in `Settings` and that you are using the browser app in `live` mode. A normal toolbar click can auto-start the app, so a manual launch should only be needed after an auto-start failure.
 2. If the dashboard or Extension Lab says `Gmail intake bridge unavailable`, another process may already be using the bridge port or the live browser server may not own it yet.
 3. If Gmail shows `accepted` but the browser app stays idle, check that the listener on `127.0.0.1:<port>` belongs to the LegalPDF browser app live server and not to `pytest` or another stray process.
 4. If Gmail says the handoff is already in progress, wait for the current launch or use the focus guidance it gives you. That message should help you find the existing browser-app handoff instead of opening another one.
-5. If the extension says the native host is unavailable, reload the extension or open the extension options page and refresh diagnostics. Normal use should not require manually copying bridge tokens.
-6. If the page says auto-launch is unavailable from this checkout, open the extension options page and refresh diagnostics.
-7. If the page says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
-7. If the page says the message is ambiguous, collapse extra Gmail messages and leave only one expanded.
-8. If the app shows no supported attachments, that email likely contains only inline or unsupported files.
-9. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
-10. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
-11. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
-12. If the honorários PDF cannot be generated, the export still keeps the local DOCX but Gmail draft creation stays blocked for that export.
-13. If the browser app opens but the page looks half-loaded or stale, the app should normally recover with one exact-tab reload. Manual hard refresh should not be the normal fix; check extension/native-host readiness instead.
-14. If Gmail/browser preparation fails before a run exists, use `Generate Failure Report` from the Gmail diagnostics area instead of searching for a run report that does not exist yet.
-15. If Gmail finalization is blocked or completes and you still want a full last-step artifact, use `Generate Finalization Report` from the finalization drawer. That report now stays available for blocked states and completed states, including successful draft creation.
+5. If the page says the browser app is running from a noncanonical build, choose `Restart from Canonical Main` for normal work. Use `Continue Anyway` only when you intentionally launched a feature worktree for validation.
+6. If the extension says the native host is unavailable, reload the extension or open the extension options page and refresh diagnostics. Normal use should not require manually copying bridge tokens.
+7. If the page says auto-launch is unavailable from this checkout, open the extension options page and refresh diagnostics.
+8. If the page says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
+9. If the page says the message is ambiguous, collapse extra Gmail messages and leave only one expanded.
+10. If the app shows no supported attachments, that email likely contains only inline or unsupported files.
+11. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
+12. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
+13. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
+14. If the honorários PDF cannot be generated, the export still keeps the local DOCX but Gmail draft creation stays blocked for that export.
+15. If the browser app opens but the page looks half-loaded or stale, the app should normally recover with one exact-tab reload. Manual hard refresh should not be the normal fix; check extension/native-host readiness instead.
+16. If Gmail/browser preparation fails before a run exists, use `Generate Failure Report` from the Gmail diagnostics area instead of searching for a run report that does not exist yet. That report now includes the raw browser PDF worker/module failure details.
+17. If Gmail finalization is blocked or completes and you still want a full last-step artifact, use `Generate Finalization Report` from the finalization drawer. That report now stays available for blocked states and completed states, including successful draft creation.
 
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.
