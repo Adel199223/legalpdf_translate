@@ -12,6 +12,7 @@
         const bootstrap = {
           buildBranch: {{ build_branch | tojson }},
           buildSha: {{ build_sha | tojson }},
+          buildIdentity: {{ build_identity | tojson }},
           assetVersion: {{ asset_version | tojson }},
           staticBasePath: {{ static_base_url | tojson }},
           shadowHost: {{ shadow_host | tojson }},
@@ -1250,6 +1251,20 @@
                 <div id="gmail-review-summary-grid" class="summary-grid"></div>
               </div>
             </details>
+            <div id="gmail-noncanonical-runtime-guard" class="result-card hidden" aria-live="polite">
+              <div class="result-header">
+                <div>
+                  <strong id="gmail-noncanonical-runtime-title">Live Gmail is running from a noncanonical build</strong>
+                  <p id="gmail-noncanonical-runtime-message">Review actions are paused until you restart from the canonical runtime or continue anyway.</p>
+                </div>
+                <span class="status-chip warn">Review Paused</span>
+              </div>
+              <ul id="gmail-noncanonical-runtime-details"></ul>
+              <div class="form-actions drawer-action-row gmail-runtime-guard-actions">
+                <button type="button" class="ghost-button" id="gmail-restart-canonical-runtime">Restart from Canonical Main</button>
+                <button type="button" class="primary-button" id="gmail-continue-noncanonical-runtime">Continue Anyway</button>
+              </div>
+            </div>
             <form id="gmail-prepare-form" class="form-grid compact-grid">
               <div class="field">
                 <label for="gmail-workflow-kind">Workflow</label>
@@ -1371,6 +1386,26 @@
             </div>
             <p class="panel-copy" id="translation-completion-status">Complete a translation run or load a saved translation row to review the case fields, artifacts, and finish-the-job actions here.</p>
             <div id="translation-completion-result" class="result-card empty-state">Complete a translation run or load a saved row to open the bounded translation finish surface.</div>
+            <div id="translation-arabic-review-card" class="result-card hidden">
+              <div class="result-header">
+                <div>
+                  <strong id="translation-arabic-review-title">Arabic DOCX Review</strong>
+                  <p id="translation-arabic-review-copy">Open the durable translated DOCX in Word, align or edit it manually, then save it before continuing.</p>
+                </div>
+                <span class="status-chip info" id="translation-arabic-review-chip">Required</span>
+              </div>
+              <div class="result-grid">
+                <div>
+                  <h3>Durable DOCX</h3>
+                  <p class="word-break" id="translation-arabic-review-docx-path">Durable DOCX unavailable.</p>
+                </div>
+              </div>
+              <div class="panel-actions translation-completion-actions translation-arabic-review-actions">
+                <button type="button" id="translation-arabic-review-open">Open in Word</button>
+                <button type="button" id="translation-arabic-review-continue-now">Continue now</button>
+                <button type="button" id="translation-arabic-review-continue-without-changes">Continue without changes</button>
+              </div>
+            </div>
             <div id="translation-gmail-step-card" class="result-card hidden">
               <div class="result-header">
                 <div>

@@ -524,6 +524,7 @@ def _load_run_failure_context(summary_path: Path | None) -> dict[str, object]:
             "validator_defect_reason": "",
             "ar_violation_kind": "",
             "ar_violation_samples": [],
+            "ar_token_details": {},
             "request_type": "",
             "request_timeout_budget_seconds": 0.0,
             "request_elapsed_before_failure_seconds": 0.0,
@@ -551,6 +552,11 @@ def _load_run_failure_context(summary_path: Path | None) -> dict[str, object]:
         ]
         if isinstance(failure.get("ar_violation_samples"), list)
         else [],
+        "ar_token_details": (
+            dict(failure.get("ar_token_details", {}))
+            if isinstance(failure.get("ar_token_details"), Mapping)
+            else {}
+        ),
         "request_type": str(failure.get("request_type", "") or ""),
         "request_timeout_budget_seconds": _coerce_float_or_none(
             failure.get("request_timeout_budget_seconds")
@@ -879,6 +885,7 @@ def _translation_result_payload(
     settings_path: Path,
 ) -> dict[str, Any]:
     summary_path = summary.run_summary_path or (summary.run_dir / "run_summary.json")
+    summary_payload = _load_json_object(summary_path)
     run_state = load_run_state(summary.run_dir / "run_state.json")
     metrics = _load_run_summary_metrics(summary_path)
     review_queue = _load_review_queue_entries(summary_path)
@@ -900,6 +907,16 @@ def _translation_result_payload(
             "estimated_api_cost": _coerce_float_or_none(metrics.get("estimated_api_cost")),
             "quality_risk_score": _coerce_float_or_none(metrics.get("quality_risk_score")),
         },
+        "advisor_recommendation_applied": (
+            bool(summary_payload.get("advisor_recommendation_applied"))
+            if isinstance(summary_payload.get("advisor_recommendation_applied"), bool)
+            else None
+        ),
+        "advisor_recommendation": (
+            dict(summary_payload.get("advisor_recommendation", {}))
+            if isinstance(summary_payload.get("advisor_recommendation"), Mapping)
+            else {}
+        ),
         "failure_context": _load_run_failure_context(summary_path),
         "save_seed": None,
     }

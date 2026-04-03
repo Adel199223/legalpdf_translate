@@ -9,6 +9,7 @@ from legalpdf_translate.types import TargetLang
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _NS = {"w": _W_NS}
 _W_VAL = f"{{{_W_NS}}}val"
+_DIR_MARKS = str.maketrans("", "", "\u200e\u200f\u2066\u2067\u2068\u2069")
 
 
 def _write_page(path: Path, content: str) -> None:
@@ -28,6 +29,11 @@ def _first_paragraph_root(document_xml: str) -> ET.Element:
     return paragraph
 
 
+def _paragraph_roots(document_xml: str) -> list[ET.Element]:
+    root = ET.fromstring(document_xml)
+    return root.findall(".//w:body/w:p", _NS)
+
+
 def _paragraph_runs(paragraph: ET.Element) -> list[dict[str, str | None]]:
     runs: list[dict[str, str | None]] = []
     for run in paragraph.findall("w:r", _NS):
@@ -40,6 +46,10 @@ def _paragraph_runs(paragraph: ET.Element) -> list[dict[str, str | None]]:
                 rtl_val = rtl.attrib.get(_W_VAL, "1")
         runs.append({"text": text, "rtl": rtl_val})
     return runs
+
+
+def _clean_run_text(text: str | None) -> str:
+    return (text or "").translate(_DIR_MARKS)
 
 
 def test_arabic_docx_sets_rtl_paragraph_and_stable_mixed_runs(tmp_path: Path) -> None:
@@ -109,3 +119,67 @@ def test_arabic_docx_month_date_mixed_direction_order_is_stable(tmp_path: Path) 
     combined = "".join((entry["text"] or "") for entry in _paragraph_runs(paragraph)).replace("\u200e", "")
     assert "فبراير" in combined
     assert re.search(r"10\s*فبراير\s*2026", combined) is not None
+
+
+def test_arabic_docx_keeps_observed_mixed_script_punctuation_outside_ltr_token_runs(tmp_path: Path) -> None:
+    pages_dir = tmp_path / "pages"
+    _write_page(
+        pages_dir / "page_0001.txt",
+        "\n".join(
+            [
+                "\u2066[[305/23.2GCBJA]]\u2069 | مسطرة عادية (محكمة منفردة) | \u2066[[36312574]]\u2069",
+                "I- وجهت النيابة العامة الاتهام، من أجل المحاكمة في مسطرة عادية،",
+                (
+                    "\u2066[[Soulimane Aouam]]\u2069، المولود بتاريخ \u2066[[18/01/2000]]\u2069، "
+                    "المولود في بلجيكا وذو جنسية مغربية، ابن \u2066[[Louiza Elcokile]]\u2069 "
+                    "و\u2066[[Mohmad Aouam]]\u2069، المقيم في "
+                    "\u2066[[Rua 1.º de Dezembro, 2.º, 7800 – 190 Beja]]\u2069،"
+                ),
+                (
+                    "جريمة تهديد مشددة، المنصوص عليها والمعاقب عليها بموجب المادتين "
+                    "\u2066[[153.º]]\u2069 أو \u2066[[155.º]]\u2069 رقم، الفقرة "
+                    "\u2066[[1]]\u2069، و\u2066[[a)]]\u2069، من قانون العقوبات."
+                ),
+            ]
+        ),
+    )
+    out = tmp_path / "observed_shapes.docx"
+
+    assemble_docx(pages_dir, out, lang=TargetLang.AR, page_breaks=False)
+
+    paragraphs = _paragraph_roots(_read_document_xml(out))
+    assert len(paragraphs) >= 4
+
+    for paragraph in paragraphs[:4]:
+        p_pr = paragraph.find("w:pPr", _NS)
+        assert p_pr is not None
+        assert p_pr.find("w:bidi", _NS) is not None
+
+    header_runs = _paragraph_runs(paragraphs[0])
+    header_ltr_runs = [_clean_run_text(entry["text"]) for entry in header_runs if entry["rtl"] != "1"]
+    assert "305/23.2GCBJA" in header_ltr_runs
+    assert "36312574" in header_ltr_runs
+    assert all("|" not in text for text in header_ltr_runs)
+    assert any("|" in _clean_run_text(entry["text"]) for entry in header_runs if entry["rtl"] == "1")
+
+    opener_runs = _paragraph_runs(paragraphs[1])
+    opener_ltr_runs = [_clean_run_text(entry["text"]).strip() for entry in opener_runs if entry["rtl"] != "1"]
+    assert "I-" in opener_ltr_runs
+    assert all("،" not in text for text in opener_ltr_runs)
+
+    mixed_runs = _paragraph_runs(paragraphs[2])
+    mixed_ltr_runs = [_clean_run_text(entry["text"]).strip() for entry in mixed_runs if entry["rtl"] != "1"]
+    assert "Soulimane Aouam" in mixed_ltr_runs
+    assert "18/01/2000" in mixed_ltr_runs
+    assert "Louiza Elcokile" in mixed_ltr_runs
+    assert "Mohmad Aouam" in mixed_ltr_runs
+    assert "Rua 1.º de Dezembro, 2.º, 7800 – 190 Beja" in mixed_ltr_runs
+    assert all("،" not in text for text in mixed_ltr_runs)
+
+    statute_runs = _paragraph_runs(paragraphs[3])
+    statute_ltr_runs = [_clean_run_text(entry["text"]).strip() for entry in statute_runs if entry["rtl"] != "1"]
+    assert "153.º" in statute_ltr_runs
+    assert "155.º" in statute_ltr_runs
+    assert "1" in statute_ltr_runs
+    assert "a)" in statute_ltr_runs
+    assert all("،" not in text for text in statute_ltr_runs)

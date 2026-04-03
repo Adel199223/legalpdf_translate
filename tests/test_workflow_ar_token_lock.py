@@ -196,6 +196,13 @@ def test_ar_expected_token_mismatch_fails_after_retry(tmp_path: Path, monkeypatc
 
     run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
     assert run_state["pages"]["1"]["retry_prompt_type"] == "ar_token_correction"
+    run_summary = json.loads((summary.run_dir / "run_summary.json").read_text(encoding="utf-8"))
+    failure_context = run_summary["failure_context"]
+    assert failure_context["validator_defect_reason"] == "Expected locked token mismatch."
+    assert failure_context["ar_violation_kind"] == "expected_token_mismatch"
+    token_details = failure_context["ar_token_details"]
+    assert token_details["missing_token_samples"]
+    assert token_details["unexpected_token_samples"]
 
 
 def test_ar_expected_token_mismatch_can_recover_on_retry(tmp_path: Path, monkeypatch) -> None:
@@ -233,10 +240,34 @@ def test_ar_expected_token_mismatch_can_recover_on_retry(tmp_path: Path, monkeyp
     assert "<<<BEGIN LOCKED TOKENS>>>" in retry_prompt
     assert "[[Adel Belghali]]" in retry_prompt
     assert "[[Rua Luís de Camões no 6, 7960-011 Marmelar, Pedrógão, Vidigueira]]" in retry_prompt
+    assert "<<<BEGIN TOKEN MISMATCH SUMMARY>>>" in retry_prompt
+    assert "Expected locked token mismatch." in retry_prompt
+    assert "<<<BEGIN SOURCE PAGE>>>" in retry_prompt
+    assert "Nome: [[Adel Belghali]]" in retry_prompt
     assert "All non-token text must be Arabic." in retry_prompt
+    assert client.calls[1]["effort"] == ReasoningEffort.HIGH.value
 
     run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
     assert run_state["pages"]["1"]["retry_prompt_type"] == "ar_token_correction"
+
+
+def test_ar_token_retry_effort_preserves_xhigh_floor(tmp_path: Path) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    config = _config(pdf, outdir)
+    config.effort = ReasoningEffort.XHIGH
+
+    workflow = TranslationWorkflow(client=_SequenceClient([]))
+    resolved = workflow._resolve_retry_effort(  # noqa: SLF001
+        config=config,
+        retry_reason="ar_token_violation",
+        attempt1_effort=ReasoningEffort.XHIGH,
+    )
+
+    assert resolved == ReasoningEffort.XHIGH
 
 
 def test_ar_expected_token_near_match_can_recover_after_retry(tmp_path: Path, monkeypatch) -> None:

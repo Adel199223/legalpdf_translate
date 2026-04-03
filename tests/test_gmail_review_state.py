@@ -103,6 +103,24 @@ results.stageTranslationRunning = reviewModule.deriveGmailStage({{
   activeSession: {{ kind: "translation", completed: false, current_item_number: 1, total_items: 2 }},
   translationUi: {{ currentJobStatus: "running", hasCompletionSurface: false, completionDrawerOpen: false }},
 }});
+results.stageTranslationRecovery = reviewModule.deriveGmailStage({{
+  loadResult: {{ ok: true, message: {{ message_id: "msg-1" }} }},
+  activeSession: {{
+    kind: "translation",
+    completed: false,
+    current_item_number: 1,
+    total_items: 2,
+    current_attachment: {{ attachment: {{ filename: "sentença 305.pdf" }} }},
+  }},
+  translationUi: {{
+    currentJobStatus: "failed",
+    currentJobKind: "translate",
+    currentJobHasSaveSeed: false,
+    currentJobRecoveryRequired: true,
+    hasCompletionSurface: false,
+    completionDrawerOpen: false,
+  }},
+}});
 results.stageTranslationSave = reviewModule.deriveGmailStage({{
   loadResult: {{ ok: true, message: {{ message_id: "msg-1" }} }},
   activeSession: {{ kind: "translation", completed: false, current_item_number: 1, total_items: 2 }},
@@ -129,6 +147,15 @@ results.ctaHidden = reviewModule.deriveGmailHomeCta({{
 results.ctaTranslationSave = reviewModule.deriveGmailHomeCta({{
   stage: "translation_save",
   activeSession: {{ kind: "translation", current_item_number: 1, total_items: 2 }},
+}});
+results.ctaTranslationRecovery = reviewModule.deriveGmailHomeCta({{
+  stage: "translation_recovery",
+  activeSession: {{
+    kind: "translation",
+    current_item_number: 1,
+    total_items: 2,
+    current_attachment: {{ attachment: {{ filename: "sentença 305.pdf" }} }},
+  }},
 }});
 results.ctaTranslationFinalize = reviewModule.deriveGmailHomeCta({{
   stage: "translation_finalize",
@@ -203,11 +230,16 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     assert results["stageIdle"] == "idle"
     assert results["stageReview"] == "review"
     assert results["stageTranslationRunning"] == "translation_running"
+    assert results["stageTranslationRecovery"] == "translation_recovery"
     assert results["stageTranslationSave"] == "translation_save"
     assert results["stageTranslationFinalize"] == "translation_finalize"
     assert results["stageInterpretationReview"] == "interpretation_review"
     assert results["stageInterpretationFinalize"] == "interpretation_finalize"
     assert results["ctaHidden"]["visible"] is False
+    assert results["ctaTranslationRecovery"]["visible"] is True
+    assert results["ctaTranslationRecovery"]["action"] == "resume-translation-recovery"
+    assert results["ctaTranslationRecovery"]["label"] == "Resume Recovery"
+    assert "needs recovery" in results["ctaTranslationRecovery"]["title"]
     assert results["ctaTranslationSave"]["visible"] is True
     assert results["ctaTranslationSave"]["action"] == "resume-translation-save"
     assert results["ctaTranslationSave"]["label"] == "Resume Current Step"

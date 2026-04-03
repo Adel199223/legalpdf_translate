@@ -1007,3 +1007,173 @@ console.log(JSON.stringify(resolved));
     assert payload["moduleUrl"] == "http://127.0.0.1:8877/static-build/asset-20260330/vendor/pdfjs/pdf.mjs?v=asset-20260330"
     assert payload["workerUrl"] == "http://127.0.0.1:8877/static-build/asset-20260330/vendor/pdfjs/pdf.worker.mjs?v=asset-20260330"
     assert "/vendor/pdfjs/vendor/pdfjs/" not in payload["workerUrl"]
+
+
+def test_browser_pdf_worker_bootstrap_preserves_raw_worker_failure_and_uses_blob_wrapper_fallback() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for browser PDF bootstrap coverage.")
+
+    module_path = Path(__file__).resolve().parents[1] / "src" / "legalpdf_translate" / "shadow_web" / "static" / "browser_pdf.js"
+    script = f"""
+import {{ pathToFileURL }} from "node:url";
+
+globalThis.window = {{
+  location: {{ origin: "http://127.0.0.1:8877" }},
+  LEGALPDF_BROWSER_BOOTSTRAP: {{
+    buildSha: "6e823b2",
+    assetVersion: "asset-20260330",
+    staticBasePath: "http://127.0.0.1:8877/static-build/asset-20260330/",
+  }},
+}};
+
+const moduleUrl = pathToFileURL({json.dumps(str(module_path))}).href;
+const browserPdf = await import(moduleUrl);
+const assetUrls = browserPdf.resolveBrowserPdfAssetUrls();
+const preflight = await browserPdf.preflightBrowserPdfAssetUrls({{
+  assetUrls,
+  fetchImpl: async (url) => ({{
+    ok: true,
+    status: 200,
+    headers: {{
+      get(name) {{
+        return name === "content-type" ? "application/javascript" : "";
+      }},
+    }},
+    body: {{ cancel() {{}} }},
+  }}),
+}});
+const createdUrls = [];
+const revokedUrls = [];
+const pdfjsModule = {{
+  GlobalWorkerOptions: {{
+    workerSrc: "",
+    workerPort: null,
+  }},
+}};
+const result = await browserPdf.bootstrapBrowserPdfWorker({{
+  pdfjsModule,
+  assetUrls,
+  preflight,
+  workerFactory: (url, options) => {{
+    createdUrls.push({{ url, type: options.type }});
+    if (url === assetUrls.workerUrl) {{
+      throw new TypeError("Failed to fetch dynamically imported module");
+    }}
+    return {{
+      url,
+      addEventListener() {{}},
+      removeEventListener() {{}},
+      terminate() {{}},
+    }};
+  }},
+  blobFactory: (parts, options) => ({{ parts, options }}),
+  createObjectUrl: (blob) => {{
+    const wrapper = `blob:pdf-worker-wrapper:${{blob.parts.join("")}}`;
+    createdUrls.push({{ url: wrapper, type: "blob-wrapper" }});
+    return wrapper;
+  }},
+  revokeObjectUrl: (url) => {{
+    revokedUrls.push(url);
+  }},
+  setTimeoutImpl: (callback) => {{
+    callback();
+    return 1;
+  }},
+  clearTimeoutImpl: () => undefined,
+}});
+
+console.log(JSON.stringify({{
+  preflight,
+  result,
+  workerSrc: pdfjsModule.GlobalWorkerOptions.workerSrc,
+  workerPortUrl: pdfjsModule.GlobalWorkerOptions.workerPort?.url || "",
+  createdUrls,
+  revokedUrls,
+}}));
+"""
+    completed = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+    assert payload["preflight"]["module"]["contentType"] == "application/javascript"
+    assert payload["preflight"]["worker"]["contentType"] == "application/javascript"
+    assert payload["result"]["workerBootPhase"] == "worker_bootstrap_blob_wrapper"
+    assert "Failed to fetch dynamically imported module" in payload["result"]["rawBrowserError"]
+    assert payload["workerSrc"] == "http://127.0.0.1:8877/static-build/asset-20260330/vendor/pdfjs/pdf.worker.mjs?v=asset-20260330"
+    assert payload["workerPortUrl"].startswith("blob:pdf-worker-wrapper:")
+    assert payload["revokedUrls"] == [payload["workerPortUrl"]]
+
+
+def test_browser_pdf_error_normalization_and_gmail_runtime_guard_keep_worker_and_provenance_details() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for browser PDF diagnostics coverage.")
+
+    browser_pdf_path = Path(__file__).resolve().parents[1] / "src" / "legalpdf_translate" / "shadow_web" / "static" / "browser_pdf.js"
+    guard_path = Path(__file__).resolve().parents[1] / "src" / "legalpdf_translate" / "shadow_web" / "static" / "gmail_runtime_guard.js"
+    script = f"""
+import {{ pathToFileURL }} from "node:url";
+
+globalThis.window = {{
+  location: {{ origin: "http://127.0.0.1:8877" }},
+  LEGALPDF_BROWSER_BOOTSTRAP: {{
+    buildSha: "6e823b2",
+    assetVersion: "asset-20260330",
+    staticBasePath: "http://127.0.0.1:8877/static-build/asset-20260330/",
+  }},
+}};
+
+const browserPdf = await import(pathToFileURL({json.dumps(str(browser_pdf_path))}).href);
+const runtimeGuard = await import(pathToFileURL({json.dumps(str(guard_path))}).href);
+
+const normalized = browserPdf.normalizeBrowserPdfError(
+  new Error('Setting up fake worker failed: "Failed to fetch dynamically imported module".'),
+  {{
+    phase: "worker_boot",
+    workerBootPhase: "worker_bootstrap_blob_wrapper",
+    rawBrowserError: "TypeError: Failed to fetch dynamically imported module",
+    workerFetchStatus: 200,
+    workerContentType: "application/javascript",
+    moduleFetchStatus: 200,
+    moduleContentType: "application/javascript",
+    attemptedUrl: "http://127.0.0.1:8877/static-build/asset-20260330/vendor/pdfjs/pdf.worker.mjs?v=asset-20260330",
+  }},
+);
+const diagnostics = browserPdf.browserPdfDiagnosticsFromError(normalized);
+const guard = runtimeGuard.deriveGmailLiveRuntimeGuard({{
+  runtime: {{
+    live_data: true,
+    build_branch: "feat/lichtfeld-wsl-setup",
+    build_sha: "6e823b2",
+  }},
+  buildIdentity: {{
+    branch: "feat/lichtfeld-wsl-setup",
+    head_sha: "6e823b2",
+    is_canonical: false,
+    canonical_branch: "main",
+    worktree_path: "C:/Users/FA507/.codex/legalpdf_translate",
+    canonical_worktree_path: "C:/Users/FA507/.codex/legalpdf_translate",
+    reasons: ["branch mismatch"],
+  }},
+}});
+
+console.log(JSON.stringify({{ diagnostics, guard }}));
+"""
+    completed = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+    assert payload["diagnostics"]["error"] == "browser_pdf_worker_load_failed"
+    assert payload["diagnostics"]["worker_boot_phase"] == "worker_bootstrap_blob_wrapper"
+    assert payload["diagnostics"]["raw_browser_error"] == "TypeError: Failed to fetch dynamically imported module"
+    assert payload["guard"]["active"] is True
+    assert payload["guard"]["blocked"] is True
+    assert payload["guard"]["canonicalBranch"] == "main"
+    assert "branch mismatch" in payload["guard"]["details"][-1]

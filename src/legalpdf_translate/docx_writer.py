@@ -34,6 +34,10 @@ _BIDI_CONTROL_CODEPOINTS = str.maketrans(
 )
 _DOCX_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 _VISIBLE_WORD_RE = re.compile(r"\S+")
+_PLACEHOLDER_TOKEN_SPAN_RE = re.compile(
+    r"(?P<open>[\u2066\u2067\u2068]?)(?:\[\[(?P<token>.*?)\]\])(?P<close>\u2069?)",
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,19 @@ def _nearest_strong_kind(segments: list[tuple[str, str]], index: int) -> str | N
     return None
 
 
+def _merge_directional_runs(segments: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    merged_segments: list[tuple[str, str]] = []
+    for kind, chunk in segments:
+        if not chunk:
+            continue
+        if merged_segments and merged_segments[-1][0] == kind:
+            prev_kind, prev_chunk = merged_segments[-1]
+            merged_segments[-1] = (prev_kind, f"{prev_chunk}{chunk}")
+            continue
+        merged_segments.append((kind, chunk))
+    return merged_segments
+
+
 def _segment_directional_runs(text: str) -> tuple[list[tuple[str, str]], bool]:
     if not text:
         return [], False
@@ -120,14 +137,61 @@ def _segment_directional_runs(text: str) -> tuple[list[tuple[str, str]], bool]:
         neighbor_kind = _nearest_strong_kind(raw_segments, index) or "rtl"
         relabeled_segments.append((neighbor_kind, chunk))
 
-    merged_segments: list[tuple[str, str]] = []
-    for kind, chunk in relabeled_segments:
-        if merged_segments and merged_segments[-1][0] == kind:
-            prev_kind, prev_chunk = merged_segments[-1]
-            merged_segments[-1] = (prev_kind, f"{prev_chunk}{chunk}")
-            continue
-        merged_segments.append((kind, chunk))
+    merged_segments = _merge_directional_runs(relabeled_segments)
+    has_rtl = any(kind == "rtl" for kind, _ in merged_segments)
+    has_ltr = any(kind == "ltr" for kind, _ in merged_segments)
+    return merged_segments, has_rtl and has_ltr
 
+
+def _infer_atomic_run_kind(text: str) -> str:
+    has_rtl = False
+    has_ltr = False
+    for char in text:
+        kind = _classify_directional_char(char)
+        if kind == "rtl":
+            has_rtl = True
+        elif kind == "ltr":
+            has_ltr = True
+    if has_rtl and not has_ltr:
+        return "rtl"
+    return "ltr"
+
+
+def _segment_rtl_placeholder_aware_runs(
+    text: str,
+    *,
+    strip_bidi_controls: bool,
+) -> tuple[list[tuple[str, str]], bool]:
+    if not text:
+        return [], False
+
+    pieces: list[tuple[str, str]] = []
+    cursor = 0
+    for match in _PLACEHOLDER_TOKEN_SPAN_RE.finditer(text):
+        if match.start() > cursor:
+            plain = text[cursor : match.start()]
+            if strip_bidi_controls:
+                plain = sanitize_bidi_controls(plain)
+            plain_runs, _ = _segment_directional_runs(plain)
+            pieces.extend(plain_runs)
+
+        token_core = match.group("token") or ""
+        if strip_bidi_controls:
+            token_text = sanitize_bidi_controls(token_core)
+        else:
+            token_text = f"{match.group('open') or ''}{token_core}{match.group('close') or ''}"
+        if token_text:
+            pieces.append((_infer_atomic_run_kind(token_core), token_text))
+        cursor = match.end()
+
+    if cursor < len(text):
+        tail = text[cursor:]
+        if strip_bidi_controls:
+            tail = sanitize_bidi_controls(tail)
+        tail_runs, _ = _segment_directional_runs(tail)
+        pieces.extend(tail_runs)
+
+    merged_segments = _merge_directional_runs(pieces)
     has_rtl = any(kind == "rtl" for kind, _ in merged_segments)
     has_ltr = any(kind == "ltr" for kind, _ in merged_segments)
     return merged_segments, has_rtl and has_ltr
@@ -422,16 +486,16 @@ def assemble_docx(
         lines = page_text.split("\n")
         for line in lines:
             if rtl_lang:
-                line = unwrap_internal_placeholders(line)
-            if strip_bidi_controls:
-                line = sanitize_bidi_controls(line)
-            if line.strip() == "":
-                continue
-            paragraph = document.add_paragraph("")
-            _paragraph_count += 1
-            if rtl_lang:
+                directional_runs, has_mixed_direction = _segment_rtl_placeholder_aware_runs(
+                    line,
+                    strip_bidi_controls=strip_bidi_controls,
+                )
+                visible_line = "".join(run_text for _, run_text in directional_runs)
+                if sanitize_bidi_controls(visible_line).strip() == "":
+                    continue
+                paragraph = document.add_paragraph("")
+                _paragraph_count += 1
                 _add_rtl_flags(paragraph)
-                directional_runs, has_mixed_direction = _segment_directional_runs(line)
                 if not directional_runs:
                     continue
                 for kind, run_text in directional_runs:
@@ -448,6 +512,12 @@ def assemble_docx(
                     _run_count += 1
                     _set_rtl_run_props(run, bidi_lang=rtl_bidi_lang)
             else:
+                if strip_bidi_controls:
+                    line = sanitize_bidi_controls(line)
+                if line.strip() == "":
+                    continue
+                paragraph = document.add_paragraph("")
+                _paragraph_count += 1
                 paragraph.add_run(line)
                 _run_count += 1
         if page_breaks and page_idx < len(page_files) - 1:
