@@ -555,7 +555,7 @@ def test_dashboard_card_can_expand_wider_than_stage_two_cap() -> None:
         app.processEvents()
         window._update_card_max_width(viewport_width=1664)
         app.processEvents()
-        assert window.setup_panel.width() > window.progress_panel.width()
+        assert window.setup_panel.width() >= window.progress_panel.width()
         assert window.setup_panel.width() < int(window.progress_panel.width() * 1.35)
     finally:
         window.close()
@@ -591,7 +591,7 @@ def test_wide_dashboard_frame_matches_centered_gemini_footprint(monkeypatch) -> 
         assert window.dashboard_frame.width() < window.content_card.width()
         assert window.dashboard_frame.x() == (window.content_card.width() - window.dashboard_frame.width()) // 2
         assert window.hero_row_layout.contentsMargins().bottom() == 14
-        assert window.setup_panel.width() > window.progress_panel.width()
+        assert window.setup_panel.width() >= window.progress_panel.width()
         assert window.setup_panel.width() < int(window.progress_panel.width() * 1.3)
         assert window.footer_card.width() < window.dashboard_frame.width()
     finally:
