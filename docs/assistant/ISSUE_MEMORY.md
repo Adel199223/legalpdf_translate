@@ -89,9 +89,9 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 ### workflow-wrong-build-under-test
 - Title: Wrong app/build under test because of mixed branches/worktrees and noncanonical launch
 - First seen timestamp: `2026-03-06T00:00:00Z`
-- Last seen timestamp: `2026-03-30T18:21:00Z`
-- Repeat count: `9`
-- Status: `mitigated`
+- Last seen timestamp: `2026-04-03T15:47:52Z`
+- Repeat count: `10`
+- Status: `regressed`
 - Trigger source: `both`
 - Symptoms:
   - the wrong `LegalPDF Translate` window was opened for testing
@@ -100,12 +100,14 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - the user also needed extra support guidance about which sibling folder or workspace file should be the normal daily entry point
   - the browser app could open on the right localhost URL while still running a stale module graph or stale extension/service-worker state
   - native-host repair could point the launcher to a broken local runtime even though a healthy runtime was already running the visible browser app
+  - the configured canonical worktree path itself could still be left on a feature branch, so a later restart drifted the launcher back to the wrong branch again
 - Likely root cause:
   - feature work progressed on side branches after acceptance
   - the approved base was not promoted immediately
   - multiple runnable worktrees existed without strong enough canonical-build enforcement
   - native-host runtime repair originally guessed from worktree state instead of validating the active runtime actually launching the browser app
   - browser cache busting originally touched only the shell entrypoint, so imported modules could stay stale and recreate already-fixed Gmail/browser failures
+  - the configured canonical worktree path was not always restored to clean `main` after isolated feature validation, so later repair/auto-launch logic could drift back to the wrong checkout
 - Attempted fix history:
   - `2026-03-07T00:00:00Z` — added worktree baseline discipline docs; outcome: insufficient on its own
   - `2026-03-07T00:00:00Z` — added Qt build identity helper and noncanonical build markers; outcome: reduced ambiguity but did not solve accepted-feature promotion drift by itself
@@ -113,6 +115,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - `2026-03-19T06:51:00Z` — promoted the local browser app to the preferred daily-use surface, added explicit `live` versus isolated `shadow` mode routing, and documented the canonical live browser URL plus detached launcher; outcome: partial_only because it gives one stable human entrypoint, but branch/publish discipline still matters
   - `2026-03-29T00:00:00Z` — added shell readiness, runtime metadata truthfulness, and single-flight Gmail handoff stabilization; outcome: partial_only because stale runtime selection and stale browser assets could still recreate the same old failures
   - `2026-03-30T00:00:00Z` — changed native-host repair to validate the current runtime, split shell-safe startup from blocked document runtime imports, versioned the whole browser asset graph, and required client/server `asset_version` agreement before a handoff is treated as ready; outcome: stronger_mitigation
+  - `2026-04-03T15:47:52Z` — repointed the native-host launcher to an isolated fix worktree during live validation; outcome: partial_only because the configured canonical path still pointed at a feature branch and the drift could return after restart
 - Accepted fix:
   - `2026-03-30T00:00:00Z` — canonical build enforcement now includes validated native-host runtime selection, shell-safe browser startup, whole-graph browser asset fingerprinting, client-ready/asset-version proof on the opened localhost tab, and one bounded stale-tab reload instead of trusting shell URL/open-state alone
 - Regressed after accepted fix: `yes`
@@ -122,6 +125,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
   - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
   - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+  - `APP_KNOWLEDGE.md`
   - `docs/assistant/runtime/CANONICAL_BUILD.json`
   - `docs/assistant/APP_KNOWLEDGE.md`
   - `docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md`
@@ -137,6 +141,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - worktree/build identity governance
     - approved-base promotion rules
     - canonical launch/default test target guidance
+    - canonical-path cleanup after side-branch validation
     - plain-language local workspace entry guidance
     - validated runtime repair and whole-graph browser asset provenance
   - Evidence refs:
@@ -147,8 +152,10 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-29_cold_start_reliability_rebuild.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_browser_asset_provenance_gmail_prepare.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_first_open_gmail_hydration_recovery.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-03_browser_gmail_arabic_publish_closeout.md`
   - Branch: `feat/ai-docs-bootstrap`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_pdf_worker_fix`
   - Workspace: `C:\Users\FA507\.codex\legalpdf_translate-worktrees.code-workspace`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_integration`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_beginner_first_ux`
@@ -242,23 +249,26 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 ### product-arabic-docx-word-right-alignment
 - Title: Arabic DOCX right alignment in Word could not be solved durably with OOXML-only writer changes
 - First seen timestamp: `2026-03-08T00:00:00Z`
-- Last seen timestamp: `2026-03-08T20:45:00Z`
-- Repeat count: `4`
+- Last seen timestamp: `2026-04-03T15:47:52Z`
+- Repeat count: `5`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
   - Arabic DOCX output still opened left-aligned in Word even though the text itself remained RTL
   - some attempted fixes worsened mixed Arabic/Portuguese line ordering or misplaced Latin fragments
   - source-side XML/test changes could appear correct while the real Word-rendered document still required manual right alignment
+  - even after manual right alignment in Word, mixed-script lines could still show commas, bars, or numbering fragments on the wrong side when DOCX runs were assembled badly
 - Likely root cause:
   - mixed RTL/LTR Word layout is not reliably controlled by the current OOXML writer path alone, so writer-only fixes were not durable enough for shipped user-visible behavior
+  - placeholder/token run assembly could still attach punctuation and separator bars to the wrong LTR runs before the manual Word review step
 - Attempted fix history:
   - `2026-03-08T00:00:00Z` — switched RTL paragraph handling toward left-justified bidi semantics; outcome: insufficient because mixed Arabic/Portuguese ordering got worse
   - `2026-03-08T00:00:00Z` — kept `jc=right` while removing paragraph bidi/rtl; outcome: insufficient because mixed ordering improved but Word still did not visually align the page to the right
   - `2026-03-08T00:00:00Z` — tried a bidi-only paragraph shape with build/delivery verification; outcome: insufficient because it was not durable enough as a shipped fix in the real host/build path
+  - `2026-04-03T15:47:52Z` — hardened shared Arabic DOCX token/run segmentation for mixed-script punctuation, identifiers, and separator bars while keeping the browser review step manual-only; outcome: stronger_mitigation
 - Accepted fix:
-  - `2026-03-08T20:45:00Z` — added an Arabic-only Word review gate with `Align Right + Save`, automatic save detection, and manual fallback actions before Save to Job Log / Gmail continuation
-- Regressed after accepted fix: `no`
+  - `2026-04-03T15:47:52Z` — the shipped mitigation is now a real Arabic Word review step that opens the durable DOCX for manual save plus corrected shared DOCX run assembly so mixed Arabic/LTR punctuation survives that manual right-alignment path
+- Regressed after accepted fix: `yes`
 - Affected workflows/docs:
   - `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
   - `APP_KNOWLEDGE.md`
@@ -274,14 +284,20 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - Targets:
     - Arabic Word review gate behavior
     - Windows Word + PowerShell same-host requirement
+    - browser manual-only save behavior
+    - mixed Arabic/LTR DOCX run-ordering hardening
     - durable memory of failed OOXML-only fixes without presenting them as current behavior
 - Evidence refs:
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-08_arabic_docx_review_gate.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-03_arabic_docx_run_ordering_manual_review.md`
   - File: `src/legalpdf_translate/word_automation.py`
+  - File: `src/legalpdf_translate/docx_writer.py`
   - File: `src/legalpdf_translate/qt_gui/dialogs.py`
+  - File: `src/legalpdf_translate/browser_arabic_review.py`
+  - File: `tests/test_docx_writer_rtl.py`
   - File: `tests/test_word_automation.py`
   - File: `tests/test_qt_app_state.py`
-  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_pdf_worker_fix`
 
 ### workflow-gmail-post-save-finalization-regression
 - Title: Gmail batch post-save continuation changes regressed behavior when special-casing the last saved item

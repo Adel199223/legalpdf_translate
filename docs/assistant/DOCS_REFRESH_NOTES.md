@@ -1307,3 +1307,23 @@ Verification commands/results:
 - Validation for this pass:
   - `dart run tooling/validate_agent_docs.dart` -> `PASS`
   - `dart run tooling/validate_workspace_hygiene.dart` -> `PASS`
+
+# 2026-04-03
+- Ran a touched-scope Assistant Docs Sync for the browser Gmail + Arabic hardening publish branch.
+- Synced current-truth and user-facing guidance for:
+  - browser Gmail PDF preview/prepare failure reporting that now preserves raw `pdf.js` worker/module diagnostics before any `run_dir` exists
+  - live Gmail provenance warnings when the browser app is running from a noncanonical build, including the normal `Restart from Canonical Main` guidance
+  - browser Arabic review as a manual-only Word save step with `Open in Word`, save-detection auto-resume, and `Continue now` / `Continue without changes`
+  - Gmail `translation_recovery` behavior for failed current attachments, including the rule that failed or rebuild-only partial outputs are not confirmable
+  - shared Arabic DOCX run-ordering hardening so mixed Arabic/LTR punctuation and separators remain stable during manual Word review
+- Updated `ISSUE_MEMORY.md` / `ISSUE_MEMORY.json` because this sync intersected two repeated issue-memory entries:
+  - `workflow-wrong-build-under-test`
+  - `product-arabic-docx-word-right-alignment`
+- Archived the April 2-3 active ExecPlans for the Gmail PDF worker fix, Arabic browser review, Arabic recovery, Arabic DOCX run-ordering, and publish closeout wave into `docs/assistant/exec_plans/completed/`.
+- Validation for this pass:
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests/test_browser_arabic_review.py tests/test_translation_recovery_state.py tests/test_docx_writer_rtl.py tests/test_prompt_builder.py tests/test_workflow_ar_token_lock.py tests/test_gmail_review_state.py tests/test_gmail_intake.py tests/test_shadow_web_api.py tests/test_gmail_focus_host.py tests/test_windows_shortcut_scripts.py` -> `126 passed`
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe tooling/render_docx.py --input tmp/docs/ar_run_ordering/observed_shapes.docx --outdir tmp/docs/ar_run_ordering/rendered_publish_gate` -> `PASS`
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe tooling/validate_agent_docs.dart` -> `PASS`
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe tooling/validate_workspace_hygiene.dart` -> `PASS`
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe test/tooling/validate_agent_docs_test.dart` -> `PASS` (`72 cases`)
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe test/tooling/validate_workspace_hygiene_test.dart` -> `PASS` (`7 cases`)
