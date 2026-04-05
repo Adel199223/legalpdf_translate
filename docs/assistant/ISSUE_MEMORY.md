@@ -215,8 +215,8 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 ### workflow-fragmented-multi-surface-diagnostics
 - Title: Fragmented diagnostics across handoff, per-run execution, and finalization slowed root-cause analysis
 - First seen timestamp: `2026-03-08T00:00:00Z`
-- Last seen timestamp: `2026-03-30T18:21:00Z`
-- Repeat count: `4`
+- Last seen timestamp: `2026-04-05T15:26:00Z`
+- Repeat count: `5`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
@@ -225,14 +225,20 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - support packets were inconsistent across handoff, execution, and finalization failures
   - Gmail/browser preparation failures that happened before `run_dir` existed had no direct report artifact, so debugging stalled before the normal run-report path even began
   - blocked or recoverable Gmail finalization states needed a dedicated artifact instead of being inferred from raw JSON pasted out of the drawer
+  - browser `Generate Run Report` could feel broken because the detailed report was not exposed like a normal translation artifact
+  - Gmail-started reruns could silently drop `gmail_batch_context`, which removed Gmail provenance from `run_summary.json` and `run_report.md`
 - Likely root cause:
   - project docs did not yet encode one support-packet order or one durable app-owned session-artifact pattern for multi-surface workflows
   - browser-only pre-run failures and last-mile finalization failures were not treated as first-class report surfaces
+  - translation-owned detailed run reports were not yet surfaced as first-class browser artifacts
+  - stale manual-upload state could override Gmail launch provenance during reruns unless the browser submit path cleared those conflicts explicitly
 - Attempted fix history:
   - `2026-03-08T00:00:00Z` — feature-specific Gmail diagnostics were added; outcome: partial_only
   - `2026-03-30T00:00:00Z` — added direct browser failure reports for pre-run Gmail/browser failures and direct Gmail finalization reports for blocked/local-only/draft-failed reply states; outcome: stronger_mitigation
+  - `2026-04-05T13:08:00Z` — promoted `run_report.md` to a first-class browser translation artifact with generate/download behavior in the completion drawer; outcome: partial_only because Gmail provenance could still drop on rerun
+  - `2026-04-05T15:26:00Z` — preserved `gmail_batch_context` through Gmail-originated reruns/manual restart prep and clarified report `run tokens` versus billed-total wording; outcome: stronger_mitigation
 - Accepted fix:
-  - `2026-03-30T00:00:00Z` — project guidance now routes multi-surface debugging through browser/banner evidence first, direct browser/finalization report artifacts when no normal run report exists yet, per-run artifacts for execution issues, and one app-owned session artifact for batch/finalization state
+  - `2026-04-05T15:26:00Z` — project guidance now routes multi-surface debugging through browser/banner evidence first, direct browser/finalization report artifacts when no normal run report exists yet, first-class per-run `run_report.md` artifacts for execution issues, preserved Gmail provenance in Gmail-started run reports, and one app-owned session artifact for batch/finalization state
 - Regressed after accepted fix: `no`
 - Affected workflows/docs:
   - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
@@ -249,12 +255,54 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - support-packet order
     - multi-surface troubleshooting workflow routing
     - direct browser/finalization report surfaces when no normal run report exists yet
+    - run-owned detailed report discoverability from the browser completion drawer
+    - Gmail provenance preservation across reruns before finalization
 - Evidence refs:
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_intake`
   - Template: `docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md`
   - File: `C:\Users\FA507\Downloads\run_report.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_gmail_prepare_pdf_worker_reportability.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-05-gmail-run-report-provenance.md`
+
+### workflow-gmail-restored-finalization-shadowed-fresh-handoff
+- Title: Recovered completed Gmail batches could reopen as the main flow and block a fresh extension handoff
+- First seen timestamp: `2026-04-05T15:05:00Z`
+- Last seen timestamp: `2026-04-05T15:52:00Z`
+- Repeat count: `1`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - clicking the Gmail extension again could reopen the previous finalized batch instead of the new handoff
+  - the browser workspace looked stuck on old work until the user reset the workspace or cold-started the app
+  - recovered finalization history could crowd the main CTA instead of staying secondary
+- Likely root cause:
+  - Gmail bootstrap treated report-restored terminal translation batches as `active_session`
+  - the Gmail frontend treated recovered-only completed state as a stable `translation_finalize` workspace instead of waiting for a fresh handoff
+- Attempted fix history:
+  - `2026-04-05T15:52:00Z` — demoted report-restored terminal batches to additive `restored_completed_session`, kept bounded refresh alive for recovered-only state, and moved recovered finalization behind `Open Last Finalization Result`; outcome: stronger_mitigation
+- Accepted fix:
+  - `2026-04-05T15:52:00Z` — fresh Gmail handoffs now take priority over recovered finalized batches by default, while the previous finalized batch remains accessible only as secondary recovered history
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/SESSION_RESUME.md`
+- Bootstrap relevance: `required`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - fresh handoff precedence over recovered finalization
+    - secondary recovered-history access
+    - do not treat recovered-only Gmail state as the default stable workspace
+- Evidence refs:
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-05_gmail_fresh_handoff_priority.md`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_fresh_handoff`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
 
 ### product-arabic-docx-word-right-alignment
 - Title: Arabic DOCX right alignment in Word could not be solved durably with OOXML-only writer changes

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-04-05T12:53:22Z",
+  "last_updated": "2026-04-05T15:52:00Z",
   "issues": [
     {
       "id": "workflow-wrong-build-under-test",
@@ -263,8 +263,8 @@
       "id": "workflow-fragmented-multi-surface-diagnostics",
       "title": "Fragmented diagnostics across handoff, per-run execution, and finalization slowed root-cause analysis",
       "first_seen_timestamp": "2026-03-08T00:00:00Z",
-      "last_seen_timestamp": "2026-03-30T18:21:00Z",
-      "repeat_count": 4,
+      "last_seen_timestamp": "2026-04-05T15:26:00Z",
+      "repeat_count": 5,
       "status": "mitigated",
       "trigger_source": "both",
       "symptoms": [
@@ -272,9 +272,11 @@
         "Repeated debugging required back-and-forth between transient UI evidence and durable run artifacts.",
         "Support packets were inconsistent across handoff, execution, and finalization failures.",
         "Gmail/browser preparation failures that happened before run_dir existed had no direct report artifact, so debugging stalled before the normal run-report path even began.",
-        "Blocked or recoverable Gmail finalization states needed a dedicated artifact instead of being inferred from raw JSON pasted out of the drawer."
+        "Blocked or recoverable Gmail finalization states needed a dedicated artifact instead of being inferred from raw JSON pasted out of the drawer.",
+        "Browser Generate Run Report could feel broken because the detailed report was not exposed like a normal translation artifact.",
+        "Gmail-started reruns could silently drop gmail_batch_context, which removed Gmail provenance from run_summary.json and run_report.md."
       ],
-      "likely_root_cause": "Project docs did not yet encode one support-packet order or one durable app-owned session-artifact pattern for multi-surface workflows, and browser-only pre-run failures plus last-mile finalization failures were not treated as first-class report surfaces.",
+      "likely_root_cause": "Project docs did not yet encode one support-packet order or one durable app-owned session-artifact pattern for multi-surface workflows, and browser-only pre-run failures plus last-mile finalization failures were not treated as first-class report surfaces. Translation-owned detailed run reports were not yet surfaced as first-class browser artifacts, and stale manual-upload state could override Gmail launch provenance during reruns unless the browser submit path cleared those conflicts explicitly.",
       "attempted_fix_history": [
         {
           "timestamp": "2026-03-08T00:00:00Z",
@@ -285,12 +287,22 @@
           "timestamp": "2026-03-30T00:00:00Z",
           "summary": "Added direct browser failure reports for pre-run Gmail/browser failures and direct Gmail finalization reports for blocked/local-only/draft-failed reply states.",
           "outcome": "stronger_mitigation"
+        },
+        {
+          "timestamp": "2026-04-05T13:08:00Z",
+          "summary": "Promoted run_report.md to a first-class browser translation artifact with generate/download behavior in the completion drawer.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-04-05T15:26:00Z",
+          "summary": "Preserved gmail_batch_context through Gmail-originated reruns/manual restart prep and clarified report run tokens versus billed-total wording.",
+          "outcome": "stronger_mitigation"
         }
       ],
       "accepted_fix": {
-        "timestamp": "2026-03-30T00:00:00Z",
-        "summary": "Project guidance now routes multi-surface debugging through browser/banner evidence first, direct browser/finalization report artifacts when no normal run report exists yet, per-run artifacts for execution issues, and one app-owned session artifact for batch/finalization state.",
-        "expected_result": "Future host-bound workflows can be debugged from one predictable packet instead of reconstructing the incident from thread memory or pasted drawer JSON."
+        "timestamp": "2026-04-05T15:26:00Z",
+        "summary": "Project guidance now routes multi-surface debugging through browser/banner evidence first, direct browser/finalization report artifacts when no normal run report exists yet, first-class per-run run_report.md artifacts for execution issues, preserved Gmail provenance in Gmail-started run reports, and one app-owned session artifact for batch/finalization state.",
+        "expected_result": "Future host-bound workflows can be debugged from one predictable packet instead of reconstructing the incident from thread memory or pasted drawer JSON, and Gmail-started run reports remain shareable and trustworthy before finalization."
       },
       "regressed_after_accepted_fix": false,
       "affected_workflows": [
@@ -311,7 +323,9 @@
           "session-artifact layering guidance",
           "support-packet order",
           "multi-surface troubleshooting workflow routing",
-          "direct browser/finalization report surfaces when no normal run report exists yet"
+          "direct browser/finalization report surfaces when no normal run report exists yet",
+          "run-owned detailed report discoverability from the browser completion drawer",
+          "Gmail provenance preservation across reruns before finalization"
         ]
       },
       "evidence_refs": [
@@ -334,6 +348,75 @@
         {
           "type": "execplan",
           "ref": "docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-05-gmail-run-report-provenance.md"
+        }
+      ]
+    },
+    {
+      "id": "workflow-gmail-restored-finalization-shadowed-fresh-handoff",
+      "title": "Recovered completed Gmail batches could reopen as the main flow and block a fresh extension handoff",
+      "first_seen_timestamp": "2026-04-05T15:05:00Z",
+      "last_seen_timestamp": "2026-04-05T15:52:00Z",
+      "repeat_count": 1,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Clicking the Gmail extension again could reopen the previous finalized batch instead of the new handoff.",
+        "The browser workspace looked stuck on old work until the user reset the workspace or cold-started the app.",
+        "Recovered finalization history could crowd the main CTA instead of staying secondary."
+      ],
+      "likely_root_cause": "Gmail bootstrap treated report-restored terminal translation batches as active_session, and the Gmail frontend treated recovered-only completed state as a stable translation_finalize workspace instead of waiting for a fresh handoff.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-04-05T15:52:00Z",
+          "summary": "Demoted report-restored terminal batches to additive restored_completed_session, kept bounded refresh alive for recovered-only state, and moved recovered finalization behind Open Last Finalization Result.",
+          "outcome": "stronger_mitigation"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-04-05T15:52:00Z",
+        "summary": "Fresh Gmail handoffs now take priority over recovered finalized batches by default, while the previous finalized batch remains accessible only as secondary recovered history.",
+        "expected_result": "Clicking the extension for new work should open fresh Gmail intake by default instead of appearing stuck on the previous finalized batch."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/SESSION_RESUME.md"
+      ],
+      "bootstrap_relevance": "required",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "fresh handoff precedence over recovered finalization",
+          "secondary recovered-history access",
+          "do not treat recovered-only Gmail state as the default stable workspace"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-05_gmail_fresh_handoff_priority.md"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_gmail_fresh_handoff"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
         }
       ]
     },
