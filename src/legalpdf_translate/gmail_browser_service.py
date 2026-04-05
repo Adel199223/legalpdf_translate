@@ -510,6 +510,7 @@ def _serialize_draft_result(result: GmailDraftResult) -> dict[str, Any]:
 
 def _serialize_translation_launch(
     *,
+    session: GmailBatchSession,
     attachment: DownloadedGmailAttachment,
     target_lang: str,
     output_dir: Path,
@@ -524,6 +525,18 @@ def _serialize_translation_launch(
         "output_dir": _path_text(output_dir),
         "target_lang": target_lang.strip().upper(),
         "workflow_source": "gmail_intake",
+        "gmail_batch_context": {
+            "source": "gmail_intake",
+            "session_id": session.session_id,
+            "message_id": session.intake_context.message_id,
+            "thread_id": session.intake_context.thread_id,
+            "attachment_id": attachment.candidate.attachment_id,
+            "selected_attachment_filename": attachment.candidate.filename,
+            "selected_attachment_count": int(len(session.downloaded_attachments)),
+            "selected_target_lang": target_lang.strip().upper(),
+            "selected_start_page": int(attachment.start_page),
+            "gmail_batch_session_report_path": _path_text(session.session_report_path) or "",
+        },
     }
 
 
@@ -1385,6 +1398,7 @@ class GmailBrowserSessionManager:
             )
             if 0 <= workspace.current_batch_index < len(workspace.batch_session.downloaded_attachments):
                 payload["suggested_translation_launch"] = _serialize_translation_launch(
+                    session=workspace.batch_session,
                     attachment=workspace.batch_session.downloaded_attachments[workspace.current_batch_index],
                     target_lang=workspace.batch_session.selected_target_lang,
                     output_dir=workspace.batch_session.effective_output_dir or outputs_dir,
@@ -1806,6 +1820,7 @@ class GmailBrowserSessionManager:
             "normalized_payload": {
                 "active_session": _serialize_batch_session(session, current_index=0),
                 "suggested_translation_launch": _serialize_translation_launch(
+                    session=session,
                     attachment=session.downloaded_attachments[0],
                     target_lang=session.selected_target_lang,
                     output_dir=session.effective_output_dir or effective_output_dir,
@@ -1900,6 +1915,7 @@ class GmailBrowserSessionManager:
         next_launch = None
         if workspace.current_batch_index < len(session.downloaded_attachments):
             next_launch = _serialize_translation_launch(
+                session=session,
                 attachment=session.downloaded_attachments[workspace.current_batch_index],
                 target_lang=session.selected_target_lang,
                 output_dir=session.effective_output_dir or run_dir.parent,

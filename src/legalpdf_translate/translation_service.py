@@ -45,6 +45,7 @@ from .ocr_engine import (
 from .openai_client import OpenAIResponsesClient, resolve_openai_key_with_source
 from .output_paths import require_writable_output_dir
 from .review_export import export_review_queue
+from .run_report import build_run_report_markdown
 from .source_document import get_source_page_count, is_pdf_source, is_supported_source_file
 from .types import AnalyzeSummary, RunConfig, RunSummary, TargetLang
 from .user_settings import (
@@ -173,6 +174,36 @@ def _normalize_optional_path(value: object) -> str:
     if cleaned == "":
         return ""
     return str(Path(cleaned).expanduser().resolve())
+
+
+def _normalize_gmail_batch_context(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    source = str(value.get("source", "") or "").strip()
+    session_id = str(value.get("session_id", "") or "").strip()
+    message_id = str(value.get("message_id", "") or "").strip()
+    thread_id = str(value.get("thread_id", "") or "").strip()
+    attachment_id = str(value.get("attachment_id", "") or "").strip()
+    selected_attachment_filename = str(value.get("selected_attachment_filename", "") or "").strip()
+    selected_target_lang = str(value.get("selected_target_lang", "") or "").strip().upper()
+    gmail_batch_session_report_path = _normalize_optional_path(value.get("gmail_batch_session_report_path"))
+    selected_attachment_count = _coerce_int_or_none(value.get("selected_attachment_count"))
+    selected_start_page = _coerce_int_or_none(value.get("selected_start_page"))
+    normalized = {
+        "source": source,
+        "session_id": session_id,
+        "message_id": message_id,
+        "thread_id": thread_id,
+        "attachment_id": attachment_id,
+        "selected_attachment_filename": selected_attachment_filename,
+        "selected_attachment_count": int(selected_attachment_count or 0),
+        "selected_target_lang": selected_target_lang,
+        "selected_start_page": int(selected_start_page or 0),
+        "gmail_batch_session_report_path": gmail_batch_session_report_path,
+    }
+    if not any(normalized.values()):
+        return None
+    return normalized
 
 
 def _load_json_object(path: Path | None) -> dict[str, Any]:
@@ -450,6 +481,7 @@ def _build_config_from_form(
             ),
             False,
         ),
+        gmail_batch_context=_normalize_gmail_batch_context(form_values.get("gmail_batch_context")),
     )
 
 
@@ -662,6 +694,11 @@ def _serialize_run_config(config: RunConfig) -> dict[str, Any]:
         "diagnostics_admin_mode": bool(config.diagnostics_admin_mode),
         "diagnostics_include_sanitized_snippets": bool(config.diagnostics_include_sanitized_snippets),
         "source_type": "pdf" if is_pdf_source(config.pdf_path) else "image",
+        "gmail_batch_context": (
+            dict(config.gmail_batch_context)
+            if isinstance(config.gmail_batch_context, Mapping)
+            else None
+        ),
     }
 
 
@@ -822,22 +859,51 @@ def export_translation_review_queue_for_job(
     }
 
 
+def _generate_translation_run_report(
+    *,
+    run_dir: Path,
+    settings_path: Path,
+) -> dict[str, Any]:
+    resolved_run_dir = run_dir.expanduser().resolve()
+    if not resolved_run_dir.exists() or not resolved_run_dir.is_dir():
+        raise ValueError(f"Run directory is unavailable for report generation: {resolved_run_dir}")
+    gui = load_gui_settings_from_path(settings_path)
+    admin_mode = bool(gui.get("diagnostics_admin_mode", True))
+    include_snippets = admin_mode and bool(gui.get("diagnostics_include_sanitized_snippets", False))
+    markdown = build_run_report_markdown(
+        run_dir=resolved_run_dir,
+        admin_mode=admin_mode,
+        include_sanitized_snippets=include_snippets,
+    )
+    report_path = resolved_run_dir / "run_report.md"
+    report_path.write_text(markdown, encoding="utf-8")
+    return {
+        "run_dir": str(resolved_run_dir),
+        "report_path": str(report_path.expanduser().resolve()),
+        "preview": markdown[:6000],
+    }
+
+
 def _artifacts_payload_from_summary(summary: RunSummary) -> dict[str, Any]:
     summary_path = summary.run_summary_path or (summary.run_dir / "run_summary.json")
+    report_path = summary.run_dir / "run_report.md"
     return {
         "run_dir": str(summary.run_dir.expanduser().resolve()),
         "run_summary_path": _path_text(summary_path),
         "pages_dir": str((summary.run_dir / "pages").expanduser().resolve()),
+        "run_report_path": _path_text(report_path if report_path.exists() else None),
         "output_docx": _path_text(summary.output_docx),
         "partial_docx": _path_text(summary.partial_docx),
     }
 
 
 def _artifacts_payload_for_rebuild(*, run_dir: Path, output_docx: Path) -> dict[str, Any]:
+    report_path = run_dir / "run_report.md"
     return {
         "run_dir": str(run_dir.expanduser().resolve()),
         "run_summary_path": _path_text(run_dir / "run_summary.json"),
         "pages_dir": str((run_dir / "pages").expanduser().resolve()),
+        "run_report_path": _path_text(report_path if report_path.exists() else None),
         "output_docx": str(output_docx.expanduser().resolve()),
         "partial_docx": None,
     }
@@ -969,6 +1035,7 @@ class TranslationJobManager:
             "rebuild": job.job_kind == "translate" and status in {"completed", "failed", "cancelled"},
             "review_export": job.job_kind == "translate" and bool(job.result_payload.get("review_queue")),
             "save_row": job.job_kind == "translate" and isinstance(job.result_payload.get("save_seed"), dict),
+            "download_run_report": job.job_kind == "translate" and bool(job.artifacts_payload.get("run_report_path")),
             "download_output_docx": bool(job.artifacts_payload.get("output_docx")),
             "download_partial_docx": bool(job.artifacts_payload.get("partial_docx")),
             "download_run_summary": bool(job.artifacts_payload.get("run_summary_path")),
@@ -1330,6 +1397,36 @@ class TranslationJobManager:
             settings_path=settings_path,
         )
 
+    def generate_run_report(self, *, job_id: str, settings_path: Path) -> dict[str, Any]:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise ValueError("Translation job not found.")
+            if job.job_kind != "translate":
+                raise ValueError("Run reports are only available for translation jobs.")
+            run_dir_text = str(job.artifacts_payload.get("run_dir") or "").strip()
+        if run_dir_text == "":
+            raise ValueError("Translation run directory is unavailable for report generation.")
+        report = _generate_translation_run_report(run_dir=Path(run_dir_text), settings_path=settings_path)
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise ValueError("Translation job not found.")
+            job.artifacts_payload["run_report_path"] = report["report_path"]
+            job.updated_at = _utc_now_iso()
+            snapshot = self._snapshot(job)
+        return {
+            "status": "ok",
+            "normalized_payload": {
+                "job": snapshot,
+                "report_kind": "run_report",
+                "run_dir": report["run_dir"],
+                "report_path": report["report_path"],
+                "preview": report["preview"],
+            },
+            "diagnostics": {},
+        }
+
     def cancel_job(self, *, job_id: str) -> bool:
         return self._mark_cancel_requested(job_id)
 
@@ -1344,6 +1441,8 @@ class TranslationJobManager:
                 candidate = job.artifacts_payload.get("partial_docx")
             elif artifact_kind == "run_summary":
                 candidate = job.artifacts_payload.get("run_summary_path")
+            elif artifact_kind == "run_report":
+                candidate = job.artifacts_payload.get("run_report_path")
             elif artifact_kind == "analyze_report":
                 candidate = job.artifacts_payload.get("analyze_report_path")
             else:

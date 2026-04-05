@@ -172,6 +172,11 @@ def _translations_for_fixed_phrase(key: str) -> dict[str, str]:
             "FR": "Parquet de la République",
             "AR": "نيابة الجمهورية",
         },
+        "judge_of_law_title": {
+            "EN": "The Judge",
+            "FR": "Le juge",
+            "AR": "القاضي",
+        },
     }[key]
 
 
@@ -225,6 +230,7 @@ class _HeaderMatcher:
     metadata_rank: int
     render: Callable[[re.Match[str]], dict[str, str]]
     city_group: str | None = None
+    canonical_source_text: str | None = None
 
 
 _HEADER_SEED_TERMS: tuple[HeaderSeedTerm, ...] = (
@@ -584,6 +590,16 @@ _HEADER_MATCHERS: tuple[_HeaderMatcher, ...] = (
         metadata_rank=0,
         render=_fixed_translations("republic_prosecutor_office"),
     ),
+    _HeaderMatcher(
+        key="judge_of_law_title",
+        pattern=re.compile(r"(?:O\s+)?Ju[ií]z\s+de\s+Direito\b", re.IGNORECASE),
+        tier=1,
+        priority=64,
+        metadata_case_entity=False,
+        metadata_rank=0,
+        render=_fixed_translations("judge_of_law_title"),
+        canonical_source_text="O Juiz de Direito",
+    ),
 )
 
 
@@ -608,7 +624,8 @@ def match_legal_header_phrases(source_text: str, target_lang: str) -> list[Match
                 if translation == "":
                     continue
                 surface = _clean_surface(match.group(0))
-                key = (matcher.key, normalize_legal_header_text(surface))
+                source_surface = matcher.canonical_source_text or surface
+                key = (matcher.key, normalize_legal_header_text(source_surface))
                 if key in seen:
                     continue
                 seen.add(key)
@@ -617,7 +634,7 @@ def match_legal_header_phrases(source_text: str, target_lang: str) -> list[Match
                 matches.append(
                     MatchedHeaderPhrase(
                         key=matcher.key,
-                        source_text=surface,
+                        source_text=source_surface,
                         preferred_translation=translation,
                         tier=matcher.tier,
                         line_index=line_index,

@@ -108,6 +108,83 @@ function normalizeGmailStage(value) {
   return allowed.has(normalized) ? normalized : "idle";
 }
 
+function normalizeGmailBatchContext(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const normalized = {
+    source: String(value.source || "").trim(),
+    session_id: String(value.session_id || "").trim(),
+    message_id: String(value.message_id || "").trim(),
+    thread_id: String(value.thread_id || "").trim(),
+    attachment_id: String(value.attachment_id || "").trim(),
+    selected_attachment_filename: String(value.selected_attachment_filename || "").trim(),
+    selected_attachment_count: Number.parseInt(String(value.selected_attachment_count ?? "").trim(), 10) || 0,
+    selected_target_lang: String(value.selected_target_lang || "").trim().toUpperCase(),
+    selected_start_page: Number.parseInt(String(value.selected_start_page ?? "").trim(), 10) || 0,
+    gmail_batch_session_report_path: String(value.gmail_batch_session_report_path || "").trim(),
+  };
+  return Object.values(normalized).some((item) => item)
+    ? normalized
+    : null;
+}
+
+function currentTranslationAttachmentContext(activeSession) {
+  if (!activeSession || activeSession.kind !== "translation" || activeSession.completed) {
+    return null;
+  }
+  const currentAttachment = activeSession.current_attachment;
+  const attachment = currentAttachment?.attachment;
+  if (!currentAttachment || !attachment) {
+    return null;
+  }
+  return {
+    source: "gmail_intake",
+    session_id: String(activeSession.session_id || "").trim(),
+    message_id: String(activeSession.message?.message_id || "").trim(),
+    thread_id: String(activeSession.message?.thread_id || "").trim(),
+    attachment_id: String(attachment.attachment_id || "").trim(),
+    selected_attachment_filename: String(attachment.filename || "").trim(),
+    selected_attachment_count: Number.parseInt(String(activeSession.total_items ?? "").trim(), 10) || 0,
+    selected_target_lang: String(activeSession.selected_target_lang || "").trim().toUpperCase(),
+    selected_start_page: Number.parseInt(String(currentAttachment.start_page ?? "").trim(), 10) || 0,
+    source_path: String(currentAttachment.saved_path || "").trim(),
+  };
+}
+
+function translationJobMatchesCurrentAttachment(job, attachmentContext) {
+  if (!job || typeof job !== "object" || !attachmentContext) {
+    return false;
+  }
+  const jobContext = normalizeGmailBatchContext(job.config?.gmail_batch_context);
+  if (jobContext && attachmentContext.attachment_id && jobContext.attachment_id === attachmentContext.attachment_id) {
+    return true;
+  }
+  if (
+    jobContext
+    && attachmentContext.message_id
+    && attachmentContext.thread_id
+    && attachmentContext.selected_attachment_filename
+    && jobContext.message_id === attachmentContext.message_id
+    && jobContext.thread_id === attachmentContext.thread_id
+    && jobContext.selected_attachment_filename === attachmentContext.selected_attachment_filename
+    && Number(jobContext.selected_start_page || 0) === Number(attachmentContext.selected_start_page || 0)
+  ) {
+    return true;
+  }
+  const sourcePath = String(job.config?.source_path || "").trim();
+  return Boolean(
+    attachmentContext.source_path
+    && sourcePath
+    && sourcePath === attachmentContext.source_path
+  );
+}
+
+function findMatchingTranslationJob(translationUi, attachmentContext) {
+  const jobs = Array.isArray(translationUi.runtimeJobs) ? translationUi.runtimeJobs : [];
+  return jobs.find((job) => translationJobMatchesCurrentAttachment(job, attachmentContext)) || null;
+}
+
 export function deriveGmailStage({
   loadResult,
   activeSession,
@@ -245,6 +322,64 @@ export function deriveGmailHomeCta({ stage, activeSession }) {
         tone: "info",
       };
   }
+}
+
+export function deriveGmailRedoAction({ activeSession, translationUi = {} }) {
+  const attachmentContext = currentTranslationAttachmentContext(activeSession);
+  if (!attachmentContext) {
+    return {
+      visible: false,
+      enabled: false,
+      blocked: false,
+      label: "Redo Current Attachment",
+      action: "",
+      title: "",
+      description: "",
+      warning: "",
+      matchingJob: null,
+    };
+  }
+  const matchingJob = findMatchingTranslationJob(translationUi, attachmentContext);
+  const status = String(matchingJob?.status || "").trim();
+  const blocked = ["queued", "running", "cancel_requested"].includes(status);
+  const filename = attachmentContext.selected_attachment_filename || "the current attachment";
+  if (!matchingJob) {
+    return {
+      visible: true,
+      enabled: true,
+      blocked: false,
+      label: "Redo Current Attachment",
+      action: "redo-current-translation",
+      title: "Redo the current attachment without resetting Gmail.",
+      description: `Reload ${filename} into the translation workspace and prepare a fresh run without disturbing the current Gmail batch.`,
+      warning: "",
+      matchingJob: null,
+    };
+  }
+  if (blocked) {
+    return {
+      visible: true,
+      enabled: false,
+      blocked: true,
+      label: "Redo Current Attachment",
+      action: "redo-current-translation",
+      title: "Current attachment already has an active browser job.",
+      description: `${filename} already has a ${matchingJob.job_kind || "translation"} job in status ${status}. Cancel that job first if you want to rerun the same attachment.`,
+      warning: `Matching job: ${matchingJob.job_id || "unknown"}`,
+      matchingJob,
+    };
+  }
+  return {
+    visible: true,
+    enabled: true,
+    blocked: false,
+    label: "Redo Current Attachment",
+    action: "redo-current-translation",
+    title: "Redo the current attachment from this live workspace.",
+    description: `${filename} already has a browser ${matchingJob.job_kind || "translation"} job in this runtime (${status || "available"}). Redo will keep prior files on disk, clear only the translation UI state, and let you start the new run manually.`,
+    warning: `Matching job: ${matchingJob.job_id || "unknown"}`,
+    matchingJob,
+  };
 }
 
 function normalizePreviewPageValue(value, { editable, pageCount }) {

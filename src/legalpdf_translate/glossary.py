@@ -115,6 +115,8 @@ _DEFAULT_AR_ENTRIES: tuple[GlossaryEntry, ...] = (
     GlossaryEntry("audiência de julgamento", "جلسة المحاكمة", "exact", "PT", 2),
     GlossaryEntry("autos", "ملف الدعوى", "exact", "PT", 2),
     GlossaryEntry("absolvição", "البراءة", "exact", "PT", 2),
+    GlossaryEntry("registo criminal", "السجل العدلي", "exact", "PT", 2),
+    GlossaryEntry("certificado do registo criminal", "شهادة السجل العدلي", "exact", "PT", 2),
     # Tier 3
     GlossaryEntry("Fica V. Exª notificado", "يُخطر سيادتكم", "contains", "PT", 3),
     GlossaryEntry("na qualidade de", "بصفتكم", "exact", "PT", 3),

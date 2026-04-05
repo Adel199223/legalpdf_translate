@@ -9,6 +9,7 @@ import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
   applyPreviewStateStartPage,
   clearConsumedReviewState,
+  deriveGmailRedoAction,
   createClosedPreviewState,
   deriveGmailHomeCta,
   deriveGmailStage,
@@ -535,12 +536,21 @@ function currentHomeCta() {
   });
 }
 
+function currentRedoAction() {
+  return deriveGmailRedoAction({
+    activeSession: gmailState.activeSession,
+    translationUi: translationUiSnapshot(),
+  });
+}
+
 function gmailHomeStatusMessage() {
   switch (gmailState.stage || currentGmailStage()) {
     case "translation_recovery":
       return "The current Gmail attachment needs recovery before the batch can continue. Resume Recovery to rerun, rebuild, or adjust translation settings from the translation workspace.";
     case "translation_running":
+      return "Use Resume Current Step to continue the active Gmail step, Redo Current Attachment to rerun just this file, or Reset Gmail Workspace if you want a full Gmail restart.";
     case "translation_save":
+      return "Use Resume Current Step to review and save the current Gmail translation row, Redo Current Attachment to rerun only this file, or Reset Gmail Workspace for a full Gmail restart.";
     case "translation_finalize":
     case "interpretation_review":
     case "interpretation_finalize":
@@ -609,6 +619,28 @@ function runStageAction(action) {
       setActiveView("gmail-intake");
       break;
   }
+}
+
+async function runRedoCurrentTranslation() {
+  if (!gmailState.suggestedTranslationLaunch) {
+    throw new Error("No Gmail attachment is ready to redo in this workspace.");
+  }
+  const redo = currentRedoAction();
+  if (!redo.visible) {
+    throw new Error("Redo is not available for the current Gmail step.");
+  }
+  if (redo.blocked) {
+    throw new Error(redo.description || "Cancel the active browser translation job before redoing this attachment.");
+  }
+  const confirmed = window.confirm(
+    `Redo the current Gmail attachment?\n\n${redo.description || "This will clear only the translation workspace state for the current attachment and keep the Gmail batch intact."}`,
+  );
+  if (!confirmed) {
+    return;
+  }
+  gmailState.hooks.resetTranslationForGmailRedo?.(gmailState.suggestedTranslationLaunch);
+  setActiveView("new-job");
+  closeSessionDrawer();
 }
 
 function setBusy(buttonIds, busy, busyLabels = {}) {
@@ -1721,13 +1753,22 @@ function renderPreviewPanel() {
 function renderResumeCard(activeSession) {
   const container = qs("gmail-resume-result");
   const button = qs("gmail-resume-step");
+  const redoButton = qs("gmail-redo-current");
   gmailState.stage = currentGmailStage();
   const cta = currentHomeCta();
+  const redo = currentRedoAction();
   if (button) {
     button.classList.toggle("hidden", !cta.visible);
     button.disabled = !cta.visible;
     button.textContent = cta.label || "Resume Current Step";
     button.dataset.gmailAction = cta.action || "";
+  }
+  if (redoButton) {
+    redoButton.classList.toggle("hidden", !redo.visible);
+    redoButton.disabled = !redo.visible || !redo.enabled;
+    redoButton.textContent = redo.label || "Redo Current Attachment";
+    redoButton.dataset.gmailAction = redo.action || "";
+    redoButton.title = redo.blocked ? (redo.description || "Cancel the active matching job before redoing this attachment.") : "";
   }
   if (!container) {
     return;
@@ -1767,6 +1808,8 @@ function renderResumeCard(activeSession) {
       <div>
         <strong>${escapeHtml(cta.title || "Resume Current Step")}</strong>
         <p>${escapeHtml(cta.description || "Continue the active Gmail step when you are ready.")}</p>
+        ${redo.visible ? `<p>${escapeHtml(redo.description || "")}</p>` : ""}
+        ${redo.warning ? `<p>${escapeHtml(redo.warning)}</p>` : ""}
       </div>
       <span class="status-chip ${cta.tone === "ok" ? "ok" : "info"}">${escapeHtml(activeSession.status || "ready")}</span>
     </div>
@@ -1839,7 +1882,10 @@ function renderWorkspaceStrip() {
   const cta = currentHomeCta();
   if (gmailState.activeSession && cta.visible) {
     title.textContent = cta.title || "A Gmail step is ready.";
-    copy.textContent = cta.description || "Resume the current Gmail step when you are ready.";
+    const redo = currentRedoAction();
+    copy.textContent = redo.visible
+      ? `${cta.description || "Resume the current Gmail step when you are ready."} Use Redo Current Attachment to rerun only this file, or Reset Gmail Workspace for a full Gmail restart.`
+      : (cta.description || "Resume the current Gmail step when you are ready.");
     if (action) {
       action.textContent = cta.label || "Resume Current Step";
       action.dataset.gmailStripAction = cta.action || "";
@@ -2798,6 +2844,20 @@ export function initializeGmailUi(hooks) {
 
   qs("gmail-resume-step")?.addEventListener("click", (event) => {
     runStageAction(event.currentTarget?.dataset.gmailAction || "");
+  });
+
+  qs("gmail-redo-current")?.addEventListener("click", async () => {
+    await runWithBusy(["gmail-redo-current"], { "gmail-redo-current": "Preparing..." }, async () => {
+      try {
+        await runRedoCurrentTranslation();
+      } catch (error) {
+        setPanelStatus("gmail-session", "bad", error.message || "Redo current attachment failed.");
+        setDiagnostics("gmail-session", error, {
+          hint: error.message || "Redo current attachment failed.",
+          open: true,
+        });
+      }
+    });
   });
 
   qs("translation-gmail-confirm-current")?.addEventListener("click", async () => {

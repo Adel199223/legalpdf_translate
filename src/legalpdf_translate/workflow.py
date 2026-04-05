@@ -87,6 +87,7 @@ from .openai_client import (
 )
 from .output_paths import require_writable_output_dir
 from .page_selection import resolve_page_selection
+from .pt_legal_glossary_aliases import build_priority_pt_legal_alias_entries
 from .prompt_builder import (
     build_ar_token_retry_prompt,
     build_language_retry_prompt,
@@ -1961,6 +1962,22 @@ class TranslationWorkflow:
             if isinstance(evaluation.ar_token_details, dict) and evaluation.ar_token_details:
                 page_metadata["ar_token_details"] = dict(evaluation.ar_token_details)
 
+        def _apply_quality_checks_metadata(checks: dict[str, Any]) -> None:
+            for key in (
+                "numeric_mismatches_count",
+                "citation_mismatches_count",
+                "structure_warnings_count",
+                "bidi_warnings_count",
+                "bidi_control_count",
+                "replacement_char_count",
+            ):
+                page_metadata[key] = int(checks.get(key, 0) or 0)
+            page_metadata["numeric_missing_sample"] = [str(item) for item in checks.get("numeric_missing_sample", [])[:3]]
+            page_metadata["source_paragraphs"] = int(checks.get("source_paragraphs", 0) or 0)
+            page_metadata["output_paragraphs"] = int(checks.get("output_paragraphs", 0) or 0)
+            page_metadata["detected_lang"] = str(checks.get("detected_lang", "") or "")
+            page_metadata["language_ok"] = bool(checks.get("language_ok", True))
+
         def _finalize_page_metadata() -> None:
             page_metadata["api_calls_count"] = int(api_calls_count)
             page_metadata["translate_seconds"] = round(
@@ -2081,13 +2098,14 @@ class TranslationWorkflow:
         _record_ar_eval_diagnostics(initial_eval, attempt=1)
         _apply_evaluation_metadata(initial_eval)
         if initial_eval.ok and initial_eval.normalized_text is not None:
+            from .translation_diagnostics import run_all_quality_checks, emit_validation_summary_event
+            _qc = run_all_quality_checks(
+                source_text=glossary_source_text,
+                output_text=initial_eval.normalized_text,
+                target_lang=config.target_lang.value,
+            )
+            _apply_quality_checks_metadata(_qc)
             if self._diagnostics_admin_mode:
-                from .translation_diagnostics import run_all_quality_checks, emit_validation_summary_event
-                _qc = run_all_quality_checks(
-                    source_text=glossary_source_text,
-                    output_text=initial_eval.normalized_text,
-                    target_lang=config.target_lang.value,
-                )
                 emit_validation_summary_event(self._event_collector, page_index=page_number, checks=_qc)
             output_path = paths.pages_dir / f"page_{page_number:04d}.txt"
             output_path.write_text(initial_eval.normalized_text, encoding="utf-8")
@@ -2295,13 +2313,14 @@ class TranslationWorkflow:
         _record_ar_eval_diagnostics(retry_eval, attempt=2)
         _apply_evaluation_metadata(retry_eval)
         if retry_eval.ok and retry_eval.normalized_text is not None:
+            from .translation_diagnostics import run_all_quality_checks, emit_validation_summary_event
+            _qc = run_all_quality_checks(
+                source_text=glossary_source_text,
+                output_text=retry_eval.normalized_text,
+                target_lang=config.target_lang.value,
+            )
+            _apply_quality_checks_metadata(_qc)
             if self._diagnostics_admin_mode:
-                from .translation_diagnostics import run_all_quality_checks, emit_validation_summary_event
-                _qc = run_all_quality_checks(
-                    source_text=glossary_source_text,
-                    output_text=retry_eval.normalized_text,
-                    target_lang=config.target_lang.value,
-                )
                 emit_validation_summary_event(self._event_collector, page_index=page_number, checks=_qc)
             output_path = paths.pages_dir / f"page_{page_number:04d}.txt"
             output_path.write_text(retry_eval.normalized_text, encoding="utf-8")
@@ -2338,7 +2357,7 @@ class TranslationWorkflow:
         self, prompt_text: str, lang: TargetLang, *, source_text: str, page_index: int | None = None,
     ) -> str:
         entries = self._prompt_glossaries_by_lang.get(lang.value, [])
-        header_entries = [
+        priority_entries = [
             GlossaryEntry(
                 source_text=match.source_text,
                 preferred_translation=match.preferred_translation,
@@ -2348,20 +2367,21 @@ class TranslationWorkflow:
             )
             for match in match_legal_header_phrases(source_text, lang.value)
         ]
-        if not entries and not header_entries:
+        priority_entries.extend(build_priority_pt_legal_alias_entries(source_text, entries))
+        if not entries and not priority_entries:
             return prompt_text
         detected_source_lang = detect_source_lang_for_glossary(source_text)
-        if header_entries and detected_source_lang == "AUTO":
+        if priority_entries and detected_source_lang == "AUTO":
             detected_source_lang = "PT"
         enabled_tiers = self._enabled_glossary_tiers_by_lang.get(lang.value, [1, 2])
         allowed_tiers = set(enabled_tiers)
-        header_entries = [entry for entry in header_entries if int(entry.tier) in allowed_tiers]
+        priority_entries = [entry for entry in priority_entries if int(entry.tier) in allowed_tiers]
         matching_entries = filter_entries_for_prompt(
             entries,
             detected_source_lang=detected_source_lang,
             enabled_tiers=enabled_tiers,
         )
-        if header_entries:
+        if priority_entries:
             seen_surface_keys = {
                 (
                     entry.source_text.casefold(),
@@ -2369,7 +2389,7 @@ class TranslationWorkflow:
                     entry.source_lang,
                     int(entry.tier),
                 )
-                for entry in header_entries
+                for entry in priority_entries
             }
             matching_entries = [
                 entry
@@ -2382,10 +2402,10 @@ class TranslationWorkflow:
                 )
                 not in seen_surface_keys
             ]
-        combined_entries = header_entries + matching_entries
+        combined_entries = priority_entries + matching_entries
         if not combined_entries:
             return prompt_text
-        sorted_entries = header_entries + sort_entries_for_prompt(matching_entries)
+        sorted_entries = priority_entries + sort_entries_for_prompt(matching_entries)
         capped_entries = cap_entries_for_prompt(
             sorted_entries,
             target_lang=lang.value,
@@ -2650,7 +2670,7 @@ class TranslationWorkflow:
             total_output_tokens=total_output_tokens,
             total_reasoning_tokens=total_reasoning_tokens,
         )
-        quality_risk_payload = build_quality_risk_summary(page_rows)
+        quality_risk_payload = build_quality_risk_summary(page_rows, target_lang=config.target_lang.value)
         advisor_rows = [page for _, page in page_rows]
         advisor_recommendation = build_ocr_image_advisor(
             rows=advisor_rows,
