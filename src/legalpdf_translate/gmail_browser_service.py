@@ -1365,6 +1365,7 @@ class GmailBrowserSessionManager:
             "defaults": defaults,
             "load_result": _serialize_load_result(workspace.loaded_result) if workspace.loaded_result is not None else None,
             "active_session": None,
+            "restored_completed_session": None,
             "suggested_translation_launch": None,
             "interpretation_seed": (
                 _seed_payload_with_preferred_reply_email(
@@ -1412,7 +1413,7 @@ class GmailBrowserSessionManager:
             and not workspace.pending_intake_context
             and not workspace.pending_status
         ):
-            payload["active_session"] = _restore_batch_session_payload_from_report(
+            payload["restored_completed_session"] = _restore_batch_session_payload_from_report(
                 outputs_dir=outputs_dir,
                 runtime_mode=runtime_mode,
                 workspace_id=workspace_id,

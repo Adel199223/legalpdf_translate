@@ -222,6 +222,64 @@ export function deriveGmailStage({
   return "idle";
 }
 
+export function deriveRecoveredFinalizationAction({ restoredCompletedSession }) {
+  if (
+    restoredCompletedSession?.kind !== "translation"
+    || restoredCompletedSession?.completed !== true
+    || restoredCompletedSession?.restored_from_report !== true
+  ) {
+    return {
+      visible: false,
+      enabled: false,
+      label: "Open Last Finalization Result",
+      action: "",
+      title: "",
+      description: "",
+      tone: "info",
+    };
+  }
+  const subject = String(restoredCompletedSession?.message?.subject || "").trim();
+  const draftReady = String(restoredCompletedSession?.finalization_state || "").trim() === "draft_ready";
+  return {
+    visible: true,
+    enabled: true,
+    label: "Open Last Finalization Result",
+    action: "open-restored-translation-finalize",
+    title: "Last finalized Gmail batch is still recoverable.",
+    description: subject
+      ? `${subject} was recovered from the last finalized Gmail batch. Open it only if you need the prior finalization artifacts or report; a fresh Gmail handoff should continue normally.`
+      : "Open the last finalized Gmail batch only if you need the prior finalization artifacts or report; a fresh Gmail handoff should continue normally.",
+    tone: draftReady ? "ok" : "info",
+  };
+}
+
+export function shouldTreatGmailWorkspaceAsStable({
+  activeView,
+  loadResult,
+  activeSession,
+  restoredCompletedSession,
+  pendingStatus = "",
+  pendingReviewOpen = false,
+}) {
+  if (String(activeView || "").trim() !== "gmail-intake") {
+    return false;
+  }
+  const normalizedPendingStatus = String(pendingStatus || "").trim().toLowerCase();
+  if (pendingReviewOpen === true && (normalizedPendingStatus === "warming" || normalizedPendingStatus === "delayed")) {
+    return false;
+  }
+  if (activeSession) {
+    return true;
+  }
+  if (loadResult?.ok && loadResult?.message) {
+    return true;
+  }
+  if (restoredCompletedSession) {
+    return false;
+  }
+  return false;
+}
+
 export function deriveGmailHomeCta({ stage, activeSession }) {
   switch (normalizeGmailStage(stage)) {
     case "translation_recovery":

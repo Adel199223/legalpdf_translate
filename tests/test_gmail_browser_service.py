@@ -270,17 +270,18 @@ def test_build_bootstrap_restores_latest_completed_batch_session_report_with_bac
         asset_version="7052858987bd",
     )
 
-    active_session = payload["normalized_payload"]["active_session"]
-    assert active_session["restored_from_report"] is True
-    assert active_session["status"] == "draft_ready"
-    assert active_session["completed"] is True
-    assert active_session["finalization_report_context"]["status"] == "ok"
-    assert active_session["finalization_report_context"]["build_sha"] == "18be21e"
-    assert active_session["finalization_report_context"]["asset_version"] == "7052858987bd"
-    assert active_session["finalization_report_context"]["session"]["session_report_path"] == str(
+    assert payload["normalized_payload"]["active_session"] is None
+    restored_session = payload["normalized_payload"]["restored_completed_session"]
+    assert restored_session["restored_from_report"] is True
+    assert restored_session["status"] == "draft_ready"
+    assert restored_session["completed"] is True
+    assert restored_session["finalization_report_context"]["status"] == "ok"
+    assert restored_session["finalization_report_context"]["build_sha"] == "18be21e"
+    assert restored_session["finalization_report_context"]["asset_version"] == "7052858987bd"
+    assert restored_session["finalization_report_context"]["session"]["session_report_path"] == str(
         session.session_report_path.expanduser().resolve()
     )
-    restored_item = active_session["finalization_report_context"]["session"]["confirmed_items"][0]
+    restored_item = restored_session["finalization_report_context"]["session"]["confirmed_items"][0]
     assert restored_item["translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
     assert restored_item["durable_translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
     assert restored_item["staged_translated_docx_path"] == str(session.confirmed_items[0].staged_translated_docx_path)
@@ -481,8 +482,9 @@ def test_build_bootstrap_repairs_completed_report_context_to_prefer_durable_tran
         asset_version="7052858987bd",
     )
 
-    active_session = payload["normalized_payload"]["active_session"]
-    restored_item = active_session["finalization_report_context"]["session"]["confirmed_items"][0]
+    assert payload["normalized_payload"]["active_session"] is None
+    restored_session = payload["normalized_payload"]["restored_completed_session"]
+    restored_item = restored_session["finalization_report_context"]["session"]["confirmed_items"][0]
     assert restored_item["translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
     assert restored_item["durable_translated_docx_path"] == str(session.confirmed_items[0].translated_docx_path)
     assert restored_item["staged_translated_docx_path"] == str(session.confirmed_items[0].staged_translated_docx_path)
@@ -538,6 +540,154 @@ def test_clear_workspace_suppresses_completed_report_restore_until_new_activity(
     )
 
     assert payload["normalized_payload"]["active_session"] is None
+    assert payload["normalized_payload"]["restored_completed_session"] is None
+
+
+def test_build_bootstrap_restored_completed_session_yields_to_fresh_bridge_handoff(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    session = _translation_batch_session(tmp_path)
+    session.status = "draft_ready"
+    session.finalization_state = "draft_ready"
+    report_dir = outputs_dir / "_gmail_batch_sessions" / session.session_id
+    report_dir.mkdir(parents=True, exist_ok=True)
+    session.session_report_path = report_dir / "gmail_batch_session.json"
+    session.session_report_path.write_text(
+        json.dumps(build_gmail_batch_session_payload(session), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path("C:/tmp/gog.exe"),
+            account_email="adel@example.com",
+            accounts=("adel@example.com",),
+        ),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.load_gmail_message_from_intake",
+        lambda **_kwargs: _load_result(
+            message_id="msg-fresh",
+            thread_id="thr-fresh",
+            subject="Fresh notice",
+            account_email="adel@example.com",
+            attachment_ids=("att-fresh",),
+        ),
+    )
+
+    manager = GmailBrowserSessionManager()
+    recovered_bootstrap = manager.build_bootstrap(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+    )
+    assert recovered_bootstrap["normalized_payload"]["active_session"] is None
+    assert recovered_bootstrap["normalized_payload"]["restored_completed_session"] is not None
+
+    bridge_payload = manager.accept_bridge_intake(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        context=InboundMailContext(
+            message_id="msg-fresh",
+            thread_id="thr-fresh",
+            subject="Fresh notice",
+            account_email="adel@example.com",
+        ),
+    )
+    assert bridge_payload["normalized_payload"]["handoff_state"] == "new"
+
+    fresh_bootstrap = manager.build_bootstrap(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+    )
+    assert fresh_bootstrap["normalized_payload"]["load_result"]["message"]["message_id"] == "msg-fresh"
+    assert fresh_bootstrap["normalized_payload"]["active_session"] is None
+    assert fresh_bootstrap["normalized_payload"]["restored_completed_session"] is None
+
+
+def test_build_bootstrap_restored_completed_session_yields_to_same_message_bridge_handoff(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    session = _translation_batch_session(tmp_path)
+    session.status = "draft_ready"
+    session.finalization_state = "draft_ready"
+    report_dir = outputs_dir / "_gmail_batch_sessions" / session.session_id
+    report_dir.mkdir(parents=True, exist_ok=True)
+    session.session_report_path = report_dir / "gmail_batch_session.json"
+    session.session_report_path.write_text(
+        json.dumps(build_gmail_batch_session_payload(session), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=True,
+            message="ready",
+            gog_path=Path("C:/tmp/gog.exe"),
+            account_email="adel@example.com",
+            accounts=("adel@example.com",),
+        ),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.load_gmail_message_from_intake",
+        lambda **_kwargs: _load_result(
+            message_id="msg-1",
+            thread_id="thr-1",
+            subject="Court notice",
+            account_email="adel@example.com",
+            attachment_ids=("att-1",),
+        ),
+    )
+
+    manager = GmailBrowserSessionManager()
+    recovered_bootstrap = manager.build_bootstrap(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+    )
+    assert recovered_bootstrap["normalized_payload"]["restored_completed_session"] is not None
+
+    bridge_payload = manager.accept_bridge_intake(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        context=InboundMailContext(
+            message_id="msg-1",
+            thread_id="thr-1",
+            subject="Court notice",
+            account_email="adel@example.com",
+        ),
+    )
+    assert bridge_payload["normalized_payload"]["handoff_state"] == "new"
+
+    fresh_bootstrap = manager.build_bootstrap(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+    )
+    assert fresh_bootstrap["normalized_payload"]["load_result"]["message"]["message_id"] == "msg-1"
+    assert fresh_bootstrap["normalized_payload"]["active_session"] is None
+    assert fresh_bootstrap["normalized_payload"]["restored_completed_session"] is None
 
 
 def test_gmail_browser_review_event_increments_for_manual_and_bridge_loads(tmp_path: Path, monkeypatch) -> None:
