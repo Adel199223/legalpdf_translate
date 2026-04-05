@@ -67,11 +67,12 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 4. After a run finishes, open the Review Queue if pages were flagged for manual checking.
 5. For Arabic runs, review the DOCX in Word when the app pauses for that step, then save it so the app can continue automatically.
 6. Save the finished run to the Job Log so the case and cost details are stored together.
-7. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
-8. Use Gmail intake when you want to start from one open Gmail message instead of choosing files manually.
-9. Open another browser tab or browser window with a different workspace URL when you want a second independent workspace for another job.
-10. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when that flow supports it and `Court Email` is available.
-11. Use the Job Log when you need an interpretation-only honorários document without a translation run, or start from Gmail intake when the court notice already arrived by email.
+7. Use `Generate Run Report` from the translation completion area when you want the full Markdown run report next to the run folder. The app now downloads it immediately once and keeps `Download Run Report` available afterward.
+8. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
+9. Use Gmail intake when you want to start from one open Gmail message instead of choosing files manually.
+10. Open another browser tab or browser window with a different workspace URL when you want a second independent workspace for another job.
+11. After generating a `Requerimento de Honorários`, let the app create a Gmail draft when that flow supports it and `Court Email` is available.
+12. Use the Job Log when you need an interpretation-only honorários document without a translation run, or start from Gmail intake when the court notice already arrived by email.
 
 ## Using the Job Log
 1. Open `Tools > View Job Log` when you want to check or fix something you already saved.
@@ -135,16 +136,17 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 14. Interpretation-notice mode stages the original notice, then moves into one compact `Current Interpretation Step` view plus a bounded `Review Interpretation` drawer instead of a long mixed admin page.
 15. If the interpretation city or distance is invalid, the browser now blocks finalization and asks you to correct the city/distance before saving, exporting, or finalizing the Gmail reply.
 16. Arabic translation files pause in a Word review step before `Save to Job Log`. The app opens the durable DOCX in Word for you; align or edit it manually, save it, and the app continues automatically. If save detection misses, use `Continue now` after saving.
-17. Translation mode requires each file to be saved before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
-18. If a translation file fails, the current attachment moves into a recovery state. `Resume Translation` reruns the same config; if you want different OCR or image settings, start a fresh translation from the current form instead.
-19. If one translation file resolves to a different case or court, stop and split the work into separate batches.
-20. After the last translation file, or after the interpretation honorários export generates its PDF, the app can create one Gmail reply draft in the original thread.
-21. Translation Gmail drafts attach the translated DOCX files plus the generated honorários PDF.
-22. Interpretation Gmail drafts attach only the generated honorários PDF. They do not attach the original notice or any translated DOCX.
-23. When the original Gmail message explicitly names a reply email, the app now prefers that reply address for the Gmail draft instead of a weaker derived guess.
-24. The app creates a draft only. It does not send the email automatically.
-25. If preview or `Prepare selected` fails before translation starts, the Gmail diagnostics area now keeps your selection and offers `Generate Failure Report`.
-26. If `Finalize Gmail Batch Reply` is blocked, treat that as a Word PDF export readiness issue first. The app now checks the real export path before finalization and offers `Generate Finalization Report` whenever the last-step Gmail finalization state is blocked or completed, including a successful draft-ready finish.
+17. If you want to rerun the same current Gmail attachment without closing Edge or resetting the whole Gmail workspace, use `Redo Current Attachment`. It reloads the same attachment into translation, keeps prior files on disk, and waits for you to start the rerun manually.
+18. Translation mode requires each file to be saved before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
+19. If a translation file fails, the current attachment moves into a recovery state. `Resume Translation` reruns the same config; if you want different OCR or image settings, start a fresh translation from the current form instead.
+20. If one translation file resolves to a different case or court, stop and split the work into separate batches.
+21. After the last translation file, or after the interpretation honorários export generates its PDF, the app can create one Gmail reply draft in the original thread.
+22. Translation Gmail drafts attach the translated DOCX files plus the generated honorários PDF.
+23. Interpretation Gmail drafts attach only the generated honorários PDF. They do not attach the original notice or any translated DOCX.
+24. When the original Gmail message explicitly names a reply email, the app now prefers that reply address for the Gmail draft instead of a weaker derived guess.
+25. The app creates a draft only. It does not send the email automatically.
+26. If preview or `Prepare selected` fails before translation starts, the Gmail diagnostics area now keeps your selection and offers `Generate Failure Report`.
+27. If `Finalize Gmail Batch Reply` is blocked, treat that as a Word PDF export readiness issue first. The app now checks the real export path before finalization and offers `Generate Finalization Report` whenever the last-step Gmail finalization state is blocked or completed, including a successful draft-ready finish.
 
 ## If Gmail Intake Stops Early
 1. If the page says the app is not listening, confirm the bridge is enabled in `Settings` and that you are using the browser app in `live` mode. A normal toolbar click can auto-start the app, so a manual launch should only be needed after an auto-start failure.
@@ -164,6 +166,8 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 15. If the browser app opens but the page looks half-loaded or stale, the app should normally recover with one exact-tab reload. Manual hard refresh should not be the normal fix; check extension/native-host readiness instead.
 16. If Gmail/browser preparation fails before a run exists, use `Generate Failure Report` from the Gmail diagnostics area instead of searching for a run report that does not exist yet. That report now includes the raw browser PDF worker/module failure details.
 17. If Gmail finalization is blocked or completes and you still want a full last-step artifact, use `Generate Finalization Report` from the finalization drawer. That report now stays available for blocked states and completed states, including successful draft creation.
+18. If the current Gmail attachment was already run and you want to do it again from the same live workspace, use `Redo Current Attachment` instead of `Reset Gmail Workspace`. `Redo` keeps the Gmail batch session and only resets the translation side for that attachment.
+19. If `Generate Run Report` appears to do nothing, it should now download the detailed `run_report.md` immediately and leave `Download Run Report` available afterward. Look for that file in the run folder next to `run_summary.json`.
 
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.

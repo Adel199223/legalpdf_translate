@@ -1,14 +1,14 @@
 {
   "version": 1,
-  "last_updated": "2026-04-03T15:47:52Z",
+  "last_updated": "2026-04-05T12:53:22Z",
   "issues": [
     {
       "id": "workflow-wrong-build-under-test",
       "title": "Wrong app/build under test because of mixed branches/worktrees and noncanonical launch",
       "first_seen_timestamp": "2026-03-06T00:00:00Z",
-      "last_seen_timestamp": "2026-04-03T15:47:52Z",
-      "repeat_count": 10,
-      "status": "regressed",
+      "last_seen_timestamp": "2026-04-05T12:53:22Z",
+      "repeat_count": 11,
+      "status": "mitigated",
       "trigger_source": "both",
       "symptoms": [
         "The wrong LegalPDF Translate window was opened for testing.",
@@ -17,9 +17,10 @@
         "The user needed extra support guidance about which sibling folder or workspace file should be the normal daily entry point.",
         "The browser app could open on the right localhost URL while still running a stale module graph or stale extension/service-worker state.",
         "Native-host repair could point the launcher to a broken local runtime even though a healthy runtime was already running the visible browser app.",
-        "The configured canonical worktree path itself could still be left on a feature branch, so a later restart drifted the launcher back to the wrong branch again."
+        "The configured canonical worktree path itself could still be left on a feature branch, so a later restart drifted the launcher back to the wrong branch again.",
+        "Accepted overlapping browser/Gmail fixes could remain split across multiple dirty feature worktrees, making the final commit/push step itself risky."
       ],
-      "likely_root_cause": "Feature work progressed on side branches after acceptance, the approved base was not promoted immediately, multiple runnable worktrees existed without strong enough canonical-build enforcement, native-host runtime repair originally guessed from worktree state instead of validating the active runtime, browser cache busting initially touched only the shell entrypoint so imported modules could stay stale, and the configured canonical worktree path was not always restored to clean main after isolated feature validation.",
+      "likely_root_cause": "Feature work progressed on side branches after acceptance, the approved base was not promoted immediately, multiple runnable worktrees existed without strong enough canonical-build enforcement, native-host runtime repair originally guessed from worktree state instead of validating the active runtime, browser cache busting initially touched only the shell entrypoint so imported modules could stay stale, the configured canonical worktree path was not always restored to clean main after isolated feature validation, and overlapping accepted work could remain fragmented across several dirty side worktrees instead of being harvested into one clean publish branch before push/merge.",
       "attempted_fix_history": [
         {
           "timestamp": "2026-03-07T00:00:00Z",
@@ -55,14 +56,19 @@
           "timestamp": "2026-04-03T15:47:52Z",
           "summary": "Repointed the native-host launcher to an isolated fix worktree during live validation.",
           "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-04-05T12:53:22Z",
+          "summary": "Required overlapping accepted work from multiple dirty feature worktrees to be harvested into one clean integration branch, published as a two-commit wave, and followed by canonical-path/launcher restoration plus side-worktree removal.",
+          "outcome": "stronger_mitigation"
         }
       ],
       "accepted_fix": {
-        "timestamp": "2026-03-30T00:00:00Z",
-        "summary": "Canonical build enforcement now includes validated native-host runtime selection, shell-safe browser startup, whole-graph browser asset fingerprinting, client-ready asset-version proof on the opened localhost tab, and one bounded stale-tab reload instead of trusting shell URL/open-state alone.",
-        "expected_result": "Only the actual current browser/runtime build is treated as authoritative, stale browser assets are rejected before Gmail handoff is declared successful, and local launch repair stops pointing the extension at broken runtimes."
+        "timestamp": "2026-04-05T12:53:22Z",
+        "summary": "Canonical build discipline now includes validated runtime/asset provenance plus a clean integration-branch publish rule for overlapping accepted side work: checkpoint locally, integrate from fresh main, publish only the integrated branch, then restore the canonical path and launcher to clean main.",
+        "expected_result": "Only the actual current browser/runtime build is treated as authoritative, overlapping accepted feature work is merged through one clean publish branch instead of fragmented side branches, and the machine returns to one clean canonical main after validation or publish."
       },
-      "regressed_after_accepted_fix": true,
+      "regressed_after_accepted_fix": false,
       "affected_workflows": [
         "docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md",
         "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md",
@@ -92,7 +98,8 @@
           "canonical launch/default test target guidance",
           "canonical-path cleanup after side-branch validation",
           "plain-language local workspace entry guidance",
-          "validated runtime repair and whole-graph browser asset provenance"
+          "validated runtime repair and whole-graph browser asset provenance",
+          "clean integration-branch publish rules for overlapping accepted side work"
         ]
       },
       "evidence_refs": [
@@ -129,12 +136,36 @@
           "ref": "docs/assistant/exec_plans/completed/2026-04-03_browser_gmail_arabic_publish_closeout.md"
         },
         {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-03_arabic_legal_risk_hardening.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-03_gmail_redo_current_attachment.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md"
+        },
+        {
           "type": "branch",
           "ref": "feat/ai-docs-bootstrap"
         },
         {
           "type": "worktree",
           "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_gmail_redo"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_run_report_artifacts"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_closeout"
         },
         {
           "type": "worktree",

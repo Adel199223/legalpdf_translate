@@ -49,6 +49,9 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - No active roadmap currently open on this worktree.
 - No active roadmap tracker is currently authoritative.
 - Recent completed Gmail/browser closeout history for reference:
+  - `docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md`
+  - `docs/assistant/exec_plans/completed/2026-04-03_gmail_redo_current_attachment.md`
+  - `docs/assistant/exec_plans/completed/2026-04-03_arabic_legal_risk_hardening.md`
   - `docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md`
   - `docs/assistant/exec_plans/completed/2026-03-30_browser_asset_provenance_gmail_prepare.md`
   - `docs/assistant/exec_plans/completed/2026-03-30_first_open_gmail_hydration_recovery.md`

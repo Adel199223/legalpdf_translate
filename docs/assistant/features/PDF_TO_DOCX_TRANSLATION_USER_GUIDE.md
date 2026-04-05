@@ -137,6 +137,8 @@ After a run, the app can mark higher-risk pages for human review.
 
 If the Review Queue opens empty, the app did not flag any pages for extra review in that run.
 
+Arabic citation-heavy pages now contribute more signal here than before. Large numeric mismatch, citation mismatch, and bidi-warning counts no longer stay near-zero risk just because the run completed successfully.
+
 ## Save to Job Log
 After a successful run, the app can prefill the Job Log dialog using the latest run artifacts.
 
@@ -157,6 +159,8 @@ After a successful run, the app can prefill the Job Log dialog using the latest 
 The prefill helps, but you still stay in control of the saved row.
 
 For Arabic target runs, the app inserts an Arabic review step before `Save to Job Log` opens. That dialog opens the durable DOCX in Word automatically, waits for your manual save, and then continues automatically. Use `Open in Word` if you need to reopen the file. If save detection misses, use `Continue now` after saving, or `Continue without changes` if you intentionally want to skip the edit. The browser no longer auto-runs `Align Right + Save` for you.
+
+The translation completion area now treats the detailed run report as a normal run artifact. `Generate Run Report` writes or refreshes `<run_dir>/run_report.md`, downloads it immediately once, and leaves `Download Run Report` available afterward for repeat sharing. This stays available even while an Arabic Word review step is still unresolved.
 
 `Words` now means translated output words. The app uses this precedence:
 1. final DOCX
@@ -263,13 +267,14 @@ Use this when the source files already arrived in Gmail and you want one reply d
 11. Translation mode then translates the selected files one by one.
 12. Interpretation-notice mode downloads the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
 13. After each successful translation, Arabic items first pause in the Word review gate. The dialog auto-opens the durable DOCX in Word and auto-continues after a detected manual save. If Word lost focus or save detection misses, reopen with `Open in Word`, then use `Continue now` after saving or `Continue without changes` if you want to skip the edit.
-14. Translation mode then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
-15. When all selected translation files are confirmed, the app can generate one honorários export using the combined translated word count for the batch.
-16. The honorários export saves the DOCX first and then attempts a sibling PDF with the same basename.
-17. If the translation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários PDF.
-18. If the interpretation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with the generated honorários PDF only.
-19. If preview or `Prepare selected attachments` fails before a translation run exists, the Gmail diagnostics area now preserves the current selection/start-page state and offers `Generate Failure Report`.
-20. Before `Finalize Gmail Batch Reply`, the app now checks whether the real Word PDF export path is ready. If it says blocked, fix that readiness issue first instead of rerunning translation.
+14. If you want to rerun the same current unconfirmed Gmail attachment without a cold start, use `Redo Current Attachment`. It resets only the translation side for that attachment, keeps the Gmail batch session intact, reapplies the same launch context, and waits for a manual `Start Translate`. If the old job is still running or cancelling, cancel it first.
+15. Translation mode then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
+16. When all selected translation files are confirmed, the app can generate one honorários export using the combined translated word count for the batch.
+17. The honorários export saves the DOCX first and then attempts a sibling PDF with the same basename.
+18. If the translation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários PDF.
+19. If the interpretation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with the generated honorários PDF only.
+20. If preview or `Prepare selected attachments` fails before a translation run exists, the Gmail diagnostics area now preserves the current selection/start-page state and offers `Generate Failure Report`.
+21. Before `Finalize Gmail Batch Reply`, the app now checks whether the real Word PDF export path is ready. If it says blocked, fix that readiness issue first instead of rerunning translation.
 
 ### Batch rules
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
@@ -325,7 +330,7 @@ Queue mode writes these sidecar files next to the manifest:
 12. OCR can improve difficult scans, but it still depends on source quality and cannot fully repair a badly scanned page.
 13. For OCR-heavy runs, start with pages `1-2`, then `3-4`, then `5-7`.
 14. If you click `Cancel and wait`, the app now waits only for the active request deadline instead of appearing indefinitely frozen.
-15. If a run stops partially, open `Generate Run Report` and the run folder before retrying. The stop dialog now includes suspected cause, halt reason, and request timing details when available.
+15. If a run stops partially, use `Generate Run Report` before retrying. The app now writes or refreshes `<run_dir>/run_report.md`, downloads it once immediately, and keeps `Download Run Report` available for repeat access. The stop dialog still includes suspected cause, halt reason, and request timing details when available.
 16. If a historical honorários Gmail draft still asks you to pick the translated DOCX, that means the row has no stored artifact path and exact `run_id` recovery did not find one unique valid match. After one successful manual selection, the row should be healed and stop asking again.
 17. If `Autofill from PDF header` is available on an interpretation row without an attached source PDF, that is expected. The app now asks you to choose the PDF manually for that autofill pass.
 18. If an interpretation row shows the wrong travel distance, check the `Service city` first. The saved KM value is keyed to that service city.
@@ -341,13 +346,14 @@ Queue mode writes these sidecar files next to the manifest:
 27. If you skip or fail honorários generation at the end of a Gmail batch, the app does not create the Gmail reply draft in V1.
 28. A WSL-only `gog` smoke is not enough for final Gmail intake validation. The signed-in browser, Windows app, and Windows `gog` must be checked on the same host.
 29. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets. In Gmail batches, the current attachment stays in a recovery state until the rerun succeeds.
-30. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
-31. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
-32. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
-33. If the browser app opens but a stale shell or old browser module graph appears, manual hard refresh should not be the normal fix. Reload the extension if needed and let the exact localhost tab recover first.
-34. If live Gmail says it is running from a noncanonical build, restart from canonical `main` for normal use. Use `Continue Anyway` only when you intentionally launched a feature worktree for isolated validation.
-35. If Gmail/browser preparation fails before a run exists, use `Generate Failure Report` from the Gmail diagnostics area. That artifact now captures browser/build context plus the raw PDF worker/module failure details that happened before `run_dir` existed.
-36. If Gmail finalization is blocked or already completed and you want the last-step operator artifact, use `Generate Finalization Report` from the finalization drawer. That report stays available for blocked states, recoverable warning states, and successful draft creation.
+30. If the current Gmail attachment was already translated once and you want to run it again without closing the app, use `Redo Current Attachment` instead of `Reset Gmail Workspace`. `Redo` keeps the batch session and only resets the translation side for the current unconfirmed attachment.
+31. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
+32. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
+33. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
+34. If the browser app opens but a stale shell or old browser module graph appears, manual hard refresh should not be the normal fix. Reload the extension if needed and let the exact localhost tab recover first.
+35. If live Gmail says it is running from a noncanonical build, restart from canonical `main` for normal use. Use `Continue Anyway` only when you intentionally launched a feature worktree for isolated validation.
+36. If Gmail/browser preparation fails before a run exists, use `Generate Failure Report` from the Gmail diagnostics area. That artifact now captures browser/build context plus the raw PDF worker/module failure details that happened before `run_dir` existed.
+37. If Gmail finalization is blocked or already completed and you want the last-step operator artifact, use `Generate Finalization Report` from the finalization drawer. That report stays available for blocked states, recoverable warning states, and successful draft creation.
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.
