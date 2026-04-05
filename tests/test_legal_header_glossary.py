@@ -48,6 +48,13 @@ def test_match_legal_header_phrases_extracts_panel_phrase_without_case_number_no
     assert matches[0].preferred_translation == "Procédure commune (formation collégiale)"
 
 
+def test_match_legal_header_phrases_maps_juiz_de_direito_variant_to_canonical_source_text() -> None:
+    matches = match_legal_header_phrases("Juiz de Direito", "AR")
+
+    assert matches[0].source_text == "O Juiz de Direito"
+    assert matches[0].preferred_translation == "القاضي"
+
+
 def test_extract_best_case_entity_match_prefers_specific_prosecution_unit_over_generic_header() -> None:
     header = """
     Ministério Público - Procuradoria da República da Comarca de Beja

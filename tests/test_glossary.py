@@ -183,9 +183,24 @@ def test_default_ar_entries_include_required_seed_rows_and_header_catalog() -> N
         (2, "exact", "PT", "Detenção de Cidadão Estrangeiro em Situação Ilegal", "احتجاز مواطن أجنبي في وضع غير قانوني"),
         (2, "exact", "PT", "Ministério Público", "النيابة العامة"),
         (2, "exact", "PT", "audiência de julgamento", "جلسة المحاكمة"),
+        (2, "exact", "PT", "registo criminal", "السجل العدلي"),
+        (2, "exact", "PT", "certificado do registo criminal", "شهادة السجل العدلي"),
         (6, "exact", "PT", "O Juiz de Direito", "القاضي"),
     }
     assert required_rows <= actual_rows
+
+
+def test_default_ar_entries_do_not_mix_registo_criminal_family_with_sijil_jinai() -> None:
+    defaults = default_ar_entries()
+    criminal_register_rows = {
+        (entry.source_text, entry.preferred_translation)
+        for entry in defaults
+        if entry.source_text in {"registo criminal", "certificado do registo criminal"}
+    }
+
+    assert ("registo criminal", "السجل العدلي") in criminal_register_rows
+    assert ("certificado do registo criminal", "شهادة السجل العدلي") in criminal_register_rows
+    assert ("registo criminal", "السجل الجنائي") not in criminal_register_rows
 
 
 def test_default_en_entries_include_required_seed_rows_and_header_catalog() -> None:
