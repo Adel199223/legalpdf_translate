@@ -67,7 +67,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 4. After a run finishes, open the Review Queue if pages were flagged for manual checking.
 5. For Arabic runs, review the DOCX in Word when the app pauses for that step, then save it so the app can continue automatically.
 6. Save the finished run to the Job Log so the case and cost details are stored together.
-7. Use `Generate Run Report` from the translation completion area when you want the full Markdown run report next to the run folder. The app now downloads it immediately once and keeps `Download Run Report` available afterward.
+7. Use `Generate Run Report` from the translation completion area when you want the full Markdown run report next to the run folder. The app now downloads it immediately once and keeps `Download Run Report` available afterward. For Gmail-started runs, that report also keeps the `Gmail Intake / Batch Context` section and clearly labels `run tokens` versus `billed total (includes reasoning)`.
 8. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.
 9. Use Gmail intake when you want to start from one open Gmail message instead of choosing files manually.
 10. Open another browser tab or browser window with a different workspace URL when you want a second independent workspace for another job.
@@ -136,7 +136,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 14. Interpretation-notice mode stages the original notice, then moves into one compact `Current Interpretation Step` view plus a bounded `Review Interpretation` drawer instead of a long mixed admin page.
 15. If the interpretation city or distance is invalid, the browser now blocks finalization and asks you to correct the city/distance before saving, exporting, or finalizing the Gmail reply.
 16. Arabic translation files pause in a Word review step before `Save to Job Log`. The app opens the durable DOCX in Word for you; align or edit it manually, save it, and the app continues automatically. If save detection misses, use `Continue now` after saving.
-17. If you want to rerun the same current Gmail attachment without closing Edge or resetting the whole Gmail workspace, use `Redo Current Attachment`. It reloads the same attachment into translation, keeps prior files on disk, and waits for you to start the rerun manually.
+17. If you want to rerun the same current Gmail attachment without closing Edge or resetting the whole Gmail workspace, use `Redo Current Attachment`. It reloads the same attachment into translation, keeps prior files on disk, and waits for you to start the rerun manually. If you instead click the extension again for a new Gmail handoff, the new handoff should win by default. Use `Open Last Finalization Result` only when you intentionally want the previous finalized batch details.
 18. Translation mode requires each file to be saved before the next one begins. If you cancel that dialog, the remaining files stop on purpose.
 19. If a translation file fails, the current attachment moves into a recovery state. `Resume Translation` reruns the same config; if you want different OCR or image settings, start a fresh translation from the current form instead.
 20. If one translation file resolves to a different case or court, stop and split the work into separate batches.

@@ -1328,6 +1328,27 @@ Verification commands/results:
   - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe test/tooling/validate_agent_docs_test.dart` -> `PASS` (`72 cases`)
   - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe test/tooling/validate_workspace_hygiene_test.dart` -> `PASS` (`7 cases`)
 
+- Ran a follow-on touched-scope Assistant Docs Sync for the Gmail browser closeout branch.
+- Synced current-truth and user-facing guidance for:
+  - Gmail-started `run_report.md` preserving `gmail_batch_context` through Gmail-originated reruns/manual restart prep, even when the report is generated before Gmail finalization
+  - clearer report wording that distinguishes `run tokens` from `billed total (includes reasoning)`
+  - fresh Gmail handoff taking priority over recovered finalized translation batches, with the older batch kept only as secondary `Open Last Finalization Result` history
+  - publish-closeout guidance that the launcher/native-host wrapper must be restored to canonical `main` and checked against recovered-session drift before cleanup is called complete
+- Updated `ISSUE_MEMORY.md` / `ISSUE_MEMORY.json` because this sync intersected two repeated issue-memory areas:
+  - `workflow-fragmented-multi-surface-diagnostics`
+  - `workflow-gmail-restored-finalization-shadowed-fresh-handoff`
+- Archived the active ExecPlans for Gmail run-report provenance and Gmail fresh-handoff priority into `docs/assistant/exec_plans/completed/`.
+- Validation for this follow-on pass:
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests/test_translation_browser_state.py tests/test_translation_service_gmail_context.py tests/test_translation_service_run_report.py tests/test_run_report.py tests/test_gmail_browser_service.py tests/test_gmail_review_state.py tests/test_shadow_web_api.py` -> `75 passed`
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe - <<py_compile bundle>>` -> `py_compile ok`
+  - `node --check src/legalpdf_translate/shadow_web/static/translation.js` -> `PASS`
+  - `node --check src/legalpdf_translate/shadow_web/static/gmail.js` -> `PASS`
+  - `node --check src/legalpdf_translate/shadow_web/static/gmail_review_state.js` -> `PASS`
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe tooling/validate_agent_docs.dart` -> `PASS`
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe tooling/validate_workspace_hygiene.dart` -> `PASS`
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe test/tooling/validate_agent_docs_test.dart` -> `PASS` (`72 cases`)
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe test/tooling/validate_workspace_hygiene_test.dart` -> `PASS` (`7 cases`)
+
 # 2026-04-03
 - Ran a touched-scope Assistant Docs Sync for the browser Gmail + Arabic hardening publish branch.
 - Synced current-truth and user-facing guidance for:

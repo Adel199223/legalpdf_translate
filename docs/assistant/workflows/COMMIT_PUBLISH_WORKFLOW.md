@@ -51,6 +51,7 @@ git ls-files --others --exclude-standard
 - Current branch does not contain the approved-base floor from `docs/assistant/runtime/CANONICAL_BUILD.json`: stop before commit/push and fix branch lineage first.
 - User-accepted functionality exists only on a side branch: stop publish flow, promote that branch into the approved base immediately, then continue.
 - User-accepted overlapping functionality is stranded across multiple dirty side worktrees: stop publish flow, take local-only safety checkpoints on each side branch, build one clean integration branch from `main`, transplant the accepted scopes there, and publish only that integrated branch.
+- Live launcher/native-host wrapper still points at a validation worktree after browser or Gmail testing: stop before calling cleanup complete, restore the launcher to canonical `main`, and verify the next live open no longer resolves to the validation build or its recovered session state.
 - Unintended staged files: `git restore --staged <path>` and restage explicitly.
 - Push safety risk: never force-push `main`; use PR flow.
 - User said `push`, but checks are red, merge is blocked, or cleanup is unsafe: report the exact blocker and stop at the highest clean point instead of silently stopping after the raw branch push.
@@ -126,5 +127,6 @@ git ls-files --others --exclude-standard
    - remove stale local branch state when safe
    - remove temporary side worktrees that were harvested into the integration branch once their changes are confirmed on `main`
    - restore the configured canonical worktree path and launcher/native-host wrapper back to clean `main` if testing had pointed them at a feature worktree
+   - when the publish wave touched Gmail/browser session bootstrap or live launcher routing, verify the next extension click or live browser open comes from canonical `main` and not from a recovered validation-session surface
    - remove known scratch outputs if they still exist locally
    - verify final clean repo state

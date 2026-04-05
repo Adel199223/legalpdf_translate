@@ -140,7 +140,9 @@ Typical files:
 - `run_events.jsonl`
 - `analyze_report.json` (analyze-only)
 
-For browser translation jobs, `Generate Run Report` now writes or refreshes the same `<run_dir>/run_report.md`, triggers a one-time download immediately, and leaves a persistent `Download Run Report` artifact link in the completion drawer for repeat access.
+For browser translation jobs, `Generate Run Report` now writes or refreshes the same `<run_dir>/run_report.md`, triggers a one-time download immediately, and leaves a persistent `Download Run Report` artifact link in the completion drawer for repeat access. The human-readable report now labels `run tokens` separately from `billed total (includes reasoning)` so token counts do not look contradictory.
+
+For Gmail-started runs, that same `run_report.md` now preserves the `Gmail Intake / Batch Context` section even when you generate it at the Arabic review/save gate before Gmail finalization.
 
 When a run comes from Gmail intake, the effective output directory also gains durable Gmail session diagnostics:
 - `<outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`
@@ -162,7 +164,7 @@ When a run comes from Gmail intake, the effective output directory also gains du
 - `failure_context`
 - `gmail_batch_context`
 
-When present, `gmail_batch_context` records the selected Gmail attachment filename/count, the Gmail intake workflow kind, the translation target language when that workflow is `translation`, the selected start page for that run, and the durable Gmail batch session report path.
+When present, `gmail_batch_context` records the selected Gmail attachment filename/count, the Gmail intake workflow kind, the translation target language when that workflow is `translation`, the selected start page for that run, and the durable Gmail batch session report path. Gmail-originated reruns now preserve that context through the same live runtime by clearing conflicting manual-upload state before submit, so rerun reports do not silently lose Gmail provenance.
 
 For Arabic target runs, persisted page-validation metadata now also feeds the quality-risk layer with numeric mismatch, citation mismatch, structure warning, bidi warning, bidi-control, and replacement-character counts so `quality_risk_score` and `review_queue` better reflect citation-heavy or mixed-direction risk.
 
@@ -255,6 +257,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - If a legacy historical row needs one manual translated-DOCX selection, the app persists that choice back into the row so the picker should not appear again for that same row.
 - Gmail intake batch downloads, interpretation-notice staging data, and confirmed per-item results are kept in memory only for the active Gmail intake session. They are cleared on reset, failure paths, app shutdown, or successful finalization.
 - Browser Gmail translation jobs now persist additive `gmail_batch_context` identity on the run config so the same live runtime can detect when the current attachment was already run and can offer `Redo Current Attachment` without resetting the whole Gmail workspace.
+- Gmail extension clicks now prefer a fresh handoff over any recovered finalized batch. Previously finalized Gmail translation batches remain available only as secondary recovered history through `Open Last Finalization Result`.
 - Gmail batch draft finalization uses an immutable staged copy of each translated DOCX rather than trusting the mutable user-facing output path directly.
 - Gmail honorários drafts now require the generated honorários PDF:
   - translation reply drafts attach the translated DOCX files plus the honorários PDF

@@ -37,6 +37,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Browser Gmail handoff now requires both shell readiness and hydrated client readiness, with client/server `asset_version` agreement on the opened localhost tab so stale browser assets do not masquerade as a fresh launch.
 - Browser-managed Gmail PDF preview/prepare now uses the bundled browser `pdf.js` path instead of depending on `PyMuPDF` during browser startup.
 - Gmail batch finalization readiness now depends on a real Word export canary, not a launch-only Word probe.
+- Report-restored completed Gmail translation batches are now secondary recovered history only; a fresh extension handoff or loaded Gmail message should supersede them automatically.
 - Browser-app live vs isolated-test mode remains a deliberate reusable system that should be preserved in later template-sync work.
 
 ## Authoritative Worktree
@@ -49,6 +50,8 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - No active roadmap currently open on this worktree.
 - No active roadmap tracker is currently authoritative.
 - Recent completed Gmail/browser closeout history for reference:
+  - `docs/assistant/exec_plans/completed/2026-04-05_gmail_fresh_handoff_priority.md`
+  - `docs/assistant/exec_plans/completed/2026-04-05-gmail-run-report-provenance.md`
   - `docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md`
   - `docs/assistant/exec_plans/completed/2026-04-03_gmail_redo_current_attachment.md`
   - `docs/assistant/exec_plans/completed/2026-04-03_arabic_legal_risk_hardening.md`
