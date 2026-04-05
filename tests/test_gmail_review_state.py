@@ -265,6 +265,46 @@ results.ctaInterpretationFinalize = reviewModule.deriveGmailHomeCta({{
   stage: "interpretation_finalize",
   activeSession: {{ kind: "interpretation" }},
 }});
+results.recoveredHidden = reviewModule.deriveRecoveredFinalizationAction({{
+  restoredCompletedSession: null,
+}});
+results.recoveredVisible = reviewModule.deriveRecoveredFinalizationAction({{
+  restoredCompletedSession: {{
+    kind: "translation",
+    completed: true,
+    restored_from_report: true,
+    finalization_state: "draft_ready",
+    message: {{ subject: "Recovered batch" }},
+  }},
+}});
+results.stableRecoveredOnly = reviewModule.shouldTreatGmailWorkspaceAsStable({{
+  activeView: "gmail-intake",
+  loadResult: null,
+  activeSession: null,
+  restoredCompletedSession: {{
+    kind: "translation",
+    completed: true,
+    restored_from_report: true,
+  }},
+  pendingStatus: "",
+  pendingReviewOpen: false,
+}});
+results.stableLoadedMessage = reviewModule.shouldTreatGmailWorkspaceAsStable({{
+  activeView: "gmail-intake",
+  loadResult: {{ ok: true, message: {{ message_id: "msg-1" }} }},
+  activeSession: null,
+  restoredCompletedSession: null,
+  pendingStatus: "",
+  pendingReviewOpen: false,
+}});
+results.stableWarmupPending = reviewModule.shouldTreatGmailWorkspaceAsStable({{
+  activeView: "gmail-intake",
+  loadResult: null,
+  activeSession: null,
+  restoredCompletedSession: null,
+  pendingStatus: "warming",
+  pendingReviewOpen: true,
+}});
 
 results.previewInitial = reviewModule.createClosedPreviewState();
 results.previewOpened = reviewModule.openPreviewState({{
@@ -345,6 +385,14 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     assert results["ctaTranslationSave"]["label"] == "Resume Current Step"
     assert results["ctaTranslationFinalize"]["action"] == "resume-translation-finalize"
     assert results["ctaInterpretationFinalize"]["action"] == "resume-interpretation-finalize"
+    assert results["recoveredHidden"]["visible"] is False
+    assert results["recoveredVisible"]["visible"] is True
+    assert results["recoveredVisible"]["action"] == "open-restored-translation-finalize"
+    assert results["recoveredVisible"]["label"] == "Open Last Finalization Result"
+    assert "Recovered batch" in results["recoveredVisible"]["description"]
+    assert results["stableRecoveredOnly"] is False
+    assert results["stableLoadedMessage"] is True
+    assert results["stableWarmupPending"] is False
     assert results["redoHidden"]["visible"] is False
     assert results["redoFresh"]["visible"] is True
     assert results["redoFresh"]["enabled"] is True

@@ -282,6 +282,15 @@ function sourceFileKey(file) {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
+function clearManualSourceSelection() {
+  const input = qs("translation-source-file");
+  if (input) {
+    input.value = "";
+  }
+  translationState.uploadedSourcePath = "";
+  translationState.uploadedSourceKey = "";
+}
+
 function isPdfFile(file) {
   if (!file) {
     return false;
@@ -1127,7 +1136,12 @@ export function applyTranslationLaunch(launch) {
     return;
   }
   dispatchNewJobTask("translation");
-  translationState.currentGmailBatchContext = normalizeGmailBatchContext(launch.gmail_batch_context);
+  const gmailBatchContext = normalizeGmailBatchContext(launch.gmail_batch_context);
+  const workflowSource = String(launch.workflow_source || "").trim();
+  if (gmailBatchContext || workflowSource === "gmail_intake") {
+    clearManualSourceSelection();
+  }
+  translationState.currentGmailBatchContext = gmailBatchContext;
   if (launch.source_path) {
     setFieldValue("translation-source-path", launch.source_path);
   }
@@ -1164,10 +1178,7 @@ export function resetTranslationForGmailRedo(launch) {
   translationState.uploadedSourceKey = "";
   setFieldValue("translation-job-id", "");
   setFieldValue("translation-row-id", "");
-  const sourceInput = qs("translation-source-file");
-  if (sourceInput) {
-    sourceInput.value = "";
-  }
+  clearManualSourceSelection();
   closeTranslationCompletionDrawer();
   clearArabicReviewState();
   renderTranslationJob(null);

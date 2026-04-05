@@ -1446,9 +1446,17 @@ def build_run_report_markdown(
         f"- Run `{run_obj.get('run_id', '-')}` status `{run_obj.get('status', '-')}` "
         f"for `{input_obj.get('file_name', '-')}` -> `{output_obj.get('output_docx_name', '-')}`."
     )
+    run_tokens = int(totals_obj.get("total_tokens", 0) or 0)
+    billed_total_tokens = 0
+    budget_post_obj = budget_obj.get("budget_post_run")
+    if isinstance(budget_post_obj, dict):
+        billed_total_tokens = int(budget_post_obj.get("total_tokens", 0) or 0)
+    token_summary = f"run tokens `{run_tokens}`"
+    if billed_total_tokens > 0 and billed_total_tokens != run_tokens:
+        token_summary += f", billed total `{billed_total_tokens}` (includes reasoning)"
     lines.append(
         f"- Total wall time `{totals_obj.get('wall_seconds', 0.0)}`s, "
-        f"tokens `{totals_obj.get('total_tokens', 0)}`, estimated cost `{totals_obj.get('estimated_cost')}`."
+        f"{token_summary}, estimated cost `{totals_obj.get('estimated_cost')}`."
     )
     lines.append(
         f"- API calls `{totals_obj.get('api_calls_total', 0)}`, retries `{totals_obj.get('transport_retries_total', 0)}`, "
