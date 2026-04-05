@@ -161,6 +161,106 @@ results.ctaTranslationFinalize = reviewModule.deriveGmailHomeCta({{
   stage: "translation_finalize",
   activeSession: {{ kind: "translation", current_item_number: 2, total_items: 2 }},
 }});
+results.redoHidden = reviewModule.deriveGmailRedoAction({{
+  activeSession: null,
+  translationUi: {{}},
+}});
+results.redoFresh = reviewModule.deriveGmailRedoAction({{
+  activeSession: {{
+    kind: "translation",
+    completed: false,
+    session_id: "gmail_batch_1",
+    selected_target_lang: "AR",
+    current_item_number: 1,
+    total_items: 2,
+    message: {{ message_id: "msg-1", thread_id: "thr-1" }},
+    current_attachment: {{
+      attachment: {{ attachment_id: "att-1", filename: "sentença 305.pdf" }},
+      saved_path: "C:/tmp/sentenca_305.pdf",
+      start_page: 1,
+      page_count: 5,
+    }},
+  }},
+  translationUi: {{ runtimeJobs: [] }},
+}});
+results.redoMatchingCompleted = reviewModule.deriveGmailRedoAction({{
+  activeSession: {{
+    kind: "translation",
+    completed: false,
+    session_id: "gmail_batch_1",
+    selected_target_lang: "AR",
+    current_item_number: 1,
+    total_items: 2,
+    message: {{ message_id: "msg-1", thread_id: "thr-1" }},
+    current_attachment: {{
+      attachment: {{ attachment_id: "att-1", filename: "sentença 305.pdf" }},
+      saved_path: "C:/tmp/sentenca_305.pdf",
+      start_page: 1,
+      page_count: 5,
+    }},
+  }},
+  translationUi: {{
+    runtimeJobs: [{{
+      job_id: "tx-1",
+      job_kind: "translate",
+      status: "completed",
+      config: {{
+        source_path: "C:/tmp/sentenca_305.pdf",
+        gmail_batch_context: {{
+          source: "gmail_intake",
+          session_id: "gmail_batch_1",
+          message_id: "msg-1",
+          thread_id: "thr-1",
+          attachment_id: "att-1",
+          selected_attachment_filename: "sentença 305.pdf",
+          selected_attachment_count: 2,
+          selected_target_lang: "AR",
+          selected_start_page: 1,
+          gmail_batch_session_report_path: "C:/tmp/session.json",
+        }},
+      }},
+    }}],
+  }},
+}});
+results.redoMatchingRunning = reviewModule.deriveGmailRedoAction({{
+  activeSession: {{
+    kind: "translation",
+    completed: false,
+    session_id: "gmail_batch_1",
+    selected_target_lang: "AR",
+    current_item_number: 1,
+    total_items: 2,
+    message: {{ message_id: "msg-1", thread_id: "thr-1" }},
+    current_attachment: {{
+      attachment: {{ attachment_id: "att-1", filename: "sentença 305.pdf" }},
+      saved_path: "C:/tmp/sentenca_305.pdf",
+      start_page: 1,
+      page_count: 5,
+    }},
+  }},
+  translationUi: {{
+    runtimeJobs: [{{
+      job_id: "tx-2",
+      job_kind: "translate",
+      status: "running",
+      config: {{
+        source_path: "C:/tmp/sentenca_305.pdf",
+        gmail_batch_context: {{
+          source: "gmail_intake",
+          session_id: "gmail_batch_1",
+          message_id: "msg-1",
+          thread_id: "thr-1",
+          attachment_id: "att-1",
+          selected_attachment_filename: "sentença 305.pdf",
+          selected_attachment_count: 2,
+          selected_target_lang: "AR",
+          selected_start_page: 1,
+          gmail_batch_session_report_path: "C:/tmp/session.json",
+        }},
+      }},
+    }}],
+  }},
+}});
 results.ctaInterpretationFinalize = reviewModule.deriveGmailHomeCta({{
   stage: "interpretation_finalize",
   activeSession: {{ kind: "interpretation" }},
@@ -245,6 +345,16 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     assert results["ctaTranslationSave"]["label"] == "Resume Current Step"
     assert results["ctaTranslationFinalize"]["action"] == "resume-translation-finalize"
     assert results["ctaInterpretationFinalize"]["action"] == "resume-interpretation-finalize"
+    assert results["redoHidden"]["visible"] is False
+    assert results["redoFresh"]["visible"] is True
+    assert results["redoFresh"]["enabled"] is True
+    assert results["redoFresh"]["action"] == "redo-current-translation"
+    assert results["redoMatchingCompleted"]["enabled"] is True
+    assert results["redoMatchingCompleted"]["matchingJob"]["job_id"] == "tx-1"
+    assert "keep prior files on disk" in results["redoMatchingCompleted"]["description"]
+    assert results["redoMatchingRunning"]["enabled"] is False
+    assert results["redoMatchingRunning"]["blocked"] is True
+    assert results["redoMatchingRunning"]["matchingJob"]["job_id"] == "tx-2"
     assert results["previewInitial"] == {
         "open": False,
         "attachmentId": "",

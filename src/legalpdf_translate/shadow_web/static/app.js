@@ -19,6 +19,7 @@ import {
   collectCurrentTranslationSaveValues,
   getTranslationUiSnapshot,
   getCurrentTranslationJobId,
+  resetTranslationForGmailRedo,
   renderTranslationBootstrap,
   startTranslationLaunch,
 } from "./translation.js";
@@ -3109,6 +3110,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     renderInterpretationGmailResult,
     applyTranslationLaunch,
     startTranslationLaunch,
+    resetTranslationForGmailRedo,
     closeTranslationCompletionDrawer,
     collectCurrentTranslationSaveValues,
     getTranslationUiSnapshot,

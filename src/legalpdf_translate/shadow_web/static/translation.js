@@ -7,6 +7,8 @@ const translationState = {
   currentRowId: null,
   currentJob: null,
   currentJobId: "",
+  runtimeJobs: [],
+  currentGmailBatchContext: null,
   uploadedSourcePath: "",
   uploadedSourceKey: "",
   pollTimer: null,
@@ -17,6 +19,54 @@ const translationState = {
 };
 
 let lastTranslationUiSnapshotKey = "";
+
+function normalizeGmailBatchContext(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const normalized = {
+    source: String(value.source || "").trim(),
+    session_id: String(value.session_id || "").trim(),
+    message_id: String(value.message_id || "").trim(),
+    thread_id: String(value.thread_id || "").trim(),
+    attachment_id: String(value.attachment_id || "").trim(),
+    selected_attachment_filename: String(value.selected_attachment_filename || "").trim(),
+    selected_attachment_count: Number.parseInt(String(value.selected_attachment_count ?? "").trim(), 10) || 0,
+    selected_target_lang: String(value.selected_target_lang || "").trim().toUpperCase(),
+    selected_start_page: Number.parseInt(String(value.selected_start_page ?? "").trim(), 10) || 0,
+    gmail_batch_session_report_path: String(value.gmail_batch_session_report_path || "").trim(),
+  };
+  return Object.values(normalized).some((item) => item)
+    ? normalized
+    : null;
+}
+
+function summarizeRuntimeJob(job) {
+  if (!job || typeof job !== "object") {
+    return null;
+  }
+  return {
+    job_id: String(job.job_id || "").trim(),
+    job_kind: String(job.job_kind || "").trim(),
+    status: String(job.status || "").trim(),
+    updated_at: String(job.updated_at || "").trim(),
+    config: {
+      source_path: String(job.config?.source_path || "").trim(),
+      target_lang: String(job.config?.target_lang || "").trim(),
+      start_page: Number.parseInt(String(job.config?.start_page ?? "").trim(), 10) || 0,
+      gmail_batch_context: normalizeGmailBatchContext(job.config?.gmail_batch_context),
+    },
+  };
+}
+
+function rememberRuntimeJob(job) {
+  const summarized = summarizeRuntimeJob(job);
+  if (!summarized || !summarized.job_id) {
+    return;
+  }
+  const remaining = translationState.runtimeJobs.filter((item) => item?.job_id !== summarized.job_id);
+  translationState.runtimeJobs = [summarized, ...remaining];
+}
 
 function blankArabicReviewState() {
   return {
@@ -256,6 +306,7 @@ async function ensureUploadedSource() {
     method: "POST",
     body: form,
   });
+  translationState.currentGmailBatchContext = null;
   translationState.uploadedSourceKey = key;
   translationState.uploadedSourcePath = payload.normalized_payload.source_path || "";
   let resolvedPageCount = payload.normalized_payload.page_count ?? "?";
@@ -283,7 +334,7 @@ async function ensureUploadedSource() {
 }
 
 function collectTranslationSetupValues() {
-  return {
+  const values = {
     source_path: fieldValue("translation-source-path"),
     output_dir: fieldValue("translation-output-dir"),
     target_lang: fieldValue("translation-target-lang"),
@@ -303,6 +354,10 @@ function collectTranslationSetupValues() {
     glossary_file: fieldValue("translation-glossary-file"),
     context_text: qs("translation-context-text").value.trim(),
   };
+  if (translationState.currentGmailBatchContext) {
+    values.gmail_batch_context = { ...translationState.currentGmailBatchContext };
+  }
+  return values;
 }
 
 function collectTranslationSaveValues() {
@@ -348,6 +403,13 @@ function setDownloadLink(id, href) {
   } else {
     clearDownloadLink(id);
   }
+}
+
+function translationRunReportHref(job = translationState.currentJob) {
+  if (!job?.actions?.download_run_report || !job?.job_id) {
+    return "";
+  }
+  return `/api/translation/jobs/${job.job_id}/artifact/run_report?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}`;
 }
 
 function blankSaveSeed() {
@@ -489,6 +551,14 @@ export function getTranslationUiSnapshot() {
     arabicReviewState: review.status || "",
     arabicReviewMessage: review.message || "",
     arabicReviewCompletionKey: review.completion_key || currentTranslationCompletionKey(),
+    runtimeJobs: translationState.runtimeJobs.map((job) => ({
+      ...job,
+      config: {
+        ...job.config,
+        gmail_batch_context: normalizeGmailBatchContext(job.config?.gmail_batch_context),
+      },
+    })),
+    currentGmailBatchContext: normalizeGmailBatchContext(translationState.currentGmailBatchContext),
   };
 }
 
@@ -613,6 +683,7 @@ function syncTranslationCompletionSurface() {
       runReportButton.disabled = true;
       runReportButton.classList.add("hidden");
     }
+    clearDownloadLink("translation-download-report");
     clearDownloadLink("translation-download-docx");
     clearDownloadLink("translation-download-partial");
     clearDownloadLink("translation-download-summary");
@@ -1056,6 +1127,7 @@ export function applyTranslationLaunch(launch) {
     return;
   }
   dispatchNewJobTask("translation");
+  translationState.currentGmailBatchContext = normalizeGmailBatchContext(launch.gmail_batch_context);
   if (launch.source_path) {
     setFieldValue("translation-source-path", launch.source_path);
   }
@@ -1078,6 +1150,44 @@ export function applyTranslationLaunch(launch) {
     ].join("\n"),
   );
   setPanelStatus("translation", "", "Gmail attachment loaded into the translation workspace. Review the settings, then start the translation run.");
+}
+
+export function resetTranslationForGmailRedo(launch) {
+  stopPolling();
+  stopArabicReviewPolling();
+  translationState.currentJob = null;
+  translationState.currentJobId = "";
+  translationState.currentSeed = null;
+  translationState.currentRowId = null;
+  translationState.lastAutoOpenedCompletionKey = "";
+  translationState.uploadedSourcePath = "";
+  translationState.uploadedSourceKey = "";
+  setFieldValue("translation-job-id", "");
+  setFieldValue("translation-row-id", "");
+  const sourceInput = qs("translation-source-file");
+  if (sourceInput) {
+    sourceInput.value = "";
+  }
+  closeTranslationCompletionDrawer();
+  clearArabicReviewState();
+  renderTranslationJob(null);
+  applyTranslationLaunch(launch);
+  setActiveView("new-job");
+  setPanelStatus("translation", "", "Current Gmail attachment reloaded for a new run. Review the settings, then start translation again.");
+  setDiagnostics(
+    "translation",
+    {
+      status: "ready",
+      action: "gmail_redo_prepared",
+      source_path: String(launch?.source_path || "").trim(),
+      attachment_id: String(launch?.gmail_batch_context?.attachment_id || "").trim(),
+    },
+    {
+      hint: "Redo is prepared. The Gmail batch stayed intact; only the translation workspace was reset for this attachment.",
+      open: false,
+    },
+  );
+  notifyTranslationUiStateChanged({ force: true });
 }
 
 export function getCurrentTranslationJobId() {
@@ -1164,6 +1274,12 @@ function renderTranslationResultCard(job, { containerId = "translation-result" }
 function renderTranslationJob(job) {
   translationState.currentJob = job || null;
   translationState.currentJobId = job?.job_id || "";
+  if (job?.config?.gmail_batch_context) {
+    translationState.currentGmailBatchContext = normalizeGmailBatchContext(job.config.gmail_batch_context);
+  } else if (job) {
+    translationState.currentGmailBatchContext = null;
+  }
+  rememberRuntimeJob(job);
   setFieldValue("translation-job-id", translationState.currentJobId);
   const runDir = currentTranslationRunDir(job);
   if (runDir && qs("diagnostics-run-dir")) {
@@ -1187,13 +1303,14 @@ function renderTranslationJob(job) {
     hint: diagnosticsHint,
     open: Boolean(job && job.status !== "completed"),
   });
+  setDownloadLink("translation-download-report", translationRunReportHref(job));
   setDownloadLink("translation-download-docx", job?.actions?.download_output_docx ? `/api/translation/jobs/${job.job_id}/artifact/output_docx?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
   setDownloadLink("translation-download-partial", job?.actions?.download_partial_docx ? `/api/translation/jobs/${job.job_id}/artifact/partial_docx?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
   setDownloadLink("translation-download-summary", job?.actions?.download_run_summary ? `/api/translation/jobs/${job.job_id}/artifact/run_summary?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
   setDownloadLink("translation-download-analyze", job?.actions?.download_analyze_report ? `/api/translation/jobs/${job.job_id}/artifact/analyze_report?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
   const reportButton = qs("translation-generate-report");
   if (reportButton) {
-    const available = Boolean(runDir);
+    const available = Boolean(job?.job_kind === "translate" && runDir);
     reportButton.disabled = !available;
     reportButton.classList.toggle("hidden", !job);
   }
@@ -1276,6 +1393,7 @@ function loadTranslationHistoryItem(item) {
   const row = item?.row || {};
   translationState.currentJob = null;
   translationState.currentJobId = "";
+  translationState.currentGmailBatchContext = null;
   clearArabicReviewState();
   applyTranslationSeed(item?.seed || blankSaveSeed(), { rowId: row.id || null });
   setActiveView("new-job");
@@ -1295,6 +1413,10 @@ function loadTranslationHistoryItem(item) {
 
 function renderTranslationJobs(jobs) {
   const container = qs("translation-jobs-list");
+  translationState.runtimeJobs = Array.isArray(jobs)
+    ? jobs.map((job) => summarizeRuntimeJob(job)).filter(Boolean)
+    : [];
+  notifyTranslationUiStateChanged();
   if (!container) {
     return;
   }
@@ -1382,20 +1504,23 @@ async function pollCurrentJob() {
 }
 
 async function handleGenerateRunReport() {
-  const runDir = currentTranslationRunDir();
-  if (!runDir) {
-    throw new Error("No translation run directory is available for report generation yet.");
+  const jobId = String(translationState.currentJobId || translationState.currentJob?.job_id || "").trim();
+  if (!jobId) {
+    throw new Error("No translation job is available for run report generation yet.");
   }
-  const payload = await fetchJson("/api/power-tools/diagnostics/run-report", appState, {
+  const payload = await fetchJson(`/api/translation/jobs/${jobId}/run-report`, appState, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ run_dir: runDir }),
   });
+  renderTranslationJob(payload.normalized_payload?.job || translationState.currentJob);
   setPanelStatus("translation", "ok", "Run report generated.");
   setDiagnostics("translation-job", payload, {
     hint: payload.normalized_payload?.report_path || "Run report generated.",
     open: true,
   });
+  const downloadLink = qs("translation-download-report");
+  if (downloadLink?.href) {
+    downloadLink.click();
+  }
 }
 
 async function handleAnalyze() {
@@ -1529,6 +1654,7 @@ export function initializeTranslationUi() {
   clearDownloadLink("translation-download-partial");
   clearDownloadLink("translation-download-summary");
   clearDownloadLink("translation-download-analyze");
+  clearDownloadLink("translation-download-report");
   clearArabicReviewState();
   syncTranslationCompletionSurface();
 
@@ -1686,4 +1812,9 @@ export function initializeTranslationUi() {
   });
 }
 
-export { loadTranslationHistoryItem, refreshTranslationBootstrap, refreshTranslationHistory, renderTranslationBootstrap };
+export {
+  loadTranslationHistoryItem,
+  refreshTranslationBootstrap,
+  refreshTranslationHistory,
+  renderTranslationBootstrap,
+};
