@@ -2042,6 +2042,20 @@ def create_shadow_app(
         response["capability_flags"] = build_translation_capability_flags(settings_path=target.data_paths.settings_path)
         return JSONResponse(_merge_response(context, target, response))
 
+    @app.post("/api/translation/jobs/{job_id}/run-report")
+    async def api_translation_job_run_report(request: Request, job_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = context.translation_jobs.generate_run_report(
+                job_id=job_id,
+                settings_path=target.data_paths.settings_path,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        response["capability_flags"] = build_translation_capability_flags(settings_path=target.data_paths.settings_path)
+        return JSONResponse(_merge_response(context, target, response))
+
     @app.get("/api/translation/jobs/{job_id}/artifact/{artifact_kind}")
     async def api_translation_job_artifact(request: Request, job_id: str, artifact_kind: str):
         context = _context(request)
@@ -2053,11 +2067,13 @@ def create_shadow_app(
                 {"status": "failed", "diagnostics": {"error": str(exc)}},
                 status_code=404,
             )
-        media_type = "application/octet-stream"
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         if path.suffix.lower() == ".docx":
             media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         elif path.suffix.lower() == ".json":
             media_type = "application/json"
+        elif path.suffix.lower() == ".md":
+            media_type = "text/markdown; charset=utf-8"
         return FileResponse(path, media_type=media_type, filename=path.name)
 
     @app.post("/api/translation/save-row")

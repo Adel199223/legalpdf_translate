@@ -1049,6 +1049,74 @@ def test_finalize_interpretation_prefers_explicit_gmail_reply_address(tmp_path: 
     assert payload["normalized_payload"]["gmail_draft_request"]["to_email"] == "beja.judicial@tribunais.org.pt"
 
 
+def test_prepare_translation_session_exposes_gmail_batch_launch_context(tmp_path: Path, monkeypatch) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    load_result = _load_result(
+        message_id="msg-1",
+        thread_id="thr-1",
+        subject="Court notice",
+        account_email="adel@example.com",
+        attachment_ids=("att-1", "att-2"),
+    )
+    attachment = load_result.message.attachments[0]
+    saved_pdf = tmp_path / "sentenca_305.pdf"
+    saved_pdf.write_bytes(b"%PDF-1.7\n")
+    downloaded = DownloadedGmailAttachment(
+        candidate=attachment,
+        saved_path=saved_pdf,
+        start_page=3,
+        page_count=5,
+    )
+    session = GmailBatchSession(
+        intake_context=load_result.intake_context,
+        message=load_result.message,
+        gog_path=load_result.gog_path,
+        account_email=load_result.account_email or "",
+        downloaded_attachments=(downloaded,),
+        download_dir=tmp_path,
+        selected_target_lang="AR",
+        effective_output_dir=outputs_dir,
+        session_report_path=outputs_dir / "_gmail_batch_sessions" / "gmail_batch_123" / "gmail_batch_session.json",
+    )
+
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.prepare_gmail_batch_session",
+        lambda **_kwargs: session,
+    )
+
+    manager = GmailBrowserSessionManager()
+    manager._store_loaded_result(runtime_mode="live", workspace_id="gmail-intake", result=load_result)
+    payload = manager.prepare_session(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+        workflow_kind="translation",
+        target_lang="AR",
+        output_dir_text=str(outputs_dir),
+        selections_payload=[{"attachment_id": "att-1", "start_page": 3}],
+    )
+
+    launch = payload["normalized_payload"]["suggested_translation_launch"]
+    assert launch["source_path"] == str(saved_pdf)
+    assert launch["target_lang"] == "AR"
+    assert launch["gmail_batch_context"] == {
+        "source": "gmail_intake",
+        "session_id": session.session_id,
+        "message_id": "msg-1",
+        "thread_id": "thr-1",
+        "attachment_id": "att-1",
+        "selected_attachment_filename": "att-1.pdf",
+        "selected_attachment_count": 1,
+        "selected_target_lang": "AR",
+        "selected_start_page": 3,
+        "gmail_batch_session_report_path": str(session.session_report_path),
+    }
+
+
 def test_preflight_batch_finalization_blocks_when_word_export_canary_fails(tmp_path: Path, monkeypatch) -> None:
     settings_path = tmp_path / "settings.json"
     settings_path.write_text("{}", encoding="utf-8")

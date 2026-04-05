@@ -2179,6 +2179,18 @@ def test_shadow_web_translation_job_routes_use_manager_methods(tmp_path: Path, m
                     "source_path": "C:/tmp/source.pdf",
                     "output_dir": str((tmp_path / "live" / "outputs").resolve()),
                     "target_lang": "EN",
+                    "gmail_batch_context": {
+                        "source": "gmail_intake",
+                        "session_id": "gmail_batch_123",
+                        "message_id": "msg-1",
+                        "thread_id": "thr-1",
+                        "attachment_id": "att-1",
+                        "selected_attachment_filename": "source.pdf",
+                        "selected_attachment_count": 1,
+                        "selected_target_lang": "EN",
+                        "selected_start_page": 1,
+                        "gmail_batch_session_report_path": "C:/tmp/gmail_batch_session.json",
+                    },
                 },
             },
         )
@@ -2187,6 +2199,7 @@ def test_shadow_web_translation_job_routes_use_manager_methods(tmp_path: Path, m
         assert start_payload["normalized_payload"]["job"]["job_id"] == "tx-stage2"
         assert recorded["start_translate"]["runtime_mode"] == "live"
         assert recorded["start_translate"]["workspace_id"] == "ws-live"
+        assert recorded["start_translate"]["form_values"]["gmail_batch_context"]["attachment_id"] == "att-1"
 
         cancel = client.post("/api/translation/jobs/tx-stage2/cancel", headers={"X-LegalPDF-Runtime-Mode": "live"})
         cancel_payload = cancel.json()
@@ -2273,6 +2286,60 @@ def test_shadow_web_translation_artifact_route_keeps_download_headers(tmp_path: 
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("application/json")
         assert response.headers["content-disposition"].startswith("attachment;")
+
+
+def test_shadow_web_translation_run_report_route_returns_updated_job(tmp_path: Path, monkeypatch) -> None:
+    recorded: dict[str, object] = {}
+
+    def _generate_run_report(self, *, job_id, settings_path):
+        recorded["job_id"] = job_id
+        recorded["settings_path"] = str(settings_path)
+        return {
+            "status": "ok",
+            "normalized_payload": {
+                "job": {
+                    "job_id": job_id,
+                    "job_kind": "translate",
+                    "status": "completed",
+                    "artifacts": {"run_report_path": "C:/tmp/run_report.md"},
+                    "actions": {"download_run_report": True},
+                },
+                "report_kind": "run_report",
+                "report_path": "C:/tmp/run_report.md",
+                "preview": "# report",
+            },
+            "diagnostics": {},
+        }
+
+    monkeypatch.setattr(shadow_app_module.TranslationJobManager, "generate_run_report", _generate_run_report)
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.post("/api/translation/jobs/tx-report/run-report")
+        payload = response.json()
+
+    assert response.status_code == 200
+    assert recorded["job_id"] == "tx-report"
+    assert payload["normalized_payload"]["report_kind"] == "run_report"
+    assert payload["normalized_payload"]["report_path"] == "C:/tmp/run_report.md"
+    assert payload["normalized_payload"]["job"]["actions"]["download_run_report"] is True
+
+
+def test_shadow_web_translation_run_report_artifact_route_serves_markdown(tmp_path: Path, monkeypatch) -> None:
+    artifact = tmp_path / "run_report.md"
+    artifact.write_text("# Run Report\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        shadow_app_module.TranslationJobManager,
+        "job_artifact_path",
+        lambda self, **kwargs: artifact,
+    )
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.get("/api/translation/jobs/tx-artifact/artifact/run_report")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/markdown")
+    assert response.headers["content-disposition"].startswith("attachment;")
 
 
 def test_shadow_web_notification_upload_route_uses_service_response(tmp_path: Path, monkeypatch) -> None:
