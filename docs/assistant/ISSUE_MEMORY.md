@@ -89,9 +89,9 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 ### workflow-wrong-build-under-test
 - Title: Wrong app/build under test because of mixed branches/worktrees and noncanonical launch
 - First seen timestamp: `2026-03-06T00:00:00Z`
-- Last seen timestamp: `2026-04-03T15:47:52Z`
-- Repeat count: `10`
-- Status: `regressed`
+- Last seen timestamp: `2026-04-05T12:53:22Z`
+- Repeat count: `11`
+- Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
   - the wrong `LegalPDF Translate` window was opened for testing
@@ -101,6 +101,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - the browser app could open on the right localhost URL while still running a stale module graph or stale extension/service-worker state
   - native-host repair could point the launcher to a broken local runtime even though a healthy runtime was already running the visible browser app
   - the configured canonical worktree path itself could still be left on a feature branch, so a later restart drifted the launcher back to the wrong branch again
+  - accepted overlapping browser/Gmail fixes could remain split across multiple dirty feature worktrees, making the final commit/push step itself risky
 - Likely root cause:
   - feature work progressed on side branches after acceptance
   - the approved base was not promoted immediately
@@ -108,6 +109,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - native-host runtime repair originally guessed from worktree state instead of validating the active runtime actually launching the browser app
   - browser cache busting originally touched only the shell entrypoint, so imported modules could stay stale and recreate already-fixed Gmail/browser failures
   - the configured canonical worktree path was not always restored to clean `main` after isolated feature validation, so later repair/auto-launch logic could drift back to the wrong checkout
+  - overlapping accepted work could remain fragmented across several dirty side worktrees instead of being harvested into one clean publish branch before push/merge
 - Attempted fix history:
   - `2026-03-07T00:00:00Z` — added worktree baseline discipline docs; outcome: insufficient on its own
   - `2026-03-07T00:00:00Z` — added Qt build identity helper and noncanonical build markers; outcome: reduced ambiguity but did not solve accepted-feature promotion drift by itself
@@ -116,9 +118,10 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - `2026-03-29T00:00:00Z` — added shell readiness, runtime metadata truthfulness, and single-flight Gmail handoff stabilization; outcome: partial_only because stale runtime selection and stale browser assets could still recreate the same old failures
   - `2026-03-30T00:00:00Z` — changed native-host repair to validate the current runtime, split shell-safe startup from blocked document runtime imports, versioned the whole browser asset graph, and required client/server `asset_version` agreement before a handoff is treated as ready; outcome: stronger_mitigation
   - `2026-04-03T15:47:52Z` — repointed the native-host launcher to an isolated fix worktree during live validation; outcome: partial_only because the configured canonical path still pointed at a feature branch and the drift could return after restart
+  - `2026-04-05T12:53:22Z` — required overlapping accepted work from multiple dirty feature worktrees to be harvested into one clean integration branch, published as a two-commit wave, and followed by canonical-path/launcher restoration plus side-worktree removal; outcome: stronger_mitigation
 - Accepted fix:
-  - `2026-03-30T00:00:00Z` — canonical build enforcement now includes validated native-host runtime selection, shell-safe browser startup, whole-graph browser asset fingerprinting, client-ready/asset-version proof on the opened localhost tab, and one bounded stale-tab reload instead of trusting shell URL/open-state alone
-- Regressed after accepted fix: `yes`
+  - `2026-04-05T12:53:22Z` — canonical build discipline now includes validated runtime/asset provenance plus a clean integration-branch publish rule for overlapping accepted side work: checkpoint locally, integrate from fresh `main`, publish only the integrated branch, then restore the canonical path and launcher to clean `main`
+- Regressed after accepted fix: `no`
 - Affected workflows/docs:
   - `docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md`
   - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
@@ -144,6 +147,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - canonical-path cleanup after side-branch validation
     - plain-language local workspace entry guidance
     - validated runtime repair and whole-graph browser asset provenance
+    - clean integration-branch publish rules for overlapping accepted side work
   - Evidence refs:
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_worktree_baseline_docs_sync.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_qt_build_identity_hardening.md`
@@ -153,8 +157,14 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_browser_asset_provenance_gmail_prepare.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_first_open_gmail_hydration_recovery.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-03_browser_gmail_arabic_publish_closeout.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-03_arabic_legal_risk_hardening.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-03_gmail_redo_current_attachment.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md`
   - Branch: `feat/ai-docs-bootstrap`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_redo`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_run_report_artifacts`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_closeout`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_pdf_worker_fix`
   - Workspace: `C:\Users\FA507\.codex\legalpdf_translate-worktrees.code-workspace`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_integration`

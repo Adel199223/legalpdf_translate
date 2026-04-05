@@ -43,6 +43,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
   - a focused attachment-review drawer for selection and preview
   - a `Finish Translation` drawer for save/export/review actions
   - a `Finalize Gmail Batch` drawer for the last reply step
+  - a `Redo Current Attachment` path that resets only the translation-side state for the active unconfirmed Gmail attachment without resetting the whole Gmail workspace or requiring a cold start
 - Gmail interpretation continuation now stays inside the same calm shell:
   - `#new-job` shows one compact `Current Interpretation Step` panel during an active Gmail interpretation session
   - the detailed work happens in a bounded `Review Interpretation` drawer instead of a persistent admin-style page stack
@@ -119,11 +120,13 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 9. Save completed runs to the Job Log with prefilled run metrics.
 10. Review historical Job Log rows, edit them inline or through the full dialog, delete mistaken rows with confirmation, and resize the table for dense saved data.
 11. Execute a queue manifest with checkpoint-aware resume and failed-only rerun behavior.
-12. Start from an open Gmail message in Edge/Chromium, let the native host auto-start the configured checkout when needed, review supported attachments from that exact email, then either run the translation batch flow or handle one interpretation notice attachment, with mandatory Save-to-Job-Log confirmation before the related honorarios and Gmail draft finalization.
+12. Start from an open Gmail message in Edge/Chromium, let the native host auto-start the configured checkout when needed, review supported attachments from that exact email, then either run the translation batch flow or handle one interpretation notice attachment, with mandatory Save-to-Job-Log confirmation before the related honorarios and Gmail draft finalization and the ability to redo the current unconfirmed Gmail attachment from the same live workspace without a cold start.
 13. Open multiple workspaces and translate different jobs in parallel without interrupting the current run.
 14. Create or edit interpretation Job Log rows manually, from a notification PDF, from a photo/screenshot, or from a Gmail notice attachment, then generate the interpretation honorarios DOCX plus sibling PDF locally, create a fresh Gmail draft from the saved row, or create a threaded Gmail reply draft when the flow started from Gmail intake.
 
 Recurring Portuguese court/prosecution headers now use a shared phrase-level institutional catalog across EN, FR, and AR. The translation workflow injects matched header phrases ahead of generic glossary rows, and metadata/header extraction reuses the same matcher so `case_entity` prefers the most specific institutional line instead of falling back to looser regex hits or contact-block noise.
+
+Arabic legal-term hardening now adds a second narrow prompt-first layer on top of that shared institutional seeding: `O Juiz de Direito` is injected as a priority legal title, Portuguese legal citation abbreviations such as `n.º`, `alínea`, and `p. e p. pelos arts.` are canonicalized before glossary matching and diagnostics, `registo criminal` terminology is harmonized on the `السجل العدلي` family, and Arabic quality-risk scoring now consumes persisted numeric/citation/bidi validation counters instead of staying artificially low on citation-heavy runs.
 
 ## Output and Run Artifacts
 Run artifacts live under:
@@ -136,6 +139,8 @@ Typical files:
 - `run_report.md` (when generated)
 - `run_events.jsonl`
 - `analyze_report.json` (analyze-only)
+
+For browser translation jobs, `Generate Run Report` now writes or refreshes the same `<run_dir>/run_report.md`, triggers a one-time download immediately, and leaves a persistent `Download Run Report` artifact link in the completion drawer for repeat access.
 
 When a run comes from Gmail intake, the effective output directory also gains durable Gmail session diagnostics:
 - `<outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`
@@ -158,6 +163,8 @@ When a run comes from Gmail intake, the effective output directory also gains du
 - `gmail_batch_context`
 
 When present, `gmail_batch_context` records the selected Gmail attachment filename/count, the Gmail intake workflow kind, the translation target language when that workflow is `translation`, the selected start page for that run, and the durable Gmail batch session report path.
+
+For Arabic target runs, persisted page-validation metadata now also feeds the quality-risk layer with numeric mismatch, citation mismatch, structure warning, bidi warning, bidi-control, and replacement-character counts so `quality_risk_score` and `review_queue` better reflect citation-heavy or mixed-direction risk.
 
 `failure_context` is used for bounded OCR/runtime failure reporting and includes:
 - `request_type`
@@ -206,6 +213,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Browser/operator diagnostics can now also generate:
   - a browser failure report when Gmail/browser preparation fails before a translation run creates a `run_dir`
   - a Gmail finalization report whenever the last-step Gmail finalization state is blocked or completed, including successful `draft_ready` completion
+  - for translation runs, a first-class `run_report.md` artifact in the run folder that the completion drawer can generate/refresh directly and serve back through `Download Run Report`
 - Save-to-Job-Log pre-fills those values from `run_summary.json` when available, while preserving user edit control before save.
 - Save-to-Job-Log now also exposes `Open translated DOCX`, which reopens the resolved final or partial DOCX for the current run without leaving the dialog.
 - Save-to-Job-Log now uses a scrollable form body with a fixed action row so create/edit flows stay usable on smaller screens without hiding `Save`, `Cancel`, `Open translated DOCX`, or the honorários action.
@@ -246,6 +254,7 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - Gmail draft attachment reuse for honorarios now prefers known translated output artifacts in this order: final DOCX path, partial DOCX path, exact `run_id` recovery, then a manual `.docx` picker only as the final fallback.
 - If a legacy historical row needs one manual translated-DOCX selection, the app persists that choice back into the row so the picker should not appear again for that same row.
 - Gmail intake batch downloads, interpretation-notice staging data, and confirmed per-item results are kept in memory only for the active Gmail intake session. They are cleared on reset, failure paths, app shutdown, or successful finalization.
+- Browser Gmail translation jobs now persist additive `gmail_batch_context` identity on the run config so the same live runtime can detect when the current attachment was already run and can offer `Redo Current Attachment` without resetting the whole Gmail workspace.
 - Gmail batch draft finalization uses an immutable staged copy of each translated DOCX rather than trusting the mutable user-facing output path directly.
 - Gmail honorários drafts now require the generated honorários PDF:
   - translation reply drafts attach the translated DOCX files plus the honorários PDF
