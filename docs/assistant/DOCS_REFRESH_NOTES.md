@@ -1308,6 +1308,26 @@ Verification commands/results:
   - `dart run tooling/validate_agent_docs.dart` -> `PASS`
   - `dart run tooling/validate_workspace_hygiene.dart` -> `PASS`
 
+# 2026-04-05
+- Ran a touched-scope Assistant Docs Sync for the integrated browser Gmail + Arabic closeout branch.
+- Synced current-truth and user-facing guidance for:
+  - narrow Arabic legal-term and citation alias hardening, including `O Juiz de Direito`, `n.º`, `alínea`, `p. e p. pelos arts.`, and harmonized `السجل العدلي` terminology
+  - Arabic quality-risk scoring that now surfaces numeric/citation/bidi drift instead of leaving citation-heavy runs artificially green
+  - Gmail `Redo Current Attachment` so the active unconfirmed Gmail attachment can be rerun from the same live workspace without a cold start or full Gmail reset
+  - translation `run_report.md` as a first-class browser artifact with generation in the run folder plus persistent `Download Run Report`
+  - the publish-closeout rule that overlapping accepted side-worktree changes must be harvested into one clean integration branch before push/merge, followed by canonical-path and launcher restoration
+- Updated `ISSUE_MEMORY.md` / `ISSUE_MEMORY.json` because this sync intersected the repeated issue-memory entry:
+  - `workflow-wrong-build-under-test`
+- Archived the active ExecPlans for Arabic legal-risk hardening, Gmail redo-current-attachment, and browser run-report artifacts into `docs/assistant/exec_plans/completed/`.
+- Validation for this pass:
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests/test_legal_header_glossary.py tests/test_workflow_glossary.py tests/test_glossary_diagnostics.py tests/test_glossary.py tests/test_quality_risk_scoring.py tests/test_gmail_browser_service.py tests/test_gmail_review_state.py tests/test_translation_recovery_state.py tests/test_translation_service_gmail_context.py tests/test_translation_service_run_report.py tests/test_shadow_web_api.py tests/test_run_report.py` -> `158 passed`
+  - `C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe - <<py_compile bundle>>` -> `py_compile ok`
+  - `node --check src/legalpdf_translate/shadow_web/static/app.js src/legalpdf_translate/shadow_web/static/gmail.js src/legalpdf_translate/shadow_web/static/gmail_review_state.js src/legalpdf_translate/shadow_web/static/translation.js` -> `PASS`
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe tooling/validate_agent_docs.dart` -> `PASS`
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe tooling/validate_workspace_hygiene.dart` -> `PASS`
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe test/tooling/validate_agent_docs_test.dart` -> `PASS` (`72 cases`)
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe test/tooling/validate_workspace_hygiene_test.dart` -> `PASS` (`7 cases`)
+
 # 2026-04-03
 - Ran a touched-scope Assistant Docs Sync for the browser Gmail + Arabic hardening publish branch.
 - Synced current-truth and user-facing guidance for:
