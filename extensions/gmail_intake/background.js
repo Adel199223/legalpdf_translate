@@ -27,6 +27,9 @@ const CLIENT_HYDRATION_RELOAD_WAIT_MS = IS_EXTENSION_TEST ? 60 : 3600;
 const CLIENT_HYDRATION_POLL_MS = IS_EXTENSION_TEST ? 1 : 140;
 
 const handoffInFlight = new Map();
+const pendingBrowserSurfaces = new Map();
+const PENDING_BROWSER_SURFACES_SESSION_KEY = "legalpdfPendingBrowserSurfaces";
+let pendingBrowserSurfacesLoaded = false;
 let handoffSequence = 0;
 
 function normalizePort(value) {
@@ -43,6 +46,176 @@ function normalizeToken(value) {
 
 function normalizeUrl(value) {
   return String(value ?? "").trim();
+}
+
+function buildPendingBrowserSurfaceKey(browserUrl) {
+  const targetUrl = normalizeUrl(browserUrl);
+  if (targetUrl === "") {
+    return "";
+  }
+  try {
+    const parsed = new URL(targetUrl);
+    const runtimeMode = normalizeToken(parsed.searchParams.get("mode")).toLowerCase() || "live";
+    const workspaceId = normalizeToken(parsed.searchParams.get("workspace")) || "workspace-1";
+    return `${parsed.origin}${parsed.pathname}?mode=${runtimeMode}&workspace=${workspaceId}`;
+  } catch (_error) {
+    return targetUrl;
+  }
+}
+
+function pendingBrowserSurfaceStorage() {
+  if (!chrome?.storage?.session) {
+    return null;
+  }
+  if (typeof chrome.storage.session.get !== "function" || typeof chrome.storage.session.set !== "function") {
+    return null;
+  }
+  return chrome.storage.session;
+}
+
+function normalizePendingBrowserSurfaceRecord(record) {
+  const tabId = Number.isInteger(record?.tabId) ? record.tabId : null;
+  if (!Number.isInteger(tabId)) {
+    return null;
+  }
+  return {
+    browserUrl: normalizeUrl(record?.browserUrl),
+    tabId,
+    windowId: Number.isInteger(record?.windowId) ? record.windowId : null,
+    createdAt: Number.isInteger(record?.createdAt) ? record.createdAt : Date.now(),
+    updatedAt: Number.isInteger(record?.updatedAt) ? record.updatedAt : Date.now(),
+  };
+}
+
+async function ensurePendingBrowserSurfacesLoaded() {
+  if (pendingBrowserSurfacesLoaded) {
+    return;
+  }
+  pendingBrowserSurfacesLoaded = true;
+  const storage = pendingBrowserSurfaceStorage();
+  if (!storage) {
+    return;
+  }
+  try {
+    const stored = await storage.get([PENDING_BROWSER_SURFACES_SESSION_KEY]);
+    const rawRecords = stored?.[PENDING_BROWSER_SURFACES_SESSION_KEY];
+    if (!rawRecords || typeof rawRecords !== "object") {
+      return;
+    }
+    pendingBrowserSurfaces.clear();
+    for (const [key, record] of Object.entries(rawRecords)) {
+      const normalized = normalizePendingBrowserSurfaceRecord(record);
+      const normalizedKey = buildPendingBrowserSurfaceKey(key);
+      if (normalized && normalizedKey !== "") {
+        pendingBrowserSurfaces.set(normalizedKey, normalized);
+      }
+    }
+  } catch (_error) {
+    // Fall back to the in-memory map when session storage is unavailable.
+  }
+}
+
+async function persistPendingBrowserSurfaces() {
+  const storage = pendingBrowserSurfaceStorage();
+  if (!storage) {
+    return;
+  }
+  const serialized = {};
+  for (const [key, record] of pendingBrowserSurfaces.entries()) {
+    const normalized = normalizePendingBrowserSurfaceRecord(record);
+    if (normalized) {
+      serialized[key] = normalized;
+    }
+  }
+  try {
+    await storage.set({
+      [PENDING_BROWSER_SURFACES_SESSION_KEY]: serialized,
+    });
+  } catch (_error) {
+    // Keep the in-memory registry if persistence fails.
+  }
+}
+
+async function rememberPendingBrowserSurface(browserUrl, tabLike) {
+  await ensurePendingBrowserSurfacesLoaded();
+  const key = buildPendingBrowserSurfaceKey(browserUrl);
+  if (key === "") {
+    return null;
+  }
+  const tabId = Number.isInteger(tabLike?.id) ? tabLike.id : Number.isInteger(tabLike?.tabId) ? tabLike.tabId : null;
+  if (!Number.isInteger(tabId)) {
+    return null;
+  }
+  const existing = pendingBrowserSurfaces.get(key);
+  const nextRecord = {
+    browserUrl: normalizeUrl(browserUrl),
+    tabId,
+    windowId: Number.isInteger(tabLike?.windowId)
+      ? tabLike.windowId
+      : Number.isInteger(existing?.windowId)
+        ? existing.windowId
+        : null,
+    createdAt: Number.isInteger(existing?.createdAt) ? existing.createdAt : Date.now(),
+    updatedAt: Date.now(),
+  };
+  pendingBrowserSurfaces.set(key, nextRecord);
+  await persistPendingBrowserSurfaces();
+  return nextRecord;
+}
+
+async function clearPendingBrowserSurface(browserUrl) {
+  await ensurePendingBrowserSurfacesLoaded();
+  const key = buildPendingBrowserSurfaceKey(browserUrl);
+  if (key === "") {
+    return;
+  }
+  pendingBrowserSurfaces.delete(key);
+  await persistPendingBrowserSurfaces();
+}
+
+async function clearPendingBrowserSurfaceByTabId(tabId) {
+  await ensurePendingBrowserSurfacesLoaded();
+  if (!Number.isInteger(tabId)) {
+    return;
+  }
+  let changed = false;
+  for (const [key, record] of pendingBrowserSurfaces.entries()) {
+    if (record && record.tabId === tabId) {
+      pendingBrowserSurfaces.delete(key);
+      changed = true;
+    }
+  }
+  if (changed) {
+    await persistPendingBrowserSurfaces();
+  }
+}
+
+async function focusPendingBrowserSurface(browserUrl) {
+  await ensurePendingBrowserSurfacesLoaded();
+  const key = buildPendingBrowserSurfaceKey(browserUrl);
+  if (key === "") {
+    return false;
+  }
+  const pending = pendingBrowserSurfaces.get(key);
+  if (!pending || !Number.isInteger(pending.tabId)) {
+    return false;
+  }
+  try {
+    const updated = await chrome.tabs.update(pending.tabId, { active: true });
+    const windowId = Number.isInteger(updated?.windowId) ? updated.windowId : pending.windowId;
+    if (Number.isInteger(windowId)) {
+      await chrome.windows.update(windowId, { focused: true });
+    }
+    await rememberPendingBrowserSurface(browserUrl, {
+      tabId: pending.tabId,
+      windowId,
+    });
+    return true;
+  } catch (_error) {
+    pendingBrowserSurfaces.delete(key);
+    await persistPendingBrowserSurfaces();
+    return false;
+  }
 }
 
 function buildBridgeEndpoint(config) {
@@ -449,6 +622,37 @@ function buildFocusNotice(nativeResponse, degradedMode) {
   return `App focus helper could not foreground the app (${buildPrepareFailureMessage(nativeResponse)}).`;
 }
 
+function parseBrowserWorkspaceIdentity(browserUrl) {
+  const targetUrl = normalizeUrl(browserUrl);
+  if (targetUrl === "") {
+    return null;
+  }
+  try {
+    const parsed = new URL(targetUrl);
+    return {
+      origin: parsed.origin,
+      pathname: parsed.pathname,
+      runtimeMode: normalizeToken(parsed.searchParams.get("mode")).toLowerCase() || "live",
+      workspaceId: normalizeToken(parsed.searchParams.get("workspace")) || "workspace-1",
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function browserWorkspaceIdentityMatches(candidateUrl, targetUrl) {
+  const candidate = parseBrowserWorkspaceIdentity(candidateUrl);
+  const target = parseBrowserWorkspaceIdentity(targetUrl);
+  return Boolean(
+    candidate
+    && target
+    && candidate.origin === target.origin
+    && candidate.pathname === target.pathname
+    && candidate.runtimeMode === target.runtimeMode
+    && candidate.workspaceId === target.workspaceId
+  );
+}
+
 function urlsMatchForFocus(candidateUrl, targetUrl) {
   try {
     const candidate = new URL(candidateUrl);
@@ -467,6 +671,9 @@ async function openOrFocusBrowserApp(browserUrl) {
   if (targetUrl === "") {
     return false;
   }
+  if (await focusPendingBrowserSurface(targetUrl)) {
+    return true;
+  }
   let url;
   try {
     url = new URL(targetUrl);
@@ -474,16 +681,18 @@ async function openOrFocusBrowserApp(browserUrl) {
     return false;
   }
   const candidates = await chrome.tabs.query({ url: `${url.origin}/*` });
-  const exactMatch = candidates.find((tab) => urlsMatchForFocus(tab.url, targetUrl));
-  if (exactMatch && Number.isInteger(exactMatch.id)) {
-    await chrome.tabs.update(exactMatch.id, { active: true });
-    if (Number.isInteger(exactMatch.windowId)) {
-      await chrome.windows.update(exactMatch.windowId, { focused: true });
+  const workspaceMatch = candidates.find((tab) => browserWorkspaceIdentityMatches(tab.url, targetUrl));
+  if (workspaceMatch && Number.isInteger(workspaceMatch.id)) {
+    await rememberPendingBrowserSurface(targetUrl, workspaceMatch);
+    await chrome.tabs.update(workspaceMatch.id, { active: true });
+    if (Number.isInteger(workspaceMatch.windowId)) {
+      await chrome.windows.update(workspaceMatch.windowId, { focused: true });
     }
     return true;
   }
   const existing = candidates.find((tab) => Number.isInteger(tab.id));
   if (existing && Number.isInteger(existing.id)) {
+    await rememberPendingBrowserSurface(targetUrl, existing);
     await chrome.tabs.update(existing.id, { active: true, url: targetUrl });
     if (Number.isInteger(existing.windowId)) {
       await chrome.windows.update(existing.windowId, { focused: true });
@@ -491,6 +700,7 @@ async function openOrFocusBrowserApp(browserUrl) {
     return true;
   }
   const created = await chrome.tabs.create({ url: targetUrl, active: true });
+  await rememberPendingBrowserSurface(targetUrl, created);
   if (created && Number.isInteger(created.windowId)) {
     await chrome.windows.update(created.windowId, { focused: true });
   }
@@ -502,6 +712,9 @@ async function focusExistingBrowserAppWindow(browserUrl = DEFAULT_BROWSER_APP_UR
   if (targetUrl === "") {
     return false;
   }
+  if (await focusPendingBrowserSurface(targetUrl)) {
+    return true;
+  }
   let url;
   try {
     url = new URL(targetUrl);
@@ -509,16 +722,18 @@ async function focusExistingBrowserAppWindow(browserUrl = DEFAULT_BROWSER_APP_UR
     return false;
   }
   const candidates = await chrome.tabs.query({ url: `${url.origin}/*` });
-  const exactMatch = candidates.find((tab) => urlsMatchForFocus(tab.url, targetUrl));
-  if (exactMatch && Number.isInteger(exactMatch.id)) {
-    await chrome.tabs.update(exactMatch.id, { active: true });
-    if (Number.isInteger(exactMatch.windowId)) {
-      await chrome.windows.update(exactMatch.windowId, { focused: true });
+  const workspaceMatch = candidates.find((tab) => browserWorkspaceIdentityMatches(tab.url, targetUrl));
+  if (workspaceMatch && Number.isInteger(workspaceMatch.id)) {
+    await rememberPendingBrowserSurface(targetUrl, workspaceMatch);
+    await chrome.tabs.update(workspaceMatch.id, { active: true });
+    if (Number.isInteger(workspaceMatch.windowId)) {
+      await chrome.windows.update(workspaceMatch.windowId, { focused: true });
     }
     return true;
   }
   const existing = candidates.find((tab) => Number.isInteger(tab.id));
   if (existing && Number.isInteger(existing.id)) {
+    await rememberPendingBrowserSurface(targetUrl, existing);
     await chrome.tabs.update(existing.id, { active: true });
     if (Number.isInteger(existing.windowId)) {
       await chrome.windows.update(existing.windowId, { focused: true });
@@ -533,6 +748,9 @@ async function waitForLaunchedBrowserAppTab(browserUrl, timeoutMs = COLD_START_T
   if (targetUrl === "") {
     return false;
   }
+  if (await focusPendingBrowserSurface(targetUrl)) {
+    return true;
+  }
   let origin;
   try {
     origin = new URL(targetUrl).origin;
@@ -542,11 +760,12 @@ async function waitForLaunchedBrowserAppTab(browserUrl, timeoutMs = COLD_START_T
   const deadline = Date.now() + Math.max(0, Number(timeoutMs || 0));
   while (Date.now() <= deadline) {
     const candidates = await chrome.tabs.query({ url: `${origin}/*` });
-    const exactMatch = candidates.find((tab) => urlsMatchForFocus(tab.url, targetUrl));
-    if (exactMatch && Number.isInteger(exactMatch.id)) {
-      await chrome.tabs.update(exactMatch.id, { active: true });
-      if (Number.isInteger(exactMatch.windowId)) {
-        await chrome.windows.update(exactMatch.windowId, { focused: true });
+    const workspaceMatch = candidates.find((tab) => browserWorkspaceIdentityMatches(tab.url, targetUrl));
+    if (workspaceMatch && Number.isInteger(workspaceMatch.id)) {
+      await rememberPendingBrowserSurface(targetUrl, workspaceMatch);
+      await chrome.tabs.update(workspaceMatch.id, { active: true });
+      if (Number.isInteger(workspaceMatch.windowId)) {
+        await chrome.windows.update(workspaceMatch.windowId, { focused: true });
       }
       return true;
     }
@@ -579,7 +798,7 @@ function buildBrowserAppBootstrapUrl(browserUrl) {
     const parsed = new URL(targetUrl);
     const runtimeMode = normalizeToken(parsed.searchParams.get("mode")) || "live";
     const workspaceId = normalizeToken(parsed.searchParams.get("workspace")) || "workspace-1";
-    return `${parsed.origin}/api/bootstrap/shell?mode=${encodeURIComponent(runtimeMode)}&workspace=${encodeURIComponent(workspaceId)}`;
+    return `${parsed.origin}/api/bootstrap/shell/ready?mode=${encodeURIComponent(runtimeMode)}&workspace=${encodeURIComponent(workspaceId)}`;
   } catch (_error) {
     return "";
   }
@@ -623,6 +842,15 @@ async function resolveBrowserAppTab(browserUrl) {
   if (targetUrl === "") {
     return null;
   }
+  await ensurePendingBrowserSurfacesLoaded();
+  const pending = pendingBrowserSurfaces.get(buildPendingBrowserSurfaceKey(targetUrl));
+  if (pending && Number.isInteger(pending.tabId)) {
+    return {
+      id: pending.tabId,
+      windowId: pending.windowId,
+      url: targetUrl,
+    };
+  }
   let url;
   try {
     url = new URL(targetUrl);
@@ -630,11 +858,15 @@ async function resolveBrowserAppTab(browserUrl) {
     return null;
   }
   const candidates = await chrome.tabs.query({ url: `${url.origin}/*` });
-  const exactMatch = candidates.find((tab) => urlsMatchForFocus(tab.url, targetUrl));
-  if (exactMatch && Number.isInteger(exactMatch.id)) {
-    return exactMatch;
+  const workspaceMatch = candidates.find((tab) => browserWorkspaceIdentityMatches(tab.url, targetUrl));
+  if (workspaceMatch && Number.isInteger(workspaceMatch.id)) {
+    await rememberPendingBrowserSurface(targetUrl, workspaceMatch);
+    return workspaceMatch;
   }
   const existing = candidates.find((tab) => Number.isInteger(tab.id));
+  if (existing && Number.isInteger(existing.id)) {
+    await rememberPendingBrowserSurface(targetUrl, existing);
+  }
   return existing || null;
 }
 
@@ -1247,8 +1479,6 @@ async function postContext(
     context,
     waitForLaunchedTab ? COLD_START_WORKSPACE_READY_WAIT_MS : WORKSPACE_READY_WAIT_MS,
   );
-  let clientHydrationState = null;
-  let hydrationReloadAttempted = false;
   const baseMessage =
     typeof payload.message === "string" && payload.message.trim() !== ""
       ? payload.message.trim()
@@ -1266,60 +1496,11 @@ async function postContext(
       if (focusNotice !== "") {
         parts.push(focusNotice);
       }
+      await clearPendingBrowserSurface(browserUrl);
       await notifyTab(tabId, "error", parts.join(" "));
       return { holdLock: false, outcome: "integrity_failure" };
     }
     if (workspaceState.loaded) {
-      clientHydrationState = await waitForBrowserClientHydration(
-        browserUrl,
-        CLIENT_HYDRATION_WAIT_MS,
-        workspaceState.assetVersion,
-      );
-      if (!clientHydrationState.ready && browserUrl !== "") {
-        const canRetryHydration = (
-          hydrationReloadAttempted === false
-          && (
-            clientHydrationState.clientState?.status !== "client_boot_failed"
-            || clientHydrationState.clientState?.reason === "stale_browser_assets"
-          )
-        );
-        if (canRetryHydration) {
-          const reloadResult = await reloadBrowserAppTab(browserUrl);
-          hydrationReloadAttempted = reloadResult.ok === true;
-          if (hydrationReloadAttempted) {
-            clientHydrationState = await waitForBrowserClientHydration(
-              browserUrl,
-              CLIENT_HYDRATION_RELOAD_WAIT_MS,
-              workspaceState.assetVersion,
-            );
-          }
-        }
-      }
-      if (!clientHydrationState.ready) {
-        if (!doesBrowserClientAssetVersionMatch(clientHydrationState?.clientState || {}, workspaceState.assetVersion)) {
-          await notifyTab(
-            tabId,
-            "error",
-            buildStaleBrowserAssetsMessage({
-              resolvedBrowserOpen,
-              focusNotice,
-              clientState: clientHydrationState?.clientState || {},
-              expectedAssetVersion: workspaceState.assetVersion,
-            }),
-          );
-          return { holdLock: false, outcome: "stale_browser_assets" };
-        }
-        await notifyTab(
-          tabId,
-          "error",
-          buildClientShellNotHydratedMessage({
-            resolvedBrowserOpen,
-            focusNotice,
-            clientState: clientHydrationState?.clientState || {},
-          }),
-        );
-        return { holdLock: false, outcome: "client_shell_not_hydrated" };
-      }
       const message = suffix.length ? `${baseMessage} ${suffix.join(" ")}` : baseMessage;
       await notifyTab(tabId, "success", message);
       return { holdLock: false, outcome: "loaded" };
@@ -1329,6 +1510,7 @@ async function postContext(
       if (focusNotice !== "") {
         parts.push(focusNotice);
       }
+      await clearPendingBrowserSurface(browserUrl);
       await notifyTab(tabId, "error", parts.join(" "));
       return { holdLock: false, outcome: "load_failed" };
     }
@@ -1345,6 +1527,7 @@ async function postContext(
       return { holdLock: true, outcome: "warming" };
     }
     if (workspaceState.workspaceRouteReachable || workspaceState.appBootstrapReady) {
+      await clearPendingBrowserSurface(browserUrl);
       await notifyTab(
         tabId,
         "error",
@@ -1355,6 +1538,7 @@ async function postContext(
       );
       return { holdLock: false, outcome: "workspace_no_handoff" };
     }
+    await clearPendingBrowserSurface(browserUrl);
     await notifyTab(
       tabId,
       "error",
@@ -1368,6 +1552,12 @@ async function postContext(
   const message = suffix.length ? `${baseMessage} ${suffix.join(" ")}` : baseMessage;
   await notifyTab(tabId, "success", message);
   return { holdLock: false, outcome: "accepted" };
+}
+
+if (chrome?.tabs?.onRemoved?.addListener) {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    void clearPendingBrowserSurfaceByTabId(tabId);
+  });
 }
 
 chrome.action.onClicked.addListener(async (tab) => {
@@ -1488,7 +1678,10 @@ if (globalThis && globalThis.__LEGALPDF_TEST__ === true) {
     resolveBridgeConfigForClick,
     postContext,
     settleBrowserAppHandoff,
+    openOrFocusBrowserApp,
+    focusExistingBrowserAppWindow,
     waitForBrowserClientHydration,
     reloadBrowserAppTab,
+    pendingBrowserSurfaces,
   };
 }

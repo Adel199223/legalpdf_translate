@@ -216,6 +216,29 @@ def test_run_all_quality_checks_returns_expected_keys() -> None:
     assert expected_keys.issubset(set(result.keys()))
 
 
+def test_run_all_quality_checks_includes_extraction_integrity_context() -> None:
+    result = run_all_quality_checks(
+        source_text="A última remuneração registada ascende a",
+        output_text="La dernière rémunération enregistrée s'élève à",
+        target_lang="FR",
+        integrity_context={
+            "extraction_integrity_suspect": True,
+            "extraction_integrity_reasons": ["dangling_amount_clause", "vector_gap_cluster"],
+            "vector_gap_count": 38,
+            "visual_recovery_strategy": "image_grounding_fallback",
+            "visual_recovery_used": True,
+            "visual_recovery_failed": False,
+        },
+    )
+
+    assert result["extraction_integrity_warnings_count"] == 1
+    assert result["extraction_integrity_reasons"] == ["dangling_amount_clause", "vector_gap_cluster"]
+    assert result["vector_gap_count"] == 38
+    assert result["visual_recovery_strategy"] == "image_grounding_fallback"
+    assert result["visual_recovery_used"] is True
+    assert result["visual_recovery_failed"] is False
+
+
 # ---------------------------------------------------------------------------
 # Event emission + report rendering
 # ---------------------------------------------------------------------------

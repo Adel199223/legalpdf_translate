@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+import legalpdf_translate.translation_service as translation_service_module
 from legalpdf_translate.translation_service import TranslationJobManager, _ManagedTranslationJob
 
 
@@ -208,3 +211,106 @@ def test_translation_job_artifact_path_supports_run_report(tmp_path: Path) -> No
     resolved = manager.job_artifact_path(job_id="tx-2", artifact_kind="run_report")
 
     assert resolved == report_path.resolve()
+
+
+def test_translation_job_manager_scopes_gmail_run_reservations_by_attachment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeThread:
+        def __init__(self, *, target, name, daemon) -> None:  # type: ignore[no-untyped-def]
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr(translation_service_module.threading, "Thread", _FakeThread)
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    pdf_path = tmp_path / "Auto.pdf"
+    pdf_path.write_bytes(b"%PDF-1.7\n")
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    manager = TranslationJobManager()
+
+    base_values = {
+        "source_path": str(pdf_path),
+        "output_dir": str(output_dir),
+        "target_lang": "FR",
+        "image_mode": "auto",
+        "ocr_mode": "auto",
+        "ocr_engine": "local_then_api",
+        "resume": False,
+        "keep_intermediates": True,
+        "start_page": 1,
+    }
+
+    first = manager.start_translate(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        form_values={
+            **base_values,
+            "gmail_batch_context": {
+                "source": "gmail_intake",
+                "session_id": "gmail_batch_a",
+                "message_id": "msg-1",
+                "thread_id": "thr-1",
+                "attachment_id": "att-1",
+                "selected_attachment_filename": "Auto.pdf",
+                "selected_attachment_count": 1,
+                "selected_target_lang": "FR",
+                "selected_start_page": 1,
+                "gmail_batch_session_report_path": str(tmp_path / "gmail_batch_a.json"),
+            },
+        },
+    )
+
+    second = manager.start_translate(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        form_values={
+            **base_values,
+            "gmail_batch_context": {
+                "source": "gmail_intake",
+                "session_id": "gmail_batch_a",
+                "message_id": "msg-1",
+                "thread_id": "thr-1",
+                "attachment_id": "att-2",
+                "selected_attachment_filename": "Auto.pdf",
+                "selected_attachment_count": 1,
+                "selected_target_lang": "FR",
+                "selected_start_page": 1,
+                "gmail_batch_session_report_path": str(tmp_path / "gmail_batch_a.json"),
+            },
+        },
+    )
+
+    assert first["status"] == "queued"
+    assert second["status"] == "queued"
+    assert first["job_id"] != second["job_id"]
+    assert len(manager._reservations) == 2
+
+    with pytest.raises(ValueError, match="already active for this run folder"):
+        manager.start_translate(
+            runtime_mode="live",
+            workspace_id="gmail-intake",
+            settings_path=settings_path,
+            form_values={
+                **base_values,
+                "gmail_batch_context": {
+                    "source": "gmail_intake",
+                    "session_id": "gmail_batch_a",
+                    "message_id": "msg-1",
+                    "thread_id": "thr-1",
+                    "attachment_id": "att-1",
+                    "selected_attachment_filename": "Auto.pdf",
+                    "selected_attachment_count": 1,
+                    "selected_target_lang": "FR",
+                    "selected_start_page": 1,
+                    "gmail_batch_session_report_path": str(tmp_path / "gmail_batch_a.json"),
+                },
+            },
+        )

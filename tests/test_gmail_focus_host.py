@@ -5,6 +5,7 @@ from io import BytesIO
 from pathlib import Path
 import tempfile
 
+from legalpdf_translate.build_identity import RuntimeBuildIdentity
 from legalpdf_translate.gmail_focus import BridgeOwnerValidationResult
 import legalpdf_translate.gmail_focus_host as host_module
 
@@ -25,6 +26,23 @@ def _ready_auto_launch_target(tmp_path: Path) -> host_module.AutoLaunchTarget:
         python_executable=str(tmp_path / ".venv311" / "Scripts" / "python.exe"),
         launcher_script=str(tmp_path / "tooling" / "launch_qt_build.py"),
         reason="launch_target_ready",
+    )
+
+
+def _canonical_runtime_identity(tmp_path: Path) -> RuntimeBuildIdentity:
+    return RuntimeBuildIdentity(
+        worktree_path=str(tmp_path.resolve()),
+        branch="main",
+        head_sha="4e9d20e",
+        labels=("shadow-web",),
+        is_canonical=True,
+        is_lineage_valid=True,
+        canonical_worktree_path=str(tmp_path.resolve()),
+        canonical_branch="main",
+        approved_base_branch="main",
+        approved_base_head_floor="4e9d20e",
+        canonical_head_floor="4e9d20e",
+        reasons=(),
     )
 
 
@@ -348,6 +366,11 @@ def test_edge_native_host_manifest_path_uses_native_messaging_dir(tmp_path: Path
 
 def test_ensure_edge_native_host_registered_writes_manifest_and_registry(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(host_module, "_is_windows", lambda: True)
+    monkeypatch.setattr(
+        host_module,
+        "_runtime_build_identity_for_registration",
+        lambda **_kwargs: _canonical_runtime_identity(tmp_path),
+    )
     host_exe = tmp_path / "LegalPDFGmailFocusHost.exe"
     host_exe.write_text("host", encoding="utf-8")
     registry: dict[str, str] = {}
@@ -375,6 +398,11 @@ def test_ensure_edge_native_host_registered_writes_manifest_and_registry(monkeyp
 
 def test_ensure_edge_native_host_registered_is_idempotent(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(host_module, "_is_windows", lambda: True)
+    monkeypatch.setattr(
+        host_module,
+        "_runtime_build_identity_for_registration",
+        lambda **_kwargs: _canonical_runtime_identity(tmp_path),
+    )
     host_exe = tmp_path / "LegalPDFGmailFocusHost.exe"
     host_exe.write_text("host", encoding="utf-8")
     manifest_path = tmp_path / "native_messaging" / "com.legalpdf.gmail_focus.edge.json"
@@ -411,6 +439,11 @@ def test_ensure_edge_native_host_registered_prefers_checkout_wrapper_when_availa
 ) -> None:
     monkeypatch.setattr(host_module, "_is_windows", lambda: True)
     repo_root = tmp_path / "repo"
+    monkeypatch.setattr(
+        host_module,
+        "_runtime_build_identity_for_registration",
+        lambda **_kwargs: _canonical_runtime_identity(repo_root),
+    )
     python_exe = repo_root / ".venv311" / "Scripts" / "python.exe"
     python_exe.parent.mkdir(parents=True, exist_ok=True)
     python_exe.write_text("", encoding="utf-8")
@@ -454,6 +487,48 @@ def test_ensure_edge_native_host_registered_prefers_checkout_wrapper_when_availa
     assert 'legalpdf_translate.gmail_focus_host' in wrapper_text
     assert str((repo_root / "src").resolve()) in wrapper_text
     assert str(python_exe.resolve()) in wrapper_text
+
+
+def test_ensure_edge_native_host_registered_blocks_noncanonical_runtime(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(host_module, "_is_windows", lambda: True)
+    monkeypatch.setattr(
+        host_module,
+        "_runtime_build_identity_for_registration",
+        lambda **_kwargs: RuntimeBuildIdentity(
+            worktree_path=str((tmp_path / "noncanonical").resolve()),
+            branch="feat/noncanonical",
+            head_sha="abc1234",
+            labels=("shadow-web",),
+            is_canonical=False,
+            is_lineage_valid=True,
+            canonical_worktree_path=str((tmp_path / "canonical").resolve()),
+            canonical_branch="main",
+            approved_base_branch="main",
+            approved_base_head_floor="4e9d20e",
+            canonical_head_floor="4e9d20e",
+            reasons=("branch mismatch",),
+        ),
+    )
+
+    result = host_module.ensure_edge_native_host_registered(
+        base_dir=tmp_path,
+        host_executable_path=tmp_path / "LegalPDFGmailFocusHost.exe",
+        read_registry_value=lambda: (_ for _ in ()).throw(AssertionError("registry read should be skipped")),
+        write_registry_value=lambda _value: (_ for _ in ()).throw(AssertionError("registry write should be skipped")),
+    )
+
+    assert result == host_module.NativeHostRegistrationResult(
+        ok=False,
+        changed=False,
+        manifest_path=None,
+        executable_path=None,
+        reason="canonical_restart_required",
+    )
+    assert not (tmp_path / "native_messaging" / "LegalPDFGmailFocusHost.cmd").exists()
+    assert not (tmp_path / "native_messaging" / "com.legalpdf.gmail_focus.edge.json").exists()
 
 
 def test_validated_python_executable_for_worktree_falls_back_when_first_runtime_is_broken(
@@ -524,6 +599,11 @@ def test_maybe_ensure_edge_native_host_registered_allows_real_registration_outsi
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     monkeypatch.setattr(host_module, "_looks_like_pytest_temp_base_dir", lambda _path: False)
     monkeypatch.setattr(host_module, "_is_windows", lambda: True)
+    monkeypatch.setattr(
+        host_module,
+        "_runtime_build_identity_for_registration",
+        lambda **_kwargs: _canonical_runtime_identity(tmp_path),
+    )
     host_exe = tmp_path / "LegalPDFGmailFocusHost.exe"
     host_exe.write_text("host", encoding="utf-8")
     registry: dict[str, str] = {}
@@ -543,6 +623,44 @@ def test_maybe_ensure_edge_native_host_registered_allows_real_registration_outsi
         executable_path=str(host_exe.resolve()),
         reason="registered",
     )
+
+
+def test_inspect_edge_native_host_disables_repair_for_noncanonical_runtime(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(host_module, "_is_windows", lambda: True)
+    monkeypatch.setattr(host_module, "_read_edge_native_host_registry_value", lambda: None)
+    monkeypatch.setattr(
+        host_module,
+        "_runtime_build_identity_for_registration",
+        lambda **_kwargs: RuntimeBuildIdentity(
+            worktree_path=str((tmp_path / "noncanonical").resolve()),
+            branch="feat/noncanonical",
+            head_sha="abc1234",
+            labels=("shadow-web",),
+            is_canonical=False,
+            is_lineage_valid=True,
+            canonical_worktree_path=str((tmp_path / "canonical").resolve()),
+            canonical_branch="main",
+            approved_base_branch="main",
+            approved_base_head_floor="4e9d20e",
+            canonical_head_floor="4e9d20e",
+            reasons=("branch mismatch",),
+        ),
+    )
+
+    payload = host_module.inspect_edge_native_host(
+        base_dir=tmp_path,
+        runtime_path=tmp_path / ".venv311" / "Scripts" / "python.exe",
+        run_self_test=False,
+        read_registry_value=lambda: None,
+    )
+
+    assert payload["repairable"] is False
+    assert payload["repair_reason"] == "canonical_restart_required"
+    assert payload["repair_recommended"] is False
+    assert payload["current_runtime_is_canonical"] is False
 
 
 def test_native_message_round_trip() -> None:
@@ -1131,7 +1249,7 @@ def test_prepare_gmail_intake_returns_browser_owner_context_without_focus(monkey
         "launchTargetReason": "launch_target_ready",
         "ui_owner": "browser_app",
         "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
-        "browser_open_owned_by": "extension",
+        "browser_open_owned_by": "runtime",
         "workspace_id": "gmail-intake",
         "runtime_mode": "live",
         "bridgePort": 9011,
@@ -1188,7 +1306,7 @@ def test_prepare_gmail_intake_reports_browser_launch_in_progress(monkeypatch, tm
             "browser_url": browser_target.browser_url,
             "workspace_id": "gmail-intake",
             "runtime_mode": "live",
-            "browser_open_owned_by": "extension",
+            "browser_open_owned_by": "native_host",
         },
     )
 
@@ -1205,7 +1323,7 @@ def test_prepare_gmail_intake_reports_browser_launch_in_progress(monkeypatch, tm
         "launchTargetReason": "launch_target_ready",
         "ui_owner": "browser_app",
         "browser_url": browser_target.browser_url,
-        "browser_open_owned_by": "extension",
+        "browser_open_owned_by": "native_host",
         "workspace_id": "gmail-intake",
         "runtime_mode": "live",
         "bridgePort": 9011,
@@ -1213,6 +1331,75 @@ def test_prepare_gmail_intake_reports_browser_launch_in_progress(monkeypatch, tm
         "launch_in_progress": True,
         "launch_lock_ttl_ms": 4200,
     }
+
+
+def test_restart_canonical_browser_runtime_spawns_helper_for_canonical_target(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    target = host_module.AutoLaunchTarget(
+        ready=True,
+        worktree_path=str(tmp_path),
+        python_executable=str(tmp_path / ".venv311" / "Scripts" / "python.exe"),
+        launcher_script=None,
+        reason="launch_target_ready",
+        ui_owner="browser_app",
+        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+        launch_args=("-m", "legalpdf_translate.shadow_web.server", "--port", "8877"),
+    )
+    identity = RuntimeBuildIdentity(
+        worktree_path=str(tmp_path),
+        branch="main",
+        head_sha="4e9d20e",
+        labels=("shadow-web",),
+        is_canonical=True,
+        is_lineage_valid=True,
+        canonical_worktree_path=str(tmp_path),
+        canonical_branch="main",
+        approved_base_branch="main",
+        approved_base_head_floor="4e9d20e",
+        canonical_head_floor="4e9d20e",
+        reasons=(),
+    )
+    recorded: dict[str, object] = {}
+    monkeypatch.setattr(host_module, "_resolve_browser_auto_launch_target", lambda **_kwargs: target)
+    monkeypatch.setattr(host_module, "detect_runtime_build_identity", lambda **_kwargs: identity)
+    monkeypatch.setattr(host_module.sys, "executable", str(tmp_path / "launcher-python.exe"))
+    monkeypatch.setattr(
+        host_module,
+        "_spawn_detached_helper",
+        lambda command, *, cwd=None: recorded.update({"command": list(command), "cwd": cwd}) or True,
+    )
+
+    payload = host_module.restart_canonical_browser_runtime(
+        current_listener_pid=5120,
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+    )
+
+    assert payload["ok"] is True
+    assert payload["reason"] == "canonical_restart_started"
+    assert payload["launch_target"] == str(tmp_path)
+    assert payload["workspace_id"] == "gmail-intake"
+    assert payload["runtime_mode"] == "live"
+    assert payload["shell_ready_url"].endswith("/api/bootstrap/shell/ready?mode=live&workspace=gmail-intake")
+    assert recorded["cwd"] == str(tmp_path)
+    assert recorded["command"] == [
+        str(tmp_path / "launcher-python.exe"),
+        "-m",
+        "legalpdf_translate.gmail_focus_host",
+        "--restart-browser-runtime-canonical",
+        "--target-worktree",
+        str(tmp_path),
+        "--target-python",
+        str(tmp_path / ".venv311" / "Scripts" / "python.exe"),
+        "--current-listener-pid",
+        "5120",
+        "--runtime-mode",
+        "live",
+        "--workspace-id",
+        "gmail-intake",
+    ]
 
 
 def test_handle_native_message_validates_action_and_port() -> None:

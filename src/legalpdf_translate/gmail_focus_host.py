@@ -11,11 +11,15 @@ import struct
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from legalpdf_translate.build_identity import normalize_path_identity, try_load_canonical_build_config
+from legalpdf_translate.build_identity import (
+    detect_runtime_build_identity,
+    normalize_path_identity,
+    try_load_canonical_build_config,
+)
 from legalpdf_translate.gmail_focus import focus_bridge_owner, validate_bridge_owner
 
 
@@ -35,6 +39,8 @@ _AUTO_LAUNCHABLE_BRIDGE_REASONS = {"runtime_metadata_missing", "bridge_not_runni
 _AUTO_LAUNCH_IN_PROGRESS_REASON = "launch_in_progress"
 _AUTO_LAUNCH_LOCK_FILENAME = "gmail_browser_launch.lock.json"
 _BROWSER_OPEN_OWNER_EXTENSION = "extension"
+_BROWSER_OPEN_OWNER_NATIVE_HOST = "native_host"
+_BROWSER_OPEN_OWNER_RUNTIME = "runtime"
 _WSL_MNT_RE = re.compile(r"^/mnt/([A-Za-z])/(.*)$")
 _BROWSER_GMAIL_WORKSPACE_ID = "gmail-intake"
 _SELF_TEST_TIMEOUT_SECONDS = 15.0
@@ -318,8 +324,48 @@ def _preferred_repo_worktree_for_auto_launch(*, runtime_path: Path | None = None
     return worktree
 
 
+def _runtime_build_identity_for_registration(
+    *,
+    runtime_path: Path | None = None,
+) -> RuntimeBuildIdentity | None:
+    worktree = _resolve_repo_worktree_for_auto_launch(runtime_path=runtime_path)
+    if worktree is None:
+        return None
+    try:
+        return detect_runtime_build_identity(repo=worktree, labels=("shadow-web",))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _browser_gmail_workspace_url(*, port: int = SHADOW_DEFAULT_PORT) -> str:
     return f"http://127.0.0.1:{int(port)}/?mode=live&workspace={_BROWSER_GMAIL_WORKSPACE_ID}#gmail-intake"
+
+
+def _browser_workspace_url(
+    *,
+    runtime_mode: str = "live",
+    workspace_id: str = _BROWSER_GMAIL_WORKSPACE_ID,
+    fragment: str = "gmail-intake",
+    port: int = SHADOW_DEFAULT_PORT,
+) -> str:
+    cleaned_mode = str(runtime_mode or "live").strip() or "live"
+    cleaned_workspace = str(workspace_id or _BROWSER_GMAIL_WORKSPACE_ID).strip() or _BROWSER_GMAIL_WORKSPACE_ID
+    cleaned_fragment = str(fragment or "gmail-intake").strip() or "gmail-intake"
+    return f"http://127.0.0.1:{int(port)}/?mode={cleaned_mode}&workspace={cleaned_workspace}#{cleaned_fragment}"
+
+
+def _browser_shell_ready_url(
+    *,
+    runtime_mode: str = "live",
+    workspace_id: str = _BROWSER_GMAIL_WORKSPACE_ID,
+    port: int = SHADOW_DEFAULT_PORT,
+) -> str:
+    cleaned_mode = str(runtime_mode or "live").strip() or "live"
+    cleaned_workspace = str(workspace_id or _BROWSER_GMAIL_WORKSPACE_ID).strip() or _BROWSER_GMAIL_WORKSPACE_ID
+    return (
+        f"http://127.0.0.1:{int(port)}/api/bootstrap/shell/ready"
+        f"?mode={cleaned_mode}&workspace={cleaned_workspace}"
+    )
 
 
 def _resolve_qt_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaunchTarget:
@@ -442,7 +488,7 @@ def _apply_validation_context(
             getattr(validation, "workspace_id", "") or _BROWSER_GMAIL_WORKSPACE_ID
         ).strip() or _BROWSER_GMAIL_WORKSPACE_ID
         response["runtime_mode"] = str(getattr(validation, "runtime_mode", "") or "live").strip() or "live"
-        response["browser_open_owned_by"] = _BROWSER_OPEN_OWNER_EXTENSION
+        response["browser_open_owned_by"] = _BROWSER_OPEN_OWNER_RUNTIME
     elif fallback_browser_url:
         response["browser_url"] = fallback_browser_url
 
@@ -459,6 +505,29 @@ def _clear_browser_auto_launch_lock(base_dir: Path) -> None:
         return
     except OSError:
         return
+
+
+def _coerce_int(value: object) -> int | None:
+    try:
+        parsed = int(value or 0)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _pid_is_running(pid: int | None) -> bool:
+    parsed = _coerce_int(pid)
+    if parsed is None:
+        return False
+    try:
+        os.kill(parsed, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except (OSError, SystemError):
+        return False
+    return True
 
 
 def _read_browser_auto_launch_lock(base_dir: Path) -> dict[str, object] | None:
@@ -492,7 +561,7 @@ def _write_browser_auto_launch_lock(base_dir: Path, target: AutoLaunchTarget) ->
         "browser_url": str(target.browser_url or "").strip(),
         "workspace_id": _BROWSER_GMAIL_WORKSPACE_ID,
         "runtime_mode": "live",
-        "browser_open_owned_by": _BROWSER_OPEN_OWNER_EXTENSION,
+        "browser_open_owned_by": _BROWSER_OPEN_OWNER_NATIVE_HOST,
     }
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = lock_path.with_suffix(".tmp")
@@ -519,8 +588,223 @@ def _apply_browser_auto_launch_lock_context(
     ).strip() or _BROWSER_GMAIL_WORKSPACE_ID
     response["runtime_mode"] = str(lock_payload.get("runtime_mode", "") or "live").strip() or "live"
     response["browser_open_owned_by"] = str(
-        lock_payload.get("browser_open_owned_by", "") or _BROWSER_OPEN_OWNER_EXTENSION
-    ).strip() or _BROWSER_OPEN_OWNER_EXTENSION
+        lock_payload.get("browser_open_owned_by", "") or _BROWSER_OPEN_OWNER_NATIVE_HOST
+    ).strip() or _BROWSER_OPEN_OWNER_NATIVE_HOST
+
+
+def _terminate_process_tree(pid: int | None) -> bool:
+    parsed = _coerce_int(pid)
+    if parsed is None:
+        return True
+    if not _pid_is_running(parsed):
+        return True
+    if _is_windows():
+        try:
+            completed = subprocess.run(
+                ["taskkill", "/PID", str(parsed), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+        except Exception:
+            return False
+        return completed.returncode == 0 or not _pid_is_running(parsed)
+    try:
+        os.kill(parsed, 15)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        if not _pid_is_running(parsed):
+            return True
+        time.sleep(0.1)
+    return not _pid_is_running(parsed)
+
+
+def _resolve_canonical_browser_restart_target(
+    *,
+    runtime_path: Path | None = None,
+) -> tuple[AutoLaunchTarget | None, dict[str, object]]:
+    target = _resolve_browser_auto_launch_target(runtime_path=runtime_path)
+    if not target.ready:
+        return None, {
+            "ok": False,
+            "reason": str(target.reason or "launch_target_missing").strip() or "launch_target_missing",
+            "launch_target": str(target.worktree_path or "").strip(),
+            "browser_url": str(target.browser_url or _browser_gmail_workspace_url()).strip(),
+        }
+    if not target.worktree_path or not target.python_executable:
+        return None, {
+            "ok": False,
+            "reason": "canonical_target_missing_runtime",
+            "launch_target": str(target.worktree_path or "").strip(),
+            "browser_url": str(target.browser_url or _browser_gmail_workspace_url()).strip(),
+        }
+    try:
+        identity = detect_runtime_build_identity(
+            repo=Path(target.worktree_path).expanduser().resolve(),
+            labels=("shadow-web",),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, {
+            "ok": False,
+            "reason": "canonical_target_identity_failed",
+            "error": str(exc) or "Failed to inspect canonical target build identity.",
+            "launch_target": str(target.worktree_path or "").strip(),
+            "browser_url": str(target.browser_url or _browser_gmail_workspace_url()).strip(),
+        }
+    if not identity.is_canonical:
+        return None, {
+            "ok": False,
+            "reason": "canonical_target_not_ready",
+            "launch_target": str(target.worktree_path or "").strip(),
+            "browser_url": str(target.browser_url or _browser_gmail_workspace_url()).strip(),
+            "build_identity": asdict(identity),
+        }
+    return target, {
+        "ok": True,
+        "reason": "canonical_target_ready",
+        "launch_target": str(target.worktree_path).strip(),
+        "target_python": str(target.python_executable).strip(),
+        "browser_url": str(target.browser_url or _browser_gmail_workspace_url()).strip(),
+        "build_identity": asdict(identity),
+    }
+
+
+def _spawn_detached_helper(
+    command: list[str],
+    *,
+    cwd: str | None = None,
+) -> bool:
+    try:
+        creationflags = 0
+        creationflags |= int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        creationflags |= int(getattr(subprocess, "DETACHED_PROCESS", 0))
+        creationflags |= int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+    except Exception:
+        return False
+    return True
+
+
+def restart_canonical_browser_runtime(
+    *,
+    current_listener_pid: int | None = None,
+    runtime_mode: str = "live",
+    workspace_id: str = _BROWSER_GMAIL_WORKSPACE_ID,
+    runtime_path: Path | None = None,
+) -> dict[str, object]:
+    target, target_payload = _resolve_canonical_browser_restart_target(runtime_path=runtime_path)
+    cleaned_runtime_mode = str(runtime_mode or "live").strip() or "live"
+    cleaned_workspace_id = str(workspace_id or _BROWSER_GMAIL_WORKSPACE_ID).strip() or _BROWSER_GMAIL_WORKSPACE_ID
+    browser_url = _browser_workspace_url(
+        runtime_mode=cleaned_runtime_mode,
+        workspace_id=cleaned_workspace_id,
+        fragment="gmail-intake",
+    )
+    shell_ready_url = _browser_shell_ready_url(
+        runtime_mode=cleaned_runtime_mode,
+        workspace_id=cleaned_workspace_id,
+    )
+    if target is None:
+        payload = dict(target_payload)
+        payload.setdefault("browser_url", browser_url)
+        payload.setdefault("shell_ready_url", shell_ready_url)
+        payload["runtime_mode"] = cleaned_runtime_mode
+        payload["workspace_id"] = cleaned_workspace_id
+        return payload
+    helper_command = [
+        str(_absolute_path_noresolve(Path(sys.executable))),
+        "-m",
+        "legalpdf_translate.gmail_focus_host",
+        "--restart-browser-runtime-canonical",
+        "--target-worktree",
+        str(target.worktree_path),
+        "--target-python",
+        str(target.python_executable),
+        "--current-listener-pid",
+        str(_coerce_int(current_listener_pid) or 0),
+        "--runtime-mode",
+        cleaned_runtime_mode,
+        "--workspace-id",
+        cleaned_workspace_id,
+    ]
+    if not _spawn_detached_helper(helper_command, cwd=str(target.worktree_path or "")):
+        return {
+            "ok": False,
+            "reason": "canonical_restart_spawn_failed",
+            "browser_url": browser_url,
+            "shell_ready_url": shell_ready_url,
+            "runtime_mode": cleaned_runtime_mode,
+            "workspace_id": cleaned_workspace_id,
+            "launch_target": str(target.worktree_path or "").strip(),
+            "target_python": str(target.python_executable or "").strip(),
+            "build_identity": target_payload.get("build_identity"),
+        }
+    return {
+        "ok": True,
+        "reason": "canonical_restart_started",
+        "browser_url": browser_url,
+        "shell_ready_url": shell_ready_url,
+        "runtime_mode": cleaned_runtime_mode,
+        "workspace_id": cleaned_workspace_id,
+        "launch_target": str(target.worktree_path or "").strip(),
+        "target_python": str(target.python_executable or "").strip(),
+        "build_identity": target_payload.get("build_identity"),
+    }
+
+
+def _run_restart_browser_runtime_canonical(
+    *,
+    target_worktree: str,
+    target_python: str,
+    current_listener_pid: int | None,
+    runtime_mode: str,
+    workspace_id: str,
+) -> dict[str, object]:
+    time.sleep(0.75)
+    if not _terminate_process_tree(current_listener_pid):
+        return {
+            "ok": False,
+            "reason": "canonical_restart_terminate_failed",
+            "current_listener_pid": _coerce_int(current_listener_pid),
+        }
+    target = AutoLaunchTarget(
+        ready=True,
+        worktree_path=str(target_worktree or "").strip(),
+        python_executable=str(target_python or "").strip(),
+        launcher_script=None,
+        reason="launch_target_ready",
+        ui_owner="browser_app",
+        browser_url=_browser_workspace_url(
+            runtime_mode=runtime_mode,
+            workspace_id=workspace_id,
+            fragment="gmail-intake",
+        ),
+        launch_args=(
+            "-m",
+            "legalpdf_translate.shadow_web.server",
+            "--port",
+            str(SHADOW_DEFAULT_PORT),
+        ),
+    )
+    launch_reason = _launch_repo_worktree(target)
+    return {
+        "ok": launch_reason == "launch_started",
+        "reason": launch_reason,
+        "launch_target": target.worktree_path,
+        "browser_url": target.browser_url,
+    }
 
 
 def _launch_repo_worktree(target: AutoLaunchTarget) -> str:
@@ -971,8 +1255,11 @@ def inspect_edge_native_host(
     repair_target_kind = ""
     repair_target_python = ""
     packaged_host = None
+    current_runtime_identity = _runtime_build_identity_for_registration(runtime_path=runtime_path)
     current_worktree = _preferred_repo_worktree_for_auto_launch(runtime_path=runtime_path)
-    if repair_supported:
+    if repair_supported and current_runtime_identity is not None and not current_runtime_identity.is_canonical:
+        repair_reason = "canonical_restart_required"
+    elif repair_supported:
         packaged_host = resolve_edge_native_host_executable(repo_root=current_worktree)
         if packaged_host is not None and _host_executable_supports_self_test(packaged_host):
             repairable = True
@@ -1055,6 +1342,7 @@ def inspect_edge_native_host(
         "repair_target_python": repair_target_python,
         "repair_recommended": bool(not ready and repairable),
         "current_runtime_python": current_runtime_python,
+        "current_runtime_is_canonical": bool(current_runtime_identity.is_canonical) if current_runtime_identity is not None else None,
     }
 
 
@@ -1134,6 +1422,16 @@ def ensure_edge_native_host_registered(
             manifest_path=None,
             executable_path=None,
             reason="unsupported_platform",
+        )
+
+    current_runtime_identity = _runtime_build_identity_for_registration(runtime_path=runtime_path)
+    if current_runtime_identity is not None and not current_runtime_identity.is_canonical:
+        return NativeHostRegistrationResult(
+            ok=False,
+            changed=False,
+            manifest_path=None,
+            executable_path=None,
+            reason="canonical_restart_required",
         )
 
     manifest_dir = (base_dir or app_data_dir()).expanduser().resolve()
@@ -1275,7 +1573,7 @@ def prepare_gmail_intake(
         response["launchTarget"] = auto_launch_target.worktree_path
     if auto_launch_target.ui_owner == "browser_app" and auto_launch_target.browser_url:
         response["browser_url"] = auto_launch_target.browser_url
-        response["browser_open_owned_by"] = _BROWSER_OPEN_OWNER_EXTENSION
+        response["browser_open_owned_by"] = _BROWSER_OPEN_OWNER_NATIVE_HOST
     bridge_port = settings.get("bridgePort")
     if isinstance(bridge_port, int):
         response["bridgePort"] = bridge_port
@@ -1437,6 +1735,12 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--edge-extension-report", action="store_true")
     parser.add_argument("--edge-extension-report-file", type=str, default="")
     parser.add_argument("--host-executable", type=str, default="")
+    parser.add_argument("--restart-browser-runtime-canonical", action="store_true")
+    parser.add_argument("--target-worktree", type=str, default="")
+    parser.add_argument("--target-python", type=str, default="")
+    parser.add_argument("--current-listener-pid", type=int, default=0)
+    parser.add_argument("--runtime-mode", type=str, default="live")
+    parser.add_argument("--workspace-id", type=str, default=_BROWSER_GMAIL_WORKSPACE_ID)
     args, _unknown = parser.parse_known_args(argv)
     if args.self_test:
         print(json.dumps(_self_test_payload(), ensure_ascii=False))
@@ -1463,6 +1767,16 @@ def cli(argv: list[str] | None = None) -> int:
         else:
             print(report_text)
         return 0
+    if args.restart_browser_runtime_canonical:
+        payload = _run_restart_browser_runtime_canonical(
+            target_worktree=args.target_worktree,
+            target_python=args.target_python,
+            current_listener_pid=args.current_listener_pid,
+            runtime_mode=args.runtime_mode,
+            workspace_id=args.workspace_id,
+        )
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0 if bool(payload.get("ok")) else 1
     return run()
 
 

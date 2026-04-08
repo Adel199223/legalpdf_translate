@@ -16,7 +16,6 @@ function shortBuildLabel(branch, buildSha) {
 export function deriveGmailLiveRuntimeGuard({
   runtime = {},
   buildIdentity = {},
-  acknowledged = false,
 } = {}) {
   const liveData = Boolean(runtime.live_data);
   const isCanonical = buildIdentity && buildIdentity.is_canonical === false ? false : true;
@@ -47,8 +46,8 @@ export function deriveGmailLiveRuntimeGuard({
   }
   return {
     active,
-    blocked: active && !acknowledged,
-    acknowledged: Boolean(acknowledged),
+    blocked: active,
+    acknowledged: false,
     branch,
     buildSha,
     canonicalBranch,
@@ -61,8 +60,6 @@ export function deriveGmailLiveRuntimeGuard({
       ? `Preview and Prepare are paused because the live browser app is running from ${buildLabel} in the canonical worktree path instead of ${canonicalBranch}.`
       : `Preview and Prepare are paused because the live browser app is running from ${buildLabel} instead of the canonical ${canonicalBranch} runtime.`,
     primaryLabel: "Restart from Canonical Main",
-    secondaryLabel: "Continue Anyway",
     details,
   };
 }
-

@@ -62,6 +62,10 @@ def _recommended_action(*, status: str, reasons: list[str]) -> str:
     reason_set = set(reasons)
     if status == "failed":
         return "rerun_page"
+    if "visual_recovery_failed" in reason_set:
+        return "manual_review"
+    if "extraction_integrity_suspect" in reason_set:
+        return "manual_review"
     if "ocr_required_not_used" in reason_set:
         return "rerun_with_ocr"
     if "numeric_mismatch" in reason_set or "citation_structure_drift" in reason_set:
@@ -108,6 +112,9 @@ def build_quality_risk_summary(
         bidi_warnings = max(0, _to_int(page.get("bidi_warnings_count", 0)))
         bidi_controls = max(0, _to_int(page.get("bidi_control_count", 0)))
         replacement_chars = max(0, _to_int(page.get("replacement_char_count", 0)))
+        extraction_integrity_suspect = _to_bool(page.get("extraction_integrity_suspect", False))
+        visual_recovery_used = _to_bool(page.get("visual_recovery_used", False))
+        visual_recovery_failed = _to_bool(page.get("visual_recovery_failed", False))
 
         score = 0.0
         reasons: list[str] = []
@@ -166,6 +173,16 @@ def build_quality_risk_summary(
             score += 0.24
             reasons.append("api_exception")
 
+        if extraction_integrity_suspect:
+            score += 0.34
+            reasons.append("extraction_integrity_suspect")
+        if visual_recovery_failed:
+            score += 0.24
+            reasons.append("visual_recovery_failed")
+        elif visual_recovery_used:
+            score += 0.08
+            reasons.append("visual_recovery_used")
+
         if arabic_mode:
             if numeric_mismatches > 0:
                 score += min(0.6, 0.45 + min(0.15, float(max(0, numeric_mismatches - 1)) * 0.05))
@@ -203,6 +220,8 @@ def build_quality_risk_summary(
             or "validator_failed" in reasons
             or "parser_failed" in reasons
             or "outside_text_detected" in reasons
+            or "extraction_integrity_suspect" in reasons
+            or "visual_recovery_failed" in reasons
             or "numeric_mismatch" in reasons
             or ("citation_structure_drift" in reasons and citation_mismatches >= 45)
         )

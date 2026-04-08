@@ -35,7 +35,24 @@ class _FakeBridge:
         self.stopped = True
 
 
-def _identity() -> RuntimeBuildIdentity:
+def _canonical_identity() -> RuntimeBuildIdentity:
+    return RuntimeBuildIdentity(
+        worktree_path="C:/Users/FA507/.codex/legalpdf_translate",
+        branch="main",
+        head_sha="5c9842e",
+        labels=("shadow-web",),
+        is_canonical=True,
+        is_lineage_valid=True,
+        canonical_worktree_path="C:/Users/FA507/.codex/legalpdf_translate",
+        canonical_branch="main",
+        approved_base_branch="main",
+        approved_base_head_floor="506dee6",
+        canonical_head_floor="506dee6",
+        reasons=(),
+    )
+
+
+def _noncanonical_identity() -> RuntimeBuildIdentity:
     return RuntimeBuildIdentity(
         worktree_path="C:/Users/FA507/.codex/legalpdf_translate_beginner_first_ux",
         branch="codex/beginner-first-primary-flow-ux",
@@ -103,7 +120,7 @@ def test_browser_live_gmail_bridge_manager_starts_and_clears_runtime_metadata(mo
 
     manager = browser_bridge_module.BrowserLiveGmailBridgeManager(
         repo_root=tmp_path,
-        build_identity=_identity(),
+        build_identity=_canonical_identity(),
         server_port=8877,
         gmail_sessions=GmailBrowserSessionManager(),
     )
@@ -165,7 +182,7 @@ def test_browser_live_gmail_bridge_manager_backs_off_for_existing_qt_owner(monke
 
     manager = browser_bridge_module.BrowserLiveGmailBridgeManager(
         repo_root=tmp_path,
-        build_identity=_identity(),
+        build_identity=_canonical_identity(),
         server_port=8877,
         gmail_sessions=GmailBrowserSessionManager(),
     )
@@ -174,6 +191,48 @@ def test_browser_live_gmail_bridge_manager_backs_off_for_existing_qt_owner(monke
 
     assert result.status == "backing_off"
     assert result.owner_kind == "qt_app"
+    assert _FakeBridge.instances == []
+    assert load_bridge_runtime_metadata(live_root) is None
+
+
+def test_browser_live_gmail_bridge_manager_disables_noncanonical_runtime(monkeypatch, tmp_path: Path) -> None:
+    _FakeBridge.instances = []
+    live_root = tmp_path / "live"
+    live_root.mkdir(parents=True, exist_ok=True)
+    (live_root / "settings.json").write_text(
+        json.dumps(
+            {
+                "gmail_intake_bridge_enabled": True,
+                "gmail_intake_bridge_token": "shared-token",
+                "gmail_intake_port": 9011,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(browser_bridge_module, "detect_browser_data_paths", lambda **kwargs: _live_data_paths(live_root))
+    monkeypatch.setattr(browser_bridge_module, "LocalGmailIntakeBridge", _FakeBridge)
+    monkeypatch.setattr(
+        browser_bridge_module,
+        "maybe_ensure_edge_native_host_registered",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("registration should be skipped on noncanonical live runtimes")
+        ),
+    )
+
+    manager = browser_bridge_module.BrowserLiveGmailBridgeManager(
+        repo_root=tmp_path,
+        build_identity=_noncanonical_identity(),
+        server_port=8877,
+        gmail_sessions=GmailBrowserSessionManager(),
+    )
+
+    result = manager.sync()
+
+    assert result.status == "disabled"
+    assert result.reason == "canonical_restart_required"
+    assert result.browser_url == "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake"
+    assert result.registration_ok is False
+    assert result.registration_reason == "skipped_noncanonical_runtime"
     assert _FakeBridge.instances == []
     assert load_bridge_runtime_metadata(live_root) is None
 
@@ -204,7 +263,7 @@ def test_browser_live_gmail_bridge_manager_disables_noncanonical_live_port(monke
 
     manager = browser_bridge_module.BrowserLiveGmailBridgeManager(
         repo_root=tmp_path,
-        build_identity=_identity(),
+        build_identity=_canonical_identity(),
         server_port=8888,
         gmail_sessions=GmailBrowserSessionManager(),
     )
@@ -256,7 +315,7 @@ def test_browser_live_gmail_bridge_manager_skips_native_host_registration_in_pyt
 
     manager = browser_bridge_module.BrowserLiveGmailBridgeManager(
         repo_root=tmp_path,
-        build_identity=_identity(),
+        build_identity=_canonical_identity(),
         server_port=8877,
         gmail_sessions=GmailBrowserSessionManager(),
     )
@@ -310,7 +369,7 @@ def test_browser_live_gmail_bridge_manager_prefers_current_runtime_for_registrat
 
     manager = browser_bridge_module.BrowserLiveGmailBridgeManager(
         repo_root=tmp_path,
-        build_identity=_identity(),
+        build_identity=_canonical_identity(),
         server_port=8877,
         gmail_sessions=GmailBrowserSessionManager(),
     )

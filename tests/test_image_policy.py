@@ -52,3 +52,13 @@ def test_ar_auto_image_keeps_fragmentation_heuristics() -> None:
         lang=TargetLang.AR,
     ) is False
 
+
+def test_force_include_overrides_mode_off() -> None:
+    assert should_include_image(
+        ImageMode.OFF,
+        "readable text",
+        False,
+        fragmented=False,
+        lang=TargetLang.FR,
+        force_include=True,
+    ) is True

@@ -173,3 +173,30 @@ def test_quality_risk_non_arabic_ignores_arabic_validation_counters() -> None:
 
     assert summary["quality_risk_score"] == 0.0
     assert summary["review_queue_count"] == 0
+
+
+def test_quality_risk_integrity_suspect_pages_enter_review_queue() -> None:
+    summary = build_quality_risk_summary(
+        [
+            (
+                4,
+                {
+                    "status": "done",
+                    "source_route": "direct_text",
+                    "ocr_request_reason": "required",
+                    "ocr_used": False,
+                    "image_used": True,
+                    "extraction_integrity_suspect": True,
+                    "visual_recovery_used": True,
+                    "visual_recovery_failed": False,
+                },
+            )
+        ],
+        target_lang="FR",
+    )
+
+    assert summary["review_queue_count"] == 1
+    assert summary["quality_risk_score"] >= 0.35
+    queue_entry = summary["review_queue"][0]
+    assert queue_entry["recommended_action"] == "manual_review"
+    assert "extraction_integrity_suspect" in queue_entry["reasons"]

@@ -1253,6 +1253,12 @@ def test_prepare_translation_session_exposes_gmail_batch_launch_context(tmp_path
     launch = payload["normalized_payload"]["suggested_translation_launch"]
     assert launch["source_path"] == str(saved_pdf)
     assert launch["target_lang"] == "AR"
+    assert launch["image_mode"] == "auto"
+    assert launch["ocr_mode"] == "auto"
+    assert launch["ocr_engine"] == "local_then_api"
+    assert launch["resume"] is False
+    assert launch["keep_intermediates"] is True
+    assert launch["auto_start"] is False
     assert launch["gmail_batch_context"] == {
         "source": "gmail_intake",
         "session_id": session.session_id,

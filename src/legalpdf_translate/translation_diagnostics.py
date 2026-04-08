@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import hashlib
 import re
 from typing import Any
@@ -215,11 +216,40 @@ def check_target_language(
     }
 
 
+def summarize_extraction_integrity(
+    integrity_context: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(integrity_context, Mapping):
+        return {
+            "extraction_integrity_warnings_count": 0,
+            "extraction_integrity_reasons": [],
+            "vector_gap_count": 0,
+            "visual_recovery_strategy": "",
+            "visual_recovery_used": False,
+            "visual_recovery_failed": False,
+        }
+    reasons_value = integrity_context.get("extraction_integrity_reasons", [])
+    reasons = [
+        str(item)
+        for item in reasons_value
+        if isinstance(item, str) and str(item).strip()
+    ]
+    return {
+        "extraction_integrity_warnings_count": int(bool(integrity_context.get("extraction_integrity_suspect", False))),
+        "extraction_integrity_reasons": reasons[:3],
+        "vector_gap_count": int(integrity_context.get("vector_gap_count", 0) or 0),
+        "visual_recovery_strategy": str(integrity_context.get("visual_recovery_strategy", "") or ""),
+        "visual_recovery_used": bool(integrity_context.get("visual_recovery_used", False)),
+        "visual_recovery_failed": bool(integrity_context.get("visual_recovery_failed", False)),
+    }
+
+
 def run_all_quality_checks(
     *,
     source_text: str,
     output_text: str,
     target_lang: str,
+    integrity_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run all lightweight quality checks, return combined summary."""
     lang_check = check_target_language(output_text, target_lang)
@@ -227,6 +257,7 @@ def run_all_quality_checks(
     citation_check = check_citation_preservation(source_text, output_text)
     structure_check = check_structure(source_text, output_text)
     bidi_check = check_bidi_safety(output_text)
+    integrity_check = summarize_extraction_integrity(integrity_context)
     return {
         "language_ok": lang_check["language_ok"],
         "detected_lang": lang_check["detected_lang"],
@@ -239,6 +270,12 @@ def run_all_quality_checks(
         "bidi_warnings_count": int(bidi_check["bidi_warning"]) + int(bidi_check["replacement_warning"]),
         "bidi_control_count": bidi_check["bidi_control_count"],
         "replacement_char_count": bidi_check["replacement_char_count"],
+        "extraction_integrity_warnings_count": integrity_check["extraction_integrity_warnings_count"],
+        "extraction_integrity_reasons": integrity_check["extraction_integrity_reasons"],
+        "vector_gap_count": integrity_check["vector_gap_count"],
+        "visual_recovery_strategy": integrity_check["visual_recovery_strategy"],
+        "visual_recovery_used": integrity_check["visual_recovery_used"],
+        "visual_recovery_failed": integrity_check["visual_recovery_failed"],
     }
 
 
@@ -290,6 +327,8 @@ def emit_validation_summary_event(
             "numeric_missing_sample": list(checks.get("numeric_missing_sample", []))[:3],
             "citation_mismatches_count": checks.get("citation_mismatches_count", 0),
             "structure_warnings_count": checks.get("structure_warnings_count", 0),
+            "extraction_integrity_warnings_count": checks.get("extraction_integrity_warnings_count", 0),
+            "vector_gap_count": checks.get("vector_gap_count", 0),
             "source_paragraphs": checks.get("source_paragraphs", 0),
             "output_paragraphs": checks.get("output_paragraphs", 0),
             "bidi_warnings_count": checks.get("bidi_warnings_count", 0),
@@ -299,6 +338,12 @@ def emit_validation_summary_event(
         decisions={
             "language_ok": bool(checks.get("language_ok", True)),
             "detected_lang": str(checks.get("detected_lang", "?")),
+            "visual_recovery_strategy": str(checks.get("visual_recovery_strategy", "") or ""),
+            "visual_recovery_used": bool(checks.get("visual_recovery_used", False)),
+            "visual_recovery_failed": bool(checks.get("visual_recovery_failed", False)),
+        },
+        details={
+            "extraction_integrity_reasons": list(checks.get("extraction_integrity_reasons", []))[:3],
         },
     )
 

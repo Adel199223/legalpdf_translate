@@ -41,7 +41,10 @@ def should_include_image(
     fragmented: bool = False,
     *,
     lang: TargetLang | None = None,
+    force_include: bool = False,
 ) -> bool:
+    if force_include:
+        return True
     if mode == ImageMode.OFF:
         return False
     if mode == ImageMode.ALWAYS:
