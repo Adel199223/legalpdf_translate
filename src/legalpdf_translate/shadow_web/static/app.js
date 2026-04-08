@@ -2474,7 +2474,7 @@ async function loadBootstrap({ staged = false } = {}) {
           activeView: appState.activeView,
         },
         fetchShell: async () => {
-          const shellPayload = await fetchJson("/api/bootstrap/shell", appState);
+          const shellPayload = await fetchJson("/api/bootstrap/shell/ready", appState);
           assertServerAssetVersionMatchesClient(shellPayload);
           applyShellBootstrapSnapshot(shellPayload);
           return shellPayload;

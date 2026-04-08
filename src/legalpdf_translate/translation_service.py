@@ -391,11 +391,27 @@ def _build_config_from_form(
         raise ValueError("Output folder is required.")
     output_dir = require_writable_output_dir(Path(output_dir_text))
 
-    target_lang_text = str(form_values.get("target_lang", defaults.get("default_lang", "EN")) or "EN").strip().upper()
+    gmail_batch_context = _normalize_gmail_batch_context(form_values.get("gmail_batch_context"))
+    gmail_prepared_launch = (
+        gmail_batch_context is not None
+        and str(gmail_batch_context.get("source", "") or "").strip().lower() == "gmail_intake"
+    )
+    gmail_target_lang = (
+        str(gmail_batch_context.get("selected_target_lang", "") or "").strip().upper()
+        if gmail_prepared_launch and gmail_batch_context is not None
+        else ""
+    )
+    target_lang_text = str(
+        form_values.get("target_lang", gmail_target_lang or defaults.get("default_lang", "EN"))
+        or gmail_target_lang
+        or "EN"
+    ).strip().upper()
     if target_lang_text not in {"EN", "FR", "AR"}:
         raise ValueError("Target language must be EN, FR, or AR.")
 
     start_page = _coerce_int_or_none(form_values.get("start_page"))
+    if start_page is None and gmail_prepared_launch and gmail_batch_context is not None:
+        start_page = _coerce_int_or_none(gmail_batch_context.get("selected_start_page"))
     if start_page is None:
         start_page = 1
     if start_page <= 0:
@@ -419,6 +435,21 @@ def _build_config_from_form(
         defaults.get("ocr_api_key_env_name")
         or default_ocr_api_env_name(provider)
     ).strip() or default_ocr_api_env_name(provider)
+    if gmail_batch_context is not None:
+        gmail_batch_context = {
+            **gmail_batch_context,
+            "selected_target_lang": target_lang_text,
+            "selected_start_page": int(start_page),
+        }
+    image_mode_default = "auto" if gmail_prepared_launch else defaults.get("image_mode", defaults.get("default_images_mode", "off"))
+    ocr_mode_default = "auto" if gmail_prepared_launch else defaults.get("ocr_mode", defaults.get("ocr_mode_default", "auto"))
+    ocr_engine_default = (
+        "local_then_api"
+        if gmail_prepared_launch
+        else defaults.get("ocr_engine", defaults.get("ocr_engine_default", "local_then_api"))
+    )
+    resume_default = False if gmail_prepared_launch else defaults.get("resume")
+    keep_intermediates_default = True if gmail_prepared_launch else defaults.get("keep_intermediates")
 
     return RunConfig(
         pdf_path=source,
@@ -439,26 +470,26 @@ def _build_config_from_form(
             False,
         ),
         image_mode=parse_image_mode(
-            str(form_values.get("image_mode", defaults.get("image_mode", defaults.get("default_images_mode", "off"))) or "off")
+            str(form_values.get("image_mode", image_mode_default) or "off")
         ),
         start_page=int(start_page),
         end_page=end_page,
         max_pages=max_pages,
         workers=max(1, min(6, int(_coerce_int_or_none(form_values.get("workers")) or 3))),
-        resume=_coerce_bool(form_values.get("resume", defaults.get("resume")), True),
+        resume=_coerce_bool(form_values.get("resume", resume_default), True),
         page_breaks=_coerce_bool(form_values.get("page_breaks", defaults.get("page_breaks")), True),
         keep_intermediates=_coerce_bool(
-            form_values.get("keep_intermediates", defaults.get("keep_intermediates")),
+            form_values.get("keep_intermediates", keep_intermediates_default),
             True,
         ),
         ocr_mode=parse_ocr_mode(
-            str(form_values.get("ocr_mode", defaults.get("ocr_mode", defaults.get("ocr_mode_default", "auto"))) or "auto")
+            str(form_values.get("ocr_mode", ocr_mode_default) or "auto")
         ),
         ocr_engine=parse_ocr_engine_policy(
             str(
                 form_values.get(
                     "ocr_engine",
-                    defaults.get("ocr_engine", defaults.get("ocr_engine_default", "local_then_api")),
+                    ocr_engine_default,
                 )
                 or "local_then_api"
             )
@@ -481,7 +512,7 @@ def _build_config_from_form(
             ),
             False,
         ),
-        gmail_batch_context=_normalize_gmail_batch_context(form_values.get("gmail_batch_context")),
+        gmail_batch_context=gmail_batch_context,
     )
 
 
@@ -1200,7 +1231,14 @@ class TranslationJobManager:
         config: RunConfig,
         settings_path: Path,
     ) -> dict[str, Any]:
-        reservation_key = _run_dir_key(build_run_paths(config.output_dir, config.pdf_path, config.target_lang).run_dir)
+        reservation_key = _run_dir_key(
+            build_run_paths(
+                config.output_dir,
+                config.pdf_path,
+                config.target_lang,
+                gmail_batch_context=config.gmail_batch_context,
+            ).run_dir
+        )
         self._reserve(reservation_key)
         job_id = f"tx-{uuid.uuid4().hex[:12]}"
         created_at = _utc_now_iso()
@@ -1301,7 +1339,12 @@ class TranslationJobManager:
                 workflow = TranslationWorkflow(log_callback=lambda message: self._append_log(job_id, message))
                 self._mark_running(job_id, workflow, "Rebuilding DOCX...")
                 output_docx = workflow.rebuild_docx(config)
-                run_dir = build_run_paths(config.output_dir, config.pdf_path, config.target_lang).run_dir
+                run_dir = build_run_paths(
+                    config.output_dir,
+                    config.pdf_path,
+                    config.target_lang,
+                    gmail_batch_context=config.gmail_batch_context,
+                ).run_dir
                 self._mark_finished(
                     job_id=job_id,
                     status="completed",

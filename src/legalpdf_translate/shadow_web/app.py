@@ -46,7 +46,11 @@ from legalpdf_translate.gmail_browser_service import (
     GmailBrowserSessionManager,
     extension_prepare_reason_catalog,
 )
-from legalpdf_translate.gmail_focus_host import inspect_edge_native_host, prepare_gmail_intake
+from legalpdf_translate.gmail_focus_host import (
+    inspect_edge_native_host,
+    prepare_gmail_intake,
+    restart_canonical_browser_runtime,
+)
 from legalpdf_translate.interpretation_service import (
     InterpretationValidationError,
     add_interpretation_city,
@@ -353,14 +357,58 @@ def _runtime_diagnostics(context: ShadowWebContext, target: ActiveBrowserTarget)
             "failed": "automation executed but flow assertions failed",
         },
     }
-def _shell_bridge_mode_state(*, target: ActiveBrowserTarget) -> dict[str, Any]:
+
+
+def _runtime_ready_payload(context: ShadowWebContext, target: ActiveBrowserTarget) -> dict[str, Any]:
+    runtime_payload = _runtime_payload(context, target)
+    bridge_sync = asdict(context.live_gmail_bridge.last_result)
+    listener = classify_shadow_listener(port=context.port, expected_pid=os.getpid())
+    return {
+        "runtime": runtime_payload,
+        "readiness": {
+            "browser_app": {
+                "ready": True,
+                "status": "ready",
+                "mode": target.mode,
+                "workspace_id": target.workspace_id,
+                "listener": asdict(listener),
+            },
+            "gmail_bridge": {
+                "ready": str(bridge_sync.get("status", "") or "").strip() == "ready",
+                "status": str(bridge_sync.get("status", "") or "").strip(),
+                "reason": str(bridge_sync.get("reason", "") or "").strip(),
+                "bridge_enabled": bool(bridge_sync.get("bridge_enabled")),
+                "bridge_port": bridge_sync.get("bridge_port"),
+                "owner_kind": str(bridge_sync.get("owner_kind", "") or "").strip() or "none",
+                "browser_url": str(bridge_sync.get("browser_url", "") or "").strip(),
+                "workspace_id": str(bridge_sync.get("workspace_id", "") or "").strip(),
+                "started": bool(bridge_sync.get("started")),
+                "registration_ok": bool(bridge_sync.get("registration_ok")),
+                "registration_reason": str(bridge_sync.get("registration_reason", "") or "").strip(),
+            },
+        },
+    }
+
+
+def _shell_bridge_mode_state(
+    *,
+    target: ActiveBrowserTarget,
+    build_identity: RuntimeBuildIdentity,
+) -> dict[str, Any]:
     settings_payload = load_settings_from_path(target.data_paths.settings_path)
-    prepare_response = prepare_gmail_intake(
-        base_dir=target.data_paths.app_data_dir,
-        request_focus=False,
-        include_token=False,
-        settings_loader=lambda: load_settings_from_path(target.data_paths.settings_path),
-    )
+    if _is_noncanonical_live_gmail_runtime(target=target, build_identity=build_identity):
+        prepare_response = _noncanonical_live_gmail_prepare_response(
+            target=target,
+            build_identity=build_identity,
+            settings_payload=settings_payload,
+        )
+    else:
+        prepare_response = prepare_gmail_intake(
+            base_dir=target.data_paths.app_data_dir,
+            request_focus=False,
+            include_token=False,
+            settings_loader=lambda: load_settings_from_path(target.data_paths.settings_path),
+        )
     bridge_port = prepare_response.get("bridgePort")
     if not isinstance(bridge_port, int):
         try:
@@ -383,6 +431,116 @@ def _shell_bridge_mode_state(*, target: ActiveBrowserTarget) -> dict[str, Any]:
         "workspace_id": str(prepare_response.get("workspace_id", "") or target.workspace_id).strip() or target.workspace_id,
         "runtime_mode": str(prepare_response.get("runtime_mode", "") or target.mode).strip() or target.mode,
         "prepare_response": prepare_response,
+    }
+
+
+def _shell_bridge_mode_state_snapshot(
+    *,
+    target: ActiveBrowserTarget,
+    bridge_sync: Mapping[str, Any],
+    build_identity: RuntimeBuildIdentity,
+) -> dict[str, Any]:
+    settings_payload = load_settings_from_path(target.data_paths.settings_path)
+    if _is_noncanonical_live_gmail_runtime(target=target, build_identity=build_identity):
+        prepare_response = _noncanonical_live_gmail_prepare_response(
+            target=target,
+            build_identity=build_identity,
+            settings_payload=settings_payload,
+        )
+        return {
+            "mode": target.data_paths.mode,
+            "label": target.data_paths.label,
+            "live_data": target.data_paths.live_data,
+            "bridge_enabled": bool(settings_payload.get("gmail_intake_bridge_enabled", False)),
+            "bridge_port": prepare_response.get("bridgePort"),
+            "account_email": str(settings_payload.get("gmail_account_email", "") or "").strip(),
+            "ready": False,
+            "reason": str(prepare_response.get("reason", "") or "").strip(),
+            "reason_message": _PREPARE_REASON_MESSAGES.get(
+                str(prepare_response.get("reason", "") or "").strip(),
+                "Unknown state.",
+            ),
+            "owner_kind": "none",
+            "browser_url": str(prepare_response.get("browser_url", "") or "").strip(),
+            "workspace_id": str(prepare_response.get("workspace_id", "") or target.workspace_id).strip() or target.workspace_id,
+            "runtime_mode": target.mode,
+            "prepare_response": prepare_response,
+        }
+    bridge_port = bridge_sync.get("bridge_port")
+    if not isinstance(bridge_port, int):
+        try:
+            bridge_port = int(settings_payload.get("gmail_intake_port", 0))
+        except (TypeError, ValueError):
+            bridge_port = None
+    reason = str(bridge_sync.get("reason", "") or "").strip()
+    owner_kind = str(bridge_sync.get("owner_kind", "") or "").strip() or "none"
+    browser_url = str(bridge_sync.get("browser_url", "") or "").strip()
+    workspace_id = str(bridge_sync.get("workspace_id", "") or "").strip() or target.workspace_id
+    ready = str(bridge_sync.get("status", "") or "").strip() == "ready"
+    prepare_response = {
+        "ok": ready,
+        "focused": False,
+        "flashed": False,
+        "bridgeTokenPresent": bool(str(settings_payload.get("gmail_intake_bridge_token", "") or "").strip()),
+        "launched": False,
+        "autoLaunchReady": True,
+        "launchTarget": str(build_identity.worktree_path or "").strip(),
+        "launchTargetReason": "launch_target_ready" if str(build_identity.worktree_path or "").strip() else "",
+        "ui_owner": owner_kind,
+        "browser_url": browser_url,
+        "browser_open_owned_by": "runtime" if owner_kind == "browser_app" else "",
+        "workspace_id": workspace_id,
+        "runtime_mode": target.mode,
+        "bridgePort": bridge_port if isinstance(bridge_port, int) and 1 <= int(bridge_port) <= 65535 else None,
+        "reason": reason,
+    }
+    if prepare_response["launchTarget"] == "":
+        prepare_response.pop("launchTarget", None)
+    if prepare_response["launchTargetReason"] == "":
+        prepare_response.pop("launchTargetReason", None)
+    if prepare_response["browser_open_owned_by"] == "":
+        prepare_response.pop("browser_open_owned_by", None)
+    return {
+        "mode": target.data_paths.mode,
+        "label": target.data_paths.label,
+        "live_data": target.data_paths.live_data,
+        "bridge_enabled": bool(settings_payload.get("gmail_intake_bridge_enabled", False)),
+        "bridge_port": bridge_port if isinstance(bridge_port, int) and 1 <= int(bridge_port) <= 65535 else None,
+        "account_email": str(settings_payload.get("gmail_account_email", "") or "").strip(),
+        "ready": ready,
+        "reason": reason,
+        "reason_message": _PREPARE_REASON_MESSAGES.get(reason, reason.replace("_", " ").strip() or "Unknown state."),
+        "owner_kind": owner_kind,
+        "browser_url": browser_url,
+        "workspace_id": workspace_id,
+        "runtime_mode": target.mode,
+        "prepare_response": prepare_response,
+    }
+
+
+def _shell_ready_capability_flags(
+    *,
+    current_mode_bridge: Mapping[str, Any],
+    bridge_sync: Mapping[str, Any],
+) -> dict[str, Any]:
+    reason = str(current_mode_bridge.get("reason", "") or "").strip() or str(bridge_sync.get("reason", "") or "").strip()
+    bridge_ready = bool(current_mode_bridge.get("ready"))
+    status = "ok" if bridge_ready else "bad" if reason in {"bridge_browser_mismatch", "split_brain_browser_owner"} else "warn"
+    label = "Ready" if bridge_ready else "Host issue" if status == "bad" else "Needs attention"
+    message = (
+        "The Gmail bridge is ready for workspace handoff."
+        if bridge_ready
+        else str(current_mode_bridge.get("reason_message", "") or "The Gmail bridge is still warming.")
+    )
+    return {
+        "gmail_bridge": {
+            "status": status,
+            "label": label,
+            "message": message,
+            "reason": reason,
+            "owner_kind": str(current_mode_bridge.get("owner_kind", "") or bridge_sync.get("owner_kind", "") or "none"),
+            "current_mode": dict(current_mode_bridge),
+        }
     }
 
 
@@ -616,6 +774,86 @@ def _validation_error_response(
     )
 
 
+def _is_noncanonical_live_gmail_runtime(
+    *,
+    target: ActiveBrowserTarget,
+    build_identity: RuntimeBuildIdentity,
+) -> bool:
+    return bool(target.mode == RUNTIME_MODE_LIVE and not build_identity.is_canonical)
+
+
+def _noncanonical_live_gmail_prepare_response(
+    *,
+    target: ActiveBrowserTarget,
+    build_identity: RuntimeBuildIdentity,
+    settings_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    bridge_port = settings_payload.get("gmail_intake_port")
+    if not isinstance(bridge_port, int):
+        try:
+            bridge_port = int(settings_payload.get("gmail_intake_port", 0))
+        except (TypeError, ValueError):
+            bridge_port = None
+    canonical_worktree = str(build_identity.canonical_worktree_path or "").strip()
+    response: dict[str, Any] = {
+        "ok": False,
+        "focused": False,
+        "flashed": False,
+        "bridgeTokenPresent": bool(str(settings_payload.get("gmail_intake_bridge_token", "") or "").strip()),
+        "launched": False,
+        "autoLaunchReady": False,
+        "launchTargetReason": "canonical_restart_required",
+        "ui_owner": "none",
+        "browser_url": f"http://{SHADOW_HOST}:{SHADOW_DEFAULT_PORT}/?mode=live&workspace={target.workspace_id}#gmail-intake",
+        "workspace_id": target.workspace_id,
+        "runtime_mode": target.mode,
+        "reason": "canonical_restart_required",
+    }
+    if canonical_worktree:
+        response["launchTarget"] = canonical_worktree
+    if isinstance(bridge_port, int) and 1 <= int(bridge_port) <= 65535:
+        response["bridgePort"] = bridge_port
+    return response
+
+
+def _noncanonical_live_gmail_block_response(
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+    *,
+    operation: str,
+    status_code: int = 409,
+) -> JSONResponse:
+    action_label = "Preview" if operation == "gmail_preview_attachment" else "Prepare"
+    message = (
+        f"{action_label} is blocked because the live browser app is not running from the canonical runtime. "
+        "Use Restart from Canonical Main, then retry."
+    )
+    diagnostics = {
+        "error": "noncanonical_live_runtime",
+        "operation": operation,
+        "message": message,
+        "build_identity": runtime_build_identity_payload(context.build_identity),
+    }
+    return JSONResponse(
+        _merge_response(
+            context,
+            target,
+            {
+                "status": "failed",
+                "normalized_payload": {
+                    "validation_error": {
+                        "reason": "canonical_restart_required",
+                        "message": message,
+                        "operation": operation,
+                    }
+                },
+                "diagnostics": diagnostics,
+            },
+        ),
+        status_code=status_code,
+    )
+
+
 def _translation_job_or_error(
     context: ShadowWebContext,
     *,
@@ -801,6 +1039,38 @@ def create_shadow_app(
         payload.headers["Cache-Control"] = "no-store"
         return payload
 
+    @app.get("/api/runtime")
+    async def api_runtime(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        payload = JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {},
+                    "diagnostics": {},
+                },
+            )
+        )
+        payload.headers["Cache-Control"] = "no-store"
+        return payload
+
+    @app.get("/api/runtime/ready")
+    async def api_runtime_ready(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        payload = JSONResponse(
+            {
+                "status": "ok",
+                "normalized_payload": _runtime_ready_payload(context, target),
+                "diagnostics": {},
+            }
+        )
+        payload.headers["Cache-Control"] = "no-store"
+        return payload
+
     @app.get("/api/bootstrap/shell")
     async def api_bootstrap_shell(request: Request) -> JSONResponse:
         context = _context(request)
@@ -813,7 +1083,7 @@ def create_shadow_app(
             build_sha=context.build_identity.head_sha,
             asset_version=context.asset_version,
         )
-        current_mode_bridge = _shell_bridge_mode_state(target=target)
+        current_mode_bridge = _shell_bridge_mode_state(target=target, build_identity=context.build_identity)
         document_runtime_state = document_runtime_state_payload()
         native_host_state = inspect_edge_native_host(
             base_dir=target.data_paths.app_data_dir,
@@ -854,6 +1124,58 @@ def create_shadow_app(
             ),
         }
         payload = JSONResponse(_merge_response(context, target, response))
+        payload.headers["Cache-Control"] = "no-store"
+        return payload
+
+    @app.get("/api/bootstrap/shell/ready")
+    async def api_bootstrap_shell_ready(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        bridge_sync = asdict(context.live_gmail_bridge.last_result)
+        current_mode_bridge = _shell_bridge_mode_state_snapshot(
+            target=target,
+            bridge_sync=bridge_sync,
+            build_identity=context.build_identity,
+        )
+        gmail_shell = context.gmail_sessions.build_shell_ready(
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            settings_path=target.data_paths.settings_path,
+        )
+        payload = JSONResponse(
+            {
+                "status": "ok",
+                "normalized_payload": {
+                    "runtime": _runtime_payload(context, target),
+                    "workspace": {
+                        "id": target.workspace_id,
+                        "runtime_mode": target.mode,
+                        "runtime_mode_label": target.data_paths.label,
+                    },
+                    "shell": {
+                        "ready": True,
+                        "gmail_bridge_ready": bool(current_mode_bridge.get("ready")),
+                        "asset_version": context.asset_version,
+                        "build_identity": runtime_build_identity_payload(context.build_identity),
+                        "runtime_mode": target.mode,
+                        "workspace_id": target.workspace_id,
+                        "owner_kind": current_mode_bridge.get("owner_kind", "none"),
+                    },
+                    "gmail": gmail_shell["normalized_payload"],
+                    "extension_lab": {
+                        "prepare_response": current_mode_bridge["prepare_response"],
+                    },
+                    "automation_preflight": dict(context.automation_preflight),
+                },
+                "diagnostics": {
+                    "gmail_bridge_sync": bridge_sync,
+                },
+                "capability_flags": _shell_ready_capability_flags(
+                    current_mode_bridge=current_mode_bridge,
+                    bridge_sync=bridge_sync,
+                ),
+            }
+        )
         payload.headers["Cache-Control"] = "no-store"
         return payload
 
@@ -1499,6 +1821,37 @@ def create_shadow_app(
         )
         return JSONResponse(_merge_response(context, target, response))
 
+    @app.post("/api/gmail/runtime/restart-canonical")
+    async def api_gmail_restart_canonical_runtime(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        restart_payload = restart_canonical_browser_runtime(
+            current_listener_pid=os.getpid(),
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            runtime_path=context.repo_root,
+        )
+        status_code = 200 if bool(restart_payload.get("ok")) else 409
+        response = JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok" if bool(restart_payload.get("ok")) else "failed",
+                    "normalized_payload": restart_payload,
+                    "diagnostics": {} if bool(restart_payload.get("ok")) else {"error": restart_payload.get("reason", "")},
+                },
+            ),
+            status_code=status_code,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.post("/api/gmail/load-message")
     async def api_gmail_load_message(request: Request) -> JSONResponse:
         context = _context(request)
@@ -1528,6 +1881,12 @@ def create_shadow_app(
             mode_override=payload.get("mode"),
             workspace_override=payload.get("workspace_id"),
         )
+        if _is_noncanonical_live_gmail_runtime(target=target, build_identity=context.build_identity):
+            return _noncanonical_live_gmail_block_response(
+                context,
+                target,
+                operation="gmail_preview_attachment",
+            )
         try:
             response = context.gmail_sessions.preview_attachment(
                 runtime_mode=target.mode,
@@ -1669,6 +2028,12 @@ def create_shadow_app(
             mode_override=payload.get("mode"),
             workspace_override=payload.get("workspace_id"),
         )
+        if _is_noncanonical_live_gmail_runtime(target=target, build_identity=context.build_identity):
+            return _noncanonical_live_gmail_block_response(
+                context,
+                target,
+                operation="gmail_prepare_session",
+            )
         try:
             response = context.gmail_sessions.prepare_session(
                 runtime_mode=target.mode,

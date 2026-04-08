@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import shutil
 import threading
 import time
@@ -131,7 +132,9 @@ from .workflow_components.quality_risk import (
 from .source_document import (
     extract_ordered_source_text as extract_ordered_page_text,
     get_source_page_count as get_page_count,
+    is_pdf_source,
     is_supported_source_file,
+    ocr_source_page_crop_text as ocr_pdf_page_crop_text,
     ocr_source_page_text as ocr_pdf_page_text,
     render_source_page_image_data_url as render_page_image_data_url,
 )
@@ -154,6 +157,26 @@ OCR_SOURCE_PROFILE_AR_TRACK = "ar_track_default"
 OCR_LOCAL_PASS_STRATEGY = "single_pass_baseline"
 OCR_API_FALLBACK_POLICY = "required_only_for_paid_fallback"
 OCR_TEXT_ONLY_IMAGE_QUALITY_FLOOR = 0.28
+_INLINE_AMOUNT_PREFIX_RE = re.compile(
+    r"(ascende\s+a|no\s+valor\s+de|quantia\s+de|montante\s+de)",
+    re.IGNORECASE,
+)
+_INLINE_AMOUNT_TAIL_RE = re.compile(
+    r"(?:^|[\s(])e\s+[A-Za-zÀ-ÿ-]+(?:\s+[A-Za-zÀ-ÿ-]+){0,6}\s+c[êe]ntimos?\)?\.?$",
+    re.IGNORECASE,
+)
+_INLINE_AMOUNT_VALUE_RE = re.compile(
+    r"\d[\d.,]{0,18}(?:\s*(?:€|eur|euros?))?",
+    re.IGNORECASE,
+)
+_INLINE_AMOUNT_WORD_RE = re.compile(
+    r"\b(?:euros?|c[êe]ntimos?)\b",
+    re.IGNORECASE,
+)
+_INLINE_GAP_VECTOR_MIN_COUNT = 6
+_INLINE_GAP_MIN_WIDTH_RATIO = 0.035
+_INLINE_GAP_MAX_VERTICAL_DELTA = 18.0
+_INLINE_WRAPPED_LINE_MAX_VERTICAL_DELTA = 32.0
 
 
 def _is_usable_source_text_value(value: str) -> bool:
@@ -303,6 +326,245 @@ def _ocr_failure_category(reason: str | None) -> str:
     if "fallback" in lowered:
         return "fallback_exhausted"
     return "other"
+
+
+@dataclass(slots=True)
+class _InlineGapCandidate:
+    prefix_text: str
+    suffix_text: str
+    prefix_bbox: tuple[float, float, float, float]
+    suffix_bbox: tuple[float, float, float, float]
+    band_rect: tuple[float, float, float, float]
+    gap_width: float
+    reasons: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class _ExtractionIntegrityAssessment:
+    suspect: bool = False
+    reasons: tuple[str, ...] = ()
+    vector_gap_count: int = 0
+    crop_rect: tuple[float, float, float, float] | None = None
+    prefix_text: str = ""
+    suffix_text: str = ""
+
+
+def _normalize_inline_text(text: str) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _block_text(block: object) -> str:
+    return str(getattr(block, "text", "") or "")
+
+
+def _block_bbox(block: object) -> tuple[float, float, float, float]:
+    return (
+        float(getattr(block, "x0", 0.0) or 0.0),
+        float(getattr(block, "y0", 0.0) or 0.0),
+        float(getattr(block, "x1", 0.0) or 0.0),
+        float(getattr(block, "y1", 0.0) or 0.0),
+    )
+
+
+def _has_amount_value_after_prefix(text: str) -> bool:
+    match = _INLINE_AMOUNT_PREFIX_RE.search(text)
+    if match is None:
+        return False
+    trailing = text[match.end() :]
+    return bool(_INLINE_AMOUNT_VALUE_RE.search(trailing) or _INLINE_AMOUNT_WORD_RE.search(trailing))
+
+
+def _looks_like_orphan_amount_tail(text: str) -> bool:
+    normalized = _normalize_inline_text(text)
+    if normalized == "":
+        return False
+    if _INLINE_AMOUNT_VALUE_RE.search(normalized):
+        return False
+    if not _INLINE_AMOUNT_WORD_RE.search(normalized):
+        return False
+    return bool(_INLINE_AMOUNT_TAIL_RE.search(normalized))
+
+
+def _build_inline_gap_candidate(ordered: object) -> _InlineGapCandidate | None:
+    body_blocks = list(getattr(ordered, "body_blocks", ()) or ())
+    if len(body_blocks) < 2:
+        return None
+
+    page_width = float(getattr(ordered, "page_width", 0.0) or 0.0)
+    best: _InlineGapCandidate | None = None
+
+    for index, prefix_block in enumerate(body_blocks[:-1]):
+        prefix_text = _normalize_inline_text(_block_text(prefix_block))
+        if not prefix_text or _INLINE_AMOUNT_PREFIX_RE.search(prefix_text) is None:
+            continue
+        if _has_amount_value_after_prefix(prefix_text):
+            continue
+
+        prefix_bbox = _block_bbox(prefix_block)
+        for suffix_block in body_blocks[index + 1 : index + 4]:
+            suffix_text = _normalize_inline_text(_block_text(suffix_block))
+            if not _looks_like_orphan_amount_tail(suffix_text):
+                continue
+
+            suffix_bbox = _block_bbox(suffix_block)
+            vertical_delta = abs(suffix_bbox[1] - prefix_bbox[1])
+            gap_width = max(0.0, suffix_bbox[0] - prefix_bbox[2])
+            wrapped_line_gap = suffix_bbox[0] <= prefix_bbox[2] and suffix_bbox[1] >= prefix_bbox[1]
+            max_vertical_delta = (
+                _INLINE_WRAPPED_LINE_MAX_VERTICAL_DELTA
+                if wrapped_line_gap
+                else _INLINE_GAP_MAX_VERTICAL_DELTA
+            )
+            if vertical_delta > max_vertical_delta:
+                continue
+            if not wrapped_line_gap and page_width > 0.0 and gap_width < (page_width * _INLINE_GAP_MIN_WIDTH_RATIO):
+                continue
+
+            band_x1 = max(prefix_bbox[2], suffix_bbox[2]) + 12.0
+            band_reasons = ["dangling_amount_clause", "orphan_amount_tail", "adjacent_block_gap"]
+            if wrapped_line_gap:
+                band_x1 = max(
+                    band_x1,
+                    (page_width - 12.0) if page_width > 0.0 else band_x1,
+                )
+                band_reasons.append("wrapped_line_gap")
+            candidate = _InlineGapCandidate(
+                prefix_text=_block_text(prefix_block),
+                suffix_text=_block_text(suffix_block),
+                prefix_bbox=prefix_bbox,
+                suffix_bbox=suffix_bbox,
+                band_rect=(
+                    max(0.0, min(prefix_bbox[0], suffix_bbox[0]) - 12.0),
+                    max(0.0, min(prefix_bbox[1], suffix_bbox[1]) - 8.0),
+                    band_x1,
+                    max(prefix_bbox[3], suffix_bbox[3]) + 8.0,
+                ),
+                gap_width=gap_width,
+                reasons=tuple(band_reasons),
+            )
+            if best is None or candidate.gap_width > best.gap_width:
+                best = candidate
+            break
+
+    return best
+
+
+def _count_vector_gap_drawings(
+    pdf_path: Path,
+    *,
+    page_number: int,
+    band_rect: tuple[float, float, float, float],
+) -> int:
+    try:
+        import fitz
+
+        with fitz.open(pdf_path) as doc:
+            page = doc.load_page(page_number - 1)
+            clip = fitz.Rect(*band_rect) & page.rect
+            if clip.is_empty or clip.width <= 1 or clip.height <= 1:
+                return 0
+            count = 0
+            for drawing in page.get_drawings():
+                rect = drawing.get("rect")
+                if rect is None:
+                    continue
+                draw_rect = fitz.Rect(rect)
+                if draw_rect.is_empty or not draw_rect.intersects(clip):
+                    continue
+                if draw_rect.width > max(clip.width * 0.9, page.rect.width * 0.25):
+                    continue
+                if draw_rect.height > max(clip.height * 1.5, page.rect.height * 0.1):
+                    continue
+                count += 1
+            return count
+    except Exception:
+        return 0
+
+
+def _assess_extraction_integrity(
+    *,
+    pdf_path: Path,
+    page_number: int,
+    target_lang: TargetLang,
+    ordered: object,
+) -> _ExtractionIntegrityAssessment:
+    if target_lang not in (TargetLang.EN, TargetLang.FR):
+        return _ExtractionIntegrityAssessment()
+    if not is_pdf_source(pdf_path):
+        return _ExtractionIntegrityAssessment()
+
+    candidate = _build_inline_gap_candidate(ordered)
+    if candidate is None:
+        return _ExtractionIntegrityAssessment()
+
+    vector_gap_count = _count_vector_gap_drawings(
+        pdf_path,
+        page_number=page_number,
+        band_rect=candidate.band_rect,
+    )
+    reasons = list(candidate.reasons)
+    strong_textual_candidate = "wrapped_line_gap" in reasons
+    if vector_gap_count >= _INLINE_GAP_VECTOR_MIN_COUNT:
+        reasons.append("vector_gap_cluster")
+    if strong_textual_candidate or vector_gap_count >= _INLINE_GAP_VECTOR_MIN_COUNT:
+        return _ExtractionIntegrityAssessment(
+            suspect=True,
+            reasons=tuple(reasons),
+            vector_gap_count=vector_gap_count,
+            crop_rect=candidate.band_rect,
+            prefix_text=str(candidate.prefix_text or ""),
+            suffix_text=str(candidate.suffix_text or ""),
+        )
+
+    return _ExtractionIntegrityAssessment(
+        suspect=False,
+        reasons=tuple(reasons),
+        vector_gap_count=vector_gap_count,
+        crop_rect=candidate.band_rect,
+        prefix_text=str(candidate.prefix_text or ""),
+        suffix_text=str(candidate.suffix_text or ""),
+    )
+
+
+def _merge_recovered_inline_text(
+    extracted_text: str,
+    *,
+    prefix_text: str,
+    suffix_text: str,
+    recovered_text: str,
+) -> str | None:
+    prefix = str(prefix_text or "")
+    suffix = str(suffix_text or "")
+    if prefix == "" or suffix == "":
+        return None
+
+    cleaned_recovered = _normalize_inline_text(recovered_text)
+    if cleaned_recovered == "":
+        return None
+    if _INLINE_AMOUNT_VALUE_RE.search(cleaned_recovered) is None and _INLINE_AMOUNT_WORD_RE.search(cleaned_recovered) is None:
+        return None
+
+    start_index = extracted_text.find(prefix)
+    if start_index < 0:
+        return None
+    end_index = extracted_text.find(suffix, start_index + len(prefix))
+    if end_index < 0:
+        return None
+    end_index += len(suffix)
+
+    normalized_prefix = _normalize_inline_text(prefix)
+    normalized_suffix = _normalize_inline_text(suffix)
+    normalized_recovered = _normalize_inline_text(cleaned_recovered)
+
+    if normalized_prefix and normalized_suffix and normalized_prefix in normalized_recovered and normalized_suffix in normalized_recovered:
+        replacement = cleaned_recovered
+    else:
+        replacement = f"{prefix.rstrip()} {cleaned_recovered.strip()} {suffix.lstrip()}".strip()
+
+    merged = extracted_text[:start_index] + replacement + extracted_text[end_index:]
+    if len(_normalize_inline_text(merged)) < len(_normalize_inline_text(extracted_text)):
+        return None
+    return merged
 
 
 def _derive_cancel_halt_reason(run_state: RunState) -> str:
@@ -1233,7 +1495,12 @@ class TranslationWorkflow:
         if not selected_pages:
             raise ValueError("No pages selected for analysis.")
 
-        paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
+        paths = build_run_paths(
+            config.output_dir,
+            config.pdf_path,
+            config.target_lang,
+            gmail_batch_context=config.gmail_batch_context,
+        )
         ensure_run_dirs(paths)
         self._last_config = config
         self._last_paths = paths
@@ -1332,7 +1599,12 @@ class TranslationWorkflow:
         config = self._normalize_config(config)
         self._validate_config(config)
 
-        base_paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
+        base_paths = build_run_paths(
+            config.output_dir,
+            config.pdf_path,
+            config.target_lang,
+            gmail_batch_context=config.gmail_batch_context,
+        )
         run_state = load_run_state(base_paths.run_state_path)
 
         effective_outdir = base_paths.frozen_outdir
@@ -1356,6 +1628,7 @@ class TranslationWorkflow:
             pdf_path=config.pdf_path,
             lang=config.target_lang,
             run_started_at=run_started_at,
+            gmail_batch_context=config.gmail_batch_context,
         )
 
         page_files = sorted(pages_dir.glob("page_*.txt"))
@@ -1547,6 +1820,12 @@ class TranslationWorkflow:
         extraction_signals = [str(item) for item in extraction_quality.get("signals", []) if isinstance(item, str)]
         ocr_required = bool(extraction_quality.get("ocr_required", False))
         ocr_helpful = bool(extraction_quality.get("ocr_helpful", False))
+        integrity_assessment = _assess_extraction_integrity(
+            pdf_path=config.pdf_path,
+            page_number=page_number,
+            target_lang=config.target_lang,
+            ordered=ordered,
+        )
         ocr_track = _ocr_track_for_target(config.target_lang)
         ocr_source_profile = _ocr_source_profile_for_track(ocr_track)
         ocr_request_reason = "not_requested"
@@ -1557,6 +1836,8 @@ class TranslationWorkflow:
                 ocr_request_reason = "required"
             elif ocr_helpful:
                 ocr_request_reason = "helpful"
+        if integrity_assessment.suspect and config.ocr_mode != OcrMode.OFF:
+            ocr_request_reason = "required"
 
         page_metadata: dict[str, object] = {
             "started_at_iso": started_at_iso,
@@ -1599,6 +1880,13 @@ class TranslationWorkflow:
             "ocr_local_pass_strategy": OCR_LOCAL_PASS_STRATEGY,
             "ocr_api_fallback_policy": OCR_API_FALLBACK_POLICY,
             "extraction_quality_signals": [],
+            "extraction_integrity_suspect": bool(integrity_assessment.suspect),
+            "extraction_integrity_reasons": list(integrity_assessment.reasons),
+            "vector_gap_count": int(integrity_assessment.vector_gap_count),
+            "visual_recovery_required": bool(integrity_assessment.suspect),
+            "visual_recovery_strategy": "none",
+            "visual_recovery_used": False,
+            "visual_recovery_failed": False,
             "ar_locked_tokens_expected": 0,
             "ar_locked_token_autofix_applied": 0,
             "estimated_cost": None,
@@ -1643,6 +1931,13 @@ class TranslationWorkflow:
         ocr_attempted = False
         ocr_provider_configured = False
         ocr_requested = ocr_request_reason in {"required", "helpful"}
+        crop_recovery_path = bool(
+            integrity_assessment.suspect
+            and extracted_usable
+            and integrity_assessment.crop_rect is not None
+        )
+        merged_visual_source_text: str | None = None
+        force_visual_grounding = False
         ocr_engine: OCREngine | None = None
         if ocr_requested:
             ocr_engine, ocr_provider_configured = self._resolve_ocr_engine_for_reason(
@@ -1671,21 +1966,54 @@ class TranslationWorkflow:
         if ocr_requested and ocr_engine is not None:
             ocr_attempted = True
             ocr_started = time.perf_counter()
-            ocr_result = ocr_pdf_page_text(
-                config.pdf_path,
-                page_number,
-                mode=OcrMode.ALWAYS,
-                engine=ocr_engine,
-                prefer_header=False,
-                lang_hint=ocr_source_profile,
-            )
+            if crop_recovery_path and integrity_assessment.crop_rect is not None:
+                ocr_result = ocr_pdf_page_crop_text(
+                    config.pdf_path,
+                    page_number,
+                    integrity_assessment.crop_rect,
+                    mode=OcrMode.ALWAYS,
+                    engine=ocr_engine,
+                    lang_hint=ocr_source_profile,
+                )
+                merged_visual_source_text = _merge_recovered_inline_text(
+                    extracted_text,
+                    prefix_text=integrity_assessment.prefix_text,
+                    suffix_text=integrity_assessment.suffix_text,
+                    recovered_text=ocr_result.text,
+                )
+                if merged_visual_source_text is None:
+                    force_visual_grounding = True
+                    ocr_result.failed_reason = ocr_result.failed_reason or "crop_merge_rejected"
+            else:
+                ocr_result = ocr_pdf_page_text(
+                    config.pdf_path,
+                    page_number,
+                    mode=OcrMode.ALWAYS,
+                    engine=ocr_engine,
+                    prefer_header=False,
+                    lang_hint=ocr_source_profile,
+                )
             page_metadata["ocr_seconds"] = round(time.perf_counter() - ocr_started, 3)
+        elif integrity_assessment.suspect:
+            force_visual_grounding = True
 
-        source_text = ocr_result.text if ocr_result.chars > 0 else extracted_text
-        source_route = "ocr" if ocr_result.chars > 0 else "direct_text"
+        ocr_used_for_source = bool(
+            merged_visual_source_text is not None
+            or (not crop_recovery_path and ocr_result.chars > 0)
+        )
+        source_text = (
+            merged_visual_source_text
+            if merged_visual_source_text is not None
+            else (ocr_result.text if ocr_used_for_source else extracted_text)
+        )
+        source_route = "ocr" if ocr_used_for_source else "direct_text"
         source_route_reason = "direct_text_default"
-        if ocr_result.chars > 0:
+        if merged_visual_source_text is not None:
+            source_route_reason = "visual_recovery_crop_merged"
+        elif ocr_used_for_source and ocr_result.chars > 0:
             source_route_reason = "ocr_success"
+        elif crop_recovery_path and ocr_requested and ocr_attempted:
+            source_route_reason = f"visual_recovery_crop_fallback:{ocr_result.failed_reason or 'empty_result'}"
         elif ocr_requested and ocr_attempted:
             source_route_reason = f"ocr_fallback:{ocr_result.failed_reason or 'empty_result'}"
         elif ocr_request_reason == "required" and ocr_engine is None:
@@ -1702,7 +2030,7 @@ class TranslationWorkflow:
         page_metadata["source_route_reason"] = source_route_reason
         page_metadata["ocr_requested"] = bool(ocr_requested)
         page_metadata["ocr_request_reason"] = ocr_request_reason
-        page_metadata["ocr_used"] = bool(ocr_result.chars > 0)
+        page_metadata["ocr_used"] = bool(ocr_used_for_source)
         page_metadata["ocr_provider_configured"] = bool(ocr_provider_configured)
         page_metadata["ocr_engine_used"] = ocr_result.engine
         page_metadata["ocr_failed_reason"] = ocr_result.failed_reason or ""
@@ -1711,6 +2039,8 @@ class TranslationWorkflow:
         page_metadata["ocr_selected_pass"] = str(ocr_result.selected_pass or "")
         page_metadata["ocr_attempts_count"] = int(len(ocr_result.attempts or []))
         page_metadata["extraction_quality_signals"] = extraction_signals
+        if merged_visual_source_text is not None:
+            page_metadata["visual_recovery_strategy"] = "crop_ocr_merge"
 
         self._record_event(
             event_type="page_source_route",
@@ -1734,6 +2064,9 @@ class TranslationWorkflow:
                 "ocr_failure_category": str(page_metadata.get("ocr_failure_category", "")),
                 "ocr_track": ocr_track,
                 "ocr_source_profile": ocr_source_profile,
+                "extraction_integrity_suspect": bool(integrity_assessment.suspect),
+                "vector_gap_count": int(integrity_assessment.vector_gap_count),
+                "visual_recovery_strategy": str(page_metadata.get("visual_recovery_strategy", "") or ""),
                 "ocr_local_pass_strategy": OCR_LOCAL_PASS_STRATEGY,
                 "ocr_api_fallback_policy": OCR_API_FALLBACK_POLICY,
             },
@@ -1761,11 +2094,25 @@ class TranslationWorkflow:
             extraction_failed=ordered.extraction_failed,
             fragmented=ordered.fragmented,
             two_column_detected=ordered.two_column_detected,
-            ocr_chars=int(ocr_result.chars),
+            ocr_chars=int(len(source_text) if ocr_used_for_source else 0),
             ocr_quality_score=float(ocr_result.quality_score or 0.0),
+            force_visual_grounding=bool(force_visual_grounding and integrity_assessment.suspect),
         )
         page_metadata["image_decision_reason"] = image_decision_reason
-        effective_image_text = source_text if ocr_result.chars > 0 else extracted_text
+        if integrity_assessment.suspect:
+            if merged_visual_source_text is not None:
+                page_metadata["visual_recovery_strategy"] = "crop_ocr_merge"
+                page_metadata["visual_recovery_used"] = True
+                page_metadata["visual_recovery_failed"] = False
+            elif image_used:
+                page_metadata["visual_recovery_strategy"] = "image_grounding_fallback"
+                page_metadata["visual_recovery_used"] = True
+                page_metadata["visual_recovery_failed"] = False
+            elif force_visual_grounding:
+                page_metadata["visual_recovery_strategy"] = "image_grounding_fallback"
+                page_metadata["visual_recovery_used"] = False
+                page_metadata["visual_recovery_failed"] = True
+        effective_image_text = source_text if ocr_used_for_source else extracted_text
         short_or_failed = ordered.extraction_failed or len(effective_image_text.strip()) < 20
         image_detail = "low"
         if short_or_failed and config.image_mode in (ImageMode.AUTO, ImageMode.ALWAYS):
@@ -1809,6 +2156,8 @@ class TranslationWorkflow:
                 "image_used": bool(image_used),
                 "reason": image_decision_reason,
                 "image_detail": image_detail if image_used else "",
+                "visual_recovery_required": bool(page_metadata.get("visual_recovery_required", False)),
+                "visual_recovery_strategy": str(page_metadata.get("visual_recovery_strategy", "") or ""),
                 "request_type": request_type,
                 "request_timeout_budget_seconds": float(request_timeout_budget_seconds),
             },
@@ -1970,6 +2319,7 @@ class TranslationWorkflow:
                 "bidi_warnings_count",
                 "bidi_control_count",
                 "replacement_char_count",
+                "extraction_integrity_warnings_count",
             ):
                 page_metadata[key] = int(checks.get(key, 0) or 0)
             page_metadata["numeric_missing_sample"] = [str(item) for item in checks.get("numeric_missing_sample", [])[:3]]
@@ -1977,6 +2327,15 @@ class TranslationWorkflow:
             page_metadata["output_paragraphs"] = int(checks.get("output_paragraphs", 0) or 0)
             page_metadata["detected_lang"] = str(checks.get("detected_lang", "") or "")
             page_metadata["language_ok"] = bool(checks.get("language_ok", True))
+            page_metadata["visual_recovery_strategy"] = str(
+                checks.get("visual_recovery_strategy", page_metadata.get("visual_recovery_strategy", "")) or ""
+            )
+            page_metadata["visual_recovery_used"] = bool(
+                checks.get("visual_recovery_used", page_metadata.get("visual_recovery_used", False))
+            )
+            page_metadata["visual_recovery_failed"] = bool(
+                checks.get("visual_recovery_failed", page_metadata.get("visual_recovery_failed", False))
+            )
 
         def _finalize_page_metadata() -> None:
             page_metadata["api_calls_count"] = int(api_calls_count)
@@ -2103,6 +2462,14 @@ class TranslationWorkflow:
                 source_text=glossary_source_text,
                 output_text=initial_eval.normalized_text,
                 target_lang=config.target_lang.value,
+                integrity_context={
+                    "extraction_integrity_suspect": page_metadata.get("extraction_integrity_suspect", False),
+                    "extraction_integrity_reasons": page_metadata.get("extraction_integrity_reasons", []),
+                    "vector_gap_count": page_metadata.get("vector_gap_count", 0),
+                    "visual_recovery_strategy": page_metadata.get("visual_recovery_strategy", ""),
+                    "visual_recovery_used": page_metadata.get("visual_recovery_used", False),
+                    "visual_recovery_failed": page_metadata.get("visual_recovery_failed", False),
+                },
             )
             _apply_quality_checks_metadata(_qc)
             if self._diagnostics_admin_mode:
@@ -2318,6 +2685,14 @@ class TranslationWorkflow:
                 source_text=glossary_source_text,
                 output_text=retry_eval.normalized_text,
                 target_lang=config.target_lang.value,
+                integrity_context={
+                    "extraction_integrity_suspect": page_metadata.get("extraction_integrity_suspect", False),
+                    "extraction_integrity_reasons": page_metadata.get("extraction_integrity_reasons", []),
+                    "vector_gap_count": page_metadata.get("vector_gap_count", 0),
+                    "visual_recovery_strategy": page_metadata.get("visual_recovery_strategy", ""),
+                    "visual_recovery_used": page_metadata.get("visual_recovery_used", False),
+                    "visual_recovery_failed": page_metadata.get("visual_recovery_failed", False),
+                },
             )
             _apply_quality_checks_metadata(_qc)
             if self._diagnostics_admin_mode:
@@ -3171,7 +3546,10 @@ class TranslationWorkflow:
         two_column_detected: bool,
         ocr_chars: int,
         ocr_quality_score: float,
+        force_visual_grounding: bool = False,
     ) -> tuple[bool, str]:
+        if force_visual_grounding:
+            return True, "visual_recovery_required"
         if config.image_mode == ImageMode.OFF:
             return False, "image_mode_off"
         if config.image_mode == ImageMode.ALWAYS:
@@ -3200,6 +3578,7 @@ class TranslationWorkflow:
             effective_extraction_failed,
             effective_fragmented,
             lang=config.target_lang,
+            force_include=force_visual_grounding,
         )
         reason = self._analyze_image_reason(
             lang=config.target_lang,
@@ -3208,6 +3587,7 @@ class TranslationWorkflow:
             ordered_text=effective_ordered_text,
             fragmented=effective_fragmented,
             would_attach_image=image_used,
+            force_visual_grounding=force_visual_grounding,
         )
         return image_used, reason
 
@@ -3220,7 +3600,10 @@ class TranslationWorkflow:
         ordered_text: str,
         fragmented: bool,
         would_attach_image: bool,
+        force_visual_grounding: bool = False,
     ) -> str:
+        if force_visual_grounding:
+            return "visual_recovery_required"
         if mode == "off":
             return "image_mode_off"
         if mode == "always":
@@ -3260,7 +3643,12 @@ class TranslationWorkflow:
         return sorted(missing_pages)
 
     def _resolve_paths_for_run(self, config: RunConfig) -> tuple[RunPaths, RunState | None]:
-        paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang)
+        paths = build_run_paths(
+            config.output_dir,
+            config.pdf_path,
+            config.target_lang,
+            gmail_batch_context=config.gmail_batch_context,
+        )
         existing = load_run_state(paths.run_state_path)
         if config.resume and existing is None and paths.run_state_path.exists():
             self._log("Existing run_state.json is unreadable; starting a new run state.")
@@ -3297,6 +3685,7 @@ class TranslationWorkflow:
             pdf_path=config.pdf_path,
             lang=config.target_lang,
             run_started_at=run_started_at,
+            gmail_batch_context=config.gmail_batch_context,
         )
         missing_page_outputs = self._missing_checkpoint_page_outputs(existing, run_dir=resolved_paths.run_dir)
         if missing_page_outputs:
@@ -3466,6 +3855,11 @@ class TranslationWorkflow:
             advisor_recommendation=(
                 dict(config.advisor_recommendation)
                 if isinstance(config.advisor_recommendation, dict)
+                else None
+            ),
+            gmail_batch_context=(
+                dict(config.gmail_batch_context)
+                if isinstance(config.gmail_batch_context, dict)
                 else None
             ),
         )

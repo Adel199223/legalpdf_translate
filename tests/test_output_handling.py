@@ -85,6 +85,44 @@ def test_paths_frozen(tmp_path: Path) -> None:
     assert frozen_paths.final_docx_path.name == "sample_EN_20260211_030303.docx"
 
 
+def test_gmail_scoped_run_dir_uses_attachment_scope(tmp_path: Path) -> None:
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+    pdf = tmp_path / "Auto.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    generic_paths = build_output_paths(outdir, pdf, TargetLang.FR, run_started_at="20260406_210000")
+    gmail_paths_a = build_output_paths(
+        outdir,
+        pdf,
+        TargetLang.FR,
+        run_started_at="20260406_210000",
+        gmail_batch_context={
+            "source": "gmail_intake",
+            "session_id": "gmail_batch_65b70fa72fec",
+            "attachment_id": "att-1",
+            "selected_start_page": 1,
+        },
+    )
+    gmail_paths_b = build_output_paths(
+        outdir,
+        pdf,
+        TargetLang.FR,
+        run_started_at="20260406_210000",
+        gmail_batch_context={
+            "source": "gmail_intake",
+            "session_id": "gmail_batch_65b70fa72fec",
+            "attachment_id": "att-2",
+            "selected_start_page": 1,
+        },
+    )
+
+    assert generic_paths.run_dir.name == "Auto_FR_run"
+    assert gmail_paths_a.run_dir.name != generic_paths.run_dir.name
+    assert "_gmail_" in gmail_paths_a.run_dir.name
+    assert gmail_paths_a.run_dir != gmail_paths_b.run_dir
+
+
 def test_atomic_docx_write_success(tmp_path: Path) -> None:
     pages_dir = tmp_path / "pages"
     _write_page(pages_dir / "page_0001.txt", "Line one\nLine two")

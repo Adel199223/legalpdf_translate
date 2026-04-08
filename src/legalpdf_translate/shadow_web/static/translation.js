@@ -9,6 +9,7 @@ const translationState = {
   currentJobId: "",
   runtimeJobs: [],
   currentGmailBatchContext: null,
+  currentPreparedLaunch: null,
   uploadedSourcePath: "",
   uploadedSourceKey: "",
   pollTimer: null,
@@ -41,6 +42,99 @@ function normalizeGmailBatchContext(value) {
     : null;
 }
 
+function normalizePreparedTranslationLaunch(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const pageCount = Number.parseInt(String(value.page_count ?? "").trim(), 10);
+  const startPage = Number.parseInt(String(value.start_page ?? "").trim(), 10);
+  const normalized = {
+    source_path: String(value.source_path || "").trim(),
+    source_filename: String(value.source_filename || "").trim(),
+    page_count: Number.isFinite(pageCount) && pageCount > 0 ? pageCount : null,
+    start_page: Number.isFinite(startPage) && startPage > 0 ? startPage : 1,
+    output_dir: String(value.output_dir || "").trim(),
+    target_lang: String(value.target_lang || "").trim().toUpperCase(),
+    image_mode: String(value.image_mode || "").trim(),
+    ocr_mode: String(value.ocr_mode || "").trim(),
+    ocr_engine: String(value.ocr_engine || "").trim(),
+    resume: typeof value.resume === "boolean" ? value.resume : null,
+    keep_intermediates: typeof value.keep_intermediates === "boolean" ? value.keep_intermediates : null,
+    auto_start: typeof value.auto_start === "boolean" ? value.auto_start : null,
+    workflow_source: String(value.workflow_source || "").trim(),
+    gmail_batch_context: normalizeGmailBatchContext(value.gmail_batch_context),
+  };
+  return Object.values(normalized).some((item) => item)
+    ? normalized
+    : null;
+}
+
+function currentPreparedTranslationLaunch() {
+  return translationState.currentPreparedLaunch;
+}
+
+function clearPreparedTranslationLaunch() {
+  translationState.currentPreparedLaunch = null;
+}
+
+function hasPreparedTranslationLaunch() {
+  return Boolean(currentPreparedTranslationLaunch() && !translationState.currentJob && !hasTranslationCompletionSurface());
+}
+
+function isActiveTranslationJobStatus(status) {
+  return ["queued", "running", "cancel_requested"].includes(String(status || "").trim());
+}
+
+// Fresh Gmail prepares should replace stale terminal workspace jobs instead of
+// inheriting their failed/completed state into New Job.
+function shouldResetWorkspaceForPreparedGmailLaunch(launch, { gmailBatchContext = null, workflowSource = "" } = {}) {
+  if (!translationState.currentJob) {
+    return false;
+  }
+  if (isActiveTranslationJobStatus(translationState.currentJob.status)) {
+    return false;
+  }
+  return Boolean(gmailBatchContext || String(workflowSource || "").trim() === "gmail_intake");
+}
+
+function resetTranslationWorkspaceForPreparedLaunch() {
+  translationState.currentSeed = null;
+  translationState.currentRowId = null;
+  translationState.lastAutoOpenedCompletionKey = "";
+  translationState.uploadedSourcePath = "";
+  translationState.uploadedSourceKey = "";
+  translationState.currentGmailBatchContext = null;
+  clearPreparedTranslationLaunch();
+  setFieldValue("translation-job-id", "");
+  setFieldValue("translation-row-id", "");
+  closeTranslationCompletionDrawer();
+  clearArabicReviewState();
+  renderTranslationJob(null);
+}
+
+function preparedTranslationSummaryLines(launch = currentPreparedTranslationLaunch()) {
+  if (!launch) {
+    return [];
+  }
+  return [
+    `Attachment: ${launch.source_filename || launch.gmail_batch_context?.selected_attachment_filename || "Prepared source"}`,
+    `Saved path: ${launch.source_path || "Unavailable"}`,
+    `Target language: ${launch.target_lang || launch.gmail_batch_context?.selected_target_lang || "?"}`,
+    `Start page: ${launch.start_page ?? launch.gmail_batch_context?.selected_start_page ?? 1}`,
+    `Images: ${launch.image_mode || "auto"}`,
+    `OCR: ${launch.ocr_mode || "auto"} / ${launch.ocr_engine || "local_then_api"}`,
+    `Resume: ${launch.resume === false ? "off" : "on"}`,
+    `Keep intermediates: ${launch.keep_intermediates === false ? "off" : "on"}`,
+  ];
+}
+
+function preparedTranslationStatusSummary(launch = currentPreparedTranslationLaunch()) {
+  if (!launch) {
+    return "";
+  }
+  return "Gmail attachment is prepared. Review the settings, then click Start Translate when you're ready.";
+}
+
 function summarizeRuntimeJob(job) {
   if (!job || typeof job !== "object") {
     return null;
@@ -50,6 +144,7 @@ function summarizeRuntimeJob(job) {
     job_kind: String(job.job_kind || "").trim(),
     status: String(job.status || "").trim(),
     updated_at: String(job.updated_at || "").trim(),
+    has_save_seed: Boolean(job.result?.save_seed),
     config: {
       source_path: String(job.config?.source_path || "").trim(),
       target_lang: String(job.config?.target_lang || "").trim(),
@@ -158,6 +253,15 @@ function setCheckbox(id, value) {
   if (node) {
     node.checked = Boolean(value);
   }
+}
+
+function revealPreparedTranslationSourceOptions() {
+  const section = qs("translation-source-options-section");
+  if (!section) {
+    return;
+  }
+  section.open = true;
+  section.dataset.reveal = "true";
 }
 
 function escapeHtml(value) {
@@ -316,6 +420,7 @@ async function ensureUploadedSource() {
     body: form,
   });
   translationState.currentGmailBatchContext = null;
+  clearPreparedTranslationLaunch();
   translationState.uploadedSourceKey = key;
   translationState.uploadedSourcePath = payload.normalized_payload.source_path || "";
   let resolvedPageCount = payload.normalized_payload.page_count ?? "?";
@@ -568,6 +673,9 @@ export function getTranslationUiSnapshot() {
       },
     })),
     currentGmailBatchContext: normalizeGmailBatchContext(translationState.currentGmailBatchContext),
+    hasPreparedLaunch: hasPreparedTranslationLaunch(),
+    preparedLaunchSourcePath: currentPreparedTranslationLaunch()?.source_path || "",
+    preparedLaunchAttachmentId: currentPreparedTranslationLaunch()?.gmail_batch_context?.attachment_id || "",
   };
 }
 
@@ -1135,53 +1243,103 @@ export function applyTranslationLaunch(launch) {
   if (!launch || typeof launch !== "object") {
     return;
   }
+  const preparedLaunch = normalizePreparedTranslationLaunch(launch);
+  if (!preparedLaunch) {
+    return;
+  }
+  const gmailBatchContext = normalizeGmailBatchContext(preparedLaunch.gmail_batch_context);
+  const workflowSource = String(preparedLaunch.workflow_source || "").trim();
   dispatchNewJobTask("translation");
-  const gmailBatchContext = normalizeGmailBatchContext(launch.gmail_batch_context);
-  const workflowSource = String(launch.workflow_source || "").trim();
+  if (shouldResetWorkspaceForPreparedGmailLaunch(preparedLaunch, { gmailBatchContext, workflowSource })) {
+    resetTranslationWorkspaceForPreparedLaunch();
+  }
+  translationState.currentPreparedLaunch = preparedLaunch;
   if (gmailBatchContext || workflowSource === "gmail_intake") {
     clearManualSourceSelection();
   }
   translationState.currentGmailBatchContext = gmailBatchContext;
-  if (launch.source_path) {
-    setFieldValue("translation-source-path", launch.source_path);
+  if (preparedLaunch.source_path) {
+    setFieldValue("translation-source-path", preparedLaunch.source_path);
   }
-  if (launch.output_dir) {
-    setFieldValue("translation-output-dir", launch.output_dir);
+  if (preparedLaunch.output_dir) {
+    setFieldValue("translation-output-dir", preparedLaunch.output_dir);
   }
-  if (launch.target_lang) {
-    setFieldValue("translation-target-lang", launch.target_lang);
+  if (preparedLaunch.target_lang) {
+    setFieldValue("translation-target-lang", preparedLaunch.target_lang);
   }
-  if (launch.start_page !== undefined && launch.start_page !== null) {
-    setFieldValue("translation-start-page", launch.start_page);
+  if (preparedLaunch.image_mode) {
+    setFieldValue("translation-image-mode", preparedLaunch.image_mode);
+  }
+  if (preparedLaunch.ocr_mode) {
+    setFieldValue("translation-ocr-mode", preparedLaunch.ocr_mode);
+  }
+  if (preparedLaunch.ocr_engine) {
+    setFieldValue("translation-ocr-engine", preparedLaunch.ocr_engine);
+  }
+  if (typeof preparedLaunch.resume === "boolean") {
+    setCheckbox("translation-resume", preparedLaunch.resume);
+  }
+  if (typeof preparedLaunch.keep_intermediates === "boolean") {
+    setCheckbox("translation-keep-intermediates", preparedLaunch.keep_intermediates);
+  }
+  if (preparedLaunch.start_page !== undefined && preparedLaunch.start_page !== null) {
+    setFieldValue("translation-start-page", preparedLaunch.start_page);
   }
   setFieldValue(
     "translation-source-summary",
     [
-      `Filename: ${launch.source_filename || "Unknown source"}`,
-      `Pages: ${launch.page_count ?? "?"}`,
-      `Start page: ${launch.start_page ?? 1}`,
-      `Saved path: ${launch.source_path || ""}`,
+      `Filename: ${preparedLaunch.source_filename || "Unknown source"}`,
+      `Pages: ${preparedLaunch.page_count ?? "?"}`,
+      `Start page: ${preparedLaunch.start_page ?? 1}`,
+      `Images: ${preparedLaunch.image_mode || "auto"}`,
+      `OCR: ${preparedLaunch.ocr_mode || "auto"} / ${preparedLaunch.ocr_engine || "local_then_api"}`,
+      `Resume: ${preparedLaunch.resume === false ? "off" : "on"}`,
+      `Keep intermediates: ${preparedLaunch.keep_intermediates === false ? "off" : "on"}`,
+      `Saved path: ${preparedLaunch.source_path || ""}`,
     ].join("\n"),
   );
-  setPanelStatus("translation", "", "Gmail attachment loaded into the translation workspace. Review the settings, then start the translation run.");
+  revealPreparedTranslationSourceOptions();
+  setDiagnostics(
+    "translation",
+    {
+      status: "prepared",
+      action: "gmail_prepare_loaded",
+      source_path: String(preparedLaunch.source_path || "").trim(),
+      target_lang: String(preparedLaunch.target_lang || "").trim().toUpperCase(),
+      start_page: preparedLaunch.start_page ?? 1,
+      gmail_batch_context: gmailBatchContext,
+    },
+    {
+      hint: "Gmail attachment loaded into the translation workspace. Review the settings, then start the translation run.",
+      open: false,
+    },
+  );
+  renderTranslationPreparedState();
+}
+
+export function maybeRestorePreparedTranslationLaunch(launch, { activeView = appState.activeView } = {}) {
+  const normalizedLaunch = normalizePreparedTranslationLaunch(launch);
+  if (!normalizedLaunch || String(activeView || "").trim() !== "new-job") {
+    return false;
+  }
+  if (
+    translationState.currentJob
+    || translationState.currentJobId
+    || translationState.currentRowId
+    || hasTranslationCompletionSurface()
+    || hasPreparedTranslationLaunch()
+    || translationState.runtimeJobs.length > 0
+  ) {
+    return false;
+  }
+  applyTranslationLaunch(normalizedLaunch);
+  return true;
 }
 
 export function resetTranslationForGmailRedo(launch) {
   stopPolling();
   stopArabicReviewPolling();
-  translationState.currentJob = null;
-  translationState.currentJobId = "";
-  translationState.currentSeed = null;
-  translationState.currentRowId = null;
-  translationState.lastAutoOpenedCompletionKey = "";
-  translationState.uploadedSourcePath = "";
-  translationState.uploadedSourceKey = "";
-  setFieldValue("translation-job-id", "");
-  setFieldValue("translation-row-id", "");
-  clearManualSourceSelection();
-  closeTranslationCompletionDrawer();
-  clearArabicReviewState();
-  renderTranslationJob(null);
+  resetTranslationWorkspaceForPreparedLaunch();
   applyTranslationLaunch(launch);
   setActiveView("new-job");
   setPanelStatus("translation", "", "Current Gmail attachment reloaded for a new run. Review the settings, then start translation again.");
@@ -1209,12 +1367,72 @@ export function collectCurrentTranslationSaveValues() {
   return collectTranslationSaveValues();
 }
 
+function renderTranslationPreparedState() {
+  if (!hasPreparedTranslationLaunch()) {
+    return false;
+  }
+  renderTranslationResultCard(null);
+  setPanelStatus("translation", "", preparedTranslationStatusSummary());
+  setDiagnostics("translation-job", {
+    status: "prepared",
+    message: "The Gmail attachment is staged in the translation workspace and ready to start.",
+    source_path: currentPreparedTranslationLaunch()?.source_path || "",
+    gmail_batch_context: normalizeGmailBatchContext(translationState.currentGmailBatchContext),
+  }, {
+    hint: "No translation job has started yet. This Gmail attachment is prepared and ready for Start Translate.",
+    open: false,
+  });
+  setDownloadLink("translation-download-report", "");
+  setDownloadLink("translation-download-docx", "");
+  setDownloadLink("translation-download-partial", "");
+  setDownloadLink("translation-download-summary", "");
+  setDownloadLink("translation-download-analyze", "");
+  const reportButton = qs("translation-generate-report");
+  if (reportButton) {
+    reportButton.disabled = true;
+    reportButton.classList.add("hidden");
+  }
+  const reviewExport = qs("translation-review-export");
+  if (reviewExport) {
+    reviewExport.disabled = true;
+  }
+  const cancelButton = qs("translation-cancel");
+  if (cancelButton) {
+    cancelButton.disabled = true;
+  }
+  const resumeButton = qs("translation-resume-btn");
+  if (resumeButton) {
+    resumeButton.disabled = true;
+  }
+  const rebuildButton = qs("translation-rebuild");
+  if (rebuildButton) {
+    rebuildButton.disabled = true;
+  }
+  notifyTranslationUiStateChanged();
+  return true;
+}
+
 function renderTranslationResultCard(job, { containerId = "translation-result" } = {}) {
   const container = qs(containerId);
   if (!container) {
     return;
   }
   if (!job) {
+    const preparedLaunch = currentPreparedTranslationLaunch();
+    if (preparedLaunch) {
+      container.classList.remove("empty-state");
+      container.innerHTML = `
+        <div class="result-header">
+          <div>
+            <strong>Prepared Gmail attachment is ready to start.</strong>
+            <p>${preparedTranslationSummaryLines(preparedLaunch).map((line) => escapeHtml(line)).join("<br>")}</p>
+            <p>Ready to start. Click Start Translate when you're ready.</p>
+          </div>
+          <span class="status-chip info">ready</span>
+        </div>
+      `;
+      return;
+    }
     container.classList.add("empty-state");
     container.textContent = "No translation job has run in this workspace yet.";
     return;
@@ -1285,6 +1503,9 @@ function renderTranslationResultCard(job, { containerId = "translation-result" }
 function renderTranslationJob(job) {
   translationState.currentJob = job || null;
   translationState.currentJobId = job?.job_id || "";
+  if (job) {
+    clearPreparedTranslationLaunch();
+  }
   if (job?.config?.gmail_batch_context) {
     translationState.currentGmailBatchContext = normalizeGmailBatchContext(job.config.gmail_batch_context);
   } else if (job) {
@@ -1298,19 +1519,31 @@ function renderTranslationJob(job) {
   }
   const recovery = deriveTranslationRecoveryState(job);
   renderTranslationResultCard(job);
+  const preparedSummary = !job ? preparedTranslationStatusSummary() : "";
   setPanelStatus(
     "translation",
     job
       ? (job.status === "failed" ? "bad" : job.status === "cancelled" ? "warn" : "")
       : "",
-    translationStatusSummary(job) || "Load a source file, then analyze or translate it in this browser workspace.",
+    translationStatusSummary(job) || preparedSummary || "Load a source file, then analyze or translate it in this browser workspace.",
   );
   const diagnosticsHint = isAuthenticationFailure(job)
     ? "OpenAI authentication failed. Open Browser Settings, save a valid translation key, run Test Translation Auth, then start the translation again."
     : recovery.visible
       ? recovery.diagnosticsHint
-      : "Latest progress, log tail, review queue, and failure context appear here.";
-  setDiagnostics("translation-job", job || { status: "idle", message: "No translation job loaded." }, {
+      : hasPreparedTranslationLaunch()
+        ? "No translation job has started yet. This Gmail attachment is prepared and ready for Start Translate."
+        : "Latest progress, log tail, review queue, and failure context appear here.";
+  setDiagnostics("translation-job", job || (
+    hasPreparedTranslationLaunch()
+      ? {
+        status: "prepared",
+        message: "The Gmail attachment is staged in the translation workspace and ready to start.",
+        source_path: currentPreparedTranslationLaunch()?.source_path || "",
+        gmail_batch_context: normalizeGmailBatchContext(translationState.currentGmailBatchContext),
+      }
+      : { status: "idle", message: "No translation job loaded." }
+  ), {
     hint: diagnosticsHint,
     open: Boolean(job && job.status !== "completed"),
   });
@@ -1405,6 +1638,7 @@ function loadTranslationHistoryItem(item) {
   translationState.currentJob = null;
   translationState.currentJobId = "";
   translationState.currentGmailBatchContext = null;
+  clearPreparedTranslationLaunch();
   clearArabicReviewState();
   applyTranslationSeed(item?.seed || blankSaveSeed(), { rowId: row.id || null });
   setActiveView("new-job");
@@ -1476,8 +1710,16 @@ function renderTranslationBootstrap(payload) {
   applyTranslationDefaults(translation.defaults || {});
   renderTranslationHistory(translation.history || []);
   renderTranslationJobs(translation.active_jobs || []);
+  maybeRestorePreparedTranslationLaunch(
+    payload.normalized_payload?.gmail?.suggested_translation_launch
+      || appState.bootstrap?.normalized_payload?.gmail?.suggested_translation_launch
+      || null,
+  );
   if (!translationState.currentSeed) {
     applyTranslationSeed(blankSaveSeed());
+  }
+  if (!translationState.currentJob && hasPreparedTranslationLaunch()) {
+    renderTranslationPreparedState();
   }
   syncTranslationCompletionSurface();
   restorePendingArabicReview();
@@ -1489,6 +1731,7 @@ async function refreshTranslationBootstrap() {
     normalized_payload: {
       translation: payload.normalized_payload,
       runtime: payload.normalized_payload.runtime || appState.bootstrap?.normalized_payload?.runtime || {},
+      gmail: appState.bootstrap?.normalized_payload?.gmail || {},
     },
   });
 }
@@ -1827,5 +2070,6 @@ export {
   loadTranslationHistoryItem,
   refreshTranslationBootstrap,
   refreshTranslationHistory,
+  renderTranslationJob,
   renderTranslationBootstrap,
 };

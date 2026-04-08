@@ -33,12 +33,14 @@ def build_run_paths(
     lang: TargetLang,
     *,
     run_started_at: str | None = None,
+    gmail_batch_context: dict[str, Any] | None = None,
 ) -> RunPaths:
     return build_output_paths(
         output_dir=output_dir,
         pdf_path=pdf_path,
         lang=lang,
         run_started_at=run_started_at,
+        gmail_batch_context=gmail_batch_context,
     )
 
 

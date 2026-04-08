@@ -99,6 +99,7 @@ function normalizeGmailStage(value) {
     "idle",
     "review",
     "translation_recovery",
+    "translation_prepared",
     "translation_running",
     "translation_save",
     "translation_finalize",
@@ -197,19 +198,45 @@ export function deriveGmailStage({
     if (activeSession.completed) {
       return "translation_finalize";
     }
+    const attachmentContext = currentTranslationAttachmentContext(activeSession);
+    const matchingJob = attachmentContext ? findMatchingTranslationJob(translationUi, attachmentContext) : null;
     const currentJobStatus = String(translationUi.currentJobStatus || "").trim();
     const currentJobKind = String(translationUi.currentJobKind || "").trim();
     const hasSaveSeed = Boolean(translationUi.currentJobHasSaveSeed);
+    const matchingJobStatus = String(matchingJob?.status || "").trim();
+    const matchingJobKind = String(matchingJob?.job_kind || "").trim();
+    const matchingJobHasSaveSeed = Boolean(matchingJob?.has_save_seed);
+    const preparedLaunchMatchesCurrentAttachment = Boolean(
+      attachmentContext
+      && translationUi.hasPreparedLaunch
+      && translationJobMatchesCurrentAttachment({
+        config: {
+          source_path: String(translationUi.preparedLaunchSourcePath || "").trim(),
+          gmail_batch_context: normalizeGmailBatchContext(translationUi.currentGmailBatchContext),
+        },
+      }, attachmentContext)
+    );
     if (
       translationUi.currentJobRecoveryRequired
       || currentJobStatus === "failed"
       || currentJobStatus === "cancelled"
       || (currentJobKind === "rebuild" && !hasSaveSeed)
+      || matchingJobStatus === "failed"
+      || matchingJobStatus === "cancelled"
+      || (matchingJobKind === "rebuild" && !matchingJobHasSaveSeed)
     ) {
       return "translation_recovery";
     }
-    if (translationUi.completionDrawerOpen || translationUi.hasCompletionSurface || currentJobStatus === "completed") {
+    if (
+      translationUi.completionDrawerOpen
+      || translationUi.hasCompletionSurface
+      || currentJobStatus === "completed"
+      || matchingJobStatus === "completed"
+    ) {
       return "translation_save";
+    }
+    if (preparedLaunchMatchesCurrentAttachment && !matchingJobStatus) {
+      return "translation_prepared";
     }
     return "translation_running";
   }
@@ -292,6 +319,17 @@ export function deriveGmailHomeCta({ stage, activeSession }) {
           ? `${activeSession.current_attachment.attachment.filename} failed on translation compliance and must be rerun or rebuilt before the Gmail batch can continue.`
           : "The current Gmail attachment failed on translation compliance and must be rerun or rebuilt before the batch can continue.",
         tone: "warn",
+      };
+    case "translation_prepared":
+      return {
+        visible: true,
+        label: "Open Prepared Translation",
+        action: "resume-translation-prepared",
+        title: "Translation is prepared and ready to start.",
+        description: activeSession?.current_attachment?.attachment?.filename
+          ? `Open the prepared translation workspace for ${activeSession.current_attachment.attachment.filename}, review the seeded settings, and start the run when you are ready.`
+          : "Open the prepared translation workspace, review the seeded settings, and start the run when you are ready.",
+        tone: "ok",
       };
     case "translation_running":
       return {

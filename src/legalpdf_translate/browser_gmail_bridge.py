@@ -68,6 +68,7 @@ class BrowserLiveGmailBridgeManager:
             repo=repo_root,
             identity=build_identity,
         )
+        self._build_identity = build_identity
         self._server_port = int(server_port)
         self._gmail_sessions = gmail_sessions
         self._bridge: LocalGmailIntakeBridge | None = None
@@ -186,6 +187,22 @@ class BrowserLiveGmailBridgeManager:
     def sync(self) -> BrowserLiveBridgeSyncResult:
         enabled, port, token = self._settings()
         current = self._bridge
+        if not self._build_identity.is_canonical:
+            if current is not None:
+                self._stop_current_bridge()
+            self._last_result = BrowserLiveBridgeSyncResult(
+                status="disabled",
+                reason="canonical_restart_required",
+                bridge_enabled=enabled,
+                bridge_port=port,
+                owner_kind="none",
+                browser_url=self.canonical_browser_url,
+                workspace_id=self.workspace_id,
+                started=False,
+                registration_ok=False,
+                registration_reason="skipped_noncanonical_runtime",
+            )
+            return self._last_result
         if self._server_port != SHADOW_DEFAULT_PORT:
             if current is not None:
                 self._stop_current_bridge()

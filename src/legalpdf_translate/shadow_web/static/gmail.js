@@ -441,29 +441,22 @@ function renderGmailNoncanonicalRuntimeGuard() {
   const message = qs("gmail-noncanonical-runtime-message");
   const details = qs("gmail-noncanonical-runtime-details");
   const restartButton = qs("gmail-restart-canonical-runtime");
-  const continueButton = qs("gmail-continue-noncanonical-runtime");
   const chip = card?.querySelector(".status-chip");
-  if (!card || !title || !message || !details || !restartButton || !continueButton || !chip) {
+  if (!card || !title || !message || !details || !restartButton || !chip) {
     return;
   }
   const guard = currentGmailRuntimeGuard();
   card.classList.toggle("hidden", !guard.active);
   if (!guard.active) {
     details.innerHTML = "";
-    continueButton.disabled = false;
-    continueButton.textContent = guard.secondaryLabel || "Continue Anyway";
     return;
   }
   title.textContent = guard.title;
-  message.textContent = guard.blocked
-    ? guard.message
-    : `Continuing with ${guard.buildLabel} for this Gmail workspace session. Restart from canonical main when you are ready.`;
+  message.textContent = guard.message;
   details.innerHTML = guard.details.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   restartButton.textContent = guard.primaryLabel || "Restart from Canonical Main";
-  continueButton.textContent = guard.acknowledged ? "Continue Enabled" : (guard.secondaryLabel || "Continue Anyway");
-  continueButton.disabled = guard.acknowledged;
-  chip.className = `status-chip ${guard.blocked ? "warn" : "info"}`;
-  chip.textContent = guard.blocked ? "Review Paused" : "Override Active";
+  chip.className = "status-chip warn";
+  chip.textContent = "Review Paused";
 }
 
 function maybeBlockGmailReviewAction(operation) {
@@ -483,37 +476,41 @@ function maybeBlockGmailReviewAction(operation) {
   return true;
 }
 
-function restartCanonicalRuntimeGuidance() {
-  const buildIdentity = currentGmailBuildIdentity();
-  setGmailRuntimeGuardAcknowledged(false, buildIdentity);
+async function restartCanonicalRuntimeGuidance() {
   const guard = currentGmailRuntimeGuard();
-  setPanelStatus("gmail", "warn", guard.message);
+  setPanelStatus("gmail", "warn", "Restarting the canonical Gmail browser runtime...");
   setDiagnostics("gmail", {
-    status: "blocked",
-    diagnostics: {
-      ...gmailRuntimeGuardDiagnostics(guard, "gmail_restart_canonical_runtime"),
-      restart_steps: guard.details,
-    },
+    status: "restarting",
+    diagnostics: gmailRuntimeGuardDiagnostics(guard, "gmail_restart_canonical_runtime"),
   }, {
-    hint: "Close this browser app and relaunch from canonical main before retrying Preview or Prepare.",
+    hint: "Restarting the browser runtime into the canonical target. This page will reconnect automatically.",
     open: true,
   });
-  renderReviewSurface();
-}
-
-function continueNoncanonicalRuntimeForWorkspace() {
-  const buildIdentity = currentGmailBuildIdentity();
-  setGmailRuntimeGuardAcknowledged(true, buildIdentity);
-  const guard = currentGmailRuntimeGuard();
-  setPanelStatus("gmail", "warn", `Continuing with ${guard.buildLabel} for this Gmail workspace session.`);
-  setDiagnostics("gmail", {
-    status: "warn",
-    diagnostics: gmailRuntimeGuardDiagnostics(guard, "gmail_continue_noncanonical_runtime"),
-  }, {
-    hint: `Preview and Prepare are re-enabled for ${guard.buildLabel} in this workspace session.`,
-    open: true,
+  const payload = await fetchJson("/api/gmail/runtime/restart-canonical", appState, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      mode: appState.runtimeMode,
+      workspace_id: appState.workspaceId,
+    }),
   });
-  renderReviewSurface();
+  const browserUrl = String(payload.normalized_payload?.browser_url || window.location.href).trim() || window.location.href;
+  const shellReadyUrl = String(payload.normalized_payload?.shell_ready_url || "").trim();
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    try {
+      if (shellReadyUrl) {
+        await fetch(shellReadyUrl, { cache: "no-store" });
+      } else {
+        await fetch(browserUrl, { cache: "no-store" });
+      }
+      window.location.replace(browserUrl);
+      return;
+    } catch {
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+    }
+  }
+  throw new Error("Canonical runtime restart was started, but the canonical browser listener did not become ready in time.");
 }
 
 function translationUiSnapshot() {
@@ -580,6 +577,8 @@ function gmailHomeStatusMessage() {
   switch (gmailState.stage || currentGmailStage()) {
     case "translation_recovery":
       return "The current Gmail attachment needs recovery before the batch can continue. Resume Recovery to rerun, rebuild, or adjust translation settings from the translation workspace.";
+    case "translation_prepared":
+      return "The Gmail translation handoff is prepared. Open Prepared Translation to review the seeded settings and start the run when you are ready.";
     case "translation_running":
       return "Use Resume Current Step to continue the active Gmail step, Redo Current Attachment to rerun just this file, or Reset Gmail Workspace if you want a full Gmail restart.";
     case "translation_save":
@@ -593,29 +592,22 @@ function gmailHomeStatusMessage() {
   }
 }
 
-async function maybeAutoStartSuggestedTranslation(reason) {
+function loadSuggestedTranslationLaunch({ closeCompletionDrawer = false } = {}) {
   if (!gmailState.suggestedTranslationLaunch) {
     return false;
   }
-  const launch = gmailState.suggestedTranslationLaunch;
-  if (typeof gmailState.hooks.startTranslationLaunch === "function") {
-    try {
-      await gmailState.hooks.startTranslationLaunch(launch, { auto: true, reason });
-      return true;
-    } catch (error) {
-      gmailState.hooks.applyTranslationLaunch?.(launch);
-      setActiveView("new-job");
-      throw error;
-    }
+  gmailState.hooks.applyTranslationLaunch?.(gmailState.suggestedTranslationLaunch);
+  if (closeCompletionDrawer) {
+    gmailState.hooks.closeTranslationCompletionDrawer?.();
   }
-  gmailState.hooks.applyTranslationLaunch?.(launch);
   setActiveView("new-job");
-  return false;
+  return true;
 }
 
 function runStageAction(action) {
   switch (action) {
     case "resume-translation-recovery":
+    case "resume-translation-prepared":
     case "resume-translation-running":
       if (gmailState.suggestedTranslationLaunch) {
         gmailState.hooks.applyTranslationLaunch?.(gmailState.suggestedTranslationLaunch);
@@ -2014,8 +2006,8 @@ function updatePrepareActionState() {
     disabled = true;
   } else if (runtimeGuard.blocked) {
     label = currentWorkflowKind() === "interpretation"
-      ? "Continue Anyway To Prepare Notice"
-      : "Continue Anyway To Prepare";
+      ? "Restart Canonical Runtime To Prepare Notice"
+      : "Restart Canonical Runtime To Prepare";
     disabled = true;
   }
   button.textContent = label;
@@ -2385,7 +2377,7 @@ async function prepareSession() {
   closeSessionDrawer();
   closeBatchFinalizeDrawer();
   if (gmailState.suggestedTranslationLaunch) {
-    await maybeAutoStartSuggestedTranslation("gmail-prepare");
+    loadSuggestedTranslationLaunch();
   } else if (gmailState.interpretationSeed) {
     gmailState.hooks.applyInterpretationSeed?.(gmailState.interpretationSeed, { openReview: true });
     setActiveView("new-job");
@@ -2527,7 +2519,7 @@ async function confirmCurrentTranslation() {
   updateSessionButtons();
   setDiagnostics("gmail-session", payload, { hint: "Current Gmail attachment confirmed and saved to the job log.", open: false });
   if (gmailState.suggestedTranslationLaunch) {
-    await maybeAutoStartSuggestedTranslation("gmail-confirm-next");
+    loadSuggestedTranslationLaunch({ closeCompletionDrawer: true });
   } else if (gmailState.activeSession?.kind === "translation" && gmailState.activeSession.completed) {
     gmailState.hooks.closeTranslationCompletionDrawer?.();
     openBatchFinalizeDrawer();
@@ -2716,11 +2708,15 @@ export function initializeGmailUi(hooks) {
   });
 
   qs("gmail-restart-canonical-runtime")?.addEventListener("click", () => {
-    restartCanonicalRuntimeGuidance();
-  });
-
-  qs("gmail-continue-noncanonical-runtime")?.addEventListener("click", () => {
-    continueNoncanonicalRuntimeForWorkspace();
+    runWithBusy(["gmail-restart-canonical-runtime"], { "gmail-restart-canonical-runtime": "Restarting..." }, async () => {
+      await restartCanonicalRuntimeGuidance();
+    }).catch((error) => {
+      setPanelStatus("gmail", "bad", error.message || "Canonical runtime restart failed.");
+      setDiagnostics("gmail", error, {
+        hint: error.message || "Canonical runtime restart failed.",
+        open: true,
+      });
+    });
   });
 
   qs("gmail-close-review-drawer")?.addEventListener("click", closeReviewDrawer);
@@ -3116,6 +3112,11 @@ export function initializeGmailUi(hooks) {
     renderResumeCard(gmailState.activeSession);
     renderTranslationCompletionGmailStepCard(gmailState.activeSession);
     renderBatchFinalizeSurface(gmailState.activeSession);
+    setPanelStatus(
+      "gmail",
+      gmailState.loadResult?.ok ? "ok" : "",
+      gmailHomeStatusMessage(),
+    );
     syncShellState();
   });
   window.addEventListener("legalpdf:interpretation-ui-state-changed", () => {

@@ -75,6 +75,7 @@ _PREPARE_REASON_MESSAGES = {
     "bridge_disabled": "Gmail bridge is disabled in LegalPDF Translate.",
     "bridge_token_missing": "Gmail bridge is not configured in LegalPDF Translate.",
     "invalid_bridge_port": "Gmail bridge port is invalid in LegalPDF Translate.",
+    "canonical_restart_required": "Live Gmail is paused until LegalPDF Translate restarts into the canonical runtime.",
     "runtime_metadata_missing": "LegalPDF Translate is not running the Gmail bridge right now.",
     "bridge_not_running": "LegalPDF Translate is not running the Gmail bridge right now.",
     "runtime_metadata_invalid": "LegalPDF Translate has invalid Gmail bridge runtime metadata.",
@@ -478,11 +479,23 @@ def _serialize_confirmed_item(item: GmailBatchConfirmedItem) -> dict[str, Any]:
 
 def _serialize_draft_prereqs(prereqs: GmailPrereqStatus) -> dict[str, Any]:
     return {
+        "status": "ready" if bool(prereqs.ready) else "failed",
         "ready": bool(prereqs.ready),
         "message": prereqs.message,
         "gog_path": _path_text(prereqs.gog_path),
         "account_email": prereqs.account_email or "",
         "accounts": list(prereqs.accounts),
+    }
+
+
+def _pending_draft_prereqs_payload(*, account_email: str = "") -> dict[str, Any]:
+    return {
+        "status": "pending",
+        "ready": False,
+        "message": "Draft prerequisites will load after the browser shell is ready.",
+        "gog_path": "",
+        "account_email": account_email or "",
+        "accounts": [],
     }
 
 
@@ -524,6 +537,12 @@ def _serialize_translation_launch(
         "page_count": int(attachment.page_count),
         "output_dir": _path_text(output_dir),
         "target_lang": target_lang.strip().upper(),
+        "image_mode": "auto",
+        "ocr_mode": "auto",
+        "ocr_engine": "local_then_api",
+        "resume": False,
+        "keep_intermediates": True,
+        "auto_start": False,
         "workflow_source": "gmail_intake",
         "gmail_batch_context": {
             "source": "gmail_intake",
@@ -1425,6 +1444,42 @@ class GmailBrowserSessionManager:
             "normalized_payload": payload,
             "diagnostics": {},
             "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
+        }
+
+    def build_shell_ready(
+        self,
+        *,
+        runtime_mode: str,
+        workspace_id: str,
+        settings_path: Path,
+    ) -> dict[str, Any]:
+        workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
+        _configured_gog_path, configured_account_email = _configured_gmail_values(settings_path)
+        handoff_state = "idle"
+        if workspace.pending_review_open and workspace.pending_status:
+            handoff_state = workspace.pending_status
+        elif workspace.loaded_result is not None:
+            handoff_state = "loaded"
+        return {
+            "status": "ok",
+            "normalized_payload": {
+                "load_result": (
+                    _serialize_load_result(workspace.loaded_result)
+                    if workspace.loaded_result is not None
+                    else None
+                ),
+                "review_event_id": int(workspace.review_event_id),
+                "message_signature": workspace.message_signature,
+                "pending_status": workspace.pending_status,
+                "pending_intake_context": dict(workspace.pending_intake_context),
+                "pending_review_open": bool(workspace.pending_review_open),
+                "handoff_state": handoff_state,
+                "draft_prereqs": _pending_draft_prereqs_payload(
+                    account_email=configured_account_email,
+                ),
+            },
+            "diagnostics": {},
+            "capability_flags": {},
         }
 
     def _set_pending_intake(

@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Mapping
 
 from .types import TargetLang
 
 RUN_STARTED_AT_FORMAT = "%Y%m%d_%H%M%S"
 _RUN_STARTED_AT_RE = re.compile(r"^\d{8}_\d{6}$")
+_SAFE_SCOPE_TOKEN_RE = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass(slots=True, frozen=True)
@@ -24,6 +27,41 @@ class OutputPaths:
     run_state_path: Path
     final_docx_path: Path
     partial_docx_path: Path
+
+
+def _normalize_scope_token(value: object, *, max_len: int) -> str:
+    cleaned = _SAFE_SCOPE_TOKEN_RE.sub("-", str(value or "").strip().lower()).strip("-")
+    if cleaned == "":
+        return "scope"
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[-max_len:]
+
+
+def _gmail_run_dir_name(
+    *,
+    pdf_path: Path,
+    lang: TargetLang,
+    gmail_batch_context: Mapping[str, Any] | None,
+) -> str | None:
+    if not isinstance(gmail_batch_context, Mapping):
+        return None
+    source = str(gmail_batch_context.get("source", "") or "").strip().lower()
+    session_id = str(gmail_batch_context.get("session_id", "") or "").strip()
+    attachment_id = str(gmail_batch_context.get("attachment_id", "") or "").strip()
+    try:
+        selected_start_page = int(gmail_batch_context.get("selected_start_page", 0) or 0)
+    except (TypeError, ValueError):
+        selected_start_page = 0
+    if source not in {"", "gmail_intake"}:
+        return None
+    if session_id == "" or attachment_id == "" or selected_start_page <= 0:
+        return None
+    scope_hash = hashlib.sha1(
+        "\n".join((session_id, attachment_id, str(selected_start_page), lang.value)).encode("utf-8")
+    ).hexdigest()[:12]
+    session_token = _normalize_scope_token(session_id, max_len=12)
+    return f"{pdf_path.stem}_{lang.value}_gmail_{session_token}_p{selected_start_page}_{scope_hash}_run"
 
 
 def timestamp_for_run_start(now: datetime | None = None) -> str:
@@ -46,6 +84,7 @@ def build_output_paths(
     lang: TargetLang,
     *,
     run_started_at: str | None = None,
+    gmail_batch_context: Mapping[str, Any] | None = None,
 ) -> OutputPaths:
     outdir_abs = output_dir.expanduser().resolve()
     started_at = (
@@ -53,7 +92,12 @@ def build_output_paths(
         if run_started_at is not None
         else timestamp_for_run_start()
     )
-    run_dir = outdir_abs / f"{pdf_path.stem}_{lang.value}_run"
+    run_dir_name = _gmail_run_dir_name(
+        pdf_path=pdf_path,
+        lang=lang,
+        gmail_batch_context=gmail_batch_context,
+    ) or f"{pdf_path.stem}_{lang.value}_run"
+    run_dir = outdir_abs / run_dir_name
     final_docx = outdir_abs / f"{pdf_path.stem}_{lang.value}_{started_at}.docx"
     partial_docx = outdir_abs / f"{pdf_path.stem}_{lang.value}_{started_at}_PARTIAL.docx"
     return OutputPaths(

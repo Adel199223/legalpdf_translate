@@ -353,7 +353,7 @@ const nativeLaunchInProgress = loadBackground({{
     launch_lock_ttl_ms: 4200,
     ui_owner: "browser_app",
     browser_url: browserUrl,
-    browser_open_owned_by: "extension",
+    browser_open_owned_by: "native_host",
   }}),
 }});
 const nativeLaunchInProgressResult = await nativeLaunchInProgress.hooks.resolveBridgeConfigForClick();
@@ -676,8 +676,11 @@ def test_gmail_extension_scripts_keep_stage_one_contract_markers() -> None:
     assert "showFallbackBanner" in background_js
     assert "chrome.runtime.sendNativeMessage" in background_js
     assert "LEGALPDF_BROWSER_CLIENT_READY" in background_js
-    assert "client_shell_not_hydrated" in background_js
-    assert "stale_browser_assets" in background_js
+    assert "/api/bootstrap/shell/ready" in background_js
+    assert "chrome.storage.session" in background_js
+    assert "pendingBrowserSurfaces" in background_js
+    assert "client_shell_not_hydrated" not in background_js
+    assert "stale_browser_assets" not in background_js
     assert "chrome.tabs.reload" in background_js
     assert "com.legalpdf.gmail_focus" in background_js
     assert 'action: "prepare_gmail_intake"' in background_js
@@ -768,7 +771,7 @@ def test_gmail_extension_background_preserves_failure_contract_and_lock_budget()
             "launch_lock_ttl_ms": 4200,
             "ui_owner": "browser_app",
             "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
-            "browser_open_owned_by": "extension",
+            "browser_open_owned_by": "native_host",
         },
         "launchInProgress": True,
         "messageKind": "info",
@@ -805,17 +808,7 @@ def test_gmail_extension_background_preserves_failure_contract_and_lock_budget()
         "holdLock": False,
         "outcome": "loaded",
     }
-    assert [op for op in results["hydratedAfterReload"]["tabOps"] if op["type"] == "reload"] == [
-        {
-            "type": "reload",
-            "args": [
-                77,
-                {
-                    "bypassCache": True,
-                },
-            ],
-        }
-    ]
+    assert [op for op in results["hydratedAfterReload"]["tabOps"] if op["type"] == "reload"] == []
     assert results["hydratedAfterReload"]["sentMessages"][-1] == {
         "tabId": 14,
         "payload": {
@@ -827,60 +820,29 @@ def test_gmail_extension_background_preserves_failure_contract_and_lock_budget()
 
     assert results["hydratedNever"]["result"] == {
         "holdLock": False,
-        "outcome": "client_shell_not_hydrated",
+        "outcome": "loaded",
     }
-    assert [op for op in results["hydratedNever"]["tabOps"] if op["type"] == "reload"] == [
-        {
-            "type": "reload",
-            "args": [
-                77,
-                {
-                    "bypassCache": True,
-                },
-            ],
-        }
-    ]
+    assert [op for op in results["hydratedNever"]["tabOps"] if op["type"] == "reload"] == []
     assert results["hydratedNever"]["sentMessages"][-1] == {
         "tabId": 15,
         "payload": {
             "type": "gmail-intake-status",
-            "kind": "error",
-            "message": (
-                "LegalPDF Translate opened, but the browser tab stayed on the plain shell instead of hydrating the Gmail review UI. "
-                "The extension reloaded the localhost tab once automatically, but the page still did not finish loading. "
-                "Refresh the LegalPDF tab once manually if it is still open. If this keeps happening, restart the "
-                "browser app and click the extension again."
-            ),
+            "kind": "success",
+            "message": "Gmail intake accepted.",
         },
     }
 
     assert results["hydratedStaleNever"]["result"] == {
         "holdLock": False,
-        "outcome": "stale_browser_assets",
+        "outcome": "loaded",
     }
-    assert [op for op in results["hydratedStaleNever"]["tabOps"] if op["type"] == "reload"] == [
-        {
-            "type": "reload",
-            "args": [
-                77,
-                {
-                    "bypassCache": True,
-                },
-            ],
-        }
-    ]
+    assert [op for op in results["hydratedStaleNever"]["tabOps"] if op["type"] == "reload"] == []
     assert results["hydratedStaleNever"]["sentMessages"][-1] == {
         "tabId": 16,
         "payload": {
             "type": "gmail-intake-status",
-            "kind": "error",
-            "message": (
-                "LegalPDF Translate opened, but the browser tab is still running stale browser assets. "
-                "The extension reloaded the localhost tab once automatically, but the tab still reported a different asset version "
-                "than the live app expects. Expected asset version: asset-20260330. Tab asset version: asset-stale-after-reload. "
-                "Reload the LegalPDF tab once manually if it is still open. If this keeps happening, restart the browser app and click "
-                "the extension again."
-            ),
+            "kind": "success",
+            "message": "Gmail intake accepted.",
         },
     }
 

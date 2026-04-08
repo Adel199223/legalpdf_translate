@@ -22,6 +22,25 @@ def _page_to_png_bytes(page: fitz.Page, *, dpi: int) -> bytes:
     return buffer.getvalue()
 
 
+def _page_crop_to_png_bytes(
+    page: fitz.Page,
+    *,
+    rect: tuple[float, float, float, float],
+    dpi: int,
+) -> bytes:
+    import fitz
+
+    crop_rect = fitz.Rect(*rect) & page.rect
+    if crop_rect.is_empty or crop_rect.width <= 1 or crop_rect.height <= 1:
+        raise ValueError("crop_rect is outside the page bounds")
+    zoom = dpi / 72.0
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=crop_rect, alpha=False)
+    image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
 def render_page_png(pdf_path: Path, page_number: int, dpi: int = 200) -> bytes:
     page_index = int(page_number) - 1
     if page_index < 0:
@@ -31,6 +50,22 @@ def render_page_png(pdf_path: Path, page_number: int, dpi: int = 200) -> bytes:
     with fitz.open(pdf_path) as doc:
         page = doc.load_page(page_index)
         return _page_to_png_bytes(page, dpi=dpi)
+
+
+def render_page_crop_png(
+    pdf_path: Path,
+    page_number: int,
+    rect: tuple[float, float, float, float],
+    dpi: int = 220,
+) -> bytes:
+    page_index = int(page_number) - 1
+    if page_index < 0:
+        raise ValueError("page_number must be >= 1")
+    import fitz
+
+    with fitz.open(pdf_path) as doc:
+        page = doc.load_page(page_index)
+        return _page_crop_to_png_bytes(page, rect=rect, dpi=dpi)
 
 
 def render_header_png(
@@ -92,6 +127,25 @@ def ocr_pdf_page_text(
             if prefer_header
             else render_page_png(pdf_path, page_number)
         )
+    except Exception as exc:  # noqa: BLE001
+        return OcrResult(text="", engine="none", failed_reason=f"render failed: {exc}", chars=0)
+    return invoke_ocr_image(engine, image_bytes, lang_hint=lang_hint, source_type="pdf")
+
+
+def ocr_pdf_page_crop_text(
+    pdf_path: Path,
+    page_number: int,
+    crop_rect: tuple[float, float, float, float],
+    mode: OcrMode,
+    engine: OCREngine,
+    *,
+    lang_hint: str | None = None,
+    dpi: int = 220,
+) -> OcrResult:
+    if mode == OcrMode.OFF:
+        return OcrResult(text="", engine="none", failed_reason="ocr disabled by mode=off", chars=0)
+    try:
+        image_bytes = render_page_crop_png(pdf_path, page_number, crop_rect, dpi=dpi)
     except Exception as exc:  # noqa: BLE001
         return OcrResult(text="", engine="none", failed_reason=f"render failed: {exc}", chars=0)
     return invoke_ocr_image(engine, image_bytes, lang_hint=lang_hint, source_type="pdf")

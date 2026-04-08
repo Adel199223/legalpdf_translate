@@ -67,6 +67,9 @@ def _blank_ordered_page_text() -> "OrderedPageText":
         barcode_blocks_count=0,
         body_blocks_count=0,
         two_column_detected=False,
+        page_width=0.0,
+        page_height=0.0,
+        body_blocks=tuple(),
     )
 
 
@@ -189,6 +192,52 @@ def ocr_source_page_text(
     )
 
 
+def ocr_source_page_crop_text(
+    path: Path,
+    page_number: int,
+    crop_rect: tuple[float, float, float, float],
+    mode: OcrMode,
+    engine: "OCREngine",
+    *,
+    lang_hint: str | None = None,
+) -> "OcrResult":
+    if is_pdf_source(path):
+        bundle_page_path = browser_pdf_bundle_page_image_path(path, page_number)
+        if bundle_page_path is not None:
+            from .ocr_helpers import ocr_image_file_text
+
+            return ocr_image_file_text(
+                bundle_page_path,
+                mode,
+                engine,
+                prefer_header=False,
+                lang_hint=lang_hint,
+            )
+        from .ocr_helpers import ocr_pdf_page_crop_text
+
+        return ocr_pdf_page_crop_text(
+            path,
+            page_number,
+            crop_rect,
+            mode,
+            engine,
+            lang_hint=lang_hint,
+        )
+    if not is_image_source(path):
+        raise ValueError(f"Unsupported source file type: {path}")
+    if page_number != 1:
+        raise ValueError("Image sources expose exactly one page at page_number=1.")
+    from .ocr_helpers import ocr_image_file_text
+
+    return ocr_image_file_text(
+        path,
+        mode,
+        engine,
+        prefer_header=False,
+        lang_hint=lang_hint,
+    )
+
+
 __all__ = [
     "SOURCE_FILE_DIALOG_FILTER",
     "extract_ordered_source_text",
@@ -196,6 +245,7 @@ __all__ = [
     "is_image_source",
     "is_pdf_source",
     "is_supported_source_file",
+    "ocr_source_page_crop_text",
     "ocr_source_page_text",
     "render_source_page_image_data_url",
     "source_has_browser_pdf_bundle",

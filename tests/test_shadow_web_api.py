@@ -39,6 +39,23 @@ def _identity() -> RuntimeBuildIdentity:
     )
 
 
+def _canonical_identity() -> RuntimeBuildIdentity:
+    return RuntimeBuildIdentity(
+        worktree_path="C:/Users/FA507/.codex/legalpdf_translate",
+        branch="main",
+        head_sha="5c9842e",
+        labels=("shadow-web",),
+        is_canonical=True,
+        is_lineage_valid=True,
+        canonical_worktree_path="C:/Users/FA507/.codex/legalpdf_translate",
+        canonical_branch="main",
+        approved_base_branch="main",
+        approved_base_head_floor="506dee6",
+        canonical_head_floor="506dee6",
+        reasons=(),
+    )
+
+
 def _runtime_paths(tmp_path: Path) -> ShadowRuntimePaths:
     app_data_dir = tmp_path / "shadow"
     return ShadowRuntimePaths(
@@ -95,8 +112,9 @@ def _native_host_state(*, ready: bool = True, repairable: bool = True) -> dict[s
     }
 
 
-def _build_app(tmp_path: Path, monkeypatch) -> TestClient:
-    monkeypatch.setattr(shadow_app_module, "detect_runtime_build_identity", lambda **kwargs: _identity())
+def _build_app(tmp_path: Path, monkeypatch, *, build_identity: RuntimeBuildIdentity | None = None) -> TestClient:
+    identity = build_identity or _identity()
+    monkeypatch.setattr(shadow_app_module, "detect_runtime_build_identity", lambda **kwargs: identity)
     monkeypatch.setattr(
         shadow_app_module,
         "detect_shadow_runtime_paths",
@@ -176,7 +194,7 @@ def test_compute_browser_asset_version_changes_for_dirty_static_edits(tmp_path: 
 
 
 def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> None:
-    with _build_app(tmp_path, monkeypatch) as client:
+    with _build_app(tmp_path, monkeypatch, build_identity=_canonical_identity()) as client:
         bootstrap = client.get("/api/bootstrap")
         assert bootstrap.status_code == 200
         assert bootstrap.headers["cache-control"] == "no-store"
@@ -184,8 +202,8 @@ def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> 
         assert bootstrap_payload["status"] == "ok"
         assert bootstrap_payload["normalized_payload"]["runtime"]["port"] == 8877
         assert bootstrap_payload["normalized_payload"]["runtime"]["runtime_mode"] == "live"
-        assert bootstrap_payload["normalized_payload"]["runtime"]["build_identity"]["is_canonical"] is False
-        assert bootstrap_payload["normalized_payload"]["runtime"]["build_identity"]["reasons"] == ["noncanonical"]
+        assert bootstrap_payload["normalized_payload"]["runtime"]["build_identity"]["is_canonical"] is True
+        assert bootstrap_payload["normalized_payload"]["runtime"]["build_identity"]["reasons"] == []
         assert bootstrap_payload["normalized_payload"]["blank_seed"]["service_date"] == ""
         assert any(item["id"] == "gmail-intake" for item in bootstrap_payload["normalized_payload"]["navigation"])
         assert any(item["id"] == "extension-lab" for item in bootstrap_payload["normalized_payload"]["navigation"])
@@ -234,7 +252,7 @@ def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> 
 
 
 def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path, monkeypatch) -> None:
-    with _build_app(tmp_path, monkeypatch) as client:
+    with _build_app(tmp_path, monkeypatch, build_identity=_canonical_identity()) as client:
         response = client.get("/")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
@@ -281,7 +299,7 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="gmail-review-summary-grid"' in text
         assert 'id="gmail-noncanonical-runtime-guard"' in text
         assert 'id="gmail-restart-canonical-runtime"' in text
-        assert 'id="gmail-continue-noncanonical-runtime"' in text
+        assert 'id="gmail-continue-noncanonical-runtime"' not in text
         assert 'id="gmail-review-detail"' in text
         assert 'id="gmail-preview-drawer"' in text
         assert 'id="gmail-preview-drawer-backdrop"' in text
@@ -397,8 +415,117 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="interpretation-export-panel"' not in text
 
 
+def test_shadow_web_runtime_ready_endpoint_exposes_lightweight_readiness(tmp_path: Path, monkeypatch) -> None:
+    with _build_app(tmp_path, monkeypatch, build_identity=_canonical_identity()) as client:
+        context = client.app.state.shadow_context
+        context.live_gmail_bridge._last_result = BrowserLiveBridgeSyncResult(
+            status="ready",
+            reason="bridge_owner_ready",
+            bridge_enabled=True,
+            bridge_port=8765,
+            owner_kind="browser_app",
+            browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+            workspace_id="gmail-intake",
+            started=True,
+            registration_ok=True,
+            registration_reason="registered",
+        )
+        response = client.get("/api/runtime/ready?mode=live&workspace=gmail-intake")
+
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        payload = response.json()
+        assert payload["status"] == "ok"
+        assert payload["normalized_payload"]["runtime"]["runtime_mode"] == "live"
+        assert payload["normalized_payload"]["readiness"]["browser_app"]["ready"] is True
+        assert payload["normalized_payload"]["readiness"]["gmail_bridge"]["ready"] is True
+        assert payload["normalized_payload"]["readiness"]["gmail_bridge"]["owner_kind"] == "browser_app"
+
+
+def test_shadow_web_shell_ready_endpoint_avoids_heavy_prepare_path(tmp_path: Path, monkeypatch) -> None:
+    shell_ready_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        shadow_app_module,
+        "prepare_gmail_intake",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("prepare_gmail_intake should not run for shell/ready")),
+    )
+    monkeypatch.setattr(
+        shadow_app_module.GmailBrowserSessionManager,
+        "build_shell_ready",
+        lambda self, **kwargs: shell_ready_calls.append(dict(kwargs)) or {
+            "normalized_payload": {
+                "pending_status": "translation_prepared",
+                "draft_prereqs": {"status": "pending"},
+            }
+        },
+    )
+
+    with _build_app(tmp_path, monkeypatch, build_identity=_canonical_identity()) as client:
+        context = client.app.state.shadow_context
+        context.live_gmail_bridge._last_result = BrowserLiveBridgeSyncResult(
+            status="ready",
+            reason="bridge_owner_ready",
+            bridge_enabled=True,
+            bridge_port=8765,
+            owner_kind="browser_app",
+            browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+            workspace_id="gmail-intake",
+            started=True,
+            registration_ok=True,
+            registration_reason="registered",
+        )
+        response = client.get("/api/bootstrap/shell/ready?mode=live&workspace=gmail-intake")
+
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        payload = response.json()
+        assert payload["status"] == "ok"
+        assert payload["normalized_payload"]["shell"]["gmail_bridge_ready"] is True
+        assert payload["normalized_payload"]["gmail"]["pending_status"] == "translation_prepared"
+        assert payload["normalized_payload"]["gmail"]["draft_prereqs"]["status"] == "pending"
+        assert shell_ready_calls == [
+            {
+                "runtime_mode": "live",
+                "workspace_id": "gmail-intake",
+                "settings_path": _browser_data_paths(tmp_path, "live").settings_path,
+            }
+        ]
+
+
+def test_shadow_web_restart_canonical_runtime_endpoint_returns_restart_payload(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        shadow_app_module,
+        "restart_canonical_browser_runtime",
+        lambda **kwargs: captured.update(kwargs) or {
+            "ok": True,
+            "reason": "canonical_restart_started",
+            "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+            "shell_ready_url": "http://127.0.0.1:8877/api/bootstrap/shell/ready?mode=live&workspace=gmail-intake",
+            "workspace_id": "gmail-intake",
+            "runtime_mode": "live",
+        },
+    )
+    with _build_app(tmp_path, monkeypatch, build_identity=_canonical_identity()) as client:
+        response = client.post(
+            "/api/gmail/runtime/restart-canonical",
+            json={"mode": "live", "workspace_id": "gmail-intake"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "ok"
+        assert payload["normalized_payload"]["reason"] == "canonical_restart_started"
+        assert payload["normalized_payload"]["workspace_id"] == "gmail-intake"
+        assert payload["normalized_payload"]["runtime_mode"] == "live"
+        assert captured["runtime_mode"] == "live"
+        assert captured["workspace_id"] == "gmail-intake"
+        assert captured["runtime_path"] == client.app.state.shadow_context.repo_root
+        assert isinstance(captured["current_listener_pid"], int)
+
+
 def test_shadow_web_index_supports_legacy_ui_flag(tmp_path: Path, monkeypatch) -> None:
-    with _build_app(tmp_path, monkeypatch) as client:
+    with _build_app(tmp_path, monkeypatch, build_identity=_canonical_identity()) as client:
         response = client.get("/", params={"ui": "legacy"})
         assert response.status_code == 200
         text = response.text
@@ -576,7 +703,7 @@ def test_shadow_web_shell_bootstrap_returns_gmail_bridge_state_and_refreshes_run
         },
     )
 
-    with _build_app(tmp_path, monkeypatch) as client:
+    with _build_app(tmp_path, monkeypatch, build_identity=_canonical_identity()) as client:
         runtime_metadata_path = _runtime_paths(tmp_path).runtime_metadata_path
         initial_payload = json.loads(runtime_metadata_path.read_text(encoding="utf-8"))
         assert initial_payload["listener_ownership"]["status"] == "available"
@@ -871,7 +998,7 @@ def test_shadow_web_gmail_routes_delegate_to_session_manager(tmp_path: Path, mon
     monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "prepare_session", _prepare_session)
     monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "build_bootstrap", _build_bootstrap)
 
-    with _build_app(tmp_path, monkeypatch) as client:
+    with _build_app(tmp_path, monkeypatch, build_identity=_canonical_identity()) as client:
         load_response = client.post(
             "/api/gmail/load-message",
             json={
@@ -1177,7 +1304,7 @@ def test_shadow_web_gmail_preview_route_keeps_inline_pdf_contract(tmp_path: Path
     monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "preview_attachment", _preview_attachment)
     monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "current_attachment_file", _current_attachment_file)
 
-    with _build_app(tmp_path, monkeypatch) as client:
+    with _build_app(tmp_path, monkeypatch, build_identity=_canonical_identity()) as client:
         preview_response = client.post("/api/gmail/preview-attachment", json={"attachment_id": "att-preview"})
         preview_payload = preview_response.json()
         assert preview_response.status_code == 200
@@ -1190,6 +1317,84 @@ def test_shadow_web_gmail_preview_route_keeps_inline_pdf_contract(tmp_path: Path
         assert attachment_response.headers["content-disposition"].startswith("inline;")
         assert recorded["current_attachment_file"]["attachment_id"] == "att-preview"
 
+
+def test_shadow_web_gmail_preview_and_prepare_block_noncanonical_live_runtime(tmp_path: Path, monkeypatch) -> None:
+    recorded: dict[str, int] = {"preview": 0, "prepare": 0}
+    monkeypatch.setattr(
+        shadow_app_module.GmailBrowserSessionManager,
+        "preview_attachment",
+        lambda self, **kwargs: recorded.__setitem__("preview", recorded["preview"] + 1) or {},
+    )
+    monkeypatch.setattr(
+        shadow_app_module.GmailBrowserSessionManager,
+        "prepare_session",
+        lambda self, **kwargs: recorded.__setitem__("prepare", recorded["prepare"] + 1) or {},
+    )
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        preview_response = client.post("/api/gmail/preview-attachment", json={"attachment_id": "att-preview"})
+        prepare_response = client.post(
+            "/api/gmail/prepare-session",
+            json={
+                "workflow_kind": "translation",
+                "target_lang": "FR",
+                "output_dir": "C:/tmp/out",
+                "selections": [{"attachment_id": "att-1", "start_page": 1}],
+            },
+        )
+
+        assert preview_response.status_code == 409
+        assert prepare_response.status_code == 409
+        assert preview_response.json()["normalized_payload"]["validation_error"]["reason"] == "canonical_restart_required"
+        assert prepare_response.json()["normalized_payload"]["validation_error"]["reason"] == "canonical_restart_required"
+        assert preview_response.json()["diagnostics"]["error"] == "noncanonical_live_runtime"
+        assert prepare_response.json()["diagnostics"]["error"] == "noncanonical_live_runtime"
+        assert recorded == {"preview": 0, "prepare": 0}
+
+
+def test_shadow_web_shell_ready_blocks_noncanonical_live_gmail_bridge(tmp_path: Path, monkeypatch) -> None:
+    shell_ready_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        shadow_app_module.GmailBrowserSessionManager,
+        "build_shell_ready",
+        lambda self, **kwargs: shell_ready_calls.append(dict(kwargs)) or {
+            "normalized_payload": {
+                "pending_status": "translation_prepared",
+                "draft_prereqs": {"status": "pending"},
+            }
+        },
+    )
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        context = client.app.state.shadow_context
+        context.live_gmail_bridge._last_result = BrowserLiveBridgeSyncResult(
+            status="ready",
+            reason="browser_bridge_owner_ready",
+            bridge_enabled=True,
+            bridge_port=8765,
+            owner_kind="browser_app",
+            browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+            workspace_id="gmail-intake",
+            started=True,
+            registration_ok=True,
+            registration_reason="registered",
+        )
+
+        response = client.get("/api/bootstrap/shell/ready?mode=live&workspace=gmail-intake")
+        payload = response.json()
+
+        assert response.status_code == 200
+        assert payload["normalized_payload"]["shell"]["gmail_bridge_ready"] is False
+        assert payload["capability_flags"]["gmail_bridge"]["reason"] == "canonical_restart_required"
+        assert payload["capability_flags"]["gmail_bridge"]["current_mode"]["prepare_response"]["ok"] is False
+        assert payload["capability_flags"]["gmail_bridge"]["current_mode"]["owner_kind"] == "none"
+        assert shell_ready_calls == [
+            {
+                "runtime_mode": "live",
+                "workspace_id": "gmail-intake",
+                "settings_path": _browser_data_paths(tmp_path, "live").settings_path,
+            }
+        ]
 
 def test_shadow_web_gmail_image_attachment_route_is_inline(tmp_path: Path, monkeypatch) -> None:
     image_file = tmp_path / "preview.png"

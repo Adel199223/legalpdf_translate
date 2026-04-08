@@ -45,6 +45,35 @@ function Get-CanonicalRepoRoot {
     return (Resolve-Path -LiteralPath $candidate).Path
 }
 
+function Get-GitWorktreeRoots {
+    param(
+        [string]$RepoRoot
+    )
+
+    $results = @()
+    try {
+        $lines = & git -C $RepoRoot worktree list --porcelain 2>$null
+    }
+    catch {
+        return @()
+    }
+    foreach ($line in $lines) {
+        $text = [string]$line
+        if (-not $text.StartsWith("worktree ")) {
+            continue
+        }
+        $candidate = $text.Substring(9).Trim()
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $candidate)) {
+            continue
+        }
+        $results += (Resolve-Path -LiteralPath $candidate).Path
+    }
+    return $results
+}
+
 function Resolve-RepoPython {
     param(
         [string]$RepoRoot
@@ -54,6 +83,11 @@ function Resolve-RepoPython {
     $canonicalRoot = Get-CanonicalRepoRoot -RepoRoot $RepoRoot
     if ($canonicalRoot -and ($canonicalRoot -notin $candidateRoots)) {
         $candidateRoots += $canonicalRoot
+    }
+    foreach ($worktreeRoot in (Get-GitWorktreeRoots -RepoRoot $RepoRoot)) {
+        if ($worktreeRoot -and ($worktreeRoot -notin $candidateRoots)) {
+            $candidateRoots += $worktreeRoot
+        }
     }
     foreach ($root in $candidateRoots) {
         foreach ($relativePath in @(".venv311\Scripts\python.exe", ".venv\Scripts\python.exe")) {
