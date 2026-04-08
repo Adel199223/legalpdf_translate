@@ -263,18 +263,19 @@ Use this when the source files already arrived in Gmail and you want one reply d
 7. In `Interpretation notice` mode, select exactly one supported PDF or image attachment. Translation-only controls stay hidden in that mode.
 8. Open the attachment preview when you need to inspect a file before proceeding.
 9. For translation PDFs, page `1` is the default. Scroll through the preview and click `Start from this page` only if translation should begin later. Interpretation notice imports do not use start-page semantics.
-10. `Prepare selected attachments` stages the files, and already previewed files are reused when possible instead of being downloaded again.
-11. Translation mode then translates the selected files one by one.
-12. Interpretation-notice mode downloads the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
-13. After each successful translation, Arabic items first pause in the Word review gate. The dialog auto-opens the durable DOCX in Word and auto-continues after a detected manual save. If Word lost focus or save detection misses, reopen with `Open in Word`, then use `Continue now` after saving or `Continue without changes` if you want to skip the edit.
-14. If you want to rerun the same current unconfirmed Gmail attachment without a cold start, use `Redo Current Attachment`. It resets only the translation side for that attachment, keeps the Gmail batch session intact, reapplies the same launch context, and waits for a manual `Start Translate`. If the old job is still running or cancelling, cancel it first. If you click the extension again for a new message, a fresh handoff should replace any recovered completed batch automatically. Use `Open Last Finalization Result` only when you want the previous finalized batch details.
-15. Translation mode then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
-16. When all selected translation files are confirmed, the app can generate one honorários export using the combined translated word count for the batch.
-17. The honorários export saves the DOCX first and then attempts a sibling PDF with the same basename.
-18. If the translation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários PDF.
-19. If the interpretation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with the generated honorários PDF only.
-20. If preview or `Prepare selected attachments` fails before a translation run exists, the Gmail diagnostics area now preserves the current selection/start-page state and offers `Generate Failure Report`.
-21. Before `Finalize Gmail Batch Reply`, the app now checks whether the real Word PDF export path is ready. If it says blocked, fix that readiness issue first instead of rerunning translation.
+10. `Prepare selected` stages the files, and already previewed files are reused when possible instead of being downloaded again.
+11. Translation mode then opens `New Job` in a prepared state instead of auto-starting immediately. The prepared summary shows the seeded attachment, target language, start page, and OCR/image settings so you can confirm them before clicking `Start Translate`.
+12. Fresh Gmail prepares start as new runs by default. They seed `Resume = off`, `Keep intermediates = on`, `Image mode = auto`, `OCR mode = auto`, and `OCR engine = local_then_api` unless you intentionally change those values before starting.
+13. Interpretation-notice mode downloads the original notice, extracts the case and service metadata, opens the interpretation `Save to Job Log` confirmation, then opens interpretation honorários export.
+14. After each successful translation, Arabic items first pause in the Word review gate. The dialog auto-opens the durable DOCX in Word and auto-continues after a detected manual save. If Word lost focus or save detection misses, reopen with `Open in Word`, then use `Continue now` after saving or `Continue without changes` if you want to skip the edit.
+15. If you want to rerun the same current unconfirmed Gmail attachment without a cold start, use `Redo Current Attachment`. It resets only the translation side for that attachment, keeps the Gmail batch session intact, reapplies the same launch context, and waits for a manual `Start Translate`. If the old job is still running or cancelling, cancel it first. If you click the extension again for a new message, a fresh handoff should replace any recovered completed batch automatically. Use `Open Last Finalization Result` only when you want the previous finalized batch details.
+16. Translation mode then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
+17. When all selected translation files are confirmed, the app can generate one honorários export using the combined translated word count for the batch.
+18. The honorários export saves the DOCX first and then attempts a sibling PDF with the same basename.
+19. If the translation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários PDF.
+20. If the interpretation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with the generated honorários PDF only.
+21. If preview or `Prepare selected` fails before a translation run exists, the Gmail diagnostics area now preserves the current selection/start-page state and offers `Generate Failure Report`.
+22. Before `Finalize Gmail Batch Reply`, the app now checks whether the real Word PDF export path is ready. If it says blocked, fix that readiness issue first instead of rerunning translation.
 
 ### Batch rules
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
@@ -284,6 +285,7 @@ Use this when the source files already arrived in Gmail and you want one reply d
 - The review list hides inline/signature/media junk and shows only supported source attachments from that exact message.
 - PDF preview uses a lazy continuous-scroll viewer so large documents can be inspected before translation without rendering every page up front.
 - If the current output folder is stale or missing, Gmail batch startup recovers automatically by preferring the current valid folder, then a valid default output folder, then `Downloads`.
+- Fresh Gmail translation starts use Gmail attachment-scoped run folders and checkpoints. Legacy generic folders such as `Auto_FR_run` are not valid fresh-start resume targets for a new Gmail attachment.
 - For Arabic Gmail items, the DOCX saved after the Word review gate is the reviewed artifact used downstream for that batch item.
 - Every confirmed item in the batch must end with the same `case_number`, `case_entity`, `case_city`, and `court_email`.
 - If any confirmed item differs, stop and split the email into separate reply batches.
@@ -351,7 +353,7 @@ Queue mode writes these sidecar files next to the manifest:
 32. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then use `Continue now` if save detection misses. WSL-only validation is not enough for this path.
 33. If a second window is blocked before start, read the run-folder warning literally: another active workspace already owns that exact output target. Change output folder or language, or wait for the owner workspace to finish.
 34. If the browser app opens but a stale shell or old browser module graph appears, manual hard refresh should not be the normal fix. Reload the extension if needed and let the exact localhost tab recover first.
-35. If live Gmail says it is running from a noncanonical build, restart from canonical `main` for normal use. Use `Continue Anyway` only when you intentionally launched a feature worktree for isolated validation.
+35. If live Gmail says it is running from a noncanonical build, use `Restart from Canonical Main`. Preview and `Prepare selected` stay blocked for normal live Gmail work until the canonical runtime is restored.
 36. If Gmail/browser preparation fails before a run exists, use `Generate Failure Report` from the Gmail diagnostics area. That artifact now captures browser/build context plus the raw PDF worker/module failure details that happened before `run_dir` existed.
 37. If Gmail finalization is blocked or already completed and you want the last-step operator artifact, use `Generate Finalization Report` from the finalization drawer. That report stays available for blocked states, recoverable warning states, and successful draft creation.
 

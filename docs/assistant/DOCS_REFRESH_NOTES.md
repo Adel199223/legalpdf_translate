@@ -16,6 +16,38 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-04-08 — feat/single-path-canonical-publish (canonical Gmail/runtime recovery docs sync)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/ISSUE_MEMORY.md
+  - docs/assistant/ISSUE_MEMORY.json
+  - docs/assistant/SESSION_RESUME.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/exec_plans/completed/2026-04-05_gmail-cold-start-loop-and-transparent-window-fix.md
+  - docs/assistant/exec_plans/completed/2026-04-05_inline-extraction-recovery.md
+  - docs/assistant/exec_plans/completed/2026-04-05_runtime-normalization-stale-listener.md
+  - docs/assistant/exec_plans/completed/2026-04-06_gmail-fast-start-single-window-recovery.md
+  - docs/assistant/exec_plans/completed/2026-04-08_single-path-canonical-recovery.md
+- Key symbols / entrypoints changed:
+  - APP_KNOWLEDGE.md::Output and Run Artifacts
+  - APP_KNOWLEDGE.md::Persistence Notes
+  - APP_KNOWLEDGE.md::Gmail Intake Batch Workflow
+  - docs/assistant/features/APP_USER_GUIDE.md::Gmail Intake Batch Replies
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md::Gmail Intake Batch Replies
+  - docs/assistant/SESSION_RESUME.md::Browser Mode Contract
+  - docs/assistant/ISSUE_MEMORY.md::workflow-wrong-build-under-test
+- User-visible behavior:
+  - live Gmail now hard-blocks noncanonical runtimes and requires `Restart from Canonical Main`
+  - `Prepare selected` is prepare-only and opens `New Job` in a prepared state instead of auto-starting translation
+  - fresh Gmail starts seed authoritative defaults (`resume=false`, `keep_intermediates=true`, OCR/image auto defaults) and use Gmail attachment-scoped run folders instead of legacy generic `Auto_FR_run`
+  - EN/FR integrity-suspect pages now escalate through OCR/visual recovery and remain review-worthy instead of silently finishing as broken direct text
+- Tests:
+  - `C:\\Users\\FA507\\.codex\\legalpdf_translate\\.venv311\\Scripts\\python.exe -m pytest -q tests/test_gmail_focus_host.py tests/test_shadow_web_api.py tests/test_gmail_intake.py tests/test_browser_gmail_bridge.py tests/test_translation_browser_state.py tests/test_translation_service_gmail_context.py tests/test_checkpoint_resume.py tests/test_output_handling.py tests/test_gmail_browser_service.py tests/test_workflow_ocr_routing.py tests/test_translation_diagnostics.py tests/test_quality_risk_scoring.py tests/test_image_policy.py tests/test_translation_service_run_report.py`
+  - post-fix live Gmail cold-start acceptance run produced `Auto_FR_20260408_133410.docx` with corrected point 10 and Gmail-scoped run artifacts
+
 ## 2026-03-19 — codex/beginner-first-primary-flow-ux (browser-app closeout docs sync)
 - Files changed:
   - APP_KNOWLEDGE.md

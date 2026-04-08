@@ -21,6 +21,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - `live` mode uses the real settings, job log, outputs, Gmail workflow, and browser-owned Gmail bridge.
 - `shadow` mode is the isolated browser testing/development copy. It keeps separate state roots and does not own the real Gmail bridge.
 - The real Gmail extension remains canonical. After a successful Gmail handoff, it should open or focus the browser app in the fixed live workspace `gmail-intake`.
+- Live Gmail is hard-blocked on noncanonical runtimes. `Restart from Canonical Main` is the only supported recovery path for normal work.
 - Port `8877` remains the canonical daily-use/live/Gmail browser port.
 - Port `8888` is review-preview only and must not become the real live Gmail bridge owner.
 
@@ -28,6 +29,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - The browser-first Gmail flow is the current canonical product experience on this repo:
   - `#new-job` remains the default landing screen
   - `#gmail-intake` remains the dedicated Gmail extension handoff screen
+  - `Prepare selected` is prepare-only and opens `#new-job` in a prepared state that waits for explicit `Start Translate`
   - the primary browser shell stays reduced to `New Job`, `Recent Jobs`, conditional `Gmail`, and `More`
   - Gmail handoff is compact and review-first
   - translation continuation stays bounded in finish/finalize surfaces instead of restacking large Gmail and translation pages

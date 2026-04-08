@@ -89,8 +89,8 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 ### workflow-wrong-build-under-test
 - Title: Wrong app/build under test because of mixed branches/worktrees and noncanonical launch
 - First seen timestamp: `2026-03-06T00:00:00Z`
-- Last seen timestamp: `2026-04-05T12:53:22Z`
-- Repeat count: `11`
+- Last seen timestamp: `2026-04-08T11:03:12Z`
+- Repeat count: `12`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
@@ -102,6 +102,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - native-host repair could point the launcher to a broken local runtime even though a healthy runtime was already running the visible browser app
   - the configured canonical worktree path itself could still be left on a feature branch, so a later restart drifted the launcher back to the wrong branch again
   - accepted overlapping browser/Gmail fixes could remain split across multiple dirty feature worktrees, making the final commit/push step itself risky
+  - live Gmail could still drift back to the old repo path because machine routing, AppData native-host state, and the canonical worktree declaration were not yet converged onto one primary repo on `main`
 - Likely root cause:
   - feature work progressed on side branches after acceptance
   - the approved base was not promoted immediately
@@ -110,6 +111,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - browser cache busting originally touched only the shell entrypoint, so imported modules could stay stale and recreate already-fixed Gmail/browser failures
   - the configured canonical worktree path was not always restored to clean `main` after isolated feature validation, so later repair/auto-launch logic could drift back to the wrong checkout
   - overlapping accepted work could remain fragmented across several dirty side worktrees instead of being harvested into one clean publish branch before push/merge
+  - the machine kept treating a side worktree as a temporary canonical target for too long instead of converging launchers, AppData native-host state, and live listeners back onto one primary repo path on `main`
 - Attempted fix history:
   - `2026-03-07T00:00:00Z` — added worktree baseline discipline docs; outcome: insufficient on its own
   - `2026-03-07T00:00:00Z` — added Qt build identity helper and noncanonical build markers; outcome: reduced ambiguity but did not solve accepted-feature promotion drift by itself
@@ -119,9 +121,10 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - `2026-03-30T00:00:00Z` — changed native-host repair to validate the current runtime, split shell-safe startup from blocked document runtime imports, versioned the whole browser asset graph, and required client/server `asset_version` agreement before a handoff is treated as ready; outcome: stronger_mitigation
   - `2026-04-03T15:47:52Z` — repointed the native-host launcher to an isolated fix worktree during live validation; outcome: partial_only because the configured canonical path still pointed at a feature branch and the drift could return after restart
   - `2026-04-05T12:53:22Z` — required overlapping accepted work from multiple dirty feature worktrees to be harvested into one clean integration branch, published as a two-commit wave, and followed by canonical-path/launcher restoration plus side-worktree removal; outcome: stronger_mitigation
+  - `2026-04-08T13:34:10Z` — converged live Gmail back onto one primary repo on `main`, blocked noncanonical runtimes from rewriting AppData native-host state to themselves, removed the live Gmail continue override, and regenerated the real launcher/native-host/extension entrypoints from the primary repo; outcome: stronger_mitigation
 - Accepted fix:
-  - `2026-04-05T12:53:22Z` — canonical build discipline now includes validated runtime/asset provenance plus a clean integration-branch publish rule for overlapping accepted side work: checkpoint locally, integrate from fresh `main`, publish only the integrated branch, then restore the canonical path and launcher to clean `main`
-- Regressed after accepted fix: `no`
+  - `2026-04-08T13:34:10Z` — canonical build discipline now also requires single-path machine routing on the primary repo `main`: live Gmail may run only from the primary repo, noncanonical runtimes cannot self-register native-host state, restart-to-canonical is the only supported drift recovery path, and launcher/AppData state must be regenerated from the merged primary repo before closeout
+- Regressed after accepted fix: `yes`
 - Affected workflows/docs:
   - `docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md`
   - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
@@ -148,6 +151,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - plain-language local workspace entry guidance
     - validated runtime repair and whole-graph browser asset provenance
     - clean integration-branch publish rules for overlapping accepted side work
+    - single-path canonical launcher/native-host routing back to the primary repo on `main`
   - Evidence refs:
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_worktree_baseline_docs_sync.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_qt_build_identity_hardening.md`
@@ -160,8 +164,11 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-03_arabic_legal_risk_hardening.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-03_gmail_redo_current_attachment.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-06_gmail-fast-start-single-window-recovery.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-08_single-path-canonical-recovery.md`
   - Branch: `feat/ai-docs-bootstrap`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_canonical_stage1`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_redo`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_run_report_artifacts`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_closeout`
@@ -169,6 +176,56 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - Workspace: `C:\Users\FA507\.codex\legalpdf_translate-worktrees.code-workspace`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_integration`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_beginner_first_ux`
+
+### workflow-gmail-fresh-start-state-drift
+- Title: Fresh Gmail prepare could inherit stale workspace state, GUI defaults, or legacy checkpoints
+- First seen timestamp: `2026-04-06T19:24:41Z`
+- Last seen timestamp: `2026-04-08T11:03:12Z`
+- Repeat count: `4`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - `Prepare selected` could open `New Job` while the workspace still showed the previous failed or completed Gmail run
+  - the prepared Gmail attachment could look ready, but `Start Translate` still inherited stale GUI defaults such as `resume=true` or `keep_intermediates=false`
+  - a fresh Gmail start could collide with a legacy generic run folder like `Auto_FR_run` and fail before page `1`
+  - the user could see a recovery/failure surface for the old run instead of a true fresh prepared start for the current Gmail attachment
+- Likely root cause:
+  - prepared Gmail launch state was not authoritative end to end
+  - stale `currentJob` and completion bindings could survive a fresh Gmail prepare
+  - fresh Gmail starts still shared filename-based run/checkpoint namespace with older manual runs unless Gmail attachment scope was carried through
+- Attempted fix history:
+  - `2026-04-06T20:00:00Z` — added prepared-state UX for `New Job` and stopped auto-starting on `Prepare selected`; outcome: partial_only because stale workspace bindings and old runtime routing could still resurrect the previous failed job
+  - `2026-04-07T22:52:44Z` — validated Gmail-side defaults and Gmail-scoped run dirs on a side worktree; outcome: partial_only because the real live runtime could still drift back to the old repo and stale client state
+  - `2026-04-08T13:34:10Z` — cleared stale workspace job bindings on fresh Gmail prepare, enforced fresh Gmail defaults server-side, and kept Gmail run/checkpoint identity attachment-scoped on the primary repo; outcome: stronger_mitigation
+- Accepted fix:
+  - `2026-04-08T13:34:10Z` — fresh Gmail prepares now clear stale terminal workspace job state, seed authoritative OCR/image/resume/keep-intermediates defaults in both UI and server paths, and use Gmail attachment-scoped run/checkpoint identity so legacy folders like `Auto_FR_run` are never treated as fresh-start resume targets
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
+  - `docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md`
+  - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/SESSION_RESUME.md`
+- Bootstrap relevance: `required`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - prepared Gmail start semantics
+    - stale workspace binding reset on fresh Gmail prepare
+    - authoritative Gmail-start defaults in UI and server paths
+    - attachment-scoped Gmail run/checkpoint identity instead of generic filename-based reuse
+  - Evidence refs:
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-06_gmail-fast-start-single-window-recovery.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-08_single-path-canonical-recovery.md`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_canonical_stage1`
+  - File: `src/legalpdf_translate/shadow_web/static/translation.js`
+  - File: `src/legalpdf_translate/translation_service.py`
+  - File: `src/legalpdf_translate/output_paths.py`
+  - File: `src/legalpdf_translate/checkpoint.py`
 
 ### harness-live-state-contamination
 - Title: Tests or harness cleanup reused live user state or user-facing ports and contaminated real runtime checks

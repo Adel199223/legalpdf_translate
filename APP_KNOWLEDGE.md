@@ -130,7 +130,10 @@ Arabic legal-term hardening now adds a second narrow prompt-first layer on top o
 
 ## Output and Run Artifacts
 Run artifacts live under:
-- `<outdir>/<pdf_stem>_<LANG>_run/`
+- manual/local runs: `<outdir>/<pdf_stem>_<LANG>_run/`
+- Gmail-started translation runs: `<outdir>/<pdf_stem>_gmail_<session_token>_p<start_page>_<attachment_token>_run/`
+
+The Gmail-scoped run directory keeps fresh Gmail starts from colliding with legacy generic folders such as `Auto_FR_run`.
 
 Typical files:
 - `pages/page_XXXX.txt`
@@ -205,9 +208,13 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - The browser-owned live Gmail bridge uses the fixed live browser workspace `gmail-intake`, and only a successful extension handoff opens or focuses `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`.
 - Rejected or failed `/gmail-intake` posts stay fail-closed in Gmail and show the browser-page banner error instead of spawning the browser app workspace.
 - Local source-checkout registration now prefers an app-data native-host wrapper at `AppData\\Roaming\\LegalPDFTranslate\\native_messaging\\LegalPDFGmailFocusHost.cmd` when available. That wrapper sets `PYTHONPATH` and invokes the repo venv module so local Edge handoff does not depend on a packaged host executable that Windows App Control may block.
+- Noncanonical live runtimes can no longer rewrite the app-data native-host wrapper or manifest to themselves. Live Gmail stays blocked until the runtime restarts into canonical `main`.
 - Browser live-bridge ownership is now guarded by port: noncanonical live listeners such as the fixed review preview on `8888` skip bridge registration and direct the extension back to the canonical live browser URL on `8877`.
 - In normal app launches, the Gmail intake bridge is app-level. It reuses the last active workspace only when that workspace is idle and pristine; otherwise it opens a new blank workspace for the intake automatically.
 - Multi-window runs share a controller-owned reservation map keyed by the resolved run directory. A second workspace cannot start `translate`, `analyze`, `rebuild`, or `queue` if it would reuse the same run folder as an active workspace.
+- Fresh Gmail prepares clear stale terminal workspace job bindings before they seed `#new-job`, so the next prepared attachment does not stay attached to the previous failed or completed Gmail run.
+- Fresh Gmail prepares seed authoritative defaults for new Gmail starts: `image_mode=auto`, `ocr_mode=auto`, `ocr_engine=local_then_api`, `resume=false`, `keep_intermediates=true`, and those defaults are enforced server-side unless the operator intentionally changes them before `Start Translate`.
+- Fresh Gmail translation runs derive run/checkpoint identity from Gmail attachment scope (`session_id`, `attachment_id`, `selected_start_page`, and target language), so generic folders such as `Auto_FR_run` are not valid fresh-start resume targets.
 - Gmail intake translation batches now write one durable app-owned session report at `<effective_outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`.
 - Gmail intake interpretation notice runs now write one durable app-owned session report at `<effective_outdir>/_gmail_interpretation_sessions/<session_id>/gmail_interpretation_session.json`.
   - These reports are the main cross-run/debug bridge between browser handoff, Save-to-Job-Log confirmation, honorários export, and Gmail draft finalization.
@@ -299,13 +306,15 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - The Gmail attachment preview now coalesces resize-driven rescaling instead of recomputing scaled preview geometry on every live resize tick, which reduces visible jitter while dragging the window.
 - Previewed attachments are cached temporarily and reused during `Prepare selected attachments` when still valid so the batch does not redownload the same file unnecessarily.
 - If preview or `Prepare selected attachments` fails before a translation run exists, the Gmail browser surface preserves the current selection/start-page state, surfaces structured browser diagnostics including raw `pdf.js` worker/module URLs plus fetch/content-type details and raw browser error text, and offers a direct browser failure report action instead of requiring Power Tools-only recovery.
-- If live Gmail is opened from a noncanonical build that still contains the approved-base floor, preview and prepare pause behind an explicit provenance warning until the operator either restarts from canonical `main` or continues anyway for isolated validation.
+- If live Gmail is opened from a noncanonical build, preview and prepare stay hard-blocked until `Restart from Canonical Main` succeeds. Normal live Gmail work no longer continues on a noncanonical runtime.
 - If the current output folder is stale or missing, Gmail batch startup recovers automatically in this order: current valid output folder, valid `default_outdir`, then `Downloads`.
 - Completed checkpoints with missing page artifacts are treated as stale and are not reused as resumable state.
-- Translation batches now auto-start from the reviewed Gmail selection, keep the main `#new-job` shell calm, and surface the case-save/export/review actions inside a bounded `Finish Translation` drawer instead of restacking Gmail and translation dashboards together.
+- Translation mode now uses a prepare-only handoff. `Prepare selected` opens `#new-job` in a prepared Gmail state, shows the selected attachment plus seeded OCR/image/resume settings, and waits for explicit `Start Translate`.
+- Fresh Gmail prepare restores the prepared attachment state across normal refresh/navigation in the same live workspace until a real translation job begins.
 - Interpretation-notice handoff now transitions to one compact `Current Interpretation Step` shell plus a bounded `Review Interpretation` drawer. Gmail reply finalization stays inside that interpretation review flow instead of bouncing back to a generic Gmail session dashboard.
 - Arabic runs now insert a Word review gate before Save-to-Job-Log opens. In the browser flow, the dialog auto-opens the durable DOCX in Word, waits for a manual save, and offers `Open in Word`, `Continue now`, and `Continue without changes` if save detection misses or the operator wants to skip the edit. The browser no longer auto-mutates the DOCX during this review step.
 - Shared Arabic DOCX assembly now keeps mixed Arabic/Latin punctuation, identifier markers, dates, and separator bars in stable runs so manual Word right alignment no longer drags commas or bars into the wrong side of the line.
+- Integrity-suspect EN/FR pages that require visual recovery can no longer silently finish as unrecovered text-only. The workflow escalates them to crop OCR merge or image-grounded fallback and keeps those pages review-worthy in the finished run.
 - Failed Arabic Gmail current-attachment runs now switch the handoff back into an explicit recovery state until rerun or resume produces a completed translation with a real save seed. Gmail confirmation stays blocked for failed or rebuild-only partial outputs.
 - Selected attachments are translated one at a time. After each successful translation, the app opens Save to Job Log and requires a confirmed save before continuing.
 - For Arabic Gmail batch items, the DOCX saved after that review gate is the reviewed artifact later used by the downstream batch item flow.
