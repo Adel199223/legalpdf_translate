@@ -29,7 +29,14 @@ const CLIENT_HYDRATION_POLL_MS = IS_EXTENSION_TEST ? 1 : 140;
 const handoffInFlight = new Map();
 const pendingBrowserSurfaces = new Map();
 const PENDING_BROWSER_SURFACES_SESSION_KEY = "legalpdfPendingBrowserSurfaces";
+const activeBrowserLaunchSessions = new Map();
+const ACTIVE_BROWSER_LAUNCH_SESSIONS_SESSION_KEY = "legalpdfActiveBrowserLaunchSessions";
+const BROWSER_OPEN_OWNER_EXTENSION = "extension";
+const BROWSER_OPEN_OWNER_SERVER_BOOT = "server_boot";
+const STRICT_BROWSER_WORKSPACES = new Set(["gmail-intake"]);
+const EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION = 3;
 let pendingBrowserSurfacesLoaded = false;
+let activeBrowserLaunchSessionsLoaded = false;
 let handoffSequence = 0;
 
 function normalizePort(value) {
@@ -42,6 +49,11 @@ function normalizePort(value) {
 
 function normalizeToken(value) {
   return String(value ?? "").trim();
+}
+
+function normalizeSchemaVersion(value) {
+  const parsed = Number.parseInt(String(value ?? "").trim(), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function normalizeUrl(value) {
@@ -84,6 +96,35 @@ function normalizePendingBrowserSurfaceRecord(record) {
     windowId: Number.isInteger(record?.windowId) ? record.windowId : null,
     createdAt: Number.isInteger(record?.createdAt) ? record.createdAt : Date.now(),
     updatedAt: Number.isInteger(record?.updatedAt) ? record.updatedAt : Date.now(),
+    launchSessionId: normalizeToken(record?.launchSessionId),
+    handoffSessionId: normalizeToken(record?.handoffSessionId),
+    browserOpenOwnedBy: normalizeToken(record?.browserOpenOwnedBy).toLowerCase(),
+    resolutionStrategy: normalizeToken(record?.resolutionStrategy).toLowerCase(),
+    surfaceCandidateSource: normalizeToken(record?.surfaceCandidateSource).toLowerCase(),
+    surfaceCandidateValid: record?.surfaceCandidateValid !== false,
+    surfaceInvalidationReason: normalizeToken(record?.surfaceInvalidationReason),
+    freshTabCreatedAfterInvalidation: record?.freshTabCreatedAfterInvalidation === true,
+  };
+}
+
+function normalizeActiveBrowserLaunchSessionRecord(record) {
+  const launchSessionId = normalizeToken(record?.launchSessionId);
+  const browserUrl = normalizeUrl(record?.browserUrl);
+  if (launchSessionId === "" || browserUrl === "") {
+    return null;
+  }
+  const createdAt = Number.isInteger(record?.createdAt) ? record.createdAt : Date.now();
+  const updatedAt = Number.isInteger(record?.updatedAt) ? record.updatedAt : createdAt;
+  const fallbackExpiresAt = updatedAt + LAUNCH_READINESS_WAIT_MS;
+  const expiresAt = Number.isInteger(record?.expiresAt) ? record.expiresAt : fallbackExpiresAt;
+  return {
+    launchSessionId,
+    handoffSessionId: normalizeToken(record?.handoffSessionId),
+    browserUrl,
+    owner: normalizeToken(record?.owner).toLowerCase() || BROWSER_OPEN_OWNER_SERVER_BOOT,
+    createdAt,
+    updatedAt,
+    expiresAt: Math.max(updatedAt, expiresAt),
   };
 }
 
@@ -136,7 +177,56 @@ async function persistPendingBrowserSurfaces() {
   }
 }
 
-async function rememberPendingBrowserSurface(browserUrl, tabLike) {
+async function ensureActiveBrowserLaunchSessionsLoaded() {
+  if (activeBrowserLaunchSessionsLoaded) {
+    return;
+  }
+  activeBrowserLaunchSessionsLoaded = true;
+  const storage = pendingBrowserSurfaceStorage();
+  if (!storage) {
+    return;
+  }
+  try {
+    const stored = await storage.get([ACTIVE_BROWSER_LAUNCH_SESSIONS_SESSION_KEY]);
+    const rawRecords = stored?.[ACTIVE_BROWSER_LAUNCH_SESSIONS_SESSION_KEY];
+    if (!rawRecords || typeof rawRecords !== "object") {
+      return;
+    }
+    activeBrowserLaunchSessions.clear();
+    for (const [key, record] of Object.entries(rawRecords)) {
+      const normalized = normalizeActiveBrowserLaunchSessionRecord(record);
+      const normalizedKey = buildPendingBrowserSurfaceKey(key);
+      if (normalized && normalizedKey !== "") {
+        activeBrowserLaunchSessions.set(normalizedKey, normalized);
+      }
+    }
+  } catch (_error) {
+    // Fall back to the in-memory map when session storage is unavailable.
+  }
+}
+
+async function persistActiveBrowserLaunchSessions() {
+  const storage = pendingBrowserSurfaceStorage();
+  if (!storage) {
+    return;
+  }
+  const serialized = {};
+  for (const [key, record] of activeBrowserLaunchSessions.entries()) {
+    const normalized = normalizeActiveBrowserLaunchSessionRecord(record);
+    if (normalized) {
+      serialized[key] = normalized;
+    }
+  }
+  try {
+    await storage.set({
+      [ACTIVE_BROWSER_LAUNCH_SESSIONS_SESSION_KEY]: serialized,
+    });
+  } catch (_error) {
+    // Keep the in-memory registry if persistence fails.
+  }
+}
+
+async function rememberPendingBrowserSurface(browserUrl, tabLike, options = {}) {
   await ensurePendingBrowserSurfacesLoaded();
   const key = buildPendingBrowserSurfaceKey(browserUrl);
   if (key === "") {
@@ -157,6 +247,22 @@ async function rememberPendingBrowserSurface(browserUrl, tabLike) {
         : null,
     createdAt: Number.isInteger(existing?.createdAt) ? existing.createdAt : Date.now(),
     updatedAt: Date.now(),
+    launchSessionId: normalizeToken(options?.launchSessionId) || normalizeToken(existing?.launchSessionId),
+    handoffSessionId: normalizeToken(options?.handoffSessionId) || normalizeToken(existing?.handoffSessionId),
+    browserOpenOwnedBy: normalizeToken(options?.browserOpenOwnedBy || existing?.browserOpenOwnedBy).toLowerCase(),
+    resolutionStrategy: normalizeToken(options?.resolutionStrategy || existing?.resolutionStrategy).toLowerCase(),
+    surfaceCandidateSource: normalizeToken(options?.surfaceCandidateSource || existing?.surfaceCandidateSource).toLowerCase(),
+    surfaceCandidateValid: options?.surfaceCandidateValid === undefined
+      ? existing?.surfaceCandidateValid !== false
+      : options.surfaceCandidateValid === true,
+    surfaceInvalidationReason: normalizeToken(
+      options?.surfaceInvalidationReason === undefined
+        ? existing?.surfaceInvalidationReason
+        : options?.surfaceInvalidationReason,
+    ),
+    freshTabCreatedAfterInvalidation: options?.freshTabCreatedAfterInvalidation === undefined
+      ? existing?.freshTabCreatedAfterInvalidation === true
+      : options.freshTabCreatedAfterInvalidation === true,
   };
   pendingBrowserSurfaces.set(key, nextRecord);
   await persistPendingBrowserSurfaces();
@@ -190,30 +296,95 @@ async function clearPendingBrowserSurfaceByTabId(tabId) {
   }
 }
 
-async function focusPendingBrowserSurface(browserUrl) {
-  await ensurePendingBrowserSurfacesLoaded();
+async function rememberActiveBrowserLaunchSession(browserUrl, sessionLike) {
+  await ensureActiveBrowserLaunchSessionsLoaded();
   const key = buildPendingBrowserSurfaceKey(browserUrl);
   if (key === "") {
-    return false;
+    return null;
   }
-  const pending = pendingBrowserSurfaces.get(key);
-  if (!pending || !Number.isInteger(pending.tabId)) {
+  const launchSessionId = normalizeToken(sessionLike?.launchSessionId);
+  if (launchSessionId === "") {
+    return null;
+  }
+  const existing = activeBrowserLaunchSessions.get(key);
+  const createdAt = Number.isInteger(existing?.createdAt) ? existing.createdAt : Date.now();
+  const updatedAt = Date.now();
+  const ttlMs = Math.max(
+    1000,
+    Number.isInteger(sessionLike?.ttlMs) ? sessionLike.ttlMs : LAUNCH_READINESS_WAIT_MS,
+  );
+  const nextRecord = {
+    launchSessionId,
+    handoffSessionId: normalizeToken(sessionLike?.handoffSessionId || existing?.handoffSessionId),
+    browserUrl: normalizeUrl(browserUrl),
+    owner: normalizeToken(sessionLike?.owner || existing?.owner).toLowerCase() || BROWSER_OPEN_OWNER_SERVER_BOOT,
+    createdAt,
+    updatedAt,
+    expiresAt: updatedAt + ttlMs,
+  };
+  activeBrowserLaunchSessions.set(key, nextRecord);
+  await persistActiveBrowserLaunchSessions();
+  return nextRecord;
+}
+
+async function clearActiveBrowserLaunchSession(browserUrl) {
+  await ensureActiveBrowserLaunchSessionsLoaded();
+  const key = buildPendingBrowserSurfaceKey(browserUrl);
+  if (key === "") {
+    return;
+  }
+  activeBrowserLaunchSessions.delete(key);
+  await persistActiveBrowserLaunchSessions();
+}
+
+async function getActiveBrowserLaunchSession(browserUrl) {
+  await ensureActiveBrowserLaunchSessionsLoaded();
+  const key = buildPendingBrowserSurfaceKey(browserUrl);
+  if (key === "") {
+    return null;
+  }
+  const record = normalizeActiveBrowserLaunchSessionRecord(activeBrowserLaunchSessions.get(key));
+  if (!record) {
+    activeBrowserLaunchSessions.delete(key);
+    await persistActiveBrowserLaunchSessions();
+    return null;
+  }
+  if (record.expiresAt <= Date.now()) {
+    activeBrowserLaunchSessions.delete(key);
+    await persistActiveBrowserLaunchSessions();
+    return null;
+  }
+  return record;
+}
+
+async function focusPendingBrowserSurface(browserUrl, options = {}) {
+  const resolved = await resolveBrowserAppTab(browserUrl, options);
+  const tab = resolved?.tab || null;
+  if (!tab || !Number.isInteger(tab.id)) {
     return false;
   }
   try {
-    const updated = await chrome.tabs.update(pending.tabId, { active: true });
-    const windowId = Number.isInteger(updated?.windowId) ? updated.windowId : pending.windowId;
+    const updated = await chrome.tabs.update(tab.id, { active: true });
+    const windowId = Number.isInteger(updated?.windowId) ? updated.windowId : tab.windowId;
     if (Number.isInteger(windowId)) {
       await chrome.windows.update(windowId, { focused: true });
     }
     await rememberPendingBrowserSurface(browserUrl, {
-      tabId: pending.tabId,
+      tabId: tab.id,
       windowId,
+    }, {
+      launchSessionId: normalizeToken(resolved?.launchSessionId),
+      handoffSessionId: normalizeToken(resolved?.handoffSessionId || options?.expectedHandoffSessionId || options?.handoffSessionId),
+      browserOpenOwnedBy: normalizeToken(resolved?.browserOpenOwnedBy),
+      resolutionStrategy: normalizeToken(resolved?.resolutionStrategy),
+      surfaceCandidateSource: normalizeToken(resolved?.surfaceCandidateSource),
+      surfaceCandidateValid: resolved?.surfaceCandidateValid === true,
+      surfaceInvalidationReason: "",
+      freshTabCreatedAfterInvalidation: resolved?.freshTabCreatedAfterInvalidation === true,
     });
     return true;
   } catch (_error) {
-    pendingBrowserSurfaces.delete(key);
-    await persistPendingBrowserSurfaces();
+    await clearPendingBrowserSurfaceByTabId(tab.id);
     return false;
   }
 }
@@ -447,6 +618,8 @@ function buildPrepareFailureMessage(response) {
       return "LegalPDF Translate could not be started automatically.";
     case "launch_in_progress":
       return "LegalPDF Translate is already starting the browser app for this Gmail handoff.";
+    case "browser_server_ready":
+      return "LegalPDF Translate started the browser app server and is waiting for the Gmail workspace tab to finish opening.";
     case "launch_timeout":
       return "LegalPDF Translate was started, but the Gmail bridge did not become ready in time.";
     case "unsupported_platform":
@@ -462,10 +635,17 @@ function isLaunchStillInProgress(response) {
 
 function buildLaunchInProgressMessage(response) {
   const remainingMs = Number.parseInt(String(response?.launch_lock_ttl_ms ?? 0), 10);
+  const browserOpenOwnedBy = normalizeToken(response?.browser_open_owned_by).toLowerCase();
   const waitSeconds = Math.max(
     1,
     Math.ceil((Number.isFinite(remainingMs) && remainingMs > 0 ? remainingMs : LAUNCH_READINESS_WAIT_MS) / 1000),
   );
+  if (browserOpenOwnedBy === BROWSER_OPEN_OWNER_EXTENSION) {
+    return (
+      "LegalPDF Translate already started this Gmail browser handoff. "
+      + `Please wait up to ${waitSeconds}s or focus the existing LegalPDF tab instead of clicking again.`
+    );
+  }
   return (
     "LegalPDF Translate is already starting the browser app for this Gmail handoff. "
     + `Please wait up to ${waitSeconds}s before clicking again; it will reuse the same launch instead of opening another window.`
@@ -598,6 +778,16 @@ function messageContextMatches(expectedContext, candidateContext) {
   return comparisons.length > 0 && comparisons.every(Boolean);
 }
 
+function browserHandoffSessionIdFromPayload(payload) {
+  const normalizedPayload = payload?.normalized_payload || {};
+  const gmailPayload = normalizedPayload?.gmail || normalizedPayload || {};
+  return normalizeToken(
+    gmailPayload?.handoff_session_id
+    || gmailPayload?.current_handoff_context?.handoff_session_id
+    || gmailPayload?.pending_intake_context?.handoff_session_id,
+  );
+}
+
 function buildFocusNotice(nativeResponse, degradedMode) {
   if (degradedMode) {
     return "App focus helper unavailable; if the app did not come forward, check the taskbar.";
@@ -640,6 +830,11 @@ function parseBrowserWorkspaceIdentity(browserUrl) {
   }
 }
 
+function browserWorkspaceRequiresExactSurface(browserUrl) {
+  const identity = parseBrowserWorkspaceIdentity(browserUrl);
+  return Boolean(identity && STRICT_BROWSER_WORKSPACES.has(identity.workspaceId));
+}
+
 function browserWorkspaceIdentityMatches(candidateUrl, targetUrl) {
   const candidate = parseBrowserWorkspaceIdentity(candidateUrl);
   const target = parseBrowserWorkspaceIdentity(targetUrl);
@@ -666,89 +861,259 @@ function urlsMatchForFocus(candidateUrl, targetUrl) {
   }
 }
 
-async function openOrFocusBrowserApp(browserUrl) {
+async function getBrowserWindowState(windowId) {
+  if (!Number.isInteger(windowId) || !chrome?.windows?.get) {
+    return null;
+  }
+  try {
+    return await chrome.windows.get(windowId);
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function ensureBrowserTabVisible(tabLike) {
+  const tabId = Number.isInteger(tabLike?.id) ? tabLike.id : Number.isInteger(tabLike?.tabId) ? tabLike.tabId : null;
+  const windowId = Number.isInteger(tabLike?.windowId) ? tabLike.windowId : null;
+  if (!Number.isInteger(tabId)) {
+    return { ok: false, surfaceVisibilityStatus: "not_visible", tabId: null };
+  }
+  let restored = false;
+  const windowState = await getBrowserWindowState(windowId);
+  const wasMinimized = normalizeToken(windowState?.state).toLowerCase() === "minimized";
+  try {
+    await chrome.tabs.update(tabId, { active: true });
+    if (Number.isInteger(windowId)) {
+      if (wasMinimized) {
+        await chrome.windows.update(windowId, { state: "normal", focused: true });
+        restored = true;
+      } else {
+        await chrome.windows.update(windowId, { focused: true });
+      }
+    }
+  } catch (_error) {
+    return {
+      ok: false,
+      surfaceVisibilityStatus: "focus_failed",
+      tabId,
+    };
+  }
+  const refreshedWindowState = await getBrowserWindowState(windowId);
+  if (Number.isInteger(windowId) && refreshedWindowState && normalizeToken(refreshedWindowState.state).toLowerCase() === "minimized") {
+    return {
+      ok: false,
+      surfaceVisibilityStatus: "not_visible",
+      tabId,
+    };
+  }
+  return {
+    ok: true,
+    surfaceVisibilityStatus: restored ? "restored" : "visible",
+    tabId,
+  };
+}
+
+async function primeBrowserClientHandoffSession(tabId, handoffSessionId, schemaVersion = EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION) {
+  if (!Number.isInteger(tabId) || normalizeToken(handoffSessionId) === "") {
+    return false;
+  }
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (nextHandoffSessionId, nextSchemaVersion) => {
+        const marker = window.LEGALPDF_BROWSER_CLIENT_READY;
+        if (!marker || typeof marker !== "object") {
+          return false;
+        }
+        marker.handoffSessionId = String(nextHandoffSessionId || "").trim();
+        marker.launchSessionSchemaVersion = Number.parseInt(String(nextSchemaVersion || 0), 10) || 0;
+        if (document.body?.dataset) {
+          document.body.dataset.clientHandoffSession = marker.handoffSessionId || "";
+          document.body.dataset.clientLaunchSessionSchemaVersion = String(marker.launchSessionSchemaVersion || 0);
+        }
+        window.LEGALPDF_BROWSER_CLIENT_READY = marker;
+        return true;
+      },
+      args: [normalizeToken(handoffSessionId), normalizeSchemaVersion(schemaVersion) || EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION],
+    });
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function buildBrowserLaunchSessionDiagnosticsUrl(browserUrl) {
+  const targetUrl = normalizeUrl(browserUrl);
+  if (targetUrl === "") {
+    return "";
+  }
+  try {
+    const parsed = new URL(targetUrl);
+    const runtimeMode = normalizeToken(parsed.searchParams.get("mode")) || "live";
+    const workspaceId = normalizeToken(parsed.searchParams.get("workspace")) || "workspace-1";
+    return `${parsed.origin}/api/extension/launch-session-diagnostics?mode=${encodeURIComponent(runtimeMode)}&workspace=${encodeURIComponent(workspaceId)}`;
+  } catch (_error) {
+    return "";
+  }
+}
+
+async function clearBrowserLaunchState(browserUrl) {
+  const targetUrl = normalizeUrl(browserUrl);
+  if (targetUrl === "") {
+    return;
+  }
+  await clearPendingBrowserSurface(targetUrl);
+  await clearActiveBrowserLaunchSession(targetUrl);
+}
+
+async function reportLaunchSessionDiagnostics(browserUrl, nativeResponse, diagnostics = {}) {
+  const endpoint = buildBrowserLaunchSessionDiagnosticsUrl(browserUrl);
+  if (endpoint === "") {
+    return;
+  }
+  const launchSessionId = normalizeToken(diagnostics.launchSessionId || nativeResponse?.launch_session_id);
+  if (launchSessionId === "") {
+    return;
+  }
+  const payload = {
+    launch_session_id: launchSessionId,
+    handoff_session_id: normalizeToken(diagnostics.handoffSessionId),
+    browser_url: normalizeUrl(browserUrl || nativeResponse?.browser_url),
+    tab_resolution_strategy: normalizeToken(diagnostics.tabResolutionStrategy).toLowerCase(),
+    workspace_surface_confirmed: diagnostics.workspaceSurfaceConfirmed === true,
+    client_hydration_status: normalizeToken(diagnostics.clientHydrationStatus).toLowerCase(),
+    surface_candidate_source: normalizeToken(diagnostics.surfaceCandidateSource).toLowerCase(),
+    surface_candidate_valid: diagnostics.surfaceCandidateValid === true,
+    surface_invalidation_reason: normalizeToken(diagnostics.surfaceInvalidationReason),
+    fresh_tab_created_after_invalidation: diagnostics.freshTabCreatedAfterInvalidation === true,
+    bridge_context_posted: diagnostics.bridgeContextPosted === true,
+    surface_visibility_status: normalizeToken(diagnostics.surfaceVisibilityStatus).toLowerCase(),
+    outcome: normalizeToken(diagnostics.outcome).toLowerCase(),
+    reason: normalizeToken(diagnostics.reason),
+  };
+  if (Number.isInteger(diagnostics.tabId)) {
+    payload.tab_id = diagnostics.tabId;
+  }
+  try {
+    await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (_error) {
+    // Diagnostics must never break Gmail handoff flow.
+  }
+}
+
+async function openOrFocusBrowserApp(browserUrl, options = {}) {
   const targetUrl = normalizeUrl(browserUrl);
   if (targetUrl === "") {
     return false;
   }
-  if (await focusPendingBrowserSurface(targetUrl)) {
-    return true;
+  const activeLaunchSession = await getActiveBrowserLaunchSession(targetUrl);
+  const allowCreate = options?.allowCreate !== false
+    && (!activeLaunchSession || activeLaunchSession.owner === BROWSER_OPEN_OWNER_EXTENSION);
+  const strictSurface = browserWorkspaceRequiresExactSurface(targetUrl);
+  const resolvedSurface = await resolveBrowserAppTab(targetUrl, {
+    expectedLaunchSessionId: normalizeToken(options?.launchSessionId || activeLaunchSession?.launchSessionId),
+    expectedHandoffSessionId: normalizeToken(options?.handoffSessionId),
+  });
+  const resolvedTab = resolvedSurface?.tab || null;
+  if (resolvedTab && Number.isInteger(resolvedTab.id)) {
+    if (!strictSurface) {
+      await chrome.tabs.update(resolvedTab.id, {
+        active: true,
+        url: targetUrl,
+      });
+    }
+    const visibility = await ensureBrowserTabVisible(resolvedTab);
+    if (visibility.ok) {
+      if (activeLaunchSession) {
+        await clearActiveBrowserLaunchSession(targetUrl);
+      }
+      return true;
+    }
+    if (!strictSurface || !allowCreate) {
+      return false;
+    }
+    await clearPendingBrowserSurface(targetUrl);
   }
-  let url;
-  try {
-    url = new URL(targetUrl);
-  } catch (_error) {
+  if (!allowCreate) {
     return false;
   }
-  const candidates = await chrome.tabs.query({ url: `${url.origin}/*` });
-  const workspaceMatch = candidates.find((tab) => browserWorkspaceIdentityMatches(tab.url, targetUrl));
-  if (workspaceMatch && Number.isInteger(workspaceMatch.id)) {
-    await rememberPendingBrowserSurface(targetUrl, workspaceMatch);
-    await chrome.tabs.update(workspaceMatch.id, { active: true });
-    if (Number.isInteger(workspaceMatch.windowId)) {
-      await chrome.windows.update(workspaceMatch.windowId, { focused: true });
-    }
-    return true;
-  }
-  const existing = candidates.find((tab) => Number.isInteger(tab.id));
-  if (existing && Number.isInteger(existing.id)) {
-    await rememberPendingBrowserSurface(targetUrl, existing);
-    await chrome.tabs.update(existing.id, { active: true, url: targetUrl });
-    if (Number.isInteger(existing.windowId)) {
-      await chrome.windows.update(existing.windowId, { focused: true });
-    }
-    return true;
-  }
   const created = await chrome.tabs.create({ url: targetUrl, active: true });
-  await rememberPendingBrowserSurface(targetUrl, created);
-  if (created && Number.isInteger(created.windowId)) {
-    await chrome.windows.update(created.windowId, { focused: true });
+  const staleSurfaceInvalidated = normalizeToken(resolvedSurface?.surfaceInvalidationReason) !== "";
+  const failedExistingFocus = resolvedTab && Number.isInteger(resolvedTab.id);
+  const invalidationReason = failedExistingFocus
+    ? "focus_failed"
+    : strictSurface
+      ? normalizeToken(resolvedSurface?.surfaceInvalidationReason)
+      : "";
+  await rememberPendingBrowserSurface(targetUrl, created, {
+    launchSessionId: normalizeToken(options?.launchSessionId || activeLaunchSession?.launchSessionId),
+    handoffSessionId: normalizeToken(options?.handoffSessionId),
+    browserOpenOwnedBy: normalizeToken(options?.browserOpenOwnedBy || BROWSER_OPEN_OWNER_EXTENSION).toLowerCase(),
+    resolutionStrategy: strictSurface ? "created_exact_tab" : "created_tab",
+    surfaceCandidateSource: strictSurface ? "fresh_exact_tab" : "created_tab",
+    surfaceCandidateValid: true,
+    surfaceInvalidationReason: strictSurface ? invalidationReason : "",
+    freshTabCreatedAfterInvalidation: strictSurface && (staleSurfaceInvalidated || failedExistingFocus),
+  });
+  if (!await ensureBrowserTabVisible(created)) {
+    return false;
+  }
+  if (activeLaunchSession) {
+    await clearActiveBrowserLaunchSession(targetUrl);
   }
   return true;
 }
 
-async function focusExistingBrowserAppWindow(browserUrl = DEFAULT_BROWSER_APP_URL) {
+async function focusExistingBrowserAppWindow(browserUrl = DEFAULT_BROWSER_APP_URL, options = {}) {
   const targetUrl = normalizeUrl(browserUrl);
   if (targetUrl === "") {
     return false;
   }
-  if (await focusPendingBrowserSurface(targetUrl)) {
-    return true;
-  }
-  let url;
-  try {
-    url = new URL(targetUrl);
-  } catch (_error) {
+  const activeLaunchSession = await getActiveBrowserLaunchSession(targetUrl);
+  const resolvedSurface = await resolveBrowserAppTab(targetUrl, {
+    expectedLaunchSessionId: normalizeToken(options?.launchSessionId || activeLaunchSession?.launchSessionId),
+    expectedHandoffSessionId: normalizeToken(options?.handoffSessionId || activeLaunchSession?.handoffSessionId),
+  });
+  const resolvedTab = resolvedSurface?.tab || null;
+  if (!resolvedTab || !Number.isInteger(resolvedTab.id)) {
     return false;
   }
-  const candidates = await chrome.tabs.query({ url: `${url.origin}/*` });
-  const workspaceMatch = candidates.find((tab) => browserWorkspaceIdentityMatches(tab.url, targetUrl));
-  if (workspaceMatch && Number.isInteger(workspaceMatch.id)) {
-    await rememberPendingBrowserSurface(targetUrl, workspaceMatch);
-    await chrome.tabs.update(workspaceMatch.id, { active: true });
-    if (Number.isInteger(workspaceMatch.windowId)) {
-      await chrome.windows.update(workspaceMatch.windowId, { focused: true });
-    }
-    return true;
+  const visibility = await ensureBrowserTabVisible(resolvedTab);
+  if (!visibility.ok) {
+    return false;
   }
-  const existing = candidates.find((tab) => Number.isInteger(tab.id));
-  if (existing && Number.isInteger(existing.id)) {
-    await rememberPendingBrowserSurface(targetUrl, existing);
-    await chrome.tabs.update(existing.id, { active: true });
-    if (Number.isInteger(existing.windowId)) {
-      await chrome.windows.update(existing.windowId, { focused: true });
-    }
-    return true;
+  await rememberPendingBrowserSurface(targetUrl, resolvedTab, {
+    launchSessionId: normalizeToken(resolvedSurface?.launchSessionId || options?.launchSessionId || activeLaunchSession?.launchSessionId),
+    handoffSessionId: normalizeToken(resolvedSurface?.handoffSessionId || options?.handoffSessionId || activeLaunchSession?.handoffSessionId),
+    browserOpenOwnedBy: normalizeToken(resolvedSurface?.browserOpenOwnedBy || activeLaunchSession?.owner),
+    resolutionStrategy: normalizeToken(resolvedSurface?.resolutionStrategy || "exact_workspace_match").toLowerCase(),
+    surfaceCandidateSource: normalizeToken(resolvedSurface?.surfaceCandidateSource || "queried_exact_tab").toLowerCase(),
+    surfaceCandidateValid: resolvedSurface?.surfaceCandidateValid !== false,
+    surfaceInvalidationReason: "",
+    freshTabCreatedAfterInvalidation: resolvedSurface?.freshTabCreatedAfterInvalidation === true,
+  });
+  if (activeLaunchSession) {
+    await clearActiveBrowserLaunchSession(targetUrl);
   }
-  return false;
+  return true;
 }
 
-async function waitForLaunchedBrowserAppTab(browserUrl, timeoutMs = COLD_START_TAB_WAIT_MS) {
+async function waitForLaunchedBrowserAppTab(browserUrl, timeoutMs = COLD_START_TAB_WAIT_MS, options = {}) {
   const targetUrl = normalizeUrl(browserUrl);
   if (targetUrl === "") {
     return false;
   }
-  if (await focusPendingBrowserSurface(targetUrl)) {
+  const activeLaunchSession = await getActiveBrowserLaunchSession(targetUrl);
+  if (await focusPendingBrowserSurface(targetUrl, {
+    expectedLaunchSessionId: normalizeToken(options?.launchSessionId || activeLaunchSession?.launchSessionId),
+    expectedHandoffSessionId: normalizeToken(options?.handoffSessionId || activeLaunchSession?.handoffSessionId),
+  })) {
     return true;
   }
   let origin;
@@ -757,21 +1122,71 @@ async function waitForLaunchedBrowserAppTab(browserUrl, timeoutMs = COLD_START_T
   } catch (_error) {
     return false;
   }
-  const deadline = Date.now() + Math.max(0, Number(timeoutMs || 0));
+  const activeLaunchWaitMs = activeLaunchSession
+    ? Math.max(0, activeLaunchSession.expiresAt - Date.now())
+    : 0;
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs || 0), activeLaunchWaitMs);
   while (Date.now() <= deadline) {
     const candidates = await chrome.tabs.query({ url: `${origin}/*` });
     const workspaceMatch = candidates.find((tab) => browserWorkspaceIdentityMatches(tab.url, targetUrl));
     if (workspaceMatch && Number.isInteger(workspaceMatch.id)) {
-      await rememberPendingBrowserSurface(targetUrl, workspaceMatch);
-      await chrome.tabs.update(workspaceMatch.id, { active: true });
-      if (Number.isInteger(workspaceMatch.windowId)) {
-        await chrome.windows.update(workspaceMatch.windowId, { focused: true });
+      if (browserWorkspaceRequiresExactSurface(targetUrl)) {
+        const validation = await validateStrictBrowserWorkspaceCandidate(targetUrl, workspaceMatch, {
+          expectedLaunchSessionId: normalizeToken(options?.launchSessionId || activeLaunchSession?.launchSessionId),
+          expectedHandoffSessionId: normalizeToken(options?.handoffSessionId || activeLaunchSession?.handoffSessionId),
+          candidateSource: "queried_exact_tab",
+        });
+        if (!validation.valid) {
+          await sleep(COLD_START_TAB_POLL_MS);
+          continue;
+        }
+      }
+      await rememberPendingBrowserSurface(targetUrl, workspaceMatch, {
+        launchSessionId: normalizeToken(options?.launchSessionId || activeLaunchSession?.launchSessionId),
+        handoffSessionId: normalizeToken(options?.handoffSessionId || activeLaunchSession?.handoffSessionId),
+        browserOpenOwnedBy: activeLaunchSession?.owner,
+        resolutionStrategy: "exact_workspace_match",
+        surfaceCandidateSource: "queried_exact_tab",
+        surfaceCandidateValid: true,
+        surfaceInvalidationReason: "",
+        freshTabCreatedAfterInvalidation: false,
+      });
+      const visibility = await ensureBrowserTabVisible(workspaceMatch);
+      if (!visibility.ok) {
+        await sleep(COLD_START_TAB_POLL_MS);
+        continue;
+      }
+      if (activeLaunchSession) {
+        await clearActiveBrowserLaunchSession(targetUrl);
       }
       return true;
     }
     await sleep(COLD_START_TAB_POLL_MS);
   }
   return false;
+}
+
+function shouldWaitForLaunchedBrowserTab({
+  nativeResponse = null,
+  browserUrl = "",
+  launchSessionId = "",
+  browserOpenOwnedBy = "",
+} = {}) {
+  const targetUrl = normalizeUrl(browserUrl || nativeResponse?.browser_url);
+  const resolvedBrowserOpenOwner = normalizeToken(
+    browserOpenOwnedBy || nativeResponse?.browser_open_owned_by,
+  ).toLowerCase() || BROWSER_OPEN_OWNER_EXTENSION;
+  const foreignLaunchOwner = resolvedBrowserOpenOwner !== BROWSER_OPEN_OWNER_EXTENSION;
+  return Boolean(
+    nativeResponse
+    && nativeResponse.ui_owner === "browser_app"
+    && targetUrl !== ""
+    && foreignLaunchOwner
+    && (
+      nativeResponse.launched === true
+      || normalizeToken(launchSessionId) !== ""
+    )
+  );
 }
 
 function buildBrowserWorkspaceBootstrapUrl(browserUrl) {
@@ -833,41 +1248,396 @@ function parseBrowserClientExpectation(browserUrl) {
       workspaceId: "workspace-1",
       activeView: "new-job",
       assetVersion: "",
-    };
+      };
   }
 }
 
-async function resolveBrowserAppTab(browserUrl) {
+function doesBrowserClientMatchExpectation(clientState, expected) {
+  return (
+    clientState.available === true
+    && clientState.runtimeMode === expected.runtimeMode
+    && clientState.workspaceId === expected.workspaceId
+    && clientState.activeView === expected.activeView
+    && doesBrowserClientAssetVersionMatch(clientState, expected.assetVersion)
+  );
+}
+
+function buildEmptyBrowserSurfaceResolution({
+  launchSessionId = "",
+  handoffSessionId = "",
+  browserOpenOwnedBy = "",
+  surfaceCandidateSource = "no_surface_confirmed",
+  surfaceCandidateValid = false,
+  surfaceInvalidationReason = "",
+  freshTabCreatedAfterInvalidation = false,
+  clientState = null,
+} = {}) {
+  return {
+    tab: null,
+    resolutionStrategy: "",
+    launchSessionId: normalizeToken(launchSessionId),
+    handoffSessionId: normalizeToken(handoffSessionId),
+    browserOpenOwnedBy: normalizeToken(browserOpenOwnedBy).toLowerCase(),
+    surfaceCandidateSource: normalizeToken(surfaceCandidateSource).toLowerCase() || "no_surface_confirmed",
+    surfaceCandidateValid: surfaceCandidateValid === true,
+    surfaceInvalidationReason: normalizeToken(surfaceInvalidationReason),
+    freshTabCreatedAfterInvalidation: freshTabCreatedAfterInvalidation === true,
+    clientState,
+  };
+}
+
+function isFreshPendingSurfaceForActiveSession(pendingRecord, expectedLaunchSessionId) {
+  const expected = normalizeToken(expectedLaunchSessionId);
+  return Boolean(
+    pendingRecord
+    && normalizeToken(pendingRecord.resolutionStrategy).toLowerCase() === "created_exact_tab"
+    && expected !== ""
+    && normalizeToken(pendingRecord.launchSessionId) === expected
+  );
+}
+
+async function validateStrictBrowserWorkspaceCandidate(
+  browserUrl,
+  tab,
+  {
+    expectedLaunchSessionId = "",
+    expectedHandoffSessionId = "",
+    expectedAssetVersion = "",
+    candidateSource = "",
+    pendingRecord = null,
+  } = {},
+) {
   const targetUrl = normalizeUrl(browserUrl);
-  if (targetUrl === "") {
-    return null;
-  }
-  await ensurePendingBrowserSurfacesLoaded();
-  const pending = pendingBrowserSurfaces.get(buildPendingBrowserSurfaceKey(targetUrl));
-  if (pending && Number.isInteger(pending.tabId)) {
+  if (!tab || !Number.isInteger(tab.id) || !browserWorkspaceIdentityMatches(tab.url, targetUrl)) {
     return {
-      id: pending.tabId,
-      windowId: pending.windowId,
-      url: targetUrl,
+      valid: false,
+      reason: "tab_missing",
+      clientState: null,
     };
   }
+
+  const normalizedExpectedLaunchSessionId = normalizeToken(expectedLaunchSessionId);
+  const normalizedExpectedHandoffSessionId = normalizeToken(expectedHandoffSessionId);
+  const rememberedLaunchSessionId = normalizeToken(pendingRecord?.launchSessionId);
+  const rememberedHandoffSessionId = normalizeToken(pendingRecord?.handoffSessionId);
+  const normalizedCandidateSource = normalizeToken(candidateSource).toLowerCase();
+  if (normalizedExpectedLaunchSessionId !== "" && rememberedLaunchSessionId !== "" && rememberedLaunchSessionId !== normalizedExpectedLaunchSessionId) {
+    return {
+      valid: false,
+      reason: "launch_session_mismatch",
+      clientState: null,
+    };
+  }
+  if (normalizedExpectedHandoffSessionId !== "" && rememberedHandoffSessionId !== "" && rememberedHandoffSessionId !== normalizedExpectedHandoffSessionId) {
+    return {
+      valid: false,
+      reason: "handoff_session_mismatch",
+      clientState: null,
+    };
+  }
+  if (
+    normalizedCandidateSource === "fresh_exact_tab"
+    && normalizedExpectedLaunchSessionId !== ""
+    && rememberedLaunchSessionId === normalizedExpectedLaunchSessionId
+    && (
+      normalizedExpectedHandoffSessionId === ""
+      || rememberedHandoffSessionId === ""
+      || rememberedHandoffSessionId === normalizedExpectedHandoffSessionId
+    )
+  ) {
+    return {
+      valid: true,
+      reason: "",
+      clientState: null,
+    };
+  }
+
+  const clientState = await readBrowserClientHydrationState(tab.id);
+  const expectation = {
+    ...parseBrowserClientExpectation(targetUrl),
+    assetVersion: normalizeToken(expectedAssetVersion),
+  };
+  if (!doesBrowserClientMatchExpectation(clientState, expectation)) {
+    return {
+      valid: false,
+      reason: clientState.available === true ? "client_state_mismatch" : "client_state_missing",
+      clientState,
+    };
+  }
+
+  if (normalizedExpectedLaunchSessionId === "") {
+    return {
+      valid: true,
+      reason: "",
+      clientState,
+    };
+  }
+
+  const observedLaunchSessionId = normalizeToken(clientState.launchSessionId);
+  const observedHandoffSessionId = normalizeToken(clientState.handoffSessionId);
+  if (rememberedLaunchSessionId !== "" && rememberedLaunchSessionId === normalizedExpectedLaunchSessionId) {
+    if (observedLaunchSessionId !== "" && observedLaunchSessionId !== normalizedExpectedLaunchSessionId) {
+      return {
+        valid: false,
+        reason: "launch_session_mismatch",
+        clientState,
+      };
+    }
+    if (
+      normalizedExpectedHandoffSessionId !== ""
+      && observedHandoffSessionId !== ""
+      && observedHandoffSessionId !== normalizedExpectedHandoffSessionId
+    ) {
+      return {
+        valid: false,
+        reason: "handoff_session_mismatch",
+        clientState,
+      };
+    }
+    return {
+      valid: true,
+      reason: "",
+      clientState,
+    };
+  }
+
+  if (observedLaunchSessionId !== normalizedExpectedLaunchSessionId) {
+    return {
+      valid: false,
+      reason: observedLaunchSessionId === "" ? "client_state_missing" : "launch_session_mismatch",
+      clientState,
+    };
+  }
+  if (
+    normalizedExpectedHandoffSessionId !== ""
+    && observedHandoffSessionId !== ""
+    && observedHandoffSessionId !== normalizedExpectedHandoffSessionId
+  ) {
+    return {
+      valid: false,
+      reason: "handoff_session_mismatch",
+      clientState,
+    };
+  }
+
+  return {
+    valid: true,
+    reason: "",
+    clientState,
+  };
+}
+
+async function resolveBrowserAppTab(browserUrl, options = {}) {
+  const targetUrl = normalizeUrl(browserUrl);
+  if (targetUrl === "") {
+    return buildEmptyBrowserSurfaceResolution();
+  }
+  await ensurePendingBrowserSurfacesLoaded();
+  const activeLaunchSession = await getActiveBrowserLaunchSession(targetUrl);
+  const expectedLaunchSessionId = normalizeToken(
+    options?.expectedLaunchSessionId
+    || options?.launchSessionId
+    || activeLaunchSession?.launchSessionId,
+  );
+  const expectedHandoffSessionId = normalizeToken(options?.expectedHandoffSessionId || options?.handoffSessionId);
+  const expectedAssetVersion = normalizeToken(options?.expectedAssetVersion);
   let url;
   try {
     url = new URL(targetUrl);
   } catch (_error) {
-    return null;
+    return buildEmptyBrowserSurfaceResolution({
+      launchSessionId: expectedLaunchSessionId,
+      browserOpenOwnedBy: activeLaunchSession?.owner,
+    });
   }
+  const key = buildPendingBrowserSurfaceKey(targetUrl);
+  const strictSurface = browserWorkspaceRequiresExactSurface(targetUrl);
   const candidates = await chrome.tabs.query({ url: `${url.origin}/*` });
+  let invalidResolution = buildEmptyBrowserSurfaceResolution({
+    launchSessionId: expectedLaunchSessionId,
+    handoffSessionId: expectedHandoffSessionId,
+    browserOpenOwnedBy: activeLaunchSession?.owner,
+  });
+  const pending = pendingBrowserSurfaces.get(key);
+  if (pending && Number.isInteger(pending.tabId)) {
+    const pendingMatch = candidates.find((tab) => tab.id === pending.tabId);
+    if (
+      pendingMatch
+      && (
+        !strictSurface
+        || browserWorkspaceIdentityMatches(pendingMatch.url, targetUrl)
+      )
+    ) {
+      if (strictSurface) {
+        const candidateSource = isFreshPendingSurfaceForActiveSession(pending, expectedLaunchSessionId)
+          ? "fresh_exact_tab"
+          : "pending_surface";
+        const validation = await validateStrictBrowserWorkspaceCandidate(targetUrl, pendingMatch, {
+          expectedLaunchSessionId,
+          expectedHandoffSessionId,
+          expectedAssetVersion,
+          candidateSource,
+          pendingRecord: pending,
+        });
+        if (!validation.valid) {
+          pendingBrowserSurfaces.delete(key);
+          await persistPendingBrowserSurfaces();
+          invalidResolution = {
+            ...invalidResolution,
+            surfaceCandidateSource: candidateSource,
+            surfaceInvalidationReason: validation.reason,
+            clientState: validation.clientState,
+          };
+        } else {
+          await rememberPendingBrowserSurface(targetUrl, pendingMatch, {
+            launchSessionId: pending.launchSessionId || expectedLaunchSessionId,
+            handoffSessionId: pending.handoffSessionId || expectedHandoffSessionId,
+            browserOpenOwnedBy: pending.browserOpenOwnedBy || activeLaunchSession?.owner,
+            resolutionStrategy: pending.resolutionStrategy || (candidateSource === "fresh_exact_tab" ? "created_exact_tab" : "pending_match"),
+            surfaceCandidateSource: candidateSource,
+            surfaceCandidateValid: true,
+            surfaceInvalidationReason: "",
+            freshTabCreatedAfterInvalidation: pending.freshTabCreatedAfterInvalidation === true,
+          });
+          return {
+            tab: pendingMatch,
+            resolutionStrategy: pending.resolutionStrategy || (candidateSource === "fresh_exact_tab" ? "created_exact_tab" : "pending_match"),
+            launchSessionId: pending.launchSessionId || expectedLaunchSessionId,
+            handoffSessionId: pending.handoffSessionId || expectedHandoffSessionId,
+            browserOpenOwnedBy: pending.browserOpenOwnedBy || activeLaunchSession?.owner || "",
+            surfaceCandidateSource: candidateSource,
+            surfaceCandidateValid: true,
+            surfaceInvalidationReason: "",
+            freshTabCreatedAfterInvalidation: pending.freshTabCreatedAfterInvalidation === true,
+            clientState: validation.clientState,
+          };
+        }
+      } else {
+        await rememberPendingBrowserSurface(targetUrl, pendingMatch, {
+          launchSessionId: pending.launchSessionId,
+          handoffSessionId: pending.handoffSessionId || expectedHandoffSessionId,
+          browserOpenOwnedBy: pending.browserOpenOwnedBy,
+          resolutionStrategy: pending.resolutionStrategy || "pending_match",
+          surfaceCandidateSource: pending.surfaceCandidateSource || "pending_surface",
+          surfaceCandidateValid: true,
+          surfaceInvalidationReason: "",
+          freshTabCreatedAfterInvalidation: pending.freshTabCreatedAfterInvalidation === true,
+        });
+        return {
+          tab: pendingMatch,
+          resolutionStrategy: pending.resolutionStrategy || "pending_match",
+          launchSessionId: pending.launchSessionId,
+          handoffSessionId: pending.handoffSessionId || expectedHandoffSessionId,
+          browserOpenOwnedBy: pending.browserOpenOwnedBy || "",
+          surfaceCandidateSource: pending.surfaceCandidateSource || "pending_surface",
+          surfaceCandidateValid: true,
+          surfaceInvalidationReason: "",
+          freshTabCreatedAfterInvalidation: pending.freshTabCreatedAfterInvalidation === true,
+          clientState: null,
+        };
+      }
+    } else {
+      pendingBrowserSurfaces.delete(key);
+      await persistPendingBrowserSurfaces();
+      invalidResolution = {
+        ...invalidResolution,
+        surfaceCandidateSource: normalizeToken(pending?.surfaceCandidateSource || "pending_surface").toLowerCase(),
+        surfaceInvalidationReason: "tab_missing",
+      };
+    }
+  }
   const workspaceMatch = candidates.find((tab) => browserWorkspaceIdentityMatches(tab.url, targetUrl));
   if (workspaceMatch && Number.isInteger(workspaceMatch.id)) {
-    await rememberPendingBrowserSurface(targetUrl, workspaceMatch);
-    return workspaceMatch;
+    if (strictSurface) {
+      const validation = await validateStrictBrowserWorkspaceCandidate(targetUrl, workspaceMatch, {
+        expectedLaunchSessionId,
+        expectedHandoffSessionId,
+        expectedAssetVersion,
+        candidateSource: "queried_exact_tab",
+      });
+      if (!validation.valid) {
+        invalidResolution = {
+          ...invalidResolution,
+          surfaceCandidateSource: "queried_exact_tab",
+          surfaceInvalidationReason: validation.reason,
+          clientState: validation.clientState,
+        };
+      } else {
+        await rememberPendingBrowserSurface(targetUrl, workspaceMatch, {
+          launchSessionId: expectedLaunchSessionId,
+          handoffSessionId: expectedHandoffSessionId,
+          browserOpenOwnedBy: activeLaunchSession?.owner,
+          resolutionStrategy: "exact_workspace_match",
+          surfaceCandidateSource: "queried_exact_tab",
+          surfaceCandidateValid: true,
+          surfaceInvalidationReason: "",
+          freshTabCreatedAfterInvalidation: false,
+        });
+        return {
+          tab: workspaceMatch,
+          resolutionStrategy: "exact_workspace_match",
+          launchSessionId: expectedLaunchSessionId,
+          handoffSessionId: expectedHandoffSessionId,
+          browserOpenOwnedBy: activeLaunchSession?.owner || "",
+          surfaceCandidateSource: "queried_exact_tab",
+          surfaceCandidateValid: true,
+          surfaceInvalidationReason: "",
+          freshTabCreatedAfterInvalidation: false,
+          clientState: validation.clientState,
+        };
+      }
+    } else {
+      await rememberPendingBrowserSurface(targetUrl, workspaceMatch, {
+        launchSessionId: expectedLaunchSessionId,
+        handoffSessionId: expectedHandoffSessionId,
+        browserOpenOwnedBy: activeLaunchSession?.owner,
+        resolutionStrategy: "exact_workspace_match",
+        surfaceCandidateSource: "queried_exact_tab",
+        surfaceCandidateValid: true,
+        surfaceInvalidationReason: "",
+        freshTabCreatedAfterInvalidation: false,
+      });
+      return {
+        tab: workspaceMatch,
+        resolutionStrategy: "exact_workspace_match",
+        launchSessionId: expectedLaunchSessionId,
+        handoffSessionId: expectedHandoffSessionId,
+        browserOpenOwnedBy: activeLaunchSession?.owner || "",
+        surfaceCandidateSource: "queried_exact_tab",
+        surfaceCandidateValid: true,
+        surfaceInvalidationReason: "",
+        freshTabCreatedAfterInvalidation: false,
+        clientState: null,
+      };
+    }
+  }
+  if (strictSurface) {
+    return invalidResolution;
   }
   const existing = candidates.find((tab) => Number.isInteger(tab.id));
   if (existing && Number.isInteger(existing.id)) {
-    await rememberPendingBrowserSurface(targetUrl, existing);
+    await rememberPendingBrowserSurface(targetUrl, existing, {
+      handoffSessionId: expectedHandoffSessionId,
+      resolutionStrategy: "origin_tab_reused",
+      surfaceCandidateSource: "origin_tab_reused",
+      surfaceCandidateValid: true,
+      surfaceInvalidationReason: "",
+      freshTabCreatedAfterInvalidation: false,
+    });
+    return {
+      tab: existing,
+      resolutionStrategy: "origin_tab_reused",
+      launchSessionId: expectedLaunchSessionId,
+      handoffSessionId: expectedHandoffSessionId,
+      browserOpenOwnedBy: activeLaunchSession?.owner || "",
+      surfaceCandidateSource: "origin_tab_reused",
+      surfaceCandidateValid: true,
+      surfaceInvalidationReason: "",
+      freshTabCreatedAfterInvalidation: false,
+      clientState: null,
+    };
   }
-  return existing || null;
+  return invalidResolution;
 }
 
 async function readBrowserClientHydrationState(tabId) {
@@ -881,6 +1651,9 @@ async function readBrowserClientHydrationState(tabId) {
       gmailHandoffState: "",
       buildSha: "",
       assetVersion: "",
+      launchSessionId: "",
+      handoffSessionId: "",
+      launchSessionSchemaVersion: 0,
       bootstrappedAt: "",
       url: "",
     };
@@ -900,6 +1673,9 @@ async function readBrowserClientHydrationState(tabId) {
             clientActiveView: dataset.clientActiveView || "",
             clientBuildSha: dataset.clientBuildSha || "",
             clientAssetVersion: dataset.clientAssetVersion || "",
+            clientLaunchSession: dataset.clientLaunchSession || "",
+            clientHandoffSession: dataset.clientHandoffSession || "",
+            clientLaunchSessionSchemaVersion: dataset.clientLaunchSessionSchemaVersion || "",
           },
           href: window.location.href,
         };
@@ -918,6 +1694,11 @@ async function readBrowserClientHydrationState(tabId) {
       gmailHandoffState: normalizeToken(marker.gmailHandoffState).toLowerCase(),
       buildSha: normalizeToken(marker.buildSha || dataset.clientBuildSha),
       assetVersion: normalizeToken(marker.assetVersion || dataset.clientAssetVersion),
+      launchSessionId: normalizeToken(marker.launchSessionId || dataset.clientLaunchSession),
+      handoffSessionId: normalizeToken(marker.handoffSessionId || dataset.clientHandoffSession),
+      launchSessionSchemaVersion: normalizeSchemaVersion(
+        marker.launchSessionSchemaVersion || dataset.clientLaunchSessionSchemaVersion,
+      ),
       bootstrappedAt: normalizeToken(marker.bootstrappedAt),
       reason: normalizeToken(marker.reason),
       message: normalizeToken(marker.message),
@@ -933,6 +1714,9 @@ async function readBrowserClientHydrationState(tabId) {
       gmailHandoffState: "",
       buildSha: "",
       assetVersion: "",
+      launchSessionId: "",
+      handoffSessionId: "",
+      launchSessionSchemaVersion: 0,
       bootstrappedAt: "",
       url: "",
     };
@@ -962,6 +1746,8 @@ async function waitForBrowserClientHydration(
   browserUrl,
   timeoutMs = CLIENT_HYDRATION_WAIT_MS,
   expectedAssetVersion = "",
+  expectedLaunchSessionId = "",
+  expectedHandoffSessionId = "",
 ) {
   const expectation = {
     ...parseBrowserClientExpectation(browserUrl),
@@ -977,11 +1763,18 @@ async function waitForBrowserClientHydration(
     gmailHandoffState: "",
     buildSha: "",
     assetVersion: "",
+    launchSessionId: "",
+    launchSessionSchemaVersion: 0,
     bootstrappedAt: "",
     url: "",
   };
   while (Date.now() <= deadline) {
-    const tab = await resolveBrowserAppTab(browserUrl);
+    const surface = await resolveBrowserAppTab(browserUrl, {
+      expectedLaunchSessionId,
+      expectedHandoffSessionId,
+      expectedAssetVersion,
+    });
+    const tab = surface?.tab || null;
     if (tab && Number.isInteger(tab.id)) {
       const clientState = await readBrowserClientHydrationState(tab.id);
       lastState = {
@@ -1015,8 +1808,108 @@ async function waitForBrowserClientHydration(
   };
 }
 
+function determineClientHydrationStatus(hydrationResult) {
+  if (hydrationResult?.ready) {
+    return "ready";
+  }
+  const clientState = hydrationResult?.clientState || {};
+  const status = normalizeToken(clientState.status).toLowerCase();
+  if (status === "warming") {
+    return "warming";
+  }
+  if (status === "client_boot_failed") {
+    return "boot_failed";
+  }
+  return "not_found";
+}
+
+async function inspectBrowserWorkspaceSurface(
+  browserUrl,
+  expectedAssetVersion = "",
+  expectedLaunchSessionId = "",
+  expectedHandoffSessionId = "",
+) {
+  const targetUrl = normalizeUrl(browserUrl);
+  const resolvedSurface = await resolveBrowserAppTab(targetUrl, {
+    expectedLaunchSessionId,
+    expectedHandoffSessionId,
+    expectedAssetVersion,
+  });
+  const resolvedTab = resolvedSurface?.tab || null;
+  const workspaceSurfaceConfirmed = Boolean(
+    resolvedTab
+    && Number.isInteger(resolvedTab.id)
+    && browserWorkspaceIdentityMatches(resolvedTab.url, targetUrl)
+  );
+  const visibility = workspaceSurfaceConfirmed
+    ? await ensureBrowserTabVisible(resolvedTab)
+    : { ok: false, surfaceVisibilityStatus: "not_visible" };
+  if (workspaceSurfaceConfirmed && visibility.ok && normalizeToken(expectedHandoffSessionId) !== "") {
+    await primeBrowserClientHandoffSession(
+      resolvedTab.id,
+      expectedHandoffSessionId,
+      EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION,
+    );
+  }
+  if (!workspaceSurfaceConfirmed) {
+    const rejectedHydration = resolvedSurface?.clientState
+      ? {
+        ready: false,
+        tabId: Number.isInteger(resolvedTab?.id) ? resolvedTab.id : null,
+        clientState: resolvedSurface.clientState,
+      }
+      : null;
+    return {
+      tabId: Number.isInteger(resolvedTab?.id) ? resolvedTab.id : null,
+      tabResolutionStrategy: normalizeToken(resolvedSurface?.resolutionStrategy).toLowerCase() || "no_surface_confirmed",
+      surfaceCandidateSource: normalizeToken(resolvedSurface?.surfaceCandidateSource).toLowerCase() || "no_surface_confirmed",
+      surfaceCandidateValid: resolvedSurface?.surfaceCandidateValid === true,
+      surfaceInvalidationReason: normalizeToken(resolvedSurface?.surfaceInvalidationReason),
+      freshTabCreatedAfterInvalidation: resolvedSurface?.freshTabCreatedAfterInvalidation === true,
+      workspaceSurfaceConfirmed: false,
+      surfaceVisibilityStatus: normalizeToken(visibility?.surfaceVisibilityStatus) || "not_visible",
+      clientHydrationStatus: rejectedHydration ? determineClientHydrationStatus(rejectedHydration) : "not_found",
+      clientHydration: rejectedHydration,
+    };
+  }
+  if (!visibility.ok) {
+    return {
+      tabId: Number.isInteger(resolvedTab?.id) ? resolvedTab.id : null,
+      tabResolutionStrategy: normalizeToken(resolvedSurface?.resolutionStrategy).toLowerCase() || "exact_workspace_match",
+      surfaceCandidateSource: normalizeToken(resolvedSurface?.surfaceCandidateSource).toLowerCase() || "queried_exact_tab",
+      surfaceCandidateValid: resolvedSurface?.surfaceCandidateValid === true,
+      surfaceInvalidationReason: normalizeToken(resolvedSurface?.surfaceInvalidationReason) || normalizeToken(visibility?.surfaceVisibilityStatus),
+      freshTabCreatedAfterInvalidation: resolvedSurface?.freshTabCreatedAfterInvalidation === true,
+      workspaceSurfaceConfirmed: false,
+      surfaceVisibilityStatus: normalizeToken(visibility?.surfaceVisibilityStatus) || "not_visible",
+      clientHydrationStatus: "not_found",
+      clientHydration: null,
+    };
+  }
+  const clientHydration = await waitForBrowserClientHydration(
+    targetUrl,
+    CLIENT_HYDRATION_WAIT_MS,
+    expectedAssetVersion,
+    expectedLaunchSessionId,
+    expectedHandoffSessionId,
+  );
+  return {
+    tabId: Number.isInteger(clientHydration?.tabId) ? clientHydration.tabId : resolvedTab.id,
+    tabResolutionStrategy: normalizeToken(resolvedSurface?.resolutionStrategy).toLowerCase() || "exact_workspace_match",
+    surfaceCandidateSource: normalizeToken(resolvedSurface?.surfaceCandidateSource).toLowerCase() || "queried_exact_tab",
+    surfaceCandidateValid: resolvedSurface?.surfaceCandidateValid === true,
+    surfaceInvalidationReason: normalizeToken(resolvedSurface?.surfaceInvalidationReason),
+    freshTabCreatedAfterInvalidation: resolvedSurface?.freshTabCreatedAfterInvalidation === true,
+    workspaceSurfaceConfirmed: true,
+    surfaceVisibilityStatus: normalizeToken(visibility?.surfaceVisibilityStatus) || "visible",
+    clientHydrationStatus: determineClientHydrationStatus(clientHydration),
+    clientHydration,
+  };
+}
+
 async function reloadBrowserAppTab(browserUrl) {
-  const tab = await resolveBrowserAppTab(browserUrl);
+  const surface = await resolveBrowserAppTab(browserUrl);
+  const tab = surface?.tab || null;
   if (!tab || !Number.isInteger(tab.id)) {
     return {
       ok: false,
@@ -1045,12 +1938,17 @@ async function waitForBrowserWorkspaceState(
       appBootstrapReady: false,
       workspaceRouteReachable: false,
       assetVersion: "",
+      launchSessionSchemaVersion: 0,
+      launchSessionDiagnosticsCompatible: true,
     };
   }
   const deadline = Date.now() + Math.max(0, Number(timeoutMs || 0));
   let appBootstrapReady = false;
   let workspaceRouteReachable = false;
   let assetVersion = "";
+  let observedHandoffSessionId = "";
+  let launchSessionSchemaVersion = 0;
+  let launchSessionDiagnosticsCompatible = true;
   let integrityFailureReason = "";
   let integrityFailureProbeReason = "";
   let integrityFailureProbeDetail = "";
@@ -1072,6 +1970,10 @@ async function waitForBrowserWorkspaceState(
             appBootstrapPayload?.normalized_payload?.shell?.asset_version
             || appBootstrapPayload?.normalized_payload?.runtime?.asset_version,
           );
+          launchSessionSchemaVersion = normalizeSchemaVersion(
+            appBootstrapPayload?.normalized_payload?.shell?.extension_launch_session_schema_version,
+          );
+          launchSessionDiagnosticsCompatible = launchSessionSchemaVersion >= EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION;
           const appIntegrityReason = appIntegrity.reason;
           if (isBridgeIntegrityFailureReason(appIntegrityReason)) {
             return {
@@ -1089,6 +1991,8 @@ async function waitForBrowserWorkspaceState(
               appBootstrapReady,
               workspaceRouteReachable,
               assetVersion,
+              launchSessionSchemaVersion,
+              launchSessionDiagnosticsCompatible,
             };
           }
         }
@@ -1110,17 +2014,21 @@ async function waitForBrowserWorkspaceState(
         const integrityState = extractBridgeIntegrityState(payload);
         const integrityReason = integrityState.reason;
         const pendingContext = gmailPayload.pending_intake_context || {};
+        observedHandoffSessionId = browserHandoffSessionIdFromPayload(payload);
+        const expectedHandoffSessionId = normalizeToken(expectedContext?.handoff_session_id);
+        const handoffMatches = expectedHandoffSessionId === "" || observedHandoffSessionId === expectedHandoffSessionId;
         const pendingStatus = normalizeToken(gmailPayload.pending_status).toLowerCase();
         const pendingReviewOpen = gmailPayload.pending_review_open === true;
         const pending = (
           messageContextMatches(expectedContext, pendingContext)
+          && handoffMatches
           && pendingReviewOpen
           && WORKSPACE_PENDING_STATUSES.has(pendingStatus)
         );
         const loadResult = gmailPayload.load_result || {};
         const loadMatches = messageContextMatches(expectedContext, loadResult.intake_context || {});
-        const loaded = loadMatches && loadResult.ok === true;
-        const loadFailed = loadMatches && loadResult.ok === false;
+        const loaded = loadMatches && handoffMatches && loadResult.ok === true;
+        const loadFailed = loadMatches && handoffMatches && loadResult.ok === false;
         const loadFailureMessage = (
           loadFailed
             ? normalizeToken(loadResult.status_message) || "LegalPDF Translate could not load the exact Gmail message."
@@ -1141,9 +2049,12 @@ async function waitForBrowserWorkspaceState(
             integrityFailureProbeDetail: integrityState.bridgeProbeDetail,
             integrityFailureTimedOut: integrityState.bridgeProbeTimedOut,
             appBootstrapReady,
-            workspaceRouteReachable,
-            assetVersion,
-          };
+              workspaceRouteReachable,
+              assetVersion,
+              handoffSessionId: observedHandoffSessionId,
+              launchSessionSchemaVersion,
+              launchSessionDiagnosticsCompatible,
+            };
         }
         if (loaded) {
           return {
@@ -1161,6 +2072,9 @@ async function waitForBrowserWorkspaceState(
             appBootstrapReady,
             workspaceRouteReachable,
             assetVersion,
+            handoffSessionId: observedHandoffSessionId,
+            launchSessionSchemaVersion,
+            launchSessionDiagnosticsCompatible,
           };
         }
         if (warming) {
@@ -1179,6 +2093,9 @@ async function waitForBrowserWorkspaceState(
             appBootstrapReady,
             workspaceRouteReachable,
             assetVersion,
+            handoffSessionId: observedHandoffSessionId,
+            launchSessionSchemaVersion,
+            launchSessionDiagnosticsCompatible,
           };
         }
         if (loadFailed) {
@@ -1197,6 +2114,9 @@ async function waitForBrowserWorkspaceState(
             appBootstrapReady,
             workspaceRouteReachable,
             assetVersion,
+            handoffSessionId: observedHandoffSessionId,
+            launchSessionSchemaVersion,
+            launchSessionDiagnosticsCompatible,
           };
         }
       }
@@ -1220,6 +2140,9 @@ async function waitForBrowserWorkspaceState(
     appBootstrapReady,
     workspaceRouteReachable,
     assetVersion,
+    handoffSessionId: observedHandoffSessionId,
+    launchSessionSchemaVersion,
+    launchSessionDiagnosticsCompatible,
   };
 }
 
@@ -1263,6 +2186,54 @@ function buildWorkspaceFailureMessage({ resolvedBrowserOpen, focusNotice }) {
     parts.push("LegalPDF Translate did not finish launching into the Gmail review surface.");
     parts.push("Please click the extension again.");
   }
+  if (focusNotice !== "") {
+    parts.push(focusNotice);
+  } else if (!resolvedBrowserOpen) {
+    parts.push("The browser app may still need manual focus.");
+  }
+  return parts.join(" ");
+}
+
+function buildWorkspaceSurfaceConfirmationFailureMessage({
+  resolvedBrowserOpen,
+  focusNotice,
+  hydrationStatus,
+  hydrationResult,
+  expectedAssetVersion = "",
+  launchSessionDiagnosticsCompatible = true,
+}) {
+  const parts = [];
+  const clientState = hydrationResult?.clientState || {};
+  const expectedVersion = normalizeToken(expectedAssetVersion);
+  const observedVersion = normalizeToken(clientState.assetVersion);
+  const assetMismatch = expectedVersion !== "" && observedVersion !== "" && observedVersion !== expectedVersion;
+  if (assetMismatch) {
+    if (resolvedBrowserOpen) {
+      parts.push("LegalPDF Translate opened, but the Gmail workspace tab is still running stale browser assets.");
+    } else {
+      parts.push("LegalPDF Translate could not confirm that the Gmail workspace tab picked up the current browser assets.");
+    }
+    parts.push(`Expected asset version: ${expectedVersion}.`);
+    parts.push(`Tab asset version: ${observedVersion}.`);
+  } else if (hydrationStatus === "boot_failed") {
+    if (resolvedBrowserOpen) {
+      parts.push("LegalPDF Translate opened, but the Gmail workspace tab failed to hydrate the review UI.");
+    } else {
+      parts.push("LegalPDF Translate could not confirm that the Gmail workspace tab hydrated the review UI.");
+    }
+    if (normalizeToken(clientState.message) !== "") {
+      parts.push(normalizeToken(clientState.message));
+    }
+  } else if (resolvedBrowserOpen) {
+    parts.push("LegalPDF Translate opened, but the exact Gmail workspace tab was not confirmed.");
+  } else {
+    parts.push("LegalPDF Translate did not confirm that the Gmail workspace tab opened correctly.");
+  }
+  if (!launchSessionDiagnosticsCompatible) {
+    parts.push("The browser app is still running an older Gmail handoff schema than the extension expects.");
+    parts.push("Reload or reopen LegalPDF Translate so the browser app and extension come from the same revision, then click the extension again.");
+  }
+  parts.push("Please focus the LegalPDF tab and click the extension again.");
   if (focusNotice !== "") {
     parts.push(focusNotice);
   } else if (!resolvedBrowserOpen) {
@@ -1414,16 +2385,117 @@ async function resolveBridgeConfigForClick() {
   };
 }
 
-async function settleBrowserAppHandoff(browserUrl, browserAppOpened, waitForLaunchedTab) {
+async function settleBrowserAppHandoff(browserUrl, browserAppOpened, waitForLaunchedTab, options = {}) {
   let resolved = Boolean(browserAppOpened);
   const targetUrl = normalizeUrl(browserUrl);
-  if (!resolved && waitForLaunchedTab && targetUrl !== "") {
-    resolved = await waitForLaunchedBrowserAppTab(targetUrl);
+  const activeLaunchSession = targetUrl === "" ? null : await getActiveBrowserLaunchSession(targetUrl);
+  const expectedLaunchSessionId = normalizeToken(options?.launchSessionId || activeLaunchSession?.launchSessionId);
+  const expectedHandoffSessionId = normalizeToken(options?.handoffSessionId || activeLaunchSession?.handoffSessionId);
+  if (
+    !resolved
+    && targetUrl !== ""
+    && (waitForLaunchedTab || (activeLaunchSession && activeLaunchSession.owner !== BROWSER_OPEN_OWNER_EXTENSION))
+  ) {
+    resolved = await waitForLaunchedBrowserAppTab(
+      targetUrl,
+      activeLaunchSession
+        ? Math.max(COLD_START_TAB_WAIT_MS, activeLaunchSession.expiresAt - Date.now())
+        : COLD_START_TAB_WAIT_MS,
+      {
+        launchSessionId: expectedLaunchSessionId,
+        handoffSessionId: expectedHandoffSessionId,
+      },
+    );
   }
   if (!resolved && targetUrl !== "") {
-    resolved = await focusExistingBrowserAppWindow(targetUrl);
+    resolved = await focusExistingBrowserAppWindow(targetUrl, {
+      launchSessionId: expectedLaunchSessionId,
+      handoffSessionId: expectedHandoffSessionId,
+    });
   }
   return resolved;
+}
+
+async function confirmBrowserWorkspaceSurfaceBeforeBridgePost(
+  tabId,
+  context,
+  nativeResponse,
+  focusNotice,
+  browserAppOpened = false,
+  browserUrl = "",
+  waitForLaunchedTab = false,
+) {
+  const targetUrl = normalizeUrl(browserUrl);
+  if (!nativeResponse || nativeResponse.ui_owner !== "browser_app" || targetUrl === "") {
+    return {
+      ok: true,
+      resolvedBrowserOpen: Boolean(browserAppOpened),
+      surfaceState: null,
+    };
+  }
+  const launchSessionId = normalizeToken(nativeResponse?.launch_session_id);
+  const handoffSessionId = normalizeToken(context?.handoff_session_id);
+  const resolvedBrowserOpen = await settleBrowserAppHandoff(
+    targetUrl,
+    browserAppOpened,
+    waitForLaunchedTab,
+    {
+      launchSessionId,
+      handoffSessionId,
+    },
+  );
+  const surfaceState = await inspectBrowserWorkspaceSurface(
+    targetUrl,
+    "",
+    launchSessionId,
+    handoffSessionId,
+  );
+  const clientHydrationStatus = normalizeToken(surfaceState?.clientHydrationStatus).toLowerCase() || "not_found";
+  const workspaceSurfaceConfirmed = surfaceState?.workspaceSurfaceConfirmed === true;
+  const hydratedSurfaceConfirmed = workspaceSurfaceConfirmed
+    && (clientHydrationStatus === "ready" || clientHydrationStatus === "warming");
+  if (hydratedSurfaceConfirmed) {
+    return {
+      ok: true,
+      resolvedBrowserOpen,
+      surfaceState,
+    };
+  }
+
+  await clearBrowserLaunchState(targetUrl);
+  await reportLaunchSessionDiagnostics(targetUrl, nativeResponse, {
+    launchSessionId,
+    handoffSessionId,
+    tabResolutionStrategy: surfaceState?.tabResolutionStrategy,
+    workspaceSurfaceConfirmed,
+    clientHydrationStatus,
+    surfaceCandidateSource: surfaceState?.surfaceCandidateSource,
+    surfaceCandidateValid: surfaceState?.surfaceCandidateValid === true,
+    surfaceInvalidationReason: surfaceState?.surfaceInvalidationReason,
+    freshTabCreatedAfterInvalidation: surfaceState?.freshTabCreatedAfterInvalidation === true,
+    bridgeContextPosted: false,
+    surfaceVisibilityStatus: normalizeToken(surfaceState?.surfaceVisibilityStatus),
+    tabId: surfaceState?.tabId,
+    outcome: "workspace_surface_unconfirmed",
+    reason: "pre_bridge_surface_unconfirmed",
+  });
+  await notifyTab(
+    tabId,
+    "error",
+    buildWorkspaceSurfaceConfirmationFailureMessage({
+      resolvedBrowserOpen,
+      focusNotice,
+      hydrationStatus: clientHydrationStatus,
+      hydrationResult: surfaceState?.clientHydration || null,
+      expectedAssetVersion: "",
+      launchSessionDiagnosticsCompatible: true,
+    }),
+  );
+  return {
+    ok: false,
+    resolvedBrowserOpen,
+    surfaceState,
+  };
 }
 
 async function postContext(
@@ -1450,6 +2522,7 @@ async function postContext(
         thread_id: context.thread_id,
         subject: context.subject,
         account_email: context.account_email ?? undefined,
+        handoff_session_id: context.handoff_session_id ?? undefined,
       }),
     });
   } catch (_error) {
@@ -1479,6 +2552,38 @@ async function postContext(
     context,
     waitForLaunchedTab ? COLD_START_WORKSPACE_READY_WAIT_MS : WORKSPACE_READY_WAIT_MS,
   );
+  const surfaceState = nativeResponse && nativeResponse.ui_owner === "browser_app"
+    ? await inspectBrowserWorkspaceSurface(
+      browserUrl,
+      workspaceState.assetVersion,
+      normalizeToken(nativeResponse?.launch_session_id),
+      normalizeToken(context?.handoff_session_id),
+    )
+    : null;
+  const clientHydrationStatus = normalizeToken(surfaceState?.clientHydrationStatus).toLowerCase() || "not_found";
+  const exactWorkspaceSurfaceConfirmed = surfaceState?.workspaceSurfaceConfirmed === true;
+  const clientHydrationResult = surfaceState?.clientHydration || null;
+  const reportBrowserOutcome = async (outcome, reason = "") => {
+    if (!surfaceState) {
+      return;
+    }
+    await reportLaunchSessionDiagnostics(browserUrl, nativeResponse, {
+      launchSessionId: normalizeToken(nativeResponse?.launch_session_id),
+      handoffSessionId: normalizeToken(context?.handoff_session_id),
+      tabResolutionStrategy: surfaceState.tabResolutionStrategy,
+      workspaceSurfaceConfirmed: surfaceState.workspaceSurfaceConfirmed,
+      clientHydrationStatus,
+      surfaceCandidateSource: surfaceState.surfaceCandidateSource,
+      surfaceCandidateValid: surfaceState.surfaceCandidateValid,
+      surfaceInvalidationReason: surfaceState.surfaceInvalidationReason,
+      freshTabCreatedAfterInvalidation: surfaceState.freshTabCreatedAfterInvalidation,
+      bridgeContextPosted: true,
+      surfaceVisibilityStatus: normalizeToken(surfaceState.surfaceVisibilityStatus),
+      tabId: surfaceState.tabId,
+      outcome,
+      reason,
+    });
+  };
   const baseMessage =
     typeof payload.message === "string" && payload.message.trim() !== ""
       ? payload.message.trim()
@@ -1496,38 +2601,93 @@ async function postContext(
       if (focusNotice !== "") {
         parts.push(focusNotice);
       }
-      await clearPendingBrowserSurface(browserUrl);
+      await clearBrowserLaunchState(browserUrl);
+      await reportBrowserOutcome("integrity_failure", workspaceState.integrityFailureReason);
       await notifyTab(tabId, "error", parts.join(" "));
       return { holdLock: false, outcome: "integrity_failure" };
     }
     if (workspaceState.loaded) {
-      const message = suffix.length ? `${baseMessage} ${suffix.join(" ")}` : baseMessage;
-      await notifyTab(tabId, "success", message);
-      return { holdLock: false, outcome: "loaded" };
+      if (exactWorkspaceSurfaceConfirmed && clientHydrationStatus === "ready") {
+        await clearActiveBrowserLaunchSession(browserUrl);
+        await reportBrowserOutcome("loaded", "workspace_loaded");
+        const message = suffix.length ? `${baseMessage} ${suffix.join(" ")}` : baseMessage;
+        await notifyTab(tabId, "success", message);
+        return { holdLock: false, outcome: "loaded" };
+      }
+      if (exactWorkspaceSurfaceConfirmed && clientHydrationStatus === "warming") {
+        await clearActiveBrowserLaunchSession(browserUrl);
+        await reportBrowserOutcome("warming", "workspace_loaded_client_warming");
+        await notifyTab(
+          tabId,
+          "info",
+          buildWorkspaceWarmupMessage({
+            baseMessage,
+            focusNotice,
+            resolvedBrowserOpen,
+          }),
+        );
+        return { holdLock: true, outcome: "warming" };
+      }
+      await clearBrowserLaunchState(browserUrl);
+      await reportBrowserOutcome("workspace_surface_unconfirmed", "workspace_loaded_without_confirmed_surface");
+      await notifyTab(
+        tabId,
+        "error",
+        buildWorkspaceSurfaceConfirmationFailureMessage({
+          resolvedBrowserOpen,
+          focusNotice,
+          hydrationStatus: clientHydrationStatus,
+          hydrationResult: clientHydrationResult,
+          expectedAssetVersion: workspaceState.assetVersion,
+          launchSessionDiagnosticsCompatible: workspaceState.launchSessionDiagnosticsCompatible,
+        }),
+      );
+      return { holdLock: false, outcome: "workspace_surface_unconfirmed" };
     }
     if (workspaceState.loadFailed) {
       const parts = [workspaceState.loadFailureMessage || "LegalPDF Translate could not load the exact Gmail message."];
       if (focusNotice !== "") {
         parts.push(focusNotice);
       }
-      await clearPendingBrowserSurface(browserUrl);
+      await clearBrowserLaunchState(browserUrl);
+      await reportBrowserOutcome("load_failed", "workspace_load_failed");
       await notifyTab(tabId, "error", parts.join(" "));
       return { holdLock: false, outcome: "load_failed" };
     }
     if (workspaceState.warming || workspaceState.pending) {
+      if (exactWorkspaceSurfaceConfirmed && (clientHydrationStatus === "ready" || clientHydrationStatus === "warming")) {
+        await clearActiveBrowserLaunchSession(browserUrl);
+        await reportBrowserOutcome("warming", "workspace_pending_with_confirmed_surface");
+        await notifyTab(
+          tabId,
+          "info",
+          buildWorkspaceWarmupMessage({
+            baseMessage,
+            focusNotice,
+            resolvedBrowserOpen,
+          }),
+        );
+        return { holdLock: true, outcome: "warming" };
+      }
+      await clearBrowserLaunchState(browserUrl);
+      await reportBrowserOutcome("workspace_surface_unconfirmed", "workspace_pending_without_confirmed_surface");
       await notifyTab(
         tabId,
-        "info",
-        buildWorkspaceWarmupMessage({
-          baseMessage,
-          focusNotice,
+        "error",
+        buildWorkspaceSurfaceConfirmationFailureMessage({
           resolvedBrowserOpen,
+          focusNotice,
+          hydrationStatus: clientHydrationStatus,
+          hydrationResult: clientHydrationResult,
+          expectedAssetVersion: workspaceState.assetVersion,
+          launchSessionDiagnosticsCompatible: workspaceState.launchSessionDiagnosticsCompatible,
         }),
       );
-      return { holdLock: true, outcome: "warming" };
+      return { holdLock: false, outcome: "workspace_surface_unconfirmed" };
     }
     if (workspaceState.workspaceRouteReachable || workspaceState.appBootstrapReady) {
-      await clearPendingBrowserSurface(browserUrl);
+      await clearBrowserLaunchState(browserUrl);
+      await reportBrowserOutcome("workspace_no_handoff", "workspace_route_reachable_without_exact_handoff");
       await notifyTab(
         tabId,
         "error",
@@ -1538,7 +2698,8 @@ async function postContext(
       );
       return { holdLock: false, outcome: "workspace_no_handoff" };
     }
-    await clearPendingBrowserSurface(browserUrl);
+    await clearBrowserLaunchState(browserUrl);
+    await reportBrowserOutcome("workspace_failure", "workspace_surface_not_ready");
     await notifyTab(
       tabId,
       "error",
@@ -1615,7 +2776,18 @@ chrome.action.onClicked.addListener(async (tab) => {
     if (!bridgeResolution.ok) {
       if (bridgeResolution.launchInProgress) {
         const pendingBrowserUrl = normalizeUrl(bridgeResolution.nativeResponse?.browser_url);
-        await focusExistingBrowserAppWindow(pendingBrowserUrl || DEFAULT_BROWSER_APP_URL);
+        await rememberActiveBrowserLaunchSession(pendingBrowserUrl || DEFAULT_BROWSER_APP_URL, {
+          launchSessionId: normalizeToken(bridgeResolution.nativeResponse?.launch_session_id),
+          handoffSessionId: normalizeToken(bridgeResolution.nativeResponse?.handoff_session_id),
+          owner: normalizeToken(bridgeResolution.nativeResponse?.browser_open_owned_by).toLowerCase() || BROWSER_OPEN_OWNER_SERVER_BOOT,
+          ttlMs: Number.isInteger(bridgeResolution.nativeResponse?.launch_lock_ttl_ms)
+            ? bridgeResolution.nativeResponse.launch_lock_ttl_ms
+            : LAUNCH_READINESS_WAIT_MS,
+        });
+        await focusExistingBrowserAppWindow(pendingBrowserUrl || DEFAULT_BROWSER_APP_URL, {
+          launchSessionId: normalizeToken(bridgeResolution.nativeResponse?.launch_session_id),
+          handoffSessionId: normalizeToken(bridgeResolution.nativeResponse?.handoff_session_id),
+        });
       }
       await notifyTab(tab.id, bridgeResolution.messageKind || "error", bridgeResolution.message);
       return;
@@ -1628,33 +2800,67 @@ chrome.action.onClicked.addListener(async (tab) => {
     let browserAppOpened = false;
     const browserUrl = normalizeUrl(bridgeResolution.nativeResponse?.browser_url);
     const browserOpenOwnedBy = normalizeToken(bridgeResolution.nativeResponse?.browser_open_owned_by).toLowerCase();
-    const waitForLaunchedTab = Boolean(
-      bridgeResolution.nativeResponse
-      && bridgeResolution.nativeResponse.ui_owner === "browser_app"
-      && bridgeResolution.nativeResponse.launched === true
-      && browserUrl !== ""
-      && browserOpenOwnedBy !== "extension"
-    );
+    const launchSessionId = normalizeToken(bridgeResolution.nativeResponse?.launch_session_id);
+    const handoffSessionId = normalizeToken(bridgeResolution.nativeResponse?.handoff_session_id);
+    const handoffContext = {
+      ...extraction.context,
+      handoff_session_id: handoffSessionId || undefined,
+    };
+    const resolvedBrowserOpenOwner = browserOpenOwnedBy || BROWSER_OPEN_OWNER_EXTENSION;
+    const foreignLaunchOwner = resolvedBrowserOpenOwner !== BROWSER_OPEN_OWNER_EXTENSION;
+    if (browserUrl !== "" && launchSessionId !== "") {
+      await rememberActiveBrowserLaunchSession(browserUrl, {
+        launchSessionId,
+        handoffSessionId,
+        owner: resolvedBrowserOpenOwner,
+        ttlMs: Number.isInteger(bridgeResolution.nativeResponse?.launch_lock_ttl_ms)
+          ? bridgeResolution.nativeResponse.launch_lock_ttl_ms
+          : LAUNCH_READINESS_WAIT_MS,
+      });
+    }
+    const waitForLaunchedTab = shouldWaitForLaunchedBrowserTab({
+      nativeResponse: bridgeResolution.nativeResponse,
+      browserUrl,
+      launchSessionId,
+      browserOpenOwnedBy: resolvedBrowserOpenOwner,
+    });
     if (
       bridgeResolution.nativeResponse
       && bridgeResolution.nativeResponse.ui_owner === "browser_app"
       && browserUrl !== ""
       && !waitForLaunchedTab
+      && !foreignLaunchOwner
     ) {
-      browserAppOpened = await openOrFocusBrowserApp(browserUrl);
+      browserAppOpened = await openOrFocusBrowserApp(browserUrl, {
+        launchSessionId,
+        handoffSessionId,
+        browserOpenOwnedBy: resolvedBrowserOpenOwner,
+      });
     }
     if (!isHandoffLockCurrent(handoffLock)) {
       return;
     }
-    const handoffResult = await postContext(
+    const surfaceConfirmation = await confirmBrowserWorkspaceSurfaceBeforeBridgePost(
       tab.id,
-      extraction.context,
-      bridgeResolution.config,
+      handoffContext,
       bridgeResolution.nativeResponse,
       focusNotice,
       browserAppOpened,
       browserUrl,
       waitForLaunchedTab,
+    );
+    if (!surfaceConfirmation.ok) {
+      return;
+    }
+    const handoffResult = await postContext(
+      tab.id,
+      handoffContext,
+      bridgeResolution.config,
+      bridgeResolution.nativeResponse,
+      focusNotice,
+      surfaceConfirmation.resolvedBrowserOpen,
+      browserUrl,
+      false,
     );
     shouldReleaseHandoffLock = Boolean(handoffResult?.holdLock) === false;
   } finally {
@@ -1678,10 +2884,17 @@ if (globalThis && globalThis.__LEGALPDF_TEST__ === true) {
     resolveBridgeConfigForClick,
     postContext,
     settleBrowserAppHandoff,
+    shouldWaitForLaunchedBrowserTab,
     openOrFocusBrowserApp,
+    rememberPendingBrowserSurface,
+    rememberActiveBrowserLaunchSession,
+    getActiveBrowserLaunchSession,
+    clearActiveBrowserLaunchSession,
     focusExistingBrowserAppWindow,
+    resolveBrowserAppTab,
     waitForBrowserClientHydration,
     reloadBrowserAppTab,
     pendingBrowserSurfaces,
+    activeBrowserLaunchSessions,
   };
 }

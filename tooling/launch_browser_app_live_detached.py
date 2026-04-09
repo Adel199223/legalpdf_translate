@@ -20,12 +20,26 @@ DEFAULT_MODE = "live"
 DEFAULT_WORKSPACE = "workspace-1"
 DEFAULT_UI = "qt"
 DEFAULT_VIEW = "new-job"
-READY_TIMEOUT_SECONDS = 20.0
+READY_TIMEOUT_SECONDS = 35.0
 READY_POLL_SECONDS = 0.5
 REQUEST_TIMEOUT_SECONDS = 2.0
 SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parents[1]
+SRC_ROOT = REPO_ROOT / "src"
 SHADOW_HOST = "127.0.0.1"
+APP_DATA_DIR_NAME = "LegalPDFTranslate"
+GMAIL_WORKSPACE_ID = "gmail-intake"
+if SRC_ROOT.exists():
+    src_text = str(SRC_ROOT)
+    if src_text not in sys.path:
+        sys.path.insert(0, src_text)
+
+try:
+    from legalpdf_translate.gmail_window_trace import (  # type: ignore
+        update_launch_session_state as _trace_update_launch_session_state,
+    )
+except Exception:  # pragma: no cover - degraded launcher fallback
+    _trace_update_launch_session_state = None
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -34,6 +48,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace", default=DEFAULT_WORKSPACE)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--ui", choices=("qt", "legacy"), default=DEFAULT_UI)
+    parser.add_argument(
+        "--launch-session-id",
+        default="",
+        help="Correlated launch session identifier for Gmail cold-start diagnostics.",
+    )
     parser.add_argument(
         "--no-open",
         action="store_true",
@@ -70,6 +89,12 @@ def _launcher_env(repo_root: Path) -> dict[str, str]:
     return env
 
 
+def _default_view(*, workspace: str, ui: str) -> str:
+    if str(ui) == "legacy":
+        return "dashboard"
+    return "gmail-intake" if str(workspace).strip() == "gmail-intake" else DEFAULT_VIEW
+
+
 def _browser_url(*, port: int, mode: str, workspace: str, ui: str = DEFAULT_UI) -> str:
     params: dict[str, str] = {
         "mode": str(mode),
@@ -78,7 +103,7 @@ def _browser_url(*, port: int, mode: str, workspace: str, ui: str = DEFAULT_UI) 
     if str(ui) == "legacy":
         params["ui"] = "legacy"
     query = urllib.parse.urlencode(params)
-    return f"http://{SHADOW_HOST}:{int(port)}/?{query}#{DEFAULT_VIEW if str(ui) != 'legacy' else 'dashboard'}"
+    return f"http://{SHADOW_HOST}:{int(port)}/?{query}#{_default_view(workspace=str(workspace), ui=str(ui))}"
 
 
 def _probe_browser_url(url: str) -> bool:
@@ -99,7 +124,50 @@ def _wait_until_ready(url: str, *, timeout_seconds: float = READY_TIMEOUT_SECOND
     return False
 
 
-def _open_browser(url: str) -> bool:
+def _normalize_token(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _is_gmail_workspace(workspace: object) -> bool:
+    return _normalize_token(workspace) == GMAIL_WORKSPACE_ID
+
+
+def _legalpdf_app_data_dir() -> Path:
+    appdata = _normalize_token(os.environ.get("APPDATA"))
+    if appdata != "":
+        return Path(appdata).expanduser().resolve() / APP_DATA_DIR_NAME
+    return (Path.home() / ".legalpdf_translate" / APP_DATA_DIR_NAME).expanduser().resolve()
+
+
+def _update_launch_session(launch_session_id: str, **fields: object) -> None:
+    if _trace_update_launch_session_state is None:
+        return
+    session_id = _normalize_token(launch_session_id)
+    if session_id == "":
+        return
+    try:
+        _trace_update_launch_session_state(
+            _legalpdf_app_data_dir(),
+            launch_session_id=session_id,
+            **fields,
+        )
+    except Exception:
+        return
+
+
+def _open_browser(url: str, *, workspace: str = DEFAULT_WORKSPACE, launch_session_id: str = "") -> bool:
+    if _is_gmail_workspace(workspace):
+        _update_launch_session(
+            _normalize_token(launch_session_id),
+            browser_launch_status="server_only",
+            browser_launch_reason="extension_browser_surface_owner",
+            launched_browser_pid=0,
+            launched_browser_path="",
+            launched_browser_user_data_dir="",
+            launched_browser_profile="",
+            launched_browser_command="",
+        )
+        return False
     startfile = getattr(os, "startfile", None)
     if callable(startfile):
         try:
@@ -163,7 +231,11 @@ def main(argv: list[str] | None = None) -> int:
         print("already-running")
 
     if not bool(args.no_open):
-        opened = _open_browser(target_url)
+        opened = _open_browser(
+            target_url,
+            workspace=str(args.workspace),
+            launch_session_id=str(args.launch_session_id or ""),
+        )
         if not opened:
             print(f"Browser app is running at: {target_url}", file=sys.stderr)
     return 0

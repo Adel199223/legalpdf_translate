@@ -64,6 +64,7 @@ from legalpdf_translate.interpretation_service import (
 )
 from legalpdf_translate.power_tools_service import (
     apply_builder_suggestions,
+    arm_browser_window_trace,
     build_browser_provider_state,
     build_power_tools_bootstrap,
     clear_browser_ocr_key,
@@ -86,6 +87,7 @@ from legalpdf_translate.power_tools_service import (
     save_browser_translation_key,
     save_glossary_workspace,
 )
+from legalpdf_translate.gmail_window_trace import latest_window_trace_status, update_launch_session_state
 from legalpdf_translate.translation_service import (
     TranslationJobManager,
     build_translation_bootstrap,
@@ -116,6 +118,7 @@ from legalpdf_translate.shadow_runtime import (
 from legalpdf_translate.user_settings import load_settings_from_path
 _SAFE_UPLOAD_TOKEN_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _PREPARE_REASON_MESSAGES = {item["reason"]: item["message"] for item in extension_prepare_reason_catalog()}
+_EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,6 +366,7 @@ def _runtime_ready_payload(context: ShadowWebContext, target: ActiveBrowserTarge
     runtime_payload = _runtime_payload(context, target)
     bridge_sync = asdict(context.live_gmail_bridge.last_result)
     listener = classify_shadow_listener(port=context.port, expected_pid=os.getpid())
+    launch_session = latest_window_trace_status(target.data_paths.app_data_dir)
     return {
         "runtime": runtime_payload,
         "readiness": {
@@ -385,8 +389,10 @@ def _runtime_ready_payload(context: ShadowWebContext, target: ActiveBrowserTarge
                 "started": bool(bridge_sync.get("started")),
                 "registration_ok": bool(bridge_sync.get("registration_ok")),
                 "registration_reason": str(bridge_sync.get("registration_reason", "") or "").strip(),
+                "launch_session_id": str(launch_session.get("launch_session_id", "") or "").strip(),
             },
         },
+        "launch_session": launch_session,
     }
 
 
@@ -396,6 +402,7 @@ def _shell_bridge_mode_state(
     build_identity: RuntimeBuildIdentity,
 ) -> dict[str, Any]:
     settings_payload = load_settings_from_path(target.data_paths.settings_path)
+    launch_session = latest_window_trace_status(target.data_paths.app_data_dir)
     if _is_noncanonical_live_gmail_runtime(target=target, build_identity=build_identity):
         prepare_response = _noncanonical_live_gmail_prepare_response(
             target=target,
@@ -409,6 +416,11 @@ def _shell_bridge_mode_state(
             include_token=False,
             settings_loader=lambda: load_settings_from_path(target.data_paths.settings_path),
         )
+    if (
+        str(prepare_response.get("launch_session_id", "") or "").strip() == ""
+        and str(launch_session.get("launch_session_id", "") or "").strip() != ""
+    ):
+        prepare_response["launch_session_id"] = str(launch_session.get("launch_session_id", "") or "").strip()
     bridge_port = prepare_response.get("bridgePort")
     if not isinstance(bridge_port, int):
         try:
@@ -430,6 +442,7 @@ def _shell_bridge_mode_state(
         "browser_url": str(prepare_response.get("browser_url", "") or "").strip(),
         "workspace_id": str(prepare_response.get("workspace_id", "") or target.workspace_id).strip() or target.workspace_id,
         "runtime_mode": str(prepare_response.get("runtime_mode", "") or target.mode).strip() or target.mode,
+        "launch_session": launch_session,
         "prepare_response": prepare_response,
     }
 
@@ -441,6 +454,7 @@ def _shell_bridge_mode_state_snapshot(
     build_identity: RuntimeBuildIdentity,
 ) -> dict[str, Any]:
     settings_payload = load_settings_from_path(target.data_paths.settings_path)
+    launch_session = latest_window_trace_status(target.data_paths.app_data_dir)
     if _is_noncanonical_live_gmail_runtime(target=target, build_identity=build_identity):
         prepare_response = _noncanonical_live_gmail_prepare_response(
             target=target,
@@ -464,6 +478,7 @@ def _shell_bridge_mode_state_snapshot(
             "browser_url": str(prepare_response.get("browser_url", "") or "").strip(),
             "workspace_id": str(prepare_response.get("workspace_id", "") or target.workspace_id).strip() or target.workspace_id,
             "runtime_mode": target.mode,
+            "launch_session": launch_session,
             "prepare_response": prepare_response,
         }
     bridge_port = bridge_sync.get("bridge_port")
@@ -488,9 +503,10 @@ def _shell_bridge_mode_state_snapshot(
         "launchTargetReason": "launch_target_ready" if str(build_identity.worktree_path or "").strip() else "",
         "ui_owner": owner_kind,
         "browser_url": browser_url,
-        "browser_open_owned_by": "runtime" if owner_kind == "browser_app" else "",
+        "browser_open_owned_by": "extension" if owner_kind == "browser_app" else "",
         "workspace_id": workspace_id,
         "runtime_mode": target.mode,
+        "launch_session_id": str(launch_session.get("launch_session_id", "") or "").strip(),
         "bridgePort": bridge_port if isinstance(bridge_port, int) and 1 <= int(bridge_port) <= 65535 else None,
         "reason": reason,
     }
@@ -514,6 +530,7 @@ def _shell_bridge_mode_state_snapshot(
         "browser_url": browser_url,
         "workspace_id": workspace_id,
         "runtime_mode": target.mode,
+        "launch_session": launch_session,
         "prepare_response": prepare_response,
     }
 
@@ -1034,6 +1051,10 @@ def create_shadow_app(
             target,
             extension_summary=extension_payload if isinstance(extension_payload, dict) else None,
         )
+        response["normalized_payload"]["shell"] = {
+            "extension_launch_session_schema_version": _EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION,
+            "launch_session": latest_window_trace_status(target.data_paths.app_data_dir),
+        }
         response["normalized_payload"]["automation_preflight"] = context.automation_preflight
         payload = JSONResponse(_merge_response(context, target, response))
         payload.headers["Cache-Control"] = "no-store"
@@ -1098,6 +1119,7 @@ def create_shadow_app(
                     "ready": bool(current_mode_bridge.get("ready")),
                     "native_host_ready": bool(native_host_state.get("ready")),
                     "asset_version": context.asset_version,
+                    "extension_launch_session_schema_version": _EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION,
                     "build_identity": runtime_build_identity_payload(context.build_identity),
                     "runtime_mode": target.mode,
                     "workspace_id": target.workspace_id,
@@ -1156,10 +1178,12 @@ def create_shadow_app(
                         "ready": True,
                         "gmail_bridge_ready": bool(current_mode_bridge.get("ready")),
                         "asset_version": context.asset_version,
+                        "extension_launch_session_schema_version": _EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION,
                         "build_identity": runtime_build_identity_payload(context.build_identity),
                         "runtime_mode": target.mode,
                         "workspace_id": target.workspace_id,
                         "owner_kind": current_mode_bridge.get("owner_kind", "none"),
+                        "launch_session": dict(current_mode_bridge.get("launch_session", {}) or {}),
                     },
                     "gmail": gmail_shell["normalized_payload"],
                     "extension_lab": {
@@ -1616,6 +1640,47 @@ def create_shadow_app(
         }
         return JSONResponse(_merge_response(context, target, response))
 
+    @app.post("/api/extension/launch-session-diagnostics")
+    async def api_extension_launch_session_diagnostics(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        launch_session_id = str(payload.get("launch_session_id", "") or "").strip()
+        if launch_session_id == "":
+            return _validation_error_response(context, target, message="launch_session_id is required.")
+        launch_session = update_launch_session_state(
+            target.data_paths.app_data_dir,
+            launch_session_id=launch_session_id,
+            handoff_session_id=str(payload.get("handoff_session_id", "") or "").strip(),
+            tab_resolution_strategy=str(payload.get("tab_resolution_strategy", "") or "").strip(),
+            workspace_surface_confirmed=bool(payload.get("workspace_surface_confirmed")),
+            client_hydration_status=str(payload.get("client_hydration_status", "") or "").strip(),
+            extension_surface_outcome=str(payload.get("outcome", "") or "").strip(),
+            extension_surface_reason=str(payload.get("reason", "") or "").strip(),
+            extension_surface_tab_id=int(payload.get("tab_id", 0) or 0),
+            surface_candidate_source=str(payload.get("surface_candidate_source", "") or "").strip(),
+            surface_candidate_valid=bool(payload.get("surface_candidate_valid")),
+            surface_invalidation_reason=str(payload.get("surface_invalidation_reason", "") or "").strip(),
+            fresh_tab_created_after_invalidation=bool(payload.get("fresh_tab_created_after_invalidation")),
+            bridge_context_posted=bool(payload.get("bridge_context_posted")),
+            surface_visibility_status=str(payload.get("surface_visibility_status", "") or "").strip(),
+            browser_url=str(payload.get("browser_url", "") or "").strip(),
+        )
+        response = {
+            "status": "ok",
+            "normalized_payload": {
+                "launch_session": latest_window_trace_status(target.data_paths.app_data_dir),
+            },
+            "diagnostics": {
+                "launch_session_updated": launch_session,
+            },
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
     @app.get("/api/power-tools/bootstrap")
     async def api_power_tools_bootstrap(request: Request) -> JSONResponse:
         context = _context(request)
@@ -1755,6 +1820,22 @@ def create_shadow_app(
             outputs_dir=target.data_paths.outputs_dir,
             runtime_metadata_path=context.server_runtime_paths.runtime_metadata_path,
             selected_run_dir_text=payload.get("run_dir") if isinstance(payload, dict) else None,
+        )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/power-tools/diagnostics/arm-window-trace")
+    async def api_power_tools_arm_window_trace(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        response = arm_browser_window_trace(
+            settings_path=target.data_paths.settings_path,
+            duration_seconds=float(payload.get("duration_seconds", 15.0) or 15.0) if isinstance(payload, dict) else 15.0,
+            sample_interval_ms=int(payload.get("sample_interval_ms", 200) or 200) if isinstance(payload, dict) else 200,
         )
         return JSONResponse(_merge_response(context, target, response))
 

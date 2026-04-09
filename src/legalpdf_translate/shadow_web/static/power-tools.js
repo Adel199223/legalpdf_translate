@@ -519,15 +519,19 @@ function renderPowerToolsPayload(powerTools, { preserveStatus = false } = {}) {
     );
   }
   if (!preserveStatus) {
+    const latestWindowTrace = diagnostics.latest_window_trace || {};
     setDiagnostics(
       "power-tools-diagnostics",
       {
         outputs_root: diagnostics.outputs_root || "",
         runtime_metadata_path: diagnostics.runtime_metadata_path || "",
         latest_run_dirs: mergeLatestRunDirs(powerTools),
+        latest_window_trace: latestWindowTrace,
       },
       {
-        hint: "Debug-bundle and run-report defaults for this runtime mode.",
+        hint: latestWindowTrace.launch_session_id
+          ? `Latest trace session: ${latestWindowTrace.launch_session_id}`
+          : "Debug-bundle, run-report, and cold-start trace defaults for this runtime mode.",
         open: false,
       },
     );
@@ -960,6 +964,19 @@ async function handleRunReport() {
   });
 }
 
+async function handleArmWindowTrace() {
+  const payload = await fetchJson("/api/power-tools/diagnostics/arm-window-trace", appState, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  setPanelStatus("power-tools", "ok", "The next cold Gmail click will capture an OS window trace.");
+  setDiagnostics("power-tools-diagnostics", payload, {
+    hint: payload.normalized_payload?.arm_path || "The next cold Gmail click will capture a window trace.",
+    open: false,
+  });
+}
+
 export function initializePowerToolsUi() {
   const settingsActionButtons = [
     "settings-save",
@@ -1248,7 +1265,7 @@ export function initializePowerToolsUi() {
 
   qs("diagnostics-create-bundle")?.addEventListener("click", async () => {
     await runWithBusy(
-      ["diagnostics-create-bundle", "diagnostics-generate-report"],
+      ["diagnostics-arm-window-trace", "diagnostics-create-bundle", "diagnostics-generate-report"],
       { "diagnostics-create-bundle": "Bundling..." },
       async () => {
         try {
@@ -1261,9 +1278,24 @@ export function initializePowerToolsUi() {
     );
   });
 
+  qs("diagnostics-arm-window-trace")?.addEventListener("click", async () => {
+    await runWithBusy(
+      ["diagnostics-arm-window-trace", "diagnostics-create-bundle", "diagnostics-generate-report"],
+      { "diagnostics-arm-window-trace": "Arming..." },
+      async () => {
+        try {
+          await handleArmWindowTrace();
+        } catch (error) {
+          setPanelStatus("power-tools", "bad", error.message || "Cold-start window trace arming failed.");
+          setDiagnostics("power-tools-diagnostics", error, { hint: error.message || "Cold-start window trace arming failed.", open: true });
+        }
+      },
+    );
+  });
+
   qs("diagnostics-generate-report")?.addEventListener("click", async () => {
     await runWithBusy(
-      ["diagnostics-create-bundle", "diagnostics-generate-report"],
+      ["diagnostics-arm-window-trace", "diagnostics-create-bundle", "diagnostics-generate-report"],
       { "diagnostics-generate-report": "Generating..." },
       async () => {
         try {

@@ -844,6 +844,7 @@ def test_gmail_browser_bootstrap_exposes_pending_bridge_warmup_state(tmp_path: P
         "thread_id": "thr-bridge",
         "subject": "Bridge warmup",
         "account_email": "adel@example.com",
+        "handoff_session_id": "",
     }
     assert pending_bootstrap["normalized_payload"]["pending_review_open"] is True
 
@@ -925,12 +926,15 @@ def test_accept_bridge_intake_reuses_same_context_while_pending(tmp_path: Path, 
             thread_id="thr-bridge",
             subject="Bridge warmup",
             account_email="adel@example.com",
+            handoff_session_id="handoff-2",
         ),
     )
 
     assert reused["status"] == "warming"
     assert reused["normalized_payload"]["handoff_state"] == "pending_reused"
     assert reused["normalized_payload"]["pending_status"] == "warming"
+    assert reused["normalized_payload"]["handoff_session_id"] == "handoff-2"
+    assert reused["normalized_payload"]["current_handoff_context"]["handoff_session_id"] == "handoff-2"
     assert reused["diagnostics"]["handoff_reused"] is True
     assert load_calls["count"] == 1
 
@@ -983,6 +987,7 @@ def test_accept_bridge_intake_reuses_same_loaded_message_without_new_review_even
             thread_id="thr-bridge",
             subject="Bridge warmup",
             account_email="adel@example.com",
+            handoff_session_id="handoff-1",
         ),
     )
     reused = manager.accept_bridge_intake(
@@ -994,6 +999,7 @@ def test_accept_bridge_intake_reuses_same_loaded_message_without_new_review_even
             thread_id="thr-bridge",
             subject="Bridge warmup",
             account_email="adel@example.com",
+            handoff_session_id="handoff-2",
         ),
     )
 
@@ -1001,6 +1007,8 @@ def test_accept_bridge_intake_reuses_same_loaded_message_without_new_review_even
     assert reused["normalized_payload"]["review_event_id"] == 1
     assert reused["normalized_payload"]["message_signature"] == first["normalized_payload"]["message_signature"]
     assert reused["normalized_payload"]["handoff_state"] == "loaded_reused"
+    assert reused["normalized_payload"]["handoff_session_id"] == "handoff-2"
+    assert reused["normalized_payload"]["current_handoff_context"]["handoff_session_id"] == "handoff-2"
     assert reused["diagnostics"]["handoff_reused"] is True
     assert load_calls["count"] == 1
 

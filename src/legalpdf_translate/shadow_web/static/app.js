@@ -242,6 +242,34 @@ function deriveClientGmailHandoffState(payload = appState.bootstrap?.normalized_
   return defaultClientGmailHandoffState();
 }
 
+function deriveClientLaunchSessionId(payload = appState.bootstrap?.normalized_payload) {
+  const shellLaunchSession = payload?.shell?.launch_session || {};
+  const runtimeLaunchSession = payload?.runtime?.launch_session || {};
+  return String(
+    shellLaunchSession.launch_session_id
+    || runtimeLaunchSession.launch_session_id
+    || "",
+  ).trim();
+}
+
+function deriveClientHandoffSessionId(payload = appState.bootstrap?.normalized_payload) {
+  const gmailPayload = payload?.gmail || payload || {};
+  const shellLaunchSession = payload?.shell?.launch_session || {};
+  const runtimeLaunchSession = payload?.runtime?.launch_session || {};
+  return String(
+    gmailPayload.handoff_session_id
+    || shellLaunchSession.handoff_session_id
+    || runtimeLaunchSession.handoff_session_id
+    || "",
+  ).trim();
+}
+
+function deriveClientLaunchSessionSchemaVersion(payload = appState.bootstrap?.normalized_payload) {
+  const rawValue = payload?.shell?.extension_launch_session_schema_version;
+  const parsed = Number.parseInt(String(rawValue ?? ""), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function setClientHydrationMarker(status, { payload = null, reason = "", message = "" } = {}) {
   const nextStatus = String(status || "warming").trim() || "warming";
   const nextBootstrappedAt = nextStatus === "ready"
@@ -257,6 +285,9 @@ function setClientHydrationMarker(status, { payload = null, reason = "", message
     gmailHandoffState: deriveClientGmailHandoffState(payload || appState.bootstrap?.normalized_payload),
     buildSha: currentBuildSha(),
     assetVersion: currentAssetVersion(),
+    launchSessionId: deriveClientLaunchSessionId(payload || appState.bootstrap?.normalized_payload),
+    handoffSessionId: deriveClientHandoffSessionId(payload || appState.bootstrap?.normalized_payload),
+    launchSessionSchemaVersion: deriveClientLaunchSessionSchemaVersion(payload || appState.bootstrap?.normalized_payload),
     bootstrappedAt: nextBootstrappedAt,
   };
   if (reason) {
@@ -276,6 +307,9 @@ function setClientHydrationMarker(status, { payload = null, reason = "", message
     document.body.dataset.clientActiveView = marker.activeView;
     document.body.dataset.clientBuildSha = marker.buildSha;
     document.body.dataset.clientAssetVersion = marker.assetVersion;
+    document.body.dataset.clientLaunchSession = marker.launchSessionId || "";
+    document.body.dataset.clientHandoffSession = marker.handoffSessionId || "";
+    document.body.dataset.clientLaunchSessionSchemaVersion = String(marker.launchSessionSchemaVersion || 0);
   }
   if (globalThis.window) {
     globalThis.window.LEGALPDF_BROWSER_CLIENT_READY = marker;

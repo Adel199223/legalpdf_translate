@@ -11,7 +11,10 @@ import struct
 import sys
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -21,6 +24,12 @@ from legalpdf_translate.build_identity import (
     try_load_canonical_build_config,
 )
 from legalpdf_translate.gmail_focus import focus_bridge_owner, validate_bridge_owner
+from legalpdf_translate.gmail_window_trace import (
+    build_launch_session_id,
+    consume_armed_window_trace,
+    latest_window_trace_status,
+    update_launch_session_state,
+)
 
 
 EDGE_NATIVE_HOST_NAME = "com.legalpdf.gmail_focus"
@@ -31,14 +40,16 @@ _EDGE_NATIVE_HOST_REGISTRY_SUBKEY = rf"Software\Microsoft\Edge\NativeMessagingHo
 EDGE_NATIVE_HOST_REGISTRY_KEY_PATH = rf"HKCU\{_EDGE_NATIVE_HOST_REGISTRY_SUBKEY}"
 _EDGE_NATIVE_HOST_EXE = "LegalPDFGmailFocusHost.exe"
 _EDGE_NATIVE_HOST_WRAPPER = "LegalPDFGmailFocusHost.cmd"
-_AUTO_LAUNCH_WAIT_SECONDS = 15.0
+_AUTO_LAUNCH_WAIT_SECONDS = 35.0
 _AUTO_LAUNCH_POLL_INTERVAL_SECONDS = 0.25
 _AUTO_LAUNCH_LOCK_SECONDS = _AUTO_LAUNCH_WAIT_SECONDS + 5.0
 _AUTO_LAUNCH_LABELS = ("gmail-intake", "auto-launch")
 _AUTO_LAUNCHABLE_BRIDGE_REASONS = {"runtime_metadata_missing", "bridge_not_running", "bridge_owner_stale"}
 _AUTO_LAUNCH_IN_PROGRESS_REASON = "launch_in_progress"
+_BROWSER_SERVER_READY_REASON = "browser_server_ready"
 _AUTO_LAUNCH_LOCK_FILENAME = "gmail_browser_launch.lock.json"
 _BROWSER_OPEN_OWNER_EXTENSION = "extension"
+_BROWSER_OPEN_OWNER_SERVER_BOOT = "server_boot"
 _BROWSER_OPEN_OWNER_NATIVE_HOST = "native_host"
 _BROWSER_OPEN_OWNER_RUNTIME = "runtime"
 _WSL_MNT_RE = re.compile(r"^/mnt/([A-Za-z])/(.*)$")
@@ -47,6 +58,8 @@ _SELF_TEST_TIMEOUT_SECONDS = 15.0
 _APP_FOLDER_NAME = "LegalPDFTranslate"
 _SETTINGS_FILENAME = "settings.json"
 SHADOW_DEFAULT_PORT = 8877
+_EDGE_NATIVE_HOST_LAUNCHER_SOURCE = Path("tooling") / "native_host_launcher" / "LegalPDFGmailFocusHostLauncher.cs"
+_EDGE_NATIVE_HOST_BUILD_DIR = Path("dist") / "legalpdf_translate"
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,10 +164,34 @@ def _python_executable_for_worktree(worktree: Path) -> Path | None:
     return python_executable
 
 
+def _python_runtime_variants(candidate: Path, *, prefer_windowless: bool) -> tuple[Path, ...]:
+    resolved = _absolute_path_noresolve(candidate)
+    lowered_name = resolved.name.casefold()
+    if lowered_name not in {"python.exe", "pythonw.exe"}:
+        return (resolved,)
+    python_console = resolved.with_name("python.exe")
+    python_windowless = resolved.with_name("pythonw.exe")
+    ordered = (
+        (python_windowless, python_console)
+        if prefer_windowless
+        else (python_console, python_windowless)
+    )
+    seen: set[Path] = set()
+    variants: list[Path] = []
+    for item in ordered:
+        normalized = _absolute_path_noresolve(item)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        variants.append(normalized)
+    return tuple(variants)
+
+
 def _candidate_python_executables_for_worktree(
     worktree: Path,
     *,
     preferred_python_executable: Path | None = None,
+    ui_owner: str = "qt_app",
 ) -> tuple[Path, ...]:
     resolved_worktree = worktree.expanduser().resolve()
     roots: list[Path] = [resolved_worktree]
@@ -164,14 +201,15 @@ def _candidate_python_executables_for_worktree(
         if canonical_root not in roots:
             roots.append(canonical_root)
     candidates: list[Path] = []
+    prefer_windowless = str(ui_owner or "").strip().lower() == "browser_app"
 
     def _append(candidate: Path | None) -> None:
         if candidate is None:
             return
-        resolved = _absolute_path_noresolve(candidate)
-        if resolved in candidates:
-            return
-        candidates.append(resolved)
+        for resolved in _python_runtime_variants(candidate, prefer_windowless=prefer_windowless):
+            if resolved in candidates:
+                continue
+            candidates.append(resolved)
 
     _append(preferred_python_executable)
     if not getattr(sys, "frozen", False):
@@ -199,19 +237,30 @@ def _run_python_runtime_probe(
     repo_root: Path,
     args: list[str],
 ) -> bool:
+    run_kwargs: dict[str, object] = {
+        "cwd": str(repo_root),
+        "env": _build_runtime_probe_env(repo_root),
+        "capture_output": True,
+        "text": True,
+        "timeout": _SELF_TEST_TIMEOUT_SECONDS,
+        "check": False,
+    }
+    if _is_windows():
+        run_kwargs["creationflags"] = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
     try:
         completed = subprocess.run(
             [str(python_executable), *args],
-            cwd=str(repo_root),
-            env=_build_runtime_probe_env(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=_SELF_TEST_TIMEOUT_SECONDS,
-            check=False,
+            **run_kwargs,
         )
     except Exception:
         return False
     return completed.returncode == 0
+
+
+def _windows_no_window_creationflags() -> int:
+    if not _is_windows():
+        return 0
+    return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def _python_runtime_supports_native_host(python_executable: Path, *, repo_root: Path) -> bool:
@@ -263,12 +312,14 @@ def _validated_python_executable_for_worktree(
     worktree: Path,
     *,
     preferred_python_executable: Path | None = None,
+    ui_owner: str = "qt_app",
 ) -> tuple[Path | None, str]:
     repo_root = worktree.expanduser().resolve()
     saw_candidate = False
     candidates = _candidate_python_executables_for_worktree(
         repo_root,
         preferred_python_executable=preferred_python_executable,
+        ui_owner=ui_owner,
     )
     for candidate in candidates:
         resolved = _absolute_path_noresolve(candidate)
@@ -368,6 +419,36 @@ def _browser_shell_ready_url(
     )
 
 
+def _browser_runtime_identity_from_url(browser_url: str) -> tuple[str, str, int]:
+    target_url = str(browser_url or "").strip()
+    if target_url == "":
+        return ("live", _BROWSER_GMAIL_WORKSPACE_ID, SHADOW_DEFAULT_PORT)
+    try:
+        parsed = urllib.parse.urlsplit(target_url)
+    except Exception:  # noqa: BLE001
+        return ("live", _BROWSER_GMAIL_WORKSPACE_ID, SHADOW_DEFAULT_PORT)
+    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
+    runtime_mode = str((query.get("mode") or ["live"])[0] or "").strip() or "live"
+    workspace_id = str((query.get("workspace") or [_BROWSER_GMAIL_WORKSPACE_ID])[0] or "").strip() or _BROWSER_GMAIL_WORKSPACE_ID
+    port = int(parsed.port or SHADOW_DEFAULT_PORT)
+    return (runtime_mode, workspace_id, port)
+
+
+def _probe_browser_shell_ready(browser_url: str) -> bool:
+    runtime_mode, workspace_id, port = _browser_runtime_identity_from_url(browser_url)
+    shell_ready_url = _browser_shell_ready_url(
+        runtime_mode=runtime_mode,
+        workspace_id=workspace_id,
+        port=port,
+    )
+    try:
+        with urllib.request.urlopen(shell_ready_url, timeout=2.0) as response:
+            status = int(getattr(response, "status", 0))
+            return 200 <= status < 300
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return False
+
+
 def _resolve_qt_auto_launch_target(*, runtime_path: Path | None = None) -> AutoLaunchTarget:
     worktree = _preferred_repo_worktree_for_auto_launch(runtime_path=runtime_path)
     if worktree is None:
@@ -394,6 +475,7 @@ def _resolve_qt_auto_launch_target(*, runtime_path: Path | None = None) -> AutoL
     python_executable, runtime_reason = _validated_python_executable_for_worktree(
         worktree,
         preferred_python_executable=runtime_path if runtime_path and runtime_path.is_file() else None,
+        ui_owner="qt_app",
     )
     if python_executable is None:
         return AutoLaunchTarget(
@@ -428,9 +510,22 @@ def _resolve_browser_auto_launch_target(*, runtime_path: Path | None = None) -> 
             browser_url=_browser_gmail_workspace_url(),
         )
 
+    launcher_script = (worktree / "tooling" / "launch_browser_app_live_detached.py").expanduser().resolve()
+    if not launcher_script.exists():
+        return AutoLaunchTarget(
+            ready=False,
+            worktree_path=str(worktree),
+            python_executable=None,
+            launcher_script=None,
+            reason="launch_helper_missing",
+            ui_owner="browser_app",
+            browser_url=_browser_gmail_workspace_url(),
+        )
+
     python_executable, runtime_reason = _validated_python_executable_for_worktree(
         worktree,
         preferred_python_executable=runtime_path if runtime_path and runtime_path.is_file() else None,
+        ui_owner="browser_app",
     )
     if python_executable is None:
         return AutoLaunchTarget(
@@ -452,10 +547,12 @@ def _resolve_browser_auto_launch_target(*, runtime_path: Path | None = None) -> 
         ui_owner="browser_app",
         browser_url=_browser_gmail_workspace_url(),
         launch_args=(
-            "-m",
-            "legalpdf_translate.shadow_web.server",
-            "--port",
-            str(SHADOW_DEFAULT_PORT),
+            str(launcher_script),
+            "--mode",
+            "live",
+            "--workspace",
+            _BROWSER_GMAIL_WORKSPACE_ID,
+            "--no-open",
         ),
     )
 
@@ -488,9 +585,35 @@ def _apply_validation_context(
             getattr(validation, "workspace_id", "") or _BROWSER_GMAIL_WORKSPACE_ID
         ).strip() or _BROWSER_GMAIL_WORKSPACE_ID
         response["runtime_mode"] = str(getattr(validation, "runtime_mode", "") or "live").strip() or "live"
-        response["browser_open_owned_by"] = _BROWSER_OPEN_OWNER_RUNTIME
+        response["browser_open_owned_by"] = _BROWSER_OPEN_OWNER_EXTENSION
     elif fallback_browser_url:
         response["browser_url"] = fallback_browser_url
+
+
+def _apply_browser_launch_ready_context(
+    response: dict[str, object],
+    *,
+    browser_url: str,
+    launch_session_id: str,
+    handoff_session_id: str = "",
+    browser_open_owned_by: str,
+    launch_lock_ttl_ms: int | None = None,
+    reason: str = _BROWSER_SERVER_READY_REASON,
+) -> None:
+    response["ok"] = True
+    response["reason"] = str(reason or _BROWSER_SERVER_READY_REASON).strip() or _BROWSER_SERVER_READY_REASON
+    response["ui_owner"] = "browser_app"
+    response["browser_url"] = str(browser_url or _browser_gmail_workspace_url()).strip()
+    response["browser_open_owned_by"] = str(browser_open_owned_by or _BROWSER_OPEN_OWNER_EXTENSION).strip() or _BROWSER_OPEN_OWNER_EXTENSION
+    response["workspace_id"] = _BROWSER_GMAIL_WORKSPACE_ID
+    response["runtime_mode"] = "live"
+    response["launch_phase"] = "server_boot_ready" if response["browser_open_owned_by"] == _BROWSER_OPEN_OWNER_EXTENSION else "server_boot"
+    if str(launch_session_id or "").strip():
+        response["launch_session_id"] = str(launch_session_id).strip()
+    if str(handoff_session_id or "").strip():
+        response["handoff_session_id"] = str(handoff_session_id).strip()
+    if isinstance(launch_lock_ttl_ms, int) and launch_lock_ttl_ms > 0:
+        response["launch_lock_ttl_ms"] = int(launch_lock_ttl_ms)
 
 
 def _browser_auto_launch_lock_path(base_dir: Path) -> Path:
@@ -551,17 +674,25 @@ def _read_browser_auto_launch_lock(base_dir: Path) -> dict[str, object] | None:
     return payload
 
 
-def _write_browser_auto_launch_lock(base_dir: Path, target: AutoLaunchTarget) -> dict[str, object]:
+def _write_browser_auto_launch_lock(
+    base_dir: Path,
+    target: AutoLaunchTarget,
+    *,
+    launch_session_id: str,
+    browser_open_owned_by: str = _BROWSER_OPEN_OWNER_SERVER_BOOT,
+    ttl_seconds: float = _AUTO_LAUNCH_LOCK_SECONDS,
+) -> dict[str, object]:
     lock_path = _browser_auto_launch_lock_path(base_dir).expanduser().resolve()
-    expires_at = time.time() + _AUTO_LAUNCH_LOCK_SECONDS
+    expires_at = time.time() + max(1.0, float(ttl_seconds or _AUTO_LAUNCH_LOCK_SECONDS))
     payload: dict[str, object] = {
         "created_at_epoch_seconds": time.time(),
         "expires_at_epoch_seconds": expires_at,
+        "launch_session_id": str(launch_session_id or "").strip(),
         "ui_owner": target.ui_owner,
         "browser_url": str(target.browser_url or "").strip(),
         "workspace_id": _BROWSER_GMAIL_WORKSPACE_ID,
         "runtime_mode": "live",
-        "browser_open_owned_by": _BROWSER_OPEN_OWNER_NATIVE_HOST,
+        "browser_open_owned_by": str(browser_open_owned_by or _BROWSER_OPEN_OWNER_SERVER_BOOT).strip() or _BROWSER_OPEN_OWNER_SERVER_BOOT,
     }
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = lock_path.with_suffix(".tmp")
@@ -579,6 +710,9 @@ def _apply_browser_auto_launch_lock_context(
 ) -> None:
     response["launch_in_progress"] = True
     response["launch_lock_ttl_ms"] = max(0, int(lock_payload.get("remaining_ms", 0) or 0))
+    launch_session_id = str(lock_payload.get("launch_session_id", "") or "").strip()
+    if launch_session_id != "":
+        response["launch_session_id"] = launch_session_id
     response["ui_owner"] = str(lock_payload.get("ui_owner", "") or "browser_app").strip() or "browser_app"
     response["browser_url"] = str(
         lock_payload.get("browser_url", "") or fallback_browser_url or ""
@@ -588,8 +722,8 @@ def _apply_browser_auto_launch_lock_context(
     ).strip() or _BROWSER_GMAIL_WORKSPACE_ID
     response["runtime_mode"] = str(lock_payload.get("runtime_mode", "") or "live").strip() or "live"
     response["browser_open_owned_by"] = str(
-        lock_payload.get("browser_open_owned_by", "") or _BROWSER_OPEN_OWNER_NATIVE_HOST
-    ).strip() or _BROWSER_OPEN_OWNER_NATIVE_HOST
+        lock_payload.get("browser_open_owned_by", "") or _BROWSER_OPEN_OWNER_SERVER_BOOT
+    ).strip() or _BROWSER_OPEN_OWNER_SERVER_BOOT
 
 
 def _terminate_process_tree(pid: int | None) -> bool:
@@ -683,7 +817,7 @@ def _spawn_detached_helper(
         creationflags = 0
         creationflags |= int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
         creationflags |= int(getattr(subprocess, "DETACHED_PROCESS", 0))
-        creationflags |= int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        creationflags |= _windows_no_window_creationflags()
         subprocess.Popen(
             command,
             cwd=cwd,
@@ -695,6 +829,37 @@ def _spawn_detached_helper(
     except Exception:
         return False
     return True
+
+
+def _start_window_trace_capture(
+    *,
+    base_dir: Path,
+    launch_session_id: str,
+    target: AutoLaunchTarget,
+    trace_request: dict[str, object] | None,
+) -> str:
+    if not trace_request:
+        return "not_requested"
+    if not target.worktree_path or not target.python_executable:
+        return "trace_runtime_unavailable"
+    command = [
+        str(target.python_executable),
+        "-m",
+        "legalpdf_translate.gmail_window_trace",
+        "--base-dir",
+        str(base_dir),
+        "--launch-session-id",
+        str(launch_session_id or "").strip(),
+        "--browser-url",
+        str(target.browser_url or "").strip(),
+        "--duration-seconds",
+        str(float(trace_request.get("duration_seconds", _AUTO_LAUNCH_WAIT_SECONDS) or _AUTO_LAUNCH_WAIT_SECONDS)),
+        "--sample-interval-ms",
+        str(int(trace_request.get("sample_interval_ms", 200) or 200)),
+    ]
+    if not _spawn_detached_helper(command, cwd=str(target.worktree_path)):
+        return "trace_spawn_failed"
+    return "trace_started"
 
 
 def restart_canonical_browser_runtime(
@@ -819,7 +984,7 @@ def _launch_repo_worktree(target: AutoLaunchTarget) -> str:
             creationflags = 0
             creationflags |= int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
             creationflags |= int(getattr(subprocess, "DETACHED_PROCESS", 0))
-            creationflags |= int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            creationflags |= _windows_no_window_creationflags()
             subprocess.Popen(
                 command,
                 cwd=target.worktree_path,
@@ -868,6 +1033,29 @@ def _wait_for_bridge_owner_after_launch(*, bridge_port: int, base_dir: Path) -> 
             return "launch_ready"
         if validation.reason in {"invalid_bridge_port", "unsupported_platform"}:
             return validation.reason
+        time.sleep(_AUTO_LAUNCH_POLL_INTERVAL_SECONDS)
+    return "launch_timeout"
+
+
+def _wait_for_auto_launch_ready_after_launch(
+    *,
+    bridge_port: int,
+    base_dir: Path,
+    target: AutoLaunchTarget,
+) -> str:
+    deadline = time.monotonic() + _AUTO_LAUNCH_WAIT_SECONDS
+    browser_url = str(target.browser_url or "").strip()
+    while time.monotonic() < deadline:
+        validation = validate_bridge_owner(
+            bridge_port=bridge_port,
+            base_dir=base_dir,
+        )
+        if validation.ok:
+            return "launch_ready"
+        if validation.reason in {"invalid_bridge_port", "unsupported_platform"}:
+            return validation.reason
+        if target.ui_owner == "browser_app" and browser_url and _probe_browser_shell_ready(browser_url):
+            return _BROWSER_SERVER_READY_REASON
         time.sleep(_AUTO_LAUNCH_POLL_INTERVAL_SECONDS)
     return "launch_timeout"
 
@@ -1009,6 +1197,133 @@ def _edge_native_host_wrapper_path(base_dir: Path) -> Path:
     return base_dir / "native_messaging" / _EDGE_NATIVE_HOST_WRAPPER
 
 
+def _native_host_path_kind(path: Path | str | None) -> str:
+    if path is None:
+        return ""
+    suffix = Path(str(path)).suffix.casefold()
+    if suffix == ".exe":
+        return "exe"
+    if suffix == ".cmd":
+        return "cmd"
+    return suffix.lstrip(".")
+
+
+def _read_registered_native_host_path(
+    *,
+    base_dir: Path | None = None,
+    read_registry_value=None,
+) -> Path | None:
+    active_read_registry_value = read_registry_value or _read_edge_native_host_registry_value
+    manifest_dir = (base_dir or app_data_dir()).expanduser().resolve()
+    registered_manifest_text = str(active_read_registry_value() or "").strip()
+    if registered_manifest_text == "":
+        return None
+    try:
+        registered_manifest_path = Path(registered_manifest_text).expanduser().resolve()
+    except Exception:  # noqa: BLE001
+        return None
+    manifest_payload = _read_edge_native_host_manifest_payload(registered_manifest_path)
+    if not isinstance(manifest_payload, dict):
+        return None
+    registered_host_text = str(manifest_payload.get("path", "") or "").strip()
+    if registered_host_text == "":
+        return None
+    try:
+        return Path(registered_host_text).expanduser().resolve()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _registered_native_host_path_kind(
+    *,
+    base_dir: Path | None = None,
+    read_registry_value=None,
+) -> str:
+    return _native_host_path_kind(_read_registered_native_host_path(base_dir=base_dir, read_registry_value=read_registry_value))
+
+
+def _edge_native_host_launcher_source_path(*, repo_root: Path | None = None) -> Path:
+    root = (repo_root or _repo_root()).expanduser().resolve()
+    return root / _EDGE_NATIVE_HOST_LAUNCHER_SOURCE
+
+
+def _edge_native_host_output_path(*, repo_root: Path | None = None) -> Path:
+    root = (repo_root or _repo_root()).expanduser().resolve()
+    return root / _EDGE_NATIVE_HOST_BUILD_DIR / _EDGE_NATIVE_HOST_EXE
+
+
+def _resolve_windows_csharp_compiler() -> Path | None:
+    if not _is_windows():
+        return None
+    windir = Path(str(os.environ.get("WINDIR", r"C:\Windows")) or r"C:\Windows")
+    candidates = (
+        windir / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe",
+        windir / "Microsoft.NET" / "Framework" / "v4.0.30319" / "csc.exe",
+    )
+    for candidate in candidates:
+        resolved = _absolute_path_noresolve(candidate)
+        if resolved.exists():
+            return resolved
+    return None
+
+
+def build_edge_native_host_executable(
+    *,
+    repo_root: Path | None = None,
+    force: bool = False,
+) -> tuple[Path | None, str]:
+    root = (repo_root or _repo_root()).expanduser().resolve()
+    source_path = _edge_native_host_launcher_source_path(repo_root=root)
+    if not source_path.exists():
+        return None, "native_host_launcher_source_missing"
+    compiler_path = _resolve_windows_csharp_compiler()
+    if compiler_path is None:
+        return None, "native_host_launcher_compiler_missing"
+    output_path = _edge_native_host_output_path(repo_root=root)
+    if output_path.exists() and not force:
+        try:
+            if output_path.stat().st_mtime >= source_path.stat().st_mtime:
+                return output_path, "native_host_launcher_ready"
+        except OSError:
+            pass
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_output_path = output_path.with_suffix(".tmp.exe")
+    run_kwargs: dict[str, object] = {
+        "capture_output": True,
+        "text": True,
+        "timeout": 60,
+        "check": False,
+        "cwd": str(root),
+    }
+    if _is_windows():
+        run_kwargs["creationflags"] = _windows_no_window_creationflags()
+    completed = subprocess.run(
+        [
+            str(compiler_path),
+            "/nologo",
+            "/optimize+",
+            "/target:winexe",
+            f"/out:{temp_output_path}",
+            str(source_path),
+        ],
+        **run_kwargs,
+    )
+    if completed.returncode != 0 or not temp_output_path.exists():
+        try:
+            temp_output_path.unlink()
+        except OSError:
+            pass
+        return None, "native_host_launcher_build_failed"
+    temp_output_path.replace(output_path)
+    return output_path, "native_host_launcher_built"
+
+
+def _native_host_launcher_buildable(*, repo_root: Path | None = None) -> bool:
+    root = (repo_root or _repo_root()).expanduser().resolve()
+    return _edge_native_host_launcher_source_path(repo_root=root).exists() and _resolve_windows_csharp_compiler() is not None
+
+
 def _build_checkout_edge_native_host_wrapper(*, repo_root: Path, python_executable: Path) -> str:
     resolved_repo = repo_root.expanduser().resolve()
     resolved_python = _absolute_path_noresolve(python_executable)
@@ -1034,6 +1349,7 @@ def _ensure_checkout_edge_native_host_wrapper(
     python_executable, runtime_reason = _validated_python_executable_for_worktree(
         worktree,
         preferred_python_executable=preferred_python_executable,
+        ui_owner="qt_app",
     )
     if python_executable is None:
         return None, runtime_reason, False
@@ -1061,13 +1377,18 @@ def _ensure_checkout_edge_native_host_wrapper(
 
 
 def _host_executable_supports_self_test(host_executable_path: Path) -> bool:
+    run_kwargs: dict[str, object] = {
+        "capture_output": True,
+        "text": True,
+        "timeout": _SELF_TEST_TIMEOUT_SECONDS,
+        "check": False,
+    }
+    if _is_windows():
+        run_kwargs["creationflags"] = _windows_no_window_creationflags()
     try:
         completed = subprocess.run(
             [str(host_executable_path), "--self-test"],
-            capture_output=True,
-            text=True,
-            timeout=_SELF_TEST_TIMEOUT_SECONDS,
-            check=False,
+            **run_kwargs,
         )
     except Exception:
         return False
@@ -1079,7 +1400,7 @@ def resolve_edge_native_host_executable(*, repo_root: Path | None = None) -> Pat
     if getattr(sys, "frozen", False):
         candidates.append(Path(sys.executable).resolve().parent / _EDGE_NATIVE_HOST_EXE)
     root = repo_root or _repo_root()
-    candidates.append(root / "dist" / "legalpdf_translate" / _EDGE_NATIVE_HOST_EXE)
+    candidates.append(_edge_native_host_output_path(repo_root=root))
 
     seen: set[str] = set()
     for candidate in candidates:
@@ -1145,13 +1466,18 @@ def _parse_wrapper_python_target(wrapper_path: Path) -> str | None:
 
 
 def _run_edge_native_host_self_test(host_path: Path) -> dict[str, object]:
+    run_kwargs: dict[str, object] = {
+        "capture_output": True,
+        "text": True,
+        "timeout": _SELF_TEST_TIMEOUT_SECONDS,
+        "check": False,
+    }
+    if _is_windows():
+        run_kwargs["creationflags"] = _windows_no_window_creationflags()
     try:
         completed = subprocess.run(
             [str(host_path), "--self-test"],
-            capture_output=True,
-            text=True,
-            timeout=_SELF_TEST_TIMEOUT_SECONDS,
-            check=False,
+            **run_kwargs,
         )
     except Exception as exc:  # noqa: BLE001
         return {
@@ -1222,6 +1548,7 @@ def inspect_edge_native_host(
     registered_host_text = str(manifest_payload.get("path", "") or "").strip() if isinstance(manifest_payload, dict) else ""
     registered_host_path = Path(registered_host_text).expanduser().resolve() if registered_host_text else None
     host_exists = bool(registered_host_path and registered_host_path.exists())
+    registered_host_path_kind = _native_host_path_kind(registered_host_path)
     wrapper_exists = wrapper_path.exists()
     wrapper_target_python = _parse_wrapper_python_target(wrapper_path) if wrapper_exists else None
     current_runtime = _absolute_path_noresolve(runtime_path or Path(sys.executable))
@@ -1266,19 +1593,11 @@ def inspect_edge_native_host(
             repair_reason = "packaged_host_ready"
             repair_target_kind = "packaged_host"
             repair_target_python = str(packaged_host.expanduser().resolve())
-        else:
-            candidate_python, candidate_reason = _validated_python_executable_for_worktree(
-                current_worktree or _repo_root(),
-                preferred_python_executable=(
-                    preferred_python_executable
-                    or (current_runtime if current_runtime.is_file() else None)
-                ),
-            )
-            repair_reason = candidate_reason
-            if candidate_python is not None:
-                repairable = True
-                repair_target_kind = "checkout_wrapper"
-                repair_target_python = str(_absolute_path_noresolve(candidate_python))
+        elif _native_host_launcher_buildable(repo_root=current_worktree or _repo_root()):
+            repairable = True
+            repair_reason = "native_host_launcher_build_ready"
+            repair_target_kind = "packaged_host"
+            repair_target_python = str(_edge_native_host_output_path(repo_root=current_worktree or _repo_root()))
 
     ready = False
     reason = "native_host_unregistered"
@@ -1327,8 +1646,10 @@ def inspect_edge_native_host(
         "manifest_exists": manifest_exists,
         "manifest_matches_expected": manifest_matches_expected,
         "registered_host_path": str(registered_host_path) if registered_host_path is not None else "",
+        "registered_host_path_kind": registered_host_path_kind,
         "host_exists": host_exists,
         "wrapper_path": str(wrapper_path),
+        "wrapper_path_kind": _native_host_path_kind(wrapper_path),
         "wrapper_exists": wrapper_exists,
         "wrapper_target_python": wrapper_target_python or "",
         "self_test_ok": bool(self_test_result.get("ok")),
@@ -1436,21 +1757,19 @@ def ensure_edge_native_host_registered(
 
     manifest_dir = (base_dir or app_data_dir()).expanduser().resolve()
     resolution_reason = "host_executable_missing"
-    wrapper_changed = False
     if host_executable_path is not None:
         resolved_host_exe = host_executable_path.expanduser().resolve()
     else:
         resolved_host_exe = None
+        current_worktree = _preferred_repo_worktree_for_auto_launch(runtime_path=runtime_path)
         packaged_host = resolve_edge_native_host_executable(
-            repo_root=_preferred_repo_worktree_for_auto_launch(runtime_path=runtime_path)
+            repo_root=current_worktree
         )
         if packaged_host is not None and _host_executable_supports_self_test(packaged_host):
             resolved_host_exe = packaged_host
         if resolved_host_exe is None:
-            resolved_host_exe, resolution_reason, wrapper_changed = _ensure_checkout_edge_native_host_wrapper(
-                base_dir=manifest_dir,
-                runtime_path=runtime_path,
-                preferred_python_executable=preferred_python_executable,
+            resolved_host_exe, resolution_reason = build_edge_native_host_executable(
+                repo_root=current_worktree or _repo_root(),
             )
     if resolved_host_exe is None or not resolved_host_exe.exists():
         return NativeHostRegistrationResult(
@@ -1460,11 +1779,19 @@ def ensure_edge_native_host_registered(
             executable_path=str(resolved_host_exe) if resolved_host_exe is not None else None,
             reason=resolution_reason,
         )
+    if not _host_executable_supports_self_test(resolved_host_exe):
+        return NativeHostRegistrationResult(
+            ok=False,
+            changed=False,
+            manifest_path=None,
+            executable_path=str(resolved_host_exe),
+            reason="native_host_self_test_failed",
+        )
 
     manifest_path = edge_native_host_manifest_path(manifest_dir).expanduser().resolve()
     manifest_payload = build_edge_native_host_manifest(resolved_host_exe)
     manifest_text = json.dumps(manifest_payload, ensure_ascii=False, indent=2) + "\n"
-    changed = wrapper_changed
+    changed = False
 
     existing_manifest_text = None
     try:
@@ -1555,10 +1882,13 @@ def prepare_gmail_intake(
     request_focus: bool = True,
     include_token: bool = True,
     settings_loader=None,
+    handoff_session_requested: bool = False,
 ) -> dict[str, object]:
     settings = _read_gmail_bridge_settings(settings_loader=settings_loader)
     base_dir = (base_dir or app_data_dir()).expanduser().resolve()
     auto_launch_target = _resolve_auto_launch_target()
+    latest_trace_state = latest_window_trace_status(base_dir)
+    native_host_path_kind = _registered_native_host_path_kind(base_dir=base_dir)
     response: dict[str, object] = {
         "ok": False,
         "focused": False,
@@ -1569,11 +1899,18 @@ def prepare_gmail_intake(
         "launchTargetReason": auto_launch_target.reason,
         "ui_owner": "none",
     }
+    if str(latest_trace_state.get("launch_session_id", "") or "").strip():
+        response["launch_session_id"] = str(latest_trace_state.get("launch_session_id", "") or "").strip()
+    handoff_session_id = build_launch_session_id() if handoff_session_requested else ""
+    if handoff_session_id:
+        response["handoff_session_id"] = handoff_session_id
     if auto_launch_target.worktree_path:
         response["launchTarget"] = auto_launch_target.worktree_path
     if auto_launch_target.ui_owner == "browser_app" and auto_launch_target.browser_url:
         response["browser_url"] = auto_launch_target.browser_url
-        response["browser_open_owned_by"] = _BROWSER_OPEN_OWNER_NATIVE_HOST
+        response["browser_open_owned_by"] = _BROWSER_OPEN_OWNER_EXTENSION
+    if native_host_path_kind:
+        response["native_host_path_kind"] = native_host_path_kind
     bridge_port = settings.get("bridgePort")
     if isinstance(bridge_port, int):
         response["bridgePort"] = bridge_port
@@ -1607,6 +1944,31 @@ def prepare_gmail_intake(
     if validation.ok:
         if active_launch_lock is not None:
             _clear_browser_auto_launch_lock(base_dir)
+        if (
+            handoff_session_id
+            and str(getattr(validation, "owner_kind", "") or "").strip() == "browser_app"
+        ):
+            current_launch_session_id = str(response.get("launch_session_id", "") or "").strip() or build_launch_session_id()
+            response["launch_session_id"] = current_launch_session_id
+            update_launch_session_state(
+                base_dir,
+                launch_session_id=current_launch_session_id,
+                handoff_session_id=handoff_session_id,
+                status="launch_ready",
+                reason=str(validation.reason or "").strip(),
+                browser_url=str(getattr(validation, "browser_url", "") or auto_launch_target.browser_url or "").strip(),
+                workspace_id=str(getattr(validation, "workspace_id", "") or _BROWSER_GMAIL_WORKSPACE_ID).strip() or _BROWSER_GMAIL_WORKSPACE_ID,
+                runtime_mode=str(getattr(validation, "runtime_mode", "") or "live").strip() or "live",
+                browser_open_owned_by=str(response.get("browser_open_owned_by", "") or _BROWSER_OPEN_OWNER_EXTENSION).strip() or _BROWSER_OPEN_OWNER_EXTENSION,
+                launch_phase=(
+                    "browser_surface_ready"
+                    if str(response.get("browser_open_owned_by", "") or "").strip() == _BROWSER_OPEN_OWNER_EXTENSION
+                    else "server_boot"
+                ),
+                native_host_path_kind=native_host_path_kind,
+                bridge_context_posted=False,
+                surface_visibility_status="",
+            )
     elif active_launch_lock is not None and validation.reason in _AUTO_LAUNCHABLE_BRIDGE_REASONS:
         response["reason"] = _AUTO_LAUNCH_IN_PROGRESS_REASON
         _apply_browser_auto_launch_lock_context(
@@ -1620,20 +1982,132 @@ def prepare_gmail_intake(
 
     if not validation.ok and request_focus and validation.reason in _AUTO_LAUNCHABLE_BRIDGE_REASONS:
         launch_lock_payload: dict[str, object] | None = None
+        launch_session_id = build_launch_session_id()
+        trace_request = consume_armed_window_trace(base_dir) if auto_launch_target.ui_owner == "browser_app" else None
+        launch_session_state = update_launch_session_state(
+            base_dir,
+            launch_session_id=launch_session_id,
+            handoff_session_id=handoff_session_id,
+            status="launch_started",
+            browser_url=str(auto_launch_target.browser_url or "").strip(),
+            workspace_id=_BROWSER_GMAIL_WORKSPACE_ID,
+            runtime_mode="live",
+            browser_open_owned_by=_BROWSER_OPEN_OWNER_SERVER_BOOT,
+            launch_runtime_path=str(auto_launch_target.python_executable or "").strip()
+            if auto_launch_target.ready and auto_launch_target.python_executable
+            else "",
+            native_host_path_kind=native_host_path_kind,
+            trace_requested=bool(trace_request),
+            trace_status="pending" if trace_request else "",
+            trace_dir="",
+            trace_samples_path="",
+            trace_summary_path="",
+            reason="launch_started",
+        )
+        response["launch_session_id"] = launch_session_id
         if auto_launch_target.ui_owner == "browser_app":
-            launch_lock_payload = _write_browser_auto_launch_lock(base_dir, auto_launch_target)
-        launch_reason = _launch_repo_worktree(auto_launch_target)
+            launch_lock_payload = _write_browser_auto_launch_lock(
+                base_dir,
+                auto_launch_target,
+                launch_session_id=launch_session_id,
+            )
+        trace_reason = _start_window_trace_capture(
+            base_dir=base_dir,
+            launch_session_id=launch_session_id,
+            target=auto_launch_target,
+            trace_request=trace_request,
+        )
+        if trace_request:
+            launch_session_state = update_launch_session_state(
+                base_dir,
+                launch_session_id=launch_session_id,
+                trace_status=trace_reason,
+                trace_dir=launch_session_state.get("trace_dir", ""),
+                trace_samples_path=launch_session_state.get("trace_samples_path", ""),
+                trace_summary_path=launch_session_state.get("trace_summary_path", ""),
+            )
+        launch_target = auto_launch_target
+        if auto_launch_target.ui_owner == "browser_app":
+            launch_target = replace(
+                auto_launch_target,
+                launch_args=(
+                    *auto_launch_target.launch_args,
+                    "--launch-session-id",
+                    launch_session_id,
+                ),
+            )
+        launch_reason = _launch_repo_worktree(launch_target)
         if launch_reason != "launch_started":
             if auto_launch_target.ui_owner == "browser_app":
                 _clear_browser_auto_launch_lock(base_dir)
+            update_launch_session_state(
+                base_dir,
+                launch_session_id=launch_session_id,
+                status=launch_reason,
+                reason=launch_reason,
+            )
             response["reason"] = launch_reason
             return response
         response["launched"] = True
-        wait_reason = _wait_for_bridge_owner_after_launch(
+        wait_reason = _wait_for_auto_launch_ready_after_launch(
             bridge_port=bridge_port,
             base_dir=base_dir,
+            target=auto_launch_target,
         )
+        if wait_reason == _BROWSER_SERVER_READY_REASON and auto_launch_target.ui_owner == "browser_app":
+            if launch_lock_payload is not None:
+                launch_lock_payload = _write_browser_auto_launch_lock(
+                    base_dir,
+                    auto_launch_target,
+                    launch_session_id=launch_session_id,
+                    browser_open_owned_by=_BROWSER_OPEN_OWNER_EXTENSION,
+                )
+            update_launch_session_state(
+                base_dir,
+                launch_session_id=launch_session_id,
+                status=_BROWSER_SERVER_READY_REASON,
+                reason=_BROWSER_SERVER_READY_REASON,
+                browser_open_owned_by=_BROWSER_OPEN_OWNER_EXTENSION,
+                launch_phase="server_boot_ready",
+                native_host_path_kind=native_host_path_kind,
+            )
+            _apply_browser_launch_ready_context(
+                response,
+                browser_url=str(auto_launch_target.browser_url or "").strip(),
+                launch_session_id=launch_session_id,
+                handoff_session_id=handoff_session_id,
+                browser_open_owned_by=_BROWSER_OPEN_OWNER_EXTENSION,
+                launch_lock_ttl_ms=(
+                    int(launch_lock_payload.get("remaining_ms", 0) or 0)
+                    if isinstance(launch_lock_payload, dict)
+                    else None
+                ),
+                reason=_BROWSER_SERVER_READY_REASON,
+            )
+            if include_token:
+                response["bridgeToken"] = str(settings["bridgeToken"])
+            return response
         if wait_reason != "launch_ready":
+            update_launch_session_state(
+                base_dir,
+                launch_session_id=launch_session_id,
+                handoff_session_id=handoff_session_id,
+                status=(
+                    _AUTO_LAUNCH_IN_PROGRESS_REASON
+                    if auto_launch_target.ui_owner == "browser_app" and wait_reason == "launch_timeout"
+                    else wait_reason
+                ),
+                reason=wait_reason,
+                native_host_path_kind=native_host_path_kind,
+            )
+            if auto_launch_target.ui_owner == "browser_app" and launch_lock_payload is not None and wait_reason == "launch_timeout":
+                _apply_browser_auto_launch_lock_context(
+                    response,
+                    lock_payload=launch_lock_payload,
+                    fallback_browser_url=auto_launch_target.browser_url,
+                )
+                response["reason"] = _AUTO_LAUNCH_IN_PROGRESS_REASON
+                return response
             if auto_launch_target.ui_owner == "browser_app":
                 _clear_browser_auto_launch_lock(base_dir)
             response["reason"] = wait_reason
@@ -1649,6 +2123,27 @@ def prepare_gmail_intake(
             response,
             validation=validation,
             fallback_browser_url=auto_launch_target.browser_url,
+        )
+        update_launch_session_state(
+            base_dir,
+            launch_session_id=launch_session_id,
+            handoff_session_id=handoff_session_id,
+            status="launch_ready" if validation.ok else str(validation.reason or "launch_failed").strip() or "launch_failed",
+            reason=str(validation.reason or "").strip(),
+            browser_open_owned_by=(
+                str(response.get("browser_open_owned_by", "") or "").strip()
+                or (
+                    _BROWSER_OPEN_OWNER_EXTENSION
+                    if str(getattr(validation, "owner_kind", "") or "").strip() == "browser_app" and bool(validation.ok)
+                    else _BROWSER_OPEN_OWNER_SERVER_BOOT
+                )
+            ),
+            launch_phase=(
+                "browser_surface_ready"
+                if str(response.get("browser_open_owned_by", "") or "").strip() == _BROWSER_OPEN_OWNER_EXTENSION
+                else "server_boot"
+            ),
+            native_host_path_kind=native_host_path_kind,
         )
         if not validation.ok and launch_lock_payload is not None:
             _clear_browser_auto_launch_lock(base_dir)
@@ -1692,6 +2187,7 @@ def handle_native_message(
             base_dir=(base_dir or app_data_dir()),
             request_focus=_normalize_bool(payload.get("requestFocus"), default=True),
             include_token=_normalize_bool(payload.get("includeToken"), default=True),
+            handoff_session_requested=True,
         )
     if action != "focus_app":
         return {"ok": False, "focused": False, "flashed": False, "reason": "unsupported_action"}
@@ -1735,6 +2231,7 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--edge-extension-report", action="store_true")
     parser.add_argument("--edge-extension-report-file", type=str, default="")
     parser.add_argument("--host-executable", type=str, default="")
+    parser.add_argument("--build-native-host-launcher", action="store_true")
     parser.add_argument("--restart-browser-runtime-canonical", action="store_true")
     parser.add_argument("--target-worktree", type=str, default="")
     parser.add_argument("--target-python", type=str, default="")
@@ -1760,6 +2257,18 @@ def cli(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if result.ok else 1
+    if args.build_native_host_launcher:
+        built_path, reason = build_edge_native_host_executable(repo_root=_preferred_repo_worktree_for_auto_launch())
+        print(
+            json.dumps(
+                {
+                    "ok": built_path is not None,
+                    "path": str(built_path) if built_path is not None else "",
+                    "reason": reason,
+                }
+            )
+        )
+        return 0 if built_path is not None else 1
     if args.edge_extension_report:
         report_text = json.dumps(build_edge_extension_report(), ensure_ascii=False)
         if args.edge_extension_report_file.strip():

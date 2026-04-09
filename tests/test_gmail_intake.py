@@ -74,6 +74,7 @@ function loadBackground({{
   fetchImpl,
   nativeImpl = async () => ({{}}),
   storageGetImpl = async () => ({{}}),
+  sessionStorageGetImpl = async () => ({{}}),
   queryImpl = async () => [],
   executeScriptImpl = async () => undefined,
   sendMessageImpl = async () => ({{ ok: true }}),
@@ -132,6 +133,10 @@ function loadBackground({{
         get: storageGetImpl,
         set: async () => undefined,
       }},
+      session: {{
+        get: sessionStorageGetImpl,
+        set: async () => undefined,
+      }},
     }},
   }};
 
@@ -157,6 +162,7 @@ function loadBackground({{
 
 const browserUrl = "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake";
 const shellAssetVersion = "asset-20260330";
+const launchSessionSchemaVersion = 3;
 const gmailContext = {{
   message_id: "msg-1",
   thread_id: "thread-1",
@@ -193,6 +199,7 @@ function workspaceReadyFetch() {{
               runtime_mode: "live",
               workspace_id: "gmail-intake",
               asset_version: shellAssetVersion,
+              extension_launch_session_schema_version: launchSessionSchemaVersion,
             }},
             gmail: {{
               pending_status: "",
@@ -245,7 +252,91 @@ function workspaceReadyFetch() {{
   }};
 }}
 
-function clientReadyPayload(status, message = "", assetVersion = shellAssetVersion) {{
+function workspacePendingFetch() {{
+  return async (url, options = {{}}) => {{
+    const targetUrl = String(url || "");
+    const method = String(options.method || "GET").toUpperCase();
+    if (targetUrl === "http://127.0.0.1:8765/gmail-intake" && method === "POST") {{
+      return {{
+        ok: true,
+        status: 200,
+        json: async () => ({{ message: "Gmail intake accepted." }}),
+      }};
+    }}
+    if (targetUrl.includes("/api/bootstrap/shell")) {{
+      return {{
+        ok: true,
+        status: 200,
+        json: async () => ({{
+          normalized_payload: {{
+            shell: {{
+              ready: true,
+              runtime_mode: "live",
+              workspace_id: "gmail-intake",
+              asset_version: shellAssetVersion,
+              extension_launch_session_schema_version: launchSessionSchemaVersion,
+            }},
+            gmail: {{
+              pending_status: "warming",
+              pending_review_open: true,
+              pending_intake_context: {{
+                message_id: "msg-1",
+                thread_id: "thread-1",
+              }},
+            }},
+          }},
+          diagnostics: {{
+            gmail_bridge_sync: {{}},
+          }},
+          capability_flags: {{
+            gmail_bridge: {{
+              current_mode: {{
+                prepare_response: {{}},
+              }},
+            }},
+          }},
+        }}),
+      }};
+    }}
+    if (targetUrl.includes("/api/gmail/bootstrap")) {{
+      return {{
+        ok: true,
+        status: 200,
+        json: async () => ({{
+          normalized_payload: {{
+            pending_status: "warming",
+            pending_review_open: true,
+            pending_intake_context: {{
+              message_id: "msg-1",
+              thread_id: "thread-1",
+            }},
+            load_result: {{}},
+          }},
+          diagnostics: {{
+            gmail_bridge_sync: {{}},
+          }},
+          capability_flags: {{
+            gmail_bridge: {{
+              current_mode: {{
+                prepare_response: {{}},
+              }},
+            }},
+          }},
+        }}),
+      }};
+    }}
+    throw new Error(`unexpected fetch ${{targetUrl}}`);
+  }};
+}}
+
+function clientReadyPayload(
+  status,
+  message = "",
+  assetVersion = shellAssetVersion,
+  launchSessionId = "",
+  handoffSessionId = "",
+  schemaVersion = launchSessionSchemaVersion,
+) {{
   return {{
     marker: {{
       status,
@@ -255,6 +346,9 @@ function clientReadyPayload(status, message = "", assetVersion = shellAssetVersi
       gmailHandoffState: status === "ready" ? "loaded" : "warming",
       buildSha: "5c9842e",
       assetVersion,
+      launchSessionId,
+      handoffSessionId,
+      launchSessionSchemaVersion: schemaVersion,
       bootstrappedAt: status === "ready" ? "2026-03-30T12:00:00Z" : null,
       message,
     }},
@@ -265,6 +359,9 @@ function clientReadyPayload(status, message = "", assetVersion = shellAssetVersi
       clientActiveView: "gmail-intake",
       clientBuildSha: "5c9842e",
       clientAssetVersion: assetVersion,
+      clientLaunchSession: launchSessionId,
+      clientHandoffSession: handoffSessionId,
+      clientLaunchSessionSchemaVersion: String(schemaVersion),
     }},
     href: browserUrl,
   }};
@@ -351,12 +448,45 @@ const nativeLaunchInProgress = loadBackground({{
     reason: "launch_in_progress",
     launch_in_progress: true,
     launch_lock_ttl_ms: 4200,
+    launch_session_id: "launch-123",
     ui_owner: "browser_app",
     browser_url: browserUrl,
-    browser_open_owned_by: "native_host",
+    browser_open_owned_by: "server_boot",
   }}),
 }});
 const nativeLaunchInProgressResult = await nativeLaunchInProgress.hooks.resolveBridgeConfigForClick();
+
+const foreignLaunchNoCreate = loadBackground({{
+  queryImpl: async () => [],
+}});
+await foreignLaunchNoCreate.hooks.rememberActiveBrowserLaunchSession(browserUrl, {{
+  launchSessionId: "launch-foreign-1",
+  owner: "server_boot",
+  ttlMs: 4200,
+}});
+const foreignLaunchNoCreateResult = await foreignLaunchNoCreate.hooks.openOrFocusBrowserApp(browserUrl);
+const extensionOwnedLaunchedWaitResult = foreignLaunchNoCreate.hooks.shouldWaitForLaunchedBrowserTab({{
+  nativeResponse: {{
+    ui_owner: "browser_app",
+    launched: true,
+    browser_url: browserUrl,
+    browser_open_owned_by: "extension",
+  }},
+  browserUrl,
+  launchSessionId: "launch-extension-1",
+  browserOpenOwnedBy: "extension",
+}});
+const foreignOwnedLaunchedWaitResult = foreignLaunchNoCreate.hooks.shouldWaitForLaunchedBrowserTab({{
+  nativeResponse: {{
+    ui_owner: "browser_app",
+    launched: true,
+    browser_url: browserUrl,
+    browser_open_owned_by: "server_boot",
+  }},
+  browserUrl,
+  launchSessionId: "launch-foreign-1",
+  browserOpenOwnedBy: "server_boot",
+}});
 
 const settleNoCreate = loadBackground({{
   fetchImpl: async () => ({{
@@ -367,11 +497,88 @@ const settleNoCreate = loadBackground({{
 }});
 const settleNoCreateResult = await settleNoCreate.hooks.settleBrowserAppHandoff(browserUrl, false, false);
 
+const unrelatedLocalhostTab = {{
+  id: 88,
+  windowId: 16,
+  url: "http://127.0.0.1:8877/?mode=live&workspace=new-job#new-job",
+}};
+
+const strictWorkspaceNoHijack = loadBackground({{
+  queryImpl: async () => [unrelatedLocalhostTab],
+}});
+const strictWorkspaceNoHijackResult = await strictWorkspaceNoHijack.hooks.openOrFocusBrowserApp(browserUrl);
+
 const readyTab = {{
   id: 77,
   windowId: 15,
   url: browserUrl,
 }};
+
+const staleExactWorkspaceTab = {{
+  id: 93,
+  windowId: 19,
+  url: browserUrl,
+}};
+
+const staleQueriedExactTab = loadBackground({{
+  queryImpl: async () => [staleExactWorkspaceTab],
+  executeScriptImpl: executeScriptSequence([
+    clientReadyPayload("ready", "", shellAssetVersion, "launch-old"),
+  ]),
+}});
+await staleQueriedExactTab.hooks.rememberActiveBrowserLaunchSession(browserUrl, {{
+  launchSessionId: "launch-new",
+  owner: "extension",
+  ttlMs: 4200,
+}});
+const staleQueriedExactTabResult = await staleQueriedExactTab.hooks.openOrFocusBrowserApp(browserUrl, {{
+  launchSessionId: "launch-new",
+  browserOpenOwnedBy: "extension",
+}});
+
+const stalePendingExactTab = loadBackground({{
+  queryImpl: async () => [staleExactWorkspaceTab],
+  executeScriptImpl: executeScriptSequence([
+    clientReadyPayload("ready", "", shellAssetVersion, "launch-old"),
+  ]),
+}});
+await stalePendingExactTab.hooks.rememberPendingBrowserSurface(browserUrl, staleExactWorkspaceTab, {{
+  launchSessionId: "launch-old",
+  browserOpenOwnedBy: "extension",
+  resolutionStrategy: "exact_workspace_match",
+  surfaceCandidateSource: "pending_surface",
+  surfaceCandidateValid: true,
+}});
+await stalePendingExactTab.hooks.rememberActiveBrowserLaunchSession(browserUrl, {{
+  launchSessionId: "launch-new",
+  owner: "extension",
+  ttlMs: 4200,
+}});
+const stalePendingExactTabResult = await stalePendingExactTab.hooks.openOrFocusBrowserApp(browserUrl, {{
+  launchSessionId: "launch-new",
+  browserOpenOwnedBy: "extension",
+}});
+
+const currentFreshPendingTab = loadBackground({{
+  queryImpl: async () => [readyTab],
+}});
+await currentFreshPendingTab.hooks.rememberPendingBrowserSurface(browserUrl, readyTab, {{
+  launchSessionId: "launch-current",
+  browserOpenOwnedBy: "extension",
+  resolutionStrategy: "created_exact_tab",
+  surfaceCandidateSource: "fresh_exact_tab",
+  surfaceCandidateValid: true,
+  freshTabCreatedAfterInvalidation: true,
+}});
+await currentFreshPendingTab.hooks.rememberActiveBrowserLaunchSession(browserUrl, {{
+  launchSessionId: "launch-current",
+  owner: "extension",
+  ttlMs: 4200,
+}});
+const currentFreshPendingTabResult = await currentFreshPendingTab.hooks.openOrFocusBrowserApp(browserUrl, {{
+  launchSessionId: "launch-current",
+  browserOpenOwnedBy: "extension",
+}});
 
 const hydratedImmediate = loadBackground({{
   fetchImpl: workspaceReadyFetch(),
@@ -463,6 +670,24 @@ const hydratedStaleNeverResult = await hydratedStaleNever.hooks.postContext(
   false,
 );
 
+const pendingWithoutSurface = loadBackground({{
+  fetchImpl: workspacePendingFetch(),
+  queryImpl: async () => [unrelatedLocalhostTab],
+  executeScriptImpl: executeScriptSequence([
+    clientReadyPayload("warming"),
+  ]),
+}});
+const pendingWithoutSurfaceResult = await pendingWithoutSurface.hooks.postContext(
+  17,
+  gmailContext,
+  config,
+  nativeResponse,
+  "",
+  false,
+  browserUrl,
+  false,
+);
+
 console.log(JSON.stringify({{
   transport: {{
     tabOps: transport.tabOps,
@@ -482,9 +707,31 @@ console.log(JSON.stringify({{
   nativeUnavailableDeadBridgeResult,
   nativeUnavailableLiveBridgeResult,
   nativeLaunchInProgressResult,
+  foreignLaunchNoCreate: {{
+    result: foreignLaunchNoCreateResult,
+    tabOps: foreignLaunchNoCreate.tabOps,
+  }},
+  extensionOwnedLaunchedWaitResult,
+  foreignOwnedLaunchedWaitResult,
   settleNoCreate: {{
     result: settleNoCreateResult,
     tabOps: settleNoCreate.tabOps,
+  }},
+  strictWorkspaceNoHijack: {{
+    result: strictWorkspaceNoHijackResult,
+    tabOps: strictWorkspaceNoHijack.tabOps,
+  }},
+  staleQueriedExactTab: {{
+    result: staleQueriedExactTabResult,
+    tabOps: staleQueriedExactTab.tabOps,
+  }},
+  stalePendingExactTab: {{
+    result: stalePendingExactTabResult,
+    tabOps: stalePendingExactTab.tabOps,
+  }},
+  currentFreshPendingTab: {{
+    result: currentFreshPendingTabResult,
+    tabOps: currentFreshPendingTab.tabOps,
   }},
   hydratedImmediate: {{
     result: hydratedImmediateResult,
@@ -505,6 +752,11 @@ console.log(JSON.stringify({{
     result: hydratedStaleNeverResult,
     tabOps: hydratedStaleNever.tabOps,
     sentMessages: hydratedStaleNever.sentMessages,
+  }},
+  pendingWithoutSurface: {{
+    result: pendingWithoutSurfaceResult,
+    tabOps: pendingWithoutSurface.tabOps,
+    sentMessages: pendingWithoutSurface.sentMessages,
   }},
 }}));
 """
@@ -687,13 +939,16 @@ def test_gmail_extension_scripts_keep_stage_one_contract_markers() -> None:
     assert "chrome.storage.local.get" in background_js
     assert "includeToken" in background_js
     assert "requestFocus" in background_js
+    assert "browser_server_ready" in background_js
     assert "launch_timeout" in background_js
     assert "auto-launch is not available from this checkout" in background_js
     assert "Gmail bridge is not configured in LegalPDF Translate." in background_js
     assert "LegalPDF Translate native host is unavailable. Reload the extension or open the options page." in background_js
     assert "extension cannot open the app automatically right now" in background_js
     assert "candidates.find((tab) => Number.isInteger(tab.id))" in background_js
-    assert "chrome.tabs.update(existing.id, { active: true, url: targetUrl })" in background_js
+    assert "ensureBrowserTabVisible" in background_js
+    assert "confirmBrowserWorkspaceSurfaceBeforeBridgePost" in background_js
+    assert "handoff_session_id: context.handoff_session_id ?? undefined" in background_js
     assert "Bridge token is missing in extension options." not in background_js
     assert background_js.index("chrome.runtime.sendNativeMessage") < background_js.index("await postContext")
     assert "[data-message-id][data-legacy-message-id]" in content_js
@@ -769,9 +1024,10 @@ def test_gmail_extension_background_preserves_failure_contract_and_lock_budget()
             "reason": "launch_in_progress",
             "launch_in_progress": True,
             "launch_lock_ttl_ms": 4200,
+            "launch_session_id": "launch-123",
             "ui_owner": "browser_app",
             "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
-            "browser_open_owned_by": "native_host",
+            "browser_open_owned_by": "server_boot",
         },
         "launchInProgress": True,
         "messageKind": "info",
@@ -780,6 +1036,17 @@ def test_gmail_extension_background_preserves_failure_contract_and_lock_budget()
             "Please wait up to 5s before clicking again; it will reuse the same launch instead of opening another window."
         ),
     }
+    assert results["foreignLaunchNoCreate"]["result"] is False
+    assert results["foreignLaunchNoCreate"]["tabOps"] == [
+        {
+            "type": "query",
+            "query": {
+                "url": "http://127.0.0.1:8877/*",
+            },
+        }
+    ]
+    assert results["extensionOwnedLaunchedWaitResult"] is False
+    assert results["foreignOwnedLaunchedWaitResult"] is True
     assert results["settleNoCreate"]["result"] is False
     assert results["settleNoCreate"]["tabOps"] == [
         {
@@ -788,6 +1055,151 @@ def test_gmail_extension_background_preserves_failure_contract_and_lock_budget()
                 "url": "http://127.0.0.1:8877/*",
             },
         }
+    ]
+    assert results["strictWorkspaceNoHijack"]["result"] is True
+    assert results["strictWorkspaceNoHijack"]["tabOps"] == [
+        {
+            "type": "query",
+            "query": {
+                "url": "http://127.0.0.1:8877/*",
+            },
+        },
+        {
+            "type": "create",
+            "args": {
+                "url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+                "active": True,
+            },
+        },
+        {
+            "type": "update",
+            "args": [
+                91,
+                {
+                    "active": True,
+                },
+            ],
+        },
+        {
+            "type": "windowUpdate",
+            "args": [
+                7,
+                {
+                    "focused": True,
+                },
+            ],
+        },
+    ]
+    assert results["staleQueriedExactTab"]["result"] is True
+    assert results["staleQueriedExactTab"]["tabOps"] == [
+        {
+            "type": "query",
+            "query": {
+                "url": "http://127.0.0.1:8877/*",
+            },
+        },
+        {
+            "type": "executeScript",
+            "args": {
+                "target": {
+                    "tabId": 93,
+                },
+            },
+        },
+        {
+            "type": "create",
+            "args": {
+                "url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+                "active": True,
+            },
+        },
+        {
+            "type": "update",
+            "args": [
+                91,
+                {
+                    "active": True,
+                },
+            ],
+        },
+        {
+            "type": "windowUpdate",
+            "args": [
+                7,
+                {
+                    "focused": True,
+                },
+            ],
+        },
+    ]
+    assert results["stalePendingExactTab"]["result"] is True
+    assert results["stalePendingExactTab"]["tabOps"] == [
+        {
+            "type": "query",
+            "query": {
+                "url": "http://127.0.0.1:8877/*",
+            },
+        },
+        {
+            "type": "executeScript",
+            "args": {
+                "target": {
+                    "tabId": 93,
+                },
+            },
+        },
+        {
+            "type": "create",
+            "args": {
+                "url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+                "active": True,
+            },
+        },
+        {
+            "type": "update",
+            "args": [
+                91,
+                {
+                    "active": True,
+                },
+            ],
+        },
+        {
+            "type": "windowUpdate",
+            "args": [
+                7,
+                {
+                    "focused": True,
+                },
+            ],
+        },
+    ]
+    assert results["currentFreshPendingTab"]["result"] is True
+    assert results["currentFreshPendingTab"]["tabOps"] == [
+        {
+            "type": "query",
+            "query": {
+                "url": "http://127.0.0.1:8877/*",
+            },
+        },
+        {
+            "type": "update",
+            "args": [
+                77,
+                {
+                    "active": True,
+                },
+            ],
+        },
+        {
+            "type": "windowUpdate",
+            "args": [
+                15,
+                {
+                    "focused": True,
+                },
+            ],
+        },
     ]
 
     assert results["hydratedImmediate"]["result"] == {
@@ -806,43 +1218,71 @@ def test_gmail_extension_background_preserves_failure_contract_and_lock_budget()
 
     assert results["hydratedAfterReload"]["result"] == {
         "holdLock": False,
-        "outcome": "loaded",
+        "outcome": "workspace_surface_unconfirmed",
     }
     assert [op for op in results["hydratedAfterReload"]["tabOps"] if op["type"] == "reload"] == []
     assert results["hydratedAfterReload"]["sentMessages"][-1] == {
         "tabId": 14,
         "payload": {
             "type": "gmail-intake-status",
-            "kind": "success",
-            "message": "Gmail intake accepted.",
+            "kind": "error",
+            "message": (
+                "LegalPDF Translate opened, but the Gmail workspace tab is still running stale browser assets. "
+                "Expected asset version: asset-20260330. Tab asset version: asset-stale-old. "
+                "Please focus the LegalPDF tab and click the extension again."
+            ),
         },
     }
 
     assert results["hydratedNever"]["result"] == {
-        "holdLock": False,
-        "outcome": "loaded",
+        "holdLock": True,
+        "outcome": "warming",
     }
     assert [op for op in results["hydratedNever"]["tabOps"] if op["type"] == "reload"] == []
     assert results["hydratedNever"]["sentMessages"][-1] == {
         "tabId": 15,
         "payload": {
             "type": "gmail-intake-status",
-            "kind": "success",
-            "message": "Gmail intake accepted.",
+            "kind": "info",
+            "message": (
+                "Gmail intake accepted. LegalPDF Translate received the Gmail handoff and is still loading "
+                "the exact Gmail message. Please wait a few seconds, then click the extension again only if it stays stuck."
+            ),
         },
     }
 
     assert results["hydratedStaleNever"]["result"] == {
         "holdLock": False,
-        "outcome": "loaded",
+        "outcome": "workspace_surface_unconfirmed",
     }
     assert [op for op in results["hydratedStaleNever"]["tabOps"] if op["type"] == "reload"] == []
     assert results["hydratedStaleNever"]["sentMessages"][-1] == {
         "tabId": 16,
         "payload": {
             "type": "gmail-intake-status",
-            "kind": "success",
-            "message": "Gmail intake accepted.",
+            "kind": "error",
+            "message": (
+                "LegalPDF Translate opened, but the Gmail workspace tab is still running stale browser assets. "
+                "Expected asset version: asset-20260330. Tab asset version: asset-stale-before-reload. "
+                "Please focus the LegalPDF tab and click the extension again."
+            ),
+        },
+    }
+
+    assert results["pendingWithoutSurface"]["result"] == {
+        "holdLock": False,
+        "outcome": "workspace_surface_unconfirmed",
+    }
+    assert results["pendingWithoutSurface"]["sentMessages"][-1] == {
+        "tabId": 17,
+        "payload": {
+            "type": "gmail-intake-status",
+            "kind": "error",
+            "message": (
+                "LegalPDF Translate did not confirm that the Gmail workspace tab opened correctly. "
+                "Please focus the LegalPDF tab and click the extension again. "
+                "The browser app may still need manual focus."
+            ),
         },
     }
 
