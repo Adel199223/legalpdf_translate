@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-04-19T12:51:44Z",
+  "last_updated": "2026-04-19T21:08:44Z",
   "issues": [
     {
       "id": "workflow-wrong-build-under-test",
@@ -959,6 +959,80 @@
         {
           "type": "live_acceptance",
           "ref": "20260419_125112_2d61fbb64f8e"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        }
+      ]
+    },
+    {
+      "id": "workflow-gmail-honorarios-local-court-city",
+      "title": "Gmail honorários metadata used generic comarca city instead of the specific local court unit",
+      "first_seen_timestamp": "2026-04-19T19:55:00Z",
+      "last_seen_timestamp": "2026-04-19T21:08:44Z",
+      "repeat_count": 1,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Gmail translation save seed and honorários output resolved case_city/service_city to Beja.",
+        "The source document showed stronger local evidence for Cuba, including Juízo de Competência Genérica de Cuba, address city Cuba, and cuba.ministeriopublico@tribunais.org.pt.",
+        "The generated honorários addressee and closing city could point to the broader comarca instead of the local court unit."
+      ],
+      "likely_root_cause": "Metadata autofill accepted broad court/comarca evidence before ranking more specific local-unit, address, and email evidence; translation seed hydration then copied that weaker city into both case and service city for downstream Job Log and honorários generation.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-04-19T20:25:26Z",
+          "summary": "Ranked local court-unit metadata over generic comarca evidence and propagated the corrected city into translation save seeds.",
+          "outcome": "accepted_after_live_validation"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-04-19T21:08:44Z",
+        "summary": "Latest live run 20260419_215231 on canonical main build 0b2687f produced case_city=Cuba, service_city=Cuba, kept court_email=cuba.ministeriopublico@tribunais.org.pt, completed intentional page-2 translation as Processed pages: 2/2, finalized gmail_batch_92aecc9772da as draft_ready, and generated an honorários PDF addressed to Juízo de Competência Genérica de Cuba with closing city Cuba.",
+        "expected_result": "Future Gmail translation save seeds, Job Log rows, honorários DOCX/PDF files, and Gmail finalization reports use the most specific local court-unit city when it conflicts with a broader comarca city."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md",
+        "docs/assistant/workflows/TRANSLATION_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/exec_plans/completed/2026-04-19_gmail_honorarios_local_court_city_fix.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "medium",
+        "targets": [
+          "specific local court-unit city outranks generic comarca city for honorários metadata",
+          "Gmail finalization acceptance should verify honorários addressee and closing city, not only case_city",
+          "citation marker and parenthesis drift remain diagnostic-only unless stronger risk signals trigger review"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-19_gmail_honorarios_local_court_city_fix.md"
+        },
+        {
+          "type": "pr",
+          "ref": "https://github.com/Adel199223/legalpdf_translate/pull/44"
+        },
+        {
+          "type": "commit",
+          "ref": "0b2687f"
+        },
+        {
+          "type": "live_run",
+          "ref": "20260419_215231"
+        },
+        {
+          "type": "gmail_batch",
+          "ref": "gmail_batch_92aecc9772da"
         },
         {
           "type": "worktree",

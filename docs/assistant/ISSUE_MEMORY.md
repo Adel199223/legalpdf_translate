@@ -321,6 +321,46 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - Live acceptance: `20260419_125112_2d61fbb64f8e`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
 
+### workflow-gmail-honorarios-local-court-city
+- Title: Gmail honorários metadata used generic comarca city instead of the specific local court unit
+- First seen timestamp: `2026-04-19T19:55:00Z`
+- Last seen timestamp: `2026-04-19T21:08:44Z`
+- Repeat count: `1`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - Gmail translation save seed and honorários output resolved `case_city` / `service_city` to `Beja`
+  - the source document showed stronger local evidence for `Cuba`, including `Juízo de Competência Genérica de Cuba`, address city `Cuba`, and `cuba.ministeriopublico@tribunais.org.pt`
+  - the generated honorários addressee and closing city could point to the broader comarca instead of the local court unit
+- Likely root cause:
+  - metadata autofill effectively accepted the first broad court/comarca evidence before ranking more specific local-unit, address, and email evidence
+  - translation seed hydration copied that weaker city into both case and service city for downstream Job Log and honorários generation
+- Attempted fix history:
+  - `2026-04-19T20:25:26Z` — ranked local court-unit metadata over generic comarca evidence and propagated the corrected city into translation save seeds; outcome: accepted after live Gmail cold-start and finalization evidence
+- Accepted fix:
+  - `2026-04-19T21:08:44Z` — latest live run `20260419_215231` on canonical `main` build `0b2687f` produced `case_city=Cuba`, `service_city=Cuba`, kept `court_email=cuba.ministeriopublico@tribunais.org.pt`, completed intentional page-2 translation as `Processed pages: 2/2`, finalized `gmail_batch_92aecc9772da` as `draft_ready`, and generated an honorários PDF addressed to `Juízo de Competência Genérica de Cuba` with closing city `Cuba`
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/DOCS_REFRESH_NOTES.md`
+  - `docs/assistant/SESSION_RESUME.md`
+  - `docs/assistant/exec_plans/completed/2026-04-19_gmail_honorarios_local_court_city_fix.md`
+- Bootstrap relevance: `possible`
+- Docs-sync relevance:
+  - Priority: `medium`
+  - Targets:
+    - specific local court-unit city outranks generic comarca city for honorários metadata
+    - Gmail finalization acceptance should verify honorários addressee/closing city, not only `case_city`
+    - citation marker and parenthesis drift remain diagnostic-only unless stronger risk signals trigger review
+- Evidence refs:
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-19_gmail_honorarios_local_court_city_fix.md`
+  - PR: `https://github.com/Adel199223/legalpdf_translate/pull/44`
+  - Commit: `0b2687f`
+  - Live run: `20260419_215231`
+  - Gmail batch: `gmail_batch_92aecc9772da`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+
 ### workflow-fragmented-multi-surface-diagnostics
 - Title: Fragmented diagnostics across handoff, per-run execution, and finalization slowed root-cause analysis
 - First seen timestamp: `2026-03-08T00:00:00Z`

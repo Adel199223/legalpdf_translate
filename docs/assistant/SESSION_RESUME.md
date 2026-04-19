@@ -39,6 +39,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Browser Gmail handoff now uses per-click `handoff_session_id`, same-tab redirect, immediate post-redirect `/gmail-intake`, and client/server `asset_version` diagnostics so stale service workers, stale tabs, and `Pending load` states do not masquerade as accepted handoffs.
 - Browser-managed Gmail PDF preview/prepare now uses the bundled browser `pdf.js` path instead of depending on `PyMuPDF` during browser startup.
 - Gmail batch finalization readiness now depends on a real Word export canary, not a launch-only Word probe.
+- Gmail translation honorários metadata now prefers the specific local court-unit city over a broader comarca city. The accepted April 19 live closeout on build `0b2687f` confirmed `case_city=Cuba`, `service_city=Cuba`, populated nested `result.artifacts.run_report_path`, `Processed pages: 2/2` for an intentional page-2 start, and finalization `draft_ready` with a Cuba honorários PDF.
 - Report-restored completed Gmail translation batches are now secondary recovered history only; a fresh extension handoff or loaded Gmail message should supersede them automatically.
 - Browser-app live vs isolated-test mode remains a deliberate reusable system that should be preserved in later template-sync work.
 
@@ -55,6 +56,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
   - `docs/assistant/exec_plans/completed/2026-04-05_gmail_fresh_handoff_priority.md`
   - `docs/assistant/exec_plans/completed/2026-04-05-gmail-run-report-provenance.md`
   - `docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md`
+  - `docs/assistant/exec_plans/completed/2026-04-19_gmail_honorarios_local_court_city_fix.md`
   - `docs/assistant/exec_plans/completed/2026-04-03_gmail_redo_current_attachment.md`
   - `docs/assistant/exec_plans/completed/2026-04-03_arabic_legal_risk_hardening.md`
   - `docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md`

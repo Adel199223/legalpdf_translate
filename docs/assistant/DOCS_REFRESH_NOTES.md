@@ -16,6 +16,26 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-04-19 — codex/gmail-honorarios-closeout-docs-sync (Gmail honorários local-court closeout)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/ISSUE_MEMORY.md
+  - docs/assistant/ISSUE_MEMORY.json
+  - docs/assistant/SESSION_RESUME.md
+  - docs/assistant/exec_plans/completed/2026-04-19_gmail_honorarios_local_court_city_fix.md
+- Key symbols / entrypoints changed:
+  - docs-only closeout for `metadata_autofill` local-court ranking and Gmail finalization evidence
+- User-visible behavior:
+  - Latest accepted cold-start Gmail run on canonical `main` build `0b2687f` confirmed AppData live state, EXE native host, same-tab Gmail intake, intentional start page `2`, `Processed pages: 2/2`, populated nested `result.artifacts.run_report_path`, finalization `draft_ready`, and Word PDF export success.
+  - Honorários output now uses the specific local court unit/city (`Juízo de Competência Genérica de Cuba`, closing city `Cuba`) instead of the broader comarca city (`Beja`) when both appear in the source document.
+  - Moderate citation marker/parenthesis drift remains diagnostic-only unless the quality-risk policy also flags stronger numeric, structure, language, or review-queue risk.
+- Tests:
+  - `.\.venv311\Scripts\python.exe -m pytest tests/test_metadata_autofill_header.py tests/test_translation_service_run_report.py tests/test_honorarios_docx.py -q` -> `82 passed`
+  - `dart tooling/validate_agent_docs.dart` -> PASS
+  - `dart tooling/validate_workspace_hygiene.dart` -> PASS
+
 ## 2026-04-19 — codex/gmail-same-tab-acceptance-closeout (same-tab Gmail intake and console-churn closeout)
 - Files changed:
   - APP_KNOWLEDGE.md
