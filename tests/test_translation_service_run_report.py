@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 import legalpdf_translate.translation_service as translation_service_module
-from legalpdf_translate.translation_service import TranslationJobManager, _ManagedTranslationJob
+from legalpdf_translate.metadata_autofill import MetadataSuggestion
+from legalpdf_translate.translation_service import (
+    TranslationJobManager,
+    _build_translation_seed_from_run_summary,
+    _ManagedTranslationJob,
+)
+from legalpdf_translate.types import RunConfig, RunSummary, TargetLang
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -222,6 +228,63 @@ def test_translation_job_manager_creates_nested_run_report_artifact_when_missing
     job = response["normalized_payload"]["job"]
     assert job["artifacts"]["run_report_path"] == report_path
     assert job["result"]["artifacts"]["run_report_path"] == report_path
+
+
+def test_translation_seed_uses_specific_local_court_city_for_honorarios_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = _seed_translation_run_dir(tmp_path)
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "vocab_cities": ["Beja", "Cuba"],
+                "vocab_court_emails": ["cuba.ministeriopublico@tribunais.org.pt"],
+                "default_rate_per_word": {"FR": 0.08},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _fake_metadata(*_args: object, **_kwargs: object) -> MetadataSuggestion:
+        return MetadataSuggestion(
+            case_entity="Juízo de Competência Genérica de Cuba",
+            case_city="Cuba",
+            case_number="48/26.5GACUB",
+            court_email="cuba.ministeriopublico@tribunais.org.pt",
+            service_entity=None,
+            service_city=None,
+        )
+
+    monkeypatch.setattr(
+        "legalpdf_translate.metadata_autofill.extract_pdf_header_metadata_priority_pages",
+        _fake_metadata,
+    )
+
+    seed = _build_translation_seed_from_run_summary(
+        settings_path=settings_path,
+        config=RunConfig(
+            pdf_path=tmp_path / "pedido de tradução.pdf",
+            output_dir=tmp_path,
+            target_lang=TargetLang.FR,
+        ),
+        summary=RunSummary(
+            success=True,
+            exit_code=0,
+            output_docx=None,
+            partial_docx=None,
+            run_dir=run_dir,
+            completed_pages=2,
+            failed_page=None,
+            run_summary_path=run_dir / "run_summary.json",
+        ),
+    )
+
+    assert seed.case_entity == "Juízo de Competência Genérica de Cuba"
+    assert seed.case_city == "Cuba"
+    assert seed.service_city == "Cuba"
+    assert seed.court_email == "cuba.ministeriopublico@tribunais.org.pt"
 
 
 def test_translation_job_artifact_path_supports_run_report(tmp_path: Path) -> None:

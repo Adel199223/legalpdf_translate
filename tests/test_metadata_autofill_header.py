@@ -344,6 +344,63 @@ def test_extract_header_metadata_supports_general_jurisdiction_unit_from_screens
     assert suggestion.case_number == "19/25.9FBPTM"
 
 
+def test_extract_header_metadata_prefers_wrapped_general_jurisdiction_city_over_generic_public_prosecution() -> None:
+    header = """
+    48/26.5GACUB [36393578]
+    Ministério Público - Procuradoria da
+    República da Comarca de Beja
+    Procuradoria do Juízo de Competência
+    Genérica de Cuba - Sec Inquéritos
+
+    Largo Cristóvão Colon
+    7940-171 Cuba
+    Mail: cuba.ministeriopublico@tribunais.org.pt
+    """
+
+    suggestion = extract_from_header_text(
+        header,
+        vocab_cities=["Beja", "Cuba", "Ferreira do Alentejo"],
+        ai_enabled=False,
+    )
+
+    assert suggestion.case_entity == "Juízo de Competência Genérica de Cuba"
+    assert suggestion.case_city == "Cuba"
+    assert suggestion.service_city == "Cuba"
+    assert suggestion.court_email == "cuba.ministeriopublico@tribunais.org.pt"
+
+
+def test_priority_page_metadata_prefers_specific_local_unit_over_earlier_generic_comarca_email(monkeypatch) -> None:
+    def _fake_header_text(_pdf_path: Path, *, page_number: int, config: MetadataAutofillConfig | None = None) -> str:
+        del config
+        if page_number == 1:
+            return """
+            Ministério Público - Procuradoria da República da Comarca de Beja
+            Mail: cuba.ministeriopublico@tribunais.org.pt
+            Processo n.º 48/26.5GACUB
+            """
+        return """
+        Procuradoria do Juízo de Competência Genérica de Cuba - Sec Inquéritos
+        48/26.5GACUB
+        """
+
+    monkeypatch.setattr(
+        "legalpdf_translate.metadata_autofill.extract_header_text_from_pdf_page_with_ocr_fallback",
+        _fake_header_text,
+    )
+
+    suggestion = extract_pdf_header_metadata_priority_pages(
+        Path("sample.pdf"),
+        vocab_cities=["Beja", "Cuba"],
+        config=MetadataAutofillConfig(metadata_ai_enabled=False),
+    )
+
+    assert suggestion.case_entity == "Juízo de Competência Genérica de Cuba"
+    assert suggestion.case_city == "Cuba"
+    assert suggestion.service_city == "Cuba"
+    assert suggestion.case_number == "48/26.5GACUB"
+    assert suggestion.court_email == "cuba.ministeriopublico@tribunais.org.pt"
+
+
 def test_extract_header_metadata_supports_central_civil_criminal_unit_from_screenshot_family() -> None:
     header = """
     Tribunal Judicial da Comarca de Beja

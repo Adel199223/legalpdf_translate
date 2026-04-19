@@ -686,10 +686,12 @@ def _build_translation_seed_from_run_summary(
     if suggestion is not None:
         if suggestion.case_entity:
             seed.case_entity = suggestion.case_entity
-            seed.service_entity = suggestion.case_entity
+            seed.service_entity = suggestion.service_entity or suggestion.case_entity
         if suggestion.case_city:
             seed.case_city = suggestion.case_city
-            seed.service_city = suggestion.case_city
+            seed.service_city = suggestion.service_city or suggestion.case_city
+        elif suggestion.service_city:
+            seed.service_city = suggestion.service_city
         if suggestion.case_number:
             seed.case_number = suggestion.case_number
         seed.court_email = choose_court_email_suggestion(
