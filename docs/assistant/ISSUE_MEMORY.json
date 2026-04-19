@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-04-08T13:34:10Z",
+  "last_updated": "2026-04-19T12:51:44Z",
   "issues": [
     {
       "id": "workflow-wrong-build-under-test",
@@ -865,6 +865,100 @@
         {
           "type": "file",
           "ref": "tests/test_qt_app_state.py"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        }
+      ]
+    },
+    {
+      "id": "workflow-gmail-same-tab-console-churn-regression",
+      "title": "Gmail extension handoff regressed through stale click state, separate-surface launch, and console-window churn",
+      "first_seen_timestamp": "2026-04-08T16:04:00Z",
+      "last_seen_timestamp": "2026-04-19T12:51:44Z",
+      "repeat_count": 7,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Gmail extension clicks could create transparent or CMD-like windows that opened and closed repeatedly.",
+        "The browser app could land on Pending load with unavailable message/thread IDs.",
+        "A second click could show stale already preparing or stale retry banners after the first click produced no usable workspace.",
+        "Separate browser-surface ownership and stale exact localhost tabs made the extension, native host, and browser app disagree about whether the handoff was ready.",
+        "Deterministic acceptance tooling itself could leave playwright-mcp helper CMD processes, creating false console-churn evidence unless cleaned up."
+      ],
+      "likely_root_cause": "Gmail cold-start responsibilities were split across native host, detached launcher, extension, stale browser tabs, and live runtime state roots; the .cmd native-host wrapper and generic launch/probe paths could surface console windows; the extension previously held locks before a current browser surface and current per-click handoff were proven; and acceptance relied too heavily on manual toolbar clicks and incomplete diagnostics.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-04-08T18:04:00Z",
+          "summary": "Added one-shot window tracing and single-owner launch diagnostics.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-04-08T21:30:00Z",
+          "summary": "Removed Edge process launch from Gmail cold start and made the extension own browser surfaces.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-04-09T11:32:00Z",
+          "summary": "Switched live registration to the no-console EXE and changed browser-app cold start to succeed on server-ready.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-04-09T21:01:00Z",
+          "summary": "Converted Gmail intake to same-tab redirect, added per-click handoff_session_id, source_gmail_url, bridge-post diagnostics, and deterministic debug acceptance.",
+          "outcome": "stronger_mitigation"
+        },
+        {
+          "timestamp": "2026-04-19T12:51:44Z",
+          "summary": "Normal Edge Profile 2 acceptance confirmed same-tab redirect, bridge_context_posted=true, ready Gmail bootstrap with one attachment, Return to Gmail, and no LegalPDF/native-host CMD churn.",
+          "outcome": "accepted_live_mitigation"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-04-19T12:51:44Z",
+        "summary": "Live Gmail intake now uses same-tab redirect for the current Gmail tab, native-host/server-only preparation through the EXE path, per-click handoff_session_id, immediate post-redirect /gmail-intake, AppData runtime-state diagnostics, and Return to Gmail from the captured source URL.",
+        "expected_result": "A first Gmail click either reaches a ready LegalPDF Gmail workspace in the same tab or fails clearly; stale already-preparing banners, Pending load, unavailable IDs, and repeated CMD/PseudoConsole churn do not return."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md",
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md",
+        "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md",
+        "docs/assistant/ISSUE_MEMORY.md"
+      ],
+      "bootstrap_relevance": "required",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "same-tab Gmail intake as the canonical click model",
+          "no-console native-host EXE as the canonical live registration target",
+          "stale already-preparing and Pending load fail-closed diagnostics",
+          "deterministic acceptance before another manual live-click validation loop",
+          "separation between product console churn and automation-helper CMD processes"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-08_gmail-same-tab-intake-and-console-churn-closeout.md"
+        },
+        {
+          "type": "commit",
+          "ref": "8dfb027"
+        },
+        {
+          "type": "live_acceptance",
+          "ref": "20260419_125112_2d61fbb64f8e"
         },
         {
           "type": "worktree",

@@ -28,6 +28,7 @@ Instead use:
 - Do not let tests reuse live roaming/profile settings, authenticated machine state, or default production ports unless the test explicitly opts in.
 - Do not treat any process listening on the expected port as proof the real runtime is healthy.
 - Do not let stale browser module assets, stale extension service workers, or old localhost tabs masquerade as the current browser build under test.
+- Do not let deterministic acceptance tooling leave helper `cmd.exe`/Playwright MCP processes behind and then confuse those helpers with product native-host console churn.
 - Do not replace per-run reports with a session artifact; layer them.
 - Do not create separate browser or extension report files by default when transient banner/UI/console evidence is enough.
 
@@ -66,6 +67,7 @@ dart run tooling/validate_agent_docs.dart
 - Runtime listener startup failures must surface visible status, not silent logs only.
 - If one browser app serves both live and isolated modes, diagnostics must show the active mode, data root, workspace, and listener owner so shadow/test state cannot be mistaken for live readiness.
 - If a localhost browser tab is part of the handoff contract, diagnostics must also prove client hydration and client/server `asset_version` agreement so stale tabs or stale assets are not mistaken for a fresh successful launch.
+- For Gmail same-tab intake, the primary acceptance proof is the correlated click/session state: current `handoff_session_id`, same-tab redirect URL, `bridge_context_posted=true`, `source_gmail_url` present, `runtime_state_root_compatible=true`, and no `Pending load`/unavailable IDs.
 
 ## Durable Diagnostics and Support Packet Rules
 - Keep existing per-run artifacts as the main run evidence.
@@ -81,6 +83,7 @@ dart run tooling/validate_agent_docs.dart
   - final output names when relevant
 - Browser-side failures remain transient UI/banner/console evidence unless the feature has a strong reason to persist them.
 - When a browser/Gmail failure happens before a run directory exists, a compact browser failure report is an acceptable additive artifact. It should capture the browser/build context, `asset_version`, and the attempted browser-module or worker URL that failed.
+- Extension/native-host launch debugging should distinguish product helper windows from harness helpers. If automation starts `playwright-mcp` or similar test helpers, clean those up before making claims about CMD/PseudoConsole churn.
 
 ## Support Packet Order
 1. User-visible browser/banner/UI error if handoff failed before app intake, plus a browser failure report when the flow failed before `run_dir` existed and the UI offered one.
@@ -111,6 +114,14 @@ dart run tooling/validate_agent_docs.dart
   - classify stale client/server asset-version or hydration mismatch as preflight `unavailable`
   - allow one exact localhost tab reload when the product contract supports it
   - if the mismatch persists, preserve the browser failure packet instead of masking it as a generic product error
+- Gmail same-tab click redirects but intake remains pending:
+  - treat `bridge_context_posted=false`, missing `source_gmail_url`, or unavailable message/thread IDs as handoff failure evidence
+  - clear stale click/session state before retrying
+  - do not repeatedly click the toolbar or switch back to a separate-tab launch model
+- Console-window churn appears during Gmail acceptance:
+  - verify the live native-host manifest targets `LegalPDFGmailFocusHost.exe`, not `LegalPDFGmailFocusHost.cmd`
+  - scan for test harness helpers separately from LegalPDF native-host/server processes
+  - fail closed rather than falling back to generic OS/browser or `.cmd` launch paths
 - Multi-surface issue lacks enough evidence:
   - collect the support packet in the documented order
   - add or repair `workflow_context` / session-artifact linkage rather than inventing ad hoc notes
@@ -129,3 +140,4 @@ dart run tooling/validate_agent_docs.dart
 4. State whether a larger workflow/session artifact exists and where it lives.
 5. Provide the support packet in the documented order.
 6. If the issue class repeated, update `docs/assistant/ISSUE_MEMORY.md` and `docs/assistant/ISSUE_MEMORY.json`.
+7. For Gmail extension acceptance, include the latest `launch_session_id`, `handoff_session_id`, `bridge_context_posted`, `source_gmail_url` presence, native-host path kind, and any helper-process cleanup performed.

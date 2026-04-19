@@ -254,8 +254,8 @@ Use this when the source files already arrived in Gmail and you want one reply d
 ### Run the batch
 1. Open Gmail in Edge or Chromium.
 2. Expand exactly one message in the target thread.
-3. Click the extension toolbar action. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the current checkout and continue that same click. The browser app opens or focuses only after the localhost handoff succeeds; failed handoffs stay in Gmail with a banner error.
-4. Choose the Gmail intake mode in the review dialog:
+3. Click the extension toolbar action once. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the canonical checkout without visible CMD windows, then the current Gmail tab redirects into the LegalPDF Gmail workspace. Failed pre-redirect handoffs stay in Gmail with a banner error.
+4. Choose the Gmail intake mode in the review dialog. Use `Return to Gmail` if you need to go back to the original Gmail message:
    - `Translation` for the existing translation batch flow
    - `Interpretation notice` for one selected court-notice attachment that should not be translated
 5. The review dialog starts with a compact summary banner. Use its info button when you need the sender, Gmail account, or output-folder details.
@@ -280,7 +280,8 @@ Use this when the source files already arrived in Gmail and you want one reply d
 ### Batch rules
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
 - In normal browser-first use, the live bridge owner should be the LegalPDF browser app server. Qt ownership is fallback/coexistence only.
-- If a second click arrives while the first Gmail handoff is still launching, the extension can show wait/focus guidance for the in-progress handoff, but it should not spawn an extra browser-app window or tab.
+- If a second click arrives while the same tab is still redirecting or hydrating for the current handoff, the extension can show wait guidance. Stale “already preparing” state from an older click should clear instead of blocking a fresh attempt.
+- A successful accepted click should leave diagnostics with `bridge_context_posted=true`, `source_gmail_url` present, and a current `handoff_session_id`; `Pending load` with unavailable message/thread IDs is not an accepted state.
 - The app fetches only the exact intake message, not the whole thread.
 - The review list hides inline/signature/media junk and shows only supported source attachments from that exact message.
 - PDF preview uses a lazy continuous-scroll viewer so large documents can be inspected before translation without rendering every page up front.

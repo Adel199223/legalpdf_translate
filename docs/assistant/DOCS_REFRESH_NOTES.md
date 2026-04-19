@@ -16,6 +16,36 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-04-19 — codex/gmail-same-tab-acceptance-closeout (same-tab Gmail intake and console-churn closeout)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/ISSUE_MEMORY.md
+  - docs/assistant/ISSUE_MEMORY.json
+  - docs/assistant/SESSION_RESUME.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md
+  - docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md
+  - docs/assistant/exec_plans/completed/2026-04-08_gmail-same-tab-intake-and-console-churn-closeout.md
+- Key symbols / entrypoints changed:
+  - extensions/gmail_intake/background.js::handleGmailIntakeClick
+  - src/legalpdf_translate/gmail_focus_host.py::prepare_gmail_intake
+  - src/legalpdf_translate/shadow_web/app.py::runtime readiness and Gmail bootstrap diagnostics
+  - tooling/native_host_launcher/LegalPDFGmailFocusHostLauncher.cs
+- User-visible behavior:
+  - Gmail extension intake now redirects the current Gmail tab into LegalPDF instead of creating or reusing a separate LegalPDF tab/window.
+  - Accepted clicks require `bridge_context_posted=true`, current `handoff_session_id`, `source_gmail_url`, AppData runtime-state compatibility, and a ready Gmail bootstrap instead of `Pending load`.
+  - Canonical live native-host registration uses the no-console EXE path; `.cmd` is no longer acceptable as the normal live Gmail target.
+  - `Return to Gmail` restores the original Gmail message URL.
+  - The docs sync widened because of the new issue-memory entry `workflow-gmail-same-tab-console-churn-regression`, which records repeated stale handoff state, console-window churn, and deterministic acceptance lessons.
+- Tests:
+  - `.\.venv311\Scripts\python.exe -m pytest tests/test_gmail_intake.py tests/test_shadow_web_api.py tests/test_gmail_focus_host.py tests/test_launch_browser_app_live_detached.py tests/test_native_host_launcher_source.py tests/test_gmail_browser_service.py -q` -> `139 passed`
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe tooling/validate_agent_docs.dart` -> PASS (`dart run ...` was blocked locally by missing `dartdev` AOT snapshot)
+  - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe tooling/validate_workspace_hygiene.dart` -> PASS (`dart run ...` was blocked locally by missing `dartdev` AOT snapshot)
+  - Live Edge Profile 2 acceptance: handoff `20260419_125112_2d61fbb64f8e`, `bridge_context_posted=true`, Gmail bootstrap `loaded/ready`, one attachment, no `Pending load`, no unavailable IDs, no LegalPDF/native-host CMD churn, and `Return to Gmail` restored the source URL.
+
 ## 2026-04-08 — feat/single-path-canonical-publish (canonical Gmail/runtime recovery docs sync)
 - Files changed:
   - APP_KNOWLEDGE.md
