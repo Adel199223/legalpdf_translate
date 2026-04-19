@@ -230,6 +230,25 @@ def test_build_honorarios_paragraph_texts_uses_case_city_for_plain_ministerio_pu
     assert "\n" not in paragraphs[2][0]
 
 
+def test_build_honorarios_paragraph_texts_uses_cuba_for_plain_ministerio_publico_when_seed_city_is_cuba() -> None:
+    draft = build_honorarios_draft(
+        case_number="48/26.5GACUB",
+        word_count=437,
+        case_entity="Ministério Público",
+        case_city="Cuba",
+        profile=_profile(),
+        today=date(2026, 4, 19),
+    )
+
+    paragraphs = build_honorarios_paragraph_texts(draft)
+
+    assert paragraphs[2] == (
+        "Exmo. Sr(a). Procurador(a) da república do Ministério Público de Cuba",
+        "address",
+    )
+    assert paragraphs[16] == ("Cuba, 19 de abril de 2026", "center")
+
+
 def test_build_honorarios_paragraph_texts_appends_case_city_for_generic_entity() -> None:
     draft = build_honorarios_draft(
         case_number="66/26.3GAFAL",

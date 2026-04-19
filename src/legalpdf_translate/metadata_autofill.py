@@ -62,6 +62,36 @@ COURT_EMAIL_CITY_ALIASES = {
     "reguengos de monsaraz": "rmonsaraz",
     "foro alentejo": "falentejo",
 }
+METADATA_CITY_RE = (
+    r"[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’\-]*"
+    r"(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’\-]*){0,6}"
+)
+SPECIFIC_CASE_ENTITY_PATTERNS: tuple[tuple[int, re.Pattern[str]], ...] = (
+    (
+        110,
+        re.compile(
+            rf"(?:Procuradoria\s+do\s+)?(?P<entity>Ju[ií]zo\s+de\s+Compet[êe]ncia\s+Gen[ée]rica\s+de\s+(?P<city>{METADATA_CITY_RE}))"
+            r"(?=\s*(?:-|,|$|\bSec\b|\bSec[cç][aã]o\b))",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        105,
+        re.compile(
+            rf"(?P<entity>Ju[ií]zo\s+Central\s+C[ií]vel\s+e\s+Criminal\s+de\s+(?P<city>{METADATA_CITY_RE})\s*-\s*Juiz\s+\d+)"
+            r"(?=\s*(?:-|,|$|\bSec\b|\bSec[cç][aã]o\b))",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        104,
+        re.compile(
+            rf"(?P<entity>Ju[ií]zo\s+Local\s+Criminal\s+de\s+(?P<city>{METADATA_CITY_RE}))"
+            r"(?=\s*(?:-|,|$|\bSec\b|\bSec[cç][aã]o\b))",
+            re.IGNORECASE,
+        ),
+    ),
+)
 
 PHOTO_DATE_PATTERNS = [
     "%A, %B %d, %Y",
@@ -121,6 +151,14 @@ class MetadataSuggestion:
     service_city: str | None = None
     service_date: str | None = None
     confidence: dict[str, float] | None = None
+
+
+@dataclass(slots=True)
+class _MetadataEntityCandidate:
+    entity: str
+    city: str | None
+    rank: int
+    confidence: float
 
 
 @dataclass(slots=True)
@@ -229,6 +267,10 @@ def _first_city_match(text: str, vocab_cities: list[str]) -> str | None:
     return matches[0][1]
 
 
+def _collapse_metadata_text(text: str) -> str:
+    return " ".join(str(text or "").replace("\xa0", " ").split())
+
+
 def _sanitize_entity(value: str | None) -> str | None:
     if value is None:
         return None
@@ -256,14 +298,54 @@ def _extract_case_number(text: str) -> str | None:
 
 
 def _extract_case_entity(text: str) -> str | None:
-    matched = extract_best_case_entity_match(text)
-    if matched is not None:
-        return _sanitize_entity(matched.source_text)
+    candidate = _best_metadata_entity_candidate(text)
+    if candidate is not None:
+        return candidate.entity
     for pattern in COURT_PATTERNS:
-        match = pattern.search(text)
+        match = pattern.search(_collapse_metadata_text(text))
         if match:
             return _sanitize_entity(match.group(1))
     return None
+
+
+def _metadata_entity_candidates(text: str) -> list[_MetadataEntityCandidate]:
+    candidates: list[_MetadataEntityCandidate] = []
+    matched = extract_best_case_entity_match(text)
+    if matched is not None:
+        entity = _sanitize_entity(matched.source_text)
+        if entity is not None:
+            candidates.append(
+                _MetadataEntityCandidate(
+                    entity=entity,
+                    city=_sanitize_city(matched.case_city),
+                    rank=int(matched.metadata_rank),
+                    confidence=0.95,
+                )
+            )
+
+    compact = _collapse_metadata_text(text)
+    for rank, pattern in SPECIFIC_CASE_ENTITY_PATTERNS:
+        for match in pattern.finditer(compact):
+            entity = _sanitize_entity(match.group("entity"))
+            if entity is None:
+                continue
+            candidates.append(
+                _MetadataEntityCandidate(
+                    entity=entity,
+                    city=_sanitize_city(match.group("city")),
+                    rank=rank,
+                    confidence=0.97,
+                )
+            )
+    return candidates
+
+
+def _best_metadata_entity_candidate(text: str) -> _MetadataEntityCandidate | None:
+    candidates = _metadata_entity_candidates(text)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item.rank, len(item.entity)), reverse=True)
+    return candidates[0]
 
 
 def _extract_city_heuristic(text: str) -> str | None:
@@ -341,6 +423,20 @@ def _court_email_city_slug(case_city: str | None, case_entity: str | None) -> st
         return COURT_EMAIL_CITY_ALIASES[normalized]
     compact = re.sub(r"[^a-z0-9]+", "", normalized)
     return compact or None
+
+
+def _court_email_city_slug_from_vocab(email: str | None, vocab_cities: list[str]) -> str | None:
+    cleaned = _sanitize_email(email)
+    if cleaned is None:
+        return None
+    local_part = _court_email_local_part(cleaned)
+    for city in vocab_cities:
+        city_slug = _court_email_city_slug(city, None)
+        if city_slug is None:
+            continue
+        if local_part == city_slug or local_part.startswith(f"{city_slug}."):
+            return city_slug
+    return None
 
 
 def _infer_court_email_candidates(
@@ -437,6 +533,54 @@ def choose_court_email_suggestion(
     return ranked[0] if ranked else None
 
 
+def _metadata_suggestion_rank(
+    suggestion: MetadataSuggestion,
+    *,
+    email_city_slug: str | None,
+) -> float:
+    entity = str(suggestion.case_entity or "").strip()
+    city = str(suggestion.case_city or "").strip()
+    if entity == "" and city == "":
+        return -1.0
+    confidence = suggestion.confidence or {}
+    entity_norm = normalize_for_match(entity)
+    score = 0.0
+    if entity:
+        score += 20.0 + (float(confidence.get("case_entity", 0.0) or 0.0) * 10.0)
+    if city:
+        score += 15.0 + (float(confidence.get("case_city", 0.0) or 0.0) * 10.0)
+    if any(token in entity_norm for token in ("juizo", "juízo")):
+        score += 30.0
+    if "competencia generica" in entity_norm:
+        score += 10.0
+    if "procuradoria do juizo" in entity_norm or "procuradoria do juízo" in entity_norm:
+        score += 8.0
+    if entity_norm == "ministerio publico":
+        score -= 25.0
+    if "comarca" in entity_norm and "juizo" not in entity_norm:
+        score -= 5.0
+    city_slug = _court_email_city_slug(city, None)
+    if email_city_slug is not None and city_slug == email_city_slug:
+        score += 25.0
+    return score
+
+
+def _best_jurisdiction_suggestion(
+    suggestions: list[MetadataSuggestion],
+    *,
+    email_city_slug: str | None,
+) -> MetadataSuggestion | None:
+    ranked: list[tuple[float, int, MetadataSuggestion]] = []
+    for index, suggestion in enumerate(suggestions):
+        score = _metadata_suggestion_rank(suggestion, email_city_slug=email_city_slug)
+        if score >= 0:
+            ranked.append((score, -index, suggestion))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return ranked[0][2]
+
+
 def _parse_json_object(raw: str) -> dict[str, Any] | None:
     cleaned = raw.strip()
     if cleaned == "":
@@ -519,19 +663,19 @@ def extract_from_header_text(
     ai_config: MetadataAutofillConfig | None = None,
 ) -> MetadataSuggestion:
     text = header_text.strip()
-    matched_entity = extract_best_case_entity_match(text)
-    case_entity = _extract_case_entity(text)
+    entity_candidate = _best_metadata_entity_candidate(text)
+    case_entity = entity_candidate.entity if entity_candidate is not None else _extract_case_entity(text)
     case_number = _extract_case_number(text)
-    case_city = _first_city_match(text, vocab_cities)
-    city_conf = 0.9 if case_city else 0.0
-    if matched_entity is not None and matched_entity.case_city:
-        case_city = matched_entity.case_city
-        city_conf = max(city_conf, 0.95)
+    case_city = entity_candidate.city if entity_candidate is not None else None
+    city_conf = entity_candidate.confidence if case_city else 0.0
+    if case_city is None:
+        case_city = _first_city_match(text, vocab_cities)
+        city_conf = 0.9 if case_city else 0.0
     if case_city is None:
         case_city = _extract_city_heuristic(text)
         city_conf = 0.55 if case_city else 0.0
 
-    entity_conf = 0.95 if matched_entity is not None else (0.9 if case_entity else 0.0)
+    entity_conf = entity_candidate.confidence if entity_candidate is not None else (0.9 if case_entity else 0.0)
     case_no_conf = 0.95 if case_number else 0.0
     court_email_near, first_email = _extract_court_email_candidates(text)
     court_email = court_email_near or first_email
@@ -1013,25 +1157,6 @@ def extract_pdf_header_metadata_priority_pages(
         related_emails_by_page[page_number] = related_email
         first_emails_by_page[page_number] = first_email
 
-    merged = MetadataSuggestion()
-    merged_confidence: dict[str, float] = {}
-    for suggestion in suggestions:
-        if merged.case_entity is None and suggestion.case_entity:
-            merged.case_entity = suggestion.case_entity
-        if merged.case_city is None and suggestion.case_city:
-            merged.case_city = suggestion.case_city
-        if merged.case_number is None and suggestion.case_number:
-            merged.case_number = suggestion.case_number
-        if merged.service_entity is None and suggestion.service_entity:
-            merged.service_entity = suggestion.service_entity
-        if merged.service_city is None and suggestion.service_city:
-            merged.service_city = suggestion.service_city
-        if merged.service_date is None and suggestion.service_date:
-            merged.service_date = suggestion.service_date
-        if suggestion.confidence:
-            for key, value in suggestion.confidence.items():
-                merged_confidence.setdefault(key, float(value))
-
     selected_email: str | None = None
     for page_number in ordered_pages:
         if related_emails_by_page.get(page_number):
@@ -1042,6 +1167,32 @@ def extract_pdf_header_metadata_priority_pages(
             if first_emails_by_page.get(page_number):
                 selected_email = first_emails_by_page[page_number]
                 break
+
+    merged = MetadataSuggestion()
+    merged_confidence: dict[str, float] = {}
+    jurisdiction = _best_jurisdiction_suggestion(
+        suggestions,
+        email_city_slug=_court_email_city_slug_from_vocab(selected_email, vocab_cities),
+    )
+    if jurisdiction is not None:
+        merged.case_entity = jurisdiction.case_entity
+        merged.case_city = jurisdiction.case_city
+        merged.service_entity = jurisdiction.service_entity or jurisdiction.case_entity
+        merged.service_city = jurisdiction.service_city or jurisdiction.case_city
+        if jurisdiction.confidence:
+            for key in ("case_entity", "case_city", "service_entity", "service_city"):
+                if key in jurisdiction.confidence:
+                    merged_confidence[key] = float(jurisdiction.confidence[key])
+
+    for suggestion in suggestions:
+        if merged.case_number is None and suggestion.case_number:
+            merged.case_number = suggestion.case_number
+        if merged.service_date is None and suggestion.service_date:
+            merged.service_date = suggestion.service_date
+        if suggestion.confidence:
+            for key, value in suggestion.confidence.items():
+                merged_confidence.setdefault(key, float(value))
+
     merged.court_email = selected_email
     if selected_email is not None:
         merged_confidence["court_email"] = 0.9 if selected_email in related_emails_by_page.values() else 0.6
