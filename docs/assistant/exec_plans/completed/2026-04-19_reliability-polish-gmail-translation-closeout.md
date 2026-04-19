@@ -62,6 +62,7 @@
 3. Current docs/tooling/tests have no package-run command references for standalone validator or cloud-evaluation scripts outside historical completed records, if any.
 4. Moderate citation drift remains out of the review queue unless stronger quality-risk signals are present.
 5. Generated run reports populate nested `result.artifacts.run_report_path`.
+6. Intentional page-range runs do not produce misleading whole-document incomplete-page warnings.
 
 ## Rollout and fallback
 - Commit as a small follow-up reliability polish branch after validation.
@@ -85,9 +86,10 @@
    - added additive citation marker/parenthesis drift fields while preserving `citation_mismatches_count`
    - clarified run-report wording so moderate citation/parenthesis drift is diagnostic rather than automatically actionable
    - made generated run reports populate nested `result.artifacts.run_report_path`
+   - made run-report sanity warnings compare completed pages against the requested page range, not always the whole PDF
    - updated current validator command references to direct Dart script invocation
 2. Validation:
-   - `.\.venv311\Scripts\python.exe -m pytest tests/test_translation_diagnostics.py tests/test_quality_risk_scoring.py tests/test_translation_report.py tests/test_translation_service_run_report.py tests/test_shadow_web_api.py -q` -> `103 passed`
+   - `.\.venv311\Scripts\python.exe -m pytest tests/test_translation_diagnostics.py tests/test_quality_risk_scoring.py tests/test_translation_report.py tests/test_translation_service_run_report.py tests/test_shadow_web_api.py -q` -> `104 passed`
    - `dart tooling/validate_agent_docs.dart` -> PASS
    - `dart tooling/validate_workspace_hygiene.dart` -> PASS
    - `dart test/tooling/validate_agent_docs_test.dart` -> `72 passed`

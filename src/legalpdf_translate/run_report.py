@@ -1620,21 +1620,54 @@ def build_run_report_markdown(
             "WARNING: Run status is 'completed' but timeline is empty. "
             "Events may not have been recorded."
         )
-    # Check processed_pages != total_pages
+    # Check processed_pages against the requested selection, not always the whole PDF.
     _total_pages = _detected_pages  # detected_page_count from input section
+    _page_range_obj = input_obj.get("page_range")
+    if not isinstance(_page_range_obj, dict):
+        _page_range_obj = {}
+    _selection_start_page = int(_page_range_obj.get("start_page", 0) or 0)
+    _selection_end_page = int(_page_range_obj.get("end_page", 0) or 0)
+    _selection_max_pages = int(_page_range_obj.get("max_pages_effective", 0) or 0)
+    _effective_start_page = _selection_start_page if _selection_start_page > 0 else 1
+    _effective_end_page = _selection_end_page if _selection_end_page > 0 else _total_pages
+    if _total_pages > 0:
+        _effective_start_page = max(1, min(_effective_start_page, _total_pages))
+        _effective_end_page = max(_effective_start_page, min(_effective_end_page, _total_pages))
+    _expected_selected_pages = 0
+    if _effective_end_page >= _effective_start_page:
+        _expected_selected_pages = _effective_end_page - _effective_start_page + 1
+    if _selection_max_pages > 0:
+        if _expected_selected_pages > 0:
+            _expected_selected_pages = min(_expected_selected_pages, _selection_max_pages)
+        else:
+            _expected_selected_pages = _selection_max_pages
+    if _expected_selected_pages <= 0:
+        _expected_selected_pages = _total_pages
     _done_pages = len([
         p for p in (_per_page_data or [])
         if isinstance(p, dict) and p.get("status") == "done"
     ])
-    if _total_pages > 0 and _per_page_count > 0 and _done_pages < _total_pages:
+    if _expected_selected_pages > 0 and _per_page_count > 0 and _done_pages < _expected_selected_pages:
+        if _expected_selected_pages == _total_pages:
+            _completion_warning = (
+                f"WARNING: Only {_done_pages}/{_total_pages} pages completed successfully."
+            )
+        else:
+            _completion_warning = (
+                f"WARNING: Only {_done_pages}/{_expected_selected_pages} selected pages "
+                f"completed successfully."
+            )
         _sanity_warnings.append(
-            f"WARNING: Only {_done_pages}/{_total_pages} pages completed successfully."
+            _completion_warning
         )
     # Store sanity summary in payload for programmatic consumers
     payload["report_sanity_summary"] = {
         "detected_page_count": _detected_pages,
         "processed_pages": _done_pages,
         "total_pages": _total_pages,
+        "expected_selected_pages": _expected_selected_pages,
+        "selected_start_page": _selection_start_page,
+        "selected_end_page": _selection_end_page,
         "timeline_event_count": len(timeline_obj),
         "sanity_warnings": list(_sanity_warnings),
     }
