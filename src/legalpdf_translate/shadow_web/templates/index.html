@@ -36,6 +36,9 @@
           gmailHandoffState: workspaceId === "gmail-intake" ? "warming" : "idle",
           buildSha: bootstrap.buildSha || "",
           assetVersion: bootstrap.assetVersion || "",
+          launchSessionId: "",
+          handoffSessionId: "",
+          launchSessionSchemaVersion: 0,
           bootstrappedAt: null
         };
         if (document.body && document.body.dataset) {
@@ -45,6 +48,9 @@
           document.body.dataset.clientActiveView = activeView;
           document.body.dataset.clientBuildSha = bootstrap.buildSha || "";
           document.body.dataset.clientAssetVersion = bootstrap.assetVersion || "";
+          document.body.dataset.clientLaunchSession = "";
+          document.body.dataset.clientHandoffSession = "";
+          document.body.dataset.clientLaunchSessionSchemaVersion = "0";
         }
       }());
     </script>
@@ -159,6 +165,7 @@
                 <button type="button" class="primary-button" id="gmail-open-review">Open Attachment Review</button>
                 <button type="button" class="ghost-button hidden" id="gmail-resume-step">Resume Current Step</button>
                 <button type="button" class="ghost-button hidden" id="gmail-redo-current">Redo Current Attachment</button>
+                <button type="button" class="ghost-button hidden" id="gmail-return-to-source">Return to Gmail</button>
                 <button type="button" class="ghost-button" id="gmail-refresh">Refresh Gmail State</button>
                 <button type="button" class="ghost-button" id="gmail-open-full-workspace">Open Full Workspace</button>
                 <button type="button" class="ghost-button" id="gmail-reset">Reset Gmail Workspace</button>
@@ -1070,6 +1077,7 @@
                 <input id="diagnostics-run-dir" type="text" placeholder="Optional run directory; leave blank to use the most recent run">
               </div>
               <div class="form-actions">
+                <button type="button" class="ghost-button" id="diagnostics-arm-window-trace">Capture Next Cold-Start Window Trace</button>
                 <button type="button" class="primary-button" id="diagnostics-create-bundle">Create Debug Bundle</button>
                 <button type="button" id="diagnostics-generate-report">Generate Run Report</button>
               </div>

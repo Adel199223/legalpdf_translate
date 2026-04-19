@@ -226,6 +226,29 @@ function defaultClientGmailHandoffState() {
   return appState.workspaceId === "gmail-intake" ? "warming" : "idle";
 }
 
+function deriveClientLaunchSessionUrlState() {
+  try {
+    const params = new URL(globalThis.window?.location?.href || "").searchParams;
+    const parsedSchemaVersion = Number.parseInt(
+      String(params.get("launch_session_schema_version") ?? "").trim(),
+      10,
+    );
+    return {
+      launchSessionId: String(params.get("launch_session_id") || "").trim(),
+      handoffSessionId: String(params.get("handoff_session_id") || "").trim(),
+      launchSessionSchemaVersion: Number.isInteger(parsedSchemaVersion) && parsedSchemaVersion > 0
+        ? parsedSchemaVersion
+        : 0,
+    };
+  } catch (_error) {
+    return {
+      launchSessionId: "",
+      handoffSessionId: "",
+      launchSessionSchemaVersion: 0,
+    };
+  }
+}
+
 function deriveClientGmailHandoffState(payload = appState.bootstrap?.normalized_payload) {
   const gmailPayload = payload?.gmail || {};
   const loadResult = gmailPayload.load_result || {};
@@ -240,6 +263,45 @@ function deriveClientGmailHandoffState(payload = appState.bootstrap?.normalized_
     return "load_failed";
   }
   return defaultClientGmailHandoffState();
+}
+
+function deriveClientLaunchSessionId(payload = appState.bootstrap?.normalized_payload) {
+  const shellLaunchSession = payload?.shell?.launch_session || {};
+  const runtimeLaunchSession = payload?.runtime?.launch_session || {};
+  const urlState = deriveClientLaunchSessionUrlState();
+  return String(
+    urlState.launchSessionId
+    || shellLaunchSession.launch_session_id
+    || runtimeLaunchSession.launch_session_id
+    || "",
+  ).trim();
+}
+
+function deriveClientHandoffSessionId(payload = appState.bootstrap?.normalized_payload) {
+  const gmailPayload = payload?.gmail || payload || {};
+  const shellLaunchSession = payload?.shell?.launch_session || {};
+  const runtimeLaunchSession = payload?.runtime?.launch_session || {};
+  const urlState = deriveClientLaunchSessionUrlState();
+  return String(
+    urlState.handoffSessionId
+    || gmailPayload.handoff_session_id
+    || shellLaunchSession.handoff_session_id
+    || runtimeLaunchSession.handoff_session_id
+    || "",
+  ).trim();
+}
+
+function deriveClientLaunchSessionSchemaVersion(payload = appState.bootstrap?.normalized_payload) {
+  const urlState = deriveClientLaunchSessionUrlState();
+  if (urlState.launchSessionSchemaVersion > 0) {
+    return urlState.launchSessionSchemaVersion;
+  }
+  const rawValue = payload?.shell?.extension_launch_session_schema_version;
+  const parsed = Number.parseInt(String(rawValue ?? ""), 10);
+  if (Number.isInteger(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return 0;
 }
 
 function setClientHydrationMarker(status, { payload = null, reason = "", message = "" } = {}) {
@@ -257,6 +319,9 @@ function setClientHydrationMarker(status, { payload = null, reason = "", message
     gmailHandoffState: deriveClientGmailHandoffState(payload || appState.bootstrap?.normalized_payload),
     buildSha: currentBuildSha(),
     assetVersion: currentAssetVersion(),
+    launchSessionId: deriveClientLaunchSessionId(payload || appState.bootstrap?.normalized_payload),
+    handoffSessionId: deriveClientHandoffSessionId(payload || appState.bootstrap?.normalized_payload),
+    launchSessionSchemaVersion: deriveClientLaunchSessionSchemaVersion(payload || appState.bootstrap?.normalized_payload),
     bootstrappedAt: nextBootstrappedAt,
   };
   if (reason) {
@@ -276,6 +341,9 @@ function setClientHydrationMarker(status, { payload = null, reason = "", message
     document.body.dataset.clientActiveView = marker.activeView;
     document.body.dataset.clientBuildSha = marker.buildSha;
     document.body.dataset.clientAssetVersion = marker.assetVersion;
+    document.body.dataset.clientLaunchSession = marker.launchSessionId || "";
+    document.body.dataset.clientHandoffSession = marker.handoffSessionId || "";
+    document.body.dataset.clientLaunchSessionSchemaVersion = String(marker.launchSessionSchemaVersion || 0);
   }
   if (globalThis.window) {
     globalThis.window.LEGALPDF_BROWSER_CLIENT_READY = marker;

@@ -42,6 +42,7 @@ from .gmail_draft import (
     validate_translated_docx_artifacts_for_gmail_draft,
 )
 from .gmail_intake import InboundMailContext
+from .gmail_window_trace import latest_window_trace_status
 from .output_paths import require_writable_output_dir
 from .user_settings import load_gui_settings_from_path
 from .word_automation import (
@@ -89,6 +90,7 @@ _PREPARE_REASON_MESSAGES = {
     "launch_command_failed": "LegalPDF Translate could not be started automatically.",
     "launch_in_progress": "LegalPDF Translate is already starting the browser app for this Gmail handoff.",
     "launch_timeout": "LegalPDF Translate was started, but the Gmail bridge did not become ready in time.",
+    "browser_server_ready": "LegalPDF Translate started the browser app server and is waiting for the Gmail workspace tab to finish opening.",
     "unsupported_platform": "Foreground activation is only supported on Windows for this extension.",
 }
 _TERMINAL_BATCH_FINALIZATION_STATES = frozenset({"local_artifacts_ready", "draft_failed", "draft_ready"})
@@ -388,6 +390,8 @@ def _serialize_load_result(result: GmailMessageLoadResult) -> dict[str, Any]:
             "thread_id": result.intake_context.thread_id,
             "subject": result.intake_context.subject,
             "account_email": result.intake_context.account_email or "",
+            "handoff_session_id": result.intake_context.handoff_session_id or "",
+            "source_gmail_url": result.intake_context.source_gmail_url or "",
         },
     }
 
@@ -401,6 +405,8 @@ def _serialize_inbound_context(context: InboundMailContext | Mapping[str, Any] |
             "thread_id": context.thread_id,
             "subject": context.subject,
             "account_email": context.account_email or "",
+            "handoff_session_id": context.handoff_session_id or "",
+            "source_gmail_url": context.source_gmail_url or "",
         }
     if isinstance(context, Mapping):
         return {
@@ -408,8 +414,48 @@ def _serialize_inbound_context(context: InboundMailContext | Mapping[str, Any] |
             "thread_id": _clean_text(context.get("thread_id")),
             "subject": _clean_text(context.get("subject")),
             "account_email": _clean_text(context.get("account_email")),
+            "handoff_session_id": _clean_text(context.get("handoff_session_id")),
+            "source_gmail_url": _clean_text(context.get("source_gmail_url")),
         }
     return {}
+
+
+def _serialize_click_diagnostics(
+    raw_state: Mapping[str, Any] | None,
+    *,
+    workspace_id: str,
+) -> dict[str, Any]:
+    if not isinstance(raw_state, Mapping):
+        return {
+            "click_phase": "",
+            "click_failure_reason": "",
+            "bridge_context_posted": False,
+            "surface_visibility_status": "",
+            "source_gmail_url_present": False,
+            "source_gmail_url": "",
+        }
+    observed_workspace_id = _clean_text(raw_state.get("workspace_id"))
+    if observed_workspace_id and observed_workspace_id != _clean_text(workspace_id):
+        return {
+            "click_phase": "",
+            "click_failure_reason": "",
+            "bridge_context_posted": False,
+            "surface_visibility_status": "",
+            "source_gmail_url_present": False,
+            "source_gmail_url": "",
+        }
+    source_gmail_url = _clean_text(raw_state.get("source_gmail_url"))
+    return {
+        "launch_session_id": _clean_text(raw_state.get("launch_session_id")),
+        "handoff_session_id": _clean_text(raw_state.get("handoff_session_id")),
+        "click_phase": _clean_text(raw_state.get("click_phase")),
+        "click_failure_reason": _clean_text(raw_state.get("click_failure_reason")),
+        "bridge_context_posted": bool(raw_state.get("bridge_context_posted")),
+        "surface_visibility_status": _clean_text(raw_state.get("surface_visibility_status")),
+        "source_gmail_url_present": source_gmail_url != "",
+        "source_gmail_url": source_gmail_url,
+        "runtime_state_root": _clean_text(raw_state.get("runtime_state_root")),
+    }
 
 
 def _gmail_context_matches(
@@ -1248,6 +1294,7 @@ class _WorkspaceState:
     review_event_id: int = 0
     message_signature: str = ""
     preferred_reply_email: str = ""
+    current_handoff_context: dict[str, str] = field(default_factory=dict, repr=False)
     pending_status: str = ""
     pending_intake_context: dict[str, str] = field(default_factory=dict, repr=False)
     pending_review_open: bool = False
@@ -1269,6 +1316,7 @@ class _WorkspaceState:
         self.preview_page_counts = {}
         self.interpretation_seed_response = None
         self.preferred_reply_email = ""
+        self.current_handoff_context = {}
         self.pending_status = ""
         self.pending_intake_context = {}
         self.pending_review_open = False
@@ -1351,10 +1399,15 @@ class GmailBrowserSessionManager:
         workspace_id: str,
         settings_path: Path,
         outputs_dir: Path,
+        runtime_state_root: Path | None = None,
         build_sha: str = "",
         asset_version: str = "",
     ) -> dict[str, Any]:
         workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
+        click_diagnostics = _serialize_click_diagnostics(
+            latest_window_trace_status(runtime_state_root) if runtime_state_root is not None else {},
+            workspace_id=workspace_id,
+        )
         configured_gog_path, configured_account_email = _configured_gmail_values(settings_path)
         prereqs = assess_gmail_draft_prereqs(
             configured_gog_path=configured_gog_path,
@@ -1366,12 +1419,16 @@ class GmailBrowserSessionManager:
                 "thread_id": "",
                 "subject": "",
                 "account_email": configured_account_email,
+                "handoff_session_id": "",
+                "source_gmail_url": "",
             },
             "default_output_dir": _path_text(_default_output_dir(settings_path, outputs_dir)),
             "workflow_kind": GMAIL_WORKFLOW_TRANSLATION,
             "target_lang": str(load_gui_settings_from_path(settings_path).get("last_lang", "EN") or "EN").strip().upper(),
         }
-        if workspace.loaded_result is not None:
+        if workspace.current_handoff_context:
+            defaults["message_context"] = dict(workspace.current_handoff_context)
+        elif workspace.loaded_result is not None:
             defaults["message_context"] = dict(_serialize_load_result(workspace.loaded_result)["intake_context"])
         elif workspace.pending_intake_context:
             defaults["message_context"] = dict(workspace.pending_intake_context)
@@ -1397,10 +1454,13 @@ class GmailBrowserSessionManager:
             "draft_prereqs": _serialize_draft_prereqs(prereqs),
             "review_event_id": int(workspace.review_event_id),
             "message_signature": workspace.message_signature,
+            "handoff_session_id": _clean_text(workspace.current_handoff_context.get("handoff_session_id")),
+            "current_handoff_context": dict(workspace.current_handoff_context),
             "pending_status": workspace.pending_status,
             "pending_intake_context": dict(workspace.pending_intake_context),
             "pending_review_open": bool(workspace.pending_review_open),
             "handoff_state": handoff_state,
+            "click_diagnostics": click_diagnostics,
         }
         if workspace.batch_session is not None:
             report_context = _backfill_batch_finalization_report_context(
@@ -1452,8 +1512,13 @@ class GmailBrowserSessionManager:
         runtime_mode: str,
         workspace_id: str,
         settings_path: Path,
+        runtime_state_root: Path | None = None,
     ) -> dict[str, Any]:
         workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
+        click_diagnostics = _serialize_click_diagnostics(
+            latest_window_trace_status(runtime_state_root) if runtime_state_root is not None else {},
+            workspace_id=workspace_id,
+        )
         _configured_gog_path, configured_account_email = _configured_gmail_values(settings_path)
         handoff_state = "idle"
         if workspace.pending_review_open and workspace.pending_status:
@@ -1470,10 +1535,13 @@ class GmailBrowserSessionManager:
                 ),
                 "review_event_id": int(workspace.review_event_id),
                 "message_signature": workspace.message_signature,
+                "handoff_session_id": _clean_text(workspace.current_handoff_context.get("handoff_session_id")),
+                "current_handoff_context": dict(workspace.current_handoff_context),
                 "pending_status": workspace.pending_status,
                 "pending_intake_context": dict(workspace.pending_intake_context),
                 "pending_review_open": bool(workspace.pending_review_open),
                 "handoff_state": handoff_state,
+                "click_diagnostics": click_diagnostics,
                 "draft_prereqs": _pending_draft_prereqs_payload(
                     account_email=configured_account_email,
                 ),
@@ -1492,6 +1560,7 @@ class GmailBrowserSessionManager:
         review_open: bool = True,
     ) -> None:
         workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
+        workspace.current_handoff_context = _serialize_inbound_context(context)
         workspace.pending_status = _clean_text(status).lower() or "warming"
         workspace.pending_intake_context = _serialize_inbound_context(context)
         workspace.pending_review_open = bool(review_open)
@@ -1520,12 +1589,14 @@ class GmailBrowserSessionManager:
     ) -> dict[str, Any]:
         workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
         next_event_id = max(0, int(workspace.review_event_id)) + 1
+        current_handoff_context = dict(workspace.current_handoff_context)
         workspace.cleanup()
         workspace.loaded_result = result
         workspace.allow_report_restore = True
         workspace.review_event_id = next_event_id
         workspace.message_signature = _message_signature(result)
         workspace.preferred_reply_email = _preferred_reply_email_from_load_result(result)
+        workspace.current_handoff_context = current_handoff_context or _serialize_inbound_context(result.intake_context)
         return {
             "review_event_id": int(workspace.review_event_id),
             "message_signature": workspace.message_signature,
@@ -1590,6 +1661,8 @@ class GmailBrowserSessionManager:
             and workspace.pending_status in {"warming", "delayed"}
             and _gmail_context_matches(workspace.pending_intake_context, context)
         ):
+            workspace.current_handoff_context = _serialize_inbound_context(context)
+            workspace.pending_intake_context = dict(workspace.current_handoff_context)
             return {
                 "status": workspace.pending_status,
                 "normalized_payload": {
@@ -1607,6 +1680,8 @@ class GmailBrowserSessionManager:
                     "runtime_mode": runtime_mode,
                     "review_event_id": int(workspace.review_event_id),
                     "message_signature": workspace.message_signature,
+                    "handoff_session_id": _clean_text(workspace.current_handoff_context.get("handoff_session_id")),
+                    "current_handoff_context": dict(workspace.current_handoff_context),
                     "pending_status": workspace.pending_status,
                     "pending_intake_context": dict(workspace.pending_intake_context),
                     "pending_review_open": bool(workspace.pending_review_open),
@@ -1623,6 +1698,7 @@ class GmailBrowserSessionManager:
             and _gmail_context_matches(workspace.loaded_result.intake_context, context)
         ):
             result = workspace.loaded_result
+            workspace.current_handoff_context = _serialize_inbound_context(context)
             return {
                 "status": "ok" if result.ok else result.classification or "failed",
                 "normalized_payload": {
@@ -1632,6 +1708,8 @@ class GmailBrowserSessionManager:
                     "runtime_mode": runtime_mode,
                     "review_event_id": int(workspace.review_event_id),
                     "message_signature": workspace.message_signature,
+                    "handoff_session_id": _clean_text(workspace.current_handoff_context.get("handoff_session_id")),
+                    "current_handoff_context": dict(workspace.current_handoff_context),
                     "pending_status": workspace.pending_status,
                     "pending_intake_context": dict(workspace.pending_intake_context),
                     "pending_review_open": bool(workspace.pending_review_open),
@@ -1675,6 +1753,8 @@ class GmailBrowserSessionManager:
                 "workspace_id": workspace_id,
                 "runtime_mode": runtime_mode,
                 "handoff_state": "new",
+                "handoff_session_id": _clean_text(workspace.current_handoff_context.get("handoff_session_id")),
+                "current_handoff_context": dict(workspace.current_handoff_context),
                 **review_state,
             },
             "diagnostics": {

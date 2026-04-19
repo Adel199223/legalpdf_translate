@@ -415,7 +415,39 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="interpretation-export-panel"' not in text
 
 
+def test_shadow_web_client_prefers_url_launch_session_state_over_stale_bootstrap() -> None:
+    app_js = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    launch_start = app_js.index("function deriveClientLaunchSessionId")
+    handoff_start = app_js.index("function deriveClientHandoffSessionId")
+    launch_block = app_js[launch_start:handoff_start]
+    assert launch_block.index("urlState.launchSessionId") < launch_block.index("shellLaunchSession.launch_session_id")
+
+    schema_start = app_js.index("function deriveClientLaunchSessionSchemaVersion")
+    handoff_block = app_js[handoff_start:schema_start]
+    assert handoff_block.index("urlState.handoffSessionId") < handoff_block.index("gmailPayload.handoff_session_id")
+
+    marker_start = app_js.index("function setClientHydrationMarker")
+    schema_block = app_js[schema_start:marker_start]
+    assert "if (urlState.launchSessionSchemaVersion > 0)" in schema_block
+
+
 def test_shadow_web_runtime_ready_endpoint_exposes_lightweight_readiness(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        shadow_app_module,
+        "latest_window_trace_status",
+        lambda _base_dir: {
+            "launch_session_id": "launch-rt-1",
+            "status": "trace_started",
+        },
+    )
     with _build_app(tmp_path, monkeypatch, build_identity=_canonical_identity()) as client:
         context = client.app.state.shadow_context
         context.live_gmail_bridge._last_result = BrowserLiveBridgeSyncResult(
@@ -440,10 +472,20 @@ def test_shadow_web_runtime_ready_endpoint_exposes_lightweight_readiness(tmp_pat
         assert payload["normalized_payload"]["readiness"]["browser_app"]["ready"] is True
         assert payload["normalized_payload"]["readiness"]["gmail_bridge"]["ready"] is True
         assert payload["normalized_payload"]["readiness"]["gmail_bridge"]["owner_kind"] == "browser_app"
+        assert payload["normalized_payload"]["readiness"]["gmail_bridge"]["launch_session_id"] == "launch-rt-1"
+        assert payload["normalized_payload"]["launch_session"]["launch_session_id"] == "launch-rt-1"
 
 
 def test_shadow_web_shell_ready_endpoint_avoids_heavy_prepare_path(tmp_path: Path, monkeypatch) -> None:
     shell_ready_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        shadow_app_module,
+        "latest_window_trace_status",
+        lambda _base_dir: {
+            "launch_session_id": "launch-shell-1",
+            "status": "trace_started",
+        },
+    )
     monkeypatch.setattr(
         shadow_app_module,
         "prepare_gmail_intake",
@@ -483,11 +525,13 @@ def test_shadow_web_shell_ready_endpoint_avoids_heavy_prepare_path(tmp_path: Pat
         assert payload["normalized_payload"]["shell"]["gmail_bridge_ready"] is True
         assert payload["normalized_payload"]["gmail"]["pending_status"] == "translation_prepared"
         assert payload["normalized_payload"]["gmail"]["draft_prereqs"]["status"] == "pending"
+        assert payload["normalized_payload"]["shell"]["launch_session"]["launch_session_id"] == "launch-shell-1"
         assert shell_ready_calls == [
             {
                 "runtime_mode": "live",
                 "workspace_id": "gmail-intake",
                 "settings_path": _browser_data_paths(tmp_path, "live").settings_path,
+                "runtime_state_root": _browser_data_paths(tmp_path, "live").app_data_dir,
             }
         ]
 
@@ -650,9 +694,119 @@ def test_shadow_web_bootstrap_includes_gmail_workspace_payload(tmp_path: Path, m
         assert response.status_code == 200
         assert "gmail" in payload["normalized_payload"]
         assert "defaults" in payload["normalized_payload"]["gmail"]
+        assert payload["normalized_payload"]["shell"]["extension_launch_session_schema_version"] == 4
+        assert "launch_session" in payload["normalized_payload"]["shell"]
         assert payload["normalized_payload"]["gmail"]["review_event_id"] == 0
         assert payload["normalized_payload"]["gmail"]["message_signature"] == ""
         assert payload["normalized_payload"]["extension_lab"]["prepare_reason_catalog"]
+
+
+def test_shadow_web_extension_launch_session_diagnostics_route_updates_launch_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/api/extension/launch-session-diagnostics",
+            json={
+                "launch_session_id": "launch-123",
+                "handoff_session_id": "handoff-456",
+                "tab_resolution_strategy": "created_exact_tab",
+                "workspace_surface_confirmed": True,
+                "client_hydration_status": "warming",
+                "surface_candidate_source": "fresh_exact_tab",
+                "surface_candidate_valid": True,
+                "surface_invalidation_reason": "launch_session_mismatch",
+                "fresh_tab_created_after_invalidation": True,
+                "bridge_context_posted": True,
+                "surface_visibility_status": "visible",
+                "outcome": "warming",
+                "reason": "workspace_pending_with_confirmed_surface",
+                "tab_id": 91,
+                "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+                "runtime_state_root_compatible": True,
+                "expected_runtime_state_root": str(_browser_data_paths(tmp_path, "live").app_data_dir),
+                "observed_runtime_state_root": str(_browser_data_paths(tmp_path, "live").app_data_dir),
+            },
+        )
+        followup_response = client.post(
+            "/api/extension/launch-session-diagnostics",
+            json={
+                "launch_session_id": "launch-123",
+                "handoff_session_id": "handoff-456",
+                "bridge_context_posted": True,
+                "outcome": "loaded",
+                "reason": "workspace_loaded",
+                "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+            },
+        )
+        inferred_response = client.post(
+            "/api/extension/launch-session-diagnostics",
+            json={
+                "launch_session_id": "launch-inferred",
+                "handoff_session_id": "handoff-inferred",
+                "click_phase": "bridge_context_posted",
+                "workspace_surface_confirmed": True,
+                "bridge_context_posted": True,
+                "runtime_state_root_compatible": False,
+                "expected_runtime_state_root": "",
+                "observed_runtime_state_root": "",
+                "outcome": "loaded",
+                "reason": "loaded",
+                "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+            },
+        )
+        payload = response.json()
+        followup_payload = followup_response.json()
+        inferred_payload = inferred_response.json()
+
+    assert response.status_code == 200
+    assert followup_response.status_code == 200
+    assert inferred_response.status_code == 200
+    assert payload["status"] == "ok"
+    launch_session = payload["normalized_payload"]["launch_session"]
+    assert launch_session["launch_session_id"] == "launch-123"
+    assert launch_session["handoff_session_id"] == "handoff-456"
+    assert launch_session["click_phase"] == ""
+    assert launch_session["click_failure_reason"] == ""
+    assert launch_session["source_gmail_url"] == ""
+    assert launch_session["tab_resolution_strategy"] == "created_exact_tab"
+    assert launch_session["workspace_surface_confirmed"] is True
+    assert launch_session["client_hydration_status"] == "warming"
+    assert launch_session["surface_candidate_source"] == "fresh_exact_tab"
+    assert launch_session["surface_candidate_valid"] is True
+    assert launch_session["surface_invalidation_reason"] == "launch_session_mismatch"
+    assert launch_session["fresh_tab_created_after_invalidation"] is True
+    assert launch_session["bridge_context_posted"] is True
+    assert launch_session["surface_visibility_status"] == "visible"
+    assert launch_session["extension_surface_outcome"] == "warming"
+    assert launch_session["extension_surface_reason"] == "workspace_pending_with_confirmed_surface"
+    assert launch_session["extension_surface_tab_id"] == 91
+    assert launch_session["runtime_state_root_compatible"] is True
+    assert launch_session["expected_runtime_state_root"] == str(_browser_data_paths(tmp_path, "live").app_data_dir)
+    assert launch_session["observed_runtime_state_root"] == str(_browser_data_paths(tmp_path, "live").app_data_dir)
+    followup_launch_session = followup_payload["normalized_payload"]["launch_session"]
+    assert followup_launch_session["extension_surface_outcome"] == "loaded"
+    assert followup_launch_session["runtime_state_root_compatible"] is True
+    assert followup_launch_session["expected_runtime_state_root"] == str(_browser_data_paths(tmp_path, "live").app_data_dir)
+    assert followup_launch_session["observed_runtime_state_root"] == str(_browser_data_paths(tmp_path, "live").app_data_dir)
+    inferred_launch_session = inferred_payload["normalized_payload"]["launch_session"]
+    assert inferred_launch_session["runtime_state_root_compatible"] is True
+    assert inferred_launch_session["expected_runtime_state_root"] == str(_browser_data_paths(tmp_path, "live").app_data_dir)
+    assert inferred_launch_session["observed_runtime_state_root"] == str(_browser_data_paths(tmp_path, "live").app_data_dir)
+
+
+def test_shadow_web_gmail_bootstrap_accepts_workspace_id_query_alias(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.get("/api/gmail/bootstrap?mode=live&workspace_id=gmail-intake")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["normalized_payload"]["runtime"]["workspace_id"] == "gmail-intake"
+    assert payload["normalized_payload"]["workspace"]["id"] == "gmail-intake"
 
 
 def test_shadow_web_shell_bootstrap_returns_gmail_bridge_state_and_refreshes_runtime_metadata(
@@ -973,12 +1127,23 @@ def test_shadow_web_gmail_routes_delegate_to_session_manager(tmp_path: Path, mon
             "capability_flags": {},
         }
 
-    def _build_bootstrap(self, *, runtime_mode, workspace_id, settings_path, outputs_dir, build_sha="", asset_version=""):
+    def _build_bootstrap(
+        self,
+        *,
+        runtime_mode,
+        workspace_id,
+        settings_path,
+        outputs_dir,
+        runtime_state_root=None,
+        build_sha="",
+        asset_version="",
+    ):
         recorded["build_bootstrap"] = {
             "runtime_mode": runtime_mode,
             "workspace_id": workspace_id,
             "settings_path": str(settings_path),
             "outputs_dir": str(outputs_dir),
+            "runtime_state_root": str(runtime_state_root) if runtime_state_root is not None else "",
             "build_sha": build_sha,
             "asset_version": asset_version,
         }
@@ -1393,6 +1558,7 @@ def test_shadow_web_shell_ready_blocks_noncanonical_live_gmail_bridge(tmp_path: 
                 "runtime_mode": "live",
                 "workspace_id": "gmail-intake",
                 "settings_path": _browser_data_paths(tmp_path, "live").settings_path,
+                "runtime_state_root": _browser_data_paths(tmp_path, "live").app_data_dir,
             }
         ]
 
@@ -1711,13 +1877,17 @@ def test_shadow_web_settings_and_power_tools_routes(tmp_path: Path, monkeypatch)
                     "native_host": _native_host_state(),
                 },
             },
-            "power_tools": {
-                "glossary": {"project_glossary_path": str(data_paths.app_data_dir / "project.json")},
-                "glossary_builder": {"defaults": {"source_mode": "run_folders"}, "latest_run_dirs": []},
-                "calibration": {"defaults": {"target_lang": "EN"}},
-                "diagnostics": {"outputs_root": str(data_paths.outputs_dir), "latest_run_dirs": []},
-            },
-        }
+                "power_tools": {
+                    "glossary": {"project_glossary_path": str(data_paths.app_data_dir / "project.json")},
+                    "glossary_builder": {"defaults": {"source_mode": "run_folders"}, "latest_run_dirs": []},
+                    "calibration": {"defaults": {"target_lang": "EN"}},
+                    "diagnostics": {
+                        "outputs_root": str(data_paths.outputs_dir),
+                        "latest_run_dirs": [],
+                        "latest_window_trace": {"launch_session_id": "", "status": "idle"},
+                    },
+                },
+            }
 
     monkeypatch.setattr(shadow_app_module, "build_power_tools_bootstrap", _fake_power_bootstrap)
     monkeypatch.setattr(
@@ -1840,11 +2010,54 @@ def test_shadow_web_settings_and_power_tools_routes(tmp_path: Path, monkeypatch)
         power_payload = power_bootstrap.json()
         assert power_bootstrap.status_code == 200
         assert power_payload["normalized_payload"]["glossary_builder"]["defaults"]["source_mode"] == "run_folders"
+        assert "latest_window_trace" in power_payload["normalized_payload"]["diagnostics"]
 
         debug_bundle = client.post("/api/power-tools/diagnostics/debug-bundle", json={"run_dir": "C:/tmp/run-1"})
         bundle_payload = debug_bundle.json()
         assert debug_bundle.status_code == 200
         assert bundle_payload["normalized_payload"]["bundle_path"].endswith(".zip")
+
+
+def test_shadow_web_power_tools_arm_window_trace_endpoint(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        shadow_app_module,
+        "arm_browser_window_trace",
+        lambda **kwargs: captured.update(kwargs) or {
+            "status": "ok",
+            "normalized_payload": {
+                "armed": True,
+                "launch_session_id": "launch-arm-1",
+            },
+            "diagnostics": {
+                "latest_window_trace": {
+                    "launch_session_id": "launch-arm-1",
+                    "status": "armed",
+                },
+            },
+        },
+    )
+    with _build_app(tmp_path, monkeypatch, build_identity=_canonical_identity()) as client:
+        response = client.post(
+            "/api/power-tools/diagnostics/arm-window-trace",
+            json={
+                "mode": "live",
+                "workspace_id": "gmail-intake",
+                "duration_seconds": 9,
+                "sample_interval_ms": 125,
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "ok"
+        assert payload["normalized_payload"]["launch_session_id"] == "launch-arm-1"
+        assert payload["diagnostics"]["latest_window_trace"]["launch_session_id"] == "launch-arm-1"
+        assert captured == {
+            "settings_path": _browser_data_paths(tmp_path, "live").settings_path,
+            "duration_seconds": 9.0,
+            "sample_interval_ms": 125,
+        }
 
 
 def test_shadow_web_settings_key_routes_delegate_to_secure_store_services(tmp_path: Path, monkeypatch) -> None:

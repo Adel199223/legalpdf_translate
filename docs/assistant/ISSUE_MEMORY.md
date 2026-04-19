@@ -269,6 +269,58 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - Template: `docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md`
   - Template: `docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md`
 
+### workflow-gmail-same-tab-console-churn-regression
+- Title: Gmail extension handoff regressed through stale click state, separate-surface launch, and console-window churn
+- First seen timestamp: `2026-04-08T16:04:00Z`
+- Last seen timestamp: `2026-04-19T12:51:44Z`
+- Repeat count: `7`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - Gmail extension clicks could create transparent/CMD-like windows that opened and closed repeatedly
+  - the browser app could land on `Pending load` with unavailable message/thread IDs
+  - a second click could show stale `already preparing` or stale retry banners after the first click produced no usable workspace
+  - separate browser-surface ownership and stale exact localhost tabs made the extension, native host, and browser app disagree about whether the handoff was ready
+  - deterministic acceptance tooling itself could leave `playwright-mcp` helper CMD processes, creating false console-churn evidence unless cleaned up
+- Likely root cause:
+  - Gmail cold-start responsibilities were split across native host, detached launcher, extension, stale browser tabs, and live runtime state roots
+  - the `.cmd` native-host wrapper and generic launch/probe paths could surface console windows
+  - the extension previously treated server-side warming or old exact tabs as enough to keep locks alive before a current browser surface and current per-click handoff were proven
+  - acceptance relied too heavily on manual toolbar clicks and incomplete diagnostics instead of driving the same handler deterministically and checking the correlated session state
+- Attempted fix history:
+  - `2026-04-08T18:04:00Z` — added one-shot window tracing and single-owner launch diagnostics; outcome: partial_only because visible surface ownership still churned
+  - `2026-04-08T21:30:00Z` — removed Edge process launch from Gmail cold start and made the extension own browser surfaces; outcome: partial_only because console/native-host churn remained
+  - `2026-04-09T11:32:00Z` — switched live registration to the no-console EXE and changed browser-app cold start to succeed on server-ready; outcome: partial_only because stale extension click state still blocked useful app opening
+  - `2026-04-09T21:01:00Z` — converted Gmail intake to same-tab redirect, added per-click `handoff_session_id`, `source_gmail_url`, bridge-post diagnostics, and deterministic debug acceptance; outcome: stronger_mitigation
+  - `2026-04-19T12:51:44Z` — normal Edge Profile 2 acceptance confirmed same-tab redirect, `bridge_context_posted=true`, ready Gmail bootstrap with one attachment, `Return to Gmail`, and no LegalPDF/native-host CMD churn; outcome: accepted_live_mitigation
+- Accepted fix:
+  - `2026-04-19T12:51:44Z` — live Gmail intake now uses same-tab redirect for the current Gmail tab, native-host/server-only preparation through the EXE path, per-click `handoff_session_id`, immediate post-redirect `/gmail-intake`, AppData runtime-state diagnostics, and `Return to Gmail` from the captured source URL
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
+  - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+  - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/SESSION_RESUME.md`
+- Bootstrap relevance: `required`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - same-tab Gmail intake as the canonical click model
+    - no-console native-host EXE as the canonical live registration target
+    - stale `already preparing` / `Pending load` fail-closed diagnostics
+    - deterministic acceptance before another manual live-click validation loop
+    - separation between product console churn and automation-helper CMD processes
+- Evidence refs:
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-08_gmail-same-tab-intake-and-console-churn-closeout.md`
+  - Commit: `8dfb027`
+  - Live acceptance: `20260419_125112_2d61fbb64f8e`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+
 ### workflow-fragmented-multi-surface-diagnostics
 - Title: Fragmented diagnostics across handoff, per-run execution, and finalization slowed root-cause analysis
 - First seen timestamp: `2026-03-08T00:00:00Z`

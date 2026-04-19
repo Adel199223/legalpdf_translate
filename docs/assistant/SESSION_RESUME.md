@@ -20,7 +20,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 ## Browser Mode Contract
 - `live` mode uses the real settings, job log, outputs, Gmail workflow, and browser-owned Gmail bridge.
 - `shadow` mode is the isolated browser testing/development copy. It keeps separate state roots and does not own the real Gmail bridge.
-- The real Gmail extension remains canonical. After a successful Gmail handoff, it should open or focus the browser app in the fixed live workspace `gmail-intake`.
+- The real Gmail extension remains canonical. After a successful Gmail click, the current Gmail tab redirects into the fixed live workspace `gmail-intake`; `Return to Gmail` restores the captured source Gmail URL.
 - Live Gmail is hard-blocked on noncanonical runtimes. `Restart from Canonical Main` is the only supported recovery path for normal work.
 - Port `8877` remains the canonical daily-use/live/Gmail browser port.
 - Port `8888` is review-preview only and must not become the real live Gmail bridge owner.
@@ -35,8 +35,8 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
   - translation continuation stays bounded in finish/finalize surfaces instead of restacking large Gmail and translation pages
   - interpretation continuation stays in one compact current-step shell plus a bounded same-tab review drawer
   - secondary/browser-operator routes stay reachable, but no longer dominate the normal path
-- Local source-checkout Edge native-host registration now prefers the app-data wrapper `LegalPDFGmailFocusHost.cmd` so Gmail handoff does not depend on a packaged host executable that Windows App Control may block.
-- Browser Gmail handoff now requires both shell readiness and hydrated client readiness, with client/server `asset_version` agreement on the opened localhost tab so stale browser assets do not masquerade as a fresh launch.
+- Canonical Edge native-host registration now targets `LegalPDFGmailFocusHost.exe`; the old `.cmd` wrapper is diagnostic fallback only and must not be the normal live target because it can surface visible CMD/PseudoConsole churn.
+- Browser Gmail handoff now uses per-click `handoff_session_id`, same-tab redirect, immediate post-redirect `/gmail-intake`, and client/server `asset_version` diagnostics so stale service workers, stale tabs, and `Pending load` states do not masquerade as accepted handoffs.
 - Browser-managed Gmail PDF preview/prepare now uses the bundled browser `pdf.js` path instead of depending on `PyMuPDF` during browser startup.
 - Gmail batch finalization readiness now depends on a real Word export canary, not a launch-only Word probe.
 - Report-restored completed Gmail translation batches are now secondary recovered history only; a fresh extension handoff or loaded Gmail message should supersede them automatically.
@@ -81,7 +81,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 ## Next Concrete Action
 - No active roadmap needs resume handling.
 - For new work, use normal ExecPlan flow unless the user explicitly opens a new roadmap.
-- Publish/merge requests should follow the standard commit/publish workflow.
+- Publish/merge requests should follow the standard commit/publish workflow and should not start a new Gmail/runtime thread while accepted live fixes remain only in local commits.
 
 ## Resume Order
 1. Read this file.

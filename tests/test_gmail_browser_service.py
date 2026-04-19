@@ -17,6 +17,7 @@ from legalpdf_translate.gmail_batch import (
     GmailMessageLoadResult,
 )
 from legalpdf_translate.gmail_intake import InboundMailContext
+from legalpdf_translate.gmail_window_trace import update_launch_session_state
 from legalpdf_translate.interpretation_service import InterpretationValidationError
 
 
@@ -844,6 +845,8 @@ def test_gmail_browser_bootstrap_exposes_pending_bridge_warmup_state(tmp_path: P
         "thread_id": "thr-bridge",
         "subject": "Bridge warmup",
         "account_email": "adel@example.com",
+        "handoff_session_id": "",
+        "source_gmail_url": "",
     }
     assert pending_bootstrap["normalized_payload"]["pending_review_open"] is True
 
@@ -925,12 +928,15 @@ def test_accept_bridge_intake_reuses_same_context_while_pending(tmp_path: Path, 
             thread_id="thr-bridge",
             subject="Bridge warmup",
             account_email="adel@example.com",
+            handoff_session_id="handoff-2",
         ),
     )
 
     assert reused["status"] == "warming"
     assert reused["normalized_payload"]["handoff_state"] == "pending_reused"
     assert reused["normalized_payload"]["pending_status"] == "warming"
+    assert reused["normalized_payload"]["handoff_session_id"] == "handoff-2"
+    assert reused["normalized_payload"]["current_handoff_context"]["handoff_session_id"] == "handoff-2"
     assert reused["diagnostics"]["handoff_reused"] is True
     assert load_calls["count"] == 1
 
@@ -983,6 +989,7 @@ def test_accept_bridge_intake_reuses_same_loaded_message_without_new_review_even
             thread_id="thr-bridge",
             subject="Bridge warmup",
             account_email="adel@example.com",
+            handoff_session_id="handoff-1",
         ),
     )
     reused = manager.accept_bridge_intake(
@@ -994,6 +1001,7 @@ def test_accept_bridge_intake_reuses_same_loaded_message_without_new_review_even
             thread_id="thr-bridge",
             subject="Bridge warmup",
             account_email="adel@example.com",
+            handoff_session_id="handoff-2",
         ),
     )
 
@@ -1001,8 +1009,57 @@ def test_accept_bridge_intake_reuses_same_loaded_message_without_new_review_even
     assert reused["normalized_payload"]["review_event_id"] == 1
     assert reused["normalized_payload"]["message_signature"] == first["normalized_payload"]["message_signature"]
     assert reused["normalized_payload"]["handoff_state"] == "loaded_reused"
+    assert reused["normalized_payload"]["handoff_session_id"] == "handoff-2"
+    assert reused["normalized_payload"]["current_handoff_context"]["handoff_session_id"] == "handoff-2"
     assert reused["diagnostics"]["handoff_reused"] is True
     assert load_calls["count"] == 1
+
+
+def test_build_bootstrap_surfaces_click_diagnostics_from_runtime_state_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    outputs_dir = tmp_path / "outputs"
+    outputs_dir.mkdir()
+    runtime_state_root = tmp_path / "appdata"
+    runtime_state_root.mkdir(exist_ok=True)
+
+    update_launch_session_state(
+        runtime_state_root,
+        launch_session_id="launch-123",
+        handoff_session_id="handoff-456",
+        click_phase="same_tab_redirect_started",
+        click_failure_reason="",
+        bridge_context_posted=False,
+        source_gmail_url="https://mail.google.com/mail/u/0/#inbox/FMfcgz",
+        native_host_path_kind="exe",
+    )
+
+    manager = GmailBrowserSessionManager()
+    payload = manager.build_bootstrap(
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        settings_path=settings_path,
+        outputs_dir=outputs_dir,
+        runtime_state_root=runtime_state_root,
+        build_sha="build-123",
+        asset_version="asset-123",
+    )
+
+    click = payload["normalized_payload"]["click_diagnostics"]
+    assert click == {
+        "launch_session_id": "launch-123",
+        "handoff_session_id": "handoff-456",
+        "click_phase": "same_tab_redirect_started",
+        "click_failure_reason": "",
+        "bridge_context_posted": False,
+        "surface_visibility_status": "",
+        "source_gmail_url_present": True,
+        "source_gmail_url": "https://mail.google.com/mail/u/0/#inbox/FMfcgz",
+        "runtime_state_root": str(runtime_state_root.resolve()),
+    }
 
 
 def test_prepare_interpretation_session_prefers_explicit_gmail_reply_address(tmp_path: Path, monkeypatch) -> None:

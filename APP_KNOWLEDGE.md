@@ -54,7 +54,8 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - Browser workspace state is URL-scoped through `workspace=<id>`, so separate tabs can keep independent draft/progress state.
 - `mode=live` uses the real settings, profiles, job log, outputs, and Gmail workflow.
 - `mode=shadow` is the explicit isolated test mode for development and browser automation. It uses separate state roots and never silently falls back to live data.
-- Browser shell readiness is now two-stage: the server must be ready and the opened localhost tab must publish a hydrated client-ready marker before the extension treats Gmail handoff as successful.
+- Gmail extension handoff is same-tab for `workspace=gmail-intake`: the native host/runtime prepares the live server, the extension redirects the current Gmail tab to the fixed browser workspace, posts `/gmail-intake` after redirect commit, and stores `source_gmail_url` so `Return to Gmail` restores the original message.
+- Browser client hydration and `asset_version` proof still guard stale browser assets, but Gmail bridge context must not be stranded behind hydration; diagnostics must show `bridge_context_posted=true` for an accepted click.
 - Browser JS/CSS/module-worker assets now ship under one runtime `asset_version` so the whole module graph invalidates together. The extension compares server and client `asset_version` values and allows one exact-tab reload before declaring stale-browser-asset failure.
 - Port `8877` remains the canonical daily-use/live/Gmail browser port; port `8888` is reserved for fixed branch-review previews so stale review tabs and normal work tabs do not collide.
 - The preview port on `8888` never owns the real live Gmail bridge. Live Gmail extension handoff always points back to the canonical browser app on `8877`.
@@ -204,10 +205,10 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - The job log also stores additive translation artifact paths for Gmail/honorarios reuse: `output_docx_path` and `partial_docx_path`.
 - Job-form draft edits are workspace-local session state. Shared settings now persist launch fields only when a task explicitly starts, so closing or resetting one workspace does not write another window's draft inputs back into `settings.json`.
 - Gmail intake bridge settings persist in GUI settings as `gmail_intake_bridge_enabled`, `gmail_intake_bridge_token`, and `gmail_intake_port`.
-- When the browser server is running, the browser app is the primary live Gmail bridge owner. The real extension/native host now hands off into the browser app first and falls back to Qt only when browser launch is unavailable and no healthy browser-owned bridge already exists.
-- The browser-owned live Gmail bridge uses the fixed live browser workspace `gmail-intake`, and only a successful extension handoff opens or focuses `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`.
+- When the browser server is running, the browser app is the primary live Gmail bridge owner. The real extension/native host now prepares the browser server, while the extension owns the visible Gmail surface by redirecting the current Gmail tab into `gmail-intake`.
+- The browser-owned live Gmail bridge uses the fixed live browser workspace `gmail-intake`. A successful Gmail click must end with the same tab at `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake...`, `bridge_context_posted=true`, and a current `handoff_session_id`.
 - Rejected or failed `/gmail-intake` posts stay fail-closed in Gmail and show the browser-page banner error instead of spawning the browser app workspace.
-- Local source-checkout registration now prefers an app-data native-host wrapper at `AppData\\Roaming\\LegalPDFTranslate\\native_messaging\\LegalPDFGmailFocusHost.cmd` when available. That wrapper sets `PYTHONPATH` and invokes the repo venv module so local Edge handoff does not depend on a packaged host executable that Windows App Control may block.
+- Canonical live Edge native-host registration now targets the no-console launcher EXE at `dist\\legalpdf_translate\\LegalPDFGmailFocusHost.exe`; the old `.cmd` wrapper is diagnostic fallback only and must not be the canonical live target because it can create visible CMD/PseudoConsole churn.
 - Noncanonical live runtimes can no longer rewrite the app-data native-host wrapper or manifest to themselves. Live Gmail stays blocked until the runtime restarts into canonical `main`.
 - Browser live-bridge ownership is now guarded by port: noncanonical live listeners such as the fixed review preview on `8888` skip bridge registration and direct the extension back to the canonical live browser URL on `8877`.
 - In normal app launches, the Gmail intake bridge is app-level. It reuses the last active workspace only when that workspace is idle and pristine; otherwise it opens a new blank workspace for the intake automatically.
@@ -283,11 +284,11 @@ Queue manifests create sidecar artifacts beside the manifest file:
 - This workflow is Windows-only and starts from Gmail web in Edge/Chromium, not from a second Gmail OAuth stack inside the app.
 - A Manifest V3 extension on `https://mail.google.com/*` posts exact Gmail message context to a token-protected localhost bridge bound only to `127.0.0.1`.
 - The extension now self-heals stale Gmail tabs by reinjecting its content script when needed and shows visible Gmail-page banner errors instead of failing silently.
-- On real toolbar clicks, the native host now prefers launching the browser app live server and only falls back to Qt when browser launch is unavailable and no healthy browser-owned bridge already exists.
-- After a successful prepare plus localhost POST, the extension opens or focuses the browser app at the live Gmail workspace URL instead of depending on Qt window focus.
+- On real toolbar clicks, the native host prepares or reuses the browser app live server only; it must not launch a browser surface or route through a console-capable wrapper for the Gmail path.
+- After successful native preparation, the extension redirects the current Gmail tab to the live Gmail workspace, waits for redirect commit, posts `/gmail-intake`, and records click diagnostics under the shared launch/handoff session.
 - The intake contract is fail-closed: if the browser cannot identify exactly one open Gmail message, the app is not listening, or the bearer token is wrong, the handoff stops immediately.
 - Failed or rejected localhost POST attempts stay on the current Gmail page and report the problem through the Gmail banner instead of opening a stale or empty browser-app handoff tab.
-- Duplicate or still-in-progress toolbar clicks can show wait/focus guidance for the existing launch, but they should not create extra browser-app windows or tabs.
+- Duplicate or still-in-progress toolbar clicks can show wait guidance only for the same current-tab `handoff_session_id`; stale “already preparing” state from older clicks must be cleared instead of surviving into the next attempt.
 - If the app cannot bind the localhost bridge port, the UI now shows a visible `Gmail intake bridge unavailable` state instead of looking idle.
 - The app fetches only the exact intake message through Windows `gog`, resolves the Gmail account in this order, and no other order:
   1. explicit Settings `gmail_account_email`

@@ -42,6 +42,7 @@ from .glossary_builder import (
 )
 from .gmail_draft import assess_gmail_draft_prereqs
 from .gmail_focus_host import inspect_edge_native_host, maybe_ensure_edge_native_host_registered
+from .gmail_window_trace import arm_next_cold_start_window_trace, latest_window_trace_status
 from .lemma_normalizer import LemmaCache, batch_normalize_lemmas
 from .ocr_engine import (
     OcrEngineConfig,
@@ -728,6 +729,7 @@ def build_power_tools_bootstrap(
                 "default_report_path": _safe_path_text(
                     _power_tools_output_dir(data_paths.outputs_dir) / f"{_RUN_REPORT_PREFIX}_{_timestamp_slug()}.md"
                 ),
+                "latest_window_trace": latest_window_trace_status(data_paths.app_data_dir),
             },
         },
     }
@@ -849,6 +851,27 @@ def run_native_host_test(*, settings_path: Path) -> dict[str, object]:
         },
         provider_state=provider_state,
     )
+
+
+def arm_browser_window_trace(
+    *,
+    settings_path: Path,
+    duration_seconds: float = 15.0,
+    sample_interval_ms: int = 200,
+) -> dict[str, object]:
+    base_dir = app_data_dir_from_settings_path(settings_path)
+    payload = arm_next_cold_start_window_trace(
+        base_dir=base_dir,
+        duration_seconds=duration_seconds,
+        sample_interval_ms=sample_interval_ms,
+    )
+    return {
+        "status": "ok",
+        "normalized_payload": payload,
+        "diagnostics": {
+            "latest_window_trace": latest_window_trace_status(base_dir),
+        },
+    }
 
 
 def repair_browser_native_host(*, settings_path: Path) -> dict[str, object]:

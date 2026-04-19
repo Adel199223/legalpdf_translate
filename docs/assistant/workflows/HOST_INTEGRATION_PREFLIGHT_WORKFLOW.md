@@ -69,7 +69,7 @@ dart run tooling/validate_workspace_hygiene.dart
    - run a minimal real operation before building the full feature
    - if the integration has a lighter startup probe and a heavier real operation, prove the heavier path explicitly inside that live smoke
    - examples in this repo:
-     - browser-app Gmail handoff should prove both shell readiness and client hydration on the opened localhost tab
+     - browser-app Gmail handoff should prove server readiness, same-tab redirect commit, `/gmail-intake` post, and current click diagnostics
      - Gmail finalization should prove Word DOCX-to-PDF export through an export canary, not only Word launch/COM reachability
 
 ## Same-Host Validation Rule
@@ -80,8 +80,9 @@ For this repo, Gmail draft creation through `gog` is the clearest example: the d
 The browser app now makes this stricter for Gmail intake:
 - validate the browser app in `live` mode, not isolated `shadow` mode
 - confirm the live Gmail bridge owner and handoff URL, not just that some localhost listener is up
+- confirm the registered native-host target is the no-console EXE for live Gmail; a `.cmd` target is diagnostic fallback only and can create visible console-window churn
 - treat browser-owned bridge readiness as the normal green path and Qt ownership as fallback/coexistence, not the default assumption
-- when browser handoff depends on the opened localhost tab, prove the tab is hydrated and not running stale browser assets before treating the launch as successful
+- for Gmail same-tab intake, prove the current Gmail tab redirected to `gmail-intake`, diagnostics show `bridge_context_posted=true`, `source_gmail_url` is present, and the workspace is not stuck in `Pending load`
 
 For this repo's Gmail finalization path:
 - a shallow Word launch probe is not sufficient

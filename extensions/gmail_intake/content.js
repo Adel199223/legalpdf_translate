@@ -5,6 +5,8 @@
   window.__legalPdfGmailIntakeLoaded = true;
 
   const BANNER_ID = "legalpdf-gmail-intake-banner";
+  const DEBUG_TRIGGER_EVENT = "legalpdf-gmail-intake-debug-trigger";
+  const DEBUG_RESULT_EVENT = "legalpdf-gmail-intake-debug-result";
 
   function showBanner(message, kind) {
     const existing = document.getElementById(BANNER_ID);
@@ -103,9 +105,53 @@
       message_id: messageId,
       thread_id: threadId,
       subject,
-      account_email: extractAccountEmail()
+      account_email: extractAccountEmail(),
+      source_gmail_url: window.location.href
     };
   }
+
+  function dispatchDebugResult(detail) {
+    window.dispatchEvent(new CustomEvent(DEBUG_RESULT_EVENT, {
+      detail: detail && typeof detail === "object" ? detail : {}
+    }));
+  }
+
+  function triggerDebugClick(detail) {
+    chrome.runtime.sendMessage({
+      type: "gmail-intake-debug-click",
+      detail: detail && typeof detail === "object" ? detail : {}
+    }, (response) => {
+      const runtimeError = chrome.runtime?.lastError;
+      if (runtimeError) {
+        dispatchDebugResult({
+          ok: false,
+          message: String(runtimeError.message || "debug_click_failed")
+        });
+        return;
+      }
+      dispatchDebugResult(response && typeof response === "object"
+        ? response
+        : { ok: true });
+    });
+  }
+
+  window.addEventListener(DEBUG_TRIGGER_EVENT, (event) => {
+    triggerDebugClick(event instanceof CustomEvent ? event.detail : {});
+  });
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) {
+      return;
+    }
+    const payload = event.data;
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+    if (payload.type !== DEBUG_TRIGGER_EVENT) {
+      return;
+    }
+    triggerDebugClick(payload.detail);
+  });
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || typeof message !== "object") {

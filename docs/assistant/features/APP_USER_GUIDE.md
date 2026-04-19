@@ -30,7 +30,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 ## What You See On Screen
 - Left sidebar: the normal first-level buttons are `New Job`, `Recent Jobs`, and sometimes `Gmail`. Less-common areas stay under `More`.
 - `New Job`: the main beginner-first work area. Translation is the default view, and `Interpretation` is available through the in-page task switch.
-- `Gmail`: a dedicated Gmail handoff screen that starts as a compact review-first surface. Exact-message review and attachment choice are shown first; deeper Gmail session/finalization work opens later in same-tab drawers.
+- `Gmail`: a dedicated Gmail handoff screen reached by same-tab redirect from Gmail. Exact-message review and attachment choice are shown first; `Return to Gmail` restores the original message, and deeper session/finalization work opens later in same-tab drawers.
 - `More`: keeps `Dashboard`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab` reachable without making the everyday shell feel crowded.
 - `Dashboard`: an operator/status page under `More` that shows runtime mode, OCR, Word PDF export readiness, browser automation, Gmail bridge state, and other machine-level checks when you need machine-level visibility.
 - `Recent Jobs`: the main secondary production page. It shows the latest saved rows first and keeps deeper translation and interpretation history tucked into collapsible sections until you ask for them.
@@ -122,8 +122,8 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 2. Load `extensions/gmail_intake/` as an unpacked extension in Edge or Chrome.
 3. Normal use no longer requires manually copying the bridge token and port into the extension options page. Use that page only for diagnostics.
 4. Open Gmail in that same Windows browser and expand exactly one message.
-5. Click the extension toolbar button. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the canonical `main` checkout and continue that same click. After a successful handoff, the extension opens or focuses the browser app in `live` mode. If the handoff fails or is rejected, Gmail stays on the current page and shows the error banner there instead of opening the app. If the browser says live Gmail is running from a noncanonical build, normal Gmail work stays blocked until `Restart from Canonical Main` succeeds.
-6. The browser app opens the fixed live workspace `gmail-intake` and asks you to choose the Gmail intake mode:
+5. Click the extension toolbar button once. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the canonical `main` checkout without opening CMD windows, and the same Gmail tab redirects into LegalPDF after preparation. If the handoff fails or is rejected before redirect, Gmail stays on the current page and shows the error banner there. If the browser says live Gmail is running from a noncanonical build, normal Gmail work stays blocked until `Restart from Canonical Main` succeeds.
+6. The same browser tab opens the fixed live workspace `gmail-intake` and asks you to choose the Gmail intake mode. Use `Return to Gmail` when you want to go back to the original Gmail message:
    - `Translation` keeps the existing multi-attachment translation batch behavior and target-language review.
    - `Interpretation notice` is for one selected court-notice attachment that should not be translated.
 7. The Gmail page starts compactly. The first screen shows the message summary, supported attachments, workflow choice, target language when needed, and one main continue action. Use the small info button only when you need sender, Gmail account, bridge owner, or output-folder details.
@@ -152,7 +152,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 1. If the page says the app is not listening, confirm the bridge is enabled in `Settings` and that you are using the browser app in `live` mode. A normal toolbar click can auto-start the app, so a manual launch should only be needed after an auto-start failure.
 2. If the dashboard or Extension Lab says `Gmail intake bridge unavailable`, another process may already be using the bridge port or the live browser server may not own it yet.
 3. If Gmail shows `accepted` but the browser app stays idle, check that the listener on `127.0.0.1:<port>` belongs to the LegalPDF browser app live server and not to `pytest` or another stray process.
-4. If Gmail says the handoff is already in progress, wait for the current launch or use the focus guidance it gives you. That message should help you find the existing browser-app handoff instead of opening another one.
+4. If Gmail says the handoff is already in progress, that should only mean the same tab is still redirecting or hydrating for the current click. If the workspace is not visible or the message repeats after a retry, treat it as stale state and refresh diagnostics instead of clicking repeatedly.
 5. If the page says the browser app is running from a noncanonical build, choose `Restart from Canonical Main`. Preview and `Prepare selected` stay blocked for normal live Gmail work until the canonical runtime is restored.
 6. If the extension says the native host is unavailable, reload the extension or open the extension options page and refresh diagnostics. Normal use should not require manually copying bridge tokens.
 7. If the page says auto-launch is unavailable from this checkout, open the extension options page and refresh diagnostics.
@@ -163,7 +163,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 12. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
 13. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
 14. If the honorários PDF cannot be generated, the export still keeps the local DOCX but Gmail draft creation stays blocked for that export.
-15. If the browser app opens but the page looks half-loaded or stale, the app should normally recover with one exact-tab reload. Manual hard refresh should not be the normal fix; check extension/native-host readiness instead.
+15. If the same tab reaches LegalPDF but shows `Pending load`, unavailable message/thread IDs, or no attachment-ready text, treat the click diagnostics as the source of truth: `bridge_context_posted` should be `true`, `source_gmail_url` should be present, and the native-host path should be the EXE target rather than the old `.cmd` wrapper.
 16. If Gmail/browser preparation fails before a run exists, use `Generate Failure Report` from the Gmail diagnostics area instead of searching for a run report that does not exist yet. That report now includes the raw browser PDF worker/module failure details.
 17. If Gmail finalization is blocked or completes and you still want a full last-step artifact, use `Generate Finalization Report` from the finalization drawer. That report now stays available for blocked states and completed states, including successful draft creation.
 18. If the current Gmail attachment was already run and you want to do it again from the same live workspace, use `Redo Current Attachment` instead of `Reset Gmail Workspace`. `Redo` keeps the Gmail batch session and only resets the translation side for that attachment.

@@ -18,6 +18,8 @@ build/*
 *_run/
 *.docx
 tmp/
+diagnostics/
+native_messaging/
 
 # assistant scratch docs (local archive only)
 docs/assistant/_scratch/
