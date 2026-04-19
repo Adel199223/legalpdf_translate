@@ -566,6 +566,7 @@ function currentRecoveredFinalizationAction() {
 }
 
 function gmailHomeStatusMessage() {
+  const clickDiagnostics = currentClickDiagnostics();
   const recoveredAction = currentRecoveredFinalizationAction();
   if (
     !gmailState.loadResult
@@ -588,6 +589,9 @@ function gmailHomeStatusMessage() {
     case "interpretation_finalize":
       return "Gmail handoff is prepared. Resume Current Step when you are ready for the next bounded step.";
     default:
+      if (!gmailState.loadResult && !gmailState.activeSession && clickDiagnostics.click_phase && !clickDiagnostics.bridge_context_posted) {
+        return `The last Gmail redirect stopped during ${clickDiagnostics.click_phase.replaceAll("_", " ")}. Use Return to Gmail or refresh this workspace before retrying the Gmail handoff.`;
+      }
       return "Keep Gmail intake compact here. Open Attachment Review to choose files, preview the selected document, and decide where translation should start.";
   }
 }
@@ -755,6 +759,33 @@ function bootstrapMessageContext() {
 
 function pendingIntakeContext() {
   return gmailState.bootstrap?.pending_intake_context || {};
+}
+
+function currentClickDiagnostics() {
+  return gmailState.bootstrap?.click_diagnostics || {};
+}
+
+function currentSourceGmailUrl() {
+  const clickDiagnostics = currentClickDiagnostics();
+  return String(
+    gmailState.bootstrap?.current_handoff_context?.source_gmail_url
+    || gmailState.bootstrap?.defaults?.message_context?.source_gmail_url
+    || gmailState.bootstrap?.pending_intake_context?.source_gmail_url
+    || clickDiagnostics.source_gmail_url
+    || "",
+  ).trim();
+}
+
+function updateReturnToGmailAction() {
+  const button = qs("gmail-return-to-source");
+  if (!button) {
+    return;
+  }
+  const sourceUrl = currentSourceGmailUrl();
+  const visible = sourceUrl !== "";
+  button.classList.toggle("hidden", !visible);
+  button.disabled = !visible;
+  button.title = visible ? sourceUrl : "";
 }
 
 function pendingStatus() {
@@ -2125,6 +2156,7 @@ export function renderGmailBootstrap(payload) {
   renderTranslationCompletionGmailStepCard(gmailState.activeSession);
   renderBatchFinalizeSurface(gmailState.activeSession);
   updateSessionButtons();
+  updateReturnToGmailAction();
   updateGmailFailureReportActionState();
   updateGmailFinalizationReportActionState();
   maybeAutoOpenReview();
@@ -2171,6 +2203,7 @@ async function loadMessage() {
         thread_id: fieldValue("gmail-thread-id"),
         subject: fieldValue("gmail-subject"),
         account_email: fieldValue("gmail-account-email"),
+        source_gmail_url: currentSourceGmailUrl(),
       },
     }),
   });
@@ -2705,6 +2738,13 @@ export function initializeGmailUi(hooks) {
 
   qs("gmail-open-review")?.addEventListener("click", () => {
     openReviewDrawer();
+  });
+
+  qs("gmail-return-to-source")?.addEventListener("click", () => {
+    const sourceUrl = currentSourceGmailUrl();
+    if (sourceUrl) {
+      window.location.assign(sourceUrl);
+    }
   });
 
   qs("gmail-restart-canonical-runtime")?.addEventListener("click", () => {

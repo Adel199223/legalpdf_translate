@@ -34,7 +34,7 @@ internal static class Program
         string pythonExecutable = ResolvePythonExecutable(repoRoot);
         if (string.IsNullOrWhiteSpace(pythonExecutable))
         {
-            TryWriteLauncherLog("Could not resolve pythonw.exe or python.exe for the native host launcher.");
+            TryWriteLauncherLog("Could not resolve python.exe or pythonw.exe for the native host launcher.");
             return 1;
         }
 
@@ -69,27 +69,112 @@ internal static class Program
             using (Stream parentInput = Console.OpenStandardInput())
             using (Stream parentOutput = Console.OpenStandardOutput())
             {
-                Task stdinTask = PumpInputAsync(parentInput, process);
                 Task stdoutTask = PumpOutputAsync(process, parentOutput);
                 Task stderrTask = DrainStandardErrorAsync(process);
                 Task waitTask = Task.Run(() => process.WaitForExit());
+                byte[] nativeMessage = await ReadSingleNativeMessageAsync(parentInput).ConfigureAwait(false);
 
-                await Task.WhenAll(stdinTask, stdoutTask, stderrTask, waitTask).ConfigureAwait(false);
+                if (nativeMessage != null)
+                {
+                    await WriteSingleNativeMessageToChildAsync(process, nativeMessage).ConfigureAwait(false);
+                }
+                else
+                {
+                    try
+                    {
+                        process.StandardInput.Close();
+                    }
+                    catch
+                    {
+                        // Best-effort close only.
+                    }
+                }
+
+                await Task.WhenAll(stdoutTask, stderrTask, waitTask).ConfigureAwait(false);
                 return process.ExitCode;
             }
         }
     }
 
-    private static async Task PumpInputAsync(Stream source, Process process)
+    // Edge keeps the native-host stdin pipe open while waiting for the one-shot
+    // sendNativeMessage() response. Proxying until EOF deadlocks that flow, so the
+    // launcher forwards exactly one framed native-messaging payload per process.
+    private static async Task<byte[]> ReadSingleNativeMessageAsync(Stream source)
+    {
+        byte[] header = new byte[4];
+        int headerBytesRead = await ReadExactAsync(source, header, 0, header.Length).ConfigureAwait(false);
+        if (headerBytesRead == 0)
+        {
+            return null;
+        }
+        if (headerBytesRead != header.Length)
+        {
+            throw new EndOfStreamException("Incomplete native messaging header.");
+        }
+
+        int payloadLength =
+            header[0]
+            | (header[1] << 8)
+            | (header[2] << 16)
+            | (header[3] << 24);
+        if (payloadLength < 0)
+        {
+            throw new InvalidDataException("Native messaging payload length was negative.");
+        }
+
+        byte[] framedMessage = new byte[header.Length + payloadLength];
+        Buffer.BlockCopy(header, 0, framedMessage, 0, header.Length);
+        if (payloadLength == 0)
+        {
+            return framedMessage;
+        }
+
+        int payloadBytesRead = await ReadExactAsync(
+            source,
+            framedMessage,
+            header.Length,
+            payloadLength
+        ).ConfigureAwait(false);
+        if (payloadBytesRead != payloadLength)
+        {
+            throw new EndOfStreamException("Incomplete native messaging payload.");
+        }
+        return framedMessage;
+    }
+
+    private static async Task<int> ReadExactAsync(Stream source, byte[] buffer, int offset, int count)
+    {
+        int totalBytesRead = 0;
+        while (totalBytesRead < count)
+        {
+            int bytesRead = await source.ReadAsync(
+                buffer,
+                offset + totalBytesRead,
+                count - totalBytesRead
+            ).ConfigureAwait(false);
+            if (bytesRead == 0)
+            {
+                break;
+            }
+            totalBytesRead += bytesRead;
+        }
+        return totalBytesRead;
+    }
+
+    private static async Task WriteSingleNativeMessageToChildAsync(Process process, byte[] framedMessage)
     {
         try
         {
-            await source.CopyToAsync(process.StandardInput.BaseStream).ConfigureAwait(false);
+            await process.StandardInput.BaseStream.WriteAsync(
+                framedMessage,
+                0,
+                framedMessage.Length
+            ).ConfigureAwait(false);
             await process.StandardInput.BaseStream.FlushAsync().ConfigureAwait(false);
         }
         catch
         {
-            // The Python child may exit before the browser closes stdin.
+            // The Python child may exit before the browser-side message is fully written.
         }
         finally
         {
@@ -219,10 +304,10 @@ internal static class Program
     {
         var candidates = new[]
         {
-            Path.Combine(repoRoot, ".venv311", "Scripts", "pythonw.exe"),
-            Path.Combine(repoRoot, ".venv", "Scripts", "pythonw.exe"),
             Path.Combine(repoRoot, ".venv311", "Scripts", "python.exe"),
             Path.Combine(repoRoot, ".venv", "Scripts", "python.exe"),
+            Path.Combine(repoRoot, ".venv311", "Scripts", "pythonw.exe"),
+            Path.Combine(repoRoot, ".venv", "Scripts", "pythonw.exe"),
         };
         foreach (string candidate in candidates)
         {

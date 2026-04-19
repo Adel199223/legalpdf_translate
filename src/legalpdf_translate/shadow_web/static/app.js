@@ -226,6 +226,29 @@ function defaultClientGmailHandoffState() {
   return appState.workspaceId === "gmail-intake" ? "warming" : "idle";
 }
 
+function deriveClientLaunchSessionUrlState() {
+  try {
+    const params = new URL(globalThis.window?.location?.href || "").searchParams;
+    const parsedSchemaVersion = Number.parseInt(
+      String(params.get("launch_session_schema_version") ?? "").trim(),
+      10,
+    );
+    return {
+      launchSessionId: String(params.get("launch_session_id") || "").trim(),
+      handoffSessionId: String(params.get("handoff_session_id") || "").trim(),
+      launchSessionSchemaVersion: Number.isInteger(parsedSchemaVersion) && parsedSchemaVersion > 0
+        ? parsedSchemaVersion
+        : 0,
+    };
+  } catch (_error) {
+    return {
+      launchSessionId: "",
+      handoffSessionId: "",
+      launchSessionSchemaVersion: 0,
+    };
+  }
+}
+
 function deriveClientGmailHandoffState(payload = appState.bootstrap?.normalized_payload) {
   const gmailPayload = payload?.gmail || {};
   const loadResult = gmailPayload.load_result || {};
@@ -245,8 +268,10 @@ function deriveClientGmailHandoffState(payload = appState.bootstrap?.normalized_
 function deriveClientLaunchSessionId(payload = appState.bootstrap?.normalized_payload) {
   const shellLaunchSession = payload?.shell?.launch_session || {};
   const runtimeLaunchSession = payload?.runtime?.launch_session || {};
+  const urlState = deriveClientLaunchSessionUrlState();
   return String(
-    shellLaunchSession.launch_session_id
+    urlState.launchSessionId
+    || shellLaunchSession.launch_session_id
     || runtimeLaunchSession.launch_session_id
     || "",
   ).trim();
@@ -256,8 +281,10 @@ function deriveClientHandoffSessionId(payload = appState.bootstrap?.normalized_p
   const gmailPayload = payload?.gmail || payload || {};
   const shellLaunchSession = payload?.shell?.launch_session || {};
   const runtimeLaunchSession = payload?.runtime?.launch_session || {};
+  const urlState = deriveClientLaunchSessionUrlState();
   return String(
-    gmailPayload.handoff_session_id
+    urlState.handoffSessionId
+    || gmailPayload.handoff_session_id
     || shellLaunchSession.handoff_session_id
     || runtimeLaunchSession.handoff_session_id
     || "",
@@ -265,9 +292,16 @@ function deriveClientHandoffSessionId(payload = appState.bootstrap?.normalized_p
 }
 
 function deriveClientLaunchSessionSchemaVersion(payload = appState.bootstrap?.normalized_payload) {
+  const urlState = deriveClientLaunchSessionUrlState();
+  if (urlState.launchSessionSchemaVersion > 0) {
+    return urlState.launchSessionSchemaVersion;
+  }
   const rawValue = payload?.shell?.extension_launch_session_schema_version;
   const parsed = Number.parseInt(String(rawValue ?? ""), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+  if (Number.isInteger(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return 0;
 }
 
 function setClientHydrationMarker(status, { payload = null, reason = "", message = "" } = {}) {

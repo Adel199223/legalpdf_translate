@@ -13,6 +13,8 @@ import time
 from typing import Any
 from uuid import uuid4
 
+from .user_settings import APP_FOLDER_NAME
+
 
 DEFAULT_TRACE_DURATION_SECONDS = 15.0
 DEFAULT_TRACE_SAMPLE_INTERVAL_MS = 200
@@ -43,8 +45,34 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
+def default_runtime_state_root() -> Path:
+    appdata = str(os.environ.get("APPDATA", "") or "").strip()
+    if appdata:
+        return Path(appdata).expanduser().resolve() / APP_FOLDER_NAME
+    return (Path.home() / ".legalpdf_translate" / APP_FOLDER_NAME).expanduser().resolve()
+
+
+def _looks_like_repo_worktree(path: Path) -> bool:
+    candidate = path.expanduser().resolve()
+    return (
+        (candidate / "src" / "legalpdf_translate" / "gmail_focus_host.py").exists()
+        and (candidate / "tooling" / "launch_browser_app_live_detached.py").exists()
+    )
+
+
+def resolve_runtime_state_root(base_dir: Path | None = None) -> Path:
+    if base_dir is None:
+        return default_runtime_state_root()
+    resolved = base_dir.expanduser().resolve()
+    # Launch-session state is machine runtime state, not repo-local diagnostics.
+    # If a repo root leaks into this API, snap back to the canonical app-data root.
+    if _looks_like_repo_worktree(resolved):
+        return default_runtime_state_root()
+    return resolved
+
+
 def window_trace_root(base_dir: Path) -> Path:
-    return base_dir.expanduser().resolve() / _WINDOW_TRACE_SUBDIR
+    return resolve_runtime_state_root(base_dir) / _WINDOW_TRACE_SUBDIR
 
 
 def window_trace_arm_path(base_dir: Path) -> Path:
@@ -174,12 +202,14 @@ def update_launch_session_state(
 
 
 def latest_window_trace_status(base_dir: Path) -> dict[str, Any]:
+    runtime_state_root = resolve_runtime_state_root(base_dir)
     state = read_launch_session_state(base_dir) or {}
     summary_path = Path(str(state.get("trace_summary_path", "") or "").strip()) if state.get("trace_summary_path") else None
     summary_payload: dict[str, Any] | None = None
     if summary_path:
         summary_payload = _read_json(summary_path)
     return {
+        "runtime_state_root": str(runtime_state_root),
         "launch_session_id": str(state.get("launch_session_id", "") or "").strip(),
         "handoff_session_id": str(state.get("handoff_session_id", "") or "").strip(),
         "status": str(state.get("status", "") or "").strip(),
@@ -194,6 +224,9 @@ def latest_window_trace_status(base_dir: Path) -> dict[str, Any]:
         "browser_open_owned_by": str(state.get("browser_open_owned_by", "") or "").strip(),
         "launch_phase": str(state.get("launch_phase", "") or "").strip(),
         "native_host_path_kind": str(state.get("native_host_path_kind", "") or "").strip(),
+        "click_phase": str(state.get("click_phase", "") or "").strip(),
+        "click_failure_reason": str(state.get("click_failure_reason", "") or "").strip(),
+        "source_gmail_url": str(state.get("source_gmail_url", "") or "").strip(),
         "tab_resolution_strategy": str(state.get("tab_resolution_strategy", "") or "").strip(),
         "workspace_surface_confirmed": bool(state.get("workspace_surface_confirmed")),
         "client_hydration_status": str(state.get("client_hydration_status", "") or "").strip(),
@@ -206,6 +239,9 @@ def latest_window_trace_status(base_dir: Path) -> dict[str, Any]:
         "fresh_tab_created_after_invalidation": bool(state.get("fresh_tab_created_after_invalidation")),
         "bridge_context_posted": bool(state.get("bridge_context_posted")),
         "surface_visibility_status": str(state.get("surface_visibility_status", "") or "").strip(),
+        "runtime_state_root_compatible": bool(state.get("runtime_state_root_compatible")),
+        "expected_runtime_state_root": str(state.get("expected_runtime_state_root", "") or "").strip(),
+        "observed_runtime_state_root": str(state.get("observed_runtime_state_root", "") or "").strip(),
         "browser_launch_status": str(state.get("browser_launch_status", "") or "").strip(),
         "browser_launch_reason": str(state.get("browser_launch_reason", "") or "").strip(),
         "launched_browser_pid": _safe_int(state.get("launched_browser_pid", 0)),

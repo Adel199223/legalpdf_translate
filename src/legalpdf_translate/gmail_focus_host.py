@@ -28,6 +28,7 @@ from legalpdf_translate.gmail_window_trace import (
     build_launch_session_id,
     consume_armed_window_trace,
     latest_window_trace_status,
+    resolve_runtime_state_root,
     update_launch_session_state,
 )
 
@@ -201,7 +202,11 @@ def _candidate_python_executables_for_worktree(
         if canonical_root not in roots:
             roots.append(canonical_root)
     candidates: list[Path] = []
-    prefer_windowless = str(ui_owner or "").strip().lower() == "browser_app"
+    # Browser/server helpers are launched with CREATE_NO_WINDOW, so python.exe
+    # gives reliable stdio/startup without flashing a console window. pythonw.exe
+    # remains a fallback only; it can silently fail to bind the localhost server
+    # in this native-host launch path.
+    prefer_windowless = False
 
     def _append(candidate: Path | None) -> None:
         if candidate is None:
@@ -229,6 +234,29 @@ def _build_runtime_probe_env(repo_root: Path) -> dict[str, str]:
         f"{resolved_src}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(resolved_src)
     )
     return env
+
+
+def _fresh_extension_handoff_state() -> dict[str, object]:
+    return {
+        "click_phase": "",
+        "click_failure_reason": "",
+        "source_gmail_url": "",
+        "tab_resolution_strategy": "",
+        "workspace_surface_confirmed": False,
+        "client_hydration_status": "",
+        "extension_surface_outcome": "",
+        "extension_surface_reason": "",
+        "extension_surface_tab_id": 0,
+        "surface_candidate_source": "",
+        "surface_candidate_valid": False,
+        "surface_invalidation_reason": "",
+        "fresh_tab_created_after_invalidation": False,
+        "bridge_context_posted": False,
+        "surface_visibility_status": "",
+        "runtime_state_root_compatible": True,
+        "expected_runtime_state_root": "",
+        "observed_runtime_state_root": "",
+    }
 
 
 def _run_python_runtime_probe(
@@ -1885,10 +1913,10 @@ def prepare_gmail_intake(
     handoff_session_requested: bool = False,
 ) -> dict[str, object]:
     settings = _read_gmail_bridge_settings(settings_loader=settings_loader)
-    base_dir = (base_dir or app_data_dir()).expanduser().resolve()
+    runtime_state_root = resolve_runtime_state_root(base_dir or app_data_dir())
     auto_launch_target = _resolve_auto_launch_target()
-    latest_trace_state = latest_window_trace_status(base_dir)
-    native_host_path_kind = _registered_native_host_path_kind(base_dir=base_dir)
+    latest_trace_state = latest_window_trace_status(runtime_state_root)
+    native_host_path_kind = _registered_native_host_path_kind(base_dir=runtime_state_root)
     response: dict[str, object] = {
         "ok": False,
         "focused": False,
@@ -1898,6 +1926,7 @@ def prepare_gmail_intake(
         "autoLaunchReady": auto_launch_target.ready,
         "launchTargetReason": auto_launch_target.reason,
         "ui_owner": "none",
+        "runtime_state_root": str(runtime_state_root),
     }
     if str(latest_trace_state.get("launch_session_id", "") or "").strip():
         response["launch_session_id"] = str(latest_trace_state.get("launch_session_id", "") or "").strip()
@@ -1927,7 +1956,7 @@ def prepare_gmail_intake(
 
     validation = validate_bridge_owner(
         bridge_port=bridge_port,
-        base_dir=base_dir,
+        base_dir=runtime_state_root,
     )
     response["reason"] = validation.reason
     _apply_validation_context(
@@ -1937,13 +1966,13 @@ def prepare_gmail_intake(
     )
 
     active_launch_lock = (
-        _read_browser_auto_launch_lock(base_dir)
+        _read_browser_auto_launch_lock(runtime_state_root)
         if auto_launch_target.ui_owner == "browser_app"
         else None
     )
     if validation.ok:
         if active_launch_lock is not None:
-            _clear_browser_auto_launch_lock(base_dir)
+            _clear_browser_auto_launch_lock(runtime_state_root)
         if (
             handoff_session_id
             and str(getattr(validation, "owner_kind", "") or "").strip() == "browser_app"
@@ -1951,8 +1980,9 @@ def prepare_gmail_intake(
             current_launch_session_id = str(response.get("launch_session_id", "") or "").strip() or build_launch_session_id()
             response["launch_session_id"] = current_launch_session_id
             update_launch_session_state(
-                base_dir,
+                runtime_state_root,
                 launch_session_id=current_launch_session_id,
+                **_fresh_extension_handoff_state(),
                 handoff_session_id=handoff_session_id,
                 status="launch_ready",
                 reason=str(validation.reason or "").strip(),
@@ -1960,14 +1990,13 @@ def prepare_gmail_intake(
                 workspace_id=str(getattr(validation, "workspace_id", "") or _BROWSER_GMAIL_WORKSPACE_ID).strip() or _BROWSER_GMAIL_WORKSPACE_ID,
                 runtime_mode=str(getattr(validation, "runtime_mode", "") or "live").strip() or "live",
                 browser_open_owned_by=str(response.get("browser_open_owned_by", "") or _BROWSER_OPEN_OWNER_EXTENSION).strip() or _BROWSER_OPEN_OWNER_EXTENSION,
+                launch_runtime_path=str(auto_launch_target.python_executable or "").strip(),
                 launch_phase=(
                     "browser_surface_ready"
                     if str(response.get("browser_open_owned_by", "") or "").strip() == _BROWSER_OPEN_OWNER_EXTENSION
                     else "server_boot"
                 ),
                 native_host_path_kind=native_host_path_kind,
-                bridge_context_posted=False,
-                surface_visibility_status="",
             )
     elif active_launch_lock is not None and validation.reason in _AUTO_LAUNCHABLE_BRIDGE_REASONS:
         response["reason"] = _AUTO_LAUNCH_IN_PROGRESS_REASON
@@ -1978,15 +2007,16 @@ def prepare_gmail_intake(
         )
         return response
     elif active_launch_lock is not None:
-        _clear_browser_auto_launch_lock(base_dir)
+        _clear_browser_auto_launch_lock(runtime_state_root)
 
     if not validation.ok and request_focus and validation.reason in _AUTO_LAUNCHABLE_BRIDGE_REASONS:
         launch_lock_payload: dict[str, object] | None = None
         launch_session_id = build_launch_session_id()
-        trace_request = consume_armed_window_trace(base_dir) if auto_launch_target.ui_owner == "browser_app" else None
+        trace_request = consume_armed_window_trace(runtime_state_root) if auto_launch_target.ui_owner == "browser_app" else None
         launch_session_state = update_launch_session_state(
-            base_dir,
+            runtime_state_root,
             launch_session_id=launch_session_id,
+            **_fresh_extension_handoff_state(),
             handoff_session_id=handoff_session_id,
             status="launch_started",
             browser_url=str(auto_launch_target.browser_url or "").strip(),
@@ -2007,19 +2037,19 @@ def prepare_gmail_intake(
         response["launch_session_id"] = launch_session_id
         if auto_launch_target.ui_owner == "browser_app":
             launch_lock_payload = _write_browser_auto_launch_lock(
-                base_dir,
+                runtime_state_root,
                 auto_launch_target,
                 launch_session_id=launch_session_id,
             )
         trace_reason = _start_window_trace_capture(
-            base_dir=base_dir,
+            base_dir=runtime_state_root,
             launch_session_id=launch_session_id,
             target=auto_launch_target,
             trace_request=trace_request,
         )
         if trace_request:
             launch_session_state = update_launch_session_state(
-                base_dir,
+                runtime_state_root,
                 launch_session_id=launch_session_id,
                 trace_status=trace_reason,
                 trace_dir=launch_session_state.get("trace_dir", ""),
@@ -2039,9 +2069,9 @@ def prepare_gmail_intake(
         launch_reason = _launch_repo_worktree(launch_target)
         if launch_reason != "launch_started":
             if auto_launch_target.ui_owner == "browser_app":
-                _clear_browser_auto_launch_lock(base_dir)
+                _clear_browser_auto_launch_lock(runtime_state_root)
             update_launch_session_state(
-                base_dir,
+                runtime_state_root,
                 launch_session_id=launch_session_id,
                 status=launch_reason,
                 reason=launch_reason,
@@ -2051,19 +2081,19 @@ def prepare_gmail_intake(
         response["launched"] = True
         wait_reason = _wait_for_auto_launch_ready_after_launch(
             bridge_port=bridge_port,
-            base_dir=base_dir,
+            base_dir=runtime_state_root,
             target=auto_launch_target,
         )
         if wait_reason == _BROWSER_SERVER_READY_REASON and auto_launch_target.ui_owner == "browser_app":
             if launch_lock_payload is not None:
                 launch_lock_payload = _write_browser_auto_launch_lock(
-                    base_dir,
+                    runtime_state_root,
                     auto_launch_target,
                     launch_session_id=launch_session_id,
                     browser_open_owned_by=_BROWSER_OPEN_OWNER_EXTENSION,
                 )
             update_launch_session_state(
-                base_dir,
+                runtime_state_root,
                 launch_session_id=launch_session_id,
                 status=_BROWSER_SERVER_READY_REASON,
                 reason=_BROWSER_SERVER_READY_REASON,
@@ -2089,7 +2119,7 @@ def prepare_gmail_intake(
             return response
         if wait_reason != "launch_ready":
             update_launch_session_state(
-                base_dir,
+                runtime_state_root,
                 launch_session_id=launch_session_id,
                 handoff_session_id=handoff_session_id,
                 status=(
@@ -2109,14 +2139,14 @@ def prepare_gmail_intake(
                 response["reason"] = _AUTO_LAUNCH_IN_PROGRESS_REASON
                 return response
             if auto_launch_target.ui_owner == "browser_app":
-                _clear_browser_auto_launch_lock(base_dir)
+                _clear_browser_auto_launch_lock(runtime_state_root)
             response["reason"] = wait_reason
             return response
         if auto_launch_target.ui_owner == "browser_app":
-            _clear_browser_auto_launch_lock(base_dir)
+            _clear_browser_auto_launch_lock(runtime_state_root)
         validation = validate_bridge_owner(
             bridge_port=bridge_port,
-            base_dir=base_dir,
+            base_dir=runtime_state_root,
         )
         response["reason"] = validation.reason
         _apply_validation_context(
@@ -2125,7 +2155,7 @@ def prepare_gmail_intake(
             fallback_browser_url=auto_launch_target.browser_url,
         )
         update_launch_session_state(
-            base_dir,
+            runtime_state_root,
             launch_session_id=launch_session_id,
             handoff_session_id=handoff_session_id,
             status="launch_ready" if validation.ok else str(validation.reason or "launch_failed").strip() or "launch_failed",
@@ -2146,7 +2176,7 @@ def prepare_gmail_intake(
             native_host_path_kind=native_host_path_kind,
         )
         if not validation.ok and launch_lock_payload is not None:
-            _clear_browser_auto_launch_lock(base_dir)
+            _clear_browser_auto_launch_lock(runtime_state_root)
 
     if not validation.ok:
         return response
@@ -2160,7 +2190,7 @@ def prepare_gmail_intake(
     if request_focus:
         focus_result = focus_bridge_owner(
             bridge_port=bridge_port,
-            base_dir=base_dir,
+            base_dir=runtime_state_root,
         )
         response["focused"] = focus_result.focused
         response["flashed"] = focus_result.flashed

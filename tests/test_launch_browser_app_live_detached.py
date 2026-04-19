@@ -27,7 +27,21 @@ def test_python_runtime_falls_back_to_current_interpreter(tmp_path: Path, monkey
 
     runtime = module._python_runtime(tmp_path)
 
-    assert runtime == fallback_python.resolve()
+    assert runtime == Path(os.path.abspath(str(fallback_python)))
+
+
+def test_python_runtime_prefers_console_python_with_no_window_flags(tmp_path: Path) -> None:
+    module = _load_module()
+    repo_root = tmp_path / "repo"
+    python = repo_root / ".venv311" / "Scripts" / "python.exe"
+    pythonw = repo_root / ".venv311" / "Scripts" / "pythonw.exe"
+    pythonw.parent.mkdir(parents=True)
+    python.write_text("", encoding="utf-8")
+    pythonw.write_text("", encoding="utf-8")
+
+    runtime = module._python_runtime(repo_root)
+
+    assert runtime == Path(os.path.abspath(str(python)))
 
 
 def test_launcher_env_prepends_repo_src_to_pythonpath(tmp_path: Path, monkeypatch) -> None:
@@ -83,9 +97,9 @@ def test_main_launches_browser_server_with_no_open_and_src_pythonpath(
 ) -> None:
     module = _load_module()
     repo_root = tmp_path / "repo"
-    pythonw = repo_root / ".venv311" / "Scripts" / "pythonw.exe"
-    pythonw.parent.mkdir(parents=True)
-    pythonw.write_text("", encoding="utf-8")
+    python = repo_root / ".venv311" / "Scripts" / "python.exe"
+    python.parent.mkdir(parents=True)
+    python.write_text("", encoding="utf-8")
     (repo_root / "src").mkdir(parents=True)
     monkeypatch.setattr(module, "REPO_ROOT", repo_root)
     monkeypatch.delenv("PYTHONPATH", raising=False)
@@ -121,7 +135,7 @@ def test_main_launches_browser_server_with_no_open_and_src_pythonpath(
 
     assert result == 0
     assert seen["args"] == [
-        str(pythonw),
+        str(python),
         "-m",
         "legalpdf_translate.shadow_web.server",
         "--port",

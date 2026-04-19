@@ -63,18 +63,25 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _python_candidates(repo_root: Path) -> list[Path]:
     return [
-        repo_root / ".venv311" / "Scripts" / "pythonw.exe",
         repo_root / ".venv311" / "Scripts" / "python.exe",
-        repo_root / ".venv" / "Scripts" / "pythonw.exe",
         repo_root / ".venv" / "Scripts" / "python.exe",
-        Path(sys.executable).resolve(),
+        repo_root / ".venv311" / "Scripts" / "pythonw.exe",
+        repo_root / ".venv" / "Scripts" / "pythonw.exe",
+        _absolute_path_noresolve(Path(sys.executable)),
     ]
+
+
+def _absolute_path_noresolve(path: Path) -> Path:
+    # Preserve Windows venv launcher identity. Path.resolve() can collapse
+    # a venv python[w].exe back to the base interpreter, which would make the
+    # detached browser app relaunch under the wrong runtime.
+    return Path(os.path.abspath(str(path.expanduser())))
 
 
 def _python_runtime(repo_root: Path) -> Path:
     for candidate in _python_candidates(repo_root):
         if candidate.exists():
-            return candidate.resolve()
+            return _absolute_path_noresolve(candidate)
     raise SystemExit(
         "No Python runtime found for the browser app launcher. "
         "Expected .venv311/Scripts/pythonw.exe, python.exe, or the current interpreter."

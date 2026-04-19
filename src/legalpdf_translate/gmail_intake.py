@@ -16,13 +16,21 @@ class InboundMailContext:
     subject: str
     account_email: str | None = None
     handoff_session_id: str | None = None
+    source_gmail_url: str | None = None
 
     @classmethod
     def from_payload(cls, payload: object) -> InboundMailContext:
         if not isinstance(payload, dict):
             raise ValueError("JSON object expected.")
 
-        allowed_keys = {"message_id", "thread_id", "subject", "account_email", "handoff_session_id"}
+        allowed_keys = {
+            "message_id",
+            "thread_id",
+            "subject",
+            "account_email",
+            "handoff_session_id",
+            "source_gmail_url",
+        }
         unknown_keys = sorted(str(key) for key in payload.keys() if key not in allowed_keys)
         if unknown_keys:
             raise ValueError(f"Unknown keys: {', '.join(unknown_keys)}")
@@ -39,6 +47,7 @@ class InboundMailContext:
         account_email_raw = payload.get("account_email")
         account_email = str(account_email_raw or "").strip() or None
         handoff_session_id = str(payload.get("handoff_session_id", "") or "").strip() or None
+        source_gmail_url = str(payload.get("source_gmail_url", "") or "").strip() or None
 
         if message_id == "":
             raise ValueError("message_id must be non-empty.")
@@ -51,6 +60,7 @@ class InboundMailContext:
             subject=subject,
             account_email=account_email,
             handoff_session_id=handoff_session_id,
+            source_gmail_url=source_gmail_url,
         )
 
 

@@ -56,7 +56,7 @@ def test_launch_repo_worktree_waits_for_browser_server_ready(monkeypatch, tmp_pa
     target = host_module.AutoLaunchTarget(
         ready=True,
         worktree_path=str(tmp_path),
-        python_executable=str(tmp_path / ".venv311" / "Scripts" / "pythonw.exe"),
+        python_executable=str(tmp_path / ".venv311" / "Scripts" / "python.exe"),
         launcher_script=None,
         reason="launch_target_ready",
         ui_owner="browser_app",
@@ -92,7 +92,7 @@ def test_launch_repo_worktree_waits_for_browser_server_ready(monkeypatch, tmp_pa
 
     assert result == "launch_started"
     assert recorded["command"] == [
-        str(tmp_path / ".venv311" / "Scripts" / "pythonw.exe"),
+        str(tmp_path / ".venv311" / "Scripts" / "python.exe"),
         str(tmp_path / "tooling" / "launch_browser_app_live_detached.py"),
         "--mode",
         "live",
@@ -140,7 +140,9 @@ def test_resolve_browser_auto_launch_target_uses_server_only_no_open(monkeypatch
     )
 
 
-def test_validated_python_executable_prefers_pythonw_for_browser_app(monkeypatch, tmp_path: Path) -> None:
+def test_validated_python_executable_prefers_console_python_for_browser_app_no_window_launch(
+    monkeypatch, tmp_path: Path
+) -> None:
     repo_root = tmp_path / "repo"
     pythonw = repo_root / ".venv311" / "Scripts" / "pythonw.exe"
     python_exe = repo_root / ".venv311" / "Scripts" / "python.exe"
@@ -157,7 +159,7 @@ def test_validated_python_executable_prefers_pythonw_for_browser_app(monkeypatch
         ui_owner="browser_app",
     )
 
-    assert executable == pythonw.resolve()
+    assert executable == python_exe.resolve()
     assert reason == "launch_target_ready"
 
 
@@ -989,6 +991,7 @@ def test_prepare_gmail_intake_returns_config_and_focus_diagnostics(monkeypatch, 
         "launchTarget": str(tmp_path),
         "launchTargetReason": "launch_target_ready",
         "ui_owner": "qt_app",
+        "runtime_state_root": str(tmp_path),
         "bridgePort": 9011,
         "bridgeToken": "shared-token",
         "reason": "foreground_blocked",
@@ -1028,6 +1031,7 @@ def test_prepare_gmail_intake_rejects_disabled_bridge(monkeypatch, tmp_path: Pat
         "launchTarget": str(tmp_path),
         "launchTargetReason": "launch_target_ready",
         "ui_owner": "none",
+        "runtime_state_root": str(tmp_path),
         "bridgePort": 9011,
         "reason": "bridge_disabled",
     }
@@ -1061,6 +1065,7 @@ def test_prepare_gmail_intake_rejects_blank_token(monkeypatch, tmp_path: Path) -
         "launchTarget": str(tmp_path),
         "launchTargetReason": "launch_target_ready",
         "ui_owner": "none",
+        "runtime_state_root": str(tmp_path),
         "bridgePort": 9011,
         "reason": "bridge_token_missing",
     }
@@ -1117,6 +1122,7 @@ def test_prepare_gmail_intake_without_focus_uses_runtime_validation_and_hides_to
         "launchTarget": str(tmp_path),
         "launchTargetReason": "launch_target_ready",
         "ui_owner": "qt_app",
+        "runtime_state_root": str(tmp_path),
         "bridgePort": 9011,
         "reason": "bridge_owner_ready",
     }
@@ -1173,6 +1179,7 @@ def test_prepare_gmail_intake_returns_runtime_failure_without_token(monkeypatch,
         "launchTarget": str(tmp_path),
         "launchTargetReason": "launch_target_ready",
         "ui_owner": "none",
+        "runtime_state_root": str(tmp_path),
         "bridgePort": 9011,
         "reason": "runtime_metadata_missing",
     }
@@ -1443,6 +1450,7 @@ def test_prepare_gmail_intake_does_not_launch_when_bridge_port_owner_mismatches(
         "launchTarget": str(tmp_path),
         "launchTargetReason": "launch_target_ready",
         "ui_owner": "none",
+        "runtime_state_root": str(tmp_path),
         "bridgePort": 9011,
         "reason": "bridge_port_owner_mismatch",
     }
@@ -1519,6 +1527,7 @@ def test_prepare_gmail_intake_returns_browser_owner_context_without_focus(monkey
         "browser_open_owned_by": "extension",
         "workspace_id": "gmail-intake",
         "runtime_mode": "live",
+        "runtime_state_root": str(tmp_path),
         "bridgePort": 9011,
         "bridgeToken": "shared-token",
         "reason": "bridge_owner_ready",
@@ -1801,6 +1810,7 @@ def test_prepare_gmail_intake_reports_browser_launch_in_progress(monkeypatch, tm
         "workspace_id": "gmail-intake",
         "runtime_mode": "live",
         "launch_session_id": "launch-123",
+        "runtime_state_root": str(tmp_path),
         "bridgePort": 9011,
         "reason": "launch_in_progress",
         "launch_in_progress": True,
