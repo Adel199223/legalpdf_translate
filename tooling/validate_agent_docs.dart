@@ -469,7 +469,7 @@ _requiredBootstrapMarkers = <String, List<String>>{
     'stale active-plan inventory',
     'scratch artifact source control noise',
     'follow-up branch/pr as the default',
-    'dart run tooling/validate_agent_docs.dart',
+    'dart tooling/validate_agent_docs.dart',
     'docs sync prompt rule',
     'relevant touched-scope docs still remain unsynced',
     'immediate same-task synchronization is necessary',

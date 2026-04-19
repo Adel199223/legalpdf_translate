@@ -25,7 +25,7 @@ Keep it factual and current. Do not list aspirational tooling that is not actual
 - OpenAI docs MCP/doc tooling is available for OpenAI-specific freshness checks
 - Browser automation tooling is available for web/UI validation when appropriate
 - Browser automation is now part of the normal product surface because the browser app supports both real `live` mode and isolated `shadow` mode from one localhost server.
-- Canonical local browser-automation preflight on this machine is `dart tooling/automation_preflight.dart`; direct script execution is preferred over `dart run ...` because the `dartdev` launcher can misreport availability here even when Playwright and the browser are healthy.
+- Canonical local browser-automation preflight on this machine is `dart tooling/automation_preflight.dart`; direct script execution is preferred over the package-run form because the `dartdev` launcher can misreport availability here even when Playwright and the browser are healthy.
 - Qt build identity enforcement exists through `tooling/launch_qt_build.py`
 - PowerShell COM automation is available for host-bound Word actions when Microsoft Word is installed on Windows
 - Local test isolation via pytest/temp-dir patterns and listener-ownership debugging are expected and available for host-bound workflow triage
@@ -50,4 +50,4 @@ Keep it factual and current. Do not list aspirational tooling that is not actual
 - Multi-worktree GUI testing must use canonical build identity rules instead of ad hoc launches.
 - Host-bound tests should avoid live `%APPDATA%`/roaming settings and default user-facing ports unless the test explicitly opts into real machine state.
 - Browser-app testing should prefer `mode=shadow` instead of reusing live data, and browser-app Gmail bridge checks must distinguish browser-owned live bridge state from intentionally isolated shadow state.
-- The Dart-based browser automation preflight must prefer direct script execution on this machine; `dart run tooling/automation_preflight.dart` can still degrade through the `dartdev` launcher and should be treated as a launcher-path issue, not a product failure.
+- The Dart-based browser automation preflight must prefer direct script execution on this machine; the package-run launcher form can still degrade through the `dartdev` launcher and should be treated as a launcher-path issue, not a product failure.

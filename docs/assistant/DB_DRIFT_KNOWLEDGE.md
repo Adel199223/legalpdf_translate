@@ -52,4 +52,4 @@ Job-log word-count semantics now use translated output artifacts with this prece
 ## Validation
 - `python -m pytest -q tests/test_db_migration_joblog_v2.py`
 - `python -m pytest -q tests/test_qt_app_state.py`
-- `dart run tooling/validate_agent_docs.dart`
+- `dart tooling/validate_agent_docs.dart`

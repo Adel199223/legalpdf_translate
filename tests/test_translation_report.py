@@ -77,6 +77,10 @@ def _seed_run(
     *,
     pages: dict[str, dict[str, Any]],
     events: list[dict[str, Any]],
+    detected_page_count: int | None = None,
+    selection_start_page: int = 1,
+    selection_end_page: int | None = None,
+    max_pages_effective: int | None = None,
     total_tokens: int = 323,
     api_calls_total: int = 2,
     wall_seconds: float = 3.0,
@@ -87,6 +91,9 @@ def _seed_run(
     pages_dir.mkdir(parents=True, exist_ok=True)
     for pn in pages:
         (pages_dir / f"page_{int(pn):04d}.txt").write_text(f"Text for page {pn}", encoding="utf-8")
+    detected_total = detected_page_count if detected_page_count is not None else len(pages)
+    selected_end = selection_end_page if selection_end_page is not None else len(pages)
+    max_pages = max_pages_effective if max_pages_effective is not None else len(pages)
 
     _write_json(
         run_dir / "run_state.json",
@@ -97,10 +104,10 @@ def _seed_run(
             "finished_at": "2026-02-14T12:01:00+00:00",
             "pdf_path": str(tmp_path / "input.pdf"),
             "lang": "EN",
-            "total_pages": len(pages),
-            "max_pages_effective": len(pages),
-            "selection_start_page": 1,
-            "selection_end_page": len(pages),
+            "total_pages": detected_total,
+            "max_pages_effective": max_pages,
+            "selection_start_page": selection_start_page,
+            "selection_end_page": selected_end,
             "settings": {"image_mode": "auto", "ocr_mode": "auto", "resume": False},
             "pages": pages,
         },
@@ -193,9 +200,12 @@ def _validation_event(
     source_paragraphs: int = 10,
     output_paragraphs: int = 10,
     citation_mismatches: int = 0,
+    citation_marker_delta: int | None = None,
+    parenthesis_delta: int = 0,
     structure_warnings: int = 0,
     bidi_warnings: int = 0,
 ) -> dict[str, Any]:
+    marker_delta = citation_mismatches if citation_marker_delta is None else citation_marker_delta
     return {
         "timestamp": "2026-02-14T12:00:30+00:00",
         "event_type": "translation_validation_summary",
@@ -206,6 +216,8 @@ def _validation_event(
             "numeric_mismatches_count": numeric_mismatches,
             "numeric_missing_sample": numeric_missing_sample or [],
             "citation_mismatches_count": citation_mismatches,
+            "citation_marker_delta_abs": marker_delta,
+            "parenthesis_delta_abs": parenthesis_delta,
             "structure_warnings_count": structure_warnings,
             "source_paragraphs": source_paragraphs,
             "output_paragraphs": output_paragraphs,
@@ -343,7 +355,14 @@ def test_quality_checks_section_renders(tmp_path: Path) -> None:
     pages = {"1": _make_page(1), "2": _make_page(2)}
     events = [
         _run_config_event(),
-        _validation_event(1, numeric_mismatches=2, numeric_missing_sample=["1.234", "56"]),
+        _validation_event(
+            1,
+            numeric_mismatches=2,
+            numeric_missing_sample=["1.234", "56"],
+            citation_mismatches=12,
+            citation_marker_delta=3,
+            parenthesis_delta=9,
+        ),
         _validation_event(2),
     ]
     run_dir = _seed_run(tmp_path, pages=pages, events=events)
@@ -351,7 +370,9 @@ def test_quality_checks_section_renders(tmp_path: Path) -> None:
     md = build_run_report_markdown(run_dir=run_dir, admin_mode=True, include_sanitized_snippets=False)
 
     assert "### D. Translation Quality Checks" in md
-    assert "| 1 | yes | EN |" in md
+    assert "Citation Marker Δ counts legal-reference marker drift" in md
+    assert "| Page | Lang OK | Detected | Numeric Δ | Citation Marker Δ | Paren Δ |" in md
+    assert "| 1 | yes | EN | 2 | 3 | 9 |" in md
     assert "#### Numeric Mismatch Samples" in md
     assert "Page 1: missing [" in md
     assert "1.234" in md
@@ -543,6 +564,36 @@ def test_sanity_warning_incomplete_pages(tmp_path: Path) -> None:
     assert "Only 2/3 pages completed successfully" in md
 
 
+def test_sanity_warning_does_not_fire_for_intentional_selected_page_range(tmp_path: Path) -> None:
+    """Starting at page 2 should compare completion against selected pages, not the whole PDF."""
+    pages = {
+        "2": _make_page(2),
+        "3": _make_page(3),
+    }
+    events = [_run_config_event()]
+    run_dir = _seed_run(
+        tmp_path,
+        pages=pages,
+        events=events,
+        detected_page_count=3,
+        selection_start_page=2,
+        selection_end_page=3,
+        max_pages_effective=2,
+    )
+
+    md = build_run_report_markdown(run_dir=run_dir, admin_mode=True, include_sanitized_snippets=False)
+
+    assert "Only 2/3 pages completed successfully" not in md
+    assert "Only 2/2 selected pages completed successfully" not in md
+    json_start = md.index("```json\n") + len("```json\n")
+    json_end = md.index("\n```", json_start)
+    payload = json.loads(md[json_start:json_end])
+    summary = payload["report_sanity_summary"]
+    assert summary["total_pages"] == 3
+    assert summary["expected_selected_pages"] == 2
+    assert summary["processed_pages"] == 2
+
+
 def test_numeric_samples_capped_at_three(tmp_path: Path) -> None:
     """Only first 3 numeric mismatch samples appear in rendered markdown."""
     pages = {"1": _make_page(1)}
@@ -666,6 +717,7 @@ def test_report_sanity_summary_in_payload(tmp_path: Path) -> None:
     assert "sanity_warnings" in summary
     assert isinstance(summary["sanity_warnings"], list)
     assert summary["total_pages"] == 2  # from detected_page_count
+    assert summary["expected_selected_pages"] == 2
     assert summary["processed_pages"] == 2
 
 

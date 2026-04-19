@@ -44,13 +44,13 @@ Instead use:
 PowerShell:
 ```powershell
 python -m pytest -q
-dart run tooling/validate_agent_docs.dart
+dart tooling/validate_agent_docs.dart
 ```
 
 POSIX:
 ```bash
 python3 -m pytest -q
-dart run tooling/validate_agent_docs.dart
+dart tooling/validate_agent_docs.dart
 ```
 
 ## Default Test Isolation Rules

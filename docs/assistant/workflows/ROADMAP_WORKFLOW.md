@@ -50,17 +50,17 @@ Instead use:
 PowerShell:
 ```powershell
 Get-Content docs/assistant/SESSION_RESUME.md
-dart run tooling/validate_agent_docs.dart
+dart tooling/validate_agent_docs.dart
 ```
 
 POSIX:
 ```bash
 sed -n '1,220p' docs/assistant/SESSION_RESUME.md
-dart run tooling/validate_agent_docs.dart
+dart tooling/validate_agent_docs.dart
 ```
 
 ## Targeted Tests
-- `dart run test/tooling/validate_agent_docs_test.dart`
+- `dart test/tooling/validate_agent_docs_test.dart`
 
 ## Failure Modes and Fallback Steps
 - The work does not actually need roadmap mode:

@@ -169,7 +169,7 @@ def test_translation_job_manager_generates_stable_run_report_artifact(tmp_path: 
         config_payload={},
         progress_payload={},
         diagnostics_payload={"kind": "translate"},
-        result_payload={},
+        result_payload={"artifacts": {"run_dir": str(run_dir), "run_report_path": None}},
         artifacts_payload={"run_dir": str(run_dir)},
     )
 
@@ -182,9 +182,46 @@ def test_translation_job_manager_generates_stable_run_report_artifact(tmp_path: 
     assert second["normalized_payload"]["report_path"] == str(report_path.resolve())
     assert first["normalized_payload"]["job"]["actions"]["download_run_report"] is True
     assert first["normalized_payload"]["job"]["artifacts"]["run_report_path"] == str(report_path.resolve())
+    assert (
+        first["normalized_payload"]["job"]["result"]["artifacts"]["run_report_path"]
+        == str(report_path.resolve())
+    )
+    assert (
+        second["normalized_payload"]["job"]["result"]["artifacts"]["run_report_path"]
+        == str(report_path.resolve())
+    )
     report_text = report_path.read_text(encoding="utf-8")
     assert "## Summary" in report_text
     assert "## Timeline" in report_text
+
+
+def test_translation_job_manager_creates_nested_run_report_artifact_when_missing(tmp_path: Path) -> None:
+    run_dir = _seed_translation_run_dir(tmp_path)
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    manager = TranslationJobManager()
+    manager._jobs["tx-missing-artifacts"] = _ManagedTranslationJob(
+        job_id="tx-missing-artifacts",
+        job_kind="translate",
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        created_at="2026-04-05T13:08:51+00:00",
+        updated_at="2026-04-05T13:11:16+00:00",
+        status="completed",
+        status_text="Translation complete",
+        config_payload={},
+        progress_payload={},
+        diagnostics_payload={"kind": "translate"},
+        result_payload={},
+        artifacts_payload={"run_dir": str(run_dir)},
+    )
+
+    response = manager.generate_run_report(job_id="tx-missing-artifacts", settings_path=settings_path)
+
+    report_path = str((run_dir / "run_report.md").resolve())
+    job = response["normalized_payload"]["job"]
+    assert job["artifacts"]["run_report_path"] == report_path
+    assert job["result"]["artifacts"]["run_report_path"] == report_path
 
 
 def test_translation_job_artifact_path_supports_run_report(tmp_path: Path) -> None:

@@ -19,15 +19,15 @@ Use only when a template/tool requests `DATA_WORKFLOW.md`.
 ## Minimal Commands
 PowerShell:
 ```powershell
-dart run tooling/validate_agent_docs.dart
+dart tooling/validate_agent_docs.dart
 ```
 POSIX:
 ```bash
-dart run tooling/validate_agent_docs.dart
+dart tooling/validate_agent_docs.dart
 ```
 
 ## Targeted Tests
-- `dart run test/tooling/validate_agent_docs_test.dart`
+- `dart test/tooling/validate_agent_docs_test.dart`
 
 ## Failure Modes and Fallback Steps
 - Shim mismatch: update this shim to point to canonical persistence workflow.

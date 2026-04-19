@@ -1036,6 +1036,20 @@ void main() {
     _expect(_hasRule(issues, 'AD040'), 'Expected AD040');
   }, failures);
 
+  _runCase('fails when standalone Dart validator commands use package-run form', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md',
+      'dart tooling/validate_agent_docs.dart',
+      'dart ' 'run tooling/validate_agent_docs.dart',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD040'), 'Expected AD040');
+  }, failures);
+
   _runCase('fails when issue memory json is missing', () {
     final String root = _fixtureRoot();
     _removePath(root, 'docs/assistant/ISSUE_MEMORY.json');

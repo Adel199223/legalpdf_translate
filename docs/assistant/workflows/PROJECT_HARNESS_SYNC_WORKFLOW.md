@@ -76,19 +76,19 @@ During the first rollout, treat missing profile files as a legacy repo case and 
 PowerShell:
 ```powershell
 Get-Content docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json
-dart run tooling/validate_agent_docs.dart
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_agent_docs.dart
+dart tooling/validate_workspace_hygiene.dart
 ```
 
 POSIX:
 ```bash
 sed -n '1,220p' docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json
-dart run tooling/validate_agent_docs.dart
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_agent_docs.dart
+dart tooling/validate_workspace_hygiene.dart
 ```
 
 ## Targeted Tests
-- `dart run test/tooling/validate_agent_docs_test.dart`
+- `dart test/tooling/validate_agent_docs_test.dart`
 
 ## Failure Modes and Fallback Steps
 - The local harness drifts from the vendored template set:
