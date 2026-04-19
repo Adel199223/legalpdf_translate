@@ -25,17 +25,17 @@ Managing localization terminology consistency and localized behavior contracts.
 ## Minimal Commands
 PowerShell:
 ```powershell
-dart run tooling/validate_agent_docs.dart --scope localization
-dart run tooling/validate_agent_docs.dart
+dart tooling/validate_agent_docs.dart --scope localization
+dart tooling/validate_agent_docs.dart
 ```
 POSIX:
 ```bash
-dart run tooling/validate_agent_docs.dart --scope localization
-dart run tooling/validate_agent_docs.dart
+dart tooling/validate_agent_docs.dart --scope localization
+dart tooling/validate_agent_docs.dart
 ```
 
 ## Targeted Tests
-- `dart run test/tooling/validate_agent_docs_test.dart`
+- `dart test/tooling/validate_agent_docs_test.dart`
 
 ## Failure Modes and Fallback Steps
 - Term drift across docs: update glossary first, then relink dependent docs.

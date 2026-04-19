@@ -28,24 +28,24 @@ PowerShell:
 ```powershell
 git status --short --branch
 .venv311\Scripts\python.exe --version
-dart run tooling/validate_agent_docs.dart
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_agent_docs.dart
+dart tooling/validate_workspace_hygiene.dart
 .venv311\Scripts\python.exe -m pytest -q
 ```
 POSIX:
 ```bash
 git status --short --branch
 python3 --version
-dart run tooling/validate_agent_docs.dart
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_agent_docs.dart
+dart tooling/validate_workspace_hygiene.dart
 python3 -m pytest -q
 ```
 
 ## Targeted Tests
-- `dart run test/tooling/validate_agent_docs_test.dart`
-- `dart run test/tooling/validate_workspace_hygiene_test.dart`
+- `dart test/tooling/validate_agent_docs_test.dart`
+- `dart test/tooling/validate_workspace_hygiene_test.dart`
 - `dart test/tooling/automation_preflight_test.dart`
-- `dart run test/tooling/cloud_eval_preflight_test.dart`
+- `dart test/tooling/cloud_eval_preflight_test.dart`
 
 ## Failure Modes and Fallback Steps
 - CI false negatives: align command scope and parser expectations.

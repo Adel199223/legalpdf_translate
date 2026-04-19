@@ -51,7 +51,7 @@ For this local source checkout, Edge native-host registration should prefer the 
 
 Live Gmail bridge ownership must stay on the browser app listener at `8877`. Fixed review previews on `8888` are for branch review only and must not become the real live Gmail bridge owner.
 
-Canonical browser-automation preflight on this machine is `dart tooling/automation_preflight.dart`. If `dart run tooling/automation_preflight.dart` fails here with `Unable to find AOT snapshot for dartdev`, treat that as a launcher-path issue and use the direct script form instead of treating browser automation as unavailable.
+Canonical browser-automation preflight on this machine is `dart tooling/automation_preflight.dart`. If the package-run launcher form fails here with `Unable to find AOT snapshot for dartdev`, treat that as a launcher-path issue and use the direct script form instead of treating browser automation as unavailable.
 
 For the Arabic DOCX review gate, WSL-only validation is insufficient because Word automation, visible Word editing, and save-detection behavior are Windows-host runtime facts.
 

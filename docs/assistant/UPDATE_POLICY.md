@@ -74,8 +74,8 @@ PowerShell:
 ```powershell
 python -m pytest -q
 python -m compileall src tests
-dart run tooling/validate_agent_docs.dart
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_agent_docs.dart
+dart tooling/validate_workspace_hygiene.dart
 git diff --name-only
 git status --short
 ```
@@ -83,8 +83,8 @@ POSIX:
 ```bash
 python3 -m pytest -q
 python3 -m compileall src tests
-dart run tooling/validate_agent_docs.dart
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_agent_docs.dart
+dart tooling/validate_workspace_hygiene.dart
 git diff --name-only
 git status --short
 ```

@@ -50,10 +50,10 @@
         "docs/assistant/workflows/TRANSLATION_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -64,10 +64,10 @@
         "docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -114,10 +114,10 @@
         "docs/assistant/manifest.json"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart --scope localization"
+        "dart tooling/validate_agent_docs.dart --scope localization"
       ]
     },
     {
@@ -129,10 +129,10 @@
         ".vscode/settings.json"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_workspace_hygiene_test.dart"
+        "dart test/tooling/validate_workspace_hygiene_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_workspace_hygiene.dart"
+        "dart tooling/validate_workspace_hygiene.dart"
       ]
     },
     {
@@ -144,10 +144,10 @@
         "docs/assistant/EXTERNAL_SOURCE_REGISTRY.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -164,7 +164,7 @@
       ],
       "validation_commands": [
         "python tooling/qt_render_review.py --help",
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -195,10 +195,10 @@
         "docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -210,10 +210,10 @@
         "docs/assistant/exec_plans/active"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -230,7 +230,7 @@
       ],
       "validation_commands": [
         "dart tooling/automation_preflight.dart",
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -243,11 +243,11 @@
         "docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/cloud_eval_preflight_test.dart"
+        "dart test/tooling/cloud_eval_preflight_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/cloud_eval_preflight.dart",
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/cloud_eval_preflight.dart",
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -259,10 +259,10 @@
         "docs/assistant/EXTERNAL_SOURCE_REGISTRY.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -274,12 +274,12 @@
         "docs/assistant/workflows/CI_REPO_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart",
-        "dart run test/tooling/validate_workspace_hygiene_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart",
+        "dart test/tooling/validate_workspace_hygiene_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart",
-        "dart run tooling/validate_workspace_hygiene.dart"
+        "dart tooling/validate_agent_docs.dart",
+        "dart tooling/validate_workspace_hygiene.dart"
       ]
     },
     {
@@ -290,10 +290,10 @@
         "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -309,12 +309,12 @@
         "docs/assistant/ISSUE_MEMORY.json"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart",
-        "dart run test/tooling/validate_workspace_hygiene_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart",
+        "dart test/tooling/validate_workspace_hygiene_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart",
-        "dart run tooling/validate_workspace_hygiene.dart"
+        "dart tooling/validate_agent_docs.dart",
+        "dart tooling/validate_workspace_hygiene.dart"
       ]
     },
     {
@@ -332,11 +332,11 @@
         "tooling/validate_agent_docs.dart"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart",
-        "dart run tooling/validate_workspace_hygiene.dart"
+        "dart tooling/validate_agent_docs.dart",
+        "dart tooling/validate_workspace_hygiene.dart"
       ]
     },
     {
@@ -350,10 +350,10 @@
         "docs/assistant/manifest.json"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -366,11 +366,11 @@
         "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart",
-        "dart run tooling/validate_workspace_hygiene.dart"
+        "dart tooling/validate_agent_docs.dart",
+        "dart tooling/validate_workspace_hygiene.dart"
       ]
     },
     {
@@ -385,21 +385,21 @@
         "docs/assistant/LOCAL_CAPABILITIES.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart",
-        "dart run tooling/validate_workspace_hygiene.dart"
+        "dart tooling/validate_agent_docs.dart",
+        "dart tooling/validate_workspace_hygiene.dart"
       ]
     }
   ],
   "global_commands": [
     "python -m pytest -q",
     "python -m compileall src tests",
-    "dart run tooling/validate_agent_docs.dart",
-    "dart run tooling/validate_workspace_hygiene.dart",
+    "dart tooling/validate_agent_docs.dart",
+    "dart tooling/validate_workspace_hygiene.dart",
     "dart tooling/automation_preflight.dart",
-    "dart run tooling/cloud_eval_preflight.dart",
+    "dart tooling/cloud_eval_preflight.dart",
     "python tooling/render_docx.py --help"
   ],
   "contracts": {

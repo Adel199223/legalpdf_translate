@@ -438,14 +438,14 @@ These remain valid supplemental references for implementation detail:
 PowerShell:
 - `python -m pytest -q`
 - `python -m compileall src tests`
-- `dart run tooling/validate_agent_docs.dart`
-- `dart run tooling/validate_workspace_hygiene.dart`
+- `dart tooling/validate_agent_docs.dart`
+- `dart tooling/validate_workspace_hygiene.dart`
 
 POSIX:
 - `python3 -m pytest -q`
 - `python3 -m compileall src tests`
-- `dart run tooling/validate_agent_docs.dart`
-- `dart run tooling/validate_workspace_hygiene.dart`
+- `dart tooling/validate_agent_docs.dart`
+- `dart tooling/validate_workspace_hygiene.dart`
 
 ## Local Python Baseline (Windows)
 - Preferred interpreter: Python `3.11`.

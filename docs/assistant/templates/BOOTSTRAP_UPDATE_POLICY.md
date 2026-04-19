@@ -107,9 +107,9 @@ Do not promote one-off local/project issues into the global Codex bootstrap unle
 
 ## Required Validation
 Any bootstrap update should finish with:
-- `dart run tooling/validate_agent_docs.dart`
-- `dart run tooling/validate_workspace_hygiene.dart`
-- `dart run test/tooling/validate_agent_docs_test.dart`
+- `dart tooling/validate_agent_docs.dart`
+- `dart tooling/validate_workspace_hygiene.dart`
+- `dart test/tooling/validate_agent_docs_test.dart`
 
 ## Expected Output For `update codex bootstrap`
 - changed files

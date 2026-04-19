@@ -37,13 +37,13 @@ dart test/tooling/automation_preflight_test.dart
 
 ## Targeted Tests
 - `dart test/tooling/automation_preflight_test.dart`
-- `dart run tooling/validate_agent_docs.dart`
+- `dart tooling/validate_agent_docs.dart`
 
 ## Failure Modes and Fallback Steps
 - Preferred host cannot execute automation: classify as `unavailable`, run fallback host preflight.
 - Assertions fail after automation starts: classify as `failed`, capture artifact packet.
 - Restricted browser pages block scripted injection: switch to standard webpage/manual-input fallback path.
-- On this Windows machine, prefer direct Dart script execution for browser automation preflight because `dart run tooling/automation_preflight.dart` can degrade through a broken `dartdev` launcher path even when the direct script form is healthy.
+- On this Windows machine, prefer direct Dart script execution for browser automation preflight because the package-run launcher form can degrade through a broken `dartdev` path even when the direct script form is healthy.
 
 ## Handoff Checklist
 1. Record canonical workspace path before automation.

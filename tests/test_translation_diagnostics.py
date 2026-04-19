@@ -121,6 +121,10 @@ def test_citation_preservation_balanced() -> None:
     # Exact deltas depend on regex, but parens should be similar
     assert isinstance(result["citation_delta"], int)
     assert isinstance(result["parens_delta"], int)
+    assert result["citation_marker_delta_abs"] == abs(result["citation_delta"])
+    assert result["parenthesis_delta_abs"] == abs(result["parens_delta"])
+    assert result["source_citation_marker_count"] == result["source_citations"]
+    assert result["output_citation_marker_count"] == result["output_citations"]
 
 
 # ---------------------------------------------------------------------------
@@ -210,10 +214,16 @@ def test_run_all_quality_checks_returns_expected_keys() -> None:
         "language_ok", "detected_lang",
         "numeric_mismatches_count", "numeric_missing_sample",
         "citation_mismatches_count",
+        "citation_marker_delta_abs", "parenthesis_delta_abs",
+        "source_citation_marker_count", "output_citation_marker_count",
+        "source_parenthesis_marker_count", "output_parenthesis_marker_count",
         "structure_warnings_count", "source_paragraphs", "output_paragraphs",
         "bidi_warnings_count", "bidi_control_count", "replacement_char_count",
     }
     assert expected_keys.issubset(set(result.keys()))
+    assert result["citation_mismatches_count"] == (
+        result["citation_marker_delta_abs"] + result["parenthesis_delta_abs"]
+    )
 
 
 def test_run_all_quality_checks_includes_extraction_integrity_context() -> None:
@@ -355,6 +365,12 @@ def _create_run_artifacts_with_translation_events(run_dir: Path) -> None:
                 "numeric_mismatches_count": 0,
                 "numeric_missing_sample": [],
                 "citation_mismatches_count": page_idx - 1,
+                "citation_marker_delta_abs": page_idx - 1,
+                "parenthesis_delta_abs": 0,
+                "source_citation_marker_count": 1,
+                "output_citation_marker_count": page_idx,
+                "source_parenthesis_marker_count": 2,
+                "output_parenthesis_marker_count": 2,
                 "structure_warnings_count": 0,
                 "bidi_warnings_count": 0,
                 "bidi_control_count": 0,

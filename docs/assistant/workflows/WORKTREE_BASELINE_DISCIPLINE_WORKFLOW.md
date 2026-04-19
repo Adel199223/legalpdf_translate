@@ -48,7 +48,7 @@ python ./tooling/launch_qt_build.py --worktree /abs/path/to/worktree --labels "f
 ```
 
 ## Targeted Tests
-- `dart run test/tooling/validate_agent_docs_test.dart`
+- `dart test/tooling/validate_agent_docs_test.dart`
 
 ## Failure Modes and Fallback Steps
 - New worktree is based on the wrong SHA or does not contain the approved-base floor: stop feature work, transplant/rebase onto the approved baseline, then continue.

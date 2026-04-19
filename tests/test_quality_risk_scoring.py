@@ -151,6 +151,33 @@ def test_quality_risk_arabic_citation_heavy_pages_enter_review_queue() -> None:
     assert "bidi_warning" in queue_entry["reasons"]
 
 
+def test_quality_risk_arabic_moderate_citation_delta_alone_stays_diagnostic() -> None:
+    summary = build_quality_risk_summary(
+        [
+            (
+                2,
+                {
+                    "status": "done",
+                    "source_route": "direct_text",
+                    "numeric_mismatches_count": 0,
+                    "citation_mismatches_count": 12,
+                    "citation_marker_delta_abs": 3,
+                    "parenthesis_delta_abs": 9,
+                    "structure_warnings_count": 0,
+                    "bidi_warnings_count": 0,
+                    "bidi_control_count": 0,
+                    "replacement_char_count": 0,
+                },
+            )
+        ],
+        target_lang="AR",
+    )
+
+    assert summary["quality_risk_score"] == 0.0
+    assert summary["review_queue_count"] == 0
+    assert summary["review_queue"] == []
+
+
 def test_quality_risk_non_arabic_ignores_arabic_validation_counters() -> None:
     summary = build_quality_risk_summary(
         [

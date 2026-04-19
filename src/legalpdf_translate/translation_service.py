@@ -1455,7 +1455,13 @@ class TranslationJobManager:
             job = self._jobs.get(job_id)
             if job is None:
                 raise ValueError("Translation job not found.")
-            job.artifacts_payload["run_report_path"] = report["report_path"]
+            report_path = str(report["report_path"])
+            job.artifacts_payload["run_report_path"] = report_path
+            result_artifacts = job.result_payload.get("artifacts")
+            if not isinstance(result_artifacts, dict):
+                result_artifacts = {}
+                job.result_payload["artifacts"] = result_artifacts
+            result_artifacts["run_report_path"] = report_path
             job.updated_at = _utc_now_iso()
             snapshot = self._snapshot(job)
         return {

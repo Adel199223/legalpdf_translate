@@ -89,8 +89,8 @@ powershell -ExecutionPolicy Bypass -File scripts/build_qt.ps1
 ```powershell
 python -m pytest -q
 python -m compileall src tests
-dart run tooling/validate_agent_docs.dart
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_agent_docs.dart
+dart tooling/validate_workspace_hygiene.dart
 ```
 
 ## Project Harness Commands

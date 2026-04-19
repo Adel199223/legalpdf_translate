@@ -42,8 +42,8 @@ git ls-files --others --exclude-standard
 
 ## Targeted Tests
 - `python -m pytest -q <targeted paths>`
-- `dart run tooling/validate_agent_docs.dart` (when docs changed)
-- `dart run tooling/validate_workspace_hygiene.dart` (when perf/workspace docs changed)
+- `dart tooling/validate_agent_docs.dart` (when docs changed)
+- `dart tooling/validate_workspace_hygiene.dart` (when perf/workspace docs changed)
 
 ## Failure Modes and Fallback Steps
 - Wrong branch for major work: create/switch to `feat/<scope-name>`.

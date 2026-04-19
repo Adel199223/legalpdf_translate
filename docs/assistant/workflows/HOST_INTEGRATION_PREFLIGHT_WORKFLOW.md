@@ -41,14 +41,14 @@ Instead use:
 ## Minimal Commands
 PowerShell:
 ```powershell
-dart run tooling/validate_agent_docs.dart
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_agent_docs.dart
+dart tooling/validate_workspace_hygiene.dart
 ```
 
 POSIX:
 ```bash
-dart run tooling/validate_agent_docs.dart
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_agent_docs.dart
+dart tooling/validate_workspace_hygiene.dart
 ```
 
 ## Targeted Tests

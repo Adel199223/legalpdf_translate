@@ -1282,8 +1282,10 @@ def _render_translation_diagnostics_markdown(
         lines.append("")
         lines.append("### D. Translation Quality Checks")
         lines.append("")
-        lines.append("| Page | Lang OK | Detected | Numeric Δ | Citation Δ | Struct Warn | Bidi Warn | Src Para | Out Para |")
-        lines.append("|------|---------|----------|-----------|------------|-------------|-----------|----------|----------|")
+        lines.append("> Citation Marker Δ counts legal-reference marker drift; Paren Δ counts parenthesis/bracket punctuation drift. Moderate drift is diagnostic unless the quality-risk policy also flags the page.")
+        lines.append("")
+        lines.append("| Page | Lang OK | Detected | Numeric Δ | Citation Marker Δ | Paren Δ | Struct Warn | Bidi Warn | Src Para | Out Para |")
+        lines.append("|------|---------|----------|-----------|-------------------|---------|-------------|-----------|----------|----------|")
         _numeric_sample_lines: list[str] = []
         _flagged_pages: set[int | str] = set()
         for row in vp:
@@ -1291,12 +1293,16 @@ def _render_translation_diagnostics_markdown(
                 continue
             lang_ok = "yes" if row.get("language_ok") else "NO"
             _page_idx = row.get("page_index", "?")
+            _legacy_citation_delta = int(row.get("citation_mismatches_count", 0) or 0)
+            _citation_marker_delta = int(row.get("citation_marker_delta_abs", _legacy_citation_delta) or 0)
+            _parenthesis_delta = int(row.get("parenthesis_delta_abs", 0) or 0)
             lines.append(
                 f"| {_page_idx}"
                 f" | {lang_ok}"
                 f" | {row.get('detected_lang', '?')}"
                 f" | {row.get('numeric_mismatches_count', 0)}"
-                f" | {row.get('citation_mismatches_count', 0)}"
+                f" | {_citation_marker_delta}"
+                f" | {_parenthesis_delta}"
                 f" | {row.get('structure_warnings_count', 0)}"
                 f" | {row.get('bidi_warnings_count', 0)}"
                 f" | {row.get('source_paragraphs', '-')}"

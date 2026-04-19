@@ -2315,6 +2315,12 @@ class TranslationWorkflow:
             for key in (
                 "numeric_mismatches_count",
                 "citation_mismatches_count",
+                "citation_marker_delta_abs",
+                "parenthesis_delta_abs",
+                "source_citation_marker_count",
+                "output_citation_marker_count",
+                "source_parenthesis_marker_count",
+                "output_parenthesis_marker_count",
                 "structure_warnings_count",
                 "bidi_warnings_count",
                 "bidi_control_count",

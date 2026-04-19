@@ -153,13 +153,21 @@ def check_citation_preservation(source: str, output: str) -> dict[str, Any]:
     out_count = len(_CITATION_RE.findall(output))
     src_parens = len(_PAREN_OPEN_RE.findall(source)) + len(_PAREN_CLOSE_RE.findall(source))
     out_parens = len(_PAREN_OPEN_RE.findall(output)) + len(_PAREN_CLOSE_RE.findall(output))
+    citation_delta = out_count - src_count
+    parens_delta = out_parens - src_parens
     return {
         "source_citations": src_count,
         "output_citations": out_count,
-        "citation_delta": out_count - src_count,
+        "source_citation_marker_count": src_count,
+        "output_citation_marker_count": out_count,
+        "citation_delta": citation_delta,
+        "citation_marker_delta_abs": abs(citation_delta),
         "source_parens": src_parens,
         "output_parens": out_parens,
-        "parens_delta": out_parens - src_parens,
+        "source_parenthesis_marker_count": src_parens,
+        "output_parenthesis_marker_count": out_parens,
+        "parens_delta": parens_delta,
+        "parenthesis_delta_abs": abs(parens_delta),
     }
 
 
@@ -258,12 +266,20 @@ def run_all_quality_checks(
     structure_check = check_structure(source_text, output_text)
     bidi_check = check_bidi_safety(output_text)
     integrity_check = summarize_extraction_integrity(integrity_context)
+    citation_marker_delta_abs = int(citation_check["citation_marker_delta_abs"])
+    parenthesis_delta_abs = int(citation_check["parenthesis_delta_abs"])
     return {
         "language_ok": lang_check["language_ok"],
         "detected_lang": lang_check["detected_lang"],
         "numeric_mismatches_count": numeric_check["missing_count"] + numeric_check["extra_count"],
         "numeric_missing_sample": numeric_check["missing_sample"],
-        "citation_mismatches_count": abs(citation_check["citation_delta"]) + abs(citation_check["parens_delta"]),
+        "citation_mismatches_count": citation_marker_delta_abs + parenthesis_delta_abs,
+        "citation_marker_delta_abs": citation_marker_delta_abs,
+        "parenthesis_delta_abs": parenthesis_delta_abs,
+        "source_citation_marker_count": citation_check["source_citation_marker_count"],
+        "output_citation_marker_count": citation_check["output_citation_marker_count"],
+        "source_parenthesis_marker_count": citation_check["source_parenthesis_marker_count"],
+        "output_parenthesis_marker_count": citation_check["output_parenthesis_marker_count"],
         "structure_warnings_count": int(structure_check["collapse_warning"]),
         "source_paragraphs": structure_check["source_paragraphs"],
         "output_paragraphs": structure_check["output_paragraphs"],
@@ -326,6 +342,12 @@ def emit_validation_summary_event(
             "numeric_mismatches_count": checks.get("numeric_mismatches_count", 0),
             "numeric_missing_sample": list(checks.get("numeric_missing_sample", []))[:3],
             "citation_mismatches_count": checks.get("citation_mismatches_count", 0),
+            "citation_marker_delta_abs": checks.get("citation_marker_delta_abs", 0),
+            "parenthesis_delta_abs": checks.get("parenthesis_delta_abs", 0),
+            "source_citation_marker_count": checks.get("source_citation_marker_count", 0),
+            "output_citation_marker_count": checks.get("output_citation_marker_count", 0),
+            "source_parenthesis_marker_count": checks.get("source_parenthesis_marker_count", 0),
+            "output_parenthesis_marker_count": checks.get("output_parenthesis_marker_count", 0),
             "structure_warnings_count": checks.get("structure_warnings_count", 0),
             "extraction_integrity_warnings_count": checks.get("extraction_integrity_warnings_count", 0),
             "vector_gap_count": checks.get("vector_gap_count", 0),

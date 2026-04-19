@@ -193,9 +193,12 @@ def _validation_event(
     source_paragraphs: int = 10,
     output_paragraphs: int = 10,
     citation_mismatches: int = 0,
+    citation_marker_delta: int | None = None,
+    parenthesis_delta: int = 0,
     structure_warnings: int = 0,
     bidi_warnings: int = 0,
 ) -> dict[str, Any]:
+    marker_delta = citation_mismatches if citation_marker_delta is None else citation_marker_delta
     return {
         "timestamp": "2026-02-14T12:00:30+00:00",
         "event_type": "translation_validation_summary",
@@ -206,6 +209,8 @@ def _validation_event(
             "numeric_mismatches_count": numeric_mismatches,
             "numeric_missing_sample": numeric_missing_sample or [],
             "citation_mismatches_count": citation_mismatches,
+            "citation_marker_delta_abs": marker_delta,
+            "parenthesis_delta_abs": parenthesis_delta,
             "structure_warnings_count": structure_warnings,
             "source_paragraphs": source_paragraphs,
             "output_paragraphs": output_paragraphs,
@@ -343,7 +348,14 @@ def test_quality_checks_section_renders(tmp_path: Path) -> None:
     pages = {"1": _make_page(1), "2": _make_page(2)}
     events = [
         _run_config_event(),
-        _validation_event(1, numeric_mismatches=2, numeric_missing_sample=["1.234", "56"]),
+        _validation_event(
+            1,
+            numeric_mismatches=2,
+            numeric_missing_sample=["1.234", "56"],
+            citation_mismatches=12,
+            citation_marker_delta=3,
+            parenthesis_delta=9,
+        ),
         _validation_event(2),
     ]
     run_dir = _seed_run(tmp_path, pages=pages, events=events)
@@ -351,7 +363,9 @@ def test_quality_checks_section_renders(tmp_path: Path) -> None:
     md = build_run_report_markdown(run_dir=run_dir, admin_mode=True, include_sanitized_snippets=False)
 
     assert "### D. Translation Quality Checks" in md
-    assert "| 1 | yes | EN |" in md
+    assert "Citation Marker Δ counts legal-reference marker drift" in md
+    assert "| Page | Lang OK | Detected | Numeric Δ | Citation Marker Δ | Paren Δ |" in md
+    assert "| 1 | yes | EN | 2 | 3 | 9 |" in md
     assert "#### Numeric Mismatch Samples" in md
     assert "Page 1: missing [" in md
     assert "1.234" in md
