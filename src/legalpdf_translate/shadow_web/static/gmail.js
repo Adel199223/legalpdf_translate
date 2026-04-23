@@ -9,11 +9,14 @@ import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
   applyPreviewStateStartPage,
   clearConsumedReviewState,
+  deriveGmailAttachmentKindLabel,
   deriveGmailRedoAction,
   deriveRecoveredFinalizationAction,
   createClosedPreviewState,
   deriveGmailHomeCta,
+  deriveGmailStagePresentation,
   deriveGmailStage,
+  deriveGmailWorkflowPresentation,
   isPreviewStateOpen,
   openPreviewState,
   readConsumedReviewState,
@@ -23,6 +26,12 @@ import {
   shouldIgnoreReviewRowFocusTarget,
   writeConsumedReviewState,
 } from "./gmail_review_state.js";
+import {
+  clearNode,
+  createTextElement,
+  setNodeTitle,
+  setText,
+} from "./safe_rendering.js";
 
 const AUTO_REFRESH_DELAY_MS = 220;
 const AUTO_REFRESH_THROTTLE_MS = 1400;
@@ -75,6 +84,14 @@ function setFieldValue(id, value) {
   if (node) {
     node.value = value ?? "";
   }
+}
+
+function createCell(className = "") {
+  const cell = document.createElement("td");
+  if (className) {
+    cell.className = className;
+  }
+  return cell;
 }
 
 function formatDiagnosticValue(value) {
@@ -568,31 +585,32 @@ function currentRecoveredFinalizationAction() {
 function gmailHomeStatusMessage() {
   const clickDiagnostics = currentClickDiagnostics();
   const recoveredAction = currentRecoveredFinalizationAction();
+  const stage = gmailState.stage || currentGmailStage();
+  const presentation = deriveGmailStagePresentation({
+    stage,
+    activeSession: gmailState.activeSession,
+  });
   if (
     !gmailState.loadResult
     && !gmailState.activeSession
     && recoveredAction.visible
   ) {
-    return "A previous finalized Gmail batch is still recoverable here, but the workspace is waiting for a fresh Gmail handoff.";
+    return "A previous Gmail result is still available here, but this page is waiting for a new Gmail message.";
   }
-  switch (gmailState.stage || currentGmailStage()) {
+  switch (stage) {
     case "translation_recovery":
-      return "The current Gmail attachment needs recovery before the batch can continue. Resume Recovery to rerun, rebuild, or adjust translation settings from the translation workspace.";
     case "translation_prepared":
-      return "The Gmail translation handoff is prepared. Open Prepared Translation to review the seeded settings and start the run when you are ready.";
     case "translation_running":
-      return "Use Resume Current Step to continue the active Gmail step, Redo Current Attachment to rerun just this file, or Reset Gmail Workspace if you want a full Gmail restart.";
     case "translation_save":
-      return "Use Resume Current Step to review and save the current Gmail translation row, Redo Current Attachment to rerun only this file, or Reset Gmail Workspace for a full Gmail restart.";
     case "translation_finalize":
     case "interpretation_review":
     case "interpretation_finalize":
-      return "Gmail handoff is prepared. Resume Current Step when you are ready for the next bounded step.";
+      return presentation.description;
     default:
       if (!gmailState.loadResult && !gmailState.activeSession && clickDiagnostics.click_phase && !clickDiagnostics.bridge_context_posted) {
-        return `The last Gmail redirect stopped during ${clickDiagnostics.click_phase.replaceAll("_", " ")}. Use Return to Gmail or refresh this workspace before retrying the Gmail handoff.`;
+        return `The last Gmail redirect stopped during ${clickDiagnostics.click_phase.replaceAll("_", " ")}. Use Back to Gmail or refresh this review before trying again.`;
       }
-      return "Keep Gmail intake compact here. Open Attachment Review to choose files, preview the selected document, and decide where translation should start.";
+      return "Choose the attachment you want to process, preview it if needed, then continue.";
   }
 }
 
@@ -655,7 +673,7 @@ function runStageAction(action) {
 
 async function runRedoCurrentTranslation() {
   if (!gmailState.suggestedTranslationLaunch) {
-    throw new Error("No Gmail attachment is ready to redo in this workspace.");
+    throw new Error("No Gmail attachment is ready to redo here yet.");
   }
   const redo = currentRedoAction();
   if (!redo.visible) {
@@ -665,7 +683,7 @@ async function runRedoCurrentTranslation() {
     throw new Error(redo.description || "Cancel the active browser translation job before redoing this attachment.");
   }
   const confirmed = window.confirm(
-    `Redo the current Gmail attachment?\n\n${redo.description || "This will clear only the translation workspace state for the current attachment and keep the Gmail batch intact."}`,
+    `Redo the current Gmail attachment?\n\n${redo.description || "This will clear only the translation state for the current attachment and keep the Gmail batch intact."}`,
   );
   if (!confirmed) {
     return;
@@ -726,15 +744,19 @@ function formatBytes(value) {
 function shortOutputFolderLabel(value) {
   const cleaned = String(value ?? "").trim();
   if (!cleaned) {
-    return "Use workspace default";
+    return "Use default folder";
   }
   const normalized = cleaned.replace(/[\\/]+$/, "");
   const parts = normalized.split(/[\\/]/).filter(Boolean);
   return parts.at(-1) || cleaned;
 }
 
+function currentWorkflowPresentation() {
+  return deriveGmailWorkflowPresentation({ workflowKind: currentWorkflowKind() });
+}
+
 function currentWorkflowLabel() {
-  return currentWorkflowKind() === "interpretation" ? "Interpretation notice" : "Translation batch";
+  return currentWorkflowPresentation().label;
 }
 
 function attachmentMime(attachment) {
@@ -747,6 +769,10 @@ function isPdfAttachment(attachment) {
 
 function isImageAttachment(attachment) {
   return attachmentMime(attachment).startsWith("image/");
+}
+
+function attachmentKindLabel(attachment) {
+  return deriveGmailAttachmentKindLabel(attachmentMime(attachment));
 }
 
 function currentWorkflowKind() {
@@ -1197,33 +1223,34 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
     draft_ready: "Draft ready",
     draft_failed: "Draft failed",
   })[finalizationState] || session?.status || "confirmed";
+  const retryLabel = "Try Gmail reply again";
   button.textContent = payload?.status === "ok"
     ? "Finalized"
     : retryAvailable
-      ? "Retry finalization"
-      : "Finalize Gmail Batch Reply";
+      ? retryLabel
+      : "Create Gmail reply";
   button.disabled = !available;
   button.classList.remove("hidden");
   if (!available) {
     summary.className = "result-card empty-state";
     summary.textContent = "Finish every Gmail attachment first to open the final reply step.";
     result.className = "result-card empty-state";
-    result.textContent = "Draft, honorários, and Gmail reply details appear here after finalization.";
-    status.textContent = "Confirm every selected Gmail attachment before finalizing the batch reply.";
+    result.textContent = "Gmail reply details will appear here after the final step.";
+    status.textContent = "After every selected attachment is saved, create the Gmail reply with the final files.";
     updateGmailFinalizationReportActionState();
     closeBatchFinalizeDrawer();
     return;
   }
   const confirmedItems = session.confirmed_items || [];
-  const outputFolder = fieldValue("gmail-output-dir") || gmailState.bootstrap?.defaults?.default_output_dir || "Use workspace default";
+  const outputFolder = fieldValue("gmail-output-dir") || gmailState.bootstrap?.defaults?.default_output_dir || "Use default folder";
   summary.className = "result-card";
   summary.innerHTML = `
     <div class="result-header">
       <div>
         <strong>${escapeHtml(session.message?.subject || "Gmail batch ready to finalize.")}</strong>
         <p>${recoveredOnly
-    ? "Recovered finalization details from the last finalized Gmail batch are available here."
-    : `${confirmedItems.length} confirmed attachment(s) are ready for the final Gmail reply.`}</p>
+    ? "Recovered Gmail reply details from the last saved attachment set are available here."
+    : `${confirmedItems.length} saved attachment(s) are ready for the Gmail reply.`}</p>
       </div>
       <span class="status-chip ${finalizationState === "blocked_word_pdf_export" || finalizationState === "local_artifacts_ready" ? "warn" : finalizationState === "draft_failed" ? "bad" : "ok"}">${escapeHtml(stateLabel)}</span>
     </div>
@@ -1238,14 +1265,14 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
     button.classList.add("hidden");
     button.disabled = true;
     status.textContent = finalizationState === "draft_ready"
-      ? "This is the previous Gmail batch finalization result recovered from session artifacts. Start a fresh Gmail handoff normally, or generate the finalization report here if you need the old operator packet."
-      : "This recovered Gmail finalization result is available for inspection and report generation only.";
+      ? "These recovered Gmail reply details are available to review. Start a new Gmail message normally if you need a fresh reply, or generate the finalization report here if you need the earlier files."
+      : "These recovered Gmail reply details are available for review and report generation only.";
     result.className = "result-card";
     result.innerHTML = `
       <div class="result-header">
         <div>
           <strong>${escapeHtml(status.textContent)}</strong>
-          <p>${escapeHtml(session.actual_honorarios_path || session.actual_honorarios_pdf_path || session.session_report_path || "Recovered Gmail finalization artifacts are available.")}</p>
+          <p>${escapeHtml(session.actual_honorarios_path || session.actual_honorarios_pdf_path || session.session_report_path || "Recovered Gmail reply files are available.")}</p>
         </div>
         <span class="status-chip ${finalizationState === "draft_ready" ? "ok" : "info"}">${escapeHtml(stateLabel || "Recovered")}</span>
       </div>
@@ -1253,7 +1280,7 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
         <div><h3>DOCX</h3><p class="word-break">${escapeHtml(session.actual_honorarios_path || "Unavailable")}</p></div>
         <div><h3>PDF</h3><p class="word-break">${escapeHtml(session.actual_honorarios_pdf_path || "Unavailable")}</p></div>
         <div><h3>Session Report</h3><p class="word-break">${escapeHtml(session.session_report_path || "Unavailable")}</p></div>
-        <div><h3>Recovery Source</h3><p>${escapeHtml(session.restored_from_report ? "Recovered from prior session artifacts" : "Recovered")}</p></div>
+        <div><h3>Recovery Source</h3><p>${escapeHtml(session.restored_from_report ? "Recovered from an earlier Gmail reply step" : "Recovered")}</p></div>
       </div>
     `;
     updateGmailFinalizationReportActionState();
@@ -1262,14 +1289,14 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
   if (gmailState.batchFinalizePreflightInFlight && !payload) {
     button.disabled = true;
     result.className = "result-card empty-state";
-    result.textContent = "Checking Word PDF export readiness for Gmail finalization...";
-    status.textContent = "Running a real Word DOCX-to-PDF canary before the final Gmail reply step.";
+    result.textContent = "Checking whether the final Word PDF step is ready...";
+    status.textContent = "Checking the Word PDF export step before the Gmail reply is created.";
     updateGmailFinalizationReportActionState();
     return;
   }
   if (!payload && preflight && !preflight.finalization_ready) {
     button.disabled = true;
-    status.textContent = "Word PDF export is blocked before Gmail finalization. Review the diagnostics here before retrying.";
+    status.textContent = "The final Word PDF step is blocked. Review the details here before you try again.";
     result.className = "result-card";
     result.innerHTML = `
       <div class="result-header">
@@ -1290,17 +1317,17 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
   }
   if (!payload && ["local_artifacts_ready", "draft_failed", "draft_ready"].includes(finalizationState)) {
     const draftCopy = finalizationState === "draft_ready"
-      ? "The Gmail draft is ready for this finalized batch."
+      ? "The Gmail draft is ready for this saved attachment set."
       : session.draft_failure_reason || "The previous Gmail finalization attempt stayed recoverable in this workspace.";
     status.textContent = finalizationState === "draft_ready"
-      ? "Gmail batch reply draft is ready. Generate the finalization report from this drawer whenever you need the full operator artifact."
+      ? "The Gmail reply is ready to review."
       : finalizationState === "draft_failed"
-        ? "Honorários were created, but the Gmail draft step failed. You can retry from this same surface."
-        : "Honorários were created locally, but the Gmail draft step stayed unavailable. You can retry from this same surface.";
+        ? "The final DOCX files were created, but the Gmail reply step failed. You can try again from here."
+        : "The final DOCX files were created locally, but the Gmail reply step stayed unavailable. You can try again from here.";
     const showRetryAction = finalizationState !== "draft_ready";
     button.classList.toggle("hidden", !showRetryAction);
     button.disabled = !showRetryAction || (preflight && !preflight.finalization_ready);
-    button.textContent = showRetryAction ? "Retry finalization" : button.textContent;
+    button.textContent = showRetryAction ? retryLabel : button.textContent;
     result.className = "result-card";
     result.innerHTML = `
       <div class="result-header">
@@ -1316,7 +1343,7 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
       <div><h3>Draft</h3><p>${escapeHtml(draftCopy)}</p></div>
       <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight?.launch_preflight?.message || "Unavailable")}</p></div>
       <div><h3>Export Canary</h3><p>${escapeHtml(preflight?.export_canary?.message || "Unavailable")}</p></div>
-      <div><h3>Retry</h3><p>${showRetryAction ? "You can retry from this drawer." : "No retry required."}</p></div>
+      <div><h3>Retry</h3><p>${showRetryAction ? "You can try again from this drawer." : "No retry required."}</p></div>
       <div><h3>Build Provenance</h3><p class="word-break">${escapeHtml(provenance.label)}</p></div>
     </div>
   `;
@@ -1329,8 +1356,8 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
     result.innerHTML = `
       <div class="result-header">
         <div>
-          <strong>Word PDF export is ready for Gmail finalization.</strong>
-          <p>The same Word export path used by finalization passed a canary export on this machine.</p>
+          <strong>Word PDF export is ready.</strong>
+          <p>The same Word export path used for the Gmail reply passed a canary export on this machine.</p>
         </div>
         <span class="status-chip ok">Ready</span>
       </div>
@@ -1340,15 +1367,15 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
         <div><h3>Checked</h3><p>${escapeHtml(preflight.last_checked_at || "Just now")}</p></div>
       </div>
     `;
-    status.textContent = "All selected attachments are confirmed. Word PDF export is ready, so you can finalize the Gmail batch reply from this surface.";
+    status.textContent = "Every selected Gmail attachment is saved. You can create the Gmail reply when you are ready.";
     updateGmailFinalizationReportActionState();
     return;
   }
   if (!payload) {
     button.disabled = true;
     result.className = "result-card empty-state";
-    result.textContent = "Generate honorários and the Gmail reply draft when the Word PDF export preflight clears.";
-    status.textContent = "All selected attachments are confirmed. Word PDF export readiness will be checked from this bounded surface.";
+    result.textContent = "Create the Gmail reply after the Word PDF readiness check finishes.";
+    status.textContent = "The Gmail reply will unlock here after the Word PDF readiness check finishes.";
     updateGmailFinalizationReportActionState();
     return;
   }
@@ -1363,14 +1390,14 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
           : "Ready";
   const tone = payload.status === "ok" ? "ok" : finalizationState === "draft_failed" ? "bad" : "warn";
   status.textContent = payload.status === "ok"
-    ? "Gmail batch reply draft is ready."
+    ? "The Gmail reply is ready."
     : finalizationState === "blocked_word_pdf_export"
-      ? "Word PDF export is blocked before Gmail finalization."
+      ? "The final Word PDF step is blocked."
       : payload.status === "local_only"
-      ? "Honorários were created locally, but the Gmail draft step stayed unavailable."
+      ? "The final DOCX files were created locally, but the Gmail reply step stayed unavailable."
       : finalizationState === "draft_failed"
-        ? "Honorários were created, but the Gmail draft step failed. You can retry from this same surface."
-        : "Batch finalization completed with warnings. Review the result details here.";
+        ? "The final DOCX files were created, but the Gmail reply step failed. You can try again from here."
+        : "The Gmail reply step completed with warnings. Review the details here.";
   button.disabled = gmailState.batchFinalizePreflightInFlight
     || payload.status === "ok"
     || (preflight && !preflight.finalization_ready);
@@ -1390,7 +1417,7 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
       <div><h3>Draft</h3><p>${escapeHtml(normalized.gmail_draft_result?.message || normalized.draft_prereqs?.message || draftStatus)}</p></div>
       <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight?.launch_preflight?.message || "Unavailable")}</p></div>
       <div><h3>Export Canary</h3><p>${escapeHtml(preflight?.export_canary?.message || "Unavailable")}</p></div>
-      <div><h3>Retry</h3><p>${retryAvailable ? "You can retry from this drawer." : "No retry required."}</p></div>
+      <div><h3>Retry</h3><p>${retryAvailable ? "You can try again from this drawer." : "No retry required."}</p></div>
       <div><h3>Build Provenance</h3><p class="word-break">${escapeHtml(provenance.label)}</p></div>
     </div>
   `;
@@ -1422,15 +1449,37 @@ function renderTranslationCompletionGmailStepCard(activeSession) {
   const batchLabel = activeSession.total_items
     ? `${activeSession.current_item_number || "?"}/${activeSession.total_items}`
     : "Batch step";
-  title.textContent = blockedOnArabicReview
-    ? `Arabic DOCX review required before Gmail attachment ${batchLabel} can continue.`
-    : `Gmail attachment ${batchLabel} is ready to confirm.`;
-  copy.textContent = blockedOnArabicReview
-    ? (translationUi.arabicReviewMessage || `${filename} must finish Arabic DOCX review before Gmail confirmation can continue.`)
-    : activeSession.current_item_number < activeSession.total_items
-      ? `${filename} will be saved to the job log and the next attachment will start automatically.`
-      : `${filename} will be saved to the job log and the final Gmail batch step will open next.`;
-  chip.textContent = batchLabel;
+  const presentation = gmailState.hooks.deriveTranslationCompletionPresentation?.({
+    currentRowId: translationUi.currentRowId,
+    arabicReview: {
+      required: translationUi.requiresArabicReview,
+      resolved: translationUi.arabicReviewResolved,
+      message: translationUi.arabicReviewMessage,
+      completion_key: translationUi.arabicReviewCompletionKey,
+      status: translationUi.arabicReviewResolved ? "resolved" : "required",
+    },
+    gmailBatchContext: translationUi.currentGmailBatchContext,
+    gmailCurrentStep: {
+      visible: show,
+      filename,
+      batchLabel,
+      hasMoreItems: Number(activeSession.current_item_number || 0) < Number(activeSession.total_items || 0),
+    },
+  });
+  title.textContent = presentation?.gmailCurrentAttachment?.title || (
+    blockedOnArabicReview
+      ? "Review the Arabic document in Word before you save this Gmail attachment."
+      : "This Gmail attachment is ready to save."
+  );
+  copy.textContent = presentation?.gmailCurrentAttachment?.copy || (
+    blockedOnArabicReview
+      ? (translationUi.arabicReviewMessage || "Open the translated DOCX in Word, save it there, then return here to save this Gmail attachment.")
+      : Number(activeSession.current_item_number || 0) < Number(activeSession.total_items || 0)
+        ? "Save this translated attachment, then continue with the next Gmail step."
+        : "Save this translated attachment, then continue to create the Gmail reply."
+  );
+  chip.textContent = presentation?.gmailCurrentAttachment?.chipLabel || batchLabel;
+  button.textContent = presentation?.gmailCurrentAttachment?.buttonLabel || "Save this Gmail attachment";
 }
 
 function collectSelections() {
@@ -1519,6 +1568,7 @@ function renderMessageResult(loadResult) {
   const currentPendingStatus = pendingStatus();
   const pendingWarming = isWarmupPendingStatus(currentPendingStatus);
   const detailsHint = qs("gmail-intake-details-summary");
+  const workflow = currentWorkflowPresentation();
   if (!container) {
     return;
   }
@@ -1537,9 +1587,9 @@ function renderMessageResult(loadResult) {
     );
     if (!hasContext) {
       container.classList.add("empty-state");
-      container.textContent = "No Gmail message is loaded in this browser workspace yet.";
+      container.textContent = "Open this from Gmail or load a message manually from details.";
       if (detailsHint) {
-        detailsHint.textContent = "Message and output overrides stay collapsed unless you need them.";
+        detailsHint.textContent = "Manual message load and output overrides stay here unless Gmail needs help finding the message.";
       }
       return;
     }
@@ -1549,55 +1599,55 @@ function renderMessageResult(loadResult) {
         <div>
           <strong>${
             currentPendingStatus === "failed"
-              ? "The last Gmail handoff did not finish loading."
+              ? "Gmail message could not finish loading."
               : pendingWarming
-                ? "The browser app is warming this Gmail handoff."
-                : "Extension handoff detected for this workspace."
+                ? "Gmail message is loading."
+                : "Gmail message found."
           }</strong>
-          <p>${escapeHtml(resolvedContext.subject || "Subject unavailable")}<br>${escapeHtml(resolvedContext.account_email || "Account unavailable")}</p>
+          <p>${escapeHtml(resolvedContext.subject || "Subject unavailable")}</p>
         </div>
         <span class="status-chip ${
           currentPendingStatus === "failed" ? "bad" : "info"
         }">${
           currentPendingStatus === "failed"
-            ? "Failed load"
+            ? "Needs attention"
             : pendingWarming
-              ? "Warming"
-              : "Pending load"
+              ? "Loading"
+              : "Ready soon"
         }</span>
       </div>
       <div class="result-grid">
-        <div><h3>Message ID</h3><p class="word-break">${escapeHtml(resolvedContext.message_id || "Unavailable")}</p></div>
-        <div><h3>Thread ID</h3><p class="word-break">${escapeHtml(resolvedContext.thread_id || "Unavailable")}</p></div>
+        <div><h3>Gmail account</h3><p class="word-break">${escapeHtml(resolvedContext.account_email || "Unavailable")}</p></div>
+        <div><h3>Workflow</h3><p>${escapeHtml(workflow.label)}</p></div>
       </div>
     `;
     if (detailsHint) {
       detailsHint.textContent = pendingWarming
-        ? "The browser workspace is still loading the exact Gmail message; manual overrides stay collapsed unless you need them."
-        : "Extension defaults are ready; expand only if you need manual overrides.";
+        ? "The message is still loading; open these details only if Gmail needs manual help."
+        : "Detected Gmail details are ready; open these details only if you need manual recovery.";
     }
     return;
   }
   const message = loadResult.message || {};
   const attachmentCount = (message.attachments || []).length;
-  const outputFolder = fieldValue("gmail-output-dir") || gmailState.bootstrap?.defaults?.default_output_dir || "Use workspace default";
   container.classList.remove("empty-state");
   container.innerHTML = `
     <div class="result-header">
       <div>
-        <strong>${escapeHtml(loadResult.status_message || "Gmail message state available.")}</strong>
-        <p>${escapeHtml(message.subject || "No subject")}<br>${attachmentCount} supported attachment(s) from ${escapeHtml(message.account_email || "unknown account")}</p>
+        <strong>${escapeHtml(loadResult.ok ? "Gmail message ready to review." : "Gmail message needs attention.")}</strong>
+        <p>${escapeHtml(message.subject || "No subject")}</p>
       </div>
-      <span class="status-chip ${loadResult.ok ? "ok" : loadResult.classification === "unavailable" ? "warn" : "bad"}">${escapeHtml(loadResult.classification || (loadResult.ok ? "ready" : "failed"))}</span>
+      <span class="status-chip ${loadResult.ok ? "ok" : loadResult.classification === "unavailable" ? "warn" : "bad"}">${loadResult.ok ? "Ready" : "Needs attention"}</span>
     </div>
     <div class="result-grid">
-      <div><h3>Workflow</h3><p>${currentWorkflowKind() === "interpretation" ? "Interpretation notice" : "Translation batch"}</p></div>
-      <div><h3>Attachments</h3><p>${attachmentCount}</p></div>
-      <div><h3>Output Folder</h3><p class="word-break">${escapeHtml(outputFolder)}</p></div>
+      <div><h3>From</h3><p class="word-break">${escapeHtml(message.from_header || "Unavailable")}</p></div>
+      <div><h3>Gmail account</h3><p class="word-break">${escapeHtml(message.account_email || "Unavailable")}</p></div>
+      <div><h3>Supported attachments</h3><p>${attachmentCount}</p></div>
+      <div><h3>Workflow</h3><p>${escapeHtml(workflow.label)}</p></div>
     </div>
   `;
   if (detailsHint) {
-    detailsHint.textContent = "Message identifiers, account, and output overrides stay out of the way unless you need them.";
+    detailsHint.textContent = "Exact IDs and output overrides stay here unless you need manual recovery or troubleshooting.";
   }
 }
 
@@ -1611,16 +1661,17 @@ function renderReviewSummary(loadResult) {
   if (!summary || !summaryGrid || !reviewStatus || !reviewOpenButton) {
     return;
   }
+  const workflow = currentWorkflowPresentation();
   reviewOpenButton.disabled = !(loadResult?.ok && loadResult?.message);
   if (!reviewOpenButton.dataset.defaultLabel) {
     reviewOpenButton.dataset.defaultLabel = reviewOpenButton.textContent;
   }
   reviewOpenButton.textContent = reviewOpenButton.dataset.defaultLabel;
+  reviewStatus.textContent = "Step 1: Choose workflow. Step 2: Pick attachment(s). Step 3: Preview or set start page if needed. Step 4: Continue.";
   if (!loadResult?.ok || !loadResult?.message) {
     summary.className = "result-card empty-state";
-    summary.textContent = "Load the exact Gmail message to open attachment review.";
+    summary.textContent = "Load this Gmail message to choose attachments.";
     summaryGrid.innerHTML = "";
-    reviewStatus.textContent = "Choose the Gmail workflow, select the files you want, and open preview only when you need to inspect a document.";
     if (summaryDetails) {
       summaryDetails.open = false;
     }
@@ -1628,57 +1679,63 @@ function renderReviewSummary(loadResult) {
   }
   const message = loadResult.message;
   const selectedCount = collectSelections().length;
-  const outputFolder = fieldValue("gmail-output-dir") || gmailState.bootstrap?.defaults?.default_output_dir || "Use workspace default";
-  const outputFolderLabel = shortOutputFolderLabel(outputFolder);
+  const outputFolder = fieldValue("gmail-output-dir") || gmailState.bootstrap?.defaults?.default_output_dir || "Use default folder";
   summary.className = "result-card";
   summary.innerHTML = `
     <div class="gmail-review-summary-card">
       <div class="gmail-review-summary-copy">
         <strong>${escapeHtml(message.subject || "No subject")}</strong>
-        <p>${attachments.length} supported attachment(s) ready for review</p>
+        <p>${escapeHtml(workflow.reviewStatus)}</p>
       </div>
       <div class="gmail-review-summary-metrics">
-        <div><h3>Workflow</h3><p>${currentWorkflowLabel()}</p></div>
-        <div><h3>Folder</h3><p title="${escapeHtml(outputFolder)}">${escapeHtml(outputFolderLabel)}</p></div>
+        <div><h3>Workflow</h3><p>${escapeHtml(workflow.label)}</p></div>
+        <div><h3>Supported attachments</h3><p>${attachments.length}</p></div>
       </div>
       <span class="status-chip ${selectedCount ? "ok" : "info"}">${selectedCount ? `${selectedCount} selected` : "Review ready"}</span>
     </div>
   `;
   summaryGrid.innerHTML = `
-    <div><h3>Sender</h3><p class="word-break">${escapeHtml(message.from_header || "Unavailable")}</p></div>
-    <div><h3>Account</h3><p class="word-break">${escapeHtml(message.account_email || "Unavailable")}</p></div>
-    <div><h3>Message ID</h3><p class="word-break">${escapeHtml(message.message_id || "Unavailable")}</p></div>
-    <div><h3>Thread ID</h3><p class="word-break">${escapeHtml(message.thread_id || "Unavailable")}</p></div>
-    <div><h3>Output Folder</h3><p class="word-break">${escapeHtml(outputFolder)}</p></div>
+    <div><h3>From</h3><p class="word-break">${escapeHtml(message.from_header || "Unavailable")}</p></div>
+    <div><h3>Gmail account</h3><p class="word-break">${escapeHtml(message.account_email || "Unavailable")}</p></div>
+    <div><h3>Exact message ID</h3><p class="word-break">${escapeHtml(message.message_id || "Unavailable")}</p></div>
+    <div><h3>Exact thread ID</h3><p class="word-break">${escapeHtml(message.thread_id || "Unavailable")}</p></div>
+    <div><h3>Save output in</h3><p class="word-break">${escapeHtml(outputFolder)}</p></div>
   `;
-  reviewStatus.textContent = currentWorkflowKind() === "interpretation"
-    ? "Choose the single notice you want to process. Preview stays optional and the handoff will still begin from page 1."
-    : "Select the files you want. Open Preview only when you need to inspect a document or set the start page precisely.";
 }
 
-function renderAttachmentList(loadResult) {
-  const container = qs("gmail-attachment-list");
-  const startHeading = qs("gmail-review-start-heading");
+export function renderAttachmentListInto(
+  container,
+  attachments,
+  {
+    startHeading = null,
+    interpretationWorkflow = false,
+    focusedAttachmentId = "",
+    resolveState = () => ({ selected: false, startPage: 1, pageCount: 0 }),
+    resolveCanEditStart = () => false,
+  } = {},
+) {
   if (!container) {
     return;
   }
-  container.innerHTML = "";
+  clearNode(container);
   if (startHeading) {
-    startHeading.textContent = currentWorkflowKind() === "interpretation" ? "Notice" : "Start";
+    startHeading.textContent = "Start page";
   }
-  const attachments = loadResult?.message?.attachments || [];
   if (!attachments.length) {
-    container.innerHTML = '<tr><td colspan="5" class="empty-state">No supported attachments are available for the loaded Gmail message.</td></tr>';
+    const row = document.createElement("tr");
+    const cell = createCell("empty-state");
+    cell.colSpan = 5;
+    cell.textContent = "No supported PDF or image attachments were found in this message.";
+    row.appendChild(cell);
+    container.appendChild(row);
     return;
   }
-  const interpretationWorkflow = currentWorkflowKind() === "interpretation";
   const selectedInputType = interpretationWorkflow ? "radio" : "checkbox";
-  syncFocusedAttachment();
   for (const attachment of attachments) {
-    const state = attachmentState(attachment.attachment_id);
-    const selected = state.selected;
-    const focused = gmailState.reviewFocusedAttachmentId === attachment.attachment_id;
-    const canEditStart = canEditStartPage(attachment);
+    const state = resolveState(attachment.attachment_id) || {};
+    const selected = state.selected === true;
+    const focused = focusedAttachmentId === attachment.attachment_id;
+    const canEditStart = resolveCanEditStart(attachment) === true;
     const row = document.createElement("tr");
     row.className = [
       "gmail-review-row",
@@ -1687,31 +1744,144 @@ function renderAttachmentList(loadResult) {
     ].filter(Boolean).join(" ");
     row.dataset.attachmentRow = attachment.attachment_id;
     row.tabIndex = 0;
-    row.innerHTML = `
-      <td>
-        <label class="checkbox-inline gmail-review-select">
-          <input
-            type="${selectedInputType}"
-            name="gmail-review-selection"
-            data-attachment-checkbox="${escapeHtml(attachment.attachment_id)}"
-            ${selected ? "checked" : ""}
-          >
-          <span class="gmail-review-row-label">${selected ? "Selected" : "Select"}</span>
-        </label>
-      </td>
-      <td class="gmail-review-file-cell">
-        <strong class="gmail-review-file-name" title="${escapeHtml(attachment.filename || "Attachment")}">${escapeHtml(attachment.filename || "Attachment")}</strong>
-      </td>
-      <td title="${escapeHtml(attachment.mime_type || "Unknown")}">${escapeHtml(attachment.mime_type || "Unknown")}</td>
-      <td>${escapeHtml(formatBytes(attachment.size_bytes || 0))}</td>
-      <td>
-        ${canEditStart
-          ? `<input type="number" class="attachment-start-page" min="1" step="1" value="${escapeHtml(String(clampStartPage(attachment, state.startPage, state.pageCount)))}" data-attachment-start-page="${escapeHtml(attachment.attachment_id)}">`
-          : `<span class="gmail-review-start-static">${interpretationWorkflow ? "1" : "1"}</span>`}
-      </td>
-    `;
+
+    const selectCell = createCell();
+    const label = document.createElement("label");
+    label.className = "checkbox-inline gmail-review-select";
+    const input = document.createElement("input");
+    input.type = selectedInputType;
+    input.name = "gmail-review-selection";
+    input.dataset.attachmentCheckbox = attachment.attachment_id;
+    input.checked = selected;
+    label.appendChild(input);
+    label.appendChild(createTextElement("span", selected ? "Selected" : "Choose", "gmail-review-row-label"));
+    selectCell.appendChild(label);
+
+    const fileCell = createCell("gmail-review-file-cell");
+    const filename = createTextElement("strong", attachment.filename || "Attachment", "gmail-review-file-name");
+    setNodeTitle(filename, attachment.filename || "Attachment");
+    fileCell.appendChild(filename);
+
+    const mimeCell = createCell();
+    setNodeTitle(mimeCell, attachment.mime_type || "Unknown");
+    mimeCell.textContent = attachmentKindLabel(attachment);
+
+    const sizeCell = createCell();
+    sizeCell.textContent = formatBytes(attachment.size_bytes || 0);
+
+    const startCell = createCell();
+    if (canEditStart) {
+      const startInput = document.createElement("input");
+      startInput.type = "number";
+      startInput.className = "attachment-start-page";
+      startInput.min = "1";
+      startInput.step = "1";
+      startInput.value = String(clampStartPage(attachment, state.startPage, state.pageCount));
+      startInput.dataset.attachmentStartPage = attachment.attachment_id;
+      startCell.appendChild(startInput);
+    } else {
+      startCell.appendChild(createTextElement("span", "1", "gmail-review-start-static"));
+    }
+
+    row.appendChild(selectCell);
+    row.appendChild(fileCell);
+    row.appendChild(mimeCell);
+    row.appendChild(sizeCell);
+    row.appendChild(startCell);
     container.appendChild(row);
   }
+}
+
+function renderAttachmentList(loadResult) {
+  const container = qs("gmail-attachment-list");
+  const startHeading = qs("gmail-review-start-heading");
+  if (!container) {
+    return;
+  }
+  const attachments = loadResult?.message?.attachments || [];
+  const interpretationWorkflow = currentWorkflowKind() === "interpretation";
+  syncFocusedAttachment();
+  renderAttachmentListInto(container, attachments, {
+    startHeading,
+    interpretationWorkflow,
+    focusedAttachmentId: gmailState.reviewFocusedAttachmentId,
+    resolveState: (attachmentId) => attachmentState(attachmentId),
+    resolveCanEditStart: (attachment) => canEditStartPage(attachment),
+  });
+}
+
+export function renderReviewDetailInto(
+  container,
+  attachment,
+  {
+    state = {},
+    canEditStart = false,
+    previewLoaded = false,
+    runtimeGuard = { blocked: false },
+    kindLabel = "",
+  } = {},
+) {
+  if (!container) {
+    return;
+  }
+  if (!attachment) {
+    container.className = "result-card empty-state";
+    clearNode(container);
+    setText(container, "Choose an attachment row to see the document details, optional preview, and start page.");
+    return;
+  }
+  const pageCountText = state.pageCount > 0
+    ? `${state.pageCount} ${state.pageCount === 1 ? "page" : "pages"}`
+    : "Page count appears after preview";
+  const selectedStateText = state.selected ? "Selected" : "Not selected";
+  container.className = "result-card";
+  clearNode(container);
+  const strip = document.createElement("div");
+  strip.className = "gmail-review-detail-strip";
+  const primary = document.createElement("div");
+  primary.className = "gmail-review-detail-primary";
+  const title = createTextElement("strong", attachment.filename || "Attachment", "word-break");
+  setNodeTitle(title, attachment.filename || "Attachment");
+  primary.appendChild(title);
+  primary.appendChild(createTextElement(
+    "p",
+    `${kindLabel} · ${selectedStateText} · ${pageCountText}${previewLoaded ? " · Preview ready" : ""}`,
+    "gmail-review-detail-meta",
+  ));
+  primary.appendChild(createTextElement(
+    "p",
+    "Preview is optional. Use it if you want to check the document or choose a later start page.",
+    "field-hint",
+  ));
+  strip.appendChild(primary);
+  const actions = document.createElement("div");
+  actions.className = "gmail-review-detail-actions";
+  if (canEditStart) {
+    const field = document.createElement("div");
+    field.className = "field gmail-review-start-field";
+    const label = createTextElement("label", "Start page");
+    label.htmlFor = "gmail-review-detail-start";
+    const input = document.createElement("input");
+    input.id = "gmail-review-detail-start";
+    input.type = "number";
+    input.min = "1";
+    input.step = "1";
+    input.value = String(clampStartPage(attachment, state.startPage, state.pageCount));
+    input.dataset.detailStartPage = attachment.attachment_id;
+    field.appendChild(label);
+    field.appendChild(input);
+    actions.appendChild(field);
+  }
+  const previewButton = document.createElement("button");
+  previewButton.type = "button";
+  previewButton.className = "ghost-button";
+  previewButton.id = "gmail-preview-selected";
+  previewButton.dataset.previewSelected = attachment.attachment_id;
+  previewButton.disabled = runtimeGuard.blocked === true;
+  previewButton.textContent = "Preview";
+  actions.appendChild(previewButton);
+  strip.appendChild(actions);
+  container.appendChild(strip);
 }
 
 function renderReviewDetail() {
@@ -1720,36 +1890,16 @@ function renderReviewDetail() {
     return;
   }
   const attachment = focusedAttachment();
-  if (!attachment) {
-    container.className = "result-card empty-state";
-    container.textContent = "Select an attachment row to inspect it, preview it, and set the starting page.";
-    return;
-  }
-  const state = attachmentState(attachment.attachment_id);
-  const canEditStart = canEditStartPage(attachment);
-  const previewLoaded = isPreviewStateOpen(gmailState.previewState) && gmailState.previewState.attachmentId === attachment.attachment_id;
-  const runtimeGuard = currentGmailRuntimeGuard();
-  const pageCountText = state.pageCount > 0
-    ? `${state.pageCount} ${state.pageCount === 1 ? "page" : "pages"}`
-    : "Page count loads when you preview";
-  container.className = "result-card";
-  container.innerHTML = `
-    <div class="gmail-review-detail-strip">
-      <div class="gmail-review-detail-primary">
-        <strong class="word-break" title="${escapeHtml(attachment.filename || "Attachment")}">${escapeHtml(attachment.filename || "Attachment")}</strong>
-        <p class="gmail-review-detail-meta">${escapeHtml(pageCountText)}${previewLoaded ? " · Preview ready" : ""}</p>
-      </div>
-      <div class="gmail-review-detail-actions">
-        ${canEditStart
-          ? `<div class="field gmail-review-start-field">
-              <label for="gmail-review-detail-start">Start Page</label>
-              <input id="gmail-review-detail-start" type="number" min="1" step="1" value="${escapeHtml(String(clampStartPage(attachment, state.startPage, state.pageCount)))}" data-detail-start-page="${escapeHtml(attachment.attachment_id)}">
-            </div>`
-          : ""}
-        <button type="button" class="ghost-button" id="gmail-preview-selected" data-preview-selected="${escapeHtml(attachment.attachment_id)}" ${runtimeGuard.blocked ? "disabled" : ""}>Preview</button>
-      </div>
-    </div>
-  `;
+  const state = attachment ? attachmentState(attachment.attachment_id) : {};
+  renderReviewDetailInto(container, attachment, {
+    state,
+    canEditStart: attachment ? canEditStartPage(attachment) : false,
+    previewLoaded: attachment
+      ? (isPreviewStateOpen(gmailState.previewState) && gmailState.previewState.attachmentId === attachment.attachment_id)
+      : false,
+    runtimeGuard: currentGmailRuntimeGuard(),
+    kindLabel: attachment ? attachmentKindLabel(attachment) : "",
+  });
 }
 
 function renderPreviewPanel() {
@@ -1782,12 +1932,10 @@ function renderPreviewPanel() {
   applyButton.disabled = true;
   if (!previewAttachment || !previewHref) {
     summary.className = "result-card empty-state";
-    summary.textContent = "Choose Preview from the review drawer to inspect an attachment here.";
+    summary.textContent = "Preview is optional. Open it when you want to check the document more closely.";
     container.className = "gmail-inline-preview empty-state";
     container.textContent = "Preview opens here when requested.";
-    status.textContent = attachment
-      ? `Preview ${attachment.filename || "the current attachment"} when you need to inspect it more closely.`
-      : "Open preview when you need to inspect the current attachment more closely.";
+    status.textContent = "Preview is optional. Use it if you want to check the document or choose a later start page.";
     return;
   }
   const canApply = canEditStartPage(previewAttachment);
@@ -1825,11 +1973,11 @@ function renderPreviewPanel() {
     `;
     status.textContent = canApply
       ? (pageCount > 0
-        ? `Previewing page ${page} of ${pageCount}. Use current page when you want it to become the review start page.`
-        : `Previewing page ${page}. Use current page when you want it to become the review start page.`)
+        ? `Previewing page ${page} of ${pageCount}. Use current page if you want the translation to start later in the document.`
+        : `Previewing page ${page}. Use current page if you want the translation to start later in the document.`)
       : (pageCount > 0
-        ? `Previewing page ${page} of ${pageCount}. This workflow still prepares from page 1.`
-        : `Previewing page ${page}. This workflow still prepares from page 1.`);
+        ? `Previewing page ${page} of ${pageCount}. This workflow still continues from page 1.`
+        : `Previewing page ${page}. This workflow still continues from page 1.`);
     void renderActivePdfPreviewCanvas(previewAttachment);
     return;
   }
@@ -1886,6 +2034,10 @@ function renderResumeCard(activeSession) {
     return;
   }
   let summaryGrid = "";
+  const stagePresentation = deriveGmailStagePresentation({
+    stage: gmailState.stage,
+    activeSession,
+  });
   if (activeSession.kind === "translation") {
     const currentAttachment = activeSession.current_attachment?.attachment?.filename || "Current attachment";
     const batchLabel = activeSession.total_items
@@ -1893,7 +2045,7 @@ function renderResumeCard(activeSession) {
       : "Batch ready";
     summaryGrid = `
       <div class="result-grid">
-        <div><h3>Stage</h3><p>${escapeHtml(gmailState.stage.replaceAll("_", " "))}</p></div>
+        <div><h3>Status</h3><p>${escapeHtml(stagePresentation.title || "Ready")}</p></div>
         <div><h3>Batch</h3><p>${escapeHtml(batchLabel)}</p></div>
         <div><h3>Current File</h3><p class="word-break">${escapeHtml(currentAttachment)}</p></div>
       </div>
@@ -1902,7 +2054,7 @@ function renderResumeCard(activeSession) {
     const noticeName = activeSession.attachment?.attachment?.filename || "Prepared notice";
     summaryGrid = `
       <div class="result-grid">
-        <div><h3>Stage</h3><p>${escapeHtml(gmailState.stage.replaceAll("_", " "))}</p></div>
+        <div><h3>Status</h3><p>${escapeHtml(stagePresentation.title || "Ready")}</p></div>
         <div><h3>Notice</h3><p class="word-break">${escapeHtml(noticeName)}</p></div>
       </div>
     `;
@@ -1915,7 +2067,6 @@ function renderResumeCard(activeSession) {
         <strong>${escapeHtml(cta.title || "Resume Current Step")}</strong>
         <p>${escapeHtml(cta.description || "Continue the active Gmail step when you are ready.")}</p>
         ${redo.visible ? `<p>${escapeHtml(redo.description || "")}</p>` : ""}
-        ${redo.warning ? `<p>${escapeHtml(redo.warning)}</p>` : ""}
       </div>
       <span class="status-chip ${cta.tone === "ok" ? "ok" : "info"}">${escapeHtml(activeSession.status || "ready")}</span>
     </div>
@@ -1930,25 +2081,29 @@ function renderSessionResult(activeSession) {
   }
   if (!activeSession) {
     container.classList.add("empty-state");
-    container.textContent = "Prepare a Gmail session to keep batch progression, interpretation notice state, and draft-finalization context in one browser workspace.";
+    container.textContent = "Continue Gmail from here when a translation or interpretation step is ready.";
     return;
   }
+  const presentation = deriveGmailStagePresentation({
+    stage: gmailState.stage || currentGmailStage(),
+    activeSession,
+  });
   container.classList.remove("empty-state");
   if (activeSession.kind === "translation") {
     const current = activeSession.current_attachment?.attachment || {};
     container.innerHTML = `
       <div class="result-header">
         <div>
-          <strong>Gmail batch ${activeSession.current_item_number}/${activeSession.total_items}</strong>
-          <p>${activeSession.completed ? "All attachments confirmed. Finalize the batch reply when ready." : `Current attachment: ${escapeHtml(current.filename || "Unavailable")}`}</p>
+          <strong>${escapeHtml(presentation.title)}</strong>
+          <p>${escapeHtml(presentation.description)}</p>
         </div>
         <span class="status-chip ${activeSession.completed ? "ok" : "info"}">${escapeHtml(activeSession.status || "prepared")}</span>
       </div>
       <div class="result-grid">
         <div><h3>Subject</h3><p>${escapeHtml(activeSession.message?.subject || "Unavailable")}</p></div>
-        <div><h3>Target Language</h3><p>${escapeHtml(activeSession.selected_target_lang || "?")}</p></div>
-        <div><h3>Confirmed Rows</h3><p>${(activeSession.confirmed_items || []).length}</p></div>
-        <div><h3>Session Report</h3><p class="word-break">${escapeHtml(activeSession.session_report_path || "Unavailable")}</p></div>
+        <div><h3>Language</h3><p>${escapeHtml(activeSession.selected_target_lang || "?")}</p></div>
+        <div><h3>Current document</h3><p class="word-break">${escapeHtml(current.filename || "Unavailable")}</p></div>
+        <div><h3>Completed attachments</h3><p>${(activeSession.confirmed_items || []).length}</p></div>
       </div>
     `;
     return;
@@ -1956,14 +2111,14 @@ function renderSessionResult(activeSession) {
   container.innerHTML = `
     <div class="result-header">
       <div>
-        <strong>Gmail interpretation notice ready</strong>
-        <p>${escapeHtml(activeSession.attachment?.attachment?.filename || "No downloaded notice")} | ${escapeHtml(activeSession.message?.subject || "No subject")}</p>
+        <strong>${escapeHtml(presentation.title)}</strong>
+        <p>${escapeHtml(presentation.description)}</p>
       </div>
       <span class="status-chip info">${escapeHtml(activeSession.status || "prepared")}</span>
     </div>
     <div class="result-grid">
-      <div><h3>Notice PDF</h3><p class="word-break">${escapeHtml(activeSession.attachment?.saved_path || "Unavailable")}</p></div>
-      <div><h3>Session Report</h3><p class="word-break">${escapeHtml(activeSession.session_report_path || "Unavailable")}</p></div>
+      <div><h3>Notice</h3><p class="word-break">${escapeHtml(activeSession.attachment?.attachment?.filename || "Unavailable")}</p></div>
+      <div><h3>Subject</h3><p>${escapeHtml(activeSession.message?.subject || "Unavailable")}</p></div>
     </div>
   `;
 }
@@ -1988,13 +2143,17 @@ function renderWorkspaceStrip() {
   const cta = currentHomeCta();
   const recoveredAction = currentRecoveredFinalizationAction();
   if (gmailState.activeSession && cta.visible) {
-    title.textContent = cta.title || "A Gmail step is ready.";
+    const presentation = deriveGmailStagePresentation({
+      stage: gmailState.stage,
+      activeSession: gmailState.activeSession,
+    });
+    title.textContent = presentation.stripTitle || cta.title || "Continue Gmail step";
     const redo = currentRedoAction();
     copy.textContent = redo.visible
-      ? `${cta.description || "Resume the current Gmail step when you are ready."} Use Redo Current Attachment to rerun only this file, or Reset Gmail Workspace for a full Gmail restart.`
-      : (cta.description || "Resume the current Gmail step when you are ready.");
+      ? `${presentation.stripDescription || cta.description || "Continue the Gmail step when you are ready."} You can also redo only this attachment if needed.`
+      : (presentation.stripDescription || cta.description || "Continue the Gmail step when you are ready.");
     if (action) {
-      action.textContent = cta.label || "Resume Current Step";
+      action.textContent = "Continue Gmail step";
       action.dataset.gmailStripAction = cta.action || "";
     }
     return;
@@ -2008,10 +2167,10 @@ function renderWorkspaceStrip() {
     }
     return;
   }
-  title.textContent = "A Gmail message is loaded for this workspace.";
-  copy.textContent = "Open Gmail intake to review attachments and choose the right workflow before you continue.";
+  title.textContent = "Gmail attachment ready";
+  copy.textContent = "Review the Gmail message and attachments before you continue.";
   if (action) {
-    action.textContent = "Open Gmail Intake";
+    action.textContent = "Review Gmail message";
     action.dataset.gmailStripAction = "open-intake";
   }
 }
@@ -2021,24 +2180,19 @@ function updatePrepareActionState() {
   if (!button) {
     return;
   }
+  const workflow = currentWorkflowPresentation();
   const selections = collectSelections();
   const runtimeGuard = currentGmailRuntimeGuard();
-  let label = currentWorkflowKind() === "interpretation"
-    ? "Prepare notice"
-    : "Prepare selected";
+  let label = workflow.prepareLabel;
   let disabled = false;
   if (!gmailState.loadResult?.ok || !gmailState.loadResult?.message) {
-    label = "Load Exact Gmail Message First";
+    label = "Load a Gmail message first";
     disabled = true;
   } else if (!selections.length) {
-    label = currentWorkflowKind() === "interpretation"
-      ? "Select One Notice To Continue"
-      : "Select Attachments To Continue";
+    label = workflow.emptySelectionLabel;
     disabled = true;
   } else if (runtimeGuard.blocked) {
-    label = currentWorkflowKind() === "interpretation"
-      ? "Restart Canonical Runtime To Prepare Notice"
-      : "Restart Canonical Runtime To Prepare";
+    label = "Restart canonical runtime to continue";
     disabled = true;
   }
   button.textContent = label;
@@ -2169,8 +2323,11 @@ export function renderGmailBootstrap(payload) {
     "gmail-session",
     gmailState.activeSession ? "ok" : "",
     gmailState.activeSession
-      ? `Gmail ${gmailState.activeSession.kind} session is active in workspace ${appState.workspaceId}.`
-      : "No Gmail translation batch or interpretation notice is active in this workspace yet.",
+      ? deriveGmailStagePresentation({
+        stage: gmailState.stage || currentGmailStage(),
+        activeSession: gmailState.activeSession,
+      }).description
+      : "No Gmail translation or interpretation step is active yet.",
   );
   syncShellState();
 }
@@ -2185,7 +2342,7 @@ async function refreshGmailState({ auto = false } = {}) {
     renderGmailBootstrap({ normalized_payload: { gmail: payload.normalized_payload } });
     gmailState.lastRefreshAt = Date.now();
     if (!auto) {
-      setDiagnostics("gmail", payload, { hint: "Gmail workspace state refreshed.", open: false });
+      setDiagnostics("gmail", payload, { hint: "Gmail review refreshed.", open: false });
     }
     return payload;
   } finally {
@@ -2550,7 +2707,7 @@ async function confirmCurrentTranslation() {
   renderTranslationCompletionGmailStepCard(gmailState.activeSession);
   renderBatchFinalizeSurface(gmailState.activeSession);
   updateSessionButtons();
-  setDiagnostics("gmail-session", payload, { hint: "Current Gmail attachment confirmed and saved to the job log.", open: false });
+  setDiagnostics("gmail-session", payload, { hint: "Current Gmail attachment saved as a case record.", open: false });
   if (gmailState.suggestedTranslationLaunch) {
     loadSuggestedTranslationLaunch({ closeCompletionDrawer: true });
   } else if (gmailState.activeSession?.kind === "translation" && gmailState.activeSession.completed) {
@@ -2589,7 +2746,7 @@ async function finalizeBatch() {
   renderSessionResult(gmailState.activeSession);
   renderBatchFinalizeSurface(gmailState.activeSession);
   updateSessionButtons();
-  setDiagnostics("gmail-batch-finalize", payload, { hint: payload.status === "ok" ? "Gmail batch reply draft is ready." : "Gmail batch finalization completed with warnings.", open: payload.status !== "ok" });
+  setDiagnostics("gmail-batch-finalize", payload, { hint: payload.status === "ok" ? "The Gmail reply is ready." : "The Gmail reply step completed with warnings.", open: payload.status !== "ok" });
   updateGmailFinalizationReportActionState();
   syncShellState();
 }
@@ -3057,24 +3214,24 @@ export function initializeGmailUi(hooks) {
   });
 
   qs("gmail-finalize-interpretation")?.addEventListener("click", async () => {
-    await runWithBusy(["gmail-finalize-interpretation"], { "gmail-finalize-interpretation": "Finalizing..." }, async () => {
+    await runWithBusy(["gmail-finalize-interpretation"], { "gmail-finalize-interpretation": "Creating..." }, async () => {
       try {
         await finalizeInterpretation();
       } catch (error) {
-        setPanelStatus("gmail-session", "bad", error.message || "Interpretation Gmail finalization failed.");
-        setDiagnostics("gmail-session", error, { hint: error.message || "Interpretation Gmail finalization failed.", open: true });
+        setPanelStatus("gmail-session", "bad", error.message || "Creating the Gmail reply failed.");
+        setDiagnostics("gmail-session", error, { hint: error.message || "Creating the Gmail reply failed.", open: true });
       }
     });
   });
 
   qs("interpretation-finalize-gmail")?.addEventListener("click", async () => {
-    await runWithBusy(["interpretation-finalize-gmail"], { "interpretation-finalize-gmail": "Finalizing..." }, async () => {
+    await runWithBusy(["interpretation-finalize-gmail"], { "interpretation-finalize-gmail": "Creating..." }, async () => {
       try {
         await finalizeInterpretation();
       } catch (error) {
         gmailState.hooks.recoverInterpretationValidationError?.(error);
-        setPanelStatus("gmail-session", "bad", error.message || "Interpretation Gmail finalization failed.");
-        setDiagnostics("gmail-session", error, { hint: error.message || "Interpretation Gmail finalization failed.", open: true });
+        setPanelStatus("gmail-session", "bad", error.message || "Creating the Gmail reply failed.");
+        setDiagnostics("gmail-session", error, { hint: error.message || "Creating the Gmail reply failed.", open: true });
       }
     });
   });
@@ -3107,12 +3264,12 @@ export function initializeGmailUi(hooks) {
         closeReviewDrawer();
         closeBatchFinalizeDrawer();
         renderGmailBootstrap({ normalized_payload: { gmail: payload.normalized_payload } });
-        setDiagnostics("gmail-session", payload, { hint: "Gmail workspace reset.", open: false });
-        setDiagnostics("gmail-batch-finalize", payload, { hint: "Gmail workspace reset.", open: false });
+        setDiagnostics("gmail-session", payload, { hint: "Gmail review reset.", open: false });
+        setDiagnostics("gmail-batch-finalize", payload, { hint: "Gmail review reset.", open: false });
         closeSessionDrawer();
       } catch (error) {
-        setPanelStatus("gmail-session", "bad", error.message || "Gmail workspace reset failed.");
-        setDiagnostics("gmail-session", error, { hint: error.message || "Gmail workspace reset failed.", open: true });
+        setPanelStatus("gmail-session", "bad", error.message || "Gmail review reset failed.");
+        setDiagnostics("gmail-session", error, { hint: error.message || "Gmail review reset failed.", open: true });
       }
     });
   });

@@ -211,6 +211,25 @@ def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> 
         assert "settings_admin" in bootstrap_payload["normalized_payload"]
         assert "power_tools" in bootstrap_payload["normalized_payload"]
         assert bootstrap_payload["normalized_payload"]["parity_audit"]["promotion_recommendation"]["status"] == "ready_for_daily_use"
+        assert [item["title"] for item in bootstrap_payload["normalized_payload"]["dashboard_cards"]] == [
+            "Interpretation Requests",
+            "Translation",
+            "Gmail Attachments",
+            "Technical Tools",
+            "Glossary and Reports",
+        ]
+        assert bootstrap_payload["normalized_payload"]["parity_audit"]["summary"] == (
+            "The browser app is ready for the daily workflows: translation, interpretation requests, Gmail attachments, and saved work."
+        )
+        assert [item["title"] for item in bootstrap_payload["normalized_payload"]["parity_audit"]["checklist"]] == [
+            "Main app screens",
+            "Translation",
+            "Interpretation requests",
+            "Gmail attachments",
+            "Saved work",
+            "Settings and profile",
+            "Technical tools",
+        ]
         assert "interpretation_reference" in bootstrap_payload["normalized_payload"]
         assert "Vidigueira" in bootstrap_payload["normalized_payload"]["interpretation_reference"]["available_cities"]
         assert bootstrap_payload["normalized_payload"]["interpretation_reference"]["travel_origin_label"] == "Marmelar"
@@ -269,7 +288,14 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert "LEGALPDF_BROWSER_CLIENT_READY" in text
         assert 'document.body.dataset.clientReady = "warming"' in text
         assert 'document.body.dataset.clientWorkspace = workspaceId' in text
-        assert "Simple Workspace Shell" in text
+        assert 'document.body.dataset.operatorChrome = operatorMode ? "on" : "off"' in text
+        assert 'document.body.dataset.beginnerSurface = uiVariant === "qt" && ["dashboard", "new-job", "recent-jobs", "profile", "settings"].includes(activeView) && !operatorMode ? "true" : "false"' in text
+        assert "<title>LegalPDF Translate</title>" in text
+        assert "Simple Workspace Shell" not in text
+        assert "Browser App" not in text
+        assert "Guided Translation" in text
+        assert "Choose a document, confirm the language, then start translation." in text
+        assert 'id="topbar-eyebrow"' in text
         assert 'data-view="gmail-intake"' in text
         assert 'data-view="new-job"' in text
         assert 'id="section-nav"' in text
@@ -280,15 +306,71 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'class="sidebar-card operator-only"' in text
         assert 'class="details-panel operator-only"' in text
         assert 'id="new-job-task-switcher"' in text
-        assert 'id="gmail-workspace-strip"' in text
-        assert 'id="gmail-workspace-strip-action"' in text
-        assert "Gmail Handoff" in text
-        assert "Focused Intake Review" in text
-        assert "Message Details and Overrides" in text
-        assert "Open Attachment Review" in text
+        dashboard_view_start = text.index('data-view="dashboard"')
+        gmail_view_start = text.index('data-view="gmail-intake"')
+        new_job_view_start = text.index('data-view="new-job"')
+        profile_drawer_start = text.index('id="profile-editor-drawer-backdrop"')
+        gmail_review_drawer_start = text.index('id="gmail-review-drawer-backdrop"')
+        gmail_session_drawer_start = text.index('id="gmail-session-drawer-backdrop"')
+        translation_completion_drawer_start = text.index('id="translation-completion-drawer-backdrop"')
+        gmail_batch_finalize_drawer_start = text.index('id="gmail-batch-finalize-drawer-backdrop"')
+        interpretation_review_drawer_start = text.index('id="interpretation-review-drawer-backdrop"')
+        interpretation_city_dialog_start = text.index('id="interpretation-city-dialog-backdrop"')
+        recent_jobs_view_start = text.index('data-view="recent-jobs"')
+        settings_view_start = text.index('data-view="settings"')
+        profile_view_start = text.index('data-view="profile"')
+        power_tools_view_start = text.index('data-view="power-tools"')
+        extension_lab_view_start = text.index('data-view="extension-lab"')
+        runtime_details_start = text.index('id="runtime-details"')
+        runtime_details_end = text.index("</details>", runtime_details_start) + len("</details>")
+        dashboard_view = text[dashboard_view_start:gmail_view_start]
+        dashboard_beginner_view = text[dashboard_view_start:runtime_details_start] + text[runtime_details_end:gmail_view_start]
+        gmail_view = text[gmail_view_start:new_job_view_start]
+        new_job_view = text[new_job_view_start:profile_drawer_start]
+        gmail_review_drawer = text[gmail_review_drawer_start:gmail_session_drawer_start]
+        gmail_session_drawer = text[gmail_session_drawer_start:translation_completion_drawer_start]
+        translation_completion_drawer = text[translation_completion_drawer_start:gmail_batch_finalize_drawer_start]
+        gmail_batch_finalize_drawer = text[gmail_batch_finalize_drawer_start:interpretation_review_drawer_start]
+        interpretation_review_drawer = text[interpretation_review_drawer_start:interpretation_city_dialog_start]
+        recent_jobs_view = text[recent_jobs_view_start:settings_view_start]
+        settings_view = text[settings_view_start:profile_view_start]
+        profile_view = text[profile_view_start:power_tools_view_start]
+        power_tools_view = text[power_tools_view_start:extension_lab_view_start]
+        extension_lab_view = text[extension_lab_view_start:profile_drawer_start]
+        profile_drawer = text[profile_drawer_start:gmail_review_drawer_start]
+        assert "Overview" in dashboard_view
+        assert "App Status" in dashboard_view
+        assert "What You Can Do" in dashboard_view
+        assert "Checking app status..." in dashboard_view
+        assert "Checking available app features..." in dashboard_view
+        assert "job-log rows" not in dashboard_beginner_view
+        assert "mode provenance" not in dashboard_beginner_view
+        assert "Gmail bridge" not in dashboard_beginner_view
+        assert "job-log writes" not in dashboard_beginner_view
+        assert "Save to Job Log" not in dashboard_beginner_view
+        assert "artifacts" not in dashboard_beginner_view
+        assert "Browser shell and runtime modes" not in dashboard_beginner_view
+        assert "Recent Jobs and Job Log actions" not in dashboard_beginner_view
+        assert 'id="gmail-workspace-strip"' in new_job_view
+        assert 'id="gmail-workspace-strip-action"' in new_job_view
+        assert "Review Gmail Attachments" in gmail_view
+        assert "Review Attachments" in gmail_view
+        assert "Open this from Gmail or load a message manually from details." in gmail_view
+        assert "Advanced message details" in gmail_view
+        assert "More options" in gmail_view
+        assert "Open full app view" in gmail_view
+        assert "Reset Gmail review" in gmail_view
+        assert "Gmail Handoff" not in gmail_view
+        assert "Focused Intake Review" not in gmail_view
+        assert "Message Details and Overrides" not in gmail_view
+        assert "Open Attachment Review" not in gmail_view
+        assert "Refresh Gmail State" not in gmail_view
+        assert "Open Full Workspace" not in gmail_view
+        assert "Reset Gmail Workspace" not in gmail_view
+        assert "browser workspace" not in gmail_view
         assert 'id="gmail-resume-step"' in text
         assert 'id="gmail-resume-result"' in text
-        assert 'id="gmail-open-full-workspace"' in text
+        assert 'id="gmail-open-full-workspace"' in gmail_view
         assert 'id="gmail-open-session"' not in text
         assert 'id="gmail-preview-session"' not in text
         assert 'id="gmail-review-drawer"' in text
@@ -308,19 +390,58 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="gmail-preview-page"' in text
         assert 'id="gmail-preview-open-tab"' in text
         assert 'id="gmail-preview-apply"' in text
-        assert "Gmail Attachment Review" in text
-        assert "Attachments" in text
-        assert "Current Attachment" in text
+        assert "Choose Attachments" in gmail_review_drawer
+        assert "Step 1: Choose workflow" in gmail_review_drawer
+        assert "English (EN)" in gmail_review_drawer
+        assert "French (FR)" in gmail_review_drawer
+        assert "Arabic (AR)" in gmail_review_drawer
+        assert "Continue with selected attachments" in gmail_review_drawer
+        assert "Current document" in gmail_review_drawer
+        assert "Use" in gmail_review_drawer
+        assert "Document" in gmail_review_drawer
+        assert "Kind" in gmail_review_drawer
+        assert "Start page" in gmail_review_drawer
+        assert "Gmail Attachment Review" not in gmail_review_drawer
         assert "Attachment Preview" in text
         assert "Preview the selected attachment to inspect it here." not in text
         assert 'id="gmail-session-banner"' not in text
         assert 'id="gmail-session-drawer"' in text
         assert 'id="gmail-session-drawer-backdrop"' in text
         assert 'id="gmail-close-session-drawer"' in text
+        assert "Continue Gmail Step" in gmail_session_drawer
+        assert "Gmail Session" not in gmail_session_drawer
+        assert "Session Actions" not in gmail_session_drawer
+        assert "Final DOCX filename" in gmail_session_drawer
+        assert "Create Gmail reply" in gmail_session_drawer
+        assert "Gmail attachment ready" in new_job_view
+        assert "Review the Gmail message and attachments before you continue." in new_job_view
+        assert "Review Gmail message" in new_job_view
         assert "Job Setup" in text
         assert "Run Status" in text
         assert "Start Translate" in text
         assert "Advanced Settings" in text
+        assert 'id="translation-source-card"' in text
+        assert 'id="translation-source-browse"' in text
+        assert 'id="translation-source-clear"' in text
+        assert 'id="translation-source-stage-status"' in text
+        assert 'id="translation-source-path-summary"' in text
+        assert 'id="translation-output-summary-label"' in text
+        assert 'id="translation-output-summary-copy"' in text
+        assert 'id="translation-output-summary-path"' in text
+        assert 'id="translation-output-change-section"' in text
+        assert "Using default output folder" in text
+        assert "Change folder/path" in text
+        assert "English (EN)" in text
+        assert "French (FR)" in text
+        assert "Arabic (AR)" in text
+        assert 'id="translation-run-status-shell"' in text
+        assert 'id="translation-progress-percent"' in text
+        assert 'id="translation-progress-bar"' in text
+        assert 'id="translation-run-pages"' in text
+        assert 'id="translation-run-current-page"' in text
+        assert 'id="translation-run-image-retry"' in text
+        assert 'id="translation-run-alerts"' in text
+        assert 'id="translation-action-helper"' in text
         assert 'id="translation-open-completion"' in text
         assert 'id="translation-completion-drawer"' in text
         assert 'id="translation-completion-drawer-backdrop"' in text
@@ -329,7 +450,7 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="translation-arabic-review-open"' in text
         assert 'id="translation-arabic-review-continue-now"' in text
         assert 'id="translation-arabic-review-continue-without-changes"' in text
-        assert "align or edit it manually" in text
+        assert "Open the translated DOCX in Word, make any alignment or formatting fixes, save it, then return here." in translation_completion_drawer
         assert 'id="translation-gmail-step-card"' in text
         assert 'id="translation-gmail-confirm-current"' in text
         assert '<select id="case-city"' in text
@@ -342,9 +463,21 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="interpretation-city-dialog-name"' in text
         assert 'id="interpretation-city-dialog-distance"' in text
         assert "Preview the selected attachment to inspect it here." not in text
-        assert "Finish Translation" in text
-        assert "Completion Surface" in text
-        assert "Export Review Queue" in text
+        assert "Finish Translation" in translation_completion_drawer
+        assert "Save Case Record" in translation_completion_drawer
+        assert "Download translated DOCX" in translation_completion_drawer
+        assert "Review Arabic document in Word" in translation_completion_drawer
+        assert "Translated DOCX" in translation_completion_drawer
+        assert "Save this Gmail attachment" in translation_completion_drawer
+        assert "Create Gmail Reply" in gmail_batch_finalize_drawer
+        assert "Create Gmail reply" in gmail_batch_finalize_drawer
+        assert "Completion Surface" not in translation_completion_drawer
+        assert "Save To Job Log" not in translation_completion_drawer
+        assert "bounded translation finish surface" not in translation_completion_drawer
+        assert "Durable DOCX" not in translation_completion_drawer
+        assert "Confirm Current Translation Row" not in translation_completion_drawer
+        assert "Finalize Gmail Batch" not in gmail_batch_finalize_drawer
+        assert "Finalize Gmail Batch Reply" not in gmail_batch_finalize_drawer
         assert 'id="settings-credentials-section"' in text
         assert 'id="settings-translation-key-input"' in text
         assert 'id="settings-save-translation-key"' in text
@@ -357,22 +490,32 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="settings-repair-native-host"' in text
         assert 'id="settings-word-pdf-export-state"' in text
         assert 'id="settings-test-word-pdf"' in text
-        assert "Credential Recovery" in text
+        assert "Provider keys and local tools" in text
         assert 'id="gmail-batch-finalize-drawer"' in text
         assert 'id="gmail-batch-finalize-drawer-backdrop"' in text
         assert 'id="gmail-batch-finalize-run"' in text
         assert 'id="gmail-batch-finalize-report"' in text
-        assert "Finalize Gmail Batch" in text
         assert "Run Metrics (auto-filled)" in text
         assert "Amounts (EUR)" in text
-        assert "Current Interpretation Step" in text
+        assert "Gmail interpretation ready" in new_job_view
+        assert "Review the notice details, then create the Gmail reply." in new_job_view
+        assert "Review Gmail message" in new_job_view
         assert 'id="interpretation-session-shell"' in text
         assert 'id="interpretation-session-result"' in text
         assert 'id="interpretation-session-primary"' in text
         assert 'id="interpretation-session-open-full-workspace"' in text
         assert 'class="workspace-drawer workspace-drawer-interpretation"' in text
-        assert "Interpretation Intake" in text
-        assert "Seed Review" in text
+        assert "Start Interpretation Request" in new_job_view
+        assert "Review Case Details" in new_job_view
+        assert "Review details" in new_job_view
+        assert "Start blank request" in new_job_view
+        assert "Refresh history" in new_job_view
+        assert "Current Interpretation Step" not in new_job_view
+        assert "Open Full Workspace" not in new_job_view
+        assert "Interpretation Intake" not in new_job_view
+        assert "Seed Review" not in new_job_view
+        assert "Action Rail" not in new_job_view
+        assert "bounded review surface" not in interpretation_review_drawer
         assert 'id="interpretation-open-review"' in text
         assert 'id="interpretation-review-drawer"' in text
         assert 'id="interpretation-review-drawer-backdrop"' in text
@@ -384,35 +527,206 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="interpretation-review-details-summary"' in text
         assert 'id="interpretation-finalize-gmail"' in text
         assert 'id="interpretation-gmail-result"' in text
+        assert "Review Interpretation Request" in interpretation_review_drawer
+        assert "Service details" in interpretation_review_drawer
+        assert "Using the case details" in interpretation_review_drawer
+        assert "Document text" in interpretation_review_drawer
+        assert "Optional wording and filename" in interpretation_review_drawer
+        assert "Recipient" in interpretation_review_drawer
+        assert "Recipient is filled automatically" in interpretation_review_drawer
+        assert "Optional amounts and internal totals" in interpretation_review_drawer
+        assert "Save case record" in interpretation_review_drawer
+        assert "Create fee-request document" in interpretation_review_drawer
+        assert "Create Gmail reply" in interpretation_review_drawer
+        assert "Gmail reply details will appear here after the final step." in interpretation_review_drawer
+        assert "Honorários Output" not in interpretation_review_drawer
+        assert "Finalize Gmail Reply" not in interpretation_review_drawer
+        assert "Save Interpretation Row" not in interpretation_review_drawer
+        assert "Generate DOCX + PDF" not in interpretation_review_drawer
+        assert "SERVICE" not in interpretation_review_drawer
+        assert "TEXT" not in interpretation_review_drawer
+        assert "RECIPIENT" not in interpretation_review_drawer
         assert 'id="interpretation-gmail-next-step-card"' not in text
         assert 'id="interpretation-open-gmail-session"' not in text
-        assert "SERVICE" in text
-        assert "RECIPIENT" in text
-        assert "Continue In Translation" in text
-        assert "Continue In Interpretation" in text
+        assert "Service details" in text
+        assert "Recipient" in text
+        assert "Continue translation" in text
+        assert "Continue interpretation" in text
         assert 'data-view="recent-jobs"' in text
-        assert "Bounded Review Flow" in text
-        assert "Recent Translation Runs" in text
-        assert "Translation Job Log History" in text
-        assert "Interpretation History" in text
+        assert "Recent Work" in recent_jobs_view
+        assert "Saved Cases" in recent_jobs_view
+        assert "Loading saved cases..." in recent_jobs_view
+        assert "Open saved work" in recent_jobs_view
+        assert "Translation Runs" in recent_jobs_view
+        assert "Saved Translation Cases" in recent_jobs_view
+        assert "Saved Interpretation Requests" in recent_jobs_view
+        assert "Job Log Overview" not in recent_jobs_view
+        assert "job-log rows" not in recent_jobs_view
+        assert "Bounded Review Flow" not in recent_jobs_view
+        assert "bounded finish surface" not in recent_jobs_view
+        assert "bounded review surface" not in recent_jobs_view
+        assert "Translation Job Log History" not in recent_jobs_view
         assert 'data-view="settings"' in text
         assert 'id="settings-defaults-section"' in text
         assert 'id="settings-integrations-section"' in text
         assert 'id="settings-ops-section"' in text
-        assert "Provider and Host Preflight" in text
+        assert "App Settings" in settings_view
+        assert "Daily defaults" in settings_view
+        assert "Text, image, and Gmail tools" in settings_view
+        assert "Provider keys and local tools" in settings_view
+        assert "Advanced diagnostics and saved-work options" in settings_view
+        assert "Check app tools" in settings_view
+        assert "Default language" in settings_view
+        assert "Gmail helper path" in settings_view
+        assert "Enable Gmail attachment intake" in settings_view
+        assert "Saved work database" in settings_view
+        assert "Save settings" in settings_view
+        assert "bounded operator sheet" not in settings_view
+        assert "runtime summary" not in settings_view
+        assert "admin controls" not in settings_view
+        assert "Provider and Host Preflight" not in settings_view
+        assert "Gmail Bridge" not in settings_view
+        assert "Job Log DB" not in settings_view
+        assert "Default Rate / Word JSON" not in settings_view
         assert 'data-view="profile"' in text
-        assert "One Profile At A Time" in text
+        assert "Profiles" in profile_view
+        assert "Set the contact, payment, and travel details used in fee-request documents and Gmail replies." in profile_view
+        assert "Choose the details used in documents" in profile_view
+        assert "Copy profiles from live app" in profile_view
+        assert "Edit Profile" in profile_drawer
+        assert "Interpretation distances" in profile_drawer
+        assert "Add or update distance" in profile_drawer
+        assert "Advanced distance data" in profile_drawer
+        assert "Save profile" in profile_drawer
+        assert "Keep profile management bounded" not in profile_view
+        assert "Editor Surface" not in profile_view
+        assert "One Profile At A Time" not in profile_view
+        assert "bounded drawer" not in profile_view
+        assert "Travel Distances JSON" not in profile_drawer
+        assert "Import Live Profiles" not in profile_view
+        assert "Set Primary" not in profile_drawer
+        assert "active runtime mode" not in profile_view
         assert 'id="profile-editor-drawer"' in text
         assert 'id="profile-editor-drawer-backdrop"' in text
         assert 'id="profile-close-editor"' in text
         assert 'id="profile-close-editor-footer"' in text
         assert 'data-view="power-tools"' in text
-        assert "bounded tool stack" in text
+        assert "Advanced Tools" in power_tools_view
+        assert "Glossary Setup" in power_tools_view
+        assert "Build Glossary Suggestions" in power_tools_view
+        assert "Quality Check" in power_tools_view
+        assert "Troubleshooting Files and Run Report" in power_tools_view
+        assert "Recent run folders" in power_tools_view
+        assert "Specific PDFs" in power_tools_view
+        assert "Full text" in power_tools_view
+        assert "Headers only" in power_tools_view
+        assert "Thorough" in power_tools_view
+        assert "Extra thorough" in power_tools_view
+        assert "This stays an operator surface" not in power_tools_view
+        assert "bounded tool stack" not in power_tools_view
         assert 'data-view="extension-lab"' in text
-        assert "bounded operator lab" in text
+        assert "Browser Helper Checks" in extension_lab_view
+        assert "Technical Gmail Handoff Test" in extension_lab_view
+        assert "Readiness Reason Guide" in extension_lab_view
+        assert "Refresh checks" in extension_lab_view
+        assert "Preview handoff request" in extension_lab_view
+        assert "Use the technical details below only when troubleshooting." in extension_lab_view
+        assert "bounded operator lab" not in extension_lab_view
+        assert "Prepare Reason Catalog" not in extension_lab_view
+        assert "Handoff Simulator" not in extension_lab_view
+        assert "This stays an operator surface" not in extension_lab_view
+        assert 'id="power-tools-refresh"' in text
+        assert 'id="power-tools-status"' in text
+        assert 'id="power-tools-glossary-details"' in text
+        assert 'id="power-tools-builder-details"' in text
+        assert 'id="power-tools-calibration-details"' in text
+        assert 'id="power-tools-diagnostics-details"' in text
+        assert 'id="power-tools-latest-run-dirs"' in text
+        assert 'id="refresh-extension"' in text
+        assert 'id="extension-status"' in text
+        assert 'id="extension-details"' in text
+        assert 'id="extension-reason-catalog"' in text
+        assert 'id="extension-simulator-form"' in text
+        assert 'id="sim-message-id"' in text
+        assert 'id="sim-thread-id"' in text
+        assert 'id="sim-subject"' in text
+        assert 'id="sim-account-email"' in text
+        assert 'id="simulate-handoff"' in text
+        assert 'id="simulator-details"' in text
+        assert '<option value="run_folders">Recent run folders</option>' in text
+        assert '<option value="select_pdfs">Specific PDFs</option>' in text
+        assert '<option value="full_text">Full text</option>' in text
+        assert '<option value="headers_only">Headers only</option>' in text
+        assert '<option value="high">Thorough</option>' in text
+        assert '<option value="xhigh">Extra thorough</option>' in text
         assert "workspace-panel-gmail-session" not in text
         assert 'id="translation-postrun-panel"' not in text
         assert 'id="interpretation-export-panel"' not in text
+
+
+def test_shadow_web_operator_routes_expose_guided_qt_topbar_copy() -> None:
+    app_js = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert 'appState.activeView === "power-tools"' in app_js
+    assert 'eyebrow: "Advanced Tools"' in app_js
+    assert 'title: "LegalPDF Translate | Advanced Tools"' in app_js
+    assert 'status: "Use glossary, quality-check, and troubleshooting tools when you need more control."' in app_js
+    assert 'appState.activeView === "extension-lab"' in app_js
+    assert 'eyebrow: "Browser Helper"' in app_js
+    assert 'title: "LegalPDF Translate | Browser Helper Checks"' in app_js
+    assert 'status: "Check the browser helper used for Gmail intake. Technical details stay below."' in app_js
+
+
+def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
+    app_js = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    readiness_start = app_js.index("function extensionReadinessCardText")
+    install_start = app_js.index("function extensionInstallCardText")
+    mode_start = app_js.index("function extensionModeCardText")
+    render_start = app_js.index("function renderExtensionLab")
+    show_live_start = app_js.index("function showLiveBanner")
+
+    readiness_block = app_js[readiness_start:install_start]
+    install_block = app_js[install_start:mode_start]
+    mode_block = app_js[mode_start:render_start]
+    render_block = app_js[render_start:show_live_start]
+
+    assert "bridgeSummary.message" not in readiness_block
+    assert '"Ready for Gmail intake in this mode."' in readiness_block
+    assert '"This test mode is isolated from live Gmail intake. Open technical details below when troubleshooting."' in readiness_block
+    assert '"Needs attention before Gmail intake can start here. Open technical details below when troubleshooting."' in readiness_block
+
+    assert "Stable ID:" not in install_block
+    assert "stable_extension_id" not in install_block
+    assert '"Browser helper details were found. Open technical details below for installation IDs."' in install_block
+    assert '"Older browser helper details were found. Open technical details below when troubleshooting."' in install_block
+    assert '"No browser helper installation details were reported."' in install_block
+
+    assert "bridgeSummary.message" not in mode_block
+    assert '"Using live app settings and saved work."' in mode_block
+    assert '"Using isolated test settings and saved work."' in mode_block
+    assert '"Use this page when Gmail intake needs a deeper technical check."' in mode_block
+    assert '"This test mode is isolated from live Gmail intake. Open technical details below when troubleshooting."' in mode_block
+    assert '"Live Gmail readiness can differ from this isolated test mode."' in mode_block
+    assert "Stable ID:" not in mode_block
+    assert "UI owner" not in mode_block
+    assert "Launch target" not in mode_block
+
+    assert 'setDiagnostics("extension", { prepare_response: prepare, extension_report: extensionReport, bridge_summary: bridgeSummary, notes: data.notes || [] }, {' in render_block
 
 
 def test_shadow_web_client_prefers_url_launch_session_state_over_stale_bootstrap() -> None:

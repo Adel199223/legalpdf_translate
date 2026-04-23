@@ -10,6 +10,8 @@ import {
   syncActiveViewFromLocation,
 } from "./state.js";
 import {
+  deriveRecentWorkPresentation,
+  deriveTranslationCompletionPresentation,
   initializeTranslationUi,
   loadTranslationHistoryItem,
   openTranslationCompletionDrawer,
@@ -25,14 +27,39 @@ import {
 } from "./translation.js";
 import { closeSessionDrawer, initializeGmailUi, renderGmailBootstrap } from "./gmail.js";
 import { initializePowerToolsUi, renderPowerToolsBootstrap } from "./power-tools.js";
+import { deriveDashboardPresentation } from "./dashboard_presentation.js";
+import {
+  buildSettingsCapabilityCards,
+  buildSettingsStatusPresentation,
+  buildSettingsSummaryItems,
+} from "./settings_presentation.js";
+import {
+  deriveProfilePresentation,
+  formatProfileCountStatus,
+  normalizeDistanceRows,
+  parseDistanceRowsFromJson,
+  removeDistanceRow,
+  serializeDistanceRows,
+  upsertDistanceRow,
+} from "./profile_presentation.js";
 import {
   buildInterpretationReference,
+  deriveInterpretationDisclosurePresentation,
   deriveInterpretationDrawerLayout,
   deriveInterpretationGuardState,
+  deriveInterpretationReviewPresentation,
   deriveInterpretationWorkspaceMode,
   normalizeCityName,
   resolveKnownCity,
 } from "./interpretation_review_state.js";
+import {
+  appendMultilineText,
+  clearNode,
+  createEmptyState,
+  createTextElement,
+  setNodeTitle,
+  setText,
+} from "./safe_rendering.js";
 
 function qs(id) {
   return document.getElementById(id);
@@ -55,12 +82,61 @@ function chipToneClass(status) {
   return "warn";
 }
 
+function createStatusChip(label, toneClass) {
+  return createTextElement("span", label, `status-chip ${toneClass}`);
+}
+
+function appendHistoryMetaBits(container, bits) {
+  const meta = document.createElement("div");
+  meta.className = "history-meta";
+  for (const bit of bits.filter(Boolean)) {
+    meta.appendChild(createTextElement("small", bit));
+  }
+  container.appendChild(meta);
+  return meta;
+}
+
+function createResultHeader({ title = "", message = "", label = "", tone = "info" }) {
+  const header = document.createElement("div");
+  header.className = "result-header";
+  const copy = document.createElement("div");
+  copy.appendChild(createTextElement("strong", title));
+  if (String(message ?? "")) {
+    copy.appendChild(createTextElement("p", message));
+  }
+  header.appendChild(copy);
+  header.appendChild(createStatusChip(label, tone));
+  return header;
+}
+
+function appendResultGridItem(container, title, value, { className = "", multiline = false, titleValue = null } = {}) {
+  const item = document.createElement("div");
+  item.appendChild(createTextElement("h3", title));
+  const paragraph = document.createElement("p");
+  if (className) {
+    paragraph.className = className;
+  }
+  if (titleValue !== null && titleValue !== undefined) {
+    setNodeTitle(paragraph, titleValue);
+  }
+  if (multiline) {
+    appendMultilineText(paragraph, value);
+  } else {
+    setText(paragraph, value);
+  }
+  item.appendChild(paragraph);
+  container.appendChild(item);
+  return item;
+}
+
 const profileState = {
   currentProfileId: "",
 };
 
 const profileUiState = {
   editorDrawerOpen: false,
+  distanceRows: [],
+  distanceJsonDirty: false,
 };
 
 const interpretationUiState = {
@@ -112,6 +188,7 @@ function notifyInterpretationUiStateChanged({ force = false } = {}) {
 
 const PRIMARY_NAV_ORDER = ["new-job", "gmail-intake", "recent-jobs"];
 const MORE_NAV_ORDER = ["dashboard", "settings", "profile", "power-tools", "extension-lab"];
+const OPERATOR_ROUTE_ORDER = ["power-tools", "extension-lab"];
 
 function formatDiagnosticValue(value) {
   if (value instanceof Error) {
@@ -562,27 +639,12 @@ function syncInterpretationDisclosureState() {
     serviceSame,
     validationField: interpretationUiState.validationField,
   });
-  setDisclosureState(
-    "interpretation-service-section",
-    drawerLayout.sections.serviceOpen,
-    serviceSame ? "Same as case" : "Custom service details",
-  );
   const useServiceLocation = qs("use-service-location")?.checked ?? false;
   const includeTransport = qs("include-transport")?.checked ?? true;
   const travelDistance = fieldValue("travel-km-outbound");
   const outputFilename = fieldValue("output-filename");
   const textCustomized = Boolean(useServiceLocation || !includeTransport || travelDistance || outputFilename);
-  setDisclosureState(
-    "interpretation-text-section",
-    drawerLayout.sections.textOpen,
-    textCustomized ? "Custom wording or export detail ready" : "Review wording and filename before you finalize",
-  );
   const recipientOverride = fieldValue("recipient-block");
-  setDisclosureState(
-    "interpretation-recipient-section",
-    drawerLayout.sections.recipientOpen,
-    recipientOverride ? "Custom recipient override ready" : "Auto-derived recipient",
-  );
   const amountsTouched = Boolean(
     fieldValue("pages")
     || fieldValue("word-count")
@@ -592,12 +654,31 @@ function syncInterpretationDisclosureState() {
     || fieldValue("api-cost")
     || fieldValue("profit"),
   );
-  const amountsSummary = amountsTouched
-    ? "Metrics and pricing are ready for final review"
-    : "Pages, words, rate, totals, API-cost, and profit stay tucked away until final review";
+  const disclosurePresentation = deriveInterpretationDisclosurePresentation({
+    serviceSame,
+    textCustomized,
+    recipientOverride,
+    amountsTouched,
+    includeTransport,
+  });
+  setDisclosureState(
+    "interpretation-service-section",
+    drawerLayout.sections.serviceOpen,
+    disclosurePresentation.serviceSummary,
+  );
+  setDisclosureState(
+    "interpretation-text-section",
+    drawerLayout.sections.textOpen,
+    disclosurePresentation.textSummary,
+  );
+  setDisclosureState(
+    "interpretation-recipient-section",
+    drawerLayout.sections.recipientOpen,
+    disclosurePresentation.recipientSummary,
+  );
   const amountsSummaryNode = qs("interpretation-amounts-section-summary");
   if (amountsSummaryNode) {
-    amountsSummaryNode.textContent = amountsSummary;
+    amountsSummaryNode.textContent = disclosurePresentation.amountsSummary;
   }
   const amountsSection = qs("interpretation-amounts-section");
   if (amountsSection) {
@@ -694,44 +775,57 @@ function hasInterpretationReviewData(snapshot = interpretationSnapshot()) {
   );
 }
 
+function currentInterpretationPresentation(snapshot = interpretationSnapshot()) {
+  const activeSession = interpretationActiveSession();
+  const workspaceMode = interpretationWorkspaceMode(snapshot, activeSession);
+  return deriveInterpretationReviewPresentation({
+    snapshot,
+    activeSession,
+    workspaceMode,
+    hasReviewData: hasInterpretationReviewData(snapshot),
+    completionPayload: interpretationUiState.completionPayload,
+  });
+}
+
 function interpretationReviewButtonLabel(snapshot = interpretationSnapshot()) {
-  if (snapshot.rowId) {
-    return "Review Saved Row";
-  }
-  if (hasInterpretationReviewData(snapshot)) {
-    return "Review Interpretation";
-  }
-  return "Start Blank Review";
+  return currentInterpretationPresentation(snapshot).actions.openReview;
 }
 
 function interpretationSessionChip(session, mode, completionPayload = interpretationUiState.completionPayload) {
+  const presentation = deriveInterpretationReviewPresentation({
+    snapshot: interpretationSnapshot(),
+    activeSession: session,
+    workspaceMode: mode,
+    hasReviewData: hasInterpretationReviewData(interpretationSnapshot()),
+    completionPayload,
+  });
   const status = String(session?.status || "").trim();
   if (mode === "gmail_completed") {
     const completionStatus = String(completionPayload?.status || "").trim();
     if (completionStatus === "ok") {
-      return { tone: "ok", label: "Draft ready" };
+      return { tone: "ok", label: presentation.gmailResult.createdLabel };
     }
     if (completionStatus === "local_only") {
-      return { tone: "warn", label: "Local only" };
+      return { tone: "warn", label: presentation.gmailResult.localOnlyLabel };
     }
     if (completionStatus === "draft_unavailable") {
-      return { tone: "warn", label: "Draft unavailable" };
+      return { tone: "warn", label: presentation.gmailResult.warningLabel };
     }
     if (completionStatus) {
-      return { tone: "bad", label: "Needs review" };
+      return { tone: "bad", label: presentation.gmailResult.warningLabel };
     }
     if (session?.draft_created || status === "draft_ready") {
-      return { tone: "ok", label: "Draft ready" };
+      return { tone: "ok", label: presentation.gmailResult.createdLabel };
     }
     if (String(session?.draft_failure_reason || "").trim() || status === "draft_failed") {
-      return { tone: "bad", label: "Needs review" };
+      return { tone: "bad", label: presentation.gmailResult.warningLabel };
     }
-    return { tone: "info", label: "Completed" };
+    return { tone: "info", label: presentation.gmailResult.localOnlyLabel };
   }
   if (status) {
     return { tone: "info", label: status.replaceAll("_", " ") };
   }
-  return { tone: "info", label: "Prepared" };
+  return { tone: "info", label: "Ready" };
 }
 
 function renderInterpretationSessionShell(snapshot = interpretationSnapshot()) {
@@ -752,22 +846,25 @@ function renderInterpretationSessionShell(snapshot = interpretationSnapshot()) {
   if (!gmailModeActive || !result) {
     return;
   }
+  const presentation = currentInterpretationPresentation(snapshot);
   const chip = interpretationSessionChip(activeSession, mode);
   const noticeFilename = interpretationNoticeFilename(activeSession) || "Notice PDF";
   const locationSummary = interpretationLocationSummary(snapshot);
   if (primaryButton) {
-    primaryButton.textContent = mode === "gmail_completed" ? "View Final Result" : "Review Interpretation";
+    primaryButton.textContent = presentation.actions.sessionPrimary;
+  }
+  const sessionOpenButton = qs("interpretation-session-open-full-workspace");
+  if (sessionOpenButton) {
+    sessionOpenButton.textContent = presentation.actions.sessionSecondary;
   }
   if (statusNode) {
-    statusNode.textContent = mode === "gmail_completed"
-      ? "The Gmail interpretation result is ready. Open the bounded review surface to inspect the draft and exported files."
-      : "Keep this Gmail interpretation in one focused review surface. Resume the current step when you are ready.";
+    statusNode.textContent = presentation.home.status;
   }
   result.classList.remove("empty-state");
   result.innerHTML = `
     <div class="result-header">
       <div>
-        <strong>${escapeHtml(mode === "gmail_completed" ? "Current interpretation result" : "Current interpretation step")}</strong>
+        <strong>${escapeHtml(presentation.home.resultTitle)}</strong>
         <p>${escapeHtml(noticeFilename)}</p>
       </div>
       <span class="status-chip ${chip.tone}">${escapeHtml(chip.label)}</span>
@@ -787,22 +884,18 @@ function renderInterpretationSeedCard(containerId) {
     return;
   }
   const snapshot = interpretationSnapshot();
-  const gmailSession = interpretationActiveSession();
+  const presentation = currentInterpretationPresentation(snapshot);
   if (!hasInterpretationReviewData(snapshot)) {
     container.classList.add("empty-state");
-    container.textContent = "Upload a notification PDF or screenshot to recover the case data, or start a blank review if you need to enter it manually.";
+    container.textContent = presentation.reviewHome.emptyState;
     return;
   }
-  const title = snapshot.rowId
-    ? `Saved interpretation row #${snapshot.rowId} is ready to review.`
-    : "Recovered interpretation seed is ready to review.";
-  const sessionLabel = gmailSession?.kind === "interpretation" ? "Gmail interpretation session active." : "Local interpretation review.";
   container.classList.remove("empty-state");
   container.innerHTML = `
     <div class="result-header">
       <div>
-        <strong>${escapeHtml(title)}</strong>
-        <p>${escapeHtml(sessionLabel)}</p>
+        <strong>${escapeHtml(presentation.reviewHome.title)}</strong>
+        <p>${escapeHtml(presentation.reviewHome.subtitle)}</p>
       </div>
       <span class="status-chip ${snapshot.rowId ? "ok" : "info"}">${snapshot.rowId ? "Saved" : "Ready"}</span>
     </div>
@@ -822,30 +915,22 @@ function renderInterpretationReviewSummary(snapshot = interpretationSnapshot()) 
   }
   const activeSession = interpretationActiveSession();
   const workspaceMode = interpretationWorkspaceMode(snapshot, activeSession);
+  const presentation = currentInterpretationPresentation(snapshot);
   const noticeFilename = interpretationNoticeFilename(activeSession);
   if (!hasInterpretationReviewData(snapshot) && !noticeFilename) {
     container.classList.add("empty-state");
-    container.textContent = "Recover the case data first, or start a blank review if you need to enter it manually.";
+    container.textContent = presentation.drawer.summaryEmpty;
     return;
   }
   const chip = interpretationSessionChip(activeSession, workspaceMode);
-  const title = activeSession?.kind === "interpretation"
-    ? workspaceMode === "gmail_completed"
-      ? "Gmail interpretation result is ready."
-      : "Gmail interpretation notice is staged for review."
-    : snapshot.rowId
-      ? `Saved interpretation row #${snapshot.rowId} is ready to review.`
-      : "Recovered interpretation seed is ready to review.";
-  const subtitle = activeSession?.kind === "interpretation"
-    ? workspaceMode === "gmail_completed"
-      ? "The draft and exported files are ready to inspect from this same bounded surface."
-      : noticeFilename || "Review the staged notice details and finish the Gmail step from this same surface."
-    : noticeFilename || "Review the recovered interpretation details before you continue.";
+  const subtitle = noticeFilename && workspaceMode !== "gmail_completed"
+    ? noticeFilename
+    : presentation.drawer.summarySubtitle;
   container.classList.remove("empty-state");
   container.innerHTML = `
     <div class="result-header">
       <div>
-        <strong>${escapeHtml(title)}</strong>
+        <strong>${escapeHtml(presentation.drawer.summaryTitle)}</strong>
         <p>${escapeHtml(subtitle)}</p>
       </div>
       <span class="status-chip ${chip.tone}">${escapeHtml(chip.label)}</span>
@@ -870,24 +955,29 @@ function renderInterpretationReviewContext(snapshot = interpretationSnapshot()) 
   }
   const activeSession = interpretationActiveSession();
   const workspaceMode = interpretationWorkspaceMode(snapshot, activeSession);
+  const presentation = currentInterpretationPresentation(snapshot);
   const reviewMode = workspaceMode === "gmail_review";
   container.classList.toggle("hidden", !reviewMode);
   if (!reviewMode) {
     return;
   }
   if (titleNode) {
-    titleNode.textContent = "Keep the Gmail follow-up inside this review step.";
+    titleNode.textContent = presentation.drawer.contextTitle;
   }
   if (copyNode) {
-    copyNode.textContent = "Review the notice details here, then finalize the Gmail reply from this same bounded surface.";
+    copyNode.textContent = presentation.drawer.contextCopy;
   }
   if (chipNode) {
     const chip = interpretationSessionChip(activeSession, workspaceMode);
     chipNode.className = `status-chip ${chip.tone}`;
     chipNode.textContent = chip.label;
   }
+  const gmailButton = qs("interpretation-finalize-gmail");
+  if (gmailButton) {
+    gmailButton.textContent = presentation.actions.finalizeGmail;
+  }
   if (result && result.classList.contains("empty-state")) {
-    result.textContent = "Gmail draft and final attachment details appear here after finalization.";
+    result.textContent = presentation.drawer.gmailResultEmpty;
   }
 }
 
@@ -897,11 +987,12 @@ function syncInterpretationReviewDetailsShell(completed) {
     return;
   }
   const summaryNode = qs("interpretation-review-details-summary");
+  const presentation = currentInterpretationPresentation();
   if (!completed) {
     details.open = true;
     delete details.dataset.autocollapsed;
     if (summaryNode) {
-      summaryNode.textContent = "Case context and honorários controls are open";
+      summaryNode.textContent = presentation.drawer.detailsSummaryOpen;
     }
     return;
   }
@@ -910,7 +1001,7 @@ function syncInterpretationReviewDetailsShell(completed) {
     details.dataset.autocollapsed = "done";
   }
   if (summaryNode) {
-    summaryNode.textContent = "Review details stay collapsed after finalization until you reopen them";
+    summaryNode.textContent = presentation.drawer.detailsSummaryClosed;
   }
 }
 
@@ -922,6 +1013,8 @@ function renderInterpretationCompletionCard(snapshot = interpretationSnapshot())
   const activeSession = interpretationActiveSession();
   const workspaceMode = interpretationWorkspaceMode(snapshot, activeSession);
   const payload = interpretationUiState.completionPayload?.normalized_payload || {};
+  const completionStatus = String(interpretationUiState.completionPayload?.status || "").trim();
+  const presentation = currentInterpretationPresentation(snapshot);
   const completed = workspaceMode === "gmail_completed";
   container.classList.toggle("hidden", !completed);
   syncInterpretationReviewDetailsShell(completed);
@@ -931,16 +1024,29 @@ function renderInterpretationCompletionCard(snapshot = interpretationSnapshot())
   const draftMessage = payload.gmail_draft_result?.message
     || payload.draft_prereqs?.message
     || activeSession?.draft_failure_reason
-    || (activeSession?.draft_created ? "Gmail draft created successfully." : "Gmail finalization details are available.");
+    || ((completionStatus === "ok" || activeSession?.draft_created || activeSession?.status === "draft_ready")
+      ? presentation.gmailResult.createdTitle
+      : completionStatus === "local_only"
+        ? presentation.gmailResult.localOnlyTitle
+        : (completionStatus === "draft_unavailable" || activeSession?.draft_failure_reason || activeSession?.status === "draft_failed")
+          ? presentation.gmailResult.warningTitle
+          : presentation.gmailResult.localOnlyTitle);
   const pdfPath = String(payload.pdf_path || payload.pdfPath || activeSession?.pdf_export?.pdf_path || activeSession?.pdf_export?.pdfPath || "").trim();
   const docxPath = String(payload.docx_path || payload.docxPath || "").trim();
   const chip = interpretationSessionChip(activeSession, workspaceMode);
+  const title = (completionStatus === "ok" || activeSession?.draft_created || activeSession?.status === "draft_ready")
+    ? presentation.gmailResult.createdTitle
+    : completionStatus === "local_only"
+      ? presentation.gmailResult.localOnlyTitle
+      : (completionStatus === "draft_unavailable" || activeSession?.draft_failure_reason || activeSession?.status === "draft_failed")
+        ? presentation.gmailResult.warningTitle
+        : presentation.gmailResult.localOnlyTitle;
   container.classList.remove("empty-state");
   container.innerHTML = `
     <div class="result-header">
       <div>
-        <strong>${escapeHtml(draftMessage)}</strong>
-        <p>${escapeHtml(interpretationNoticeFilename(activeSession) || "Notice PDF")}</p>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(draftMessage)}</p>
       </div>
       <span class="status-chip ${chip.tone}">${escapeHtml(chip.label)}</span>
     </div>
@@ -1003,7 +1109,9 @@ function syncInterpretationDistanceFromReference() {
   }
   const serviceCity = guard.effectiveServiceCity || "";
   if (!guard.includeTransport) {
-    hint.textContent = "Transport sentence disabled for this honorarios export.";
+    hint.textContent = deriveInterpretationDisclosurePresentation({
+      includeTransport: false,
+    }).transportDisabledHint;
     return;
   }
   if (guard.parsedTravelDistanceState === "positive") {
@@ -1082,12 +1190,13 @@ function resetInterpretationExportResult() {
   const panel = qs("interpretation-review-export-panel");
   const result = qs("export-result");
   interpretationUiState.completionPayload = null;
+  const presentation = currentInterpretationPresentation();
   if (panel) {
     panel.classList.add("hidden");
   }
   if (result) {
     result.classList.add("empty-state");
-    result.textContent = "No export has been run yet.";
+    result.textContent = presentation.export.emptyState;
   }
   notifyInterpretationUiStateChanged();
 }
@@ -1114,6 +1223,7 @@ function closeInterpretationReviewDrawer() {
 
 function syncInterpretationReviewSurface() {
   const snapshot = interpretationSnapshot();
+  const presentation = currentInterpretationPresentation(snapshot);
   const button = qs("interpretation-open-review");
   const gmailButton = qs("interpretation-finalize-gmail");
   const gmailResult = qs("interpretation-gmail-result");
@@ -1121,8 +1231,32 @@ function syncInterpretationReviewSurface() {
   const exportButton = qs("export-honorarios");
   const clearButton = qs("interpretation-clear-review");
   const closeFooterButton = qs("interpretation-close-review-footer");
+  const drawerTitle = qs("interpretation-review-drawer-title");
   if (button) {
-    button.textContent = interpretationReviewButtonLabel(snapshot);
+    button.textContent = presentation.actions.openReview;
+  }
+  if (drawerTitle) {
+    drawerTitle.textContent = presentation.drawer.title;
+  }
+  if (clearButton) {
+    clearButton.textContent = presentation.actions.startBlank;
+  }
+  const clearTopButton = qs("clear-form");
+  if (clearTopButton) {
+    clearTopButton.textContent = presentation.actions.startBlank;
+  }
+  const reloadHistoryButton = qs("reload-history");
+  if (reloadHistoryButton) {
+    reloadHistoryButton.textContent = presentation.actions.refreshHistory;
+  }
+  if (saveButton) {
+    saveButton.textContent = presentation.actions.saveRow;
+  }
+  if (exportButton) {
+    exportButton.textContent = presentation.actions.export;
+  }
+  if (gmailButton) {
+    gmailButton.textContent = presentation.actions.finalizeGmail;
   }
   renderInterpretationSessionShell(snapshot);
   renderInterpretationSeedCard("interpretation-review-home-result");
@@ -1153,19 +1287,11 @@ function syncInterpretationReviewSurface() {
   }
   if (gmailResult && !hasGmailInterpretationSession) {
     gmailResult.classList.add("empty-state");
-    gmailResult.textContent = "Gmail draft and final attachment details appear here after finalization.";
+    gmailResult.textContent = presentation.drawer.gmailResultEmpty;
   }
   const statusNode = qs("interpretation-review-status");
   if (statusNode) {
-    if (interpretationWorkspaceMode(snapshot, interpretationActiveSession()) === "gmail_completed") {
-      statusNode.textContent = "The Gmail interpretation draft and export are ready. Reopen Review details only if you need to inspect or adjust the completed form.";
-    } else if (drawerLayout.actions.showFinalizeGmail) {
-      statusNode.textContent = "Review the staged notice details here, then finish the Gmail reply from this same bounded surface.";
-    } else {
-      statusNode.textContent = hasInterpretationReviewData(snapshot)
-        ? "Review the recovered case data here, then save the row or generate the honorários export when you are ready."
-        : "Autofill a notification or open a blank review surface to prepare the interpretation row and honorários export.";
-    }
+    statusNode.textContent = presentation.drawer.status;
   }
   syncInterpretationCityControls();
   syncInterpretationDisclosureState();
@@ -1510,18 +1636,132 @@ function setNewJobTask(task) {
   renderInterpretationSessionShell();
 }
 
+function isBeginnerPrimarySurface() {
+  return appState.uiVariant === "qt"
+    && ["dashboard", "new-job", "recent-jobs", "profile", "settings"].includes(appState.activeView)
+    && !operatorChromeActive();
+}
+
+function routeAwareTopbarStatus(runtime = {}) {
+  const workspaceId = String(runtime.workspace_id || appState.workspaceId || "workspace-1").trim() || "workspace-1";
+  if (appState.uiVariant === "qt" && appState.activeView === "dashboard" && !operatorChromeActive()) {
+    return {
+      eyebrow: "Overview",
+      title: "LegalPDF Translate",
+      status: "Check what is ready and choose what you want to do next.",
+      tone: runtime.live_data ? "info" : "ok",
+    };
+  }
+  if (appState.uiVariant === "qt" && appState.activeView === "new-job" && !operatorChromeActive()) {
+    return {
+      eyebrow: "New Job",
+      title: "LegalPDF Translate",
+      status: "Choose a document, confirm the language, then start translation.",
+      tone: runtime.live_data ? "info" : "ok",
+    };
+  }
+  if (appState.uiVariant === "qt" && appState.activeView === "recent-jobs" && !operatorChromeActive()) {
+    return {
+      eyebrow: "Recent Work",
+      title: "LegalPDF Translate",
+      status: "Open saved cases or review recent translation runs.",
+      tone: runtime.live_data ? "info" : "ok",
+    };
+  }
+  if (appState.uiVariant === "qt" && appState.activeView === "profile" && !operatorChromeActive()) {
+    return {
+      eyebrow: "Profiles",
+      title: "LegalPDF Translate",
+      status: "Edit the details used in documents, travel distances, and Gmail replies.",
+      tone: runtime.live_data ? "info" : "ok",
+    };
+  }
+  if (appState.uiVariant === "qt" && appState.activeView === "settings" && !operatorChromeActive()) {
+    return {
+      eyebrow: "App Settings",
+      title: "LegalPDF Translate",
+      status: "Set defaults and check the tools used for translation, Gmail, and Word/PDF output.",
+      tone: runtime.live_data ? "info" : "ok",
+    };
+  }
+  if (appState.uiVariant === "qt" && appState.activeView === "gmail-intake" && !operatorChromeActive()) {
+    return {
+      eyebrow: "Gmail",
+      title: "Review Gmail Attachments",
+      status: "Choose the attachment you want to process, preview it if needed, then continue.",
+      tone: runtime.live_data ? "info" : "ok",
+    };
+  }
+  if (appState.uiVariant === "qt" && appState.activeView === "power-tools") {
+    return {
+      eyebrow: "Advanced Tools",
+      title: "LegalPDF Translate | Advanced Tools",
+      status: "Use glossary, quality-check, and troubleshooting tools when you need more control.",
+      tone: runtime.live_data ? "info" : "ok",
+    };
+  }
+  if (appState.uiVariant === "qt" && appState.activeView === "extension-lab") {
+    return {
+      eyebrow: "Browser Helper",
+      title: "LegalPDF Translate | Browser Helper Checks",
+      status: "Check the browser helper used for Gmail intake. Technical details stay below.",
+      tone: runtime.live_data ? "info" : "ok",
+    };
+  }
+  const currentNav = document.querySelector(`.nav-button[data-view="${appState.activeView}"] span`);
+  const navLabel = currentNav?.textContent?.trim() || "";
+  return {
+    eyebrow: navLabel === "Dashboard" ? "Overview" : navLabel || "Workspace",
+    title: navLabel && navLabel !== "Dashboard"
+      ? `LegalPDF Translate | ${navLabel}`
+      : "LegalPDF Translate",
+    status: runtime.live_data
+      ? `Live workspace ${workspaceId}: real settings, Gmail bridge, and job-log writes are active here.`
+      : `Shadow workspace ${workspaceId}: isolated browser-app data stays separate from live mode.`,
+    tone: runtime.live_data ? "info" : "ok",
+  };
+}
+
 function syncShellChrome() {
   document.body.dataset.activeView = appState.activeView;
-  const currentNav = document.querySelector(`.nav-button[data-view="${appState.activeView}"] span`);
-  if (qs("topbar-title") && currentNav?.textContent?.trim()) {
-    qs("topbar-title").textContent = currentNav.textContent.trim() === "Dashboard"
-      ? "LegalPDF Translate"
-      : `LegalPDF Translate | ${currentNav.textContent.trim()}`;
+  document.body.dataset.beginnerSurface = isBeginnerPrimarySurface() ? "true" : "false";
+  const runtime = appState.bootstrap?.normalized_payload?.runtime || {};
+  const chrome = routeAwareTopbarStatus(runtime);
+  if (qs("topbar-eyebrow")) {
+    qs("topbar-eyebrow").textContent = chrome.eyebrow;
+  }
+  if (qs("topbar-title")) {
+    qs("topbar-title").textContent = chrome.title;
+  }
+  if (runtime.workspace_id && qs("workspace-id-label")) {
+    qs("workspace-id-label").textContent = runtime.workspace_id;
+  }
+  if (runtime.runtime_mode_label && qs("runtime-mode-label")) {
+    qs("runtime-mode-label").textContent = runtime.runtime_mode_label;
+  }
+  if (runtime.workspace_id || appState.bootstrap?.normalized_payload?.runtime) {
+    setTopbarStatus(chrome.status, chrome.tone);
   }
 }
 
+function beginnerSurfaceTargetLabel() {
+  if (appState.activeView === "dashboard") {
+    return "overview screen";
+  }
+  if (appState.activeView === "recent-jobs") {
+    return "recent work screen";
+  }
+  if (appState.activeView === "profile") {
+    return "profile setup screen";
+  }
+  if (appState.activeView === "settings") {
+    return "settings screen";
+  }
+  return "translation screen";
+}
+
 function operatorChromeActive() {
-  return appState.operatorMode || MORE_NAV_ORDER.includes(appState.activeView);
+  return appState.operatorMode || OPERATOR_ROUTE_ORDER.includes(appState.activeView);
 }
 
 function syncOperatorChrome() {
@@ -1621,49 +1861,161 @@ function profileFieldIds() {
 }
 
 function formatDistanceJson(value) {
-  const distances = value && typeof value === "object" ? value : {};
-  return JSON.stringify(distances, null, 2);
+  return JSON.stringify(serializeDistanceRows(value), null, 2);
+}
+
+function setProfileDistanceStatus(tone, message) {
+  const node = qs("profile-distance-status");
+  if (!node) {
+    return;
+  }
+  node.textContent = message;
+  if (tone) {
+    node.dataset.tone = tone;
+  } else {
+    delete node.dataset.tone;
+  }
+}
+
+function syncProfileDistanceJsonField({ markClean = true } = {}) {
+  const jsonField = qs("profile-editor-travel-distances-json");
+  if (!jsonField) {
+    return;
+  }
+  jsonField.value = formatDistanceJson(profileUiState.distanceRows);
+  if (markClean) {
+    profileUiState.distanceJsonDirty = false;
+  }
+}
+
+export function renderProfileDistanceRowsInto(container, rows, { onRemove } = {}) {
+  if (!container) {
+    return;
+  }
+  clearNode(container);
+  if (!rows.length) {
+    container.appendChild(createEmptyState(
+      "No city distances saved yet. Add the cities you use most often.",
+      "result-card empty-state",
+    ));
+    return;
+  }
+  for (const row of rows) {
+    const article = document.createElement("article");
+    article.className = "distance-row";
+    const details = document.createElement("div");
+    details.appendChild(createTextElement("strong", row.city));
+    details.appendChild(createTextElement("p", row.distanceLabel, "distance-row-meta"));
+    article.appendChild(details);
+    const actions = document.createElement("div");
+    actions.className = "distance-row-actions";
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "ghost-button";
+    removeButton.textContent = "Remove";
+    removeButton.addEventListener("click", () => onRemove?.(row));
+    actions.appendChild(removeButton);
+    article.appendChild(actions);
+    container.appendChild(article);
+  }
+}
+
+function renderProfileDistanceRows() {
+  const container = qs("profile-distance-list");
+  if (!container) {
+    return;
+  }
+  renderProfileDistanceRowsInto(container, profileUiState.distanceRows, {
+    onRemove: (row) => {
+      profileUiState.distanceRows = removeDistanceRow(profileUiState.distanceRows, row.city);
+      syncProfileDistanceJsonField();
+      renderProfileDistanceRows();
+      setProfileDistanceStatus("ok", `${row.city} removed from interpretation distances.`);
+    },
+  });
+}
+
+function setProfileDistanceRows(rows, { markClean = true, statusTone = "", statusMessage = "" } = {}) {
+  profileUiState.distanceRows = normalizeDistanceRows(rows);
+  syncProfileDistanceJsonField({ markClean });
+  renderProfileDistanceRows();
+  setProfileDistanceStatus(
+    statusTone,
+    statusMessage || (
+      profileUiState.distanceRows.length
+        ? "Saved city distances are ready to use in interpretation requests."
+        : "No city distances saved yet. Add the cities you use most often."
+    ),
+  );
+}
+
+function resyncProfileDistancesFromAdvancedJson({ setStatus = true } = {}) {
+  const rows = parseDistanceRowsFromJson(qs("profile-editor-travel-distances-json")?.value || "");
+  setProfileDistanceRows(rows, {
+    markClean: true,
+    statusTone: setStatus ? "ok" : "",
+    statusMessage: setStatus ? "Distance list refreshed from the advanced data." : "",
+  });
+  return rows;
+}
+
+function applyProfileDistanceUpsert() {
+  const cityField = qs("profile-distance-city");
+  const kmField = qs("profile-distance-km");
+  const nextRows = upsertDistanceRow(
+    profileUiState.distanceRows,
+    cityField?.value || "",
+    kmField?.value || "",
+  );
+  const resolvedCity = String(cityField?.value || "").trim().replace(/\s+/g, " ");
+  profileUiState.distanceRows = nextRows;
+  syncProfileDistanceJsonField();
+  renderProfileDistanceRows();
+  setProfileDistanceStatus("ok", `${resolvedCity} is ready for interpretation travel details.`);
+  if (cityField) {
+    cityField.value = "";
+  }
+  if (kmField) {
+    kmField.value = "";
+  }
 }
 
 function applyProfileEditor(profile, { openDrawer = false } = {}) {
   const resolved = { ...blankProfileDraft(), ...(profile || {}) };
+  const presentation = deriveProfilePresentation(resolved);
   const fieldIds = profileFieldIds();
   for (const [key, id] of Object.entries(fieldIds)) {
     setFieldValue(id, resolved[key] ?? "");
   }
-  setFieldValue("profile-editor-travel-distances-json", formatDistanceJson(resolved.travel_distances_by_city));
   setCheckbox("profile-editor-make-primary", Boolean(resolved.is_primary));
   profileState.currentProfileId = resolved.id || "";
-  qs("profile-editor-status").textContent = resolved.id
-    ? `Editing profile ${resolved.document_name || resolved.id}.`
-    : "Editing a new profile draft.";
+  qs("profile-editor-status").textContent = presentation.editorStatus;
   qs("profile-set-primary").disabled = !resolved.id;
   qs("profile-delete").disabled = !resolved.id;
+  qs("profile-set-primary").textContent = presentation.useAsMainLabel;
+  qs("profile-delete").textContent = "Delete profile";
+  setFieldValue("profile-distance-city", "");
+  setFieldValue("profile-distance-km", "");
+  if (qs("profile-distance-advanced-details")) {
+    qs("profile-distance-advanced-details").open = false;
+  }
+  setProfileDistanceRows(resolved.travel_distances_by_city || {}, { markClean: true });
   if (openDrawer) {
     openProfileEditorDrawer();
   }
 }
 
 function collectProfileFormValues() {
+  if (profileUiState.distanceJsonDirty) {
+    resyncProfileDistancesFromAdvancedJson({ setStatus: false });
+  }
   const fieldIds = profileFieldIds();
   const payload = {};
   for (const [key, id] of Object.entries(fieldIds)) {
     payload[key] = fieldValue(id);
   }
-  let travelDistances = {};
-  const rawJson = fieldValue("profile-editor-travel-distances-json");
-  if (rawJson) {
-    try {
-      const parsed = JSON.parse(rawJson);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("Travel distances JSON must be an object mapping city names to one-way km values.");
-      }
-      travelDistances = parsed;
-    } catch (error) {
-      throw new Error(error.message || "Travel distances JSON is invalid.");
-    }
-  }
-  payload.travel_distances_by_city = travelDistances;
+  payload.travel_distances_by_city = serializeDistanceRows(profileUiState.distanceRows);
+  syncProfileDistanceJsonField();
   return payload;
 }
 
@@ -1758,8 +2110,8 @@ function applyHistoryItem(item) {
   interpretationCityState.autoDistanceCity = "";
   resetInterpretationExportResult();
   syncInterpretationReviewSurface();
-  setPanelStatus("form", "ok", `Loaded row #${item.row.id} from the active job log.`);
-  setDiagnostics("form", { status: "ok", message: `Loaded row #${item.row.id}.` }, { hint: "Loaded from job-log history.", open: false });
+  setPanelStatus("form", "ok", deriveRecentWorkPresentation().loadedSavedCaseStatus);
+  setDiagnostics("form", { status: "ok", message: `Loaded row #${item.row.id}.` }, { hint: `Loaded interpretation record #${item.row.id}.`, open: false });
   setActiveView("new-job");
   renderShellVisibility();
   openInterpretationReviewDrawer();
@@ -1848,33 +2200,49 @@ function renderShellVisibility() {
   syncOperatorChrome();
 }
 
-function renderDashboardCards(cards) {
-  const container = qs("dashboard-cards");
-  container.innerHTML = "";
+export function renderDashboardCardsInto(container, cards = []) {
+  if (!container) {
+    return;
+  }
+  clearNode(container);
   for (const card of cards) {
     const article = document.createElement("article");
     article.className = "launch-card";
     article.classList.add(card.status === "ready" ? "ready" : "planned");
     const chipTone = card.status === "ready" ? "ok" : "warn";
-    const chipText = card.status === "ready" ? "Ready now" : card.status.replaceAll("_", " ");
-    article.innerHTML = `<h3>${card.title}</h3><p>${card.description}</p><span class="status-chip ${chipTone}">${chipText}</span>`;
+    const chipText = card.status === "ready" ? "Ready" : String(card.status || "").replaceAll("_", " ");
+    article.appendChild(createTextElement("h3", card.title));
+    article.appendChild(createTextElement("p", card.description));
+    article.appendChild(createStatusChip(chipText, chipTone));
     container.appendChild(article);
   }
 }
 
-function renderSummaryGrid(containerId, items) {
-  const container = qs(containerId);
-  container.innerHTML = "";
+function renderDashboardCards(cards) {
+  renderDashboardCardsInto(qs("dashboard-cards"), cards);
+}
+
+export function renderSummaryGridInto(container, items = []) {
+  if (!container) {
+    return;
+  }
+  clearNode(container);
   for (const item of items) {
     const card = document.createElement("article");
     card.className = "summary-card";
-    card.innerHTML = `<h3>${item.label}</h3><p class="word-break">${item.value}</p>`;
+    card.appendChild(createTextElement("h3", item.label));
+    card.appendChild(createTextElement("p", item.value, "word-break"));
     container.appendChild(card);
   }
 }
 
+function renderSummaryGrid(containerId, items) {
+  renderSummaryGridInto(qs(containerId), items);
+}
+
 async function handleDeleteJobLogRow(rowId, { jobType = "job-log", source = "history" } = {}) {
-  if (!window.confirm(`Delete ${jobType} row #${rowId} from the active job log?`)) {
+  const presentation = deriveRecentWorkPresentation({ jobType });
+  if (!window.confirm(presentation.deleteConfirmMessage)) {
     return;
   }
   const payload = await fetchJson("/api/joblog/delete", appState, {
@@ -1886,8 +2254,7 @@ async function handleDeleteJobLogRow(rowId, { jobType = "job-log", source = "his
     appState.currentRowId = null;
     qs("row-id").value = "";
   }
-  const message = payload.normalized_payload?.message || `Deleted row #${rowId}.`;
-  setPanelStatus("recent-jobs", "ok", message);
+  setPanelStatus("recent-jobs", "ok", presentation.deleteStatus);
   setDiagnostics("form", payload, { hint: `${source} deleted row #${rowId}.`, open: false });
   window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
 }
@@ -1989,63 +2356,80 @@ function describeCredentialSource(source) {
   return kind || "unknown";
 }
 
-function renderCapabilityCards(containerId, cards) {
-  const container = qs(containerId);
-  container.innerHTML = "";
+export function renderCapabilityCardsInto(container, cards = []) {
+  if (!container) {
+    return;
+  }
+  clearNode(container);
   for (const card of cards) {
     const article = document.createElement("article");
     article.className = "status-card";
-    article.innerHTML = `<h3>${card.title}</h3><p>${card.text.replaceAll("\n", "<br>")}</p><span class="status-chip ${chipToneClass(card.status)}">${card.label}</span>`;
+    article.appendChild(createTextElement("h3", card.title));
+    const paragraph = document.createElement("p");
+    appendMultilineText(paragraph, card.text);
+    article.appendChild(paragraph);
+    article.appendChild(createStatusChip(card.label, chipToneClass(card.status)));
     container.appendChild(article);
   }
 }
 
-function renderRecentJobs(items, history, translationHistory = []) {
-  const container = qs("recent-jobs-list");
-  container.innerHTML = "";
-  if (!items.length) {
-    setPanelStatus("recent-jobs", "", "No recent rows are available for this runtime mode yet.");
-    container.innerHTML = '<div class="empty-state">No job-log rows exist for this runtime mode yet.</div>';
+function renderCapabilityCards(containerId, cards) {
+  renderCapabilityCardsInto(qs(containerId), cards);
+}
+
+export function renderRecentJobsInto(
+  container,
+  items,
+  historyById,
+  translationHistoryById,
+  { onOpenInterpretation, onOpenTranslation, onDelete } = {},
+) {
+  if (!container) {
     return;
   }
-  setPanelStatus("recent-jobs", "", `${items.length} recent row(s) loaded for this runtime mode.`);
-  const historyById = new Map(history.map((item) => [Number(item.row.id), item]));
-  const translationHistoryById = new Map(translationHistory.map((item) => [Number(item.row.id), item]));
+  clearNode(container);
+  if (!items.length) {
+    container.appendChild(createEmptyState(deriveRecentWorkPresentation().recentWorkEmpty));
+    return;
+  }
   for (const item of items) {
     const card = document.createElement("article");
     card.className = "history-item";
-    const metaBits = [item.job_type];
-    if (item.target_lang) {
-      metaBits.push(item.target_lang);
-    }
-    if (item.service_date) {
-      metaBits.push(item.service_date);
-    }
-    card.innerHTML = `<div><strong>${item.case_number}</strong><p>${item.case_entity} | ${item.case_city}</p><div class="history-meta">${metaBits.map((bit) => `<small>${bit}</small>`).join("")}</div></div>`;
+    const details = document.createElement("div");
     const interpretationItem = item.job_type === "Interpretation" ? historyById.get(Number(item.id)) : null;
     const translationItem = item.job_type !== "Interpretation" ? translationHistoryById.get(Number(item.id)) : null;
+    const presentation = deriveRecentWorkPresentation({
+      recentItemCount: items.length,
+      recordAvailable: Boolean(interpretationItem || translationItem),
+      jobType: item.job_type,
+    });
+    const summaryBits = [item.case_entity, item.case_city, item.service_date || item.completed_at].filter(Boolean);
+    const chipBits = [presentation.typeLabel];
+    if (item.target_lang) {
+      chipBits.push(item.target_lang);
+    }
+    if (item.service_date || item.completed_at) {
+      chipBits.push(item.service_date || item.completed_at);
+    }
+    details.appendChild(createTextElement("strong", item.case_number || "Saved case record"));
+    details.appendChild(createTextElement("p", summaryBits.join(" | ") || "Saved case record"));
+    appendHistoryMetaBits(details, chipBits);
+    card.appendChild(details);
     const actions = document.createElement("div");
     actions.className = "history-actions";
     const loadButton = document.createElement("button");
     loadButton.type = "button";
-    loadButton.textContent = interpretationItem || translationItem ? "Load" : "View";
+    loadButton.textContent = presentation.recentOpenLabel;
     loadButton.disabled = !(interpretationItem || translationItem);
     if (interpretationItem) {
-      loadButton.addEventListener("click", () => applyHistoryItem(interpretationItem));
+      loadButton.addEventListener("click", () => onOpenInterpretation?.(interpretationItem));
     } else if (translationItem) {
-      loadButton.addEventListener("click", () => loadTranslationHistoryItem(translationItem));
+      loadButton.addEventListener("click", () => onOpenTranslation?.(translationItem));
     }
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
-    deleteButton.textContent = "Delete";
-    deleteButton.addEventListener("click", async () => {
-      try {
-        await handleDeleteJobLogRow(item.id, { jobType: item.job_type, source: "recent jobs" });
-      } catch (error) {
-        setPanelStatus("recent-jobs", "bad", error.message || "Recent-jobs delete failed.");
-        setDiagnostics("form", error, { hint: error.message || "Recent-jobs delete failed.", open: true });
-      }
-    });
+    deleteButton.textContent = presentation.recentDeleteLabel;
+    deleteButton.addEventListener("click", () => onDelete?.(item));
     actions.appendChild(loadButton);
     actions.appendChild(deleteButton);
     card.appendChild(actions);
@@ -2053,36 +2437,63 @@ function renderRecentJobs(items, history, translationHistory = []) {
   }
 }
 
-function renderHistory(items, modeLabel) {
-  const container = qs("history-list");
-  qs("history-heading").textContent = `${modeLabel} Interpretation History`;
-  container.innerHTML = "";
+function renderRecentJobs(items, history, translationHistory = []) {
+  const container = qs("recent-jobs-list");
+  if (!container) {
+    return;
+  }
   if (!items.length) {
-    container.innerHTML = '<div class="empty-state">No interpretation rows saved yet for this runtime mode.</div>';
+    const presentation = deriveRecentWorkPresentation();
+    setPanelStatus("recent-jobs", "", presentation.recentWorkEmpty);
+  } else {
+    setPanelStatus("recent-jobs", "", deriveRecentWorkPresentation({ recentItemCount: items.length }).recentWorkCount);
+  }
+  const historyById = new Map(history.map((item) => [Number(item.row.id), item]));
+  const translationHistoryById = new Map(translationHistory.map((item) => [Number(item.row.id), item]));
+  renderRecentJobsInto(container, items, historyById, translationHistoryById, {
+    onOpenInterpretation: (item) => applyHistoryItem(item),
+    onOpenTranslation: (item) => loadTranslationHistoryItem(item),
+    onDelete: async (item) => {
+      try {
+        await handleDeleteJobLogRow(item.id, { jobType: item.job_type, source: "recent jobs" });
+      } catch (error) {
+        setPanelStatus("recent-jobs", "bad", error.message || "Saved work delete failed.");
+        setDiagnostics("form", error, { hint: error.message || "Saved work delete failed.", open: true });
+      }
+    },
+  });
+}
+
+export function renderInterpretationHistoryInto(container, items, { onOpen, onDelete } = {}) {
+  if (!container) {
+    return;
+  }
+  clearNode(container);
+  const presentation = deriveRecentWorkPresentation({ jobType: "Interpretation" });
+  if (!items.length) {
+    container.appendChild(createEmptyState(presentation.interpretationHistoryEmpty));
     return;
   }
   for (const item of items) {
     const card = document.createElement("article");
     card.className = "history-item";
     const left = document.createElement("div");
-    left.innerHTML = `<strong>${item.row.case_number || "Sem processo"}</strong><p>${item.row.case_entity || "No case entity"} | ${item.row.case_city || "No case city"} | ${item.row.service_date || "No service date"}</p>`;
+    const row = item.row || {};
+    left.appendChild(createTextElement("strong", row.case_number || "Sem processo"));
+    left.appendChild(createTextElement(
+      "p",
+      [row.case_entity || "No case entity", row.case_city || "No case city", row.service_date || "No service date"].join(" | "),
+    ));
     const actions = document.createElement("div");
     actions.className = "history-actions";
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "Load";
-    button.addEventListener("click", () => applyHistoryItem(item));
+    button.textContent = presentation.interpretationHistoryOpenLabel;
+    button.addEventListener("click", () => onOpen?.(item));
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
-    deleteButton.textContent = "Delete";
-    deleteButton.addEventListener("click", async () => {
-      try {
-        await handleDeleteJobLogRow(item.row.id, { jobType: "Interpretation", source: "interpretation history" });
-      } catch (error) {
-        setPanelStatus("recent-jobs", "bad", error.message || "Interpretation row delete failed.");
-        setDiagnostics("form", error, { hint: error.message || "Interpretation row delete failed.", open: true });
-      }
-    });
+    deleteButton.textContent = presentation.interpretationHistoryDeleteLabel;
+    deleteButton.addEventListener("click", () => onDelete?.(item));
     actions.appendChild(button);
     actions.appendChild(deleteButton);
     card.appendChild(left);
@@ -2091,12 +2502,29 @@ function renderHistory(items, modeLabel) {
   }
 }
 
+function renderHistory(items, modeLabel) {
+  const container = qs("history-list");
+  qs("history-heading").textContent = "Saved Interpretation Requests";
+  renderInterpretationHistoryInto(container, items, {
+    onOpen: (item) => applyHistoryItem(item),
+    onDelete: async (item) => {
+      try {
+        await handleDeleteJobLogRow(item.row.id, { jobType: "Interpretation", source: "interpretation history" });
+      } catch (error) {
+        setPanelStatus("recent-jobs", "bad", error.message || "Saved work delete failed.");
+        setDiagnostics("form", error, { hint: error.message || "Saved work delete failed.", open: true });
+      }
+    },
+  });
+}
+
 function renderStatus(payload) {
   const runtime = payload.normalized_payload.runtime;
-  const cards = buildCapabilityCards(payload);
-  renderCapabilityCards("status-grid", cards);
-  renderCapabilityCards("settings-capability-grid", cards);
-  setPanelStatus("runtime", runtime.live_data ? "warn" : "ok", `Running on ${runtime.host}:${runtime.port} in ${runtime.runtime_mode_label}. Workspace ${runtime.workspace_id} is active.`);
+  const dashboardPresentation = deriveDashboardPresentation(payload);
+  const settingsCards = buildSettingsCapabilityCards(payload);
+  renderCapabilityCards("status-grid", dashboardPresentation.statusCards);
+  renderCapabilityCards("settings-capability-grid", settingsCards);
+  setPanelStatus("runtime", runtime.live_data ? "info" : "ok", dashboardPresentation.statusSummary);
   setDiagnostics("runtime", payload.diagnostics.runtime, {
     hint: "Build identity, listener ownership, and runtime-mode provenance.",
     open: false,
@@ -2106,25 +2534,40 @@ function renderStatus(payload) {
 export function renderInterpretationExportResult(payload) {
   const container = qs("export-result");
   qs("interpretation-review-export-panel")?.classList.remove("hidden");
+  const presentation = currentInterpretationPresentation();
   const result = payload.normalized_payload || {};
   const pdf = payload.diagnostics?.pdf_export || {};
   const isOk = payload.status === "ok";
   const isLocalOnly = payload.status === "local_only";
   const tone = isOk ? "ok" : isLocalOnly ? "warn" : "bad";
-  const label = isOk ? "PDF ready" : isLocalOnly ? "Local-only" : "Export failed";
-  const message = isOk ? "DOCX and sibling PDF are ready." : isLocalOnly ? pdf.failure_message || "DOCX is ready, but PDF export is unavailable." : "The export did not complete successfully.";
+  const label = isOk
+    ? presentation.export.readyLabel
+    : isLocalOnly
+      ? presentation.export.localOnlyLabel
+      : presentation.export.failedLabel;
+  const message = isOk
+    ? presentation.export.readyTitle
+    : isLocalOnly
+      ? pdf.failure_message || presentation.export.localOnlyTitle
+      : presentation.export.failedTitle;
   container.classList.remove("empty-state");
-  container.innerHTML = `
-    <div class="result-header">
-      <div><strong>${message}</strong></div>
-      <span class="status-chip ${tone === "ok" ? "ok" : tone === "bad" ? "bad" : "warn"}">${label}</span>
-    </div>
-    <div class="result-grid">
-      <div><h3>DOCX</h3><p class="word-break">${result.docx_path || "Unavailable"}</p></div>
-      <div><h3>PDF</h3><p class="word-break">${result.pdf_path || "Unavailable"}</p></div>
-      <div><h3>PDF Export</h3><p>${pdf.ok ? "Ready" : pdf.failure_message || "Unavailable"}</p></div>
-    </div>
-  `;
+  clearNode(container);
+  container.appendChild(createResultHeader({
+    title: message,
+    message: "",
+    label,
+    tone: tone === "ok" ? "ok" : tone === "bad" ? "bad" : "warn",
+  }));
+  const grid = document.createElement("div");
+  grid.className = "result-grid";
+  appendResultGridItem(grid, "DOCX", result.docx_path || "Unavailable", { className: "word-break" });
+  appendResultGridItem(grid, "PDF", result.pdf_path || "Unavailable", { className: "word-break" });
+  appendResultGridItem(
+    grid,
+    "PDF Export",
+    pdf.ok ? presentation.export.pdfReadyLabel : pdf.failure_message || "Unavailable",
+  );
+  container.appendChild(grid);
   openInterpretationReviewDrawer();
   syncInterpretationReviewSurface();
   notifyInterpretationUiStateChanged();
@@ -2135,25 +2578,35 @@ export function renderInterpretationGmailResult(payload) {
   if (!container) {
     return;
   }
+  const presentation = currentInterpretationPresentation();
   const result = payload.normalized_payload || {};
   const status = payload.status || "ok";
-  const draftMessage = result.gmail_draft_result?.message || result.draft_prereqs?.message || "Gmail finalization details are available.";
-  const label = status === "ok" ? "Draft ready" : status === "local_only" ? "Local only" : status === "draft_unavailable" ? "Draft unavailable" : "Draft warning";
+  const draftMessage = result.gmail_draft_result?.message || result.draft_prereqs?.message || result.pdf_path || result.docx_path || presentation.drawer.gmailResultEmpty;
+  const title = status === "ok"
+    ? presentation.gmailResult.createdTitle
+    : status === "local_only"
+      ? presentation.gmailResult.localOnlyTitle
+      : presentation.gmailResult.warningTitle;
+  const label = status === "ok"
+    ? presentation.gmailResult.createdLabel
+    : status === "local_only"
+      ? presentation.gmailResult.localOnlyLabel
+      : presentation.gmailResult.warningLabel;
   const tone = status === "ok" ? "ok" : status === "local_only" ? "warn" : "bad";
   interpretationUiState.completionPayload = payload;
   container.classList.remove("empty-state");
   container.innerHTML = `
     <div class="result-header">
       <div>
-        <strong>${escapeHtml(draftMessage)}</strong>
-        <p>${escapeHtml(result.pdf_path || result.docx_path || "Final interpretation artifacts are available.")}</p>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(draftMessage)}</p>
       </div>
       <span class="status-chip ${tone === "ok" ? "ok" : tone === "warn" ? "warn" : "bad"}">${escapeHtml(label)}</span>
     </div>
     <div class="result-grid">
       <div><h3>DOCX</h3><p class="word-break">${escapeHtml(result.docx_path || "Unavailable")}</p></div>
       <div><h3>PDF</h3><p class="word-break">${escapeHtml(result.pdf_path || "Unavailable")}</p></div>
-      <div><h3>Draft</h3><p>${escapeHtml(draftMessage)}</p></div>
+      <div><h3>Reply status</h3><p>${escapeHtml(label)}</p></div>
     </div>
   `;
   openInterpretationReviewDrawer();
@@ -2162,14 +2615,13 @@ export function renderInterpretationGmailResult(payload) {
 }
 
 function renderDashboard(payload) {
-  const counts = payload.normalized_payload.recent_job_counts || { total: 0, translation: 0, interpretation: 0 };
-  const runtime = payload.normalized_payload.runtime;
-  qs("dashboard-summary").textContent = `${counts.total} total job-log rows in ${runtime.runtime_mode_label}. ${counts.interpretation} interpretation row(s) and ${counts.translation} translation row(s) are available in this mode.`;
+  const presentation = deriveDashboardPresentation(payload);
+  qs("dashboard-summary").textContent = presentation.savedWorkSummary;
   renderDashboardCards(payload.normalized_payload.dashboard_cards || []);
-  renderParityAudit(payload);
+  renderParityAudit(payload, presentation);
 }
 
-function renderParityAudit(payload) {
+function renderParityAudit(payload, presentation = deriveDashboardPresentation(payload)) {
   const audit = payload.normalized_payload.parity_audit || {};
   const checklist = audit.checklist || [];
   const cards = checklist.map((item) => ({
@@ -2178,102 +2630,108 @@ function renderParityAudit(payload) {
     status: item.status === "ready" ? "ok" : item.status === "blocked" ? "bad" : "warn",
     label: item.status === "ready" ? "Ready" : item.status.replaceAll("_", " "),
   }));
-  qs("parity-audit-status").textContent = audit.summary || "Browser-app readiness summary is unavailable.";
+  qs("parity-audit-status").textContent = presentation.parityStatus;
   renderCapabilityCards("parity-audit-grid", cards);
   const recommendation = audit.promotion_recommendation || {};
-  const remaining = (audit.remaining_limitations || []).map((item) => `<li>${item}</li>`).join("");
-  const workflows = (recommendation.recommended_workflows || []).map((item) => `<li>${item}</li>`).join("");
   const result = qs("parity-audit-result");
   const recommendationReady = recommendation.status === "ready_for_daily_use";
   result.classList.remove("empty-state");
-  result.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${recommendation.headline || "Promotion recommendation unavailable."}</strong>
-        <p>${audit.ready_count || 0}/${audit.total_count || 0} audit areas are marked ready.</p>
-      </div>
-      <span class="status-chip ${recommendationReady ? "ok" : "warn"}">${recommendationReady ? "Ready now" : recommendation.status || "unknown"}</span>
-    </div>
-    <div class="result-grid">
-      <div>
-        <h3>Recommended Now</h3>
-        <ul>${workflows || "<li>No recommendation items available.</li>"}</ul>
-      </div>
-      <div>
-        <h3>Intentional Limits</h3>
-        <ul>${remaining || "<li>No limitations recorded.</li>"}</ul>
-      </div>
-    </div>
-  `;
+  clearNode(result);
+  result.appendChild(createResultHeader({
+    title: recommendation.headline || "Promotion recommendation unavailable.",
+    message: presentation.readyCountLine,
+    label: presentation.resultChipLabel,
+    tone: recommendationReady ? "ok" : "warn",
+  }));
+  const grid = document.createElement("div");
+  grid.className = "result-grid";
+  const nextBox = document.createElement("div");
+  nextBox.appendChild(createTextElement("h3", presentation.resultNextTitle));
+  const workflowList = document.createElement("ul");
+  const workflows = recommendation.recommended_workflows || [];
+  if (workflows.length) {
+    workflows.forEach((item) => workflowList.appendChild(createTextElement("li", item)));
+  } else {
+    workflowList.appendChild(createTextElement("li", "No recommendation items available."));
+  }
+  nextBox.appendChild(workflowList);
+  const limitsBox = document.createElement("div");
+  limitsBox.appendChild(createTextElement("h3", presentation.resultLimitsTitle));
+  const remainingList = document.createElement("ul");
+  const remaining = audit.remaining_limitations || [];
+  if (remaining.length) {
+    remaining.forEach((item) => remainingList.appendChild(createTextElement("li", item)));
+  } else {
+    remainingList.appendChild(createTextElement("li", "No limitations recorded."));
+  }
+  limitsBox.appendChild(remainingList);
+  grid.appendChild(nextBox);
+  grid.appendChild(limitsBox);
+  result.appendChild(grid);
 }
 
 function renderSettings(payload) {
   const summary = payload.normalized_payload.settings_summary || {};
   const providerState = payload.normalized_payload.settings_admin?.provider_state || {};
-  const translation = providerState.translation || {};
-  const ocr = providerState.ocr || {};
-  const gmailDraft = providerState.gmail_draft || {};
-  const wordPdf = providerState.word_pdf_export || {};
-  const translationReady = translation.credentials_configured === true;
-  const translationSource = describeCredentialSource(
-    translation.effective_credential_source || translation.credential_source,
-  );
-  const items = [
-    { label: "Theme", value: summary.ui_theme || "Unknown" },
-    { label: "Default Language", value: summary.default_lang || "Unknown" },
-    { label: "Default Output Directory", value: summary.default_outdir || "Not configured" },
-    { label: "Translation Auth", value: translationReady ? `Configured via ${translationSource}` : "Not configured" },
-    { label: "OCR Defaults", value: `${summary.ocr_mode_default || "?"} / ${summary.ocr_engine_default || "?"} / ${summary.ocr_api_provider_default || "?"}` },
-    { label: "Gmail Bridge", value: summary.gmail_intake_bridge_enabled ? `Enabled on ${summary.gmail_intake_port}` : "Disabled" },
-    { label: "Settings File", value: summary.settings_path || "Unavailable" },
-    { label: "Job Log DB", value: summary.job_log_db_path || "Unavailable" },
-    { label: "Outputs Root", value: summary.outputs_dir || "Unavailable" },
-  ];
+  const items = buildSettingsSummaryItems(summary, providerState);
+  const statusPresentation = buildSettingsStatusPresentation(providerState);
   renderSummaryGrid("settings-summary-grid", items);
-  const settingsTone = translationReady && wordPdf.ok && (ocr.api_configured || ocr.local_available) && gmailDraft.ready ? "ok" : "warn";
-  setPanelStatus(
-    "settings",
-    settingsTone,
-    `Showing ${summary.runtime_label || "current"} settings with translation auth ${translationReady ? `configured via ${translationSource}` : "not configured"}, OCR ${ocr.provider || "provider"} ${ocr.api_configured || ocr.local_available ? "ready" : "not ready"}, Gmail drafts ${gmailDraft.ready ? "ready" : "not ready"}, and Word PDF export ${wordPdf.ok ? "ready" : "degraded"}.`,
-  );
+  setPanelStatus("settings", statusPresentation.tone, statusPresentation.message);
 }
 
 function renderProfile(payload) {
   const summary = payload.normalized_payload.profile_summary || {};
   const primary = summary.primary_profile;
+  const runtime = payload.normalized_payload.runtime || {};
   const importButton = qs("import-live-profiles");
   const newButton = qs("new-profile");
-  importButton.disabled = appState.runtimeMode === "live";
-  importButton.textContent = appState.runtimeMode === "live" ? "Live Profiles Active" : "Import Live Profiles";
+  const primaryCard = qs("profile-primary-card");
+  importButton.disabled = runtime.live_data === true;
+  importButton.textContent = runtime.live_data === true ? "Using live app profiles" : "Copy profiles from live app";
   if (newButton) {
     newButton.disabled = false;
   }
   if (!primary) {
-    qs("profile-primary-card").innerHTML = "No primary profile is configured for this runtime mode.";
+    primaryCard.classList.add("empty-state");
+    primaryCard.innerHTML = "No main profile is set yet. Add a profile or choose one from the list.";
   } else {
-    qs("profile-primary-card").innerHTML = `
+    const presentation = deriveProfilePresentation(primary);
+    primaryCard.classList.remove("empty-state");
+    primaryCard.innerHTML = `
       <div class="result-header">
         <div>
-          <strong>${primary.document_name || primary.id}</strong>
-          <p>${primary.email || "No email saved"} | ${primary.travel_origin_label || "No travel origin label"}</p>
+          <strong>${escapeHtml(presentation.displayName)}</strong>
+          <p>${escapeHtml(presentation.contactSummary)}</p>
         </div>
-        <span class="status-chip ok">Primary</span>
+        <span class="status-chip ok">${escapeHtml(presentation.mainChipLabel)}</span>
       </div>
-      <div class="history-meta"><small>Travel city distances: ${primary.distance_city_count}</small></div>
+      <div class="history-meta">
+        <small>${escapeHtml(presentation.travelOriginSummary)}</small>
+        <small>${escapeHtml(presentation.distanceSummary)}</small>
+      </div>
     `;
   }
   const container = qs("profile-list");
   container.innerHTML = "";
+  if (!(summary.profiles || []).length) {
+    container.innerHTML = '<div class="result-card empty-state">No profiles yet. Add a profile to get started.</div>';
+  }
   for (const profile of summary.profiles || []) {
+    const presentation = deriveProfilePresentation(profile);
+    const distanceCount = normalizeDistanceRows(profile.travel_distances_by_city || {}).length;
     const article = document.createElement("article");
     article.className = "profile-card";
     article.innerHTML = `
       <div class="result-header">
         <div>
-          <h3>${profile.document_name || profile.id}</h3>
-          <p>${profile.email || "No email"} | ${profile.travel_origin_label || "No travel origin label"}</p>
+          <h3>${escapeHtml(presentation.displayName)}</h3>
+          <p>${escapeHtml(presentation.contactSummary)}</p>
         </div>
-        <span class="status-chip ${profile.is_primary ? "ok" : "info"}">${profile.is_primary ? "Primary" : `${profile.distance_city_count} city distances`}</span>
+        <span class="status-chip ${profile.is_primary ? "ok" : "info"}">${escapeHtml(profile.is_primary ? presentation.mainChipLabel : `${distanceCount} saved city distance${distanceCount === 1 ? "" : "s"}`)}</span>
+      </div>
+      <div class="history-meta">
+        <small>${escapeHtml(presentation.travelOriginSummary)}</small>
+        <small>${escapeHtml(presentation.distanceSummary)}</small>
       </div>
     `;
     const actions = document.createElement("div");
@@ -2284,7 +2742,7 @@ function renderProfile(payload) {
     editButton.addEventListener("click", () => applyProfileEditor(cloneJson(profile), { openDrawer: true }));
     const primaryButton = document.createElement("button");
     primaryButton.type = "button";
-    primaryButton.textContent = profile.is_primary ? "Primary" : "Set Primary";
+    primaryButton.textContent = presentation.useAsMainLabel;
     primaryButton.disabled = Boolean(profile.is_primary);
     primaryButton.addEventListener("click", async () => {
       try {
@@ -2296,7 +2754,7 @@ function renderProfile(payload) {
     });
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
-    deleteButton.textContent = "Delete";
+    deleteButton.textContent = "Delete profile";
     deleteButton.disabled = Boolean(summary.count <= 1);
     deleteButton.addEventListener("click", async () => {
       try {
@@ -2312,9 +2770,9 @@ function renderProfile(payload) {
     article.appendChild(actions);
     container.appendChild(article);
   }
-  setPanelStatus("profile", "", `${summary.count || 0} profile(s) loaded for ${payload.normalized_payload.runtime.runtime_mode_label}.`);
+  setPanelStatus("profile", "", formatProfileCountStatus(summary.count || 0));
   setDiagnostics("profile", summary, {
-    hint: "Profile summaries, required fields, and travel-distance mappings for the active runtime mode.",
+    hint: "Profile summaries, required fields, and saved distance data appear here.",
     open: false,
   });
   const selectedId = profileState.currentProfileId;
@@ -2325,37 +2783,109 @@ function renderProfile(payload) {
   applyProfileEditor(cloneJson(selectedProfile), { openDrawer: false });
 }
 
+export function renderExtensionPrepareReasonCatalogInto(container, items = []) {
+  if (!container) {
+    return;
+  }
+  clearNode(container);
+  if (!items.length) {
+    container.appendChild(createEmptyState("No prepare reasons are available."));
+    return;
+  }
+  for (const item of items) {
+    const card = document.createElement("article");
+    card.className = "history-item";
+    const body = document.createElement("div");
+    body.appendChild(createTextElement("strong", item?.message || "No message available."));
+    body.appendChild(createTextElement("p", `Code: ${item?.reason || "Unknown reason"}`));
+    card.appendChild(body);
+    container.appendChild(card);
+  }
+}
+
+function extensionReadinessCardText(prepare = {}, bridgeSummary = {}) {
+  if (prepare.ok === true) {
+    return "Ready for Gmail intake in this mode.";
+  }
+  if (bridgeSummary.status === "info") {
+    return "This test mode is isolated from live Gmail intake. Open technical details below when troubleshooting.";
+  }
+  return "Needs attention before Gmail intake can start here. Open technical details below when troubleshooting.";
+}
+
+function extensionInstallCardText(extensionReport = {}) {
+  const activeCount = Array.isArray(extensionReport.active_extension_ids)
+    ? extensionReport.active_extension_ids.length
+    : 0;
+  const staleCount = Array.isArray(extensionReport.stale_extension_ids)
+    ? extensionReport.stale_extension_ids.length
+    : 0;
+  if (activeCount > 0) {
+    return "Browser helper details were found. Open technical details below for installation IDs.";
+  }
+  if (staleCount > 0) {
+    return "Older browser helper details were found. Open technical details below when troubleshooting.";
+  }
+  return "No browser helper installation details were reported.";
+}
+
+function extensionModeCardText(runtime = {}, bridgeSummary = {}) {
+  const lines = [
+    runtime.live_data === true
+      ? "Using live app settings and saved work."
+      : "Using isolated test settings and saved work.",
+  ];
+  if (runtime.live_data === true) {
+    lines.push("Use this page when Gmail intake needs a deeper technical check.");
+  } else if (bridgeSummary.status === "info") {
+    lines.push("This test mode is isolated from live Gmail intake. Open technical details below when troubleshooting.");
+  } else {
+    lines.push("Live Gmail readiness can differ from this isolated test mode.");
+  }
+  return lines.join("\n");
+}
+
 function renderExtensionLab(payload) {
   const data = payload.normalized_payload.extension_lab || {};
   appState.extensionDiagnostics = data;
   const prepare = data.prepare_response || {};
   const extensionReport = data.extension_report || {};
   const bridgeSummary = data.bridge_summary || {};
+  const runtime = payload.normalized_payload.runtime || {};
+  const activeInstallCount = Array.isArray(extensionReport.active_extension_ids)
+    ? extensionReport.active_extension_ids.length
+    : 0;
   const cards = [
     {
-      title: "Native Host Prepare",
-      text: `Reason: ${prepare.reason || "unknown"}\nUI owner: ${prepare.ui_owner || "none"}\nAuto-launch ready: ${prepare.autoLaunchReady === true ? "yes" : "no"}\nLaunch target: ${prepare.browser_url || prepare.launchTarget || "Unavailable"}`,
+      title: "Gmail helper readiness",
+      text: extensionReadinessCardText(prepare, bridgeSummary),
       status: bridgeSummary.status || (prepare.ok === true ? "ok" : "warn"),
-      label: bridgeSummary.status === "info" ? "Informational" : prepare.ok === true ? "Ready" : "Needs attention",
+      label: prepare.ok === true ? "Ready" : bridgeSummary.label || "Needs attention",
     },
     {
-      title: "Extension Discovery",
-      text: `Stable ID: ${extensionReport.stable_extension_id || "unknown"}\nActive unpacked installs: ${(extensionReport.active_extension_ids || []).length}\nStale installs: ${(extensionReport.stale_extension_ids || []).length}`,
-      status: "ok",
-      label: "Reported",
+      title: "Installed browser helper",
+      text: extensionInstallCardText(extensionReport),
+      status: activeInstallCount > 0 ? "ok" : "warn",
+      label: activeInstallCount > 0 ? "Detected" : "Needs attention",
     },
     {
-      title: "Mode Context",
-      text: (data.notes || []).join("\n") || "No extension-lab notes.",
-      status: payload.normalized_payload.runtime.live_data ? "warn" : "ok",
-      label: payload.normalized_payload.runtime.live_data ? "Live mode" : "Shadow mode",
+      title: "Current mode",
+      text: extensionModeCardText(runtime, bridgeSummary),
+      status: bridgeSummary.status === "info" ? "info" : runtime.live_data ? "warn" : "ok",
+      label: runtime.live_data ? "Live mode" : "Test mode",
     },
   ];
   renderCapabilityCards("extension-status-grid", cards);
   const extensionTone = bridgeSummary.status || (prepare.ok === true ? "ok" : "warn");
-  setPanelStatus("extension", extensionTone, prepare.ok === true ? "The current runtime mode is ready for extension handoff." : bridgeSummary.message || "Extension diagnostics loaded. Review prepare status and simulator output below.");
+  setPanelStatus(
+    "extension",
+    extensionTone,
+    prepare.ok === true
+      ? "The browser helper is ready for Gmail intake in this mode."
+      : "The browser helper needs attention. Open technical details below if you are troubleshooting.",
+  );
   setDiagnostics("extension", { prepare_response: prepare, extension_report: extensionReport, bridge_summary: bridgeSummary, notes: data.notes || [] }, {
-    hint: "Native host readiness, extension discovery, and bridge preparation details.",
+    hint: "Browser helper, extension, and readiness details.",
     open: false,
   });
   const defaults = data.simulator_defaults || {};
@@ -2373,16 +2903,7 @@ function renderExtensionLab(payload) {
   }
   const reasonCatalog = qs("extension-reason-catalog");
   if (reasonCatalog) {
-    reasonCatalog.innerHTML = "";
-    for (const item of data.prepare_reason_catalog || []) {
-      const card = document.createElement("article");
-      card.className = "history-item";
-      card.innerHTML = `<div><strong>${item.reason}</strong><p>${item.message}</p></div>`;
-      reasonCatalog.appendChild(card);
-    }
-    if (!reasonCatalog.children.length) {
-      reasonCatalog.innerHTML = '<div class="empty-state">No prepare reasons are available.</div>';
-    }
+    renderExtensionPrepareReasonCatalogInto(reasonCatalog, data.prepare_reason_catalog || []);
   }
 }
 
@@ -2401,9 +2922,7 @@ function renderTopbar(payload) {
   const runtime = payload.normalized_payload.runtime;
   qs("workspace-id-label").textContent = runtime.workspace_id;
   qs("runtime-mode-label").textContent = runtime.runtime_mode_label;
-  setTopbarStatus(runtime.live_data
-    ? `Live workspace ${runtime.workspace_id}: real settings, Gmail bridge, and job-log writes are active here.`
-    : `Shadow workspace ${runtime.workspace_id}: isolated browser-app data stays separate from live mode.`, runtime.live_data ? "info" : "ok");
+  syncShellChrome();
   showLiveBanner(runtime);
 }
 
@@ -2483,6 +3002,23 @@ function applyShellBootstrapSnapshot(payload) {
     );
     return;
   }
+  if (isBeginnerPrimarySurface()) {
+    const target = beginnerSurfaceTargetLabel();
+    setTopbarStatus(
+      shellReady
+        ? `Opening the ${target}...`
+        : `Preparing the ${target}...`,
+      shellReady ? "info" : "warn",
+    );
+    setPanelStatus(
+      "runtime",
+      shellReady ? "info" : "warn",
+      shellReady
+        ? `Browser shell is responding. Loading the ${target}...`
+        : "Browser shell is still warming.",
+    );
+    return;
+  }
   setTopbarStatus(
     shellReady
       ? "Browser shell is ready. Finishing browser workspace hydration..."
@@ -2501,7 +3037,9 @@ function applyShellBootstrapSnapshot(payload) {
 function applyStagedBootstrapRetryStatus({ attempt, maxAttempts, error }) {
   const target = appState.workspaceId === "gmail-intake" || appState.activeView === "gmail-intake"
     ? "Gmail workspace"
-    : "browser workspace";
+    : isBeginnerPrimarySurface()
+      ? beginnerSurfaceTargetLabel()
+      : "browser workspace";
   const detail = error?.message ? ` ${error.message}` : "";
   setTopbarStatus(
     `Finishing ${target} hydration (attempt ${attempt} of ${maxAttempts})...`,
@@ -2627,8 +3165,8 @@ async function handleSave() {
   });
   appState.currentRowId = payload.saved_result.row_id;
   qs("row-id").value = payload.saved_result.row_id;
-  setPanelStatus("form", "ok", `Saved row #${payload.saved_result.row_id} to the active job log.`);
-  setDiagnostics("form", payload, { hint: `Saved row #${payload.saved_result.row_id}.`, open: false });
+  setPanelStatus("form", "ok", `Saved case record #${payload.saved_result.row_id}.`);
+  setDiagnostics("form", payload, { hint: `Saved case record #${payload.saved_result.row_id}.`, open: false });
   await loadBootstrap();
   syncInterpretationReviewSurface();
   openInterpretationReviewDrawer();
@@ -2648,7 +3186,9 @@ async function handleExport() {
       include_transport_sentence_in_honorarios_checked: qs("include-transport").checked,
     }),
   });
-  const message = payload.status === "ok" ? "Generated DOCX and PDF successfully." : "DOCX is ready, but PDF export stayed in local-only mode.";
+  const message = payload.status === "ok"
+    ? "Created the fee-request document successfully."
+    : "The DOCX is ready, but the PDF export stayed local in this run.";
   setPanelStatus("form", payload.status === "ok" ? "ok" : "warn", message);
   setDiagnostics("form", payload, { hint: message, open: payload.status !== "ok" });
   renderInterpretationExportResult(payload);
@@ -2657,11 +3197,13 @@ async function handleExport() {
 async function handleImportLiveProfiles() {
   const payload = await fetchJson("/api/profiles/import-live", appState, { method: "POST" });
   const importedCount = payload.normalized_payload?.imported_profile_count ?? 0;
-  const message = importedCount > 0 ? `Imported ${importedCount} live profile${importedCount === 1 ? "" : "s"} into the isolated browser workspace.` : payload.normalized_payload?.message || "Live profiles are already active in this mode.";
+  const message = importedCount > 0
+    ? `Copied ${importedCount} profile${importedCount === 1 ? "" : "s"} from the live app.`
+    : "Using live app profiles in this mode.";
   await loadBootstrap();
   setPanelStatus("profile", "ok", message);
   setDiagnostics("profile", payload, {
-    hint: importedCount > 0 ? `Imported ${importedCount} profile(s).` : payload.normalized_payload?.message || "Live profiles already active.",
+    hint: importedCount > 0 ? `Copied ${importedCount} profile(s) from the live app.` : "Using live app profiles in this mode.",
     open: false,
   });
 }
@@ -2669,9 +3211,9 @@ async function handleImportLiveProfiles() {
 async function handleNewProfile() {
   const payload = await fetchJson("/api/profile/new", appState);
   applyProfileEditor(payload.normalized_payload?.profile || blankProfileDraft(), { openDrawer: true });
-  setPanelStatus("profile", "", "New profile draft loaded. Fill the required fields, then save it.");
+  setPanelStatus("profile", "", "New profile draft ready. Fill the required details, then save.");
   setDiagnostics("profile", payload, {
-    hint: "New profile draft loaded.",
+    hint: "New profile draft ready.",
     open: false,
   });
   setActiveView("profile");
@@ -2690,11 +3232,11 @@ async function handleSaveProfile() {
   });
   const savedProfile = payload.normalized_payload?.saved_profile || {};
   profileState.currentProfileId = savedProfile.id || "";
-  const message = payload.normalized_payload?.message || `Saved profile ${savedProfile.document_name || savedProfile.id || ""}.`;
+  const message = "Profile saved.";
   await loadBootstrap();
   setPanelStatus("profile", "ok", message);
   setDiagnostics("profile", payload, {
-    hint: payload.normalized_payload?.message || "Profile saved.",
+    hint: message,
     open: false,
   });
 }
@@ -2704,7 +3246,7 @@ async function handleDeleteProfile(profileId = fieldValue("profile-editor-id")) 
   if (!resolvedId) {
     throw new Error("Select a saved profile before deleting it.");
   }
-  if (!window.confirm(`Delete profile ${resolvedId} from the active runtime mode?`)) {
+  if (!window.confirm(deriveProfilePresentation({}).deleteConfirmMessage)) {
     return;
   }
   const payload = await fetchJson("/api/profile/delete", appState, {
@@ -2713,12 +3255,12 @@ async function handleDeleteProfile(profileId = fieldValue("profile-editor-id")) 
     body: JSON.stringify({ profile_id: resolvedId }),
   });
   profileState.currentProfileId = "";
-  const message = payload.normalized_payload?.message || `Deleted profile ${resolvedId}.`;
+  const message = "Profile deleted.";
   await loadBootstrap();
   closeProfileEditorDrawer();
   setPanelStatus("profile", "ok", message);
   setDiagnostics("profile", payload, {
-    hint: payload.normalized_payload?.message || `Deleted profile ${resolvedId}.`,
+    hint: "Profile deleted.",
     open: false,
   });
 }
@@ -2734,11 +3276,12 @@ async function handleSetPrimaryProfile(profileId = fieldValue("profile-editor-id
     body: JSON.stringify({ profile_id: resolvedId }),
   });
   profileState.currentProfileId = resolvedId;
-  const message = payload.normalized_payload?.message || `Set profile ${resolvedId} as primary.`;
+  const primaryProfile = payload.normalized_payload?.profile_summary?.primary_profile || {};
+  const message = `${deriveProfilePresentation(primaryProfile).displayName} is now the main profile.`;
   await loadBootstrap();
   setPanelStatus("profile", "ok", message);
   setDiagnostics("profile", payload, {
-    hint: payload.normalized_payload?.message || `Set profile ${resolvedId} as primary.`,
+    hint: message,
     open: false,
   });
 }
@@ -2750,8 +3293,8 @@ function resetFormToBlank() {
     setCheckbox("use-service-location", false);
     setCheckbox("include-transport", true);
     updateServiceFieldState();
-    setPanelStatus("form", "", "Blank interpretation entry loaded. Fill fields manually or use autofill above.");
-    setDiagnostics("form", { status: "ok", message: "Blank interpretation seed loaded." }, { hint: "Blank interpretation seed loaded.", open: false });
+    setPanelStatus("form", "", "Blank interpretation request loaded. Fill in the details manually or use autofill above.");
+    setDiagnostics("form", { status: "ok", message: "Blank interpretation request loaded." }, { hint: "Blank interpretation request loaded.", open: false });
     openInterpretationReviewDrawer();
   }
 }
@@ -2905,7 +3448,7 @@ function wireEvents() {
   qs("save-row").addEventListener("click", async () => {
     await runWithBusy(["save-row", "export-honorarios", "clear-form", "reload-history"], { "save-row": "Saving..." }, async () => {
       try {
-        setPanelStatus("form", "", "Saving the interpretation row...");
+        setPanelStatus("form", "", "Saving the case record...");
         await handleSave();
       } catch (error) {
         recoverInterpretationValidationError(error);
@@ -2916,9 +3459,9 @@ function wireEvents() {
   });
 
   qs("export-honorarios").addEventListener("click", async () => {
-    await runWithBusy(["save-row", "export-honorarios", "clear-form", "reload-history"], { "export-honorarios": "Generating..." }, async () => {
+    await runWithBusy(["save-row", "export-honorarios", "clear-form", "reload-history"], { "export-honorarios": "Creating..." }, async () => {
       try {
-        setPanelStatus("form", "", "Generating honorários DOCX and PDF...");
+        setPanelStatus("form", "", "Creating the fee-request document...");
         await handleExport();
       } catch (error) {
         recoverInterpretationValidationError(error);
@@ -2998,6 +3541,27 @@ function wireEvents() {
     });
   });
 
+  qs("profile-distance-add")?.addEventListener("click", () => {
+    try {
+      applyProfileDistanceUpsert();
+    } catch (error) {
+      setProfileDistanceStatus("bad", error.message || "Unable to update the distance.");
+    }
+  });
+
+  qs("profile-distance-sync-advanced")?.addEventListener("click", () => {
+    try {
+      resyncProfileDistancesFromAdvancedJson();
+    } catch (error) {
+      setProfileDistanceStatus("bad", error.message || "Unable to refresh the distance list.");
+    }
+  });
+
+  qs("profile-editor-travel-distances-json")?.addEventListener("input", () => {
+    profileUiState.distanceJsonDirty = true;
+    setProfileDistanceStatus("info", "Advanced distance data changed. Save or refresh the visible list to apply it.");
+  });
+
   qs("profile-set-primary").addEventListener("click", async () => {
     await runWithBusy(["import-live-profiles", "new-profile", "profile-save", "profile-set-primary", "profile-delete"], { "profile-set-primary": "Updating..." }, async () => {
       try {
@@ -3035,7 +3599,7 @@ function wireEvents() {
     await runWithBusy(["reload-history"], { "reload-history": "Reloading..." }, async () => {
       try {
         await reloadHistory();
-        setPanelStatus("recent-jobs", "", "Job-log history refreshed.");
+        setPanelStatus("recent-jobs", "", deriveRecentWorkPresentation().refreshStatus);
       } catch (error) {
         setPanelStatus("recent-jobs", "bad", error.message || "History reload failed.");
         setDiagnostics("form", error, { hint: error.message || "History reload failed.", open: true });
@@ -3181,6 +3745,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     resetTranslationForGmailRedo,
     closeTranslationCompletionDrawer,
     collectCurrentTranslationSaveValues,
+    deriveTranslationCompletionPresentation,
     getTranslationUiSnapshot,
     getCurrentTranslationJobId,
     openInterpretationReviewDrawer,
@@ -3193,10 +3758,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   setDiagnostics("simulator", { status: "idle", message: "No simulator run has been executed yet." }, { hint: "Preview request payload, bridge endpoint, and readiness.", open: false });
   setDiagnostics("settings-admin", { status: "idle", message: "No settings save has been run yet." }, { hint: "Save responses and provider-state refresh details appear here.", open: false });
   setDiagnostics("settings-test", { status: "idle", message: "No provider preflight has been run yet." }, { hint: "Translation auth, OCR, Gmail, and Word preflight checks appear here.", open: false });
-  setDiagnostics("power-tools-glossary", { status: "idle", message: "No glossary action has been run yet." }, { hint: "Glossary saves and markdown export details appear here.", open: false });
-  setDiagnostics("power-tools-builder", { status: "idle", message: "No glossary builder run has been executed yet." }, { hint: "Glossary builder results and apply responses appear here.", open: false });
-  setDiagnostics("power-tools-calibration", { status: "idle", message: "No calibration audit has been run yet." }, { hint: "Calibration audit report paths and suggestion details appear here.", open: false });
-  setDiagnostics("power-tools-diagnostics", { status: "idle", message: "No debug bundle or run report has been generated yet." }, { hint: "Debug bundle and run report outputs appear here.", open: false });
+  setDiagnostics("power-tools-glossary", { status: "idle", message: "No glossary action has been run yet." }, { hint: "Glossary save and markdown export details appear here.", open: false });
+  setDiagnostics("power-tools-builder", { status: "idle", message: "No glossary suggestion run has been executed yet." }, { hint: "Glossary suggestion results and apply responses appear here.", open: false });
+  setDiagnostics("power-tools-calibration", { status: "idle", message: "No quality check has been run yet." }, { hint: "Quality-check report paths and suggestion details appear here.", open: false });
+  setDiagnostics("power-tools-diagnostics", { status: "idle", message: "No troubleshooting bundle or run report has been generated yet." }, { hint: "Troubleshooting bundle and run report outputs appear here.", open: false });
   try {
     await loadBootstrap({ staged: true });
   } catch (error) {

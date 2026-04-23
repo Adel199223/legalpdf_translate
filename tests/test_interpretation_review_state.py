@@ -1,29 +1,12 @@
 from __future__ import annotations
-
 import json
-import shutil
-import subprocess
-from pathlib import Path
 
-import pytest
+from .browser_esm_probe import run_browser_esm_json_probe
 
 
 def _run_interpretation_review_state_probe() -> dict[str, object]:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is required for interpretation review-state coverage.")
-
-    module_url = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "legalpdf_translate"
-        / "shadow_web"
-        / "static"
-        / "interpretation_review_state.js"
-    ).as_uri()
-
-    script = f"""
-const reviewModule = await import({json.dumps(module_url)});
+    script = """
+const reviewModule = await import(__INTERPRETATION_REVIEW_STATE_MODULE_URL__);
 
 const reference = reviewModule.buildInterpretationReference(
   {{
@@ -95,6 +78,17 @@ const invalidDistance = reviewModule.deriveInterpretationGuardState({{
   provisionalServiceCity: "",
   includeTransport: true,
   travelKmOutbound: "0",
+}});
+
+const transportDisabled = reviewModule.deriveInterpretationGuardState({{
+  reference,
+  caseCity: "Beja",
+  serviceCity: "Beja",
+  serviceSame: true,
+  provisionalCaseCity: "",
+  provisionalServiceCity: "",
+  includeTransport: false,
+  travelKmOutbound: "",
 }});
 
 const workspaceModes = {{
@@ -183,6 +177,77 @@ const drawerLayouts = {{
   }}),
 }};
 
+const presentations = {{
+  blank: reviewModule.deriveInterpretationReviewPresentation({{
+    snapshot: {{}},
+    activeSession: null,
+    workspaceMode: "blank",
+    hasReviewData: false,
+  }}),
+  manualSeed: reviewModule.deriveInterpretationReviewPresentation({{
+    snapshot: {{
+      caseNumber: "305/23.2GCBJA",
+      caseCity: "Beja",
+      serviceDate: "2026-03-20",
+    }},
+    activeSession: null,
+    workspaceMode: "manual_seed",
+    hasReviewData: true,
+  }}),
+  savedRow: reviewModule.deriveInterpretationReviewPresentation({{
+    snapshot: {{
+      rowId: "41",
+      caseNumber: "305/23.2GCBJA",
+      caseCity: "Beja",
+      serviceDate: "2026-03-20",
+    }},
+    activeSession: null,
+    workspaceMode: "manual_seed",
+    hasReviewData: true,
+  }}),
+  gmailReview: reviewModule.deriveInterpretationReviewPresentation({{
+    snapshot: {{
+      caseNumber: "305/23.2GCBJA",
+      caseCity: "Beja",
+    }},
+    activeSession: {{ kind: "interpretation", status: "prepared" }},
+    workspaceMode: "gmail_review",
+    hasReviewData: true,
+  }}),
+  gmailCompleted: reviewModule.deriveInterpretationReviewPresentation({{
+    snapshot: {{
+      caseNumber: "305/23.2GCBJA",
+      caseCity: "Beja",
+    }},
+    activeSession: {{
+      kind: "interpretation",
+      status: "draft_ready",
+      draft_created: true,
+      pdf_export: "C:/tmp/out.pdf",
+    }},
+    workspaceMode: "gmail_completed",
+    hasReviewData: true,
+    completionPayload: {{ status: "ok" }},
+  }}),
+}};
+
+const disclosures = {{
+  defaults: reviewModule.deriveInterpretationDisclosurePresentation({{
+    serviceSame: true,
+    textCustomized: false,
+    recipientOverride: "",
+    amountsTouched: false,
+    includeTransport: true,
+  }}),
+  customized: reviewModule.deriveInterpretationDisclosurePresentation({{
+    serviceSame: false,
+    textCustomized: true,
+    recipientOverride: "Tribunal Judicial",
+    amountsTouched: true,
+    includeTransport: false,
+  }}),
+}};
+
 console.log(JSON.stringify({{
   reference,
   unknownImported,
@@ -190,20 +255,18 @@ console.log(JSON.stringify({{
   knownNeedsPrompt,
   knownSavedDistance,
   invalidDistance,
+  transportDisabled,
   workspaceModes,
   drawerLayouts,
+  presentations,
+  disclosures,
 }}));
-"""
-
-    completed = subprocess.run(
-        [node, "--input-type=module", "-"],
-        input=script,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
+""".replace("{{", "{").replace("}}", "}")
+    return run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REVIEW_STATE_MODULE_URL__": "interpretation_review_state.js"},
+        timeout_seconds=20,
     )
-    return json.loads(completed.stdout)
 
 
 def test_interpretation_review_state_blocks_unknown_city_and_guides_distance_prompt() -> None:
@@ -227,6 +290,7 @@ def test_interpretation_review_state_blocks_unknown_city_and_guides_distance_pro
 
     assert results["invalidDistance"]["blocked"] is True
     assert results["invalidDistance"]["blockedCode"] == "distance_must_be_positive"
+    assert results["transportDisabled"]["distanceHint"] == "Transport sentence is turned off for this document."
 
     assert results["workspaceModes"] == {
         "blank": "blank",
@@ -270,3 +334,53 @@ def test_interpretation_review_state_blocks_unknown_city_and_guides_distance_pro
         "showNewBlank": False,
         "showFooterClose": False,
     }
+
+    assert results["presentations"]["blank"]["drawer"]["status"] == "Upload a notification or start a blank request to begin."
+    assert results["presentations"]["blank"]["actions"] == {
+        "openReview": "Review details",
+        "startBlank": "Start blank request",
+        "refreshHistory": "Refresh history",
+        "sessionPrimary": "Review details",
+        "sessionSecondary": "Review Gmail message",
+        "saveRow": "Save case record",
+        "export": "Create fee-request document",
+        "finalizeGmail": "Create Gmail reply",
+    }
+    assert results["presentations"]["manualSeed"]["drawer"]["status"] == (
+        "Check the recovered details, then save the case record or create the fee-request document."
+    )
+    assert results["presentations"]["manualSeed"]["drawer"]["summaryTitle"] == "Recovered case details are ready."
+    assert results["presentations"]["savedRow"]["reviewHome"]["title"] == "Saved case record loaded."
+    assert results["presentations"]["savedRow"]["reviewHome"]["subtitle"] == "Review the fields below and save any edits."
+    assert results["presentations"]["gmailReview"]["drawer"]["status"] == "Check the notice details, then create the Gmail reply."
+    assert results["presentations"]["gmailReview"]["drawer"]["contextTitle"] == "Create the Gmail reply after review."
+    assert results["presentations"]["gmailCompleted"]["drawer"]["status"] == "The Gmail reply and exported files are ready."
+    assert results["presentations"]["gmailCompleted"]["actions"]["sessionPrimary"] == "View final result"
+    assert results["presentations"]["gmailCompleted"]["gmailResult"] == {
+        "createdTitle": "Gmail reply created.",
+        "createdLabel": "Gmail reply created",
+        "localOnlyTitle": "Final files are ready.",
+        "localOnlyLabel": "Final files are ready",
+        "warningTitle": "Gmail reply needs review.",
+        "warningLabel": "Gmail reply needs review",
+    }
+    assert results["disclosures"]["defaults"] == {
+        "serviceSummary": "Using the case details",
+        "textSummary": "Optional wording and filename",
+        "recipientSummary": "Recipient is filled automatically",
+        "amountsSummary": "Optional amounts and internal totals",
+        "transportDisabledHint": "",
+    }
+    assert results["disclosures"]["customized"] == {
+        "serviceSummary": "Custom service details ready",
+        "textSummary": "Custom document options ready",
+        "recipientSummary": "Custom recipient text ready",
+        "amountsSummary": "Amounts and totals ready",
+        "transportDisabledHint": "Transport sentence is turned off for this document.",
+    }
+
+    disclosure_json = json.dumps(results["disclosures"], ensure_ascii=False)
+    assert "Same as case" not in disclosure_json
+    assert "Auto-derived recipient" not in disclosure_json
+    assert "Pages, words, rate, totals" not in disclosure_json
+    assert "honorarios export" not in disclosure_json

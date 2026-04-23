@@ -1,6 +1,12 @@
 import { fetchJson } from "./api.js";
 import { appState, setActiveView } from "./state.js";
 import { ensureBrowserPdfBundleFromFile } from "./browser_pdf.js";
+import {
+  clearNode,
+  createEmptyState,
+  createTextElement,
+  setNodeTitle,
+} from "./safe_rendering.js";
 
 const translationState = {
   currentSeed: null,
@@ -10,6 +16,9 @@ const translationState = {
   runtimeJobs: [],
   currentGmailBatchContext: null,
   currentPreparedLaunch: null,
+  manualSourceFile: null,
+  sourceCard: null,
+  sourceUpload: null,
   uploadedSourcePath: "",
   uploadedSourceKey: "",
   pollTimer: null,
@@ -20,6 +29,8 @@ const translationState = {
 };
 
 let lastTranslationUiSnapshotKey = "";
+const PAGE_FLAG_LOG_RE = /page=(?<page>\d+)\s+image_used=(?<image>True|False)\s+retry_used=(?<retry>True|False)\s+status=(?<status>[a-z_]+)/;
+const PAGE_STATUS_LOG_RE = /Page\s+(?<page>\d+)\s+(?<status>finished|failed)/i;
 
 function normalizeGmailBatchContext(value) {
   if (!value || typeof value !== "object") {
@@ -101,9 +112,9 @@ function resetTranslationWorkspaceForPreparedLaunch() {
   translationState.currentSeed = null;
   translationState.currentRowId = null;
   translationState.lastAutoOpenedCompletionKey = "";
-  translationState.uploadedSourcePath = "";
-  translationState.uploadedSourceKey = "";
   translationState.currentGmailBatchContext = null;
+  clearSourceUploadState();
+  clearManualStagedSource();
   clearPreparedTranslationLaunch();
   setFieldValue("translation-job-id", "");
   setFieldValue("translation-row-id", "");
@@ -151,6 +162,113 @@ function summarizeRuntimeJob(job) {
       start_page: Number.parseInt(String(job.config?.start_page ?? "").trim(), 10) || 0,
       gmail_batch_context: normalizeGmailBatchContext(job.config?.gmail_batch_context),
     },
+  };
+}
+
+function titleCaseWords(value) {
+  return String(value || "")
+    .trim()
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function recentWorkTypeLabel(value) {
+  return String(value || "").trim().toLowerCase() === "interpretation"
+    ? "Interpretation"
+    : "Translation";
+}
+
+function recentRunKindLabel(value) {
+  const kind = String(value || "").trim().toLowerCase();
+  if (kind === "translate") {
+    return "Translation";
+  }
+  if (kind === "analyze") {
+    return "Analysis";
+  }
+  if (kind === "rebuild") {
+    return "DOCX rebuild";
+  }
+  return titleCaseWords(kind) || "Translation";
+}
+
+function recentRunStatusLabel(value) {
+  const status = String(value || "").trim().toLowerCase();
+  if (status === "queued") {
+    return "Queued";
+  }
+  if (status === "running") {
+    return "Running";
+  }
+  if (status === "completed") {
+    return "Complete";
+  }
+  if (status === "failed") {
+    return "Needs attention";
+  }
+  if (status === "cancel_requested") {
+    return "Cancel requested";
+  }
+  if (status === "canceled") {
+    return "Canceled";
+  }
+  return titleCaseWords(status) || "Unknown";
+}
+
+export function formatRecentRunTitle(job = {}) {
+  const sourcePath = String(job?.config?.source_path || "").trim();
+  if (sourcePath) {
+    const segments = sourcePath.split(/[\\/]/).filter(Boolean);
+    return segments[segments.length - 1] || sourcePath;
+  }
+  return String(job?.job_id || "").trim() || "Translation run";
+}
+
+export function deriveRecentWorkPresentation({
+  recentItemCount = 0,
+  translationRunCount = 0,
+  recordAvailable = true,
+  jobType = "",
+  job = null,
+} = {}) {
+  const typeLabel = recentWorkTypeLabel(jobType || job?.job_type || job?.row?.job_type);
+  const targetLang = String(job?.config?.target_lang || "").trim().toUpperCase();
+  const translationRunSubtitleBits = [
+    recentRunKindLabel(job?.job_kind),
+    targetLang ? `Target ${targetLang}` : "",
+    recentRunStatusLabel(job?.status),
+  ].filter(Boolean);
+  const deleteConfirmMessage = typeLabel === "Interpretation"
+    ? "Delete this saved interpretation record? This cannot be undone."
+    : typeLabel === "Translation"
+      ? "Delete this saved translation record? This cannot be undone."
+      : "Delete this saved record? This cannot be undone.";
+
+  return {
+    typeLabel,
+    recentWorkEmpty: "No saved work yet. Completed translations and interpretation requests will appear here.",
+    recentWorkCount: `${recentItemCount} recent item(s) ready.`,
+    recentOpenLabel: recordAvailable ? "Open" : "Open unavailable",
+    recentDeleteLabel: "Delete record",
+    interpretationHistoryEmpty: "No saved interpretation requests yet.",
+    interpretationHistoryOpenLabel: "Open",
+    interpretationHistoryDeleteLabel: "Delete record",
+    translationHistoryEmpty: "No saved translation cases yet.",
+    translationHistoryOpenLabel: "Open",
+    translationHistoryDeleteLabel: "Delete record",
+    translationRunsEmpty: "No translation runs have started yet.",
+    translationRunsCount: `${translationRunCount} translation run(s) ready.`,
+    translationRunOpenLabel: "Open run",
+    translationRunResumeLabel: "Resume",
+    translationRunRebuildLabel: "Rebuild DOCX",
+    translationRunTitle: formatRecentRunTitle(job),
+    translationRunSubtitle: translationRunSubtitleBits.join(" | "),
+    deleteConfirmMessage,
+    deleteStatus: "Saved record deleted.",
+    refreshStatus: "Saved work refreshed.",
+    loadedSavedCaseStatus: "Saved case record loaded. Review the details below.",
   };
 }
 
@@ -211,6 +329,187 @@ function currentArabicReviewState() {
   return normalizeArabicReviewState(translationState.arabicReview);
 }
 
+function hasTranslationSaveSeedData(saveSeed = {}, { currentRowId = null, job = null } = {}) {
+  const seed = saveSeed && typeof saveSeed === "object" ? saveSeed : {};
+  return Boolean(
+    currentRowId
+    || job?.result?.save_seed
+    || seed.run_id
+    || seed.case_number
+    || seed.court_email
+    || seed.case_entity
+    || seed.case_city,
+  );
+}
+
+export function deriveTranslationCompletionPresentation({
+  job = null,
+  saveSeed = null,
+  currentRowId = null,
+  arabicReview = null,
+  gmailBatchContext = null,
+  gmailCurrentStep = null,
+  gmailFinalizeReady = false,
+} = {}) {
+  const seed = saveSeed && typeof saveSeed === "object"
+    ? saveSeed
+    : (job?.result?.save_seed || {});
+  const review = normalizeArabicReviewState(arabicReview);
+  const hasSaveSeed = hasTranslationSaveSeedData(seed, { currentRowId, job });
+  const available = hasSaveSeed || Boolean(job?.status === "completed");
+  const rowLoaded = Boolean(currentRowId);
+  const analyzeCompleted = Boolean(job?.job_kind === "analyze" && job?.status === "completed");
+  const rebuildCompleted = Boolean(job?.job_kind === "rebuild" && job?.status === "completed");
+  const translationCompleted = Boolean(job?.job_kind === "translate" && job?.status === "completed");
+  const blockedOnArabicReview = Boolean(review.required && !review.resolved);
+  const gmailStep = gmailCurrentStep && typeof gmailCurrentStep === "object" ? gmailCurrentStep : {};
+  const gmailStepFilename = String(gmailStep.filename || "").trim();
+  const gmailStepBatchLabel = String(gmailStep.batchLabel || "").trim() || "Gmail";
+  const gmailStepHasMoreItems = Boolean(gmailStep.hasMoreItems);
+  const resultDetailLines = [];
+
+  if (rowLoaded || hasSaveSeed || translationCompleted) {
+    if (seed.case_number || seed.case_entity || seed.case_city || seed.translation_date) {
+      resultDetailLines.push(seed.case_number || "No case number");
+      resultDetailLines.push([
+        seed.case_entity || "No case entity",
+        seed.case_city || "No case city",
+        seed.translation_date || "No date",
+      ].join(" | "));
+    }
+  } else if (analyzeCompleted) {
+    const analysis = job?.result?.analysis || {};
+    resultDetailLines.push(`Selected pages: ${analysis.selected_pages_count ?? 0}`);
+    if (analysis.pages_would_attach_images != null) {
+      resultDetailLines.push(`Pages that would use images: ${analysis.pages_would_attach_images}`);
+    }
+  } else if (rebuildCompleted) {
+    resultDetailLines.push(job?.result?.rebuild?.docx_path || "Updated DOCX is ready.");
+  }
+
+  let completionButtonLabel = "Finish Translation";
+  let drawerStatus = "When a translation finishes, you can review the result, download files, and save the case record here.";
+  let emptyTitle = "Review Results";
+  let emptyCopy = "When a translation finishes, you can review the result, download files, and save the case record here.";
+  let resultTitle = "Finish Translation";
+  let resultCopy = "When a translation finishes, you can review the result, download files, and save the case record here.";
+  let resultChipLabel = "Waiting";
+  let resultChipTone = "info";
+  let saveTitle = "Save Case Record";
+  let saveStatus = "When a translation finishes, you can review the result, download files, and save the case record here.";
+
+  if (rowLoaded) {
+    completionButtonLabel = "Open saved case record";
+    drawerStatus = "Saved case record loaded. Review the fields below and save any edits.";
+    resultTitle = "Saved case record loaded.";
+    resultCopy = "Review the fields below and save any edits.";
+    resultChipLabel = "Loaded";
+    resultChipTone = "info";
+    saveStatus = "Saved case record loaded. Review the fields below and save any edits.";
+  } else if (analyzeCompleted) {
+    completionButtonLabel = "Review analysis";
+    drawerStatus = "Analysis complete. Review the report, then start a full translation when you are ready.";
+    emptyCopy = drawerStatus;
+    resultTitle = "Analysis complete.";
+    resultCopy = "Review the report, then start a full translation when you are ready.";
+    resultChipLabel = "Report ready";
+    resultChipTone = "ok";
+    saveStatus = drawerStatus;
+  } else if (rebuildCompleted) {
+    drawerStatus = "DOCX rebuild complete. Review the translated DOCX and download the refreshed file here.";
+    resultTitle = "Translated DOCX refreshed.";
+    resultCopy = "Review the refreshed translated DOCX and download it when you are ready.";
+    resultChipLabel = "Ready";
+    resultChipTone = "ok";
+    saveStatus = "The translated DOCX was rebuilt. Review it here before you save the case record.";
+  } else if (translationCompleted || hasSaveSeed) {
+    drawerStatus = "Translation complete. Review the translated document, then save the case record if everything looks right.";
+    resultTitle = "Translation complete.";
+    resultCopy = "Review the translated document, then save the case record if everything looks right.";
+    resultChipLabel = "Ready";
+    resultChipTone = "ok";
+    saveStatus = "Translation complete. Review the translated document, then save the case record if everything looks right.";
+  }
+
+  if (blockedOnArabicReview) {
+    drawerStatus = review.message || "Review the Arabic document in Word before you save the case record.";
+    saveStatus = review.message || "Review the Arabic document in Word before you save the case record.";
+  } else if (review.required && review.resolved && (translationCompleted || hasSaveSeed)) {
+    saveStatus = "Arabic document review is complete. Save the case record when you are ready.";
+  }
+
+  const gmailAttachmentReady = Boolean(gmailBatchContext || gmailStep.visible);
+  const gmailCurrentAttachment = {
+    ready: gmailAttachmentReady,
+    title: blockedOnArabicReview
+      ? "Review the Arabic document in Word before you save this Gmail attachment."
+      : "This Gmail attachment is ready to save.",
+    copy: blockedOnArabicReview
+      ? (review.message || "Open the translated DOCX in Word, save it there, then return here to save this Gmail attachment.")
+      : gmailStepHasMoreItems
+        ? "Save this translated attachment, then continue with the next Gmail step."
+        : "Save this translated attachment, then continue to create the Gmail reply.",
+    chipLabel: gmailStepBatchLabel,
+    filename: gmailStepFilename,
+    buttonLabel: "Save this Gmail attachment",
+  };
+
+  return {
+    available,
+    hasSaveSeed,
+    completionButtonLabel,
+    drawerStatus,
+    emptyTitle,
+    emptyCopy,
+    resultTitle,
+    resultCopy,
+    resultChipLabel,
+    resultChipTone,
+    resultDetailLines,
+    saveTitle,
+    saveStatus,
+    saveButtonLabel: "Save case record",
+    arabicReview: {
+      title: "Review Arabic document in Word",
+      copy: blockedOnArabicReview
+        ? (review.message || "Open the translated DOCX in Word, make any alignment or formatting fixes, save it, then return here.")
+        : review.required && review.resolved
+          ? "The Arabic document review is complete. Save the case record or continue with the Gmail step when you are ready."
+          : "Open the translated DOCX in Word, make any alignment or formatting fixes, save it, then return here.",
+      chipLabel: review.required && review.resolved
+        ? "Done"
+        : review.status === "waiting_for_save"
+          ? "Waiting"
+          : "Required",
+      chipTone: review.required && review.resolved
+        ? "ok"
+        : review.status === "attention" || review.status === "missing"
+          ? "warn"
+          : "info",
+      docxLabel: "Translated DOCX",
+      unavailableText: "Translated DOCX unavailable.",
+      openLabel: "Open in Word",
+      continueNowLabel: "I saved the Word file",
+      continueWithoutChangesLabel: "Continue without changes",
+    },
+    gmailCurrentAttachment,
+    gmailFinalization: {
+      ready: Boolean(gmailFinalizeReady),
+      title: "Create Gmail Reply",
+      status: gmailFinalizeReady
+        ? "Every selected Gmail attachment is saved. You can create the Gmail reply when you are ready."
+        : "After every selected attachment is saved, create the Gmail reply with the final files.",
+      summary: gmailFinalizeReady
+        ? "The final Gmail reply step is ready."
+        : "Finish saving every Gmail attachment to unlock the final reply step.",
+      resultEmpty: "Gmail reply details will appear here after the final step.",
+      filenameLabel: "Final DOCX filename",
+      filenamePlaceholder: "Optional filename for the final Gmail DOCX",
+      buttonLabel: "Create Gmail reply",
+    },
+  };
+}
+
 function translationUiSnapshotKey() {
   return JSON.stringify(getTranslationUiSnapshot());
 }
@@ -255,13 +554,466 @@ function setCheckbox(id, value) {
   }
 }
 
-function revealPreparedTranslationSourceOptions() {
-  const section = qs("translation-source-options-section");
-  if (!section) {
+function coercePositiveInt(value) {
+  const parsed = Number.parseInt(String(value ?? "").trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function blankSourceCardState() {
+  return {
+    kind: "empty",
+    status: "idle",
+    filename: "",
+    sourceType: "",
+    pageCount: null,
+    sourcePath: "",
+    message: "",
+  };
+}
+
+function blankSourceUploadState() {
+  return {
+    token: 0,
+    pending: false,
+    fileKey: "",
+    filename: "",
+    sourceType: "",
+    replacingPrepared: false,
+    preservedPreparedLaunch: null,
+    preservedGmailBatchContext: null,
+    preservedSourcePath: "",
+  };
+}
+
+function inferSourceType(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized === "pdf" || normalized.endsWith(".pdf")) {
+    return "pdf";
+  }
+  if (normalized === "image" || /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(normalized)) {
+    return "image";
+  }
+  return "";
+}
+
+function buildPreparedSourceCardState(launch = currentPreparedTranslationLaunch()) {
+  if (!launch) {
+    return blankSourceCardState();
+  }
+  const filename = launch.source_filename || launch.gmail_batch_context?.selected_attachment_filename || "Prepared source";
+  return {
+    kind: "prepared",
+    status: "ready",
+    filename,
+    sourceType: inferSourceType(filename || launch.source_path),
+    pageCount: coercePositiveInt(launch.page_count),
+    sourcePath: launch.source_path || "",
+    message: "Prepared source is staged and ready to start.",
+  };
+}
+
+function currentSourceCardState() {
+  return {
+    ...blankSourceCardState(),
+    ...(translationState.sourceCard || {}),
+  };
+}
+
+function setSourceCardState(value) {
+  translationState.sourceCard = {
+    ...blankSourceCardState(),
+    ...(value || {}),
+  };
+}
+
+function currentSourceUploadState() {
+  return {
+    ...blankSourceUploadState(),
+    ...(translationState.sourceUpload || {}),
+  };
+}
+
+function setSourceUploadState(value) {
+  translationState.sourceUpload = {
+    ...blankSourceUploadState(),
+    ...(value || {}),
+  };
+}
+
+function clearSourceUploadState() {
+  translationState.sourceUpload = blankSourceUploadState();
+}
+
+function setSourcePathValue(value) {
+  setFieldValue("translation-source-path", value ?? "");
+  const pathNode = qs("translation-source-path-summary");
+  if (pathNode) {
+    pathNode.textContent = String(value || "").trim() || "No source staged yet.";
+  }
+}
+
+function currentManualSourceFile() {
+  return translationState.manualSourceFile || qs("translation-source-file")?.files?.[0] || null;
+}
+
+function normalizeSourceTypeLabel(sourceType) {
+  const normalized = String(sourceType || "").trim().toLowerCase();
+  if (normalized === "pdf") {
+    return "PDF";
+  }
+  if (normalized === "image") {
+    return "Image";
+  }
+  return "PDF or image";
+}
+
+function buildSourceCardStateFromJob(job) {
+  const jobSourcePath = String(job?.config?.source_path || "").trim();
+  const sourceName = jobSourcePath.split(/[\\/]/).pop() || jobSourcePath;
+  return {
+    kind: job?.config?.gmail_batch_context ? "prepared" : "manual",
+    status: "ready",
+    filename: sourceName,
+    sourceType: inferSourceType(sourceName),
+    pageCount: coercePositiveInt(job?.progress?.selected_total),
+    sourcePath: jobSourcePath,
+    message: isActiveTranslationJobStatus(job?.status)
+      ? "This source is attached to the current translation job."
+      : "Source is staged for the loaded job.",
+  };
+}
+
+export function deriveTranslationSourceState({
+  job = translationState.currentJob,
+  preparedLaunch = currentPreparedTranslationLaunch(),
+  sourceCard = currentSourceCardState(),
+  sourceUpload = currentSourceUploadState(),
+  sourcePathValue = fieldValue("translation-source-path"),
+  uploadedSourcePath = translationState.uploadedSourcePath,
+  currentGmailBatchContext = translationState.currentGmailBatchContext,
+} = {}) {
+  const normalizedCard = {
+    ...blankSourceCardState(),
+    ...(sourceCard || {}),
+  };
+  const normalizedUpload = {
+    ...blankSourceUploadState(),
+    ...(sourceUpload || {}),
+  };
+  const normalizedPreparedLaunch = normalizePreparedTranslationLaunch(preparedLaunch);
+  const normalizedGmailContext = normalizeGmailBatchContext(currentGmailBatchContext);
+  const jobSourcePath = String(job?.config?.source_path || "").trim();
+  const preparedSourcePath = String(normalizedPreparedLaunch?.source_path || "").trim();
+  const activeSourcePath = String(
+    normalizedCard.sourcePath
+    || (normalizedCard.kind === "manual" ? uploadedSourcePath : "")
+    || sourcePathValue
+    || "",
+  ).trim();
+  const sourceType = normalizedCard.sourceType
+    || inferSourceType(normalizedCard.filename || activeSourcePath || preparedSourcePath || jobSourcePath);
+  const fromGmail = Boolean(
+    normalizedPreparedLaunch?.gmail_batch_context
+    || normalizedGmailContext
+    || job?.config?.gmail_batch_context,
+  );
+  const jobActive = isActiveTranslationJobStatus(job?.status);
+
+  if (normalizedUpload.pending) {
+    return {
+      status: "manual-uploading",
+      ready: false,
+      filename: normalizedUpload.filename || normalizedCard.filename || "Document upload",
+      sourceType: normalizedUpload.sourceType || sourceType,
+      pageCount: null,
+      sourcePath: "",
+      fromGmail,
+      replacingPrepared: Boolean(normalizedUpload.replacingPrepared),
+      message: normalizedUpload.replacingPrepared
+        ? "Checking the replacement document..."
+        : "Uploading the document and checking it...",
+    };
+  }
+
+  if (jobActive && jobSourcePath) {
+    const jobCard = buildSourceCardStateFromJob(job);
+    return {
+      status: "current-job",
+      ready: false,
+      filename: jobCard.filename,
+      sourceType: jobCard.sourceType,
+      pageCount: jobCard.pageCount,
+      sourcePath: jobCard.sourcePath,
+      fromGmail: Boolean(job?.config?.gmail_batch_context),
+      replacingPrepared: false,
+      message: "This source is attached to the current translation job.",
+    };
+  }
+
+  if (normalizedCard.kind === "manual" && normalizedCard.status === "error") {
+    return {
+      status: "manual-error",
+      ready: false,
+      filename: normalizedCard.filename,
+      sourceType: normalizedCard.sourceType || sourceType,
+      pageCount: normalizedCard.pageCount,
+      sourcePath: "",
+      fromGmail: false,
+      replacingPrepared: false,
+      message: normalizedCard.message || "The document could not be staged. Choose another file to continue.",
+    };
+  }
+
+  if (normalizedCard.kind === "manual" && normalizedCard.status === "ready" && activeSourcePath) {
+    return {
+      status: "manual-ready",
+      ready: true,
+      filename: normalizedCard.filename || activeSourcePath.split(/[\\/]/).pop() || "",
+      sourceType: normalizedCard.sourceType || sourceType,
+      pageCount: normalizedCard.pageCount,
+      sourcePath: activeSourcePath,
+      fromGmail: false,
+      replacingPrepared: false,
+      message: normalizedCard.message || "The document is staged and ready.",
+    };
+  }
+
+  if (normalizedPreparedLaunch && preparedSourcePath) {
+    const preparedCard = buildPreparedSourceCardState(normalizedPreparedLaunch);
+    return {
+      status: "prepared-ready",
+      ready: true,
+      filename: preparedCard.filename,
+      sourceType: preparedCard.sourceType || sourceType,
+      pageCount: preparedCard.pageCount,
+      sourcePath: preparedSourcePath,
+      fromGmail: Boolean(normalizedPreparedLaunch.gmail_batch_context || normalizedGmailContext),
+      replacingPrepared: false,
+      message: preparedCard.message || "Prepared source is staged and ready to start.",
+    };
+  }
+
+  if (normalizedCard.kind === "prepared" && normalizedCard.status === "ready" && activeSourcePath) {
+    return {
+      status: "prepared-ready",
+      ready: true,
+      filename: normalizedCard.filename || activeSourcePath.split(/[\\/]/).pop() || "",
+      sourceType: normalizedCard.sourceType || sourceType,
+      pageCount: normalizedCard.pageCount,
+      sourcePath: activeSourcePath,
+      fromGmail,
+      replacingPrepared: false,
+      message: normalizedCard.message || "Prepared source is staged and ready to start.",
+    };
+  }
+
+  return {
+    status: "empty",
+    ready: false,
+    filename: "",
+    sourceType: "",
+    pageCount: null,
+    sourcePath: "",
+    fromGmail: false,
+    replacingPrepared: false,
+    message: "Choose a PDF or image to begin.",
+  };
+}
+
+function currentSourcePageCount() {
+  const sourceState = deriveTranslationSourceState();
+  if (sourceState.pageCount !== null) {
+    return sourceState.pageCount;
+  }
+  return currentPreparedTranslationLaunch()?.page_count ?? null;
+}
+
+function hasReadyTranslationSource() {
+  return Boolean(deriveTranslationSourceState().ready);
+}
+
+function hasManualSourceSelection() {
+  return deriveTranslationSourceState().status === "manual-ready";
+}
+
+export function deriveTranslationActionState(
+  job = translationState.currentJob,
+  {
+    sourceState = deriveTranslationSourceState({ job }),
+  } = {},
+) {
+  const activeJob = isActiveTranslationJobStatus(job?.status);
+  const jobId = String(job?.job_id || translationState.currentJobId || "").trim();
+  const canStart = sourceState.ready && !activeJob;
+  let helperText = "Choose a PDF or image to enable Start Translate.";
+  if (sourceState.status === "manual-uploading") {
+    helperText = sourceState.replacingPrepared
+      ? "Checking the replacement document..."
+      : "Checking the document before translation starts...";
+  } else if (activeJob) {
+    helperText = "A translation run is already in progress. Cancel it or wait for it to finish before starting another one.";
+  } else if (sourceState.status === "prepared-ready") {
+    helperText = sourceState.fromGmail
+      ? "The Gmail attachment is ready. Confirm the language and output folder, then start translation."
+      : "The prepared document is ready. Confirm the language and output folder, then start translation.";
+  } else if (sourceState.status === "manual-ready") {
+    helperText = "The document is ready. Confirm the language and output folder, then start translation.";
+  } else if (sourceState.status === "manual-error") {
+    helperText = sourceState.message || "The document could not be staged. Choose another file to continue.";
+  }
+  return {
+    sourceState: sourceState.status,
+    helperText,
+    startEnabled: canStart,
+    analyzeEnabled: canStart,
+    cancelEnabled: Boolean(jobId && job?.actions?.cancel),
+    resumeEnabled: Boolean(jobId && job?.actions?.resume),
+    rebuildEnabled: Boolean(jobId && job?.actions?.rebuild),
+  };
+}
+
+function renderTranslationSourceCard() {
+  const card = qs("translation-source-card");
+  if (!card) {
     return;
   }
-  section.open = true;
-  section.dataset.reveal = "true";
+  const title = qs("translation-source-card-title");
+  const copy = qs("translation-source-card-copy");
+  const filename = qs("translation-source-filename");
+  const sourceType = qs("translation-source-type");
+  const pages = qs("translation-source-pages");
+  const stageStatus = qs("translation-source-stage-status");
+  const hint = qs("translation-source-card-hint");
+  const chip = qs("translation-source-card-chip");
+  const browseButton = qs("translation-source-browse");
+  const clearButton = qs("translation-source-clear");
+  const sourceState = deriveTranslationSourceState();
+  const isPrepared = sourceState.status === "prepared-ready";
+  const isUploading = sourceState.status === "manual-uploading";
+  const isError = sourceState.status === "manual-error";
+  const isCurrentJob = sourceState.status === "current-job";
+  const ready = sourceState.ready;
+  card.dataset.state = sourceState.status || "empty";
+
+  if (title) {
+    title.textContent = sourceState.filename || (isPrepared ? "Prepared Gmail attachment" : "Choose a PDF or image");
+  }
+  if (copy) {
+    if (isUploading) {
+      copy.textContent = sourceState.replacingPrepared
+        ? "Checking the replacement document before it replaces the prepared attachment..."
+        : "Uploading the file and checking the page count...";
+    } else if (isCurrentJob) {
+      copy.textContent = "This source is attached to the current translation job. Progress will update below while the run is active.";
+    } else if (isPrepared) {
+      copy.textContent = sourceState.fromGmail
+        ? "This Gmail attachment is already staged. Choosing a local file will replace it for the next run."
+        : "This document is already staged. Choosing a local file will replace it for the next run.";
+    } else if (ready) {
+      copy.textContent = "The document is staged and ready. Confirm the language and output folder, then start translation.";
+    } else if (isError) {
+      copy.textContent = sourceState.message || "The file could not be staged. Choose another document to try again.";
+    } else {
+      copy.textContent = "Drag and drop it here, or choose it from your computer.";
+    }
+  }
+  if (filename) {
+    filename.textContent = sourceState.filename || "No file selected yet.";
+  }
+  if (sourceType) {
+    sourceType.textContent = normalizeSourceTypeLabel(sourceState.sourceType || (isPrepared ? "pdf" : ""));
+  }
+  if (pages) {
+    pages.textContent = sourceState.pageCount ?? "--";
+  }
+  if (stageStatus) {
+    if (isUploading) {
+      stageStatus.textContent = sourceState.replacingPrepared
+        ? "Checking the replacement document..."
+        : "Uploading and checking the file...";
+    } else if (isCurrentJob) {
+      stageStatus.textContent = "Current job is using this source.";
+    } else if (isPrepared) {
+      stageStatus.textContent = sourceState.fromGmail ? "Ready from Gmail." : "Prepared and ready.";
+    } else if (ready) {
+      stageStatus.textContent = "Uploaded and ready.";
+    } else if (isError) {
+      stageStatus.textContent = sourceState.message || "Upload failed.";
+    } else {
+      stageStatus.textContent = "Choose a file to begin.";
+    }
+  }
+  if (hint) {
+    if (isCurrentJob) {
+      hint.textContent = "Load another source only when you are ready to prepare the next run.";
+    } else if (ready && isPrepared) {
+      hint.textContent = sourceState.fromGmail
+        ? "The Gmail attachment stays staged until you explicitly choose a new local file."
+        : "The prepared document stays staged until you explicitly choose a new local file.";
+    } else if (ready) {
+      hint.textContent = "The same local file will not be uploaded again unless it changes.";
+    } else {
+      hint.textContent = "PDF and common image files are supported.";
+    }
+  }
+  if (chip) {
+    const chipState = isError
+      ? { text: "Needs attention", tone: "bad" }
+      : isUploading
+        ? { text: "Uploading", tone: "info" }
+        : isCurrentJob
+          ? { text: "In progress", tone: "info" }
+        : isPrepared
+          ? { text: "Ready", tone: "info" }
+          : ready
+            ? { text: "Ready", tone: "ok" }
+            : { text: "", tone: "" };
+    chip.textContent = chipState.text;
+    chip.className = chipState.text ? `status-chip ${chipState.tone}` : "status-chip info hidden";
+    chip.classList.toggle("hidden", chipState.text === "");
+  }
+  if (browseButton) {
+    browseButton.textContent = ready ? "Choose another document" : "Choose document";
+    browseButton.disabled = isUploading;
+  }
+  if (clearButton) {
+    clearButton.classList.toggle("hidden", !hasManualSourceSelection());
+  }
+}
+
+function browserDefaultOutputDir() {
+  return String(appState.bootstrap?.normalized_payload?.settings_summary?.default_outdir || "").trim();
+}
+
+function renderTranslationOutputSummary() {
+  const label = qs("translation-output-summary-label");
+  const copy = qs("translation-output-summary-copy");
+  const path = qs("translation-output-summary-path");
+  if (!label || !copy || !path) {
+    return;
+  }
+  const outputDir = fieldValue("translation-output-dir");
+  const defaultOutdir = browserDefaultOutputDir();
+  if (outputDir && defaultOutdir && outputDir === defaultOutdir) {
+    label.textContent = "Using default output folder";
+    copy.textContent = "Translated files will be saved in the default folder for this workspace.";
+    path.textContent = outputDir;
+    return;
+  }
+  if (outputDir) {
+    label.textContent = "Save output in";
+    copy.textContent = defaultOutdir
+      ? "Using the folder shown below. Open Change folder/path if you want to save somewhere else."
+      : "Using the folder shown below.";
+    path.textContent = outputDir;
+    return;
+  }
+  label.textContent = "Choose an output folder";
+  copy.textContent = "Open Change folder/path to decide where translated files should be saved.";
+  path.textContent = "No output folder selected yet.";
 }
 
 function escapeHtml(value) {
@@ -386,13 +1138,46 @@ function sourceFileKey(file) {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
-function clearManualSourceSelection() {
+function syncNativeSourceInputFile(file) {
   const input = qs("translation-source-file");
-  if (input) {
-    input.value = "";
+  if (!input) {
+    return;
   }
+  if (!file) {
+    input.value = "";
+    try {
+      input.files = [];
+    } catch {
+      // Ignore environments that do not allow programmatic FileList mutation.
+    }
+    return;
+  }
+  try {
+    if (typeof DataTransfer === "function") {
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      input.files = transfer.files;
+    }
+  } catch {
+    // Ignore environments that do not allow programmatic FileList mutation.
+  }
+}
+
+function clearManualSourceSelection() {
+  syncNativeSourceInputFile(null);
+  translationState.manualSourceFile = null;
+}
+
+function clearUploadedSourceCache() {
   translationState.uploadedSourcePath = "";
   translationState.uploadedSourceKey = "";
+}
+
+function clearManualStagedSource() {
+  clearManualSourceSelection();
+  setSourcePathValue("");
+  clearSourceUploadState();
+  setSourceCardState(blankSourceCardState());
 }
 
 function isPdfFile(file) {
@@ -403,48 +1188,208 @@ function isPdfFile(file) {
     || String(file.name || "").trim().toLowerCase().endsWith(".pdf");
 }
 
-async function ensureUploadedSource() {
-  const input = qs("translation-source-file");
-  const file = input?.files?.[0];
-  if (!file) {
-    return translationState.uploadedSourcePath || "";
+function sourceUploadToken() {
+  return currentSourceUploadState().token + 1;
+}
+
+function isActiveSourceUploadTransaction(transaction) {
+  if (!transaction) {
+    return false;
   }
+  const activeUpload = currentSourceUploadState();
+  return Boolean(
+    activeUpload.pending
+      && Number(activeUpload.token) === Number(transaction.token)
+      && String(activeUpload.fileKey || "") === String(transaction.fileKey || ""),
+  );
+}
+
+function sourceUploadIsPending() {
+  return Boolean(currentSourceUploadState().pending);
+}
+
+function beginSourceUploadTransaction(file) {
+  const preparedLaunch = currentPreparedTranslationLaunch();
+  const gmailBatchContext = normalizeGmailBatchContext(translationState.currentGmailBatchContext);
+  const token = sourceUploadToken();
+  setSourceUploadState({
+    token,
+    pending: true,
+    fileKey: sourceFileKey(file),
+    filename: file.name,
+    sourceType: isPdfFile(file) ? "pdf" : "image",
+    replacingPrepared: Boolean(preparedLaunch?.source_path),
+    preservedPreparedLaunch: preparedLaunch ? normalizePreparedTranslationLaunch(preparedLaunch) : null,
+    preservedGmailBatchContext: gmailBatchContext,
+    preservedSourcePath: fieldValue("translation-source-path"),
+  });
+  return currentSourceUploadState();
+}
+
+function commitManualSourceState({
+  file,
+  sourcePath,
+  sourceKey,
+  filename = file?.name || "",
+  sourceType = isPdfFile(file) ? "pdf" : "image",
+  pageCount = null,
+  message = "Source upload complete.",
+} = {}) {
+  clearSourceUploadState();
+  clearPreparedTranslationLaunch();
+  translationState.currentGmailBatchContext = null;
+  translationState.manualSourceFile = file || null;
+  syncNativeSourceInputFile(file || null);
+  translationState.uploadedSourceKey = sourceKey || translationState.uploadedSourceKey || "";
+  translationState.uploadedSourcePath = String(sourcePath || "").trim();
+  setSourcePathValue(translationState.uploadedSourcePath);
+  setSourceCardState({
+    kind: "manual",
+    status: "ready",
+    filename,
+    sourceType,
+    pageCount: coercePositiveInt(pageCount),
+    sourcePath: translationState.uploadedSourcePath,
+    message,
+  });
+}
+
+function restorePreparedSourceAfterFailedReplacement(transaction) {
+  const restoredPrepared = normalizePreparedTranslationLaunch(transaction?.preservedPreparedLaunch);
+  if (!restoredPrepared?.source_path) {
+    return false;
+  }
+  translationState.currentPreparedLaunch = restoredPrepared;
+  translationState.currentGmailBatchContext = normalizeGmailBatchContext(
+    transaction?.preservedGmailBatchContext || restoredPrepared.gmail_batch_context,
+  );
+  setSourcePathValue(transaction?.preservedSourcePath || restoredPrepared.source_path || "");
+  setSourceCardState(buildPreparedSourceCardState(restoredPrepared));
+  return true;
+}
+
+function rollbackSourceUploadTransaction(file, error, transaction = currentSourceUploadState()) {
+  clearSourceUploadState();
+  clearManualSourceSelection();
+  if (transaction?.replacingPrepared && restorePreparedSourceAfterFailedReplacement(transaction)) {
+    return;
+  }
+  setSourcePathValue("");
+  setSourceCardState({
+    kind: "manual",
+    status: "error",
+    filename: file?.name || "",
+    sourceType: isPdfFile(file) ? "pdf" : "image",
+    pageCount: null,
+    sourcePath: "",
+    message: error?.message || "The file could not be staged.",
+  });
+}
+
+async function stageTranslationSourceFile(file) {
+  if (!file) {
+    clearManualStagedSource();
+    return "";
+  }
+  translationState.manualSourceFile = file;
+  syncNativeSourceInputFile(file);
   const key = sourceFileKey(file);
   if (translationState.uploadedSourceKey === key && translationState.uploadedSourcePath) {
+    commitManualSourceState({
+      file,
+      sourcePath: translationState.uploadedSourcePath,
+      sourceKey: key,
+      filename: file.name,
+      sourceType: isPdfFile(file) ? "pdf" : "image",
+      pageCount: currentSourceCardState().pageCount,
+      message: "The document is staged and ready.",
+    });
+    renderTranslationSourceCard();
+    syncTranslationPrimaryActionState();
+    renderTranslationRunStatus(translationState.currentJob);
+    if (!translationState.currentJob) {
+      renderTranslationResultCard(null);
+    }
     return translationState.uploadedSourcePath;
   }
-  const form = new FormData();
-  form.append("file", file);
-  const payload = await fetchJson("/api/translation/upload-source", appState, {
-    method: "POST",
-    body: form,
+  const transaction = beginSourceUploadTransaction(file);
+  setSourceCardState({
+    kind: "manual",
+    status: "uploading",
+    filename: file.name,
+    sourceType: transaction.sourceType,
+    pageCount: null,
+    sourcePath: "",
+    message: transaction.replacingPrepared
+      ? "Checking the replacement document..."
+      : "Uploading the file and checking the page count...",
   });
-  translationState.currentGmailBatchContext = null;
-  clearPreparedTranslationLaunch();
-  translationState.uploadedSourceKey = key;
-  translationState.uploadedSourcePath = payload.normalized_payload.source_path || "";
-  let resolvedPageCount = payload.normalized_payload.page_count ?? "?";
-  let sourceUploadHint = "Source upload complete.";
-  if (isPdfFile(file) && translationState.uploadedSourcePath) {
-    const browserBundle = await ensureBrowserPdfBundleFromFile({
-      appState,
-      sourcePath: translationState.uploadedSourcePath,
-      file,
+  renderTranslationSourceCard();
+  syncTranslationPrimaryActionState();
+  renderTranslationRunStatus(translationState.currentJob);
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const payload = await fetchJson("/api/translation/upload-source", appState, {
+      method: "POST",
+      body: form,
     });
-    resolvedPageCount = browserBundle.page_count ?? resolvedPageCount;
-    sourceUploadHint = "Source upload complete. Browser PDF staging is ready.";
+    if (!isActiveSourceUploadTransaction(transaction)) {
+      return "";
+    }
+    let resolvedPageCount = payload.normalized_payload.page_count ?? "?";
+    let sourceUploadHint = "Source upload complete.";
+    const resolvedSourcePath = String(payload.normalized_payload.source_path || "").trim();
+    if (isPdfFile(file) && resolvedSourcePath) {
+      const browserBundle = await ensureBrowserPdfBundleFromFile({
+        appState,
+        sourcePath: resolvedSourcePath,
+        file,
+      });
+      if (!isActiveSourceUploadTransaction(transaction)) {
+        return "";
+      }
+      resolvedPageCount = browserBundle.page_count ?? resolvedPageCount;
+      sourceUploadHint = "Source upload complete. Browser PDF staging is ready.";
+    }
+    if (!isActiveSourceUploadTransaction(transaction)) {
+      return "";
+    }
+    commitManualSourceState({
+      file,
+      sourcePath: resolvedSourcePath,
+      sourceKey: key,
+      filename: payload.normalized_payload.source_filename || file.name,
+      sourceType: payload.normalized_payload.source_type || transaction.sourceType,
+      pageCount: resolvedPageCount,
+      message: sourceUploadHint,
+    });
+    setDiagnostics("translation", payload, {
+      hint: sourceUploadHint,
+      open: false,
+    });
+    renderTranslationSourceCard();
+    syncTranslationPrimaryActionState();
+    renderTranslationRunStatus(translationState.currentJob);
+    if (!translationState.currentJob) {
+      renderTranslationResultCard(null);
+    }
+    return translationState.uploadedSourcePath;
+  } catch (error) {
+    if (!isActiveSourceUploadTransaction(transaction)) {
+      return "";
+    }
+    rollbackSourceUploadTransaction(file, error, transaction);
+    throw error;
   }
-  setFieldValue("translation-source-summary", [
-    `Filename: ${payload.normalized_payload.source_filename || file.name}`,
-    `Type: ${payload.normalized_payload.source_type || "unknown"}`,
-    `Pages: ${resolvedPageCount}`,
-    `Saved path: ${payload.normalized_payload.source_path || ""}`,
-  ].join("\n"));
-  setDiagnostics("translation", payload, {
-    hint: sourceUploadHint,
-    open: false,
-  });
-  return translationState.uploadedSourcePath;
+}
+
+async function ensureUploadedSource() {
+  const sourceState = deriveTranslationSourceState();
+  if (sourceState.status === "manual-ready" || sourceState.status === "prepared-ready") {
+    return sourceState.sourcePath || "";
+  }
+  return "";
 }
 
 function collectTranslationSetupValues() {
@@ -495,6 +1440,200 @@ function collectTranslationSaveValues() {
     quality_risk_score: fieldValue("translation-quality-risk-score"),
     profit: fieldValue("translation-profit"),
   };
+}
+
+function summarizeTranslationLogFlags(logs = []) {
+  const imagePages = new Set();
+  const retryPages = new Set();
+  const failedPages = new Set();
+  for (const entry of Array.isArray(logs) ? logs : []) {
+    const line = String(entry || "").trim();
+    const flagMatch = PAGE_FLAG_LOG_RE.exec(line);
+    if (flagMatch) {
+      const page = coercePositiveInt(flagMatch.groups?.page);
+      if (page) {
+        if (flagMatch.groups?.image === "True") {
+          imagePages.add(page);
+        }
+        if (flagMatch.groups?.retry === "True") {
+          retryPages.add(page);
+        }
+      }
+    }
+    const statusMatch = PAGE_STATUS_LOG_RE.exec(line);
+    if (statusMatch?.groups?.status?.toLowerCase() === "failed") {
+      const page = coercePositiveInt(statusMatch.groups.page);
+      if (page) {
+        failedPages.add(page);
+      }
+    }
+  }
+  return { imagePages, retryPages, failedPages };
+}
+
+function syncTranslationPrimaryActionState() {
+  const startButton = qs("translation-start");
+  const analyzeButton = qs("translation-analyze");
+  const cancelButton = qs("translation-cancel");
+  const resumeButton = qs("translation-resume-btn");
+  const rebuildButton = qs("translation-rebuild");
+  const helper = qs("translation-action-helper");
+  const actionState = deriveTranslationActionState();
+  if (helper) {
+    helper.textContent = actionState.helperText;
+  }
+  if (startButton) {
+    startButton.disabled = !actionState.startEnabled;
+  }
+  if (analyzeButton) {
+    analyzeButton.disabled = !actionState.analyzeEnabled;
+  }
+  if (cancelButton) {
+    cancelButton.disabled = !actionState.cancelEnabled;
+  }
+  if (resumeButton) {
+    resumeButton.disabled = !actionState.resumeEnabled;
+  }
+  if (rebuildButton) {
+    rebuildButton.disabled = !actionState.rebuildEnabled;
+  }
+}
+
+export function deriveTranslationRunStatusView(
+  job,
+  {
+    preparedLaunch = currentPreparedTranslationLaunch(),
+    sourceState = deriveTranslationSourceState({ job, preparedLaunch }),
+    sourceReady = sourceState.ready,
+    sourcePageCount = sourceState.pageCount ?? currentSourcePageCount(),
+  } = {},
+) {
+  const progress = job && typeof job.progress === "object" ? job.progress : {};
+  const result = job && typeof job.result === "object" ? job.result : {};
+  const logFlags = summarizeTranslationLogFlags(job?.logs || []);
+  const completedPages = coercePositiveInt(result.completed_pages) ?? 0;
+  const selectedIndex = coercePositiveInt(progress.selected_index) ?? completedPages;
+  const selectedTotal = coercePositiveInt(progress.selected_total) ?? sourcePageCount ?? preparedLaunch?.page_count ?? null;
+  const realPage = coercePositiveInt(progress.real_page);
+  const flaggedCount = coercePositiveInt(result.review_queue_count) ?? 0;
+  const failedPage = coercePositiveInt(result.failed_page);
+  const errorCount = Math.max(logFlags.failedPages.size, failedPage ? 1 : 0, job?.status === "failed" ? 1 : 0);
+  const percentValue = job
+    ? (job.status === "completed"
+      ? 100
+      : selectedTotal
+        ? Math.max(0, Math.min(100, Math.round((selectedIndex / selectedTotal) * 100)))
+        : 0)
+    : 0;
+  let tone = "info";
+  let chipText = "Ready";
+  let currentTask = "Choose a source file to begin.";
+  if (!job) {
+    if (sourceState.status === "manual-uploading") {
+      currentTask = sourceState.replacingPrepared
+        ? "Checking the replacement document..."
+        : "Checking the document before translation starts.";
+      chipText = "Checking";
+      tone = "info";
+    } else if (sourceState.status === "manual-error") {
+      currentTask = sourceState.message || "Choose another source file to continue.";
+      chipText = "Needs attention";
+      tone = "bad";
+    } else if (preparedLaunch) {
+      currentTask = "Prepared Gmail attachment is ready to start.";
+      chipText = "Ready";
+      tone = "info";
+    } else if (sourceState.status === "current-job") {
+      currentTask = "Current translation job is using this source.";
+      chipText = "Running";
+      tone = "info";
+    } else if (sourceReady) {
+      currentTask = "Source file is ready. Confirm the language and folder, then start translation.";
+      chipText = "Ready";
+      tone = "ok";
+    } else {
+      chipText = "Waiting";
+      tone = "info";
+    }
+  } else {
+    currentTask = String(progress.status_text || job.status_text || "").trim() || "Translation job state is available.";
+    if (job.status === "completed") {
+      chipText = "Complete";
+      tone = "ok";
+    } else if (job.status === "failed") {
+      chipText = "Needs attention";
+      tone = "bad";
+    } else if (job.status === "cancel_requested" || job.status === "cancelled") {
+      chipText = "Stopping";
+      tone = "warn";
+    } else {
+      chipText = "Running";
+      tone = "info";
+    }
+  }
+  const imageRetryParts = [];
+  if (logFlags.imagePages.size > 0) {
+    imageRetryParts.push(`Images ${logFlags.imagePages.size}`);
+  }
+  if (logFlags.retryPages.size > 0) {
+    imageRetryParts.push(`Retries ${logFlags.retryPages.size}`);
+  }
+  if (Boolean(progress.image_used) && realPage) {
+    imageRetryParts.unshift(`Image on page ${realPage}`);
+  }
+  if (Boolean(progress.retry_used) && realPage) {
+    imageRetryParts.unshift(`Retry on page ${realPage}`);
+  }
+  const alertParts = [];
+  if (flaggedCount > 0) {
+    alertParts.push(`Flagged ${flaggedCount}`);
+  }
+  if (errorCount > 0) {
+    alertParts.push(`Errors ${errorCount}`);
+  }
+  return {
+    percentValue,
+    percentText: `${percentValue}%`,
+    chipText,
+    chipTone: tone,
+    currentTask,
+    pagesText: `${selectedIndex} / ${selectedTotal ?? "--"}`,
+    currentPageText: realPage
+      ? `Page ${realPage}`
+      : job?.status === "completed"
+        ? "Completed"
+        : preparedLaunch?.start_page && preparedLaunch.start_page > 1
+          ? `Start at page ${preparedLaunch.start_page}`
+          : "Not started",
+    imageRetryText: imageRetryParts.join(" | ") || "No image or retry markers yet.",
+    alertsText: alertParts.join(" | ") || "No flagged pages or errors.",
+  };
+}
+
+function renderTranslationRunStatus(job = translationState.currentJob) {
+  const percentNode = qs("translation-progress-percent");
+  const chipNode = qs("translation-run-status-chip");
+  const trackNode = qs("translation-progress-track");
+  const barNode = qs("translation-progress-bar");
+  const taskNode = qs("translation-current-task");
+  const pagesNode = qs("translation-run-pages");
+  const currentPageNode = qs("translation-run-current-page");
+  const imageRetryNode = qs("translation-run-image-retry");
+  const alertsNode = qs("translation-run-alerts");
+  if (!percentNode || !chipNode || !trackNode || !barNode || !taskNode || !pagesNode || !currentPageNode || !imageRetryNode || !alertsNode) {
+    return;
+  }
+  const view = deriveTranslationRunStatusView(job);
+  percentNode.textContent = view.percentText;
+  chipNode.textContent = view.chipText;
+  chipNode.className = `status-chip ${view.chipTone}`;
+  trackNode.setAttribute("aria-valuenow", String(view.percentValue));
+  barNode.style.width = `${view.percentValue}%`;
+  taskNode.textContent = view.currentTask;
+  pagesNode.textContent = view.pagesText;
+  currentPageNode.textContent = view.currentPageText;
+  imageRetryNode.textContent = view.imageRetryText;
+  alertsNode.textContent = view.alertsText;
 }
 
 function clearDownloadLink(id) {
@@ -568,16 +1707,10 @@ function collapseTranslationCompletionSections() {
 }
 
 function hasTranslationSaveSeed() {
-  const seed = translationState.currentSeed || {};
-  return Boolean(
-    translationState.currentRowId
-    || translationState.currentJob?.result?.save_seed
-    || seed.run_id
-    || seed.case_number
-    || seed.court_email
-    || seed.case_entity
-    || seed.case_city,
-  );
+  return hasTranslationSaveSeedData(translationState.currentSeed || {}, {
+    currentRowId: translationState.currentRowId,
+    job: translationState.currentJob,
+  });
 }
 
 function hasTranslationCompletionSurface() {
@@ -647,6 +1780,9 @@ export function closeTranslationCompletionDrawer() {
 export function getTranslationUiSnapshot() {
   const review = currentArabicReviewState();
   const recovery = deriveTranslationRecoveryState(translationState.currentJob);
+  const sourceCard = currentSourceCardState();
+  const sourceState = deriveTranslationSourceState();
+  const actionState = deriveTranslationActionState(translationState.currentJob, { sourceState });
   return {
     currentJobKind: translationState.currentJob?.job_kind || "",
     currentJobStatus: translationState.currentJob?.status || "",
@@ -676,6 +1812,26 @@ export function getTranslationUiSnapshot() {
     hasPreparedLaunch: hasPreparedTranslationLaunch(),
     preparedLaunchSourcePath: currentPreparedTranslationLaunch()?.source_path || "",
     preparedLaunchAttachmentId: currentPreparedTranslationLaunch()?.gmail_batch_context?.attachment_id || "",
+    sourceReady: sourceState.ready,
+    sourceState: sourceState.status,
+    sourceCardKind: sourceCard.kind,
+    sourceCardStatus: sourceCard.status,
+    sourceCardFilename: sourceCard.filename,
+    sourceCardPageCount: sourceCard.pageCount,
+    sourceCardSourcePath: sourceCard.sourcePath || fieldValue("translation-source-path"),
+    sourcePathValue: fieldValue("translation-source-path"),
+    sourceUploadPending: currentSourceUploadState().pending,
+    sourceUploadReplacingPrepared: currentSourceUploadState().replacingPrepared,
+    manualSourceFileName: currentManualSourceFile()?.name || "",
+    outputDirValue: fieldValue("translation-output-dir"),
+    translationStartDisabled: Boolean(qs("translation-start")?.disabled),
+    translationAnalyzeDisabled: Boolean(qs("translation-analyze")?.disabled),
+    translationCancelDisabled: Boolean(qs("translation-cancel")?.disabled),
+    translationResumeDisabled: Boolean(qs("translation-resume-btn")?.disabled),
+    translationRebuildDisabled: Boolean(qs("translation-rebuild")?.disabled),
+    translationActionHelper: qs("translation-action-helper")?.textContent?.trim?.() ?? "",
+    derivedActionState: actionState,
+    runStatusTask: qs("translation-current-task")?.textContent?.trim?.() ?? "",
   };
 }
 
@@ -691,31 +1847,23 @@ export async function startTranslationLaunch(launch, { auto = false } = {}) {
 }
 
 function completionButtonLabel() {
-  if (translationState.currentRowId) {
-    return "Open Saved Row";
-  }
-  if (translationState.currentJob?.job_kind === "analyze") {
-    return "Review Results";
-  }
-  return "Finish Translation";
+  return deriveTranslationCompletionPresentation({
+    job: translationState.currentJob,
+    saveSeed: currentTranslationSeed(),
+    currentRowId: translationState.currentRowId,
+    arabicReview: currentArabicReviewState(),
+    gmailBatchContext: translationState.currentGmailBatchContext,
+  }).completionButtonLabel;
 }
 
 function completionSurfaceSummary() {
-  const review = currentArabicReviewState();
-  const job = translationState.currentJob;
-  if (job?.job_kind === "analyze" && job.status === "completed") {
-    return "Analyze-only preflight is complete. Export the report or other artifacts here, or start the full translation when you are ready to create a job-log row.";
-  }
-  if (review.required && !review.resolved) {
-    return review.message || "Arabic DOCX review is required before Save-to-Job-Log can continue.";
-  }
-  if (translationState.currentRowId) {
-    return `Loaded translation row #${translationState.currentRowId}. Review the case fields first, then save any edits back to the active job log.`;
-  }
-  if (hasTranslationSaveSeed()) {
-    return "Translation complete. Review the case fields first. Run metrics and amounts stay collapsed until you need them.";
-  }
-  return "Complete a translation run or load a saved translation row to review the case fields, artifacts, and finish-the-job actions here.";
+  return deriveTranslationCompletionPresentation({
+    job: translationState.currentJob,
+    saveSeed: currentTranslationSeed(),
+    currentRowId: translationState.currentRowId,
+    arabicReview: currentArabicReviewState(),
+    gmailBatchContext: translationState.currentGmailBatchContext,
+  }).drawerStatus;
 }
 
 function renderTranslationCompletionResultCard() {
@@ -723,24 +1871,30 @@ function renderTranslationCompletionResultCard() {
   if (!container) {
     return;
   }
-  if (translationState.currentJob) {
-    renderTranslationResultCard(translationState.currentJob, { containerId: "translation-completion-result" });
-    return;
-  }
-  if (!hasTranslationSaveSeed()) {
+  const presentation = deriveTranslationCompletionPresentation({
+    job: translationState.currentJob,
+    saveSeed: currentTranslationSeed(),
+    currentRowId: translationState.currentRowId,
+    arabicReview: currentArabicReviewState(),
+    gmailBatchContext: translationState.currentGmailBatchContext,
+  });
+  if (!presentation.available) {
     container.classList.add("empty-state");
-    container.textContent = "Complete a translation run or load a saved row to open the bounded translation finish surface.";
+    container.textContent = presentation.resultCopy;
     return;
   }
-  const seed = translationState.currentSeed || {};
+  const detailLines = presentation.resultDetailLines
+    .filter(Boolean)
+    .map((line) => escapeHtml(line))
+    .join("<br>");
   container.classList.remove("empty-state");
   container.innerHTML = `
     <div class="result-header">
       <div>
-        <strong>Saved translation row is ready to review.</strong>
-        <p>${seed.case_number || "No case number"}<br>${seed.case_entity || "No case entity"} | ${seed.case_city || "No case city"} | ${seed.translation_date || "No date"}</p>
+        <strong>${escapeHtml(presentation.resultTitle)}</strong>
+        <p>${escapeHtml(presentation.resultCopy)}${detailLines ? `<br><br>${detailLines}` : ""}</p>
       </div>
-      <span class="status-chip info">Ready</span>
+      <span class="status-chip ${escapeHtml(presentation.resultChipTone)}">${escapeHtml(presentation.resultChipLabel)}</span>
     </div>
   `;
 }
@@ -750,32 +1904,39 @@ function renderArabicReviewCard() {
   const title = qs("translation-arabic-review-title");
   const copy = qs("translation-arabic-review-copy");
   const chip = qs("translation-arabic-review-chip");
+  const docxLabel = qs("translation-arabic-review-docx-label");
   const docxPath = qs("translation-arabic-review-docx-path");
   const openButton = qs("translation-arabic-review-open");
   const continueNowButton = qs("translation-arabic-review-continue-now");
   const continueWithoutChangesButton = qs("translation-arabic-review-continue-without-changes");
-  if (!card || !title || !copy || !chip || !docxPath || !openButton || !continueNowButton || !continueWithoutChangesButton) {
+  if (!card || !title || !copy || !chip || !docxLabel || !docxPath || !openButton || !continueNowButton || !continueWithoutChangesButton) {
     return;
   }
   const review = currentArabicReviewState();
+  const presentation = deriveTranslationCompletionPresentation({
+    job: translationState.currentJob,
+    saveSeed: currentTranslationSeed(),
+    currentRowId: translationState.currentRowId,
+    arabicReview: review,
+    gmailBatchContext: translationState.currentGmailBatchContext,
+  });
   const show = Boolean(review.required || currentCompletedTranslationJobRequiresArabicReview());
   card.classList.toggle("hidden", !show);
   if (!show) {
     return;
   }
-  const resolved = Boolean(review.required && review.resolved);
-  title.textContent = "Arabic DOCX Review";
-  copy.textContent = review.message || (
-    resolved
-      ? "Arabic DOCX review is resolved. You can continue with Save-to-Job-Log or Gmail confirmation."
-      : "Open the durable translated DOCX in Word, align or edit it manually, then save it to continue automatically."
-  );
-  docxPath.textContent = review.docx_path || String(currentTranslationSeed().output_docx || "").trim() || "Durable DOCX unavailable.";
-  chip.textContent = resolved ? "Resolved" : review.status === "waiting_for_save" ? "Waiting" : "Required";
-  chip.className = `status-chip ${resolved ? "ok" : review.status === "attention" || review.status === "missing" ? "warn" : "info"}`;
+  docxLabel.textContent = presentation.arabicReview.docxLabel;
+  title.textContent = presentation.arabicReview.title;
+  copy.textContent = presentation.arabicReview.copy;
+  docxPath.textContent = review.docx_path || String(currentTranslationSeed().output_docx || "").trim() || presentation.arabicReview.unavailableText;
+  chip.textContent = presentation.arabicReview.chipLabel;
+  chip.className = `status-chip ${presentation.arabicReview.chipTone}`;
+  openButton.textContent = presentation.arabicReview.openLabel;
+  continueNowButton.textContent = presentation.arabicReview.continueNowLabel;
+  continueWithoutChangesButton.textContent = presentation.arabicReview.continueWithoutChangesLabel;
   openButton.disabled = !Boolean(review.docx_path || currentTranslationSeed().output_docx);
-  continueNowButton.disabled = resolved;
-  continueWithoutChangesButton.disabled = resolved;
+  continueNowButton.disabled = Boolean(review.required && review.resolved);
+  continueWithoutChangesButton.disabled = Boolean(review.required && review.resolved);
 }
 
 function syncTranslationCompletionSurface() {
@@ -784,13 +1945,36 @@ function syncTranslationCompletionSurface() {
   const formShell = qs("translation-completion-form-shell");
   const emptyShell = qs("translation-completion-empty");
   const statusNode = qs("translation-completion-status");
+  const emptyTitleNode = qs("translation-completion-empty-title");
+  const emptyCopyNode = qs("translation-completion-empty-copy");
+  const saveTitleNode = qs("translation-save-form-title");
+  const saveStatusNode = qs("translation-save-status");
   const reviewExportButton = qs("translation-review-export");
   const runReportButton = qs("translation-generate-report");
   const saveButton = qs("translation-save-row");
   const review = currentArabicReviewState();
+  const presentation = deriveTranslationCompletionPresentation({
+    job: translationState.currentJob,
+    saveSeed: currentTranslationSeed(),
+    currentRowId: translationState.currentRowId,
+    arabicReview: review,
+    gmailBatchContext: translationState.currentGmailBatchContext,
+  });
   if (openButton) {
     openButton.classList.toggle("hidden", !available);
     openButton.textContent = completionButtonLabel();
+  }
+  if (emptyTitleNode) {
+    emptyTitleNode.textContent = presentation.emptyTitle;
+  }
+  if (emptyCopyNode) {
+    emptyCopyNode.textContent = presentation.emptyCopy;
+  }
+  if (saveTitleNode) {
+    saveTitleNode.textContent = presentation.saveTitle;
+  }
+  if (saveStatusNode) {
+    saveStatusNode.textContent = presentation.saveStatus;
   }
   if (!translationState.currentJob) {
     if (reviewExportButton) {
@@ -810,7 +1994,7 @@ function syncTranslationCompletionSurface() {
     formShell?.classList.add("hidden");
     emptyShell?.classList.add("hidden");
     if (statusNode) {
-      statusNode.textContent = "Complete a translation run or load a saved translation row to review the case fields, artifacts, and finish-the-job actions here.";
+      statusNode.textContent = presentation.drawerStatus;
     }
     renderTranslationCompletionResultCard();
     renderArabicReviewCard();
@@ -818,21 +2002,20 @@ function syncTranslationCompletionSurface() {
     return;
   }
   if (statusNode) {
-    statusNode.textContent = completionSurfaceSummary();
+    statusNode.textContent = presentation.drawerStatus;
   }
   const hasSaveSurface = hasTranslationSaveSeed();
   formShell?.classList.toggle("hidden", !hasSaveSurface);
   emptyShell?.classList.toggle("hidden", hasSaveSurface);
   if (saveButton) {
+    saveButton.textContent = presentation.saveButtonLabel;
     saveButton.disabled = !hasSaveSurface || currentArabicReviewIsBlocking();
   }
   if (hasSaveSurface && !translationState.currentRowId && review.required) {
     setPanelStatus(
       "translation-save",
       review.resolved ? "" : "warn",
-      review.resolved
-        ? "Arabic DOCX review resolved. Review the case fields before saving."
-        : (review.message || "Arabic DOCX review is required before Save-to-Job-Log can continue."),
+      presentation.saveStatus,
     );
   }
   renderTranslationCompletionResultCard();
@@ -1033,16 +2216,16 @@ function translationStatusSummary(job) {
   }
   if (job.job_kind === "analyze") {
     return job.status === "completed"
-      ? "Analyze complete. Open the bounded results surface to export the report or start the full translation."
+      ? "Analysis complete. Review the report, then start a full translation when you are ready."
       : job.status_text || "Analyze job is running.";
   }
   if (job.job_kind === "rebuild") {
     return job.status === "completed"
-      ? "DOCX rebuild complete. Open the bounded results surface to collect the refreshed artifact."
+      ? "DOCX rebuild complete. Review the translated DOCX and download the refreshed file here."
       : job.status_text || "DOCX rebuild is running.";
   }
   if (job.status === "completed") {
-    return "Translation complete. Finish the job from the bounded results surface.";
+    return "Translation complete. Review the translated document, then save the case record if everything looks right.";
   }
   if (job.status === "cancel_requested") {
     return "Cancellation requested. Waiting for the current page task to stop cleanly.";
@@ -1200,7 +2383,8 @@ async function restorePendingArabicReview() {
 }
 
 async function deleteTranslationJobLogRow(rowId) {
-  if (!window.confirm(`Delete translation row #${rowId} from the active job log?`)) {
+  const presentation = deriveRecentWorkPresentation({ jobType: "Translation" });
+  if (!window.confirm(presentation.deleteConfirmMessage)) {
     return;
   }
   const payload = await fetchJson("/api/joblog/delete", appState, {
@@ -1211,16 +2395,17 @@ async function deleteTranslationJobLogRow(rowId) {
   if (Number(translationState.currentRowId) === Number(rowId)) {
     applyTranslationSeed(blankSaveSeed(), { rowId: null });
   }
-  setPanelStatus("translation-save", "ok", payload.normalized_payload?.message || `Deleted translation row #${rowId}.`);
+  setPanelStatus("recent-jobs", "ok", presentation.deleteStatus);
+  setPanelStatus("translation-save", "ok", presentation.deleteStatus);
   setDiagnostics("translation-save", payload, {
-    hint: payload.normalized_payload?.message || `Deleted translation row #${rowId}.`,
+    hint: `Deleted translation record #${rowId}.`,
     open: false,
   });
   window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
 }
 
 function applyTranslationDefaults(defaults) {
-  setFieldValue("translation-output-dir", defaults.output_dir || "");
+  setFieldValue("translation-output-dir", defaults.output_dir || browserDefaultOutputDir() || "");
   setFieldValue("translation-target-lang", defaults.target_lang || "EN");
   setFieldValue("translation-effort", defaults.effort || "high");
   setFieldValue("translation-effort-policy", defaults.effort_policy || "adaptive");
@@ -1237,6 +2422,7 @@ function applyTranslationDefaults(defaults) {
   setFieldValue("translation-context-file", defaults.context_file || "");
   setFieldValue("translation-glossary-file", defaults.glossary_file || "");
   setFieldValue("translation-context-text", defaults.context_text || "");
+  renderTranslationOutputSummary();
 }
 
 export function applyTranslationLaunch(launch) {
@@ -1254,13 +2440,12 @@ export function applyTranslationLaunch(launch) {
     resetTranslationWorkspaceForPreparedLaunch();
   }
   translationState.currentPreparedLaunch = preparedLaunch;
+  clearSourceUploadState();
   if (gmailBatchContext || workflowSource === "gmail_intake") {
     clearManualSourceSelection();
   }
   translationState.currentGmailBatchContext = gmailBatchContext;
-  if (preparedLaunch.source_path) {
-    setFieldValue("translation-source-path", preparedLaunch.source_path);
-  }
+  setSourcePathValue(preparedLaunch.source_path || "");
   if (preparedLaunch.output_dir) {
     setFieldValue("translation-output-dir", preparedLaunch.output_dir);
   }
@@ -1285,20 +2470,11 @@ export function applyTranslationLaunch(launch) {
   if (preparedLaunch.start_page !== undefined && preparedLaunch.start_page !== null) {
     setFieldValue("translation-start-page", preparedLaunch.start_page);
   }
-  setFieldValue(
-    "translation-source-summary",
-    [
-      `Filename: ${preparedLaunch.source_filename || "Unknown source"}`,
-      `Pages: ${preparedLaunch.page_count ?? "?"}`,
-      `Start page: ${preparedLaunch.start_page ?? 1}`,
-      `Images: ${preparedLaunch.image_mode || "auto"}`,
-      `OCR: ${preparedLaunch.ocr_mode || "auto"} / ${preparedLaunch.ocr_engine || "local_then_api"}`,
-      `Resume: ${preparedLaunch.resume === false ? "off" : "on"}`,
-      `Keep intermediates: ${preparedLaunch.keep_intermediates === false ? "off" : "on"}`,
-      `Saved path: ${preparedLaunch.source_path || ""}`,
-    ].join("\n"),
-  );
-  revealPreparedTranslationSourceOptions();
+  setSourceCardState(buildPreparedSourceCardState(preparedLaunch));
+  renderTranslationSourceCard();
+  renderTranslationOutputSummary();
+  syncTranslationPrimaryActionState();
+  renderTranslationRunStatus(null);
   setDiagnostics(
     "translation",
     {
@@ -1371,7 +2547,12 @@ function renderTranslationPreparedState() {
   if (!hasPreparedTranslationLaunch()) {
     return false;
   }
+  setSourceCardState(buildPreparedSourceCardState(currentPreparedTranslationLaunch()));
+  renderTranslationSourceCard();
+  renderTranslationOutputSummary();
   renderTranslationResultCard(null);
+  renderTranslationRunStatus(null);
+  syncTranslationPrimaryActionState();
   setPanelStatus("translation", "", preparedTranslationStatusSummary());
   setDiagnostics("translation-job", {
     status: "prepared",
@@ -1433,8 +2614,21 @@ function renderTranslationResultCard(job, { containerId = "translation-result" }
       `;
       return;
     }
+    if (hasReadyTranslationSource()) {
+      container.classList.remove("empty-state");
+      container.innerHTML = `
+        <div class="result-header">
+          <div>
+            <strong>Source file is ready.</strong>
+            <p>Confirm the language and output folder, then click Start Translate when you're ready.</p>
+          </div>
+          <span class="status-chip ok">ready</span>
+        </div>
+      `;
+      return;
+    }
     container.classList.add("empty-state");
-    container.textContent = "No translation job has run in this workspace yet.";
+    container.textContent = "Choose a source file to see translation progress and results here.";
     return;
   }
   const summaryLines = [];
@@ -1504,7 +2698,20 @@ function renderTranslationJob(job) {
   translationState.currentJob = job || null;
   translationState.currentJobId = job?.job_id || "";
   if (job) {
+    clearSourceUploadState();
     clearPreparedTranslationLaunch();
+  }
+  const jobSourcePath = String(job?.config?.source_path || "").trim();
+  if (jobSourcePath) {
+    const currentSourcePath = String(deriveTranslationSourceState({ job: null }).sourcePath || "").trim();
+    setSourcePathValue(jobSourcePath);
+    if (
+      isActiveTranslationJobStatus(job?.status)
+      || currentSourceCardState().kind === "empty"
+      || currentSourcePath !== jobSourcePath
+    ) {
+      setSourceCardState(buildSourceCardStateFromJob(job));
+    }
   }
   if (job?.config?.gmail_batch_context) {
     translationState.currentGmailBatchContext = normalizeGmailBatchContext(job.config.gmail_batch_context);
@@ -1519,13 +2726,18 @@ function renderTranslationJob(job) {
   }
   const recovery = deriveTranslationRecoveryState(job);
   renderTranslationResultCard(job);
-  const preparedSummary = !job ? preparedTranslationStatusSummary() : "";
+  const preparedSummary = !job
+    ? (preparedTranslationStatusSummary()
+      || (hasReadyTranslationSource()
+        ? "Source file is ready. Confirm the language and output folder, then start translation."
+        : "Choose a source file to begin."))
+    : "";
   setPanelStatus(
     "translation",
     job
       ? (job.status === "failed" ? "bad" : job.status === "cancelled" ? "warn" : "")
       : "",
-    translationStatusSummary(job) || preparedSummary || "Load a source file, then analyze or translate it in this browser workspace.",
+    translationStatusSummary(job) || preparedSummary || "Choose a source file to begin.",
   );
   const diagnosticsHint = isAuthenticationFailure(job)
     ? "OpenAI authentication failed. Open Browser Settings, save a valid translation key, run Test Translation Auth, then start the translation again."
@@ -1559,12 +2771,19 @@ function renderTranslationJob(job) {
     reportButton.classList.toggle("hidden", !job);
   }
   qs("translation-review-export").disabled = !job?.actions?.review_export;
-  qs("translation-cancel").disabled = !job?.actions?.cancel;
-  qs("translation-resume-btn").disabled = !job?.actions?.resume;
-  qs("translation-rebuild").disabled = !(job?.actions?.rebuild || false);
   if (job?.result?.save_seed) {
     applyTranslationSeed(job.result.save_seed);
-    setPanelStatus("translation-save", "", "Translation seed loaded from the completed run. Review the fields before saving.");
+    setPanelStatus(
+      "translation-save",
+      "",
+      deriveTranslationCompletionPresentation({
+        job,
+        saveSeed: job.result.save_seed,
+        currentRowId: translationState.currentRowId,
+        arabicReview: currentArabicReviewState(),
+        gmailBatchContext: translationState.currentGmailBatchContext,
+      }).saveStatus,
+    );
   } else if (!job) {
     clearArabicReviewState();
   } else if (!currentCompletedTranslationJobRequiresArabicReview()) {
@@ -1588,44 +2807,44 @@ function renderTranslationJob(job) {
       });
     });
   }
+  renderTranslationSourceCard();
+  renderTranslationOutputSummary();
+  renderTranslationRunStatus(job);
+  syncTranslationPrimaryActionState();
   notifyTranslationUiStateChanged();
 }
 
-function renderTranslationHistory(history) {
-  const container = qs("translation-history-list");
+export function renderTranslationHistoryInto(container, history, { onOpen, onDelete } = {}) {
   if (!container) {
     return;
   }
-  container.innerHTML = "";
+  clearNode(container);
   if (!history.length) {
-    container.innerHTML = '<div class="empty-state">No translation rows have been saved yet for this runtime mode.</div>';
+    container.appendChild(createEmptyState(deriveRecentWorkPresentation().translationHistoryEmpty));
     return;
   }
   for (const item of history) {
     const row = item.row || {};
+    const presentation = deriveRecentWorkPresentation({ jobType: row.job_type || "Translation" });
     const card = document.createElement("article");
     card.className = "history-item";
-    card.innerHTML = `<div><strong>${row.case_number || "No case number"}</strong><p>${row.case_entity || "No case entity"} | ${row.case_city || "No case city"} | ${row.translation_date || "No date"}</p></div>`;
+    const details = document.createElement("div");
+    details.appendChild(createTextElement("strong", row.case_number || "No case number"));
+    details.appendChild(createTextElement(
+      "p",
+      [row.case_entity || "No case entity", row.case_city || "No case city", row.translation_date || "No date"].join(" | "),
+    ));
+    card.appendChild(details);
     const actions = document.createElement("div");
     actions.className = "history-actions";
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "Load";
-    button.addEventListener("click", () => loadTranslationHistoryItem(item));
+    button.textContent = presentation.translationHistoryOpenLabel;
+    button.addEventListener("click", () => onOpen?.(item));
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
-    deleteButton.textContent = "Delete";
-    deleteButton.addEventListener("click", async () => {
-      try {
-        await deleteTranslationJobLogRow(row.id);
-      } catch (error) {
-        setPanelStatus("translation-save", "bad", error.message || "Translation row delete failed.");
-        setDiagnostics("translation-save", error, {
-          hint: error.message || "Translation row delete failed.",
-          open: true,
-        });
-      }
-    });
+    deleteButton.textContent = presentation.translationHistoryDeleteLabel;
+    deleteButton.addEventListener("click", () => onDelete?.(item));
     actions.appendChild(button);
     actions.appendChild(deleteButton);
     card.appendChild(actions);
@@ -1633,11 +2852,33 @@ function renderTranslationHistory(history) {
   }
 }
 
+function renderTranslationHistory(history) {
+  const container = qs("translation-history-list");
+  if (!container) {
+    return;
+  }
+  renderTranslationHistoryInto(container, history, {
+    onOpen: (item) => loadTranslationHistoryItem(item),
+    onDelete: async (item) => {
+      try {
+        await deleteTranslationJobLogRow(item.row?.id);
+      } catch (error) {
+        setPanelStatus("translation-save", "bad", error.message || "Translation row delete failed.");
+        setDiagnostics("translation-save", error, {
+          hint: error.message || "Translation row delete failed.",
+          open: true,
+        });
+      }
+    },
+  });
+}
+
 function loadTranslationHistoryItem(item) {
   const row = item?.row || {};
   translationState.currentJob = null;
   translationState.currentJobId = "";
   translationState.currentGmailBatchContext = null;
+  clearManualStagedSource();
   clearPreparedTranslationLaunch();
   clearArabicReviewState();
   applyTranslationSeed(item?.seed || blankSaveSeed(), { rowId: row.id || null });
@@ -1650,10 +2891,60 @@ function loadTranslationHistoryItem(item) {
     buttonNode.classList.toggle("active", buttonNode.dataset.view === "new-job");
   });
   if (row.id) {
-    setPanelStatus("translation-save", "ok", `Loaded translation row #${row.id} from the active job log.`);
-    setDiagnostics("translation-save", item, { hint: `Loaded row #${row.id}.`, open: false });
+    setPanelStatus("translation-save", "ok", "Saved case record loaded. Review the fields below and save any edits.");
+    setDiagnostics("translation-save", item, { hint: `Loaded case record #${row.id}.`, open: false });
   }
+  renderTranslationSourceCard();
+  renderTranslationOutputSummary();
+  renderTranslationResultCard(null);
+  renderTranslationRunStatus(null);
+  syncTranslationPrimaryActionState();
   openTranslationCompletionDrawer();
+}
+
+export function renderTranslationJobsInto(container, jobs, { onOpen, onResume, onRebuild } = {}) {
+  if (!container) {
+    return;
+  }
+  clearNode(container);
+  if (!jobs.length) {
+    container.appendChild(createEmptyState(deriveRecentWorkPresentation().translationRunsEmpty));
+    return;
+  }
+  for (const job of jobs) {
+    const presentation = deriveRecentWorkPresentation({ translationRunCount: jobs.length, job });
+    const card = document.createElement("article");
+    card.className = "history-item";
+    const details = document.createElement("div");
+    const title = createTextElement("strong", presentation.translationRunTitle);
+    setNodeTitle(title, String(job?.config?.source_path || "").trim());
+    details.appendChild(title);
+    details.appendChild(createTextElement("p", presentation.translationRunSubtitle));
+    const actions = document.createElement("div");
+    actions.className = "history-meta";
+    const loadButton = document.createElement("button");
+    loadButton.type = "button";
+    loadButton.textContent = presentation.translationRunOpenLabel;
+    loadButton.addEventListener("click", () => onOpen?.(job));
+    actions.appendChild(loadButton);
+    if (job.actions?.resume) {
+      const resume = document.createElement("button");
+      resume.type = "button";
+      resume.textContent = presentation.translationRunResumeLabel;
+      resume.addEventListener("click", () => onResume?.(job));
+      actions.appendChild(resume);
+    }
+    if (job.actions?.rebuild) {
+      const rebuild = document.createElement("button");
+      rebuild.type = "button";
+      rebuild.textContent = presentation.translationRunRebuildLabel;
+      rebuild.addEventListener("click", () => onRebuild?.(job));
+      actions.appendChild(rebuild);
+    }
+    card.appendChild(details);
+    card.appendChild(actions);
+    container.appendChild(card);
+  }
 }
 
 function renderTranslationJobs(jobs) {
@@ -1665,44 +2956,17 @@ function renderTranslationJobs(jobs) {
   if (!container) {
     return;
   }
-  container.innerHTML = "";
   if (!jobs.length) {
-    container.innerHTML = '<div class="empty-state">No browser translation jobs have been started in this runtime mode yet.</div>';
-    setPanelStatus("translation-jobs", "", "No browser translation jobs are active for this runtime mode.");
-    return;
+    const presentation = deriveRecentWorkPresentation();
+    setPanelStatus("translation-jobs", "", presentation.translationRunsEmpty);
+  } else {
+    setPanelStatus("translation-jobs", "", deriveRecentWorkPresentation({ translationRunCount: jobs.length }).translationRunsCount);
   }
-  setPanelStatus("translation-jobs", "", `${jobs.length} browser translation job(s) are available in this runtime mode.`);
-  for (const job of jobs) {
-    const card = document.createElement("article");
-    card.className = "history-item";
-    const details = document.createElement("div");
-    const config = job.config || {};
-    details.innerHTML = `<strong>${config.source_path || job.job_id}</strong><p>${job.job_kind} | ${config.target_lang || "?"} | ${job.status}</p>`;
-    const actions = document.createElement("div");
-    actions.className = "history-meta";
-    const loadButton = document.createElement("button");
-    loadButton.type = "button";
-    loadButton.textContent = "Load";
-    loadButton.addEventListener("click", () => renderTranslationJob(job));
-    actions.appendChild(loadButton);
-    if (job.actions?.resume) {
-      const resume = document.createElement("button");
-      resume.type = "button";
-      resume.textContent = "Resume";
-      resume.addEventListener("click", () => handleResume(job.job_id));
-      actions.appendChild(resume);
-    }
-    if (job.actions?.rebuild) {
-      const rebuild = document.createElement("button");
-      rebuild.type = "button";
-      rebuild.textContent = "Rebuild";
-      rebuild.addEventListener("click", () => handleRebuild(job.job_id));
-      actions.appendChild(rebuild);
-    }
-    card.appendChild(details);
-    card.appendChild(actions);
-    container.appendChild(card);
-  }
+  renderTranslationJobsInto(container, jobs, {
+    onOpen: (job) => renderTranslationJob(job),
+    onResume: (job) => handleResume(job.job_id),
+    onRebuild: (job) => handleRebuild(job.job_id),
+  });
 }
 
 function renderTranslationBootstrap(payload) {
@@ -1718,9 +2982,20 @@ function renderTranslationBootstrap(payload) {
   if (!translationState.currentSeed) {
     applyTranslationSeed(blankSaveSeed());
   }
+  if (hasPreparedTranslationLaunch()) {
+    setSourceCardState(buildPreparedSourceCardState(currentPreparedTranslationLaunch()));
+  } else if (!hasReadyTranslationSource()) {
+    setSourceCardState(blankSourceCardState());
+  }
   if (!translationState.currentJob && hasPreparedTranslationLaunch()) {
     renderTranslationPreparedState();
+  } else if (!translationState.currentJob) {
+    renderTranslationSourceCard();
+    renderTranslationResultCard(null);
+    renderTranslationRunStatus(null);
+    syncTranslationPrimaryActionState();
   }
+  renderTranslationOutputSummary();
   syncTranslationCompletionSurface();
   restorePendingArabicReview();
 }
@@ -1783,6 +3058,9 @@ async function handleAnalyze() {
   if (!formValues.source_path && uploadedSourcePath) {
     formValues.source_path = uploadedSourcePath;
   }
+  if (!String(formValues.source_path || "").trim()) {
+    throw new Error("Choose a PDF or image and wait for it to finish checking before running Analyze Only.");
+  }
   const payload = await fetchJson("/api/translation/jobs/analyze", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1803,6 +3081,9 @@ async function handleTranslate() {
   if (!formValues.source_path && uploadedSourcePath) {
     formValues.source_path = uploadedSourcePath;
   }
+  if (!String(formValues.source_path || "").trim()) {
+    throw new Error("Choose a PDF or image and wait for it to finish checking before starting translation.");
+  }
   const payload = await fetchJson("/api/translation/jobs/translate", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1818,6 +3099,9 @@ async function handleTranslate() {
 }
 
 async function handleResume(jobId = translationState.currentJobId) {
+  if (!String(jobId || "").trim()) {
+    throw new Error("No translation job is available to resume.");
+  }
   const payload = await fetchJson(`/api/translation/jobs/${jobId}/resume`, appState, {
     method: "POST",
   });
@@ -1830,6 +3114,9 @@ async function handleResume(jobId = translationState.currentJobId) {
 }
 
 async function handleRebuild(jobId = translationState.currentJobId) {
+  if (!String(jobId || "").trim()) {
+    throw new Error("No translation job is available to rebuild.");
+  }
   const payload = await fetchJson(`/api/translation/jobs/${jobId}/rebuild`, appState, {
     method: "POST",
   });
@@ -1842,11 +3129,15 @@ async function handleRebuild(jobId = translationState.currentJobId) {
 }
 
 async function handleCancel() {
-  const payload = await fetchJson(`/api/translation/jobs/${translationState.currentJobId}/cancel`, appState, {
+  const jobId = String(translationState.currentJobId || "").trim();
+  if (!jobId) {
+    throw new Error("No translation job is available to cancel.");
+  }
+  const payload = await fetchJson(`/api/translation/jobs/${jobId}/cancel`, appState, {
     method: "POST",
   });
   setDiagnostics("translation", payload, {
-    hint: `Cancel request sent for ${translationState.currentJobId}.`,
+    hint: `Cancel request sent for ${jobId}.`,
     open: false,
   });
   renderTranslationJob(payload.normalized_payload.job || null);
@@ -1863,7 +3154,7 @@ async function handleReviewExport() {
 
 async function handleTranslationSave() {
   if (currentArabicReviewIsBlocking()) {
-    throw new Error(currentArabicReviewState().message || "Arabic DOCX review is still required before saving.");
+    throw new Error(currentArabicReviewState().message || "Review the Arabic document in Word before you save the case record.");
   }
   const payload = await fetchJson("/api/translation/save-row", appState, {
     method: "POST",
@@ -1878,17 +3169,24 @@ async function handleTranslationSave() {
   });
   translationState.currentRowId = payload.saved_result.row_id;
   setFieldValue("translation-row-id", payload.saved_result.row_id);
-  setPanelStatus("translation-save", "ok", `Saved translation row #${payload.saved_result.row_id} to the active job log.`);
-  setDiagnostics("translation-save", payload, { hint: `Saved row #${payload.saved_result.row_id}.`, open: false });
+  setPanelStatus("translation-save", "ok", `Saved case record #${payload.saved_result.row_id}.`);
+  setDiagnostics("translation-save", payload, { hint: `Saved case record #${payload.saved_result.row_id}.`, open: false });
   await refreshTranslationHistory();
   window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
 }
 
 function resetTranslationSaveForm() {
   applyTranslationSeed(translationState.currentJob?.result?.save_seed || blankSaveSeed(), { rowId: null });
-  setPanelStatus("translation-save", "", "Translation save form reset.");
+  setPanelStatus("translation-save", "", "Case record form reset.");
   collapseTranslationCompletionSections();
   syncTranslationCompletionSurface();
+}
+
+function sourceCardClickIsInteractive(target) {
+  if (!target || typeof target.closest !== "function") {
+    return false;
+  }
+  return Boolean(target.closest("button, a, input, select, textarea, summary, details, label"));
 }
 
 export function initializeTranslationUi() {
@@ -1910,7 +3208,108 @@ export function initializeTranslationUi() {
   clearDownloadLink("translation-download-analyze");
   clearDownloadLink("translation-download-report");
   clearArabicReviewState();
+  renderTranslationSourceCard();
+  renderTranslationOutputSummary();
+  renderTranslationResultCard(null);
+  renderTranslationRunStatus(null);
+  syncTranslationPrimaryActionState();
   syncTranslationCompletionSurface();
+
+  const sourceInput = qs("translation-source-file");
+  const sourceCard = qs("translation-source-card");
+  const outputDirInput = qs("translation-output-dir");
+  const handleSourceStagingError = (error) => {
+    renderTranslationSourceCard();
+    renderTranslationResultCard(translationState.currentJob);
+    renderTranslationRunStatus(translationState.currentJob);
+    syncTranslationPrimaryActionState();
+    setPanelStatus("translation", "bad", error.message || "Source staging failed.");
+    setDiagnostics("translation", error, {
+      hint: error.message || "Source staging failed.",
+      open: true,
+    });
+  };
+
+  qs("translation-source-browse")?.addEventListener("click", () => {
+    if (sourceUploadIsPending()) {
+      return;
+    }
+    sourceInput?.click();
+  });
+
+  sourceCard?.addEventListener("click", (event) => {
+    if (sourceUploadIsPending()) {
+      return;
+    }
+    if (sourceCardClickIsInteractive(event.target)) {
+      return;
+    }
+    sourceInput?.click();
+  });
+
+  qs("translation-source-clear")?.addEventListener("click", () => {
+    clearManualStagedSource();
+    renderTranslationSourceCard();
+    renderTranslationResultCard(translationState.currentJob);
+    renderTranslationRunStatus(translationState.currentJob);
+    syncTranslationPrimaryActionState();
+    setDiagnostics("translation", { status: "idle", message: "Local source cleared." }, {
+      hint: "Choose another PDF or image to continue.",
+      open: false,
+    });
+  });
+
+  sourceInput?.addEventListener("change", async () => {
+    const file = sourceInput.files?.[0] || null;
+    if (!file) {
+      renderTranslationSourceCard();
+      renderTranslationRunStatus(translationState.currentJob);
+      syncTranslationPrimaryActionState();
+      return;
+    }
+    try {
+      await stageTranslationSourceFile(file);
+    } catch (error) {
+      handleSourceStagingError(error);
+    }
+  });
+
+  sourceCard?.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    if (sourceUploadIsPending()) {
+      delete sourceCard.dataset.dragActive;
+      return;
+    }
+    sourceCard.dataset.dragActive = "true";
+  });
+
+  sourceCard?.addEventListener("dragleave", () => {
+    delete sourceCard.dataset.dragActive;
+  });
+
+  sourceCard?.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    delete sourceCard.dataset.dragActive;
+    if (sourceUploadIsPending()) {
+      return;
+    }
+    const file = event.dataTransfer?.files?.[0] || null;
+    if (!file) {
+      return;
+    }
+    try {
+      await stageTranslationSourceFile(file);
+    } catch (error) {
+      handleSourceStagingError(error);
+    }
+  });
+
+  for (const eventName of ["input", "change"]) {
+    outputDirInput?.addEventListener(eventName, () => {
+      renderTranslationOutputSummary();
+      syncTranslationPrimaryActionState();
+    });
+  }
 
   qs("translation-refresh")?.addEventListener("click", async () => {
     await runWithBusy(["translation-refresh"], { "translation-refresh": "Refreshing..." }, async () => {

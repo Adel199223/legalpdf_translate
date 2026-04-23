@@ -1,29 +1,11 @@
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
-from pathlib import Path
-
-import pytest
+from .browser_esm_probe import run_browser_esm_json_probe
 
 
 def _run_review_state_probe() -> dict[str, object]:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is required for Gmail review-state coverage.")
-
-    module_url = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "legalpdf_translate"
-        / "shadow_web"
-        / "static"
-        / "gmail_review_state.js"
-    ).as_uri()
-
-    script = f"""
-const reviewModule = await import({json.dumps(module_url)});
+    script = """
+const reviewModule = await import(__GMAIL_REVIEW_MODULE_URL__);
 
 const memory = new Map();
 const storage = {{
@@ -139,6 +121,56 @@ results.stageInterpretationFinalize = reviewModule.deriveGmailStage({{
   loadResult: {{ ok: true, message: {{ message_id: "msg-1" }} }},
   activeSession: {{ kind: "interpretation", completed: false }},
   interpretationUi: {{ exportReady: true }},
+}});
+results.workflowTranslation = reviewModule.deriveGmailWorkflowPresentation({{
+  workflowKind: "translation",
+}});
+results.workflowInterpretation = reviewModule.deriveGmailWorkflowPresentation({{
+  workflowKind: "interpretation",
+}});
+results.kindPdf = reviewModule.deriveGmailAttachmentKindLabel("application/pdf");
+results.kindImage = reviewModule.deriveGmailAttachmentKindLabel("image/png");
+results.kindUnknown = reviewModule.deriveGmailAttachmentKindLabel("application/octet-stream");
+results.stagePresentationIdle = reviewModule.deriveGmailStagePresentation({{
+  stage: "idle",
+  activeSession: null,
+}});
+results.stagePresentationReview = reviewModule.deriveGmailStagePresentation({{
+  stage: "review",
+  activeSession: null,
+}});
+results.stagePresentationPrepared = reviewModule.deriveGmailStagePresentation({{
+  stage: "translation_prepared",
+  activeSession: {{
+    kind: "translation",
+    current_attachment: {{ attachment: {{ filename: "sentença 305.pdf" }} }},
+  }},
+}});
+results.stagePresentationRunning = reviewModule.deriveGmailStagePresentation({{
+  stage: "translation_running",
+  activeSession: {{
+    kind: "translation",
+    current_attachment: {{ attachment: {{ filename: "sentença 305.pdf" }} }},
+  }},
+}});
+results.stagePresentationSave = reviewModule.deriveGmailStagePresentation({{
+  stage: "translation_save",
+  activeSession: {{ kind: "translation" }},
+}});
+results.stagePresentationFinalize = reviewModule.deriveGmailStagePresentation({{
+  stage: "translation_finalize",
+  activeSession: {{
+    kind: "translation",
+    finalization_state: "draft_ready",
+  }},
+}});
+results.stagePresentationInterpretationReview = reviewModule.deriveGmailStagePresentation({{
+  stage: "interpretation_review",
+  activeSession: {{ kind: "interpretation" }},
+}});
+results.stagePresentationInterpretationFinalize = reviewModule.deriveGmailStagePresentation({{
+  stage: "interpretation_finalize",
+  activeSession: {{ kind: "interpretation" }},
 }});
 results.ctaHidden = reviewModule.deriveGmailHomeCta({{
   stage: "review",
@@ -345,16 +377,12 @@ reviewModule.clearConsumedReviewState(storage, context);
 results.afterClear = reviewModule.readConsumedReviewState(storage, context);
 
 console.log(JSON.stringify(results));
-"""
-
-    completed = subprocess.run(
-        [node, "--input-type=module", "-"],
-        input=script,
-        capture_output=True,
-        text=True,
-        check=True,
+""".replace("{{", "{").replace("}}", "}")
+    return run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_REVIEW_MODULE_URL__": "gmail_review_state.js"},
+        timeout_seconds=20,
     )
-    return json.loads(completed.stdout)
 
 
 def test_gmail_review_state_storage_and_auto_open_rules() -> None:
@@ -375,20 +403,40 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     assert results["stageTranslationFinalize"] == "translation_finalize"
     assert results["stageInterpretationReview"] == "interpretation_review"
     assert results["stageInterpretationFinalize"] == "interpretation_finalize"
+    assert results["workflowTranslation"]["label"] == "Translation"
+    assert results["workflowTranslation"]["prepareLabel"] == "Continue with selected attachments"
+    assert results["workflowInterpretation"]["label"] == "Interpretation"
+    assert results["workflowInterpretation"]["prepareLabel"] == "Continue with selected notice"
+    assert results["kindPdf"] == "PDF"
+    assert results["kindImage"] == "Image"
+    assert results["kindUnknown"] == "Unknown"
+    assert "Open this from Gmail" in results["stagePresentationIdle"]["description"]
+    assert "Choose your workflow" in results["stagePresentationReview"]["description"]
+    assert results["stagePresentationPrepared"]["title"] == "Translation is ready to start."
+    assert "sentença 305.pdf" in results["stagePresentationPrepared"]["description"]
+    assert results["stagePresentationRunning"]["title"] == "Translation is running."
+    assert results["stagePresentationSave"]["title"] == "Review and save this attachment."
+    assert results["stagePresentationFinalize"]["title"] == "Finalize Gmail reply."
+    assert results["stagePresentationInterpretationReview"]["title"] == "Interpretation details are ready."
+    assert "create the Gmail reply" in results["stagePresentationInterpretationReview"]["description"]
+    assert results["stagePresentationInterpretationFinalize"]["title"] == "Create Gmail reply."
+    assert "final files are ready" in results["stagePresentationInterpretationFinalize"]["description"]
     assert results["ctaHidden"]["visible"] is False
     assert results["ctaTranslationRecovery"]["visible"] is True
     assert results["ctaTranslationRecovery"]["action"] == "resume-translation-recovery"
     assert results["ctaTranslationRecovery"]["label"] == "Resume Recovery"
-    assert "needs recovery" in results["ctaTranslationRecovery"]["title"]
+    assert results["ctaTranslationRecovery"]["title"] == "Translation needs attention."
     assert results["ctaTranslationSave"]["visible"] is True
     assert results["ctaTranslationSave"]["action"] == "resume-translation-save"
     assert results["ctaTranslationSave"]["label"] == "Resume Current Step"
     assert results["ctaTranslationFinalize"]["action"] == "resume-translation-finalize"
+    assert results["ctaTranslationFinalize"]["label"] == "Resume Current Step"
     assert results["ctaInterpretationFinalize"]["action"] == "resume-interpretation-finalize"
     assert results["recoveredHidden"]["visible"] is False
     assert results["recoveredVisible"]["visible"] is True
     assert results["recoveredVisible"]["action"] == "open-restored-translation-finalize"
     assert results["recoveredVisible"]["label"] == "Open Last Finalization Result"
+    assert results["recoveredVisible"]["title"] == "Last Gmail reply is still available."
     assert "Recovered batch" in results["recoveredVisible"]["description"]
     assert results["stableRecoveredOnly"] is False
     assert results["stableLoadedMessage"] is True
@@ -399,7 +447,7 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     assert results["redoFresh"]["action"] == "redo-current-translation"
     assert results["redoMatchingCompleted"]["enabled"] is True
     assert results["redoMatchingCompleted"]["matchingJob"]["job_id"] == "tx-1"
-    assert "keep prior files on disk" in results["redoMatchingCompleted"]["description"]
+    assert "keeps the earlier files" in results["redoMatchingCompleted"]["description"]
     assert results["redoMatchingRunning"]["enabled"] is False
     assert results["redoMatchingRunning"]["blocked"] is True
     assert results["redoMatchingRunning"]["matchingJob"]["job_id"] == "tx-2"

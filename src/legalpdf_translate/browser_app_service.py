@@ -83,7 +83,7 @@ def browser_navigation_sections() -> list[dict[str, str]]:
             "id": "dashboard",
             "label": "Dashboard",
             "status": "ready",
-            "description": "Capability snapshot, mode provenance, and quick links into browser-ready workflows.",
+            "description": "Calm app overview, saved-work summary, and links into the main workflows.",
         },
         {
             "id": "new-job",
@@ -99,33 +99,33 @@ def browser_navigation_sections() -> list[dict[str, str]]:
         },
         {
             "id": "recent-jobs",
-            "label": "Recent Jobs",
+            "label": "Recent Work",
             "status": "ready",
-            "description": "Job-log history and quick reopen details for the selected runtime mode.",
+            "description": "Saved cases, recent translation runs, and older record lists for the selected app mode.",
         },
         {
             "id": "settings",
             "label": "Settings",
             "status": "ready",
-            "description": "Editable runtime defaults, provider diagnostics, OCR preflight, Gmail draft checks, and admin settings.",
+            "description": "Daily defaults, provider keys, Gmail reply setup, and Word/PDF checks.",
         },
         {
             "id": "profile",
-            "label": "Profile",
+            "label": "Profiles",
             "status": "ready",
-            "description": "Primary profile and imported profile management for the selected runtime mode.",
+            "description": "Contact, payment, and travel details used in documents and Gmail replies.",
         },
         {
             "id": "power-tools",
             "label": "Power Tools",
             "status": "ready",
-            "description": "Glossary workspace, glossary builder, calibration audit, debug bundles, and run-report generation.",
+            "description": "Advanced glossary, quality-check, and troubleshooting tools.",
         },
         {
             "id": "extension-lab",
             "label": "Extension Lab",
             "status": "ready",
-            "description": "Real extension diagnostics plus a browser-hosted handoff simulator.",
+            "description": "Check the browser helper used for Gmail intake and open technical details when troubleshooting.",
         },
     ]
 
@@ -134,33 +134,33 @@ def browser_dashboard_cards() -> list[dict[str, str]]:
     return [
         {
             "id": "interpretation",
-            "title": "Interpretation + Honorários",
+            "title": "Interpretation Requests",
             "status": "ready",
-            "description": "Notification/photo autofill, editable form, save to job log, and DOCX/PDF export.",
+            "description": "Recover case details from a notification or screenshot, review the form, and create the fee-request document.",
         },
         {
             "id": "translation",
-            "title": "Translation Workflow",
+            "title": "Translation",
             "status": "ready",
-            "description": "Analyze, translate, cancel/resume, rebuild, review queue, artifacts, and Save to Job Log are ready in the browser app.",
+            "description": "Translate a PDF or image, review the result, and save the case record.",
         },
         {
             "id": "gmail",
-            "title": "Gmail Batch + Drafts",
+            "title": "Gmail Attachments",
             "status": "ready",
-            "description": "Exact-message load, attachment review, Gmail batch progression, interpretation notice intake, and draft finalization are ready here.",
+            "description": "Review Gmail attachments, choose what to process, and create the reply when everything is ready.",
         },
         {
             "id": "extension",
-            "title": "Extension Diagnostics",
+            "title": "Technical Tools",
             "status": "ready",
-            "description": "The real Gmail extension stays canonical; Extension Lab adds repeatable diagnostics and simulation.",
+            "description": "Check extension and local-tool readiness when Gmail or Word needs help.",
         },
         {
             "id": "power-tools",
-            "title": "Power Tools",
+            "title": "Glossary and Reports",
             "status": "ready",
-            "description": "Glossary editing/building, calibration audit, diagnostics bundles, and run-report tools are browser-ready.",
+            "description": "Manage glossary and report tools when you need a deeper review.",
         },
     ]
 
@@ -400,69 +400,66 @@ def build_browser_parity_audit(*, data_paths: BrowserDataPaths) -> dict[str, Any
     checklist = [
         {
             "id": "browser-shell",
-            "title": "Browser shell and runtime modes",
+            "title": "Main app screens",
             "status": "ready",
-            "description": "Dashboard, New Job, Recent Jobs, Settings, Profile, Power Tools, and Extension Lab are available with clear live-mode and isolated-test-mode provenance.",
+            "description": "Overview, New Job, Gmail, Recent Work, and the secondary tools are all available from the browser app.",
         },
         {
             "id": "translation",
-            "title": "Translation workflow",
+            "title": "Translation",
             "status": "ready",
-            "description": "Analyze, translate, cancel/resume, rebuild, review export, artifact downloads, and Save to Job Log are browser-ready.",
+            "description": "Translate a PDF or image, review the result, and save the case record.",
         },
         {
             "id": "interpretation",
-            "title": "Interpretation and honorários",
+            "title": "Interpretation requests",
             "status": "ready",
-            "description": "Notification/photo autofill, editable interpretation save flow, job-log history, and DOCX/PDF export are browser-ready.",
+            "description": "Recover notice details, review the request, and create the fee-request document.",
         },
         {
             "id": "gmail",
-            "title": "Gmail batch and finalization",
+            "title": "Gmail attachments",
             "status": "ready",
-            "description": "Exact-message Gmail intake, attachment review, batch progression, interpretation intake, and Gmail draft finalization are available in the browser app.",
+            "description": "Review Gmail attachments, continue selected work, and create replies when everything is ready.",
         },
         {
             "id": "joblog",
-            "title": "Recent Jobs and Job Log actions",
+            "title": "Saved work",
             "status": "ready",
-            "description": "Recent Jobs, translation history, and interpretation history now support load and confirmation-gated delete actions in the browser app.",
+            "description": "Recent Work reopens saved translation cases, interpretation requests, and recent translation runs.",
         },
         {
             "id": "profiles-settings-admin",
-            "title": "Profile, settings, and admin tools",
+            "title": "Settings and profile",
             "status": "ready",
-            "description": "Editable settings, profile management, glossary, calibration, diagnostics bundles, and provider preflight are available in the browser app.",
+            "description": "Settings, profile management, glossary tools, and deeper checks stay available when you need them.",
         },
         {
             "id": "extension-lab",
-            "title": "Extension diagnostics and simulator",
+            "title": "Technical tools",
             "status": "ready",
-            "description": "The real Gmail extension remains canonical, while Extension Lab provides repeatable localhost diagnostics and handoff simulation.",
+            "description": "Open technical tools when Gmail, Word, or local app setup needs troubleshooting.",
         },
     ]
     remaining_limitations = [
-        "The browser app is intentionally local-only on 127.0.0.1 and is not a public web deployment.",
-        "Isolated test mode remains available when you want to try changes without touching live data.",
-        "The real Gmail extension remains the canonical live Gmail entrypoint; Extension Lab is a diagnostics companion.",
+        "The app runs locally on this computer.",
+        "A separate test-only mode is still available when you want to try changes without touching regular app data.",
+        "Technical troubleshooting details stay available when Gmail or Word needs extra help.",
     ]
     return {
-        "summary": (
-            "The browser app now covers the latest daily workflows, while keeping live-data use, Gmail bridge ownership, "
-            "and isolated testing explicit."
-        ),
+        "summary": "The browser app is ready for the daily workflows: translation, interpretation requests, Gmail attachments, and saved work.",
         "checklist": checklist,
         "ready_count": len(checklist),
         "total_count": len(checklist),
         "remaining_limitations": remaining_limitations,
         "promotion_recommendation": {
             "status": "ready_for_daily_use",
-            "headline": "Ready for daily browser use, with isolated test mode still available when needed.",
+            "headline": "Ready for daily use. Start with New Job, Gmail, or Recent Work.",
             "recommended_workflows": [
-                "Translation setup, run monitoring, resume/rebuild, and Save to Job Log",
-                "Interpretation notice/photo intake and honorários DOCX/PDF export",
-                "Recent Jobs and Job Log history load/delete actions",
-                "Settings, profile management, glossary, calibration, diagnostics, and Gmail tools",
+                "Start a translation and save the case record",
+                "Review Gmail attachments and create replies",
+                "Create interpretation fee-request documents",
+                "Open saved work from Recent Work",
             ],
             "keep_qt_canonical_for_now": True,
             "current_runtime_mode": data_paths.mode,
