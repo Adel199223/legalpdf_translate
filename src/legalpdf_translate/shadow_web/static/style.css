@@ -255,6 +255,28 @@ h2 {
   align-items: end;
 }
 
+.runtime-mode-banner {
+  margin: 14px 0 0;
+  padding: 12px 16px;
+  border: 1px solid rgba(122, 243, 176, 0.24);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(122, 243, 176, 0.14), rgba(117, 218, 255, 0.08)),
+    rgba(5, 20, 30, 0.82);
+  color: var(--success);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
+}
+
+.runtime-mode-banner[data-mode="live"] {
+  border-color: rgba(117, 218, 255, 0.24);
+  background:
+    linear-gradient(135deg, rgba(117, 218, 255, 0.13), rgba(77, 163, 255, 0.08)),
+    rgba(5, 20, 30, 0.82);
+  color: var(--accent);
+}
+
 body[data-beginner-surface="true"] .beginner-technical-control {
   display: none !important;
 }
@@ -517,6 +539,23 @@ button:disabled,
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.profile-section-label {
+  margin-top: 14px;
+}
+
+.profile-records-heading {
+  margin: 18px 0 10px;
+}
+
+.profile-records-heading .panel-copy {
+  margin-top: 4px;
+}
+
+.profile-card-helper {
+  margin-top: 12px !important;
+  color: var(--muted) !important;
 }
 
 .status-chip {

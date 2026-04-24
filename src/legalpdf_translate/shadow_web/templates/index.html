@@ -112,6 +112,7 @@
             <button type="button" class="ghost-button" id="refresh-bootstrap">Refresh</button>
           </div>
         </header>
+        <div id="runtime-mode-banner" class="runtime-mode-banner hidden" role="status" aria-live="polite"></div>
 
         <section class="page-view" data-view="dashboard">
           <div class="panel">
@@ -991,7 +992,12 @@
           <div class="secondary-route-sheet profile-route-sheet">
             <div class="panel secondary-route-main">
               <p class="panel-copy" id="profile-status">Loading profile summaries...</p>
+              <p class="eyebrow profile-section-label">Main profile summary</p>
               <div id="profile-primary-card" class="result-card empty-state">No main profile is set yet. Add a profile or choose one from the list.</div>
+              <div class="profile-records-heading">
+                <p class="eyebrow profile-section-label">Profile records</p>
+                <p class="panel-copy">Edit saved contact, payment, and travel details here.</p>
+              </div>
               <div id="profile-list" class="profile-grid"></div>
               <details class="details-panel operator-only" id="profile-details">
                 <summary>

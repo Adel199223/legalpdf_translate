@@ -259,6 +259,7 @@ export function deriveRecentWorkPresentation({
   return {
     typeLabel,
     recentWorkEmpty: "No saved work yet. Completed translations and interpretation requests will appear here.",
+    recentCasesEmpty: "No saved cases yet.",
     recentWorkCount: `${recentItemCount} recent item(s) ready.`,
     recentOpenLabel: recordAvailable ? "Open" : "Open unavailable",
     recentDeleteLabel: "Delete record",

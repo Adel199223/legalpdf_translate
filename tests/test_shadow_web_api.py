@@ -739,13 +739,19 @@ def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
 def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> None:
     root = Path(__file__).resolve().parents[1]
     static_dir = root / "src" / "legalpdf_translate" / "shadow_web" / "static"
+    template = (root / "src" / "legalpdf_translate" / "shadow_web" / "templates" / "index.html").read_text(
+        encoding="utf-8"
+    )
     app_js = (static_dir / "app.js").read_text(encoding="utf-8")
     guard_js = (static_dir / "gmail_runtime_guard.js").read_text(encoding="utf-8")
     dashboard_js = (static_dir / "dashboard_presentation.js").read_text(encoding="utf-8")
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
 
+    assert 'id="runtime-mode-banner"' in template
     assert '"Live mode: using your real settings, Gmail drafts, and saved work."' in app_js
     assert '"Test mode: using isolated app data. Live Gmail and saved work may differ."' in app_js
+    assert "DAILY_RUNTIME_MODE_BANNER_ROUTES" in app_js
+    assert 'appState.runtimeMode === "live"' in app_js
     assert '"Warming the browser shell and Gmail workspace..."' in app_js
     assert '"Warming the browser shell, Gmail bridge, and workspace..."' not in app_js
     assert '"Live mode"' in app_js
@@ -769,6 +775,40 @@ def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> Non
     assert '"gmail-batch-finalize-numeric-warning"' in warning_block
     assert "container.textContent" in warning_block
     assert ".innerHTML" not in warning_block
+
+    banner_start = app_js.index("function syncRuntimeModeBanner")
+    banner_end = app_js.index("function syncShellChrome")
+    banner_block = app_js[banner_start:banner_end]
+    assert "DAILY_RUNTIME_MODE_BANNER_ROUTES.has(appState.activeView)" in banner_block
+    assert "Boolean(appState.bootstrap?.normalized_payload?.runtime)" not in banner_block
+    assert "operatorChromeActive()" in banner_block
+
+    shell_start = app_js.index("function syncShellChrome")
+    shell_end = app_js.index("function beginnerSurfaceTargetLabel")
+    shell_block = app_js[shell_start:shell_end]
+    assert "setTopbarStatus(chrome.status, chrome.tone);" in shell_block
+    assert "runtime.workspace_id || appState.bootstrap?.normalized_payload?.runtime" not in shell_block
+
+
+def test_shadow_web_tiny_presentation_cleanup_copy_is_distinct() -> None:
+    root = Path(__file__).resolve().parents[1]
+    static_dir = root / "src" / "legalpdf_translate" / "shadow_web" / "static"
+    template = (root / "src" / "legalpdf_translate" / "shadow_web" / "templates" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+
+    assert '"No saved work yet. Completed translations and interpretation requests will appear here."' in translation_js
+    assert '"No saved cases yet."' in translation_js
+    assert "deriveRecentWorkPresentation().recentCasesEmpty" in app_js
+    assert "presentation.recentWorkEmpty" in app_js
+
+    assert "Main profile summary" in template
+    assert "Profile records" in template
+    assert "Edit saved contact, payment, and travel details here." in template
+    assert "Profile record" in app_js
+    assert "Edit this profile's contact, payment, and travel details." in app_js
 
 
 def test_shadow_web_client_prefers_url_launch_session_state_over_stale_bootstrap() -> None:

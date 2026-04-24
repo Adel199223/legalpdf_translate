@@ -1401,6 +1401,7 @@ def test_recent_work_presentation_helper_uses_beginner_saved_work_copy() -> None
 
     empty = presentation["empty"]
     assert empty["recentWorkEmpty"] == "No saved work yet. Completed translations and interpretation requests will appear here."
+    assert empty["recentCasesEmpty"] == "No saved cases yet."
     assert empty["translationHistoryEmpty"] == "No saved translation cases yet."
     assert empty["translationRunsEmpty"] == "No translation runs have started yet."
     assert empty["recentOpenLabel"] == "Open"

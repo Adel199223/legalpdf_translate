@@ -189,6 +189,13 @@ function notifyInterpretationUiStateChanged({ force = false } = {}) {
 const PRIMARY_NAV_ORDER = ["new-job", "gmail-intake", "recent-jobs"];
 const MORE_NAV_ORDER = ["dashboard", "settings", "profile", "power-tools", "extension-lab"];
 const OPERATOR_ROUTE_ORDER = ["power-tools", "extension-lab"];
+const DAILY_RUNTIME_MODE_BANNER_ROUTES = new Set(["dashboard", "new-job"]);
+const LIVE_MODE_BANNER_TEXT = "Live mode: using your real settings, Gmail drafts, and saved work.";
+const SHADOW_MODE_BANNER_TEXT = "Test mode: using isolated app data. Live Gmail and saved work may differ.";
+
+function isLiveRuntimeMode(runtime = {}) {
+  return runtime.live_data === true || appState.runtimeMode === "live";
+}
 
 function formatDiagnosticValue(value) {
   if (value instanceof Error) {
@@ -1643,13 +1650,14 @@ function isBeginnerPrimarySurface() {
 }
 
 function routeAwareTopbarStatus(runtime = {}) {
+  const liveMode = isLiveRuntimeMode(runtime);
   const workspaceId = String(runtime.workspace_id || appState.workspaceId || "workspace-1").trim() || "workspace-1";
   if (appState.uiVariant === "qt" && appState.activeView === "dashboard" && !operatorChromeActive()) {
     return {
       eyebrow: "Overview",
       title: "LegalPDF Translate",
       status: "Check what is ready and choose what you want to do next.",
-      tone: runtime.live_data ? "info" : "ok",
+      tone: liveMode ? "info" : "ok",
     };
   }
   if (appState.uiVariant === "qt" && appState.activeView === "new-job" && !operatorChromeActive()) {
@@ -1657,7 +1665,7 @@ function routeAwareTopbarStatus(runtime = {}) {
       eyebrow: "New Job",
       title: "LegalPDF Translate",
       status: "Choose a document, confirm the language, then start translation.",
-      tone: runtime.live_data ? "info" : "ok",
+      tone: liveMode ? "info" : "ok",
     };
   }
   if (appState.uiVariant === "qt" && appState.activeView === "recent-jobs" && !operatorChromeActive()) {
@@ -1665,7 +1673,7 @@ function routeAwareTopbarStatus(runtime = {}) {
       eyebrow: "Recent Work",
       title: "LegalPDF Translate",
       status: "Open saved cases or review recent translation runs.",
-      tone: runtime.live_data ? "info" : "ok",
+      tone: liveMode ? "info" : "ok",
     };
   }
   if (appState.uiVariant === "qt" && appState.activeView === "profile" && !operatorChromeActive()) {
@@ -1673,7 +1681,7 @@ function routeAwareTopbarStatus(runtime = {}) {
       eyebrow: "Profiles",
       title: "LegalPDF Translate",
       status: "Edit the details used in documents, travel distances, and Gmail replies.",
-      tone: runtime.live_data ? "info" : "ok",
+      tone: liveMode ? "info" : "ok",
     };
   }
   if (appState.uiVariant === "qt" && appState.activeView === "settings" && !operatorChromeActive()) {
@@ -1681,7 +1689,7 @@ function routeAwareTopbarStatus(runtime = {}) {
       eyebrow: "App Settings",
       title: "LegalPDF Translate",
       status: "Set defaults and check the tools used for translation, Gmail, and Word/PDF output.",
-      tone: runtime.live_data ? "info" : "ok",
+      tone: liveMode ? "info" : "ok",
     };
   }
   if (appState.uiVariant === "qt" && appState.activeView === "gmail-intake" && !operatorChromeActive()) {
@@ -1689,7 +1697,7 @@ function routeAwareTopbarStatus(runtime = {}) {
       eyebrow: "Gmail",
       title: "Review Gmail Attachments",
       status: "Choose the attachment you want to process, preview it if needed, then continue.",
-      tone: runtime.live_data ? "info" : "ok",
+      tone: liveMode ? "info" : "ok",
     };
   }
   if (appState.uiVariant === "qt" && appState.activeView === "power-tools") {
@@ -1697,7 +1705,7 @@ function routeAwareTopbarStatus(runtime = {}) {
       eyebrow: "Advanced Tools",
       title: "LegalPDF Translate | Advanced Tools",
       status: "Use glossary, quality-check, and troubleshooting tools when you need more control.",
-      tone: runtime.live_data ? "info" : "ok",
+      tone: liveMode ? "info" : "ok",
     };
   }
   if (appState.uiVariant === "qt" && appState.activeView === "extension-lab") {
@@ -1705,7 +1713,7 @@ function routeAwareTopbarStatus(runtime = {}) {
       eyebrow: "Browser Helper",
       title: "LegalPDF Translate | Browser Helper Checks",
       status: "Check the browser helper used for Gmail intake. Technical details stay below.",
-      tone: runtime.live_data ? "info" : "ok",
+      tone: liveMode ? "info" : "ok",
     };
   }
   const currentNav = document.querySelector(`.nav-button[data-view="${appState.activeView}"] span`);
@@ -1715,11 +1723,32 @@ function routeAwareTopbarStatus(runtime = {}) {
     title: navLabel && navLabel !== "Dashboard"
       ? `LegalPDF Translate | ${navLabel}`
       : "LegalPDF Translate",
-    status: runtime.live_data
-      ? "Live mode: using your real settings, Gmail drafts, and saved work."
-      : "Test mode: using isolated app data. Live Gmail and saved work may differ.",
-    tone: runtime.live_data ? "info" : "ok",
+    status: liveMode ? LIVE_MODE_BANNER_TEXT : SHADOW_MODE_BANNER_TEXT,
+    tone: liveMode ? "info" : "ok",
   };
+}
+
+function runtimeModeBannerText(runtime = {}) {
+  return isLiveRuntimeMode(runtime) ? LIVE_MODE_BANNER_TEXT : SHADOW_MODE_BANNER_TEXT;
+}
+
+function syncRuntimeModeBanner(runtime = {}) {
+  const banner = qs("runtime-mode-banner");
+  if (!banner) {
+    return;
+  }
+  const shouldShow = appState.uiVariant === "qt"
+    && DAILY_RUNTIME_MODE_BANNER_ROUTES.has(appState.activeView)
+    && !operatorChromeActive();
+  if (!shouldShow) {
+    banner.classList.add("hidden");
+    banner.textContent = "";
+    delete banner.dataset.mode;
+    return;
+  }
+  banner.textContent = runtimeModeBannerText(runtime);
+  banner.dataset.mode = isLiveRuntimeMode(runtime) ? "live" : "shadow";
+  banner.classList.remove("hidden");
 }
 
 function syncShellChrome() {
@@ -1727,6 +1756,7 @@ function syncShellChrome() {
   document.body.dataset.beginnerSurface = isBeginnerPrimarySurface() ? "true" : "false";
   const runtime = appState.bootstrap?.normalized_payload?.runtime || {};
   const chrome = routeAwareTopbarStatus(runtime);
+  syncRuntimeModeBanner(runtime);
   if (qs("topbar-eyebrow")) {
     qs("topbar-eyebrow").textContent = chrome.eyebrow;
   }
@@ -1739,9 +1769,7 @@ function syncShellChrome() {
   if (runtime.runtime_mode_label && qs("runtime-mode-label")) {
     qs("runtime-mode-label").textContent = runtimeModeDisplayLabel(runtime);
   }
-  if (runtime.workspace_id || appState.bootstrap?.normalized_payload?.runtime) {
-    setTopbarStatus(chrome.status, chrome.tone);
-  }
+  setTopbarStatus(chrome.status, chrome.tone);
 }
 
 function beginnerSurfaceTargetLabel() {
@@ -2389,7 +2417,7 @@ export function renderRecentJobsInto(
   }
   clearNode(container);
   if (!items.length) {
-    container.appendChild(createEmptyState(deriveRecentWorkPresentation().recentWorkEmpty));
+    container.appendChild(createEmptyState(deriveRecentWorkPresentation().recentCasesEmpty));
     return;
   }
   for (const item of items) {
@@ -2700,6 +2728,7 @@ function renderProfile(payload) {
     primaryCard.innerHTML = `
       <div class="result-header">
         <div>
+          <p class="eyebrow">Main profile summary</p>
           <strong>${escapeHtml(presentation.displayName)}</strong>
           <p>${escapeHtml(presentation.contactSummary)}</p>
         </div>
@@ -2724,6 +2753,7 @@ function renderProfile(payload) {
     article.innerHTML = `
       <div class="result-header">
         <div>
+          <p class="eyebrow">Profile record</p>
           <h3>${escapeHtml(presentation.displayName)}</h3>
           <p>${escapeHtml(presentation.contactSummary)}</p>
         </div>
@@ -2733,6 +2763,7 @@ function renderProfile(payload) {
         <small>${escapeHtml(presentation.travelOriginSummary)}</small>
         <small>${escapeHtml(presentation.distanceSummary)}</small>
       </div>
+      <p class="profile-card-helper">Edit this profile's contact, payment, and travel details.</p>
     `;
     const actions = document.createElement("div");
     actions.className = "history-actions";
