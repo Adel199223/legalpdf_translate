@@ -37,6 +37,7 @@ def _run_node_probe(script: str, *, cwd: Path, timeout_seconds: int) -> str:
             input=script,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=timeout_seconds,
             cwd=cwd,
             check=False,
