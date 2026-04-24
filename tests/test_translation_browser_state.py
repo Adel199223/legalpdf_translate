@@ -395,11 +395,19 @@ function captureUi(env, translationModule) {
     sourceCardCopy: env.element("translation-source-card-copy").textContent,
     sourceCardFilename: env.element("translation-source-filename").textContent,
     sourceCardPages: env.element("translation-source-pages").textContent,
+    sourceCardTarget: env.element("translation-source-target").textContent,
+    sourceCardDefaultTarget: env.element("translation-source-default-target").textContent,
     sourceCardStatus: env.element("translation-source-stage-status").textContent,
     sourceCardHint: env.element("translation-source-card-hint").textContent,
     actionHelper: env.element("translation-action-helper").textContent,
     runTask: env.element("translation-current-task").textContent,
     resultHtml: env.element("translation-result").innerHTML,
+    jobDiagnostics: env.element("translation-job-diagnostics").textContent,
+    jobDetailsOpen: env.element("translation-job-details").open,
+    numericWarning: env.element("translation-numeric-warning").textContent,
+    completionNumericWarning: env.element("translation-completion-numeric-warning").textContent,
+    saveNumericWarning: env.element("translation-save-numeric-warning").textContent,
+    gmailStepNumericWarning: env.element("translation-gmail-step-numeric-warning").textContent,
     browseDisabled: env.element("translation-source-browse").disabled,
     sourceInputValue: env.element("translation-source-file").value,
     sourceInputClickCount: env.element("translation-source-file").clickCount,
@@ -418,6 +426,7 @@ async function setupScenario(name, url = "http://127.0.0.1:8877/?mode=live&works
     normalized_payload: {
       settings_summary: {
         default_outdir: "C:/tmp/default-output",
+        default_lang: "AR",
       },
       gmail: {},
       runtime: {},
@@ -467,6 +476,18 @@ const results = {};
   const scenario = await setupScenario("prepared");
   scenario.translationModule.applyTranslationLaunch(preparedLaunch());
   results.prepared = captureUi(scenario.env, scenario.translationModule);
+}
+
+{
+  const scenario = await setupScenario("prepared-target-mismatch");
+  scenario.translationModule.applyTranslationLaunch(preparedLaunch({
+    target_lang: "EN",
+    gmail_batch_context: {
+      ...preparedLaunch().gmail_batch_context,
+      selected_target_lang: "EN",
+    },
+  }));
+  results.preparedTargetMismatch = captureUi(scenario.env, scenario.translationModule);
 }
 
 {
@@ -797,6 +818,100 @@ const results = {};
 }
 
 {
+  const scenario = await setupScenario("raw-status-and-numeric-warning");
+  const rawStatus = '{"job_id":"tx-num","progress":{"phase":"completed"}}';
+  scenario.translationModule.renderTranslationJob({
+    job_id: "tx-num",
+    job_kind: "translate",
+    status: "completed",
+    status_text: rawStatus,
+    config: {
+      source_path: "C:/tmp/gmail.pdf",
+      source_filename: "gmail.pdf",
+      target_lang: "EN",
+      start_page: 2,
+      gmail_batch_context: {
+        ...preparedLaunch().gmail_batch_context,
+        selected_target_lang: "EN",
+      },
+    },
+    result: {
+      completed_pages: 9,
+      save_seed: {
+        case_number: "CASE-NUM",
+        target_lang: "EN",
+      },
+      translation_diagnostics: {
+        validation_pages: [
+          {
+            page: 3,
+            numeric_mismatches_count: 1,
+            numeric_missing_sample: ["10.15"],
+          },
+          {
+            page_number: 7,
+            numeric_mismatches_count: 3,
+            numeric_missing_sample: ["495,00", "5,50", "5,50"],
+          },
+        ],
+      },
+    },
+  });
+  results.rawStatusNumericWarning = captureUi(scenario.env, scenario.translationModule);
+  results.numericWarningFromPreview = scenario.translationModule.deriveNumericMismatchWarning(null, {
+    preview: [
+      "## Numeric Mismatch Samples",
+      "- Page 3: missing ['10.15']",
+      "- Page 7: missing ['495,00', '5,50', '5,50']",
+    ].join("\n"),
+  });
+}
+
+{
+  const scenario = await setupScenario("normal-running-diagnostics-collapsed");
+  scenario.translationModule.renderTranslationJob({
+    job_id: "tx-running-diagnostics",
+    job_kind: "translate",
+    status: "running",
+    status_text: '{"job_id":"tx-running-diagnostics","phase":"page"}',
+    config: {
+      source_path: "C:/tmp/gmail.pdf",
+      source_filename: "gmail.pdf",
+      target_lang: "EN",
+      start_page: 2,
+    },
+    progress: {
+      selected_index: 2,
+      selected_total: 8,
+    },
+    result: {
+      completed_pages: 2,
+    },
+  });
+  results.normalRunningDiagnostics = captureUi(scenario.env, scenario.translationModule);
+}
+
+{
+  const scenario = await setupScenario("failed-diagnostics-open");
+  scenario.translationModule.renderTranslationJob({
+    job_id: "tx-failed-diagnostics",
+    job_kind: "translate",
+    status: "failed",
+    status_text: "Translation failed on page 4.",
+    config: {
+      source_path: "C:/tmp/gmail.pdf",
+      source_filename: "gmail.pdf",
+      target_lang: "EN",
+      start_page: 2,
+    },
+    result: {
+      error: "Page translation failed.",
+    },
+  });
+  results.failedDiagnostics = captureUi(scenario.env, scenario.translationModule);
+}
+
+{
   const scenario = await setupScenario("completion-presentation");
   results.completionPresentation = {
     idle: scenario.translationModule.deriveTranslationCompletionPresentation(),
@@ -1059,8 +1174,17 @@ def test_translation_browser_idle_and_prepared_action_states() -> None:
     assert prepared["snapshot"]["translationCancelDisabled"] is True
     assert prepared["snapshot"]["translationResumeDisabled"] is True
     assert prepared["snapshot"]["translationRebuildDisabled"] is True
+    assert prepared["sourceCardTitle"] == "Gmail attachment is prepared"
+    assert "Review settings, then start translation" in prepared["sourceCardCopy"]
+    assert prepared["sourceCardFilename"] == "gmail.pdf"
+    assert prepared["sourceCardTarget"] == "Current Gmail job target: AR"
+    assert "No file chosen" not in prepared["sourceCardCopy"]
     assert prepared["sourceCardStatus"] == "Ready from Gmail."
-    assert prepared["actionHelper"] == "The Gmail attachment is ready. Confirm the language and output folder, then start translation."
+    assert prepared["actionHelper"] == "Gmail attachment is prepared. Review settings, then start translation."
+
+    prepared_mismatch = results["preparedTargetMismatch"]
+    assert prepared_mismatch["sourceCardTarget"] == "Current Gmail job target: EN"
+    assert prepared_mismatch["sourceCardDefaultTarget"] == "Default target for new jobs: AR"
 
 
 def test_translation_browser_failed_local_replacement_restores_prepared_gmail_source() -> None:
@@ -1177,7 +1301,8 @@ def test_translation_browser_loaded_job_source_replaces_stale_summary_and_run_st
     assert loaded["snapshot"]["sourcePathValue"] == "C:/jobs/loaded-source.pdf"
     assert loaded["snapshot"]["sourceCardFilename"] == "loaded-source.pdf"
     assert loaded["snapshot"]["currentGmailBatchContext"]["attachment_id"] == "att-loaded"
-    assert loaded["sourceCardTitle"] == "loaded-source.pdf"
+    assert loaded["sourceCardTitle"] == "Gmail attachment is prepared"
+    assert loaded["sourceCardFilename"] == "loaded-source.pdf"
     assert loaded["sourceCardStatus"] == "Ready from Gmail."
 
     run_status = results["runStatusView"]
@@ -1192,6 +1317,36 @@ def test_translation_browser_loaded_job_source_replaces_stale_summary_and_run_st
     assert "Retry on page 4" in run_status["imageRetryText"]
     assert "Flagged 1" in run_status["alertsText"]
     assert "Errors 1" in run_status["alertsText"]
+
+    raw_warning = results["rawStatusNumericWarning"]
+    assert raw_warning["runTask"] == "Completed pages: 9. Latest technical state is available in details."
+    assert '{"job_id"' not in raw_warning["runTask"]
+    assert "Translation complete." in raw_warning["resultHtml"]
+    assert '{"job_id"' not in raw_warning["resultHtml"]
+    assert '"status_text"' in raw_warning["jobDiagnostics"]
+    assert '\\"job_id\\"' in raw_warning["jobDiagnostics"]
+    assert "Review recommended: some numbers from the source may not appear exactly in the translation." in raw_warning["numericWarning"]
+    assert "Page 3: 10.15" in raw_warning["numericWarning"]
+    assert "Page 7: 495,00; 5,50" in raw_warning["numericWarning"]
+    assert raw_warning["numericWarning"] == raw_warning["completionNumericWarning"]
+    assert raw_warning["numericWarning"] == raw_warning["saveNumericWarning"]
+    assert raw_warning["numericWarning"] == raw_warning["gmailStepNumericWarning"]
+
+    preview_warning = results["numericWarningFromPreview"]
+    assert preview_warning["visible"] is True
+    assert "Page 3: 10.15" in preview_warning["lines"]
+    assert "Page 7: 495,00; 5,50; 5,50" in preview_warning["lines"]
+    assert "Page 7: 495; 00; 5; 50" not in preview_warning["lines"]
+
+    running_diagnostics = results["normalRunningDiagnostics"]
+    assert running_diagnostics["jobDetailsOpen"] is False
+    assert '"status_text"' in running_diagnostics["jobDiagnostics"]
+    assert '\\"job_id\\"' in running_diagnostics["jobDiagnostics"]
+    assert running_diagnostics["runTask"] == "Translating... Completed pages: 2. Latest technical state is available in details."
+
+    failed_diagnostics = results["failedDiagnostics"]
+    assert failed_diagnostics["jobDetailsOpen"] is True
+    assert "Page translation failed." in failed_diagnostics["jobDiagnostics"]
 
 
 def test_translation_completion_presentation_helper_uses_beginner_finish_copy() -> None:
@@ -1302,12 +1457,15 @@ def test_dashboard_presentation_helper_uses_beginner_overview_copy() -> None:
         "Word/PDF tools",
         "Translation provider",
     ]
+    assert zero["statusCards"][2]["text"] == "Optional setup for live Gmail intake."
+    assert zero["statusCards"][2]["label"] == "Setup needed"
 
     nonzero = presentation["nonzero"]
     assert nonzero["savedWorkSummary"] == "5 saved item(s) available. 3 translation case(s) and 2 interpretation request(s) are ready to reopen."
     assert nonzero["statusSummary"] == "App status looks ready for normal work."
     assert nonzero["readyCountLine"] == "7/7 overview area(s) are ready."
     assert nonzero["resultChipLabel"] == "Ready"
+    assert nonzero["statusCards"][2]["text"] == "Live Gmail attachments are ready when you need them."
 
     summary_only = presentation["summaryOnly"]
     assert summary_only["zero"] == "No saved work yet. Completed translations and interpretation requests will appear here."

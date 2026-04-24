@@ -26,11 +26,14 @@ const translationState = {
   completionDrawerOpen: false,
   lastAutoOpenedCompletionKey: "",
   arabicReview: null,
+  numericMismatchWarningsByJobId: {},
+  numericMismatchWarningFetches: {},
 };
 
 let lastTranslationUiSnapshotKey = "";
 const PAGE_FLAG_LOG_RE = /page=(?<page>\d+)\s+image_used=(?<image>True|False)\s+retry_used=(?<retry>True|False)\s+status=(?<status>[a-z_]+)/;
 const PAGE_STATUS_LOG_RE = /Page\s+(?<page>\d+)\s+(?<status>finished|failed)/i;
+const NUMERIC_MISMATCH_WARNING_MESSAGE = "Review recommended: some numbers from the source may not appear exactly in the translation.";
 
 function normalizeGmailBatchContext(value) {
   if (!value || typeof value !== "object") {
@@ -127,10 +130,17 @@ function preparedTranslationSummaryLines(launch = currentPreparedTranslationLaun
   if (!launch) {
     return [];
   }
+  const gmailTarget = String(launch.target_lang || launch.gmail_batch_context?.selected_target_lang || "").trim().toUpperCase();
+  const defaultTarget = defaultTranslationTargetLang();
+  const targetLines = gmailTarget
+    ? [`Current Gmail job target: ${gmailTarget}`]
+    : ["Current Gmail job target: ?"];
+  if (defaultTarget && defaultTarget !== gmailTarget) {
+    targetLines.push(`Default target for new jobs: ${defaultTarget}`);
+  }
   return [
     `Attachment: ${launch.source_filename || launch.gmail_batch_context?.selected_attachment_filename || "Prepared source"}`,
-    `Saved path: ${launch.source_path || "Unavailable"}`,
-    `Target language: ${launch.target_lang || launch.gmail_batch_context?.selected_target_lang || "?"}`,
+    ...targetLines,
     `Start page: ${launch.start_page ?? launch.gmail_batch_context?.selected_start_page ?? 1}`,
     `Images: ${launch.image_mode || "auto"}`,
     `OCR: ${launch.ocr_mode || "auto"} / ${launch.ocr_engine || "local_then_api"}`,
@@ -143,7 +153,7 @@ function preparedTranslationStatusSummary(launch = currentPreparedTranslationLau
   if (!launch) {
     return "";
   }
-  return "Gmail attachment is prepared. Review the settings, then click Start Translate when you're ready.";
+  return "Gmail attachment is prepared. Review settings, then start translation.";
 }
 
 function summarizeRuntimeJob(job) {
@@ -857,7 +867,7 @@ export function deriveTranslationActionState(
     helperText = "A translation run is already in progress. Cancel it or wait for it to finish before starting another one.";
   } else if (sourceState.status === "prepared-ready") {
     helperText = sourceState.fromGmail
-      ? "The Gmail attachment is ready. Confirm the language and output folder, then start translation."
+      ? "Gmail attachment is prepared. Review settings, then start translation."
       : "The prepared document is ready. Confirm the language and output folder, then start translation.";
   } else if (sourceState.status === "manual-ready") {
     helperText = "The document is ready. Confirm the language and output folder, then start translation.";
@@ -885,6 +895,8 @@ function renderTranslationSourceCard() {
   const filename = qs("translation-source-filename");
   const sourceType = qs("translation-source-type");
   const pages = qs("translation-source-pages");
+  const target = qs("translation-source-target");
+  const defaultTarget = qs("translation-source-default-target");
   const stageStatus = qs("translation-source-stage-status");
   const hint = qs("translation-source-card-hint");
   const chip = qs("translation-source-card-chip");
@@ -899,7 +911,9 @@ function renderTranslationSourceCard() {
   card.dataset.state = sourceState.status || "empty";
 
   if (title) {
-    title.textContent = sourceState.filename || (isPrepared ? "Prepared Gmail attachment" : "Choose a PDF or image");
+    title.textContent = isPrepared && sourceState.fromGmail
+      ? "Gmail attachment is prepared"
+      : sourceState.filename || (isPrepared ? "Prepared source" : "Choose a PDF or image");
   }
   if (copy) {
     if (isUploading) {
@@ -910,7 +924,7 @@ function renderTranslationSourceCard() {
       copy.textContent = "This source is attached to the current translation job. Progress will update below while the run is active.";
     } else if (isPrepared) {
       copy.textContent = sourceState.fromGmail
-        ? "This Gmail attachment is already staged. Choosing a local file will replace it for the next run."
+        ? "Review settings, then start translation. Choosing a local file will replace the prepared Gmail attachment for the next run."
         : "This document is already staged. Choosing a local file will replace it for the next run.";
     } else if (ready) {
       copy.textContent = "The document is staged and ready. Confirm the language and output folder, then start translation.";
@@ -928,6 +942,22 @@ function renderTranslationSourceCard() {
   }
   if (pages) {
     pages.textContent = sourceState.pageCount ?? "--";
+  }
+  if (target) {
+    const launch = currentPreparedTranslationLaunch();
+    const gmailTarget = String(launch?.target_lang || launch?.gmail_batch_context?.selected_target_lang || "").trim().toUpperCase();
+    const selectedTarget = String(fieldValue("translation-target-lang") || "").trim().toUpperCase();
+    target.textContent = isPrepared && sourceState.fromGmail && gmailTarget
+      ? `Current Gmail job target: ${gmailTarget}`
+      : `Target language: ${selectedTarget || defaultTranslationTargetLang() || "EN"}`;
+  }
+  if (defaultTarget) {
+    const launch = currentPreparedTranslationLaunch();
+    const gmailTarget = String(launch?.target_lang || launch?.gmail_batch_context?.selected_target_lang || "").trim().toUpperCase();
+    const fallbackTarget = defaultTranslationTargetLang();
+    defaultTarget.textContent = isPrepared && sourceState.fromGmail && fallbackTarget && fallbackTarget !== gmailTarget
+      ? `Default target for new jobs: ${fallbackTarget}`
+      : "Using the current target language for this run.";
   }
   if (stageStatus) {
     if (isUploading) {
@@ -988,6 +1018,15 @@ function browserDefaultOutputDir() {
   return String(appState.bootstrap?.normalized_payload?.settings_summary?.default_outdir || "").trim();
 }
 
+function defaultTranslationTargetLang() {
+  return String(
+    appState.bootstrap?.normalized_payload?.settings_summary?.default_lang
+    || appState.bootstrap?.normalized_payload?.settings_summary?.target_lang
+    || fieldValue("translation-target-lang")
+    || "EN",
+  ).trim().toUpperCase();
+}
+
 function renderTranslationOutputSummary() {
   const label = qs("translation-output-summary-label");
   const copy = qs("translation-output-summary-copy");
@@ -1023,6 +1062,227 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function blankNumericMismatchWarning({ checked = false } = {}) {
+  return {
+    visible: false,
+    checked,
+    message: NUMERIC_MISMATCH_WARNING_MESSAGE,
+    lines: [],
+    pages: [],
+  };
+}
+
+function cleanNumericSample(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/^['"`]+|['"`]+$/g, "")
+    .trim();
+}
+
+function normalizeNumericSamples(value) {
+  if (Array.isArray(value)) {
+    return value.map(cleanNumericSample).filter(Boolean).slice(0, 6);
+  }
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return [];
+  }
+  const trimmed = text.replace(/^\[/, "").replace(/\]$/, "");
+  const quoted = Array.from(trimmed.matchAll(/["']([^"']+)["']/g))
+    .map((match) => cleanNumericSample(match[1]))
+    .filter(Boolean);
+  if (quoted.length) {
+    return quoted.slice(0, 6);
+  }
+  const separator = trimmed.includes(";") ? /\s*;\s*/ : /,\s+/;
+  const parts = (trimmed.includes(";") || /,\s+/.test(trimmed))
+    ? trimmed.split(separator)
+    : [trimmed];
+  return parts
+    .map(cleanNumericSample)
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+function normalizeNumericWarningRows(rows = []) {
+  const normalizedRows = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") {
+      continue;
+    }
+    const samples = normalizeNumericSamples(row.samples ?? row.numeric_missing_sample ?? row.missing);
+    const count = coercePositiveInt(row.count ?? row.numeric_mismatches_count) ?? samples.length;
+    if (count <= 0 && samples.length === 0) {
+      continue;
+    }
+    const page = coercePositiveInt(row.page ?? row.page_index ?? row.page_number);
+    normalizedRows.push({
+      page,
+      count,
+      samples,
+    });
+  }
+  const lines = normalizedRows.map((row) => {
+    const prefix = row.page ? `Page ${row.page}: ` : "";
+    if (row.samples.length) {
+      return `${prefix}${row.samples.join("; ")}`;
+    }
+    const countText = row.count === 1 ? "1 number needs review" : `${row.count} numbers need review`;
+    return `${prefix}${countText}`;
+  });
+  return {
+    visible: lines.length > 0,
+    checked: true,
+    message: NUMERIC_MISMATCH_WARNING_MESSAGE,
+    lines,
+    pages: normalizedRows,
+  };
+}
+
+function collectNumericWarningRows(value, rows = [], seen = new Set(), depth = 0) {
+  if (!value || typeof value !== "object" || seen.has(value) || depth > 7) {
+    return rows;
+  }
+  seen.add(value);
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectNumericWarningRows(item, rows, seen, depth + 1));
+    return rows;
+  }
+  const samples = normalizeNumericSamples(value.numeric_missing_sample);
+  const count = coercePositiveInt(value.numeric_mismatches_count) ?? 0;
+  if (count > 0 || samples.length > 0) {
+    rows.push({
+      page: value.page_index ?? value.page ?? value.page_number,
+      count,
+      samples,
+    });
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (
+      key === "save_seed"
+      || key === "logs"
+      || key.endsWith("_path")
+      || key.endsWith("_dir")
+    ) {
+      continue;
+    }
+    collectNumericWarningRows(nested, rows, seen, depth + 1);
+  }
+  return rows;
+}
+
+function extractNumericMismatchWarningFromText(text) {
+  const source = String(text || "");
+  if (!source) {
+    return blankNumericMismatchWarning();
+  }
+  const rows = [];
+  const lines = source.split(/\r?\n/);
+  let inSamples = false;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (/^#{1,6}\s+Numeric Mismatch Samples/i.test(line)) {
+      inSamples = true;
+      continue;
+    }
+    if (inSamples && /^#{1,6}\s+/.test(line)) {
+      break;
+    }
+    const match = line.match(/^-?\s*Page\s+(?<page>\d+)\s*:\s*(?:missing\s*)?(?<samples>\[[^\]]*\]|.+)$/i);
+    if (!match?.groups) {
+      continue;
+    }
+    rows.push({
+      page: match.groups.page,
+      samples: normalizeNumericSamples(match.groups.samples),
+    });
+  }
+  return normalizeNumericWarningRows(rows);
+}
+
+export function deriveNumericMismatchWarning(job = translationState.currentJob, extra = null) {
+  const rows = collectNumericWarningRows(extra || job || []);
+  const structured = normalizeNumericWarningRows(rows);
+  if (structured.visible) {
+    return structured;
+  }
+  const previewText = String(extra?.preview || extra?.normalized_payload?.preview || job?.result?.run_report_preview || "").trim();
+  const previewWarning = extractNumericMismatchWarningFromText(previewText);
+  if (previewWarning.visible) {
+    return previewWarning;
+  }
+  const jobId = String(job?.job_id || "").trim();
+  if (jobId && translationState.numericMismatchWarningsByJobId[jobId]) {
+    return translationState.numericMismatchWarningsByJobId[jobId];
+  }
+  return blankNumericMismatchWarning();
+}
+
+export function renderNumericMismatchWarningInto(containerOrId, warning = blankNumericMismatchWarning()) {
+  const container = typeof containerOrId === "string" ? qs(containerOrId) : containerOrId;
+  if (!container) {
+    return;
+  }
+  const normalized = warning?.visible ? warning : blankNumericMismatchWarning();
+  container.classList.toggle("hidden", !normalized.visible);
+  if (!normalized.visible) {
+    container.textContent = "";
+    return;
+  }
+  const detailLines = normalized.lines?.length ? `\n${normalized.lines.join("\n")}` : "";
+  container.textContent = `${normalized.message}${detailLines}`;
+  container.setAttribute("role", "note");
+}
+
+function currentNumericMismatchWarning(job = translationState.currentJob) {
+  return deriveNumericMismatchWarning(job);
+}
+
+function renderTranslationNumericMismatchWarnings(job = translationState.currentJob) {
+  const warning = currentNumericMismatchWarning(job);
+  renderNumericMismatchWarningInto("translation-numeric-warning", warning);
+  renderNumericMismatchWarningInto("translation-completion-numeric-warning", warning);
+  renderNumericMismatchWarningInto("translation-save-numeric-warning", warning);
+  renderNumericMismatchWarningInto("translation-gmail-step-numeric-warning", warning);
+}
+
+function cacheNumericMismatchWarning(jobId, warning) {
+  const normalizedJobId = String(jobId || "").trim();
+  if (!normalizedJobId) {
+    return;
+  }
+  translationState.numericMismatchWarningsByJobId[normalizedJobId] = warning?.checked
+    ? warning
+    : { ...blankNumericMismatchWarning({ checked: true }), ...(warning || {}) };
+}
+
+function looksLikeRawTechnicalStateText(value) {
+  const text = String(value || "").trim();
+  return Boolean(
+    text.startsWith("{")
+    || text.startsWith("[")
+    || /"job_id"|"normalized_payload"|"progress"|"result"/.test(text)
+    || /^translation job state/i.test(text),
+  );
+}
+
+function friendlyTranslationTaskText({ job, progress = {}, result = {}, fallback = "" } = {}) {
+  const raw = String(progress.status_text || job?.status_text || fallback || "").trim();
+  if (raw && !looksLikeRawTechnicalStateText(raw)) {
+    return raw;
+  }
+  const completedPages = coercePositiveInt(result.completed_pages) ?? coercePositiveInt(progress.selected_index) ?? 0;
+  if (job?.status === "completed") {
+    return `Completed pages: ${completedPages}. Latest technical state is available in details.`;
+  }
+  if (["queued", "running", "cancel_requested"].includes(String(job?.status || ""))) {
+    return completedPages > 0
+      ? `Translating... Completed pages: ${completedPages}. Latest technical state is available in details.`
+      : "Translating... Latest technical state is available in details.";
+  }
+  return "Latest technical state is available in details.";
 }
 
 function formatDiagnosticValue(value) {
@@ -1556,7 +1816,12 @@ export function deriveTranslationRunStatusView(
       tone = "info";
     }
   } else {
-    currentTask = String(progress.status_text || job.status_text || "").trim() || "Translation job state is available.";
+    currentTask = friendlyTranslationTaskText({
+      job,
+      progress,
+      result,
+      fallback: "Translation job state is available.",
+    });
     if (job.status === "completed") {
       chipText = "Complete";
       tone = "ok";
@@ -1783,6 +2048,7 @@ export function getTranslationUiSnapshot() {
   const sourceCard = currentSourceCardState();
   const sourceState = deriveTranslationSourceState();
   const actionState = deriveTranslationActionState(translationState.currentJob, { sourceState });
+  const numericMismatchWarning = currentNumericMismatchWarning();
   return {
     currentJobKind: translationState.currentJob?.job_kind || "",
     currentJobStatus: translationState.currentJob?.status || "",
@@ -1809,9 +2075,12 @@ export function getTranslationUiSnapshot() {
       },
     })),
     currentGmailBatchContext: normalizeGmailBatchContext(translationState.currentGmailBatchContext),
+    numericMismatchWarning,
     hasPreparedLaunch: hasPreparedTranslationLaunch(),
     preparedLaunchSourcePath: currentPreparedTranslationLaunch()?.source_path || "",
     preparedLaunchAttachmentId: currentPreparedTranslationLaunch()?.gmail_batch_context?.attachment_id || "",
+    preparedLaunchTargetLang: currentPreparedTranslationLaunch()?.target_lang || currentPreparedTranslationLaunch()?.gmail_batch_context?.selected_target_lang || "",
+    defaultTargetLang: defaultTranslationTargetLang(),
     sourceReady: sourceState.ready,
     sourceState: sourceState.status,
     sourceCardKind: sourceCard.kind,
@@ -2551,6 +2820,7 @@ function renderTranslationPreparedState() {
   renderTranslationSourceCard();
   renderTranslationOutputSummary();
   renderTranslationResultCard(null);
+  renderTranslationNumericMismatchWarnings(null);
   renderTranslationRunStatus(null);
   syncTranslationPrimaryActionState();
   setPanelStatus("translation", "", preparedTranslationStatusSummary());
@@ -2683,15 +2953,66 @@ function renderTranslationResultCard(job, { containerId = "translation-result" }
     }
   }
   container.classList.remove("empty-state");
+  const primaryTitle = String(job.status_text || "").trim();
+  const safeTitle = primaryTitle && !looksLikeRawTechnicalStateText(primaryTitle)
+    ? primaryTitle
+    : job.status === "completed"
+      ? "Translation complete."
+      : "Translation progress is available.";
   container.innerHTML = `
     <div class="result-header">
       <div>
-        <strong>${escapeHtml(job.status_text || "Translation job state available.")}</strong>
+        <strong>${escapeHtml(safeTitle)}</strong>
         <p>${summaryLines.map((line) => escapeHtml(line)).join("<br>")}</p>
       </div>
       <span class="status-chip ${job.status === "completed" ? "ok" : job.status === "failed" ? "bad" : job.status === "cancelled" ? "warn" : "info"}">${escapeHtml(job.status)}</span>
     </div>
   `;
+}
+
+function maybeRefreshNumericMismatchWarning(job) {
+  const jobId = String(job?.job_id || "").trim();
+  if (
+    !jobId
+    || job?.job_kind !== "translate"
+    || job?.status !== "completed"
+    || !job?.actions?.download_run_report
+    || !currentTranslationRunDir(job)
+    || translationState.numericMismatchWarningsByJobId[jobId]?.checked
+    || translationState.numericMismatchWarningFetches[jobId]
+  ) {
+    return;
+  }
+  translationState.numericMismatchWarningFetches[jobId] = true;
+  fetchJson(`/api/translation/jobs/${jobId}/run-report`, appState, {
+    method: "POST",
+  }).then((payload) => {
+    const warning = deriveNumericMismatchWarning(job, payload.normalized_payload || payload);
+    cacheNumericMismatchWarning(jobId, warning.visible ? warning : blankNumericMismatchWarning({ checked: true }));
+    if (translationState.currentJobId === jobId) {
+      const refreshedJob = payload.normalized_payload?.job || translationState.currentJob || job;
+      translationState.currentJob = refreshedJob;
+      renderTranslationNumericMismatchWarnings(refreshedJob);
+      notifyTranslationUiStateChanged({ force: true });
+    }
+  }).catch(() => {
+    cacheNumericMismatchWarning(jobId, blankNumericMismatchWarning({ checked: true }));
+  }).finally(() => {
+    delete translationState.numericMismatchWarningFetches[jobId];
+  });
+}
+
+function shouldOpenTranslationJobDiagnostics(job, recovery = deriveTranslationRecoveryState(job)) {
+  if (!job) {
+    return false;
+  }
+  if (isAuthenticationFailure(job)) {
+    return true;
+  }
+  if (recovery?.visible) {
+    return true;
+  }
+  return String(job.status || "").trim() === "failed";
 }
 
 function renderTranslationJob(job) {
@@ -2726,6 +3047,8 @@ function renderTranslationJob(job) {
   }
   const recovery = deriveTranslationRecoveryState(job);
   renderTranslationResultCard(job);
+  renderTranslationNumericMismatchWarnings(job);
+  maybeRefreshNumericMismatchWarning(job);
   const preparedSummary = !job
     ? (preparedTranslationStatusSummary()
       || (hasReadyTranslationSource()
@@ -2757,7 +3080,7 @@ function renderTranslationJob(job) {
       : { status: "idle", message: "No translation job loaded." }
   ), {
     hint: diagnosticsHint,
-    open: Boolean(job && job.status !== "completed"),
+    open: shouldOpenTranslationJobDiagnostics(job, recovery),
   });
   setDownloadLink("translation-download-report", translationRunReportHref(job));
   setDownloadLink("translation-download-docx", job?.actions?.download_output_docx ? `/api/translation/jobs/${job.job_id}/artifact/output_docx?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
@@ -3040,6 +3363,10 @@ async function handleGenerateRunReport() {
   const payload = await fetchJson(`/api/translation/jobs/${jobId}/run-report`, appState, {
     method: "POST",
   });
+  cacheNumericMismatchWarning(
+    jobId,
+    deriveNumericMismatchWarning(payload.normalized_payload?.job || translationState.currentJob, payload.normalized_payload || payload),
+  );
   renderTranslationJob(payload.normalized_payload?.job || translationState.currentJob);
   setPanelStatus("translation", "ok", "Run report generated.");
   setDiagnostics("translation-job", payload, {

@@ -495,12 +495,12 @@ function maybeBlockGmailReviewAction(operation) {
 
 async function restartCanonicalRuntimeGuidance() {
   const guard = currentGmailRuntimeGuard();
-  setPanelStatus("gmail", "warn", "Restarting the canonical Gmail browser runtime...");
+  setPanelStatus("gmail", "warn", "Restarting the live Gmail browser runtime...");
   setDiagnostics("gmail", {
     status: "restarting",
     diagnostics: gmailRuntimeGuardDiagnostics(guard, "gmail_restart_canonical_runtime"),
   }, {
-    hint: "Restarting the browser runtime into the canonical target. This page will reconnect automatically.",
+    hint: "Restarting the browser runtime for live Gmail. This page will reconnect automatically.",
     open: true,
   });
   const payload = await fetchJson("/api/gmail/runtime/restart-canonical", appState, {
@@ -527,11 +527,28 @@ async function restartCanonicalRuntimeGuidance() {
       await new Promise((resolve) => window.setTimeout(resolve, 500));
     }
   }
-  throw new Error("Canonical runtime restart was started, but the canonical browser listener did not become ready in time.");
+  throw new Error("Live Gmail runtime restart was started, but the browser listener did not become ready in time.");
 }
 
 function translationUiSnapshot() {
   return gmailState.hooks.getTranslationUiSnapshot?.() || {};
+}
+
+function renderGmailFinalizeNumericMismatchWarning(warning = translationUiSnapshot().numericMismatchWarning) {
+  const container = qs("gmail-batch-finalize-numeric-warning");
+  if (!container) {
+    return;
+  }
+  const visible = Boolean(warning?.visible);
+  container.classList.toggle("hidden", !visible);
+  if (!visible) {
+    container.textContent = "";
+    return;
+  }
+  const lines = Array.isArray(warning.lines) ? warning.lines.filter(Boolean) : [];
+  const detail = lines.length ? `\n${lines.join("\n")}` : "";
+  container.textContent = `${warning.message || "Review recommended: some numbers from the source may not appear exactly in the translation."}${detail}`;
+  container.setAttribute("role", "note");
 }
 
 function interpretationUiSnapshot() {
@@ -1203,6 +1220,7 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
   const summary = qs("gmail-batch-finalize-summary");
   const result = qs("gmail-batch-finalize-result");
   const button = qs("gmail-batch-finalize-run");
+  renderGmailFinalizeNumericMismatchWarning();
   if (!status || !summary || !result || !button) {
     return;
   }
@@ -2192,7 +2210,7 @@ function updatePrepareActionState() {
     label = workflow.emptySelectionLabel;
     disabled = true;
   } else if (runtimeGuard.blocked) {
-    label = "Restart canonical runtime to continue";
+    label = "Restart live Gmail runtime to continue";
     disabled = true;
   }
   button.textContent = label;

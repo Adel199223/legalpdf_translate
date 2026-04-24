@@ -381,6 +381,8 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="gmail-review-summary-grid"' in text
         assert 'id="gmail-noncanonical-runtime-guard"' in text
         assert 'id="gmail-restart-canonical-runtime"' in text
+        assert "Live Gmail needs the main app runtime" in text
+        assert "Restart live Gmail runtime" in text
         assert 'id="gmail-continue-noncanonical-runtime"' not in text
         assert 'id="gmail-review-detail"' in text
         assert 'id="gmail-preview-drawer"' in text
@@ -408,6 +410,11 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="gmail-session-drawer"' in text
         assert 'id="gmail-session-drawer-backdrop"' in text
         assert 'id="gmail-close-session-drawer"' in text
+        assert 'id="translation-numeric-warning"' in text
+        assert 'id="translation-completion-numeric-warning"' in text
+        assert 'id="translation-save-numeric-warning"' in text
+        assert 'id="translation-gmail-step-numeric-warning"' in text
+        assert 'id="gmail-batch-finalize-numeric-warning"' in text
         assert "Continue Gmail Step" in gmail_session_drawer
         assert "Gmail Session" not in gmail_session_drawer
         assert "Session Actions" not in gmail_session_drawer
@@ -727,6 +734,41 @@ def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     assert "Launch target" not in mode_block
 
     assert 'setDiagnostics("extension", { prepare_response: prepare, extension_report: extensionReport, bridge_summary: bridgeSummary, notes: data.notes || [] }, {' in render_block
+
+
+def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> None:
+    root = Path(__file__).resolve().parents[1]
+    static_dir = root / "src" / "legalpdf_translate" / "shadow_web" / "static"
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    guard_js = (static_dir / "gmail_runtime_guard.js").read_text(encoding="utf-8")
+    dashboard_js = (static_dir / "dashboard_presentation.js").read_text(encoding="utf-8")
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+
+    assert '"Live mode: using your real settings, Gmail drafts, and saved work."' in app_js
+    assert '"Test mode: using isolated app data. Live Gmail and saved work may differ."' in app_js
+    assert '"Warming the browser shell and Gmail workspace..."' in app_js
+    assert '"Warming the browser shell, Gmail bridge, and workspace..."' not in app_js
+    assert '"Live mode"' in app_js
+    assert '"Test mode"' in app_js
+
+    assert '"Live Gmail needs the main app runtime"' in guard_js
+    assert '"Restart live Gmail runtime"' in guard_js
+    assert (
+        '"Live Gmail extension intake requires the canonical main runtime. Use shadow/test mode for feature-branch UI review."'
+        in guard_js
+    )
+    assert '"Live Gmail is running from a noncanonical build"' not in guard_js
+
+    assert '"Optional setup for live Gmail intake."' in dashboard_js
+    assert '"Live Gmail attachments are ready when you need them."' in dashboard_js
+    assert '"Gmail tools need attention before live Gmail work."' not in dashboard_js
+
+    warning_start = gmail_js.index("function renderGmailFinalizeNumericMismatchWarning")
+    warning_end = gmail_js.index("function interpretationUiSnapshot")
+    warning_block = gmail_js[warning_start:warning_end]
+    assert '"gmail-batch-finalize-numeric-warning"' in warning_block
+    assert "container.textContent" in warning_block
+    assert ".innerHTML" not in warning_block
 
 
 def test_shadow_web_client_prefers_url_launch_session_state_over_stale_bootstrap() -> None:

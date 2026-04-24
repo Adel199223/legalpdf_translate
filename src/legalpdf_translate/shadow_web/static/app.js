@@ -503,7 +503,7 @@ function applyBootstrapFailureState(error) {
     qs("workspace-id-label").textContent = details.workspaceId;
     qs("runtime-mode-label").textContent = details.port === 8888
       ? "Fixed Review Preview"
-      : (details.runtimeMode === "live" ? "Live App Data" : "Isolated Test Data");
+      : (details.runtimeMode === "live" ? "Live mode" : "Test mode");
     setTopbarStatus(details.statusMessage, "bad");
     const banner = qs("live-banner");
     banner.classList.add("hidden");
@@ -1716,8 +1716,8 @@ function routeAwareTopbarStatus(runtime = {}) {
       ? `LegalPDF Translate | ${navLabel}`
       : "LegalPDF Translate",
     status: runtime.live_data
-      ? `Live workspace ${workspaceId}: real settings, Gmail bridge, and job-log writes are active here.`
-      : `Shadow workspace ${workspaceId}: isolated browser-app data stays separate from live mode.`,
+      ? "Live mode: using your real settings, Gmail drafts, and saved work."
+      : "Test mode: using isolated app data. Live Gmail and saved work may differ.",
     tone: runtime.live_data ? "info" : "ok",
   };
 }
@@ -1737,7 +1737,7 @@ function syncShellChrome() {
     qs("workspace-id-label").textContent = runtime.workspace_id;
   }
   if (runtime.runtime_mode_label && qs("runtime-mode-label")) {
-    qs("runtime-mode-label").textContent = runtime.runtime_mode_label;
+    qs("runtime-mode-label").textContent = runtimeModeDisplayLabel(runtime);
   }
   if (runtime.workspace_id || appState.bootstrap?.normalized_payload?.runtime) {
     setTopbarStatus(chrome.status, chrome.tone);
@@ -2910,7 +2910,7 @@ function renderExtensionLab(payload) {
 function showLiveBanner(runtime) {
   const banner = qs("live-banner");
   if (runtime.live_data) {
-    banner.textContent = runtime.banner_text || "LIVE APP DATA is active.";
+    banner.textContent = "Live mode: using your real settings, Gmail drafts, and saved work.";
     banner.classList.remove("hidden");
   } else {
     banner.classList.add("hidden");
@@ -2918,10 +2918,14 @@ function showLiveBanner(runtime) {
   }
 }
 
+function runtimeModeDisplayLabel(runtime = {}) {
+  return runtime.live_data ? "Live mode" : "Test mode";
+}
+
 function renderTopbar(payload) {
   const runtime = payload.normalized_payload.runtime;
   qs("workspace-id-label").textContent = runtime.workspace_id;
-  qs("runtime-mode-label").textContent = runtime.runtime_mode_label;
+  qs("runtime-mode-label").textContent = runtimeModeDisplayLabel(runtime);
   syncShellChrome();
   showLiveBanner(runtime);
 }
@@ -2985,12 +2989,12 @@ function applyShellBootstrapSnapshot(payload) {
   const workspaceId = String(shellPayload.workspace_id || appState.workspaceId || "workspace-1").trim();
   const shellReady = shellPayload.ready === true;
   qs("workspace-id-label").textContent = workspaceId || "workspace-1";
-  qs("runtime-mode-label").textContent = runtimeMode === "live" ? "Live App Data" : "Isolated Test Data";
+  qs("runtime-mode-label").textContent = runtimeMode === "live" ? "Live mode" : "Test mode";
   if (workspaceId === "gmail-intake") {
     setTopbarStatus(
       shellReady
         ? "Browser shell is ready. Finishing Gmail workspace hydration..."
-        : "Warming the browser shell, Gmail bridge, and workspace...",
+        : "Warming the browser shell and Gmail workspace...",
       shellReady ? "info" : "warn",
     );
     setPanelStatus(

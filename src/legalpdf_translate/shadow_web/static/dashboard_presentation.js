@@ -47,10 +47,10 @@ function buildGmailToolsCard(gmailBridge = {}) {
   return {
     title: "Gmail tools",
     text: ready
-      ? "Gmail attachment review is ready when you need it."
-      : "Gmail tools need attention before live Gmail work.",
+      ? "Live Gmail attachments are ready when you need them."
+      : "Optional setup for live Gmail intake.",
     status: ready ? "ok" : "warn",
-    label: ready ? "Ready" : "Needs attention",
+    label: ready ? "Ready" : "Setup needed",
   };
 }
 
