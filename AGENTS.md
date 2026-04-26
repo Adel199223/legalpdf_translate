@@ -1,10 +1,20 @@
 # AGENTS.md
 
-This file is a compatibility shim.
+Quick guardrails for Codex/agent work in `legalpdf_translate`.
 
 - Primary runbook: `agent.md`
 - Canonical app architecture/status: `APP_KNOWLEDGE.md`
+- Fresh-session handoff: `docs/assistant/HANDOFF.md`
+- Validation guide: `docs/assistant/VALIDATION.md`
+- Live Gmail guide: `docs/assistant/GMAIL_LIVE_TESTING.md`
 - Machine routing map: `docs/assistant/manifest.json`
+
+## Project Snapshot
+- Canonical repo path: `C:\Users\FA507\.codex\legalpdf_translate`
+- Canonical branch for live Gmail: `main`
+- PR #46 merge commit on `main`: `dbca0ca536429f3c92edfb503f461da21b5909f8`
+- Primary UI: local browser app; live/Gmail port `8877`; Gmail bridge port `8765`
+- Development UI review mode: browser `mode=shadow` with isolated app data
 
 ## Approval Gates
 Ask before executing any of the following:
@@ -13,6 +23,20 @@ Ask before executing any of the following:
 3. Force-push or history rewrite.
 4. Publish/release/deploy actions.
 5. Non-essential external network actions.
+
+## Contract Rules
+- Do not change backend route paths, API payload shapes, submitted select values, Gmail/native-host/extension contracts, or browser route IDs unless the task explicitly requires that contract change.
+- Do not weaken safe rendering. Browser UI changes that render dynamic text must preserve safe text insertion patterns.
+- Do not print secrets, tokens, `.env` values, app-data dumps, live Gmail content, or private config contents.
+- Do not create full repo ZIPs or review bundles unless explicitly requested.
+
+## Validation Defaults
+- Use `.\.venv311\Scripts\python.exe` for pytest. Do not use bare/global Python for project tests.
+- Standard docs/product validation:
+  - `.\.venv311\Scripts\python.exe -m pytest -q <targeted tests>`
+  - `powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1`
+  - `powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1 -Full` before merge or when code/test/workflow files changed.
+- If `dart run ...` fails with `Unable to find AOT snapshot for dartdev`, record it and rely on the direct-Dart fallback when the wrapper reports fallback success.
 
 ## ExecPlans
 - Major or multi-file work requires an ExecPlan under `docs/assistant/exec_plans/active/`.
@@ -23,6 +47,14 @@ Ask before executing any of the following:
 - For concurrent threads, isolate work with `git worktree` before coding.
 - Keep `main` stable as integration branch.
 - For major work on `main`, branch to `feat/<scope-name>` first.
+- Do not switch branches in the primary canonical worktree while a LegalPDF browser server launched from that worktree is running.
+- If the canonical live server is active on `8877`/`8765`, modify files in a separate worktree or stop only clearly identified LegalPDF `python.exe`/`pythonw.exe -m legalpdf_translate.shadow_web.server` processes when the task permits it.
+
+## Live vs Shadow Mode
+- Live Gmail extension intake must use canonical `main` at `C:\Users\FA507\.codex\legalpdf_translate`.
+- Feature branches and review worktrees should use browser `mode=shadow` and isolated workspaces for UI review.
+- Codex must not click the live Gmail extension or operate live Gmail unless the user explicitly authorizes that scope.
+- Generated DOCX/PDF files must be manually reviewed before any Gmail draft is sent.
 
 ## Routing Rules
 - For support or non-technical explanations, route to:
@@ -46,6 +78,9 @@ Ask before executing any of the following:
   - `docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md`
 - Commit/push requests must follow:
   - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+- Post-PR #46 continuity starts with:
+  - `docs/assistant/HANDOFF.md`
+  - `docs/assistant/PR46_POST_MERGE_SUMMARY.md`
 
 ## Stage-Gate Protocol
 - For risk-triggered complex work, enforce staged execution via:
