@@ -7,6 +7,10 @@
 ## Use when you need governance rules
 - `agent.md`: operational runbook.
 - `AGENTS.md`: compatibility shim.
+- `docs/assistant/HANDOFF.md`: durable fresh-thread handoff after PR #46, including canonical main status, live Gmail caveats, and next steps.
+- `docs/assistant/VALIDATION.md`: exact validation commands, CI expectations, known Dart fallback semantics, and merge-stop rules.
+- `docs/assistant/GMAIL_LIVE_TESTING.md`: canonical-main-only live Gmail extension retest guide and listener diagnostics.
+- `docs/assistant/PR46_POST_MERGE_SUMMARY.md`: historical summary of PR #46 scope, fixes, validation, merge, and post-merge retest setup.
 - `docs/assistant/SESSION_RESUME.md`: first resume stop for `resume master plan` and fresh-session roadmap continuity.
 - `docs/assistant/GOLDEN_PRINCIPLES.md`: enforceable rule source-of-truth.
 - `docs/assistant/exec_plans/PLANS.md`: ExecPlan format and lifecycle.

@@ -6,6 +6,10 @@ Windows-first Python app with a primary local browser interface, a secondary Qt/
 - Canonical app knowledge: `APP_KNOWLEDGE.md`
 - Agent runbook: `agent.md`
 - Agent shim: `AGENTS.md`
+- Fresh-session handoff: `docs/assistant/HANDOFF.md`
+- Validation guide: `docs/assistant/VALIDATION.md`
+- Live Gmail testing guide: `docs/assistant/GMAIL_LIVE_TESTING.md`
+- PR #46 post-merge summary: `docs/assistant/PR46_POST_MERGE_SUMMARY.md`
 - Assistant docs index: `docs/assistant/INDEX.md`
 - Machine routing map: `docs/assistant/manifest.json`
 - Fresh-session roadmap resume: `docs/assistant/SESSION_RESUME.md`
@@ -92,6 +96,7 @@ powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1 -Full
 ```
 
 For normal work, do not install or run project dev validation through bare/global Python. Keep validation inside `.venv311`.
+See `docs/assistant/VALIDATION.md` for targeted browser/Gmail/Qt commands and the known Dart fallback behavior.
 
 ## Create Clean Review ZIP
 ```powershell
