@@ -437,10 +437,9 @@ These remain valid supplemental references for implementation detail:
 
 ## Verification Commands
 PowerShell:
-- `python -m pytest -q`
-- `python -m compileall src tests`
-- `dart tooling/validate_agent_docs.dart`
-- `dart tooling/validate_workspace_hygiene.dart`
+- `powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1 -Full`
+- `powershell -ExecutionPolicy Bypass -File scripts/create_review_bundle.ps1`
 
 POSIX:
 - `python3 -m pytest -q`
@@ -452,7 +451,12 @@ POSIX:
 - Preferred interpreter: Python `3.11`.
 - Preferred local environment path: `.venv311`.
 - Bootstrap/recovery script: `scripts/setup_python311_env.ps1`.
+- Preferred validation wrapper: `scripts/validate_dev.ps1`.
+- Preferred clean review ZIP helper: `scripts/create_review_bundle.ps1`.
+
+For normal Windows work, do not install dev dependencies into bare/global Python. Use `.venv311` and the repo scripts above.
 
 If local `pip`/`pytest` fails with import errors like `html.entities` or `idna`, treat it as a machine Python issue and rebuild `.venv311`:
 - `powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate`
 - `. .\.venv311\Scripts\Activate.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1`

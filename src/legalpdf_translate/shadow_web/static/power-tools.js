@@ -1,5 +1,6 @@
 import { fetchJson } from "./api.js";
 import { appState } from "./state.js";
+import { buildSettingsStatusPresentation } from "./settings_presentation.js";
 
 function qs(id) {
   return document.getElementById(id);
@@ -340,34 +341,7 @@ function renderCredentialRecoveryState(providerState) {
 }
 
 function buildSettingsReadinessSummary(providerState) {
-  const translation = providerState.translation || {};
-  const ocr = providerState.ocr || {};
-  const gmail = providerState.gmail_draft || {};
-  const word = providerState.word_pdf_export || {};
-  const wordLaunch = word.launch_preflight || word.preflight || {};
-  const wordCanary = word.export_canary || {};
-  const nativeHost = providerState.native_host || {};
-  const translationReady = translation.credentials_configured === true;
-  const ocrReady = ocr.api_configured || ocr.local_available;
-  const gmailReady = gmail.ready === true;
-  const wordReady = word.finalization_ready === true || word.ok === true;
-  const nativeHostReady = nativeHost.ready === true;
-  const tone = translationReady && ocrReady && gmailReady && wordReady && nativeHostReady ? "ok" : "warn";
-  const translationSource = describeTranslationCredentialSource(translation);
-  const ocrSource = describeOcrCredentialSource(ocr);
-  return {
-    tone,
-    message: [
-      `Native host is ${nativeHostReady ? "ready" : describeNativeHostState(nativeHost)}.`,
-      `Translation auth is ${translationReady ? `configured via ${translationSource}` : "not configured"}.`,
-      `OCR ${ocr.provider || "provider"} is ${ocrReady ? `usable via ${ocrSource}` : "not ready"}.`,
-      `Gmail drafts are ${gmailReady ? "ready" : "not ready"}.`,
-      `Word PDF export is ${wordReady ? "ready" : "degraded"}.`,
-      !wordReady && wordCanary.message ? `Export canary: ${wordCanary.message}.` : "",
-      !wordReady && wordLaunch.message ? `Launch preflight: ${wordLaunch.message}.` : "",
-    ].join(" "),
-    hint: "Current native-host, translation auth, OCR credential source, Gmail draft, and Word host readiness.",
-  };
+  return buildSettingsStatusPresentation(providerState);
 }
 
 function renderSettingsAdminPayload(settingsAdmin, { preserveStatus = false } = {}) {
@@ -409,7 +383,10 @@ function renderLatestRunDirs(items) {
   }
   container.innerHTML = "";
   if (!items.length) {
-    container.innerHTML = '<div class="empty-state">No recent run folders were discovered yet in this runtime mode.</div>';
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No recent run folders are available yet.";
+    container.appendChild(empty);
     return;
   }
   for (const item of items) {
@@ -445,19 +422,19 @@ function renderLatestRunDirs(items) {
     actions.className = "panel-actions";
     const useForReport = document.createElement("button");
     useForReport.type = "button";
-    useForReport.textContent = "Use For Report";
+    useForReport.textContent = "Use for run report";
     useForReport.addEventListener("click", () => {
       setFieldValue("diagnostics-run-dir", item.run_dir || "");
-      setPanelStatus("power-tools", "", `Selected ${item.name || "run"} for diagnostics output.`);
+      setPanelStatus("power-tools", "", `Selected ${item.name || "run"} for troubleshooting files.`);
     });
     const addToBuilder = document.createElement("button");
     addToBuilder.type = "button";
-    addToBuilder.textContent = "Add To Builder";
+    addToBuilder.textContent = "Add to builder";
     addToBuilder.addEventListener("click", () => {
       appendUniqueLine("builder-run-dirs", item.run_dir || "");
       setFieldValue("builder-source-mode", "run_folders");
       syncBuilderSourceMode();
-      setPanelStatus("power-tools", "", `Added ${item.name || "run"} to glossary builder input.`);
+      setPanelStatus("power-tools", "", `Added ${item.name || "run"} to glossary suggestions input.`);
     });
     actions.appendChild(useForReport);
     actions.appendChild(addToBuilder);
@@ -512,10 +489,10 @@ function renderPowerToolsPayload(powerTools, { preserveStatus = false } = {}) {
     const latestCount = mergeLatestRunDirs(powerTools).length;
     setPanelStatus(
       "power-tools",
-      latestCount > 0 ? "ok" : "",
+      "ok",
       latestCount > 0
-        ? `Glossary, calibration, and diagnostics tools are ready. ${latestCount} recent run folder(s) are available.`
-        : "Glossary, calibration, and diagnostics tools are ready for this runtime mode.",
+        ? `Advanced glossary, quality-check, and troubleshooting tools are ready. ${latestCount} recent run folder(s) are available.`
+        : "Advanced glossary, quality-check, and troubleshooting tools are ready.",
     );
   }
   if (!preserveStatus) {
@@ -530,8 +507,8 @@ function renderPowerToolsPayload(powerTools, { preserveStatus = false } = {}) {
       },
       {
         hint: latestWindowTrace.launch_session_id
-          ? `Latest trace session: ${latestWindowTrace.launch_session_id}`
-          : "Debug-bundle, run-report, and cold-start trace defaults for this runtime mode.",
+          ? `Latest startup trace session: ${latestWindowTrace.launch_session_id}`
+          : "Troubleshooting bundle, run report, and startup trace defaults appear here.",
         open: false,
       },
     );
@@ -860,9 +837,9 @@ async function handleGlossarySave() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  setPanelStatus("power-tools", "ok", "Glossary workspace saved for the active runtime mode.");
+  setPanelStatus("power-tools", "ok", "Glossary setup saved.");
   setDiagnostics("power-tools-glossary", payload, {
-    hint: "Glossary JSON persisted to browser settings and project glossary storage.",
+    hint: "Advanced glossary data was saved to browser settings and project glossary storage.",
     open: false,
   });
   await refreshPowerTools({ preserveStatus: true });
@@ -878,7 +855,7 @@ async function handleGlossaryExport() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  setPanelStatus("power-tools", "ok", "Consistency glossary markdown exported.");
+  setPanelStatus("power-tools", "ok", "Glossary markdown exported.");
   setDiagnostics("power-tools-glossary", payload, {
     hint: payload.normalized_payload?.markdown_path || "Glossary markdown export completed.",
     open: false,
@@ -897,7 +874,7 @@ async function handleBuilderRun() {
   setPanelStatus(
     "power-tools",
     "ok",
-    `Glossary builder scanned ${payload.normalized_payload?.pages_scanned ?? 0} page(s) across ${payload.normalized_payload?.sources_processed ?? 0} source(s).`,
+    `Built glossary suggestions from ${payload.normalized_payload?.pages_scanned ?? 0} page(s) across ${payload.normalized_payload?.sources_processed ?? 0} source(s).`,
   );
   setDiagnostics("power-tools-builder", payload, {
     hint: payload.normalized_payload?.artifact_dir || "Glossary builder run completed.",
@@ -914,9 +891,9 @@ async function handleBuilderApply() {
       project_glossary_path: fieldValue("glossary-project-path"),
     }),
   });
-  setPanelStatus("power-tools", "ok", "Approved glossary suggestions were applied.");
+  setPanelStatus("power-tools", "ok", "Glossary suggestions applied.");
   setDiagnostics("power-tools-builder", payload, {
-    hint: "Builder suggestions were merged into personal and project glossaries.",
+    hint: "Selected glossary suggestions were merged into personal and project glossaries.",
     open: false,
   });
 }
@@ -927,9 +904,9 @@ async function handleCalibrationRun() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(collectCalibrationPayload()),
   });
-  setPanelStatus("power-tools", "ok", "Calibration audit completed.");
+  setPanelStatus("power-tools", "ok", "Quality check completed.");
   setDiagnostics("power-tools-calibration", payload, {
-    hint: payload.normalized_payload?.report_md_path || "Calibration audit artifacts were generated.",
+    hint: payload.normalized_payload?.report_md_path || "Quality-check files were generated.",
     open: false,
   });
   const reportPath = String(payload.normalized_payload?.report_json_path || "").trim();
@@ -944,9 +921,9 @@ async function handleDebugBundle() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ run_dir: fieldValue("diagnostics-run-dir") }),
   });
-  setPanelStatus("power-tools", "ok", "Browser debug bundle created.");
+  setPanelStatus("power-tools", "ok", "Troubleshooting bundle created.");
   setDiagnostics("power-tools-diagnostics", payload, {
-    hint: payload.normalized_payload?.bundle_path || "Debug bundle created.",
+    hint: payload.normalized_payload?.bundle_path || "Troubleshooting bundle created.",
     open: false,
   });
 }
@@ -970,9 +947,9 @@ async function handleArmWindowTrace() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  setPanelStatus("power-tools", "ok", "The next cold Gmail click will capture an OS window trace.");
+  setPanelStatus("power-tools", "ok", "The next Gmail startup click will capture a troubleshooting window trace.");
   setDiagnostics("power-tools-diagnostics", payload, {
-    hint: payload.normalized_payload?.arm_path || "The next cold Gmail click will capture a window trace.",
+    hint: payload.normalized_payload?.arm_path || "The next Gmail startup click will capture a troubleshooting window trace.",
     open: false,
   });
 }
@@ -1006,7 +983,7 @@ export function initializePowerToolsUi() {
   });
 
   qs("settings-run-preflight")?.addEventListener("click", async () => {
-    await runWithBusy(["settings-run-preflight"], { "settings-run-preflight": "Refreshing..." }, async () => {
+    await runWithBusy(["settings-run-preflight"], { "settings-run-preflight": "Checking..." }, async () => {
       try {
         await handleSettingsPreflight();
       } catch (error) {
@@ -1186,8 +1163,8 @@ export function initializePowerToolsUi() {
       try {
         await refreshPowerTools({ preserveStatus: false });
       } catch (error) {
-        setPanelStatus("power-tools", "bad", error.message || "Power tools refresh failed.");
-        setDiagnostics("power-tools-diagnostics", error, { hint: error.message || "Power tools refresh failed.", open: true });
+        setPanelStatus("power-tools", "bad", error.message || "Advanced tools refresh failed.");
+        setDiagnostics("power-tools-diagnostics", error, { hint: error.message || "Advanced tools refresh failed.", open: true });
       }
     });
   });
@@ -1230,8 +1207,8 @@ export function initializePowerToolsUi() {
         try {
           await handleBuilderRun();
         } catch (error) {
-          setPanelStatus("power-tools", "bad", error.message || "Glossary builder failed.");
-          setDiagnostics("power-tools-builder", error, { hint: error.message || "Glossary builder failed.", open: true });
+          setPanelStatus("power-tools", "bad", error.message || "Build suggestions failed.");
+          setDiagnostics("power-tools-builder", error, { hint: error.message || "Build suggestions failed.", open: true });
         }
       },
     );
@@ -1245,8 +1222,8 @@ export function initializePowerToolsUi() {
         try {
           await handleBuilderApply();
         } catch (error) {
-          setPanelStatus("power-tools", "bad", error.message || "Applying builder suggestions failed.");
-          setDiagnostics("power-tools-builder", error, { hint: error.message || "Applying builder suggestions failed.", open: true });
+          setPanelStatus("power-tools", "bad", error.message || "Apply selected suggestions failed.");
+          setDiagnostics("power-tools-builder", error, { hint: error.message || "Apply selected suggestions failed.", open: true });
         }
       },
     );
@@ -1257,8 +1234,8 @@ export function initializePowerToolsUi() {
       try {
         await handleCalibrationRun();
       } catch (error) {
-        setPanelStatus("power-tools", "bad", error.message || "Calibration audit failed.");
-        setDiagnostics("power-tools-calibration", error, { hint: error.message || "Calibration audit failed.", open: true });
+        setPanelStatus("power-tools", "bad", error.message || "Quality check failed.");
+        setDiagnostics("power-tools-calibration", error, { hint: error.message || "Quality check failed.", open: true });
       }
     });
   });
@@ -1271,8 +1248,8 @@ export function initializePowerToolsUi() {
         try {
           await handleDebugBundle();
         } catch (error) {
-          setPanelStatus("power-tools", "bad", error.message || "Debug bundle creation failed.");
-          setDiagnostics("power-tools-diagnostics", error, { hint: error.message || "Debug bundle creation failed.", open: true });
+          setPanelStatus("power-tools", "bad", error.message || "Create troubleshooting bundle failed.");
+          setDiagnostics("power-tools-diagnostics", error, { hint: error.message || "Create troubleshooting bundle failed.", open: true });
         }
       },
     );
@@ -1286,8 +1263,8 @@ export function initializePowerToolsUi() {
         try {
           await handleArmWindowTrace();
         } catch (error) {
-          setPanelStatus("power-tools", "bad", error.message || "Cold-start window trace arming failed.");
-          setDiagnostics("power-tools-diagnostics", error, { hint: error.message || "Cold-start window trace arming failed.", open: true });
+          setPanelStatus("power-tools", "bad", error.message || "Capture startup window trace failed.");
+          setDiagnostics("power-tools-diagnostics", error, { hint: error.message || "Capture startup window trace failed.", open: true });
         }
       },
     );

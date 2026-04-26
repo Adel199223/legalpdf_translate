@@ -65,7 +65,7 @@ Run:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate
 . .\.venv311\Scripts\Activate.ps1
-python -m pytest -q
+powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1
 ```
 
 ## Run Qt Shell (Secondary / Fallback)
@@ -87,11 +87,18 @@ powershell -ExecutionPolicy Bypass -File scripts/build_qt.ps1
 
 ## Validate
 ```powershell
-python -m pytest -q
-python -m compileall src tests
-dart tooling/validate_agent_docs.dart
-dart tooling/validate_workspace_hygiene.dart
+powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1
+powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1 -Full
 ```
+
+For normal work, do not install or run project dev validation through bare/global Python. Keep validation inside `.venv311`.
+
+## Create Clean Review ZIP
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/create_review_bundle.ps1
+```
+
+This writes a clean review ZIP to your Windows Downloads folder, keeps `.env.example`, and excludes local `.env`, virtualenvs, caches, generated DOCX/PDF outputs, and other local clutter.
 
 ## Project Harness Commands
 - `implement the template files` / `sync project harness`: apply the vendored templates in `docs/assistant/templates/` to this repo's local harness without editing the template folder itself.

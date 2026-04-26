@@ -1,29 +1,11 @@
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
-from pathlib import Path
-
-import pytest
+from .browser_esm_probe import run_browser_esm_json_probe
 
 
 def _run_api_probe() -> dict[str, dict[str, object]]:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is required for shadow web recovery coverage.")
-
-    module_url = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "legalpdf_translate"
-        / "shadow_web"
-        / "static"
-        / "api.js"
-    ).as_uri()
-
-    script = f"""
-const apiModule = await import({json.dumps(module_url)});
+    script = """
+const apiModule = await import(__API_MODULE_URL__);
 
 async function captureNetworkCase(name, url, bootstrap, state) {{
   globalThis.window = {{
@@ -128,35 +110,18 @@ results.push(await captureNetworkCase(
 ));
 results.push(await captureBackendCase());
 console.log(JSON.stringify(results));
-"""
-
-    completed = subprocess.run(
-        [node, "--input-type=module", "-"],
-        input=script,
-        capture_output=True,
-        text=True,
-        check=True,
+""".replace("{{", "{").replace("}}", "}")
+    payload = run_browser_esm_json_probe(
+        script,
+        {"__API_MODULE_URL__": "api.js"},
+        timeout_seconds=20,
     )
-    payload = json.loads(completed.stdout)
     return {entry["name"]: entry for entry in payload}
 
 
 def _run_bootstrap_hydration_probe() -> dict[str, dict[str, object]]:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is required for shadow web recovery coverage.")
-
-    module_url = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "legalpdf_translate"
-        / "shadow_web"
-        / "static"
-        / "bootstrap_hydration.js"
-    ).as_uri()
-
-    script = f"""
-const hydrationModule = await import({json.dumps(module_url)});
+    script = """
+const hydrationModule = await import(__BOOTSTRAP_HYDRATION_MODULE_URL__);
 
 const initial = hydrationModule.buildInitialClientReadyState({{
   href: "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
@@ -210,16 +175,12 @@ console.log(JSON.stringify({{
   retryEvents,
   stagedStandard,
 }}));
-"""
-
-    completed = subprocess.run(
-        [node, "--input-type=module", "-"],
-        input=script,
-        capture_output=True,
-        text=True,
-        check=True,
+""".replace("{{", "{").replace("}}", "}")
+    return run_browser_esm_json_probe(
+        script,
+        {"__BOOTSTRAP_HYDRATION_MODULE_URL__": "bootstrap_hydration.js"},
+        timeout_seconds=20,
     )
-    return json.loads(completed.stdout)
 
 
 def test_shadow_web_fetch_json_normalizes_dead_preview_and_daily_ports() -> None:

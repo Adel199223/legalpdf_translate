@@ -43,6 +43,12 @@ export function routeShellMode(state = appState) {
     : "standard";
 }
 
+function beginnerSurfaceActive(state = appState) {
+  return state.uiVariant === "qt"
+    && ["dashboard", "new-job", "recent-jobs", "profile", "settings"].includes(state.activeView)
+    && !state.operatorMode;
+}
+
 function syncRouteDatasets() {
   if (!globalThis.document?.body?.dataset) {
     return;
@@ -51,6 +57,7 @@ function syncRouteDatasets() {
   document.body.dataset.workspaceId = appState.workspaceId;
   document.body.dataset.activeView = appState.activeView;
   document.body.dataset.shellMode = routeShellMode();
+  document.body.dataset.beginnerSurface = beginnerSurfaceActive() ? "true" : "false";
 }
 
 function emitRouteStateChanged() {

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from .browser_esm_probe import run_browser_esm_json_probe
 from legalpdf_translate.gmail_intake import InboundMailContext, LocalGmailIntakeBridge
 
 
@@ -2115,15 +2116,21 @@ def test_gmail_extension_options_page_is_diagnostics_first() -> None:
     assert "bridgeToken" not in options_html
 
 
+def _run_browser_static_esm_probe(
+    script: str,
+    module_placeholders: dict[str, str],
+    *,
+    timeout_seconds: int = 20,
+) -> object:
+    return run_browser_esm_json_probe(
+        script.replace("{{", "{").replace("}}", "}"),
+        module_placeholders,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def test_browser_pdf_asset_urls_use_static_root_without_nested_vendor_segment() -> None:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is required for browser PDF asset URL coverage.")
-
-    module_path = Path(__file__).resolve().parents[1] / "src" / "legalpdf_translate" / "shadow_web" / "static" / "browser_pdf.js"
-    script = f"""
-import {{ pathToFileURL }} from "node:url";
-
+    script = """
 globalThis.window = {{
   location: {{ origin: "http://127.0.0.1:8877" }},
   LEGALPDF_BROWSER_BOOTSTRAP: {{
@@ -2132,32 +2139,21 @@ globalThis.window = {{
   }},
 }};
 
-const moduleUrl = pathToFileURL({json.dumps(str(module_path))}).href;
-const browserPdf = await import(moduleUrl);
+const browserPdf = await import(__BROWSER_PDF_MODULE_URL__);
 const resolved = browserPdf.resolveBrowserPdfAssetUrls();
 console.log(JSON.stringify(resolved));
 """
-    completed = subprocess.run(
-        [node, "--input-type=module", "-e", script],
-        check=True,
-        capture_output=True,
-        text=True,
+    payload = _run_browser_static_esm_probe(
+        script,
+        {"__BROWSER_PDF_MODULE_URL__": "browser_pdf.js"},
     )
-    payload = json.loads(completed.stdout)
     assert payload["moduleUrl"] == "http://127.0.0.1:8877/static/vendor/pdfjs/pdf.mjs?v=6e823b2"
     assert payload["workerUrl"] == "http://127.0.0.1:8877/static/vendor/pdfjs/pdf.worker.mjs?v=6e823b2"
     assert "/vendor/pdfjs/vendor/pdfjs/" not in payload["workerUrl"]
 
 
 def test_browser_pdf_asset_urls_accept_absolute_static_base_path() -> None:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is required for browser PDF asset URL coverage.")
-
-    module_path = Path(__file__).resolve().parents[1] / "src" / "legalpdf_translate" / "shadow_web" / "static" / "browser_pdf.js"
-    script = f"""
-import {{ pathToFileURL }} from "node:url";
-
+    script = """
 globalThis.window = {{
   location: {{ origin: "http://127.0.0.1:8877" }},
   LEGALPDF_BROWSER_BOOTSTRAP: {{
@@ -2166,32 +2162,21 @@ globalThis.window = {{
   }},
 }};
 
-const moduleUrl = pathToFileURL({json.dumps(str(module_path))}).href;
-const browserPdf = await import(moduleUrl);
+const browserPdf = await import(__BROWSER_PDF_MODULE_URL__);
 const resolved = browserPdf.resolveBrowserPdfAssetUrls();
 console.log(JSON.stringify(resolved));
 """
-    completed = subprocess.run(
-        [node, "--input-type=module", "-e", script],
-        check=True,
-        capture_output=True,
-        text=True,
+    payload = _run_browser_static_esm_probe(
+        script,
+        {"__BROWSER_PDF_MODULE_URL__": "browser_pdf.js"},
     )
-    payload = json.loads(completed.stdout)
     assert payload["moduleUrl"] == "http://127.0.0.1:8877/static/vendor/pdfjs/pdf.mjs?v=6e823b2"
     assert payload["workerUrl"] == "http://127.0.0.1:8877/static/vendor/pdfjs/pdf.worker.mjs?v=6e823b2"
     assert "/http://127.0.0.1:8877/static/" not in payload["workerUrl"]
 
 
 def test_browser_pdf_asset_urls_stay_under_versioned_static_prefix() -> None:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is required for browser PDF asset URL coverage.")
-
-    module_path = Path(__file__).resolve().parents[1] / "src" / "legalpdf_translate" / "shadow_web" / "static" / "browser_pdf.js"
-    script = f"""
-import {{ pathToFileURL }} from "node:url";
-
+    script = """
 globalThis.window = {{
   location: {{ origin: "http://127.0.0.1:8877" }},
   LEGALPDF_BROWSER_BOOTSTRAP: {{
@@ -2201,32 +2186,21 @@ globalThis.window = {{
   }},
 }};
 
-const moduleUrl = pathToFileURL({json.dumps(str(module_path))}).href;
-const browserPdf = await import(moduleUrl);
+const browserPdf = await import(__BROWSER_PDF_MODULE_URL__);
 const resolved = browserPdf.resolveBrowserPdfAssetUrls();
 console.log(JSON.stringify(resolved));
 """
-    completed = subprocess.run(
-        [node, "--input-type=module", "-e", script],
-        check=True,
-        capture_output=True,
-        text=True,
+    payload = _run_browser_static_esm_probe(
+        script,
+        {"__BROWSER_PDF_MODULE_URL__": "browser_pdf.js"},
     )
-    payload = json.loads(completed.stdout)
     assert payload["moduleUrl"] == "http://127.0.0.1:8877/static-build/asset-20260330/vendor/pdfjs/pdf.mjs?v=asset-20260330"
     assert payload["workerUrl"] == "http://127.0.0.1:8877/static-build/asset-20260330/vendor/pdfjs/pdf.worker.mjs?v=asset-20260330"
     assert "/vendor/pdfjs/vendor/pdfjs/" not in payload["workerUrl"]
 
 
 def test_browser_pdf_worker_bootstrap_preserves_raw_worker_failure_and_uses_blob_wrapper_fallback() -> None:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is required for browser PDF bootstrap coverage.")
-
-    module_path = Path(__file__).resolve().parents[1] / "src" / "legalpdf_translate" / "shadow_web" / "static" / "browser_pdf.js"
-    script = f"""
-import {{ pathToFileURL }} from "node:url";
-
+    script = """
 globalThis.window = {{
   location: {{ origin: "http://127.0.0.1:8877" }},
   LEGALPDF_BROWSER_BOOTSTRAP: {{
@@ -2236,8 +2210,7 @@ globalThis.window = {{
   }},
 }};
 
-const moduleUrl = pathToFileURL({json.dumps(str(module_path))}).href;
-const browserPdf = await import(moduleUrl);
+const browserPdf = await import(__BROWSER_PDF_MODULE_URL__);
 const assetUrls = browserPdf.resolveBrowserPdfAssetUrls();
 const preflight = await browserPdf.preflightBrowserPdfAssetUrls({{
   assetUrls,
@@ -2301,13 +2274,10 @@ console.log(JSON.stringify({{
   revokedUrls,
 }}));
 """
-    completed = subprocess.run(
-        [node, "--input-type=module", "-e", script],
-        check=True,
-        capture_output=True,
-        text=True,
+    payload = _run_browser_static_esm_probe(
+        script,
+        {"__BROWSER_PDF_MODULE_URL__": "browser_pdf.js"},
     )
-    payload = json.loads(completed.stdout)
     assert payload["preflight"]["module"]["contentType"] == "application/javascript"
     assert payload["preflight"]["worker"]["contentType"] == "application/javascript"
     assert payload["result"]["workerBootPhase"] == "worker_bootstrap_blob_wrapper"
@@ -2318,15 +2288,7 @@ console.log(JSON.stringify({{
 
 
 def test_browser_pdf_error_normalization_and_gmail_runtime_guard_keep_worker_and_provenance_details() -> None:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is required for browser PDF diagnostics coverage.")
-
-    browser_pdf_path = Path(__file__).resolve().parents[1] / "src" / "legalpdf_translate" / "shadow_web" / "static" / "browser_pdf.js"
-    guard_path = Path(__file__).resolve().parents[1] / "src" / "legalpdf_translate" / "shadow_web" / "static" / "gmail_runtime_guard.js"
-    script = f"""
-import {{ pathToFileURL }} from "node:url";
-
+    script = """
 globalThis.window = {{
   location: {{ origin: "http://127.0.0.1:8877" }},
   LEGALPDF_BROWSER_BOOTSTRAP: {{
@@ -2336,8 +2298,8 @@ globalThis.window = {{
   }},
 }};
 
-const browserPdf = await import(pathToFileURL({json.dumps(str(browser_pdf_path))}).href);
-const runtimeGuard = await import(pathToFileURL({json.dumps(str(guard_path))}).href);
+const browserPdf = await import(__BROWSER_PDF_MODULE_URL__);
+const runtimeGuard = await import(__GMAIL_RUNTIME_GUARD_MODULE_URL__);
 
 const normalized = browserPdf.normalizeBrowserPdfError(
   new Error('Setting up fake worker failed: "Failed to fetch dynamically imported module".'),
@@ -2372,13 +2334,13 @@ const guard = runtimeGuard.deriveGmailLiveRuntimeGuard({{
 
 console.log(JSON.stringify({{ diagnostics, guard }}));
 """
-    completed = subprocess.run(
-        [node, "--input-type=module", "-e", script],
-        check=True,
-        capture_output=True,
-        text=True,
+    payload = _run_browser_static_esm_probe(
+        script,
+        {
+            "__BROWSER_PDF_MODULE_URL__": "browser_pdf.js",
+            "__GMAIL_RUNTIME_GUARD_MODULE_URL__": "gmail_runtime_guard.js",
+        },
     )
-    payload = json.loads(completed.stdout)
     assert payload["diagnostics"]["error"] == "browser_pdf_worker_load_failed"
     assert payload["diagnostics"]["worker_boot_phase"] == "worker_bootstrap_blob_wrapper"
     assert payload["diagnostics"]["raw_browser_error"] == "TypeError: Failed to fetch dynamically imported module"

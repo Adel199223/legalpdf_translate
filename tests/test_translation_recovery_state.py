@@ -1,29 +1,11 @@
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
-from pathlib import Path
-
-import pytest
+from .browser_esm_probe import run_browser_esm_json_probe
 
 
 def _run_translation_recovery_probe() -> dict[str, object]:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is required for browser translation recovery coverage.")
-
-    module_url = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "legalpdf_translate"
-        / "shadow_web"
-        / "static"
-        / "translation.js"
-    ).as_uri()
-
-    script = f"""
-const translationModule = await import({json.dumps(module_url)});
+    script = """
+const translationModule = await import(__TRANSLATION_MODULE_URL__);
 
 const failedJob = {{
   job_kind: "translate",
@@ -76,16 +58,12 @@ const results = {{
 }};
 
 console.log(JSON.stringify(results));
-"""
-
-    completed = subprocess.run(
-        [node, "--input-type=module", "-"],
-        input=script,
-        capture_output=True,
-        text=True,
-        check=True,
+""".replace("{{", "{").replace("}}", "}")
+    return run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_MODULE_URL__": "translation.js"},
+        timeout_seconds=20,
     )
-    return json.loads(completed.stdout)
 
 
 def test_translation_recovery_state_surfaces_failed_arabic_guidance() -> None:

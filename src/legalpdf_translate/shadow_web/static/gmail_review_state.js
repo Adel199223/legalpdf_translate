@@ -249,6 +249,139 @@ export function deriveGmailStage({
   return "idle";
 }
 
+function activeAttachmentFilename(activeSession) {
+  if (activeSession?.kind === "translation") {
+    return String(activeSession.current_attachment?.attachment?.filename || "").trim();
+  }
+  if (activeSession?.kind === "interpretation") {
+    return String(activeSession.attachment?.attachment?.filename || "").trim();
+  }
+  return "";
+}
+
+export function deriveGmailWorkflowPresentation({ workflowKind } = {}) {
+  const normalized = String(workflowKind || "").trim() === "interpretation"
+    ? "interpretation"
+    : "translation";
+  if (normalized === "interpretation") {
+    return {
+      kind: "interpretation",
+      label: "Interpretation",
+      selectionLabel: "selected notice",
+      emptySelectionLabel: "Choose a notice to continue",
+      prepareLabel: "Continue with selected notice",
+      reviewStatus: "Choose the notice you want to process. Preview is optional and the notice will continue from page 1.",
+      currentItemLabel: "Current notice",
+    };
+  }
+  return {
+    kind: "translation",
+    label: "Translation",
+    selectionLabel: "selected attachments",
+    emptySelectionLabel: "Choose attachments to continue",
+    prepareLabel: "Continue with selected attachments",
+    reviewStatus: "Choose the attachments you want to process. Preview is optional and helps when you want to confirm the document or choose a later start page.",
+    currentItemLabel: "Current document",
+  };
+}
+
+export function deriveGmailAttachmentKindLabel(mimeType) {
+  const normalized = String(mimeType || "").trim().toLowerCase();
+  if (normalized === "application/pdf") {
+    return "PDF";
+  }
+  if (normalized.startsWith("image/")) {
+    return "Image";
+  }
+  return "Unknown";
+}
+
+export function deriveGmailStagePresentation({ stage, activeSession } = {}) {
+  const normalizedStage = normalizeGmailStage(stage);
+  const filename = activeAttachmentFilename(activeSession) || "this attachment";
+  switch (normalizedStage) {
+    case "translation_recovery":
+      return {
+        title: "Translation needs attention.",
+        description: `${filename} needs recovery before the Gmail reply can continue.`,
+        stripTitle: "Continue Gmail step",
+        stripDescription: `${filename} needs recovery before you can keep going.`,
+      };
+    case "translation_prepared":
+      return {
+        title: "Translation is ready to start.",
+        description: `${filename} is prepared in the translation screen. Review the settings there and start when you are ready.`,
+        stripTitle: "Translation is ready to start",
+        stripDescription: "Continue the Gmail step to review the seeded translation settings and start when you are ready.",
+      };
+    case "translation_running":
+      return {
+        title: "Translation is running.",
+        description: `${filename} is already in progress. Continue the Gmail step when you want to review progress or the next action.`,
+        stripTitle: "Translation is running",
+        stripDescription: "Continue the Gmail step to review progress and the next action for this attachment.",
+      };
+    case "translation_save":
+      return {
+        title: "Review and save this attachment.",
+        description: "Return to the finish step to confirm the translation details and save the current attachment.",
+        stripTitle: "Review and save this attachment",
+        stripDescription: "Continue the Gmail step to review and save the current attachment.",
+      };
+    case "translation_finalize":
+      if (activeSession?.finalization_state === "draft_ready") {
+        return {
+          title: "Finalize Gmail reply.",
+          description: "The Gmail reply is ready to review. Open the final step to check the final files or report.",
+          stripTitle: "Finalize Gmail reply",
+          stripDescription: "Continue the Gmail step to review the final Gmail reply and saved files.",
+        };
+      }
+      if (activeSession?.finalization_state === "draft_failed") {
+        return {
+          title: "Finalize Gmail reply.",
+          description: "The final Gmail reply still needs attention. Continue the final step to retry or review the report.",
+          stripTitle: "Finalize Gmail reply",
+          stripDescription: "Continue the Gmail step to finish the Gmail reply or review what still needs attention.",
+        };
+      }
+      return {
+        title: "Finalize Gmail reply.",
+        description: "All selected attachments are ready. Continue the final step when you want to finish the Gmail reply.",
+        stripTitle: "Finalize Gmail reply",
+        stripDescription: "Continue the Gmail step to finish the Gmail reply when you are ready.",
+      };
+    case "interpretation_review":
+      return {
+        title: "Interpretation details are ready.",
+        description: "Continue the interpretation review to check the notice details before you create the Gmail reply.",
+        stripTitle: "Gmail interpretation ready",
+        stripDescription: "Continue the Gmail step to review the notice details and create the Gmail reply.",
+      };
+    case "interpretation_finalize":
+      return {
+        title: "Create Gmail reply.",
+        description: "The notice details and final files are ready for the Gmail reply step.",
+        stripTitle: "Create Gmail reply",
+        stripDescription: "Continue the Gmail step to create the interpretation reply.",
+      };
+    case "review":
+      return {
+        title: "Review Gmail attachments.",
+        description: "Choose your workflow, pick the attachment you want, and continue when you are ready.",
+        stripTitle: "Gmail attachment ready",
+        stripDescription: "Review the Gmail message and attachments before you continue.",
+      };
+    default:
+      return {
+        title: "Review Gmail attachments.",
+        description: "Open this from Gmail or load a message manually from details.",
+        stripTitle: "Gmail attachment ready",
+        stripDescription: "Review the Gmail message and attachments before you continue.",
+      };
+  }
+}
+
 export function deriveRecoveredFinalizationAction({ restoredCompletedSession }) {
   if (
     restoredCompletedSession?.kind !== "translation"
@@ -272,10 +405,10 @@ export function deriveRecoveredFinalizationAction({ restoredCompletedSession }) 
     enabled: true,
     label: "Open Last Finalization Result",
     action: "open-restored-translation-finalize",
-    title: "Last finalized Gmail batch is still recoverable.",
+    title: "Last Gmail reply is still available.",
     description: subject
-      ? `${subject} was recovered from the last finalized Gmail batch. Open it only if you need the prior finalization artifacts or report; a fresh Gmail handoff should continue normally.`
-      : "Open the last finalized Gmail batch only if you need the prior finalization artifacts or report; a fresh Gmail handoff should continue normally.",
+      ? `${subject} was recovered from the previous Gmail reply. Open it only if you need the earlier final files or report; a fresh Gmail message should continue normally.`
+      : "Open the previous Gmail reply only if you need the earlier final files or report; a fresh Gmail message should continue normally.",
     tone: draftReady ? "ok" : "info",
   };
 }
@@ -308,27 +441,24 @@ export function shouldTreatGmailWorkspaceAsStable({
 }
 
 export function deriveGmailHomeCta({ stage, activeSession }) {
+  const presentation = deriveGmailStagePresentation({ stage, activeSession });
   switch (normalizeGmailStage(stage)) {
     case "translation_recovery":
       return {
         visible: true,
         label: "Resume Recovery",
         action: "resume-translation-recovery",
-        title: "Current Gmail attachment needs recovery.",
-        description: activeSession?.current_attachment?.attachment?.filename
-          ? `${activeSession.current_attachment.attachment.filename} failed on translation compliance and must be rerun or rebuilt before the Gmail batch can continue.`
-          : "The current Gmail attachment failed on translation compliance and must be rerun or rebuilt before the batch can continue.",
+        title: presentation.title,
+        description: presentation.description,
         tone: "warn",
       };
     case "translation_prepared":
       return {
         visible: true,
-        label: "Open Prepared Translation",
+        label: "Continue Current Step",
         action: "resume-translation-prepared",
-        title: "Translation is prepared and ready to start.",
-        description: activeSession?.current_attachment?.attachment?.filename
-          ? `Open the prepared translation workspace for ${activeSession.current_attachment.attachment.filename}, review the seeded settings, and start the run when you are ready.`
-          : "Open the prepared translation workspace, review the seeded settings, and start the run when you are ready.",
+        title: presentation.title,
+        description: presentation.description,
         tone: "ok",
       };
     case "translation_running":
@@ -336,10 +466,8 @@ export function deriveGmailHomeCta({ stage, activeSession }) {
         visible: true,
         label: "Resume Current Step",
         action: "resume-translation-running",
-        title: "Translation step is in progress.",
-        description: activeSession?.current_attachment?.attachment?.filename
-          ? `Continue the Gmail translation workspace for ${activeSession.current_attachment.attachment.filename}.`
-          : `Continue attachment ${activeSession?.current_item_number || "?"}/${activeSession?.total_items || "?"} in the Gmail translation batch.`,
+        title: presentation.title,
+        description: presentation.description,
         tone: "info",
       };
     case "translation_save":
@@ -347,18 +475,18 @@ export function deriveGmailHomeCta({ stage, activeSession }) {
         visible: true,
         label: "Resume Current Step",
         action: "resume-translation-save",
-        title: "Finish Translation is ready.",
-        description: "Return to the bounded finish surface to review and save the current Gmail translation row.",
+        title: presentation.title,
+        description: presentation.description,
         tone: "ok",
       };
     case "translation_finalize":
       if (activeSession?.finalization_state === "draft_ready") {
         return {
           visible: true,
-          label: "Open Finalization Result",
+          label: "Continue Current Step",
           action: "resume-translation-finalize",
-          title: "Batch finalization is complete.",
-          description: "The Gmail draft is already ready. Open the finalization drawer to review the artifacts or generate a finalization report.",
+          title: presentation.title,
+          description: presentation.description,
           tone: "ok",
         };
       }
@@ -367,8 +495,8 @@ export function deriveGmailHomeCta({ stage, activeSession }) {
           visible: true,
           label: "Resume Current Step",
           action: "resume-translation-finalize",
-          title: "Batch finalization needs attention.",
-          description: "Honorários were created, but the Gmail draft step failed. Open the finalization drawer to retry or generate a finalization report.",
+          title: presentation.title,
+          description: presentation.description,
           tone: "info",
         };
       }
@@ -377,8 +505,8 @@ export function deriveGmailHomeCta({ stage, activeSession }) {
           visible: true,
           label: "Resume Current Step",
           action: "resume-translation-finalize",
-          title: "Batch finalization is recoverable.",
-          description: "Honorários were created locally, but the Gmail draft step is still pending. Open the finalization drawer to retry or generate a finalization report.",
+          title: presentation.title,
+          description: presentation.description,
           tone: "info",
         };
       }
@@ -386,8 +514,8 @@ export function deriveGmailHomeCta({ stage, activeSession }) {
         visible: true,
         label: "Resume Current Step",
         action: "resume-translation-finalize",
-        title: "Batch finalization is waiting.",
-        description: "All selected Gmail attachments are confirmed. Resume the final reply step when you are ready.",
+        title: presentation.title,
+        description: presentation.description,
         tone: "ok",
       };
     case "interpretation_review":
@@ -395,8 +523,8 @@ export function deriveGmailHomeCta({ stage, activeSession }) {
         visible: true,
         label: "Resume Current Step",
         action: "resume-interpretation-review",
-        title: "Interpretation review is ready.",
-        description: "Continue in the bounded interpretation review surface with the Gmail notice already staged.",
+        title: presentation.title,
+        description: presentation.description,
         tone: "info",
       };
     case "interpretation_finalize":
@@ -404,8 +532,8 @@ export function deriveGmailHomeCta({ stage, activeSession }) {
         visible: true,
         label: "Resume Current Step",
         action: "resume-interpretation-finalize",
-        title: "Interpretation finalization is ready.",
-        description: "Return to the interpretation review surface to finish the Gmail reply without reopening the full workspace.",
+        title: presentation.title,
+        description: presentation.description,
         tone: "ok",
       };
     default:
@@ -446,8 +574,8 @@ export function deriveGmailRedoAction({ activeSession, translationUi = {} }) {
       blocked: false,
       label: "Redo Current Attachment",
       action: "redo-current-translation",
-      title: "Redo the current attachment without resetting Gmail.",
-      description: `Reload ${filename} into the translation workspace and prepare a fresh run without disturbing the current Gmail batch.`,
+      title: "Redo this attachment.",
+      description: `Prepare a fresh translation for ${filename} while keeping the Gmail reply on the same message.`,
       warning: "",
       matchingJob: null,
     };
@@ -459,8 +587,8 @@ export function deriveGmailRedoAction({ activeSession, translationUi = {} }) {
       blocked: true,
       label: "Redo Current Attachment",
       action: "redo-current-translation",
-      title: "Current attachment already has an active browser job.",
-      description: `${filename} already has a ${matchingJob.job_kind || "translation"} job in status ${status}. Cancel that job first if you want to rerun the same attachment.`,
+      title: "This attachment is already running.",
+      description: `${filename} already has an active ${matchingJob.job_kind || "translation"} run. Cancel it first if you want to run this file again.`,
       warning: `Matching job: ${matchingJob.job_id || "unknown"}`,
       matchingJob,
     };
@@ -471,8 +599,8 @@ export function deriveGmailRedoAction({ activeSession, translationUi = {} }) {
     blocked: false,
     label: "Redo Current Attachment",
     action: "redo-current-translation",
-    title: "Redo the current attachment from this live workspace.",
-    description: `${filename} already has a browser ${matchingJob.job_kind || "translation"} job in this runtime (${status || "available"}). Redo will keep prior files on disk, clear only the translation UI state, and let you start the new run manually.`,
+    title: "Redo this attachment.",
+    description: `${filename} already has an earlier ${matchingJob.job_kind || "translation"} run in this app. Redo keeps the earlier files and prepares a fresh run for you to start manually.`,
     warning: `Matching job: ${matchingJob.job_id || "unknown"}`,
     matchingJob,
   };
