@@ -3807,6 +3807,8 @@ class QtJobLogWindow(QDialog):
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.table.installEventFilter(self)
+        self.table.viewport().installEventFilter(self)
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -4347,14 +4349,28 @@ class QtJobLogWindow(QDialog):
         row = selected_rows[0]
         return self._rows_data[row]
 
+    def _handle_delete_key_from_joblog_table(self, event: object) -> bool:
+        if self._confirm_delete_selected_rows():
+            event.accept()
+            return True
+        return False
+
+    def eventFilter(self, watched: QObject, event: object) -> bool:
+        if (
+            watched in {self.table, self.table.viewport()}
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Delete
+        ):
+            return self._handle_delete_key_from_joblog_table(event)
+        return super().eventFilter(watched, event)
+
     def keyPressEvent(self, event) -> None:  # type: ignore[override]
         if (
             event.key() == Qt.Key.Key_Delete
             and self._inline_edit_row_id is None
             and QApplication.focusWidget() in {self.table, self.table.viewport()}
-            and self._confirm_delete_selected_rows()
+            and self._handle_delete_key_from_joblog_table(event)
         ):
-            event.accept()
             return
         super().keyPressEvent(event)
 
