@@ -6,7 +6,7 @@
 
 ## Use when you need governance rules
 - `agent.md`: operational runbook.
-- `AGENTS.md`: compatibility shim.
+- `AGENTS.md`: quick guardrails / compatibility entrypoint.
 - `docs/assistant/HANDOFF.md`: durable fresh-thread handoff after PR #46, including canonical main status, live Gmail caveats, and next steps.
 - `docs/assistant/VALIDATION.md`: exact validation commands, CI expectations, known Dart fallback semantics, and merge-stop rules.
 - `docs/assistant/GMAIL_LIVE_TESTING.md`: canonical-main-only live Gmail extension retest guide and listener diagnostics.

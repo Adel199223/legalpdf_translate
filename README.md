@@ -5,7 +5,7 @@ Windows-first Python app with a primary local browser interface, a secondary Qt/
 ## Docs Onboarding
 - Canonical app knowledge: `APP_KNOWLEDGE.md`
 - Agent runbook: `agent.md`
-- Agent shim: `AGENTS.md`
+- Agent guardrails / compatibility entrypoint: `AGENTS.md`
 - Fresh-session handoff: `docs/assistant/HANDOFF.md`
 - Validation guide: `docs/assistant/VALIDATION.md`
 - Live Gmail testing guide: `docs/assistant/GMAIL_LIVE_TESTING.md`

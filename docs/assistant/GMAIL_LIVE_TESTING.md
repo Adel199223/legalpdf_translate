@@ -31,6 +31,7 @@ If process inspection is needed, only stop a process when it is clearly:
 - running `-m legalpdf_translate.shadow_web.server`,
 - using a LegalPDF browser-app port such as `8877` or `8888`.
 
+Only stop a matching LegalPDF server when the current task permits it or the user has approved that process cleanup.
 Never stop browsers, unrelated Python processes, or unknown processes.
 
 ## Manual Retest Steps
