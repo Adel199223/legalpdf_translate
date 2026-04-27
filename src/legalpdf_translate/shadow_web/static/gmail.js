@@ -9,8 +9,11 @@ import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
   applyPreviewStateStartPage,
   clearConsumedReviewState,
+  deriveGmailOverlayDismissalAction,
   deriveGmailAttachmentKindLabel,
+  deriveGmailPreviewRestoreLabel,
   deriveGmailRedoAction,
+  deriveGmailReviewRestoreLabel,
   deriveRecoveredFinalizationAction,
   createClosedPreviewState,
   deriveGmailHomeCta,
@@ -18,8 +21,10 @@ import {
   deriveGmailStage,
   deriveGmailWorkflowPresentation,
   isPreviewStateOpen,
+  minimizePreviewState,
   openPreviewState,
   readConsumedReviewState,
+  restorePreviewState,
   setPreviewStatePage,
   shouldTreatGmailWorkspaceAsStable,
   shouldAutoOpenReview,
@@ -48,8 +53,10 @@ const gmailState = {
   suggestedTranslationLaunch: null,
   selectionState: new Map(),
   reviewDrawerOpen: false,
+  reviewDrawerMinimized: false,
   reviewFocusedAttachmentId: "",
   previewDrawerOpen: false,
+  previewDrawerMinimized: false,
   previewState: createClosedPreviewState(),
   sessionDrawerOpen: false,
   batchFinalizeDrawerOpen: false,
@@ -933,7 +940,9 @@ function activeSessionAttachmentId(activeSession) {
 
 function resetPreviewState() {
   gmailState.previewState = createClosedPreviewState();
+  gmailState.previewDrawerMinimized = false;
   setPreviewDrawerOpen(false);
+  renderGmailRestoreBar();
 }
 
 function canEditStartPage(attachment) {
@@ -1100,23 +1109,30 @@ function setReviewDrawerOpen(open) {
   }
   const nextOpen = Boolean(open) && Boolean(gmailState.loadResult?.ok && gmailState.loadResult?.message);
   gmailState.reviewDrawerOpen = nextOpen;
+  if (nextOpen) {
+    gmailState.reviewDrawerMinimized = false;
+  }
   backdrop.classList.toggle("hidden", !nextOpen);
   backdrop.setAttribute("aria-hidden", nextOpen ? "false" : "true");
   document.body.dataset.gmailReviewDrawer = nextOpen ? "open" : "closed";
   if (nextOpen) {
     rememberCurrentReviewEvent();
   }
+  renderGmailRestoreBar();
 }
 
 function openReviewDrawer() {
   if (!gmailState.loadResult?.ok || !gmailState.loadResult?.message) {
     return;
   }
+  gmailState.reviewDrawerMinimized = false;
   setReviewDrawerOpen(true);
 }
 
-function closeReviewDrawer() {
+function closeReviewDrawer({ restore = true } = {}) {
+  gmailState.reviewDrawerMinimized = Boolean(restore && gmailState.loadResult?.ok && gmailState.loadResult?.message);
   setReviewDrawerOpen(false);
+  renderGmailRestoreBar();
 }
 
 function setPreviewDrawerOpen(open) {
@@ -1126,21 +1142,33 @@ function setPreviewDrawerOpen(open) {
   }
   const nextOpen = Boolean(open) && isPreviewStateOpen(gmailState.previewState);
   gmailState.previewDrawerOpen = nextOpen;
+  if (nextOpen) {
+    gmailState.previewDrawerMinimized = false;
+    gmailState.previewState = restorePreviewState(gmailState.previewState);
+  }
   backdrop.classList.toggle("hidden", !nextOpen);
   backdrop.setAttribute("aria-hidden", nextOpen ? "false" : "true");
   document.body.dataset.gmailPreviewDrawer = nextOpen ? "open" : "closed";
+  renderGmailRestoreBar();
 }
 
 function openPreviewDrawer() {
   if (!isPreviewStateOpen(gmailState.previewState)) {
     return;
   }
+  gmailState.previewDrawerMinimized = false;
+  gmailState.previewState = restorePreviewState(gmailState.previewState);
   setPreviewDrawerOpen(true);
 }
 
-function closePreviewDrawer() {
+function closePreviewDrawer({ restore = true } = {}) {
+  if (restore && isPreviewStateOpen(gmailState.previewState)) {
+    gmailState.previewState = minimizePreviewState(gmailState.previewState);
+    gmailState.previewDrawerMinimized = true;
+  } else {
+    gmailState.previewDrawerMinimized = false;
+  }
   setPreviewDrawerOpen(false);
-  resetPreviewState();
   renderReviewSurface();
 }
 
@@ -2022,6 +2050,49 @@ function renderPreviewPanel() {
   status.textContent = "This attachment type is available through the new-tab fallback.";
 }
 
+function renderGmailRestoreBar() {
+  const bar = qs("gmail-restore-bar");
+  const reviewButton = qs("gmail-restore-review");
+  const previewButton = qs("gmail-restore-preview");
+  if (!bar || !reviewButton || !previewButton) {
+    return;
+  }
+  const canRestoreReview = Boolean(
+    gmailState.reviewDrawerMinimized
+    && !gmailState.reviewDrawerOpen
+    && gmailState.loadResult?.ok
+    && gmailState.loadResult?.message,
+  );
+  reviewButton.classList.toggle("hidden", !canRestoreReview);
+  reviewButton.disabled = !canRestoreReview;
+  if (canRestoreReview) {
+    reviewButton.textContent = deriveGmailReviewRestoreLabel({ selectedCount: collectSelections().length });
+  }
+
+  const canRestorePreview = Boolean(
+    gmailState.previewDrawerMinimized
+    && !gmailState.previewDrawerOpen
+    && isPreviewStateOpen(gmailState.previewState),
+  );
+  previewButton.classList.toggle("hidden", !canRestorePreview);
+  previewButton.disabled = !canRestorePreview;
+  if (canRestorePreview) {
+    previewButton.textContent = deriveGmailPreviewRestoreLabel(gmailState.previewState);
+  }
+
+  bar.classList.toggle("hidden", !(canRestoreReview || canRestorePreview));
+}
+
+function updateDemoReviewAction() {
+  const button = qs("gmail-load-demo-review");
+  if (!button) {
+    return;
+  }
+  const visible = appState.runtimeMode === "shadow" && !(gmailState.loadResult?.ok && gmailState.loadResult?.message);
+  button.classList.toggle("hidden", !visible);
+  button.disabled = !visible;
+}
+
 function renderResumeCard(activeSession) {
   const container = qs("gmail-resume-result");
   const button = qs("gmail-resume-step");
@@ -2272,6 +2343,8 @@ function renderReviewSurface() {
   renderAttachmentList(gmailState.loadResult);
   renderReviewDetail();
   renderPreviewPanel();
+  renderGmailRestoreBar();
+  updateDemoReviewAction();
   updatePrepareActionState();
   updateGmailFailureReportActionState();
 }
@@ -2412,6 +2485,44 @@ async function loadMessage() {
   if (details) {
     details.open = false;
   }
+  if (gmailState.loadResult?.ok && gmailState.loadResult?.message) {
+    openReviewDrawer();
+  }
+  syncShellState();
+}
+
+async function loadDemoReview() {
+  const payload = await fetchJson("/api/gmail/demo-review", appState, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  mergeBootstrapPayload({
+    review_event_id: payload.normalized_payload.review_event_id,
+    message_signature: payload.normalized_payload.message_signature,
+  });
+  gmailState.browserPdfState = new Map();
+  gmailState.loadResult = payload.normalized_payload.load_result || null;
+  gmailState.activeSession = null;
+  gmailState.restoredCompletedSession = null;
+  gmailState.interpretationSeed = null;
+  gmailState.suggestedTranslationLaunch = null;
+  gmailState.batchFinalizePreflight = null;
+  gmailState.batchFinalizeDrawerSource = "active";
+  clearGmailFailureReportContext();
+  ensureSelectionState(gmailState.loadResult, null);
+  resetPreviewState();
+  gmailState.batchFinalizeResult = null;
+  gmailState.lastFinalizationReportPayload = null;
+  renderMessageResult(gmailState.loadResult);
+  renderReviewSurface();
+  renderResumeCard(null);
+  renderSessionResult(null);
+  renderTranslationCompletionGmailStepCard(null);
+  renderBatchFinalizeSurface(null);
+  updateSessionButtons();
+  setPanelStatus("gmail", "ok", "Demo Gmail attachments loaded for shadow review.");
+  setDiagnostics("gmail", payload, { hint: "Demo Gmail attachments loaded for shadow review.", open: false });
   if (gmailState.loadResult?.ok && gmailState.loadResult?.message) {
     openReviewDrawer();
   }
@@ -2580,8 +2691,8 @@ async function prepareSession() {
   clearGmailFailureReportContext();
   updateGmailFinalizationReportActionState();
   setDiagnostics("gmail", payload, { hint: "Gmail session prepared.", open: false });
-  closePreviewDrawer();
-  closeReviewDrawer();
+  closePreviewDrawer({ restore: false });
+  closeReviewDrawer({ restore: false });
   closeSessionDrawer();
   closeBatchFinalizeDrawer();
   if (gmailState.suggestedTranslationLaunch) {
@@ -2895,6 +3006,17 @@ export function initializeGmailUi(hooks) {
     });
   });
 
+  qs("gmail-load-demo-review")?.addEventListener("click", async () => {
+    await runWithBusy(["gmail-load-demo-review"], { "gmail-load-demo-review": "Loading demo..." }, async () => {
+      try {
+        await loadDemoReview();
+      } catch (error) {
+        setPanelStatus("gmail", "bad", error.message || "Demo Gmail review load failed.");
+        setDiagnostics("gmail", error, { hint: error.message || "Demo Gmail review load failed.", open: true });
+      }
+    });
+  });
+
   qs("gmail-use-simulator-defaults")?.addEventListener("click", () => {
     const defaults = appState.extensionDiagnostics?.simulator_defaults || {};
     setFieldValue("gmail-message-id", defaults.message_id || "");
@@ -2935,9 +3057,15 @@ export function initializeGmailUi(hooks) {
   });
 
   qs("gmail-close-review-drawer")?.addEventListener("click", closeReviewDrawer);
+  qs("gmail-minimize-review-drawer")?.addEventListener("click", closeReviewDrawer);
+  qs("gmail-restore-review")?.addEventListener("click", openReviewDrawer);
   qs("gmail-review-drawer-backdrop")?.addEventListener("click", (event) => {
     if (event.target === qs("gmail-review-drawer-backdrop")) {
-      closeReviewDrawer();
+      if (deriveGmailOverlayDismissalAction("backdrop") === "keep-open") {
+        event.preventDefault();
+        event.stopPropagation();
+        renderGmailRestoreBar();
+      }
     }
   });
 
@@ -3056,9 +3184,19 @@ export function initializeGmailUi(hooks) {
   });
 
   qs("gmail-close-preview-drawer")?.addEventListener("click", closePreviewDrawer);
+  qs("gmail-minimize-preview-drawer")?.addEventListener("click", closePreviewDrawer);
+  qs("gmail-restore-preview")?.addEventListener("click", openPreviewDrawer);
+  qs("gmail-back-to-review-drawer")?.addEventListener("click", () => {
+    closePreviewDrawer();
+    openReviewDrawer();
+  });
   qs("gmail-preview-drawer-backdrop")?.addEventListener("click", (event) => {
     if (event.target === qs("gmail-preview-drawer-backdrop")) {
-      closePreviewDrawer();
+      if (deriveGmailOverlayDismissalAction("backdrop") === "keep-open") {
+        event.preventDefault();
+        event.stopPropagation();
+        renderGmailRestoreBar();
+      }
     }
   });
 
@@ -3279,7 +3417,7 @@ export function initializeGmailUi(hooks) {
         gmailState.batchFinalizeResult = null;
         clearGmailFailureReportContext();
         gmailState.lastFinalizationReportPayload = null;
-        closeReviewDrawer();
+        closeReviewDrawer({ restore: false });
         closeBatchFinalizeDrawer();
         renderGmailBootstrap({ normalized_payload: { gmail: payload.normalized_payload } });
         setDiagnostics("gmail-session", payload, { hint: "Gmail review reset.", open: false });
@@ -3359,17 +3497,23 @@ export function initializeGmailUi(hooks) {
       return;
     }
     stopWarmupPolling();
-    closePreviewDrawer();
-    closeReviewDrawer();
+    resetPreviewState();
+    closeReviewDrawer({ restore: false });
   });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && gmailState.previewDrawerOpen) {
-      closePreviewDrawer();
+      if (deriveGmailOverlayDismissalAction("escape") === "minimize") {
+        event.preventDefault();
+        closePreviewDrawer();
+      }
       return;
     }
     if (event.key === "Escape" && gmailState.reviewDrawerOpen) {
-      closeReviewDrawer();
+      if (deriveGmailOverlayDismissalAction("escape") === "minimize") {
+        event.preventDefault();
+        closeReviewDrawer();
+      }
       return;
     }
     if (event.key === "Escape" && gmailState.sessionDrawerOpen) {
