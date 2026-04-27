@@ -57,6 +57,8 @@ GMAIL_WORKFLOW_TRANSLATION = "translation"
 GMAIL_WORKFLOW_INTERPRETATION = "interpretation"
 
 _DEFAULT_GMAIL_OUTPUT_SUBDIR = "gmail_browser"
+_DEMO_GMAIL_ATTACHMENT_ID = "demo-gmail-review-pdf"
+_DEMO_GMAIL_MESSAGE_ID = "demo-shadow-message"
 _EMAIL_PATTERN = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.IGNORECASE)
 _REPLY_HINT_TERMS = (
     "reply",
@@ -93,6 +95,35 @@ _PREPARE_REASON_MESSAGES = {
     "browser_server_ready": "LegalPDF Translate started the browser app server and is waiting for the Gmail workspace tab to finish opening.",
     "unsupported_platform": "Foreground activation is only supported on Windows for this extension.",
 }
+
+
+def _demo_pdf_bytes() -> bytes:
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length 95 >>\nstream\nBT\n/F1 20 Tf\n72 720 Td\n(LegalPDF demo Gmail attachment) Tj\n0 -32 Td\n(Shadow review and preview test PDF.) Tj\nET\nendstream",
+    ]
+    chunks = [b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"]
+    offsets: list[int] = []
+    current_offset = len(chunks[0])
+    for index, body in enumerate(objects, start=1):
+        obj = f"{index} 0 obj\n".encode("ascii") + body + b"\nendobj\n"
+        offsets.append(current_offset)
+        chunks.append(obj)
+        current_offset += len(obj)
+    xref_offset = current_offset
+    xref = [b"xref\n", f"0 {len(objects) + 1}\n".encode("ascii"), b"0000000000 65535 f \n"]
+    xref.extend(f"{offset:010d} 00000 n \n".encode("ascii") for offset in offsets)
+    trailer = (
+        b"trailer\n"
+        + f"<< /Size {len(objects) + 1} /Root 1 0 R >>\n".encode("ascii")
+        + b"startxref\n"
+        + f"{xref_offset}\n".encode("ascii")
+        + b"%%EOF\n"
+    )
+    return b"".join(chunks + xref + [trailer])
 _TERMINAL_BATCH_FINALIZATION_STATES = frozenset({"local_artifacts_ready", "draft_failed", "draft_ready"})
 _REPORTABLE_BATCH_FINALIZATION_STATES = _TERMINAL_BATCH_FINALIZATION_STATES | frozenset({"blocked_word_pdf_export"})
 _RESTORED_BATCH_SESSION_MAX_AGE = timedelta(hours=24)
@@ -1644,6 +1675,72 @@ class GmailBrowserSessionManager:
                 **review_state,
             },
             "diagnostics": {},
+            "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
+        }
+
+    def load_demo_review(
+        self,
+        *,
+        runtime_mode: str,
+        workspace_id: str,
+        settings_path: Path,
+    ) -> dict[str, Any]:
+        if str(runtime_mode or "").strip() != "shadow":
+            raise ValueError("Demo Gmail attachments are available only in shadow/test mode.")
+        attachment = GmailAttachmentCandidate(
+            attachment_id=_DEMO_GMAIL_ATTACHMENT_ID,
+            filename="demo-gmail-review.pdf",
+            mime_type="application/pdf",
+            size_bytes=len(_demo_pdf_bytes()),
+            source_message_id=_DEMO_GMAIL_MESSAGE_ID,
+        )
+        intake_context = InboundMailContext(
+            message_id=_DEMO_GMAIL_MESSAGE_ID,
+            thread_id="demo-shadow-thread",
+            subject="Demo Gmail attachment review",
+            account_email="demo@example.test",
+            handoff_session_id="demo-shadow-handoff",
+            source_gmail_url="",
+        )
+        message = FetchedGmailMessage(
+            message_id=_DEMO_GMAIL_MESSAGE_ID,
+            thread_id="demo-shadow-thread",
+            subject="Demo Gmail attachment review",
+            from_header="Demo Sender <demo@example.test>",
+            account_email="demo@example.test",
+            attachments=(attachment,),
+        )
+        result = GmailMessageLoadResult(
+            ok=True,
+            classification="ready",
+            status_message="Demo Gmail attachments loaded for shadow review.",
+            intake_context=intake_context,
+            gog_path=None,
+            account_email="demo@example.test",
+            accounts=("demo@example.test",),
+            message=message,
+        )
+        review_state = self._store_loaded_result(
+            runtime_mode=runtime_mode,
+            workspace_id=workspace_id,
+            result=result,
+        )
+        workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
+        preview_path = workspace.ensure_preview_dir() / attachment.filename
+        preview_path.write_bytes(_demo_pdf_bytes())
+        workspace.preview_paths[attachment.attachment_id] = preview_path
+        workspace.preview_page_counts[attachment.attachment_id] = 1
+        return {
+            "status": "ok",
+            "normalized_payload": {
+                "load_result": _serialize_load_result(result),
+                "message": _serialize_message(message),
+                "workspace_id": workspace_id,
+                "runtime_mode": runtime_mode,
+                "shadow_demo": True,
+                **review_state,
+            },
+            "diagnostics": {"shadow_demo": True},
             "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
         }
 

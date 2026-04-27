@@ -1292,6 +1292,39 @@ body[data-profile-editor-drawer="open"] {
   margin-left: auto;
 }
 
+.gmail-restore-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0 4px;
+}
+
+.gmail-restore-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 9px 14px;
+  border: 1px solid rgba(117, 218, 255, 0.34);
+  border-radius: 999px;
+  color: var(--text);
+  background:
+    linear-gradient(135deg, rgba(117, 218, 255, 0.16), rgba(21, 72, 96, 0.26)),
+    rgba(7, 22, 36, 0.92);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.22);
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+}
+
+.gmail-restore-chip:hover,
+.gmail-restore-chip:focus-visible {
+  border-color: rgba(126, 235, 251, 0.72);
+  box-shadow:
+    0 14px 32px rgba(0, 0, 0, 0.24),
+    0 0 0 3px rgba(117, 218, 255, 0.18);
+}
+
 body[data-gmail-review-drawer="open"],
 body[data-gmail-preview-drawer="open"],
 body[data-gmail-session-drawer="open"],

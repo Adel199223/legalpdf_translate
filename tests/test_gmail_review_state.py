@@ -348,6 +348,8 @@ results.previewOpened = reviewModule.openPreviewState({{
   editable: true,
 }});
 results.previewMoved = reviewModule.setPreviewStatePage(results.previewOpened, 4);
+results.previewMinimized = reviewModule.minimizePreviewState(results.previewMoved);
+results.previewRestored = reviewModule.restorePreviewState(results.previewMinimized);
 results.previewApplied = reviewModule.applyPreviewStateStartPage(results.previewMoved, 2);
 results.previewClosed = reviewModule.createClosedPreviewState();
 results.previewUnchangedOnClose = 2;
@@ -363,6 +365,15 @@ results.previewInspectOnlyMoved = reviewModule.setPreviewStatePage(results.previ
 results.previewInspectOnlyApplied = reviewModule.applyPreviewStateStartPage(results.previewInspectOnlyMoved, 3);
 results.previewIsOpen = reviewModule.isPreviewStateOpen(results.previewOpened);
 results.previewClosedIsOpen = reviewModule.isPreviewStateOpen(results.previewClosed);
+results.reviewRestoreZero = reviewModule.deriveGmailReviewRestoreLabel({{ selectedCount: 0 }});
+results.reviewRestoreOne = reviewModule.deriveGmailReviewRestoreLabel({{ selectedCount: 1 }});
+results.reviewRestoreTwo = reviewModule.deriveGmailReviewRestoreLabel({{ selectedCount: 2 }});
+results.previewRestoreClosed = reviewModule.deriveGmailPreviewRestoreLabel(results.previewClosed);
+results.previewRestorePage = reviewModule.deriveGmailPreviewRestoreLabel(results.previewMoved);
+results.dismissBackdrop = reviewModule.deriveGmailOverlayDismissalAction("backdrop");
+results.dismissOutside = reviewModule.deriveGmailOverlayDismissalAction("outside");
+results.dismissEscape = reviewModule.deriveGmailOverlayDismissalAction("escape");
+results.dismissClose = reviewModule.deriveGmailOverlayDismissalAction("close");
 const makeTarget = (matches) => ({{
   closest(selector) {{
     return matches.includes(selector) ? {{ selector }} : null;
@@ -453,6 +464,7 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     assert results["redoMatchingRunning"]["matchingJob"]["job_id"] == "tx-2"
     assert results["previewInitial"] == {
         "open": False,
+        "minimized": False,
         "attachmentId": "",
         "previewHref": "",
         "previewMimeType": "",
@@ -462,6 +474,7 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     }
     assert results["previewOpened"] == {
         "open": True,
+        "minimized": False,
         "attachmentId": "att-1",
         "previewHref": "/api/gmail/attachment/att-1",
         "previewMimeType": "application/pdf",
@@ -470,6 +483,14 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
         "editable": True,
     }
     assert results["previewMoved"]["page"] == 4
+    assert results["previewMinimized"]["open"] is True
+    assert results["previewMinimized"]["minimized"] is True
+    assert results["previewMinimized"]["attachmentId"] == "att-1"
+    assert results["previewMinimized"]["page"] == 4
+    assert results["previewRestored"]["open"] is True
+    assert results["previewRestored"]["minimized"] is False
+    assert results["previewRestored"]["attachmentId"] == "att-1"
+    assert results["previewRestored"]["page"] == 4
     assert results["previewApplied"] == 4
     assert results["previewUnchangedOnClose"] == 2
     assert results["previewInspectOnly"]["page"] == 1
@@ -477,6 +498,15 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     assert results["previewInspectOnlyApplied"] == 1
     assert results["previewIsOpen"] is True
     assert results["previewClosedIsOpen"] is False
+    assert results["reviewRestoreZero"] == "Review Attachments — Restore"
+    assert results["reviewRestoreOne"] == "Review Attachments — 1 selected"
+    assert results["reviewRestoreTwo"] == "Review Attachments — 2 selected"
+    assert results["previewRestoreClosed"] == "PDF Preview — Restore"
+    assert results["previewRestorePage"] == "PDF Preview — page 4"
+    assert results["dismissBackdrop"] == "keep-open"
+    assert results["dismissOutside"] == "keep-open"
+    assert results["dismissEscape"] == "minimize"
+    assert results["dismissClose"] == "minimize"
     assert results["ignoreRowFocusForSelection"] is True
     assert results["ignoreRowFocusForStartPage"] is True
     assert results["ignoreRowFocusForButton"] is True

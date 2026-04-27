@@ -15,6 +15,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Gmail handoff workspace: `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`
 - Preferred detached launcher: `python tooling/launch_browser_app_live_detached.py`
 - Fixed review-preview URL: `http://127.0.0.1:8888/?mode=shadow&workspace=workspace-preview#new-job`
+- Shadow Gmail Review/Preview demo URL: `http://127.0.0.1:8888/?mode=shadow&workspace=gmail-review-demo#gmail-intake`
 - Qt status: supported secondary shell and fallback, not the lead day-to-day surface
 
 ## Browser Mode Contract
@@ -38,6 +39,8 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Canonical Edge native-host registration now targets `LegalPDFGmailFocusHost.exe`; the old `.cmd` wrapper is diagnostic fallback only and must not be the normal live target because it can surface visible CMD/PseudoConsole churn.
 - Browser Gmail handoff now uses per-click `handoff_session_id`, same-tab redirect, immediate post-redirect `/gmail-intake`, and client/server `asset_version` diagnostics so stale service workers, stale tabs, and `Pending load` states do not masquerade as accepted handoffs.
 - Browser-managed Gmail PDF preview/prepare now uses the bundled browser `pdf.js` path instead of depending on `PyMuPDF` during browser startup.
+- Gmail Review Attachments and PDF Preview drawers should persist instead of feeling lost: outside clicks keep them open, explicit close/minimize paths preserve state, and restore chips bring back the selected attachment/start page/preview page.
+- Shadow Gmail intake can seed a safe demo PDF with `Load demo attachments` for feature-branch Review/Preview testing without live Gmail, native-host handoff, private attachments, or drafts.
 - Gmail batch finalization readiness now depends on a real Word export canary, not a launch-only Word probe.
 - Gmail translation honorários metadata now prefers the specific local court-unit city over a broader comarca city. The accepted April 19 live closeout on build `0b2687f` confirmed `case_city=Cuba`, `service_city=Cuba`, populated nested `result.artifacts.run_report_path`, `Processed pages: 2/2` for an intentional page-2 start, and finalization `draft_ready` with a Cuba honorários PDF.
 - Report-restored completed Gmail translation batches are now secondary recovered history only; a fresh extension handoff or loaded Gmail message should supersede them automatically.

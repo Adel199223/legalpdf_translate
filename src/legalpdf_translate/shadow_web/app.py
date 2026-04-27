@@ -2012,6 +2012,25 @@ def create_shadow_app(
             return _validation_error_response(context, target, message=str(exc))
         return JSONResponse(_merge_response(context, target, response))
 
+    @app.post("/api/gmail/demo-review")
+    async def api_gmail_demo_review(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = context.gmail_sessions.load_demo_review(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                settings_path=target.data_paths.settings_path,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
     @app.post("/api/gmail/preview-attachment")
     async def api_gmail_preview_attachment(request: Request) -> JSONResponse:
         context = _context(request)

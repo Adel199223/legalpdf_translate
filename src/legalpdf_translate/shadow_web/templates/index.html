@@ -191,6 +191,7 @@
               </div>
               <div class="panel-actions">
                 <button type="button" class="primary-button" id="gmail-open-review">Review Attachments</button>
+                <button type="button" class="ghost-button hidden" id="gmail-load-demo-review">Load demo attachments</button>
                 <button type="button" class="ghost-button hidden" id="gmail-resume-step">Resume Current Step</button>
                 <button type="button" class="ghost-button hidden" id="gmail-redo-current">Redo Current Attachment</button>
                 <button type="button" class="ghost-button hidden" id="gmail-return-to-source">Back to Gmail</button>
@@ -199,6 +200,10 @@
             <p class="panel-copy" id="gmail-status">Choose the attachment you want to process, preview it if needed, then continue.</p>
             <div id="gmail-message-result" class="result-card empty-state">Open this from Gmail or load a message manually from details.</div>
             <div id="gmail-resume-result" class="result-card empty-state hidden">No Gmail step is waiting yet.</div>
+            <div id="gmail-restore-bar" class="gmail-restore-bar hidden" aria-live="polite">
+              <button type="button" class="gmail-restore-chip hidden" id="gmail-restore-review" aria-label="Restore Review Attachments panel">Review Attachments — Restore</button>
+              <button type="button" class="gmail-restore-chip hidden" id="gmail-restore-preview" aria-label="Restore PDF Preview">PDF Preview — Restore</button>
+            </div>
             <details class="shell-collapsible compact-affordance" id="gmail-more-actions">
               <summary>
                 <span>More options</span>
@@ -1418,7 +1423,10 @@
                 <p class="eyebrow">Gmail</p>
                 <h2 id="gmail-review-drawer-title">Choose Attachments</h2>
               </div>
-              <button type="button" class="ghost-button" id="gmail-close-review-drawer">Close</button>
+              <div class="panel-actions">
+                <button type="button" class="ghost-button" id="gmail-minimize-review-drawer" aria-label="Minimize Review Attachments panel">Minimize</button>
+                <button type="button" class="ghost-button" id="gmail-close-review-drawer" aria-label="Close Review Attachments panel">Close</button>
+              </div>
             </div>
             <p class="panel-copy" id="gmail-review-status">Step 1: Choose workflow. Step 2: Pick attachment(s). Step 3: Preview or set start page if needed. Step 4: Continue.</p>
             <div id="gmail-review-summary" class="result-card empty-state">Load this Gmail message to choose attachments.</div>
@@ -1500,7 +1508,11 @@
                 <p class="eyebrow">Preview</p>
                 <h2 id="gmail-preview-drawer-title">Attachment Preview</h2>
               </div>
-              <button type="button" class="ghost-button" id="gmail-close-preview-drawer">Close</button>
+              <div class="panel-actions">
+                <button type="button" class="ghost-button" id="gmail-back-to-review-drawer" aria-label="Back to Review Attachments">Back to Review</button>
+                <button type="button" class="ghost-button" id="gmail-minimize-preview-drawer" aria-label="Minimize PDF Preview">Minimize</button>
+                <button type="button" class="ghost-button" id="gmail-close-preview-drawer" aria-label="Close PDF Preview">Close</button>
+              </div>
             </div>
             <p class="panel-copy" id="gmail-preview-status">Open preview when you need to inspect the current attachment more closely.</p>
             <div id="gmail-preview-summary" class="result-card empty-state">Choose Preview from the review drawer to inspect an attachment here.</div>

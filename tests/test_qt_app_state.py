@@ -692,6 +692,7 @@ def test_settings_dialog_small_screen_is_bounded(monkeypatch) -> None:
         "available_screen_geometry",
         lambda _widget: QRect(0, 0, 860, 640),
     )
+    monkeypatch.setattr(QtSettingsDialog, "_refresh_key_status", lambda self: None)
 
     dialog = QtSettingsDialog(
         parent=None,
@@ -1416,12 +1417,13 @@ def test_advanced_settings_hover_and_open_state_stays_local_to_active_combo() ->
             app.quit()
 
 
-def test_settings_dialog_uses_guarded_run_critical_controls(tmp_path: Path) -> None:
+def test_settings_dialog_uses_guarded_run_critical_controls(tmp_path: Path, monkeypatch) -> None:
     app = QApplication.instance()
     owns_app = app is None
     if app is None:
         app = QApplication(sys.argv[:1])
 
+    monkeypatch.setattr(QtSettingsDialog, "_refresh_key_status", lambda self: None)
     settings_dialog = QtSettingsDialog(
         parent=None,
         settings={},
@@ -1488,12 +1490,13 @@ def test_settings_dialog_uses_guarded_run_critical_controls(tmp_path: Path) -> N
             app.quit()
 
 
-def test_settings_dialog_generates_bridge_token_when_enabled() -> None:
+def test_settings_dialog_generates_bridge_token_when_enabled(monkeypatch) -> None:
     app = QApplication.instance()
     owns_app = app is None
     if app is None:
         app = QApplication(sys.argv[:1])
 
+    monkeypatch.setattr(QtSettingsDialog, "_refresh_key_status", lambda self: None)
     settings_dialog = QtSettingsDialog(
         parent=None,
         settings=_base_gui_settings(),
@@ -1520,12 +1523,13 @@ def test_settings_dialog_generates_bridge_token_when_enabled() -> None:
             app.quit()
 
 
-def test_settings_dialog_normalizes_default_start_page_to_one() -> None:
+def test_settings_dialog_normalizes_default_start_page_to_one(monkeypatch) -> None:
     app = QApplication.instance()
     owns_app = app is None
     if app is None:
         app = QApplication(sys.argv[:1])
 
+    monkeypatch.setattr(QtSettingsDialog, "_refresh_key_status", lambda self: None)
     settings_dialog = QtSettingsDialog(
         parent=None,
         settings=_base_gui_settings(default_start_page=7),
@@ -5832,7 +5836,7 @@ def test_workspace_controller_run_target_reservations_block_other_workspaces(tmp
             app.quit()
 
 
-def test_settings_dialog_shows_build_identity_summary() -> None:
+def test_settings_dialog_shows_build_identity_summary(monkeypatch) -> None:
     app = QApplication.instance()
     owns_app = app is None
     if app is None:
@@ -5852,6 +5856,7 @@ def test_settings_dialog_shows_build_identity_summary() -> None:
         canonical_head_floor="4e9d20e",
         reasons=("branch mismatch",),
     )
+    monkeypatch.setattr(QtSettingsDialog, "_refresh_key_status", lambda self: None)
     settings_dialog = QtSettingsDialog(
         parent=None,
         settings={},

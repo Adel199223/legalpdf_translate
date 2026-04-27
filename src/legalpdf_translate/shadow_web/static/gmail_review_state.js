@@ -622,6 +622,7 @@ function normalizePreviewPageValue(value, { editable, pageCount }) {
 export function createClosedPreviewState() {
   return {
     open: false,
+    minimized: false,
     attachmentId: "",
     previewHref: "",
     previewMimeType: "",
@@ -644,6 +645,7 @@ export function openPreviewState({
   const nextPageCount = Math.max(0, Number.parseInt(String(pageCount ?? 0).trim(), 10) || 0);
   return {
     open: Boolean(normalizedAttachmentId),
+    minimized: false,
     attachmentId: normalizedAttachmentId,
     previewHref: normalizeSignature(previewHref),
     previewMimeType: normalizeSignature(previewMimeType),
@@ -681,6 +683,56 @@ export function applyPreviewStateStartPage(previewState, currentStartPage) {
 
 export function isPreviewStateOpen(previewState) {
   return Boolean(previewState?.open && normalizeSignature(previewState.attachmentId));
+}
+
+export function minimizePreviewState(previewState) {
+  if (!isPreviewStateOpen(previewState)) {
+    return createClosedPreviewState();
+  }
+  return {
+    ...previewState,
+    minimized: true,
+  };
+}
+
+export function restorePreviewState(previewState) {
+  if (!isPreviewStateOpen(previewState)) {
+    return createClosedPreviewState();
+  }
+  return {
+    ...previewState,
+    minimized: false,
+  };
+}
+
+export function deriveGmailReviewRestoreLabel({ selectedCount } = {}) {
+  const count = Math.max(0, Number.parseInt(String(selectedCount ?? 0).trim(), 10) || 0);
+  if (count === 1) {
+    return "Review Attachments — 1 selected";
+  }
+  if (count > 1) {
+    return `Review Attachments — ${count} selected`;
+  }
+  return "Review Attachments — Restore";
+}
+
+export function deriveGmailPreviewRestoreLabel(previewState) {
+  if (!isPreviewStateOpen(previewState)) {
+    return "PDF Preview — Restore";
+  }
+  const page = Math.max(1, Number.parseInt(String(previewState.page ?? 1).trim(), 10) || 1);
+  return `PDF Preview — page ${page}`;
+}
+
+export function deriveGmailOverlayDismissalAction(trigger) {
+  const normalizedTrigger = normalizeSignature(trigger).toLowerCase();
+  if (normalizedTrigger === "backdrop" || normalizedTrigger === "outside") {
+    return "keep-open";
+  }
+  if (["back", "close", "escape", "minimize"].includes(normalizedTrigger)) {
+    return "minimize";
+  }
+  return "keep-open";
 }
 
 export function shouldIgnoreReviewRowFocusTarget(target) {

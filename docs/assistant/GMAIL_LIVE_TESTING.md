@@ -9,6 +9,24 @@
 
 Feature branches should use browser `mode=shadow` and isolated workspaces for UI review.
 
+## Shadow Review/Preview Demo
+Use this path when you need to review Gmail attachment UI behavior from a feature branch without touching live Gmail:
+
+```powershell
+cd C:\Users\FA507\.codex\legalpdf_translate
+.\.venv311\Scripts\python.exe -m legalpdf_translate.shadow_web.server --port 8888
+```
+
+Open `http://127.0.0.1:8888/?mode=shadow&workspace=gmail-review-demo#gmail-intake`.
+
+When no Gmail message is loaded, shadow mode shows `Load demo attachments`. Click it to seed one safe demo PDF, open Review Attachments, and test the real Review/Preview drawer behavior against isolated test data. This demo route is blocked in `live` mode and does not use the native host, real Gmail, drafts, or private attachments.
+
+Expected persistence behavior:
+- Review Attachments should not silently close when you click outside it.
+- Preview should not silently disappear when you click outside it.
+- Minimize/Close/Escape should preserve the selected attachment, start page, preview page, and show a restore chip.
+- Restore chips should bring back the existing Review or Preview state instead of resetting it.
+
 ## Launch Canonical Main Runtime
 From the primary repo on `main`:
 

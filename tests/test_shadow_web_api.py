@@ -370,11 +370,19 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert "browser workspace" not in gmail_view
         assert 'id="gmail-resume-step"' in text
         assert 'id="gmail-resume-result"' in text
+        assert 'id="gmail-load-demo-review"' in gmail_view
+        assert "Load demo attachments" in gmail_view
+        assert 'id="gmail-restore-bar"' in gmail_view
+        assert 'id="gmail-restore-review"' in gmail_view
+        assert 'id="gmail-restore-preview"' in gmail_view
+        assert "Review Attachments — Restore" in gmail_view
+        assert "PDF Preview — Restore" in gmail_view
         assert 'id="gmail-open-full-workspace"' in gmail_view
         assert 'id="gmail-open-session"' not in text
         assert 'id="gmail-preview-session"' not in text
         assert 'id="gmail-review-drawer"' in text
         assert 'id="gmail-review-drawer-backdrop"' in text
+        assert 'id="gmail-minimize-review-drawer"' in text
         assert 'id="gmail-close-review-drawer"' in text
         assert 'id="gmail-review-summary"' in text
         assert 'id="gmail-review-summary-details"' in text
@@ -387,6 +395,8 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="gmail-review-detail"' in text
         assert 'id="gmail-preview-drawer"' in text
         assert 'id="gmail-preview-drawer-backdrop"' in text
+        assert 'id="gmail-back-to-review-drawer"' in text
+        assert 'id="gmail-minimize-preview-drawer"' in text
         assert 'id="gmail-close-preview-drawer"' in text
         assert 'id="gmail-preview-frame"' in text
         assert 'id="gmail-preview-page"' in text
@@ -1877,6 +1887,56 @@ def test_shadow_web_gmail_preview_route_keeps_inline_pdf_contract(tmp_path: Path
         assert attachment_response.headers["content-type"].startswith("application/pdf")
         assert attachment_response.headers["content-disposition"].startswith("inline;")
         assert recorded["current_attachment_file"]["attachment_id"] == "att-preview"
+
+
+def test_shadow_web_gmail_demo_review_fixture_is_shadow_only_and_previewable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    with _build_app(tmp_path, monkeypatch, build_identity=_canonical_identity()) as client:
+        live_response = client.post(
+            "/api/gmail/demo-review",
+            json={"mode": "live", "workspace_id": "gmail-demo"},
+        )
+        assert live_response.status_code == 422
+        assert "shadow/test mode" in live_response.json()["diagnostics"]["error"]
+
+        demo_response = client.post(
+            "/api/gmail/demo-review",
+            json={"mode": "shadow", "workspace_id": "gmail-demo"},
+        )
+        demo_payload = demo_response.json()
+        assert demo_response.status_code == 200
+        assert demo_payload["normalized_payload"]["shadow_demo"] is True
+        load_result = demo_payload["normalized_payload"]["load_result"]
+        assert load_result["ok"] is True
+        attachments = load_result["message"]["attachments"]
+        assert len(attachments) == 1
+        assert attachments[0]["attachment_id"] == "demo-gmail-review-pdf"
+        assert attachments[0]["mime_type"] == "application/pdf"
+
+        bootstrap_response = client.get("/api/gmail/bootstrap?mode=shadow&workspace=gmail-demo")
+        bootstrap_payload = bootstrap_response.json()
+        bootstrap_load = bootstrap_payload["normalized_payload"]["load_result"]
+        assert bootstrap_response.status_code == 200
+        assert bootstrap_load["ok"] is True
+        assert bootstrap_load["message"]["attachments"][0]["attachment_id"] == "demo-gmail-review-pdf"
+
+        preview_response = client.post(
+            "/api/gmail/preview-attachment",
+            json={"mode": "shadow", "workspace_id": "gmail-demo", "attachment_id": "demo-gmail-review-pdf"},
+        )
+        preview_payload = preview_response.json()
+        assert preview_response.status_code == 200
+        assert preview_payload["normalized_payload"]["page_count"] == 1
+        assert preview_payload["normalized_payload"]["preview_href"].startswith(
+            "/api/gmail/attachment/demo-gmail-review-pdf?"
+        )
+
+        attachment_response = client.get(preview_payload["normalized_payload"]["preview_href"])
+        assert attachment_response.status_code == 200
+        assert attachment_response.headers["content-type"].startswith("application/pdf")
+        assert attachment_response.headers["content-disposition"].startswith("inline;")
 
 
 def test_shadow_web_gmail_preview_and_prepare_block_noncanonical_live_runtime(tmp_path: Path, monkeypatch) -> None:
