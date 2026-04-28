@@ -11,6 +11,8 @@
 
 PR #46 and the docs harness refresh PR #47 have been squash-merged into `main`. A post-merge setup pass launched the canonical-main live browser runtime and reported both `8877` and `8765` listening. Future live Gmail extension testing must happen from canonical `main`, not from feature branches.
 
+Google Photos Interpretation work is currently validated on feature branch `feat/google-photos-interpretation`, not merged. The feature is Interpretation-only and uses Google Photos Picker API OAuth/session flow to import one user-selected photo into the existing photo/OCR autofill and `Review Case Details` drawer. The temporary OAuth client used during troubleshooting was exposed and must be deleted or rotated before production-like use or PR review that depends on live credentials.
+
 ## What The App Does
 LegalPDF Translate is a Windows-first legal PDF translation and Gmail intake app. It translates PDFs page by page into DOCX, preserves run artifacts, supports browser and Qt workflows, records translation and interpretation work in the Job Log, and can continue from a real Gmail message through a browser extension/native-host bridge.
 
@@ -21,6 +23,7 @@ Important invariant: do not convert the translation workflow into one whole-docu
 - Agent runbook: `agent.md`.
 - Quick guardrails: `AGENTS.md`.
 - Validation commands: `docs/assistant/VALIDATION.md`.
+- Google Photos Interpretation runbook: `docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md`.
 - Live Gmail retest guide: `docs/assistant/GMAIL_LIVE_TESTING.md`.
 - PR #46 historical summary: `docs/assistant/PR46_POST_MERGE_SUMMARY.md`.
 - Routing map: `docs/assistant/manifest.json`.
@@ -44,6 +47,7 @@ For feature-branch Review/Preview UI checks, use `mode=shadow` and the shadow-on
 - Live Gmail extension intake requires canonical `main` at the primary repo path. Feature branches should use `mode=shadow` for browser UI review; the shadow Gmail demo fixture is safe for Review/Preview drawer testing.
 - The Dart launcher can fail locally with `Unable to find AOT snapshot for dartdev`; when `scripts/validate_dev.ps1` detects this, the direct Dart fallback at `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe` is the expected path.
 - Generated DOCX/PDF files must be manually reviewed before any Gmail draft is sent.
+- The Google Photos validation intentionally did not generate the final honorários DOCX/PDF. Treat Google Photos `createTime` and downloaded EXIF dates as provenance only; do not claim Google Photos place/location or EXIF GPS support from the current validation.
 - Numeric mismatch warnings are serious in legal workflows; do not suppress or soften them without a focused safety review.
 - Do not print secrets, tokens, `.env` values, private app data, or live Gmail content in reports.
 

@@ -48,6 +48,45 @@ C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe tooling\validate_workspace_
 
 Record both the wrapper failure and direct-Dart fallback success in validation summaries.
 
+## Google Photos Interpretation Validation
+Use this section for the Interpretation-only Google Photos Picker import feature.
+
+Focused commands:
+```powershell
+.\.venv311\Scripts\python.exe -m pytest -q tests/test_google_photos_picker.py tests/test_interpretation_google_photos.py tests/test_metadata_autofill_photo.py
+.\.venv311\Scripts\python.exe -m pytest -q tests/test_shadow_web_api.py
+.\.venv311\Scripts\python.exe -m pytest -q tests/test_interpretation_review_state.py tests/test_honorarios_docx.py
+powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1
+```
+
+Run the safe config gate before live OAuth/Picker work:
+- `configured=true`
+- `client_id_source=process_env` or `windows_user_env`
+- `client_secret_source=process_env` or `windows_user_env`
+- scope exactly `https://www.googleapis.com/auth/photospicker.mediaitems.readonly`
+- shadow redirect exactly `http://127.0.0.1:8890/api/interpretation/google-photos/oauth/callback`
+- live redirect exactly `http://127.0.0.1:8877/api/interpretation/google-photos/oauth/callback`
+
+Live validation acceptance checklist:
+- OAuth reaches `connected=true`.
+- Token store is present.
+- `Choose from Google Photos` is enabled.
+- Picker session is created and polled.
+- User selects exactly one non-private test photo.
+- Google Photos completion screen or auto-close indicates selection finished.
+- `mediaItemsSet=true` is observed.
+- selected media items are listed.
+- import route is called.
+- selected image imports into the existing Interpretation photo/OCR autofill flow.
+- `Review Case Details` opens.
+- Translation controls are avoided.
+- `createTime` and downloaded EXIF date are provenance only.
+- `service_date`, `service_city`, and `case_city` remain OCR- or user-confirmed.
+- Picker session cleanup succeeds.
+- No final honorários DOCX/PDF is generated unless explicitly approved and then manually reviewed.
+
+Sanitized route logs for this flow may contain method/path only. Drop query strings immediately and normalize Picker session IDs.
+
 ## CI Expectations
 GitHub CI currently runs on Windows Python 3.11 and includes:
 - agent docs validation,

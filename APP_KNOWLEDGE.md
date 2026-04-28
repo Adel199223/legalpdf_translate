@@ -37,6 +37,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
   - `Recent Jobs`
   - `More`, which keeps `Dashboard`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab` reachable without crowding the first screen
 - `New Job` is translation-first by default and keeps interpretation inside the same shell through an in-page task switcher.
+- Interpretation now also supports a Google Photos Picker import path in shadow/live browser mode. The flow is Interpretation-only: connect Google Photos, choose one user-selected photo, import the selected image/metadata into the existing photo/OCR autofill path, review `Review Case Details`, and continue through the normal honorários review/export path only after user confirmation.
 - `Gmail` is a dedicated browser view for exact-message context, attachment review, and continuation into translation or interpretation; deeper Gmail session/finalization work stays in same-tab drawers instead of crowding the intake screen.
 - Gmail intake now starts as one compact review-first surface instead of a stacked workspace. The first screen keeps message summary, supported attachments, workflow choice, target language, and one primary continue action visible.
 - Gmail translation continuation stays bounded in browser-native secondary surfaces:
@@ -95,6 +96,9 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - `src/legalpdf_translate/gmail_intake.py`: localhost Gmail message intake bridge for exact-message handoff.
 - `src/legalpdf_translate/gmail_batch.py`: exact-message Gmail fetch, attachment filtering/download, and batch-state orchestration helpers.
 - `src/legalpdf_translate/gmail_draft.py`: Windows `gog` Gmail prerequisite checks and draft creation helpers.
+- `src/legalpdf_translate/google_photos_oauth.py`: Google Photos Picker OAuth configuration, source-aware env resolution, safe callback diagnostics, and token storage separate from Gmail.
+- `src/legalpdf_translate/google_photos_picker.py`: Google Photos Picker session create/get/list/delete client and sanitized metadata normalization.
+- `src/legalpdf_translate/interpretation_google_photos.py`: Interpretation-only selected-photo import orchestration into the existing photo/OCR autofill pipeline.
 - `src/legalpdf_translate/workflow_components/contracts.py`: typed workflow internal contracts.
 - `src/legalpdf_translate/workflow_components/evaluation.py`: output-evaluation and retry-reason delegation.
 - `src/legalpdf_translate/workflow_components/quality_risk.py`: deterministic quality risk scoring and review queue construction.
@@ -123,7 +127,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 11. Execute a queue manifest with checkpoint-aware resume and failed-only rerun behavior.
 12. Start from an open Gmail message in Edge/Chromium, let the native host auto-start the configured checkout when needed, review supported attachments from that exact email, then either run the translation batch flow or handle one interpretation notice attachment, with mandatory Save-to-Job-Log confirmation before the related honorarios and Gmail draft finalization and the ability to redo the current unconfirmed Gmail attachment from the same live workspace without a cold start.
 13. Open multiple workspaces and translate different jobs in parallel without interrupting the current run.
-14. Create or edit interpretation Job Log rows manually, from a notification PDF, from a photo/screenshot, or from a Gmail notice attachment, then generate the interpretation honorarios DOCX plus sibling PDF locally, create a fresh Gmail draft from the saved row, or create a threaded Gmail reply draft when the flow started from Gmail intake.
+14. Create or edit interpretation Job Log rows manually, from a notification PDF, from a photo/screenshot, from one selected Google Photos image, or from a Gmail notice attachment, then generate the interpretation honorarios DOCX plus sibling PDF locally, create a fresh Gmail draft from the saved row, or create a threaded Gmail reply draft when the flow started from Gmail intake.
 
 Recurring Portuguese court/prosecution headers now use a shared phrase-level institutional catalog across EN, FR, and AR. The translation workflow injects matched header phrases ahead of generic glossary rows, and metadata/header extraction reuses the same matcher so `case_entity` prefers the most specific institutional line instead of falling back to looser regex hits or contact-block noise. When a local court unit such as `Juízo de Competência Genérica de Cuba` conflicts with broader district text such as `Comarca de Beja`, Gmail translation save seeds, Job Log rows, honorários DOCX/PDF output, and Gmail finalization use the local unit city (`Cuba`) while preserving the exact extracted court email.
 
@@ -244,6 +248,9 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - interpretation notification imports keep the local `pdf_path` when present
   - interpretation photo imports stay image-only and do not create a PDF-backed row contract
   - interpretation photo/screenshot imports tolerate missing service entity or city values and keep the form editable instead of failing autofill
+  - Google Photos interpretation imports use the Picker API with the minimal `photospicker.mediaitems.readonly` scope, create a Picker session, open the Google Photos Picker or visible fallback, poll until `mediaItemsSet=true`, list the selected media item, download the selected image bytes, and feed the existing photo/OCR autofill path
+  - Google Photos `createTime` and downloaded EXIF dates are provenance only; `service_date`, `service_city`, and `case_city` remain OCR- or user-confirmed legal fields
+  - Google Photos place/location and downloaded EXIF GPS are not supported facts in the current validation state and must not be required or claimed unless a future sanitized live payload proves them
   - translation-only inputs are hidden in interpretation mode instead of shown as inactive clutter
   - the primary visible date in interpretation mode is the service date
   - interpretation distance is shown as one visible one-way value in the UI, keyed by `service_city`, and mirrored internally into outbound/return storage for compatibility

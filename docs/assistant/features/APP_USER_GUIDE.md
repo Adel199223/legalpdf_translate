@@ -96,8 +96,9 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
    - `Blank/manual interpretation entry`
    - `From notification PDF...`
    - `From photo/screenshot...`
+   - `Choose from Google Photos` from the `New Job > Interpretation` panel when you want to import one selected Google Photos image
 3. Review the case and service details before saving. Interpretation mode focuses on service date, service location, and distance instead of translation metrics.
-4. If a photo or screenshot import did not contain an explicit service entity or city, the form still opens normally and lets you fill those fields in manually.
+4. If a photo, screenshot, or Google Photos import did not contain an explicit service entity or city, the form still opens normally and lets you fill those fields in manually.
 5. Keep `Service same as Case` on when the hearing/service happened in the same place as the case. Turn it off only when the service entity or city is different.
 6. The visible KM field is the one-way distance only. The app reuses the saved value for that service city when one already exists.
 7. If you enter a new one-way distance for a service city and save the row, the app remembers it for future interpretation rows under the current profile.
@@ -108,6 +109,16 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 12. The body still uses the service day, but the footer date before your signature always uses the day you generate the document.
 13. If automatic PDF generation fails, the dialog keeps the DOCX, stays responsive, and lets you retry, choose an existing PDF, or continue local-only.
 14. Manual/local interpretation exports can create a fresh Gmail draft when `Court Email`, Gmail draft prerequisites, and the honorários PDF are all available. Those drafts attach the honorários PDF only.
+
+### Google Photos Interpretation Import
+1. Use this only from `New Job > Interpretation`; it is not part of the Translation workflow.
+2. Click `Connect Google Photos` if the app is not already connected.
+3. If no Google sign-in tab opens, use the visible `Open Google sign-in` fallback.
+4. After connection, click `Choose from Google Photos`.
+5. If no Google Photos tab opens, use the visible `Open Google Photos Picker` fallback.
+6. Select exactly one non-private photo first and finish the Google Photos selection flow.
+7. Return to LegalPDF and wait for `Review Case Details`.
+8. Treat Google Photos `createTime` and any downloaded EXIF date as provenance only. Confirm `service_date`, `service_city`, and `case_city` from OCR/document text or manual review before generating any honorários document.
 
 ## Multiple Windows
 1. Open another browser tab or browser window with a different workspace URL when you want another independent workspace.

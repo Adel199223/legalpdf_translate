@@ -577,7 +577,18 @@
                 <input id="photo-file" name="file" type="file" accept="image/*" required>
                 <button id="photo-submit" type="submit">Recover from photo or screenshot</button>
               </form>
+              <div id="google-photos-import-panel" class="upload-form">
+                <label>Google Photos</label>
+                <div class="panel-actions">
+                  <button id="google-photos-connect" type="button">Connect Google Photos</button>
+                  <button id="google-photos-choose" type="button">Choose from Google Photos</button>
+                  <a id="google-photos-open-signin" class="ghost-button hidden" href="#" target="_blank" rel="noopener noreferrer" aria-hidden="true" tabindex="-1">Open Google sign-in</a>
+                  <a id="google-photos-open-picker" class="ghost-button hidden" href="#" target="_blank" rel="noopener noreferrer" aria-hidden="true" tabindex="-1">Open Google Photos Picker</a>
+                </div>
+                <p class="panel-copy" id="google-photos-status">Google Photos connection status appears here.</p>
+              </div>
             </div>
+            <div id="google-photos-summary" class="result-card empty-state">No Google Photos selection yet.</div>
             <details class="details-panel operator-only" id="autofill-details">
               <summary>
                 <span>Autofill diagnostics</span>

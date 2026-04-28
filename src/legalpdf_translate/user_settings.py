@@ -154,6 +154,10 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "gmail_intake_bridge_enabled": False,
     "gmail_intake_bridge_token": "",
     "gmail_intake_port": 8765,
+    "google_photos_client_id": "",
+    "google_photos_client_id_env_name": "LEGALPDF_GOOGLE_PHOTOS_CLIENT_ID",
+    "google_photos_client_secret_env_name": "LEGALPDF_GOOGLE_PHOTOS_CLIENT_SECRET",
+    "google_photos_token_path": "",
 }
 ALLOWED_GUI_KEYS = {
     "settings_schema_version",
@@ -228,6 +232,10 @@ ALLOWED_GUI_KEYS = {
     "gmail_intake_bridge_enabled",
     "gmail_intake_bridge_token",
     "gmail_intake_port",
+    "google_photos_client_id",
+    "google_photos_client_id_env_name",
+    "google_photos_client_secret_env_name",
+    "google_photos_token_path",
 }
 ALLOWED_JOBLOG_KEYS = {
     "vocab_case_entities",
@@ -631,6 +639,16 @@ def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
         1,
         min(65535, _coerce_int(merged.get("gmail_intake_port"), 8765)),
     )
+    merged["google_photos_client_id"] = str(merged.get("google_photos_client_id", "") or "").strip()
+    merged["google_photos_client_id_env_name"] = (
+        str(merged.get("google_photos_client_id_env_name", "") or "").strip()
+        or "LEGALPDF_GOOGLE_PHOTOS_CLIENT_ID"
+    )
+    merged["google_photos_client_secret_env_name"] = (
+        str(merged.get("google_photos_client_secret_env_name", "") or "").strip()
+        or "LEGALPDF_GOOGLE_PHOTOS_CLIENT_SECRET"
+    )
+    merged["google_photos_token_path"] = str(merged.get("google_photos_token_path", "") or "").strip()
     merged["settings_schema_version"] = _coerce_int(
         merged.get("settings_schema_version"),
         SETTINGS_SCHEMA_VERSION,

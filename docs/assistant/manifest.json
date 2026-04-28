@@ -37,6 +37,7 @@
   ],
   "user_guides": [
     "docs/assistant/features/APP_USER_GUIDE.md",
+    "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
     "docs/assistant/features/PRIMARY_FEATURE_USER_GUIDE.md",
     "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
     "docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md"
@@ -304,6 +305,7 @@
         "APP_KNOWLEDGE.md",
         "docs/assistant/APP_KNOWLEDGE.md",
         "docs/assistant/INDEX.md",
+        "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
         "docs/assistant/manifest.json",
         "docs/assistant/ISSUE_MEMORY.md",
         "docs/assistant/ISSUE_MEMORY.json"
@@ -459,5 +461,5 @@
     "cloud_scoring_failure_recovery_policy": "Cloud failure semantics use unavailable|failed and recovery order is cloud-fix-rerun before local-heavy fallback.",
     "cloud_local_apply_separation_policy": "Cloud evaluation outputs must not auto-apply runtime config/state; local manual acceptance gate is required before final apply."
   },
-  "last_updated": "2026-04-01"
+  "last_updated": "2026-04-28"
 }

@@ -4,10 +4,12 @@ import io
 import json
 from pathlib import Path
 import re
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from .browser_esm_probe import run_browser_esm_json_probe
 import legalpdf_translate.browser_arabic_review as browser_arabic_review
 import legalpdf_translate.browser_app_service as browser_app_service
 from legalpdf_translate.browser_gmail_bridge import BrowserLiveBridgeSyncResult
@@ -20,6 +22,11 @@ from legalpdf_translate.word_automation import WordAutomationResult
 
 
 _ORIGINAL_BUILD_BROWSER_PROVIDER_STATE = shadow_app_module.build_browser_provider_state
+_GOOGLE_PHOTOS_CALLBACK_PATH = "/api/interpretation/google-photos/oauth/callback"
+
+
+def _google_photos_callback_url(**query: str) -> str:
+    return f"{_GOOGLE_PHOTOS_CALLBACK_PATH}?{urlencode(query)}"
 
 
 def _identity() -> RuntimeBuildIdentity:
@@ -523,6 +530,14 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="interpretation-session-open-full-workspace"' in text
         assert 'class="workspace-drawer workspace-drawer-interpretation"' in text
         assert "Start Interpretation Request" in new_job_view
+        assert "Connect Google Photos" in new_job_view
+        assert "Choose from Google Photos" in new_job_view
+        assert "Open Google sign-in" in new_job_view
+        assert "Open Google Photos Picker" in new_job_view
+        assert 'id="google-photos-open-signin"' in text
+        assert 'id="google-photos-open-picker"' in text
+        assert 'rel="noopener noreferrer"' in text
+        assert 'id="google-photos-summary"' in text
         assert "Review Case Details" in new_job_view
         assert "Review details" in new_job_view
         assert "Start blank request" in new_job_view
@@ -699,6 +714,479 @@ def test_shadow_web_operator_routes_expose_guided_qt_topbar_copy() -> None:
     assert 'eyebrow: "Browser Helper"' in app_js
     assert 'title: "LegalPDF Translate | Browser Helper Checks"' in app_js
     assert 'status: "Check the browser helper used for Gmail intake. Technical details stay below."' in app_js
+
+
+def test_google_photos_busy_guard_allows_connect_when_choose_is_disabled() -> None:
+    script = """
+function makeButton(id, { disabled = false, textContent = id } = {}) {
+  return {
+    id,
+    tagName: "BUTTON",
+    disabled,
+    textContent,
+    dataset: {},
+    attributes: {},
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
+  };
+}
+
+const elements = new Map([
+  ["google-photos-connect", makeButton("google-photos-connect", { textContent: "Connect Google Photos" })],
+  ["google-photos-choose", makeButton("google-photos-choose", {
+    disabled: true,
+    textContent: "Choose from Google Photos",
+  })],
+  ["photo-submit", makeButton("photo-submit", { textContent: "Recover from photo or screenshot" })],
+]);
+
+globalThis.document = {
+  body: { dataset: {} },
+  getElementById(id) {
+    return elements.get(id) || null;
+  },
+  querySelector() {
+    return null;
+  },
+  querySelectorAll() {
+    return [];
+  },
+  createElement(tagName) {
+    return { tagName: String(tagName).toUpperCase(), dataset: {}, children: [], appendChild() {} };
+  },
+  addEventListener() {},
+};
+
+globalThis.window = {
+  LEGALPDF_BROWSER_BOOTSTRAP: {
+    defaultRuntimeMode: "shadow",
+    defaultWorkspaceId: "google-photos-stage2",
+    defaultUiVariant: "qt",
+    shadowHost: "127.0.0.1",
+    shadowPort: 8890,
+    buildSha: "test",
+    assetVersion: "test-assets",
+    staticBasePath: "http://127.0.0.1:8890/static-build/test-assets/",
+  },
+  location: new URL("http://127.0.0.1:8890/?mode=shadow&workspace=google-photos-stage2#new-job"),
+  history: { replaceState() {} },
+  addEventListener() {},
+  removeEventListener() {},
+  dispatchEvent() {},
+  setTimeout() { return 1; },
+  clearTimeout() {},
+  confirm() { return true; },
+};
+globalThis.CustomEvent = class CustomEvent {
+  constructor(type, init = {}) {
+    this.type = type;
+    this.detail = init.detail;
+  }
+};
+
+const appModule = await import(__APP_MODULE_URL__);
+
+let connectActions = 0;
+await appModule.runWithBusy(
+  ["google-photos-connect", "google-photos-choose"],
+  { "google-photos-connect": "Connecting..." },
+  async () => {
+    connectActions += 1;
+  },
+  { guardIds: ["google-photos-connect"] },
+);
+
+elements.get("google-photos-choose").disabled = true;
+let chooseActions = 0;
+await appModule.runWithBusy(
+  ["google-photos-connect", "google-photos-choose", "photo-submit"],
+  { "google-photos-choose": "Choosing..." },
+  async () => {
+    chooseActions += 1;
+  },
+  { guardIds: ["google-photos-choose"] },
+);
+
+console.log(JSON.stringify({
+  connectActions,
+  chooseActions,
+  connectAriaBusy: elements.get("google-photos-connect").attributes["aria-busy"],
+  chooseAriaBusy: elements.get("google-photos-choose").attributes["aria-busy"],
+}));
+"""
+    results = run_browser_esm_json_probe(script, {"__APP_MODULE_URL__": "app.js"}, timeout_seconds=30)
+
+    assert results["connectActions"] == 1
+    assert results["chooseActions"] == 0
+    assert results["connectAriaBusy"] == "false"
+    assert results["chooseAriaBusy"] == "false"
+
+
+def test_google_photos_oauth_fallback_is_visible_without_rendering_url_text() -> None:
+    script = """
+function makeClassList(initial = []) {
+  const values = new Set(initial);
+  return {
+    add(value) {
+      values.add(value);
+    },
+    remove(value) {
+      values.delete(value);
+    },
+    contains(value) {
+      return values.has(value);
+    },
+    toArray() {
+      return Array.from(values).sort();
+    },
+  };
+}
+
+function makeElement(id, { tagName = "DIV", disabled = false, textContent = "" } = {}) {
+  return {
+    id,
+    tagName,
+    disabled,
+    textContent,
+    dataset: {},
+    attributes: {},
+    classList: makeClassList(id === "google-photos-open-signin" ? ["hidden"] : []),
+    href: "",
+    tabIndex: 0,
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
+    removeAttribute(name) {
+      delete this.attributes[name];
+      if (name === "href") {
+        this.href = "";
+      }
+    },
+  };
+}
+
+const elements = new Map([
+  ["google-photos-status", makeElement("google-photos-status")],
+  ["google-photos-connect", makeElement("google-photos-connect", {
+    tagName: "BUTTON",
+    textContent: "Connect Google Photos",
+  })],
+  ["google-photos-choose", makeElement("google-photos-choose", {
+    tagName: "BUTTON",
+    disabled: true,
+    textContent: "Choose from Google Photos",
+  })],
+  ["google-photos-open-signin", makeElement("google-photos-open-signin", {
+    tagName: "A",
+    textContent: "Open Google sign-in",
+  })],
+]);
+
+const storageWrites = [];
+function makeStorage() {
+  return {
+    setItem(key, value) {
+      storageWrites.push([String(key), String(value)]);
+    },
+    getItem() {
+      return null;
+    },
+    removeItem() {},
+  };
+}
+
+globalThis.document = {
+  body: { dataset: {} },
+  getElementById(id) {
+    return elements.get(id) || null;
+  },
+  querySelector() {
+    return null;
+  },
+  querySelectorAll() {
+    return [];
+  },
+  createElement(tagName) {
+    return { tagName: String(tagName).toUpperCase(), dataset: {}, children: [], appendChild() {} };
+  },
+  addEventListener() {},
+};
+
+globalThis.window = {
+  LEGALPDF_BROWSER_BOOTSTRAP: {
+    defaultRuntimeMode: "shadow",
+    defaultWorkspaceId: "google-photos-stage2",
+    defaultUiVariant: "qt",
+    shadowHost: "127.0.0.1",
+    shadowPort: 8890,
+    buildSha: "test",
+    assetVersion: "test-assets",
+    staticBasePath: "http://127.0.0.1:8890/static-build/test-assets/",
+  },
+  location: new URL("http://127.0.0.1:8890/?mode=shadow&workspace=google-photos-stage2#new-job"),
+  history: { replaceState() {} },
+  localStorage: makeStorage(),
+  sessionStorage: makeStorage(),
+  addEventListener() {},
+  removeEventListener() {},
+  dispatchEvent() {},
+  setTimeout() { return 1; },
+  clearTimeout() {},
+  confirm() { return true; },
+};
+globalThis.localStorage = globalThis.window.localStorage;
+globalThis.sessionStorage = globalThis.window.sessionStorage;
+globalThis.CustomEvent = class CustomEvent {
+  constructor(type, init = {}) {
+    this.type = type;
+    this.detail = init.detail;
+  }
+};
+
+const appModule = await import(__APP_MODULE_URL__);
+const authUrl = "https://oauth.example.invalid/start";
+appModule.setGooglePhotosAuthFallback(authUrl, { visible: true });
+appModule.renderGooglePhotosStatus({
+  configured: true,
+  connected: false,
+  client_id_configured: true,
+  client_secret_env_configured: true,
+});
+
+const fallback = elements.get("google-photos-open-signin");
+const disconnectedSnapshot = {
+  fallbackHidden: fallback.classList.contains("hidden"),
+  fallbackHref: fallback.href,
+  fallbackText: fallback.textContent,
+  statusText: elements.get("google-photos-status").textContent,
+  chooseDisabled: elements.get("google-photos-choose").disabled,
+  storageWrites: storageWrites.length,
+};
+
+appModule.renderGooglePhotosStatus({
+  configured: true,
+  connected: true,
+  client_id_configured: true,
+  client_secret_env_configured: true,
+});
+
+console.log(JSON.stringify({
+  disconnectedSnapshot,
+  connectedSnapshot: {
+    fallbackHidden: fallback.classList.contains("hidden"),
+    fallbackHref: fallback.href,
+    ariaHidden: fallback.attributes["aria-hidden"],
+    tabIndex: fallback.tabIndex,
+    chooseDisabled: elements.get("google-photos-choose").disabled,
+    statusText: elements.get("google-photos-status").textContent,
+  },
+}));
+"""
+    results = run_browser_esm_json_probe(script, {"__APP_MODULE_URL__": "app.js"}, timeout_seconds=30)
+
+    disconnected = results["disconnectedSnapshot"]
+    assert disconnected["fallbackHidden"] is False
+    assert disconnected["fallbackHref"] == "https://oauth.example.invalid/start"
+    assert disconnected["fallbackText"] == "Open Google sign-in"
+    assert disconnected["fallbackText"] != disconnected["fallbackHref"]
+    assert "Google sign-in is ready" in disconnected["statusText"]
+    assert disconnected["chooseDisabled"] is True
+    assert disconnected["storageWrites"] == 0
+
+    connected = results["connectedSnapshot"]
+    assert connected["fallbackHidden"] is True
+    assert connected["fallbackHref"] == ""
+    assert connected["ariaHidden"] == "true"
+    assert connected["tabIndex"] == -1
+    assert connected["chooseDisabled"] is False
+    assert "Google Photos connected" in connected["statusText"]
+
+
+def test_google_photos_picker_fallback_uses_autoclose_without_rendering_url_text() -> None:
+    script = """
+function makeClassList(initial = []) {
+  const values = new Set(initial);
+  return {
+    add(value) {
+      values.add(value);
+    },
+    remove(value) {
+      values.delete(value);
+    },
+    contains(value) {
+      return values.has(value);
+    },
+    toArray() {
+      return Array.from(values).sort();
+    },
+  };
+}
+
+function makeElement(id, { tagName = "DIV", disabled = false, textContent = "" } = {}) {
+  return {
+    id,
+    tagName,
+    disabled,
+    textContent,
+    dataset: {},
+    attributes: {},
+    classList: makeClassList(id === "google-photos-open-picker" ? ["hidden"] : []),
+    href: "",
+    tabIndex: 0,
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
+    removeAttribute(name) {
+      delete this.attributes[name];
+      if (name === "href") {
+        this.href = "";
+      }
+    },
+  };
+}
+
+const elements = new Map([
+  ["google-photos-status", makeElement("google-photos-status")],
+  ["google-photos-connect", makeElement("google-photos-connect", {
+    tagName: "BUTTON",
+    textContent: "Connect Google Photos",
+  })],
+  ["google-photos-choose", makeElement("google-photos-choose", {
+    tagName: "BUTTON",
+    textContent: "Choose from Google Photos",
+  })],
+  ["google-photos-open-picker", makeElement("google-photos-open-picker", {
+    tagName: "A",
+    textContent: "Open Google Photos Picker",
+  })],
+]);
+
+const storageWrites = [];
+function makeStorage() {
+  return {
+    setItem(key, value) {
+      storageWrites.push([String(key), String(value)]);
+    },
+    getItem() {
+      return null;
+    },
+    removeItem() {},
+  };
+}
+
+globalThis.document = {
+  body: { dataset: {} },
+  getElementById(id) {
+    return elements.get(id) || null;
+  },
+  querySelector() {
+    return null;
+  },
+  querySelectorAll() {
+    return [];
+  },
+  createElement(tagName) {
+    return { tagName: String(tagName).toUpperCase(), dataset: {}, children: [], appendChild() {} };
+  },
+  addEventListener() {},
+};
+
+globalThis.window = {
+  LEGALPDF_BROWSER_BOOTSTRAP: {
+    defaultRuntimeMode: "shadow",
+    defaultWorkspaceId: "google-photos-stage2",
+    defaultUiVariant: "qt",
+    shadowHost: "127.0.0.1",
+    shadowPort: 8890,
+    buildSha: "test",
+    assetVersion: "test-assets",
+    staticBasePath: "http://127.0.0.1:8890/static-build/test-assets/",
+  },
+  location: new URL("http://127.0.0.1:8890/?mode=shadow&workspace=google-photos-stage2#new-job"),
+  history: { replaceState() {} },
+  localStorage: makeStorage(),
+  sessionStorage: makeStorage(),
+  addEventListener() {},
+  removeEventListener() {},
+  dispatchEvent() {},
+  setTimeout() { return 1; },
+  clearTimeout() {},
+  confirm() { return true; },
+};
+globalThis.localStorage = globalThis.window.localStorage;
+globalThis.sessionStorage = globalThis.window.sessionStorage;
+globalThis.CustomEvent = class CustomEvent {
+  constructor(type, init = {}) {
+    this.type = type;
+    this.detail = init.detail;
+  }
+};
+
+const appModule = await import(__APP_MODULE_URL__);
+const pickerUri = "https://picker.example.invalid/session-123";
+const pickerWithSlash = "https://picker.example.invalid/session-456/";
+const pickerWithAutoclose = "https://picker.example.invalid/session-789/autoclose";
+appModule.setGooglePhotosPickerFallback(pickerUri, { visible: true });
+const fallback = elements.get("google-photos-open-picker");
+const visibleSnapshot = {
+  fallbackHidden: fallback.classList.contains("hidden"),
+  fallbackHref: fallback.href,
+  fallbackText: fallback.textContent,
+  storageWrites: storageWrites.length,
+  appendedOnce: appModule.googlePhotosPickerBrowserUrl(pickerWithSlash),
+  alreadyAutoclose: appModule.googlePhotosPickerBrowserUrl(pickerWithAutoclose),
+};
+appModule.setGooglePhotosPickerFallback("", { visible: false });
+console.log(JSON.stringify({
+  visibleSnapshot,
+  hiddenSnapshot: {
+    fallbackHidden: fallback.classList.contains("hidden"),
+    fallbackHref: fallback.href,
+    ariaHidden: fallback.attributes["aria-hidden"],
+    tabIndex: fallback.tabIndex,
+  },
+}));
+"""
+    results = run_browser_esm_json_probe(script, {"__APP_MODULE_URL__": "app.js"}, timeout_seconds=30)
+
+    visible = results["visibleSnapshot"]
+    assert visible["fallbackHidden"] is False
+    assert visible["fallbackHref"] == "https://picker.example.invalid/session-123/autoclose"
+    assert visible["fallbackText"] == "Open Google Photos Picker"
+    assert visible["fallbackText"] != visible["fallbackHref"]
+    assert visible["storageWrites"] == 0
+    assert visible["appendedOnce"] == "https://picker.example.invalid/session-456/autoclose"
+    assert visible["alreadyAutoclose"] == "https://picker.example.invalid/session-789/autoclose"
+
+    hidden = results["hiddenSnapshot"]
+    assert hidden["fallbackHidden"] is True
+    assert hidden["fallbackHref"] == ""
+    assert hidden["ariaHidden"] == "true"
+    assert hidden["tabIndex"] == -1
+
+
+def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
+    app_js = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert "export async function runWithBusy(buttonIds, busyLabels, action, options = {})" in app_js
+    assert "const guardIds = options.guardIds || buttonIds;" in app_js
+    assert "export function setGooglePhotosAuthFallback" in app_js
+    assert "export function setGooglePhotosPickerFallback" in app_js
+    assert "export function googlePhotosPickerBrowserUrl" in app_js
+    assert "localStorage.setItem" not in app_js
+    assert "sessionStorage.setItem" not in app_js
+    assert 'window.open(authUrl, "_blank", "noopener,noreferrer")' in app_js
+    assert "/autoclose" in app_js
+    assert '}, { guardIds: ["google-photos-connect"] });' in app_js
+    assert '}, { guardIds: ["google-photos-choose"] });' in app_js
 
 
 def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
@@ -3269,6 +3757,347 @@ def test_shadow_web_notification_upload_route_uses_service_response(tmp_path: Pa
         assert payload["status"] == "ok"
     assert payload["normalized_payload"]["service_date"] == "2026-02-26"
     assert Path(payload["diagnostics"]["uploaded_file"]).exists()
+
+
+def test_shadow_web_google_photos_status_route_is_sanitized(tmp_path: Path, monkeypatch) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.get("/api/interpretation/google-photos/status")
+
+    payload = response.json()
+    google_photos = payload["normalized_payload"]["google_photos"]
+    assert response.status_code == 200
+    assert google_photos["api"] == "google_photos_picker"
+    assert google_photos["connected"] is False
+    assert google_photos["location_metadata_available"] is False
+    assert "auth_url" not in google_photos
+    assert "access_token" not in str(payload)
+    assert "refresh_token" not in str(payload)
+
+
+def test_shadow_web_google_photos_connect_creates_pending_state_without_secrets(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LEGALPDF_GOOGLE_PHOTOS_CLIENT_SECRET", "configured-secret-value-12345")
+    settings_path = tmp_path / "shadow" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps({"google_photos_client_id": "test-client-id"}), encoding="utf-8")
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.post("/api/interpretation/google-photos/connect?mode=shadow&workspace=google-photos-review")
+
+    payload = response.json()
+    google_photos = payload["normalized_payload"]["google_photos"]
+    state = parse_qs(urlparse(google_photos["auth_url"]).query)["state"][0]
+    pending_path = tmp_path / "shadow" / "google_photos_picker_pending_oauth_states.json"
+    pending_raw = pending_path.read_text(encoding="utf-8")
+
+    assert response.status_code == 200
+    assert google_photos["scope"] == "https://www.googleapis.com/auth/photospicker.mediaitems.readonly"
+    assert state not in pending_raw
+    assert "access_token" not in pending_raw
+    assert "refresh_token" not in pending_raw
+    assert "configured" not in pending_raw
+
+
+def test_shadow_web_google_photos_oauth_callback_consumes_state_and_rejects_replay(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LEGALPDF_GOOGLE_PHOTOS_CLIENT_SECRET", "configured-secret-value-12345")
+    settings_path = tmp_path / "shadow" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps({"google_photos_client_id": "test-client-id"}), encoding="utf-8")
+    calls: list[dict[str, object]] = []
+
+    def fake_token_request(config, **kwargs):
+        calls.append(dict(kwargs))
+        return {"access_token": "test-access-token", "refresh_token": "test-refresh-token", "expires_in": 3600}
+
+    monkeypatch.setattr(shadow_app_module, "request_google_photos_authorization_token", fake_token_request)
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        connect_response = client.post("/api/interpretation/google-photos/connect?mode=shadow&workspace=google-photos-review")
+        auth_url = connect_response.json()["normalized_payload"]["google_photos"]["auth_url"]
+        state = parse_qs(urlparse(auth_url).query)["state"][0]
+        callback_response = client.get(_google_photos_callback_url(state=state, code="authorization-code"))
+        connected_status_response = client.get(
+            "/api/interpretation/google-photos/status?mode=shadow&workspace=google-photos-review"
+        )
+        replay_response = client.get(_google_photos_callback_url(state=state, code="authorization-code"))
+        replay_status_response = client.get(
+            "/api/interpretation/google-photos/status?mode=shadow&workspace=google-photos-review"
+        )
+
+    pending_raw = (tmp_path / "shadow" / "google_photos_picker_pending_oauth_states.json").read_text(encoding="utf-8")
+    assert callback_response.status_code == 200
+    assert "Google Photos connected" in callback_response.text
+    assert calls[0]["code"] == "authorization-code"
+    assert replay_response.status_code == 400
+    assert "state_invalid_or_expired" in replay_response.text
+    assert state not in pending_raw
+    token_raw = (tmp_path / "shadow" / "google_photos_picker_token.json").read_text(encoding="utf-8")
+    assert "test-access-token" in token_raw
+    diagnostic = connected_status_response.json()["normalized_payload"]["google_photos"]["last_callback_diagnostic"]
+    assert diagnostic["safe_failure_category"] == "connected"
+    assert diagnostic["state_verified"] is True
+    assert diagnostic["token_path_same_for_callback_and_status"] is True
+    replay_diagnostic = replay_status_response.json()["normalized_payload"]["google_photos"]["last_callback_diagnostic"]
+    assert replay_diagnostic["safe_failure_category"] == "state_invalid_or_expired"
+
+
+def test_shadow_web_google_photos_oauth_callback_rejects_missing_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.get(_google_photos_callback_url(code="authorization-code"))
+
+    assert response.status_code == 400
+    assert "state_missing" in response.text
+
+
+def test_shadow_web_google_photos_oauth_callback_reports_safe_failure_categories(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LEGALPDF_GOOGLE_PHOTOS_CLIENT_SECRET", "configured-secret-value-12345")
+    settings_path = tmp_path / "shadow" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps({"google_photos_client_id": "test-client-id"}), encoding="utf-8")
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        connect_response = client.post("/api/interpretation/google-photos/connect?mode=shadow&workspace=diag-workspace")
+        state = parse_qs(urlparse(connect_response.json()["normalized_payload"]["google_photos"]["auth_url"]).query)["state"][0]
+        error_response = client.get(_google_photos_callback_url(state=state, error="access_denied"))
+        status_response = client.get("/api/interpretation/google-photos/status?mode=shadow&workspace=diag-workspace")
+
+    assert error_response.status_code == 400
+    assert "oauth_error_param_present" in error_response.text
+    diagnostic = status_response.json()["normalized_payload"]["google_photos"]["last_callback_diagnostic"]
+    assert diagnostic["safe_failure_category"] == "oauth_error_param_present"
+    assert diagnostic["oauth_error_param_present"] is True
+    assert diagnostic["state_verified"] is True
+    serialized = json.dumps(diagnostic)
+    assert "access_denied" not in serialized
+    assert "test-client-id" not in serialized
+    assert state not in serialized
+
+
+def test_shadow_web_google_photos_oauth_callback_reports_missing_code(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LEGALPDF_GOOGLE_PHOTOS_CLIENT_SECRET", "configured-secret-value-12345")
+    settings_path = tmp_path / "shadow" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps({"google_photos_client_id": "test-client-id"}), encoding="utf-8")
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        connect_response = client.post("/api/interpretation/google-photos/connect?mode=shadow&workspace=diag-workspace")
+        state = parse_qs(urlparse(connect_response.json()["normalized_payload"]["google_photos"]["auth_url"]).query)["state"][0]
+        response = client.get(_google_photos_callback_url(state=state))
+        diagnostic = client.get(
+            "/api/interpretation/google-photos/status?mode=shadow&workspace=diag-workspace"
+        ).json()["normalized_payload"]["google_photos"]["last_callback_diagnostic"]
+
+    assert response.status_code == 400
+    assert "code_missing" in response.text
+    assert diagnostic["safe_failure_category"] == "code_missing"
+    assert diagnostic["code_present"] is False
+
+
+def test_shadow_web_google_photos_oauth_callback_maps_exchange_failure_without_leaking_body(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from legalpdf_translate.google_photos_oauth import GooglePhotosOAuthTokenExchangeError
+
+    monkeypatch.setenv("LEGALPDF_GOOGLE_PHOTOS_CLIENT_SECRET", "configured-secret-value-12345")
+    settings_path = tmp_path / "shadow" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps({"google_photos_client_id": "test-client-id"}), encoding="utf-8")
+
+    def fake_token_request(config, **kwargs):
+        raise GooglePhotosOAuthTokenExchangeError("token_exchange_invalid_client")
+
+    monkeypatch.setattr(shadow_app_module, "request_google_photos_authorization_token", fake_token_request)
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        connect_response = client.post("/api/interpretation/google-photos/connect?mode=shadow&workspace=diag-workspace")
+        state = parse_qs(urlparse(connect_response.json()["normalized_payload"]["google_photos"]["auth_url"]).query)["state"][0]
+        response = client.get(_google_photos_callback_url(state=state, code="secret-code"))
+        diagnostic = client.get(
+            "/api/interpretation/google-photos/status?mode=shadow&workspace=diag-workspace"
+        ).json()["normalized_payload"]["google_photos"]["last_callback_diagnostic"]
+
+    assert response.status_code == 502
+    assert "token_exchange_invalid_client" in response.text
+    assert diagnostic["safe_failure_category"] == "token_exchange_invalid_client"
+    assert diagnostic["token_exchange_attempted"] is True
+    serialized = json.dumps(diagnostic)
+    assert "secret-code" not in serialized
+    assert "test-client-id" not in serialized
+
+
+def test_shadow_web_google_photos_oauth_callback_detects_saved_token_but_empty_status(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LEGALPDF_GOOGLE_PHOTOS_CLIENT_SECRET", "configured-secret-value-12345")
+    settings_path = tmp_path / "shadow" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps({"google_photos_client_id": "test-client-id"}), encoding="utf-8")
+
+    def fake_token_request(config, **kwargs):
+        return {"expires_in": 3600}
+
+    monkeypatch.setattr(shadow_app_module, "request_google_photos_authorization_token", fake_token_request)
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        connect_response = client.post("/api/interpretation/google-photos/connect?mode=shadow&workspace=diag-workspace")
+        state = parse_qs(urlparse(connect_response.json()["normalized_payload"]["google_photos"]["auth_url"]).query)["state"][0]
+        response = client.get(_google_photos_callback_url(state=state, code="authorization-code"))
+        diagnostic = client.get(
+            "/api/interpretation/google-photos/status?mode=shadow&workspace=diag-workspace"
+        ).json()["normalized_payload"]["google_photos"]["last_callback_diagnostic"]
+
+    assert response.status_code == 400
+    assert "token_saved_but_status_empty" in response.text
+    assert diagnostic["safe_failure_category"] == "token_saved_but_status_empty"
+    assert diagnostic["token_save_succeeded"] is True
+    assert diagnostic["token_path_same_for_callback_and_status"] is True
+
+
+def test_shadow_web_google_photos_session_route_uses_interpretation_service(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def fake_create_session(**kwargs):
+        return {
+            "status": "ok",
+            "normalized_payload": {
+                "google_photos": {
+                    "session": {
+                        "session_id": "session-1",
+                        "picker_uri": "https://picker.example.invalid/session-1",
+                        "is_ready": False,
+                        "media_items_set": False,
+                    },
+                    "location_metadata_available": False,
+                }
+            },
+            "diagnostics": {},
+            "capability_flags": {},
+        }
+
+    monkeypatch.setattr(shadow_app_module, "create_google_photos_picker_session", fake_create_session)
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.post("/api/interpretation/google-photos/session")
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["normalized_payload"]["google_photos"]["session"]["session_id"] == "session-1"
+    assert payload["normalized_payload"]["google_photos"]["location_metadata_available"] is False
+
+
+def test_shadow_web_google_photos_delete_session_route_uses_interpretation_service(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    called: dict[str, object] = {}
+
+    def fake_delete_session(**kwargs):
+        called.update(kwargs)
+        return {
+            "status": "ok",
+            "normalized_payload": {"google_photos": {"session_deleted": True}},
+            "diagnostics": {},
+            "capability_flags": {},
+        }
+
+    monkeypatch.setattr(shadow_app_module, "delete_google_photos_picker_session", fake_delete_session)
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.delete("/api/interpretation/google-photos/session/session-1")
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert called["session_id"] == "session-1"
+    assert payload["normalized_payload"]["google_photos"]["session_deleted"] is True
+
+
+def test_shadow_web_google_photos_import_route_stays_in_interpretation_flow(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    called: dict[str, object] = {}
+
+    def fake_import(**kwargs):
+        called.update(kwargs)
+        return {
+            "status": "ok",
+            "normalized_payload": {
+                "case_number": "69/26.8PBBBJA",
+                "case_entity": "Ministerio Publico de Moura",
+                "case_city": "Moura",
+                "service_date": "",
+                "court_email": "",
+                "service_entity": "",
+                "service_city": "",
+                "travel_km_outbound": None,
+                "travel_km_return": None,
+                "use_service_location_in_honorarios": False,
+                "include_transport_sentence_in_honorarios": True,
+                "completed_at": "2026-04-27T10:00:00",
+                "translation_date": "",
+                "job_type": "Interpretation",
+                "lang": "",
+                "pages": 0,
+                "word_count": 0,
+                "rate_per_word": 0.0,
+                "expected_total": 0.0,
+                "amount_paid": 0.0,
+                "api_cost": 0.0,
+                "run_id": "",
+                "target_lang": "",
+                "total_tokens": None,
+                "estimated_api_cost": None,
+                "quality_risk_score": None,
+                "profit": 0.0,
+                "pdf_path": None,
+                "output_docx": None,
+                "partial_docx": None,
+            },
+            "diagnostics": {
+                "metadata_extraction": {"source": "google_photos_picker", "extracted_fields": ["case_city"]},
+                "google_photos": {
+                    "selected_photo": {
+                        "selection_key": "safe-selection",
+                        "source_filename": "notice.jpg",
+                        "location_status": "unavailable",
+                    }
+                },
+            },
+            "capability_flags": {},
+        }
+
+    monkeypatch.setattr(shadow_app_module, "import_google_photos_selection", fake_import)
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/api/interpretation/google-photos/import",
+            json={"session_id": "session-1", "selection_key": "safe-selection"},
+        )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert called["session_id"] == "session-1"
+    assert called["selection_key"] == "safe-selection"
+    assert payload["normalized_payload"]["job_type"] == "Interpretation"
+    assert payload["normalized_payload"]["case_city"] == "Moura"
+    assert "translation_route" not in str(payload)
 
 
 def test_shadow_web_extension_simulator_validation_returns_json(tmp_path: Path, monkeypatch) -> None:

@@ -1,7 +1,115 @@
 {
   "version": 1,
-  "last_updated": "2026-04-19T21:08:44Z",
+  "last_updated": "2026-04-28T15:57:40Z",
   "issues": [
+    {
+      "id": "google-photos-oauth-picker-validation-hygiene",
+      "title": "Google Photos OAuth and Picker validation repeatedly stalled on env, popup, secret, and selection-completion evidence",
+      "first_seen_timestamp": "2026-04-28T00:00:00Z",
+      "last_seen_timestamp": "2026-04-28T15:57:40Z",
+      "repeat_count": 6,
+      "status": "mitigated",
+      "trigger_source": "operational",
+      "symptoms": [
+        "Google Photos credentials were visible in PowerShell but not inherited by the app process.",
+        "A too-short or masked client secret allowed the config gate to look configured before token exchange failed with token_exchange_invalid_client.",
+        "The Connect button was visible but did not dispatch /api/interpretation/google-photos/connect because a disabled secondary Choose button blocked the busy guard.",
+        "/connect succeeded but no OAuth tab opened until a visible Open Google sign-in fallback was added.",
+        "OAuth callback diagnostics were needed to distinguish state, code, token-exchange, token-save, and token-path failures without exposing sensitive values.",
+        "Picker session creation and polling worked, but validation remained partial until the user confirmed the Google Photos completion screen and LegalPDF observed mediaItemsSet=true, media-items listing, import, and Review Case Details."
+      ],
+      "likely_root_cause": "Live OAuth and Picker flows crossed process environment inheritance, Google Cloud credential setup, browser popup behavior, route dispatch guards, user-controlled Google account consent/selection screens, and privacy-limited diagnostics. Without a strict source-aware config gate, visible browser fallbacks, and method/path-only route logs, each layer looked like the same generic disconnected or waiting state.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-04-28T00:00:00Z",
+          "summary": "Added Windows User environment fallback and source labels for Google Photos OAuth config.",
+          "outcome": "stronger_mitigation"
+        },
+        {
+          "timestamp": "2026-04-28T00:30:00Z",
+          "summary": "Tightened secret validation/reset checklist to reject placeholders, masked or too-short values, and Client-ID-shaped secrets.",
+          "outcome": "stronger_mitigation"
+        },
+        {
+          "timestamp": "2026-04-28T01:00:00Z",
+          "summary": "Fixed Connect dispatch by guarding only the primary action while disabling secondary buttons for busy state.",
+          "outcome": "accepted_ui_fix"
+        },
+        {
+          "timestamp": "2026-04-28T01:30:00Z",
+          "summary": "Added safe callback diagnostics and failure categories.",
+          "outcome": "allowed_invalid_client_diagnosis_without_leakage"
+        },
+        {
+          "timestamp": "2026-04-28T02:30:00Z",
+          "summary": "Added visible Open Google sign-in fallback.",
+          "outcome": "popup_noopener_no_longer_stranded_oauth"
+        },
+        {
+          "timestamp": "2026-04-28T14:00:00Z",
+          "summary": "Added visible Open Google Photos Picker fallback and clearer Picker instructions.",
+          "outcome": "picker_session_flow_became_user_completable"
+        },
+        {
+          "timestamp": "2026-04-28T15:57:40Z",
+          "summary": "Manual completion run confirmed Google Photos Done screen, mediaItemsSet=true, media-items listing, import route, and Review Case Details.",
+          "outcome": "accepted_validation"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-04-28T15:57:40Z",
+        "summary": "Source-aware OAuth config, stricter secret validation, safe callback diagnostics, primary-action busy guards, visible OAuth/Picker fallbacks, and a manual validation run that waits for explicit user selection completion before judging Picker readiness.",
+        "expected_result": "Future Google Photos Interpretation validation uses a safe config gate, visible fallback controls, sanitized route logs, and explicit user selection-completion evidence before proceeding to media import."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
+        "docs/assistant/VALIDATION.md",
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
+        "docs/assistant/exec_plans/completed/2026-04-28_google_photos_interpretation_import.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
+        "docs/assistant/VALIDATION.md",
+        "docs/assistant/HANDOFF.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md",
+        "docs/assistant/ISSUE_MEMORY.md",
+        "docs/assistant/ISSUE_MEMORY.json"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "Google Photos Picker API setup and exact redirect URI checklist",
+          "source-aware env diagnostics and invalid-secret classification",
+          "visible browser fallbacks for OAuth and Picker URLs without logging raw URLs",
+          "method/path-only route logs with no query strings",
+          "manual completion semantics for Google Photos Done screens and mediaItemsSet"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "runbook",
+          "ref": "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-28_google_photos_interpretation_import.md"
+        },
+        {
+          "type": "manual_validation_report",
+          "ref": "C:\\Users\\FA507\\Downloads\\legalpdf_translate_google_photos_picker_manual_completion_report_20260428_155740.md"
+        },
+        {
+          "type": "branch",
+          "ref": "feat/google-photos-interpretation"
+        }
+      ]
+    },
     {
       "id": "workflow-wrong-build-under-test",
       "title": "Wrong app/build under test because of mixed branches/worktrees and noncanonical launch",

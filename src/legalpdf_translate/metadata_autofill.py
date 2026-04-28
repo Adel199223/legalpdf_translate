@@ -1338,6 +1338,10 @@ def _read_exif_date(image_path: Path) -> str | None:
     return None
 
 
+def read_photo_exif_date(image_path: Path) -> str | None:
+    return _read_exif_date(image_path)
+
+
 def _ocr_photo_text(image_path: Path, config: MetadataAutofillConfig) -> OcrResult:
     try:
         engine = _build_ocr_engine_from_config(config)
@@ -1355,6 +1359,7 @@ def extract_photo_metadata_from_image(
     *,
     vocab_cities: list[str],
     config: MetadataAutofillConfig | None = None,
+    use_exif_date_as_service_date: bool = True,
 ) -> MetadataSuggestion:
     effective = config or MetadataAutofillConfig()
     exif_date = _read_exif_date(image_path)
@@ -1368,11 +1373,15 @@ def extract_photo_metadata_from_image(
         ai_enabled=effective.metadata_ai_enabled,
         ai_config=effective,
     )
-    if exif_date:
+    if exif_date and use_exif_date_as_service_date:
         suggestion.service_date = exif_date
         if suggestion.confidence is None:
             suggestion.confidence = {}
         suggestion.confidence["service_date"] = 0.99
+    elif exif_date:
+        if suggestion.confidence is None:
+            suggestion.confidence = {}
+        suggestion.confidence["photo_taken_date"] = 0.99
     return suggestion
 
 
@@ -1424,10 +1433,12 @@ def extract_interpretation_photo_metadata_from_image(
     *,
     vocab_cities: list[str],
     config: MetadataAutofillConfig | None = None,
+    use_exif_date_as_service_date: bool = True,
 ) -> MetadataSuggestion:
     base = extract_photo_metadata_from_image(
         image_path,
         vocab_cities=vocab_cities,
         config=config,
+        use_exif_date_as_service_date=use_exif_date_as_service_date,
     )
     return extract_interpretation_photo_metadata_from_suggestion(base)
