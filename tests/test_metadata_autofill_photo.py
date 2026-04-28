@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from PIL import Image
+
 from legalpdf_translate.metadata_autofill import (
+    MetadataAutofillConfig,
+    OcrMode,
     extract_from_photo_ocr_text,
+    extract_photo_metadata_from_image,
     extract_interpretation_photo_metadata_from_ocr_text,
 )
 
@@ -53,3 +58,21 @@ def test_extract_interpretation_photo_metadata_defaults_case_fields_from_service
     assert suggestion.case_number == "69/26.8PBBBJA"
     assert suggestion.service_city is None
     assert suggestion.service_date == "2026-02-02"
+
+
+def test_extract_photo_metadata_can_keep_exif_date_as_provenance_only(tmp_path) -> None:
+    image_path = tmp_path / "photo.jpg"
+    image = Image.new("RGB", (10, 10), color="white")
+    exif = Image.Exif()
+    exif[36867] = "2026:02:03 12:00:00"
+    image.save(image_path, exif=exif)
+
+    suggestion = extract_photo_metadata_from_image(
+        image_path,
+        vocab_cities=["Beja", "Moura"],
+        config=MetadataAutofillConfig(ocr_mode=OcrMode.OFF),
+        use_exif_date_as_service_date=False,
+    )
+
+    assert suggestion.service_date is None
+    assert suggestion.confidence == {"service_city": 0.0, "service_date": 0.0, "case_number": 0.0, "photo_taken_date": 0.99}

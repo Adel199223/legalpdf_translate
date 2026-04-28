@@ -20,7 +20,6 @@ from typing import Any, BinaryIO
 
 from legalpdf_translate.build_identity import (
     detect_runtime_build_identity,
-    normalize_path_identity,
     try_load_canonical_build_config,
 )
 from legalpdf_translate.gmail_focus import focus_bridge_owner, validate_bridge_owner
@@ -1141,10 +1140,7 @@ def discover_edge_unpacked_gmail_extensions(
             path_text = str(entry.get("path", "") or "").strip()
             if path_text == "":
                 continue
-            try:
-                normalized = normalize_path_identity(path_text)
-            except OSError:
-                continue
+            normalized = _normalize_edge_extension_path(path_text)
             if not normalized.endswith("/extensions/gmail_intake"):
                 continue
             cleaned_extension_id = str(extension_id).strip()
@@ -1164,6 +1160,13 @@ def discover_edge_unpacked_gmail_extensions(
             key=lambda item: (item.profile_name.casefold(), item.extension_id.casefold()),
         )
     )
+
+
+def _normalize_edge_extension_path(path_text: str) -> str:
+    cleaned = str(path_text or "").strip().replace("\\", "/")
+    if cleaned.startswith("//?/"):
+        cleaned = cleaned[4:]
+    return cleaned.rstrip("/").lower()
 
 
 def discover_edge_unpacked_gmail_extension_ids(*, edge_user_data_dir: Path | None = None) -> tuple[str, ...]:

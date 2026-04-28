@@ -624,6 +624,7 @@ def autofill_interpretation_from_photo(
     *,
     image_path: Path,
     settings_path: Path,
+    use_photo_date_as_service_date: bool = True,
 ) -> dict[str, Any]:
     joblog_settings, metadata_config = _metadata_config_from_settings_path(settings_path)
 
@@ -631,6 +632,7 @@ def autofill_interpretation_from_photo(
         image_path.expanduser().resolve(),
         vocab_cities=list(joblog_settings["vocab_cities"]),
         config=metadata_config,
+        use_exif_date_as_service_date=use_photo_date_as_service_date,
     )
     seed = build_interpretation_seed_from_photo_screenshot(
         suggestion=suggestion,

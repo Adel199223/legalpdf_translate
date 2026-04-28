@@ -86,6 +86,53 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 
 ## Active Entries
 
+### google-photos-oauth-picker-validation-hygiene
+- Title: Google Photos OAuth and Picker validation repeatedly stalled on env, popup, secret, and selection-completion evidence
+- First seen timestamp: `2026-04-28T00:00:00Z`
+- Last seen timestamp: `2026-04-28T15:57:40Z`
+- Repeat count: `6`
+- Status: `mitigated`
+- Trigger source: `operational`
+- Symptoms:
+  - Google Photos credentials were visible in PowerShell but not inherited by the app process.
+  - A too-short or masked client secret allowed the config gate to look configured before token exchange failed with `token_exchange_invalid_client`.
+  - The Connect button was visible but did not dispatch `/api/interpretation/google-photos/connect` because a disabled secondary `Choose` button blocked the busy guard.
+  - `/connect` succeeded but no OAuth tab opened until a visible `Open Google sign-in` fallback was added.
+  - OAuth callback diagnostics were needed to distinguish state/code/token-exchange/token-save/token-path failures without exposing sensitive values.
+  - Picker session creation and polling worked, but validation remained partial until the user confirmed the Google Photos completion screen and LegalPDF observed `mediaItemsSet=true`, media-items listing, import, and `Review Case Details`.
+- Likely root cause:
+  - Live OAuth/Picker flows crossed process environment inheritance, Google Cloud credential setup, browser popup behavior, route dispatch guards, user-controlled Google account/consent/selection screens, and privacy-limited diagnostics. Without a strict source-aware config gate, visible browser fallbacks, and method/path-only route logs, each layer looked like the same generic disconnected or waiting state.
+- Attempted fix history:
+  - `2026-04-28T00:00:00Z` — added Windows User environment fallback and source labels for Google Photos OAuth config; outcome: stronger mitigation.
+  - `2026-04-28T00:30:00Z` — tightened secret validation/reset checklist to reject placeholders, masked/too-short values, and Client-ID-shaped secrets; outcome: stronger mitigation.
+  - `2026-04-28T01:00:00Z` — fixed Connect dispatch by guarding only the primary action while disabling secondary buttons for busy state; outcome: accepted UI fix.
+  - `2026-04-28T01:30:00Z` — added safe callback diagnostics and failure categories; outcome: allowed `token_exchange_invalid_client` to be identified without leaking OAuth data.
+  - `2026-04-28T02:30:00Z` — added visible `Open Google sign-in` fallback; outcome: popup/noopener behavior no longer stranded OAuth.
+  - `2026-04-28T14:00:00Z` — added visible `Open Google Photos Picker` fallback and clearer Picker instructions; outcome: Picker session flow became user-completable.
+  - `2026-04-28T15:57:40Z` — manual completion run confirmed Google Photos `Done` screen, `mediaItemsSet=true`, media-items listing, import route, and `Review Case Details`; outcome: accepted validation.
+- Accepted fix:
+  - Source-aware OAuth config, stricter secret validation, safe callback diagnostics, primary-action busy guards, visible OAuth/Picker fallbacks, and a manual validation run that waits for explicit user selection completion before judging Picker readiness.
+- Regressed after accepted fix: `false`
+- Affected workflows/docs:
+  - `docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md`
+  - `docs/assistant/VALIDATION.md`
+  - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+  - `docs/assistant/exec_plans/completed/2026-04-28_google_photos_interpretation_import.md`
+- Bootstrap relevance: `possible`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - Google Photos Picker API setup and exact redirect URI checklist
+    - source-aware env diagnostics and invalid-secret classification
+    - visible browser fallbacks for OAuth and Picker URLs without logging raw URLs
+    - method/path-only route logs with no query strings
+    - manual completion semantics for Google Photos `Done` screens and `mediaItemsSet`
+- Evidence refs:
+  - `docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md`
+  - `docs/assistant/exec_plans/completed/2026-04-28_google_photos_interpretation_import.md`
+  - `C:\Users\FA507\Downloads\legalpdf_translate_google_photos_picker_manual_completion_report_20260428_155740.md`
+  - `feat/google-photos-interpretation`
+
 ### workflow-wrong-build-under-test
 - Title: Wrong app/build under test because of mixed branches/worktrees and noncanonical launch
 - First seen timestamp: `2026-03-06T00:00:00Z`

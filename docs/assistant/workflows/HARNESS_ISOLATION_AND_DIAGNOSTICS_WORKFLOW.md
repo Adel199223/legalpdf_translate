@@ -68,6 +68,7 @@ dart tooling/validate_agent_docs.dart
 - If one browser app serves both live and isolated modes, diagnostics must show the active mode, data root, workspace, and listener owner so shadow/test state cannot be mistaken for live readiness.
 - If a localhost browser tab is part of the handoff contract, diagnostics must also prove client hydration and client/server `asset_version` agreement so stale tabs or stale assets are not mistaken for a fresh successful launch.
 - For Gmail same-tab intake, the primary acceptance proof is the correlated click/session state: current `handoff_session_id`, same-tab redirect URL, `bridge_context_posted=true`, `source_gmail_url` present, `runtime_state_root_compatible=true`, and no `Pending load`/unavailable IDs.
+- For Google Photos Interpretation OAuth/Picker diagnostics, use shadow mode first, normally on `127.0.0.1:8890`, and log only method/path with query strings removed. Stop OAuth diagnostics after `connected=true` before opening Picker. For Picker diagnostics, continue only after the user confirms a non-private selection, then expect session polling -> `mediaItemsSet=true` -> media-items list -> import -> `Review Case Details` -> cleanup.
 
 ## Durable Diagnostics and Support Packet Rules
 - Keep existing per-run artifacts as the main run evidence.
@@ -128,6 +129,10 @@ dart tooling/validate_agent_docs.dart
 - Historical polluted artifacts are discovered:
   - fail closed and rerun to create clean artifacts
   - do not silently substitute partial or guessed outputs
+- Google Photos Picker session is created but `mediaItemsSet` remains false:
+  - confirm whether the Picker tab opened, whether the visible fallback was used, whether the same/expected Google account was active without recording the email, and whether the Google Photos completion screen appeared
+  - do not log Picker URLs, query strings, media IDs, base URLs, account identifiers, or raw photos
+  - if the user sees `Done! Continue in the other app or device`, treat selection as complete and continue LegalPDF polling before declaring failure
 - Host-bound desktop automation freezes the visible UI or dumps raw technical commands into the main warning text:
   - move the long-running step off the GUI thread
   - keep the main warning concise and place raw diagnostics in expandable details only

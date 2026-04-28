@@ -199,8 +199,18 @@ Use this flow when you need a `Requerimento de Honorários` for interpreting wor
    - `Blank/manual interpretation entry`
    - `From notification PDF...`
    - `From photo/screenshot...`
+   - `Choose from Google Photos` from `New Job > Interpretation`, when you want one user-selected Google Photos image
 3. Confirm the case, service, and date fields before saving the row.
-4. If a photo or screenshot import did not contain an explicit service entity or city, the form still opens and lets you fill those fields in manually.
+4. If a photo, screenshot, or Google Photos import did not contain an explicit service entity or city, the form still opens and lets you fill those fields in manually.
+
+### Google Photos path
+1. Use Google Photos only from the Interpretation panel. It does not translate the selected image and does not use target-language controls.
+2. Connect Google Photos if needed. If a browser popup is blocked, use `Open Google sign-in`.
+3. Click `Choose from Google Photos`. If the Google Photos Picker does not visibly open, use `Open Google Photos Picker`.
+4. Select exactly one non-private photo first and finish the Picker flow. A Google Photos `Done` screen means selection has completed.
+5. LegalPDF imports the selected image into the existing photo/OCR autofill path and opens `Review Case Details`.
+6. Google Photos `createTime` and any downloaded EXIF date are provenance only. Confirm `service_date`, `service_city`, and `case_city` from OCR/document text or manual review before generating the honorários document.
+7. Current validation did not prove Google Photos place/location or downloaded EXIF GPS support, so do not depend on either field.
 
 ### Service city and distance rules
 1. `Service same as Case` starts enabled for interpretation rows unless the imported data already proves a different service location.

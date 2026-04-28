@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
 import hashlib
+import html
 import json
 import mimetypes
 import os
@@ -50,6 +51,32 @@ from legalpdf_translate.gmail_focus_host import (
     inspect_edge_native_host,
     prepare_gmail_intake,
     restart_canonical_browser_runtime,
+)
+from legalpdf_translate.google_photos_oauth import (
+    GooglePhotosOAuthTokenExchangeError,
+    GooglePhotosOAuthTokenSaveError,
+    consume_pending_google_photos_oauth_state,
+    decode_google_photos_oauth_state_hint,
+    google_photos_callback_token_path_diagnostics,
+    google_photos_callback_token_status_label,
+    google_photos_connection_status,
+    load_google_photos_oauth_config,
+    new_google_photos_callback_diagnostic,
+    request_google_photos_authorization_token,
+    save_google_photos_callback_diagnostic,
+    save_google_photos_token,
+    safe_google_photos_workspace_label,
+    verify_pending_google_photos_oauth_state,
+)
+from legalpdf_translate.google_photos_picker import GooglePhotosPickerError
+from legalpdf_translate.interpretation_google_photos import (
+    build_google_photos_connect_response,
+    build_google_photos_status,
+    create_google_photos_picker_session,
+    delete_google_photos_picker_session,
+    get_google_photos_picker_session,
+    import_google_photos_selection,
+    list_google_photos_picker_media,
 )
 from legalpdf_translate.interpretation_service import (
     InterpretationValidationError,
@@ -211,6 +238,50 @@ def _versioned_static_base_url(request: Request, context: ShadowWebContext) -> s
 def _versioned_static_url(request: Request, context: ShadowWebContext, asset_path: str) -> str:
     relative_path = quote(str(asset_path or "").lstrip("/"), safe="/")
     return f"{_versioned_static_base_url(request, context)}{relative_path}"
+
+
+def _google_photos_redirect_uri(request: Request) -> str:
+    return str(request.url_for("api_google_photos_oauth_callback"))
+
+
+def _google_photos_callback_html(*, title: str, message: str, ok: bool) -> str:
+    escaped_title = html.escape(title)
+    escaped_message = html.escape(message)
+    tone = "#166534" if ok else "#991b1b"
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{escaped_title}</title>
+    <style>
+      body {{
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #f8fafc;
+        color: #0f172a;
+      }}
+      main {{
+        width: min(520px, calc(100vw - 32px));
+        border: 1px solid #dbe3ef;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 24px;
+        box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+      }}
+      strong {{ color: {tone}; }}
+      p {{ line-height: 1.5; }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <strong>{escaped_title}</strong>
+      <p>{escaped_message}</p>
+    </main>
+  </body>
+</html>"""
 
 
 def _resolve_static_asset(static_dir: Path, asset_path: str) -> Path | None:
@@ -1059,6 +1130,13 @@ def create_shadow_app(
             asset_version=context.asset_version,
         )
         response["normalized_payload"]["gmail"] = gmail_bootstrap["normalized_payload"]
+        google_photos_bootstrap = build_google_photos_status(
+            settings_path=target.data_paths.settings_path,
+            redirect_uri=_google_photos_redirect_uri(request),
+            mode=target.mode,
+            workspace_id=target.workspace_id,
+        )
+        response["normalized_payload"]["google_photos"] = google_photos_bootstrap["normalized_payload"]["google_photos"]
         extension_payload = response["normalized_payload"].get("extension_lab", {})
         if isinstance(extension_payload, dict):
             extension_payload["prepare_reason_catalog"] = extension_prepare_reason_catalog()
@@ -2837,6 +2915,256 @@ def create_shadow_app(
         )
         response.setdefault("diagnostics", {})
         response["diagnostics"]["uploaded_file"] = str(saved_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/interpretation/google-photos/status")
+    async def api_google_photos_status(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = build_google_photos_status(
+            settings_path=target.data_paths.settings_path,
+            redirect_uri=_google_photos_redirect_uri(request),
+            mode=target.mode,
+            workspace_id=target.workspace_id,
+        )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/google-photos/connect")
+    async def api_google_photos_connect(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = build_google_photos_connect_response(
+                settings_path=target.data_paths.settings_path,
+                redirect_uri=_google_photos_redirect_uri(request),
+                mode=target.mode,
+                workspace_id=target.workspace_id,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/interpretation/google-photos/oauth/callback", response_class=HTMLResponse)
+    async def api_google_photos_oauth_callback(request: Request) -> HTMLResponse:
+        state = str(request.query_params.get("state", "") or "")
+        code = str(request.query_params.get("code", "") or "")
+        oauth_error = str(request.query_params.get("error", "") or "").strip()
+        state_payload = decode_google_photos_oauth_state_hint(state)
+        target = _active_target(
+            request,
+            mode_override=state_payload.get("mode"),
+            workspace_override=state_payload.get("workspace_id"),
+        )
+        config = load_google_photos_oauth_config(
+            settings_path=target.data_paths.settings_path,
+            redirect_uri=_google_photos_redirect_uri(request),
+        )
+        diagnostic = new_google_photos_callback_diagnostic(
+            callback_received=True,
+            state_present=bool(state.strip()),
+            oauth_error_param_present=bool(oauth_error),
+            code_present=bool(code.strip()),
+            connect_workspace_id=safe_google_photos_workspace_label(state_payload.get("workspace_id", "")),
+            callback_workspace_id=safe_google_photos_workspace_label(target.workspace_id),
+        )
+
+        def _finalize_callback_diagnostic(
+            *,
+            category: str,
+            status_config: Any | None = None,
+            status_target: Any | None = None,
+        ) -> dict[str, Any]:
+            nonlocal diagnostic
+            checked_config = status_config or config
+            status = google_photos_connection_status(checked_config)
+            checked_target = status_target or target
+            diagnostic.update(
+                {
+                    "safe_failure_category": category,
+                    "token_status_after_callback": google_photos_callback_token_status_label(status),
+                    "status_workspace_id": safe_google_photos_workspace_label(checked_target.workspace_id),
+                }
+            )
+            diagnostic.update(
+                google_photos_callback_token_path_diagnostics(
+                    config,
+                    status_config=checked_config,
+                )
+            )
+            diagnostic = save_google_photos_callback_diagnostic(config, diagnostic)
+            return diagnostic
+
+        def _callback_failure(category: str, *, status_code: int = 400) -> HTMLResponse:
+            _finalize_callback_diagnostic(category=category)
+            return HTMLResponse(
+                _google_photos_callback_html(
+                    title="Google Photos connection failed",
+                    message=f"Google Photos connection failed: {category}.",
+                    ok=False,
+                ),
+                status_code=status_code,
+            )
+
+        if not state.strip():
+            return _callback_failure("state_missing")
+        try:
+            verified_state = verify_pending_google_photos_oauth_state(config, state=state)
+        except ValueError:
+            return _callback_failure("state_invalid_or_expired")
+        diagnostic["state_verified"] = True
+        target = _active_target(
+            request,
+            mode_override=verified_state.get("mode"),
+            workspace_override=verified_state.get("workspace_id"),
+        )
+        config = load_google_photos_oauth_config(
+            settings_path=target.data_paths.settings_path,
+            redirect_uri=_google_photos_redirect_uri(request),
+        )
+        diagnostic.update(
+            {
+                "connect_workspace_id": safe_google_photos_workspace_label(verified_state.get("workspace_id", "")),
+                "callback_workspace_id": safe_google_photos_workspace_label(target.workspace_id),
+            }
+        )
+        if oauth_error:
+            return _callback_failure("oauth_error_param_present")
+        if not code.strip():
+            return _callback_failure("code_missing")
+        try:
+            diagnostic["token_exchange_attempted"] = True
+            token_payload = request_google_photos_authorization_token(config, code=code)
+            diagnostic["token_exchange_succeeded"] = True
+            diagnostic["token_save_attempted"] = True
+            save_google_photos_token(config, token_payload)
+            diagnostic["token_save_succeeded"] = True
+        except GooglePhotosOAuthTokenExchangeError as exc:
+            return _callback_failure(exc.safe_category, status_code=502)
+        except GooglePhotosOAuthTokenSaveError:
+            return _callback_failure("token_save_failed")
+        except OSError:
+            return _callback_failure("token_save_failed")
+
+        status_config = load_google_photos_oauth_config(
+            settings_path=target.data_paths.settings_path,
+            redirect_uri=_google_photos_redirect_uri(request),
+        )
+        status = google_photos_connection_status(status_config)
+        consume_pending_google_photos_oauth_state(config, state=state)
+        path_flags = google_photos_callback_token_path_diagnostics(config, status_config=status_config)
+        if not path_flags["token_path_same_for_callback_and_status"]:
+            category = "token_path_mismatch"
+        elif not bool(status.get("connected", False)):
+            category = "token_saved_but_status_empty"
+        else:
+            category = "connected"
+        diagnostic.update(path_flags)
+        _finalize_callback_diagnostic(
+            category=category,
+            status_config=status_config,
+            status_target=target,
+        )
+        if category != "connected":
+            return HTMLResponse(
+                _google_photos_callback_html(
+                    title="Google Photos connection failed",
+                    message=f"Google Photos connection failed: {category}.",
+                    ok=False,
+                ),
+                status_code=400,
+            )
+        return HTMLResponse(
+            _google_photos_callback_html(
+                title="Google Photos connected",
+                message="You can close this tab and return to LegalPDF to choose a photo.",
+                ok=True,
+            )
+        )
+
+    @app.post("/api/interpretation/google-photos/session")
+    async def api_google_photos_session_create(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = create_google_photos_picker_session(
+                settings_path=target.data_paths.settings_path,
+                redirect_uri=_google_photos_redirect_uri(request),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        except GooglePhotosPickerError as exc:
+            return _validation_error_response(context, target, message=str(exc), status_code=502)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/interpretation/google-photos/session/{session_id}")
+    async def api_google_photos_session_get(request: Request, session_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = get_google_photos_picker_session(
+                settings_path=target.data_paths.settings_path,
+                redirect_uri=_google_photos_redirect_uri(request),
+                session_id=session_id,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        except GooglePhotosPickerError as exc:
+            return _validation_error_response(context, target, message=str(exc), status_code=502)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/interpretation/google-photos/session/{session_id}/media-items")
+    async def api_google_photos_media_items(request: Request, session_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = list_google_photos_picker_media(
+                settings_path=target.data_paths.settings_path,
+                redirect_uri=_google_photos_redirect_uri(request),
+                session_id=session_id,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        except GooglePhotosPickerError as exc:
+            return _validation_error_response(context, target, message=str(exc), status_code=502)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.delete("/api/interpretation/google-photos/session/{session_id}")
+    async def api_google_photos_session_delete(request: Request, session_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = delete_google_photos_picker_session(
+                settings_path=target.data_paths.settings_path,
+                redirect_uri=_google_photos_redirect_uri(request),
+                session_id=session_id,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        except GooglePhotosPickerError as exc:
+            return _validation_error_response(context, target, message=str(exc), status_code=502)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/google-photos/import")
+    async def api_google_photos_import(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = import_google_photos_selection(
+                settings_path=target.data_paths.settings_path,
+                uploads_dir=context.server_runtime_paths.uploads_dir,
+                redirect_uri=_google_photos_redirect_uri(request),
+                session_id=str(payload.get("session_id", "") or "").strip(),
+                selection_key=str(payload.get("selection_key", "") or "").strip(),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        except GooglePhotosPickerError as exc:
+            return _validation_error_response(context, target, message=str(exc), status_code=502)
         return JSONResponse(_merge_response(context, target, response))
 
     @app.post("/api/interpretation/save-row")

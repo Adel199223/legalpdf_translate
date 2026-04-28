@@ -69,6 +69,10 @@ function qsa(selector) {
   return Array.from(document.querySelectorAll(selector));
 }
 
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 function chipToneClass(status) {
   if (status === "ok") {
     return "ok";
@@ -143,6 +147,15 @@ const interpretationUiState = {
   reviewDrawerOpen: false,
   validationField: "",
   completionPayload: null,
+};
+
+const googlePhotosUiState = {
+  status: null,
+  sessionId: "",
+  selectedItems: [],
+  connectPollTimedOut: false,
+  authUrl: "",
+  pickerUrl: "",
 };
 
 const interpretationCityState = {
@@ -2996,6 +3009,7 @@ function renderBootstrap(payload) {
   renderProfile(payload);
   renderExtensionLab(payload);
   renderGmailBootstrap(payload);
+  renderGooglePhotosStatus(payload.normalized_payload.google_photos || {});
   renderStatus(payload);
   renderTranslationBootstrap(payload);
   renderShellVisibility();
@@ -3181,6 +3195,312 @@ async function handleUpload(formId, endpoint) {
   setPanelStatus("autofill", extractedFields.length ? "ok" : "warn", message);
   setDiagnostics("autofill", payload.diagnostics, { hint: message, open: !extractedFields.length });
   openInterpretationReviewDrawer();
+}
+
+function googlePhotosStatusMessage(status = {}) {
+  if (status.connected) {
+    return "Google Photos connected. Choose a photo to recover Interpretation metadata.";
+  }
+  if (googlePhotosUiState.authUrl && status.client_id_configured && status.client_secret_env_configured) {
+    return "Google sign-in is ready. If no Google tab opened, click Open Google sign-in.";
+  }
+  if (status.reason === "token_expired_reconnect_required") {
+    return "Google Photos authorization expired. Connect Google Photos again before choosing a photo.";
+  }
+  if (!status.client_id_configured) {
+    return "Google Photos is not configured. Add a client ID setting or environment variable before connecting.";
+  }
+  if (!status.client_secret_env_configured) {
+    return `Google Photos needs the ${status.client_secret_env_name || "client secret"} environment variable before connecting.`;
+  }
+  return "Google Photos is configured. Connect before choosing a photo.";
+}
+
+export function setGooglePhotosAuthFallback(authUrl = "", { visible = false } = {}) {
+  const fallback = qs("google-photos-open-signin");
+  const cleanedUrl = String(authUrl || "").trim();
+  googlePhotosUiState.authUrl = visible && cleanedUrl ? cleanedUrl : "";
+  if (!fallback) {
+    return;
+  }
+  if (visible && cleanedUrl) {
+    fallback.href = cleanedUrl;
+    fallback.classList.remove("hidden");
+    fallback.setAttribute("aria-hidden", "false");
+    fallback.tabIndex = 0;
+  } else {
+    fallback.removeAttribute("href");
+    fallback.classList.add("hidden");
+    fallback.setAttribute("aria-hidden", "true");
+    fallback.tabIndex = -1;
+  }
+}
+
+export function googlePhotosPickerBrowserUrl(pickerUri = "") {
+  const cleanedUrl = String(pickerUri || "").trim();
+  if (!cleanedUrl) {
+    return "";
+  }
+  try {
+    const parsed = new URL(cleanedUrl);
+    const normalizedPath = parsed.pathname.replace(/\/+$/, "");
+    if (!normalizedPath.endsWith("/autoclose")) {
+      parsed.pathname = `${normalizedPath}/autoclose`;
+    }
+    return parsed.toString();
+  } catch {
+    return cleanedUrl.endsWith("/autoclose") ? cleanedUrl : `${cleanedUrl.replace(/\/+$/, "")}/autoclose`;
+  }
+}
+
+export function setGooglePhotosPickerFallback(pickerUri = "", { visible = false } = {}) {
+  const fallback = qs("google-photos-open-picker");
+  const browserUrl = googlePhotosPickerBrowserUrl(pickerUri);
+  googlePhotosUiState.pickerUrl = visible && browserUrl ? browserUrl : "";
+  if (!fallback) {
+    return;
+  }
+  if (visible && browserUrl) {
+    fallback.href = browserUrl;
+    fallback.classList.remove("hidden");
+    fallback.setAttribute("aria-hidden", "false");
+    fallback.tabIndex = 0;
+  } else {
+    fallback.removeAttribute("href");
+    fallback.classList.add("hidden");
+    fallback.setAttribute("aria-hidden", "true");
+    fallback.tabIndex = -1;
+  }
+}
+
+export function renderGooglePhotosStatus(status = {}) {
+  googlePhotosUiState.status = status;
+  if (status.connected || !status.client_id_configured || !status.client_secret_env_configured) {
+    setGooglePhotosAuthFallback("", { visible: false });
+  }
+  if (!status.connected) {
+    setGooglePhotosPickerFallback("", { visible: false });
+  }
+  const statusNode = qs("google-photos-status");
+  if (statusNode) {
+    statusNode.textContent = googlePhotosStatusMessage(status);
+    statusNode.dataset.tone = status.connected ? "ok" : status.configured ? "warn" : "bad";
+  }
+  const connectButton = qs("google-photos-connect");
+  if (connectButton) {
+    connectButton.disabled = !status.client_id_configured || !status.client_secret_env_configured;
+    connectButton.textContent = status.connected ? "Reconnect Google Photos" : "Connect Google Photos";
+  }
+  const chooseButton = qs("google-photos-choose");
+  if (chooseButton) {
+    chooseButton.disabled = !status.connected;
+  }
+}
+
+function renderGooglePhotosSummary({ selectedPhoto = null, diagnostics = null, message = "" } = {}) {
+  const container = qs("google-photos-summary");
+  if (!container) {
+    return;
+  }
+  clearNode(container);
+  if (!selectedPhoto && !diagnostics && !message) {
+    container.classList.add("empty-state");
+    container.textContent = "No Google Photos selection yet.";
+    return;
+  }
+  container.classList.remove("empty-state");
+  container.appendChild(createResultHeader({
+    title: selectedPhoto?.source_filename || "Google Photos selection",
+    message: message || "Review the recovered fields before creating the fee-request document.",
+    label: selectedPhoto ? "Selected" : "Pending",
+    tone: selectedPhoto ? "ok" : "info",
+  }));
+  const grid = document.createElement("div");
+  grid.className = "result-grid";
+  appendResultGridItem(grid, "Create Time", selectedPhoto?.create_time || "Unavailable", { className: "word-break" });
+  appendResultGridItem(grid, "Filename", selectedPhoto?.source_filename || "Unavailable", { className: "word-break" });
+  const camera = selectedPhoto?.camera || {};
+  appendResultGridItem(grid, "Camera", [camera.make, camera.model].filter(Boolean).join(" ") || "Unavailable", { className: "word-break" });
+  const dimensions = selectedPhoto?.dimensions || {};
+  const dimensionLabel = dimensions.width && dimensions.height ? `${dimensions.width} x ${dimensions.height}` : "Unavailable";
+  appendResultGridItem(grid, "Dimensions", dimensionLabel, { className: "word-break" });
+  appendResultGridItem(grid, "Downloaded EXIF Date", diagnostics?.downloaded_exif_date || "Unavailable", { className: "word-break" });
+  appendResultGridItem(grid, "Location Status", diagnostics?.location_status || selectedPhoto?.location_status || "unavailable", { className: "word-break" });
+  container.appendChild(grid);
+}
+
+async function refreshGooglePhotosStatus() {
+  const payload = await fetchJson("/api/interpretation/google-photos/status", appState);
+  renderGooglePhotosStatus(payload.normalized_payload?.google_photos || {});
+  return payload;
+}
+
+function clampGooglePhotosPollMilliseconds(value, fallback, minValue, maxValue) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.max(minValue, Math.min(maxValue, parsed));
+}
+
+async function waitForGooglePhotosConnection() {
+  const startedAt = Date.now();
+  const timeoutMs = 90000;
+  const pollIntervalMs = 2000;
+  while (Date.now() - startedAt < timeoutMs) {
+    await delay(pollIntervalMs);
+    const payload = await refreshGooglePhotosStatus();
+    const status = payload.normalized_payload?.google_photos || {};
+    if (status.connected) {
+      googlePhotosUiState.connectPollTimedOut = false;
+      setPanelStatus("autofill", "ok", "Google Photos connected. Choose a photo to recover Interpretation metadata.");
+      renderGooglePhotosSummary({ message: "Google Photos connected. Choose a photo to continue." });
+      return true;
+    }
+  }
+  googlePhotosUiState.connectPollTimedOut = true;
+  setPanelStatus("autofill", "warn", "Google Photos authorization is still pending. Use Open Google sign-in if no Google tab opened, or return after completing Google consent.");
+  renderGooglePhotosSummary({ message: "Still waiting for Google Photos authorization. Use Open Google sign-in if no Google tab opened." });
+  await refreshGooglePhotosStatus().catch(() => {});
+  return false;
+}
+
+async function handleGooglePhotosConnect() {
+  const payload = await fetchJson("/api/interpretation/google-photos/connect", appState, { method: "POST" });
+  const authUrl = payload.normalized_payload?.google_photos?.auth_url || "";
+  if (!authUrl) {
+    throw new Error("Google Photos did not return an authorization URL.");
+  }
+  setGooglePhotosAuthFallback(authUrl, { visible: true });
+  try {
+    window.open(authUrl, "_blank", "noopener,noreferrer");
+  } catch {
+    // The visible fallback link remains available when the browser blocks programmatic opening.
+  }
+  const currentStatus = googlePhotosUiState.status || {};
+  renderGooglePhotosStatus({
+    ...currentStatus,
+    configured: true,
+    client_id_configured: true,
+    client_secret_env_configured: true,
+    connected: false,
+  });
+  setPanelStatus("autofill", "info", "Google sign-in is ready. If no Google tab opened, click Open Google sign-in.");
+  renderGooglePhotosSummary({ message: "Google sign-in is ready. If no Google tab opened, click Open Google sign-in." });
+  await waitForGooglePhotosConnection();
+}
+
+async function waitForGooglePhotosPickerSelection(sessionId, initialSession = {}) {
+  const encodedSessionId = encodeURIComponent(sessionId);
+  const pollIntervalMs = clampGooglePhotosPollMilliseconds(initialSession.poll_interval_ms, 2000, 1000, 10000);
+  const timeoutMs = clampGooglePhotosPollMilliseconds(initialSession.timeout_ms, 120000, 30000, 600000);
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const payload = await fetchJson(`/api/interpretation/google-photos/session/${encodedSessionId}`, appState);
+    const session = payload.normalized_payload?.google_photos?.session || {};
+    if (session.is_ready || session.media_items_set) {
+      setGooglePhotosPickerFallback("", { visible: false });
+      return session;
+    }
+    setPanelStatus("autofill", "info", "Waiting for Google Photos selection...");
+    renderGooglePhotosSummary({
+      message: "A Google Photos tab should open. Select one photo, then click Done. If no tab opened, click Open Google Photos Picker. LegalPDF will continue waiting here until selection is completed.",
+    });
+    await delay(clampGooglePhotosPollMilliseconds(session.poll_interval_ms, pollIntervalMs, 1000, 10000));
+  }
+  setGooglePhotosPickerFallback("", { visible: false });
+  throw new Error("Google Photos selection timed out before any media item was available.");
+}
+
+async function deleteGooglePhotosPickerSession(sessionId) {
+  const cleaned = String(sessionId || "").trim();
+  if (!cleaned) {
+    return null;
+  }
+  return fetchJson(`/api/interpretation/google-photos/session/${encodeURIComponent(cleaned)}`, appState, {
+    method: "DELETE",
+  });
+}
+
+async function handleGooglePhotosChoose() {
+  const pickerWindow = window.open("about:blank", "_blank", "noopener");
+  let importedSelection = false;
+  try {
+    const sessionPayload = await fetchJson("/api/interpretation/google-photos/session", appState, { method: "POST" });
+    const session = sessionPayload.normalized_payload?.google_photos?.session || {};
+    const pickerUri = session.picker_uri || "";
+    if (!session.session_id || !pickerUri) {
+      throw new Error("Google Photos Picker did not return a usable session.");
+    }
+    googlePhotosUiState.sessionId = session.session_id;
+    const pickerBrowserUrl = googlePhotosPickerBrowserUrl(pickerUri);
+    setGooglePhotosPickerFallback(pickerUri, { visible: true });
+    if (pickerWindow) {
+      pickerWindow.location.href = pickerBrowserUrl;
+    } else {
+      window.open(pickerBrowserUrl, "_blank", "noopener");
+    }
+    const pickerMessage = "A Google Photos tab should open. Select one photo, then click Done. If no tab opened, click Open Google Photos Picker. LegalPDF will continue waiting here until selection is completed.";
+    renderGooglePhotosSummary({ message: pickerMessage });
+    setPanelStatus("autofill", "info", pickerMessage);
+    await waitForGooglePhotosPickerSelection(session.session_id, session);
+    const mediaPayload = await fetchJson(
+      `/api/interpretation/google-photos/session/${encodeURIComponent(session.session_id)}/media-items`,
+      appState,
+    );
+    const googlePhotosPayload = mediaPayload.normalized_payload?.google_photos || {};
+    const mediaItems = googlePhotosPayload.media_items || [];
+    googlePhotosUiState.selectedItems = mediaItems;
+    if (!mediaItems.length) {
+      throw new Error("No Google Photos media item was selected.");
+    }
+    const selectionWarning = googlePhotosPayload.multiple_selection_warning || "";
+    renderGooglePhotosSummary({
+      selectedPhoto: mediaItems[0],
+      message: selectionWarning || "Selected photo found. Recovering Interpretation metadata...",
+    });
+    const importPayload = await fetchJson("/api/interpretation/google-photos/import", appState, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: session.session_id,
+        selection_key: mediaItems[0].selection_key || "",
+        mode: appState.runtimeMode,
+        workspace_id: appState.workspaceId,
+      }),
+    });
+    importedSelection = true;
+    setGooglePhotosPickerFallback("", { visible: false });
+    if (importPayload.normalized_payload) {
+      applyInterpretationSeed(importPayload.normalized_payload);
+    }
+    const extractedFields = importPayload.diagnostics?.metadata_extraction?.extracted_fields || [];
+    const message = extractedFields.length
+      ? `Recovered ${extractedFields.join(", ")} from the Google Photos selection.`
+      : "Google Photos import completed, but no metadata fields were recovered automatically.";
+    setPanelStatus("autofill", extractedFields.length ? "ok" : "warn", message);
+    setDiagnostics("autofill", importPayload.diagnostics, { hint: message, open: !extractedFields.length });
+    renderGooglePhotosSummary({
+      selectedPhoto: importPayload.diagnostics?.google_photos?.selected_photo || mediaItems[0],
+      diagnostics: importPayload.diagnostics?.google_photos || {},
+      message: importPayload.diagnostics?.google_photos?.multiple_selection_warning || message,
+    });
+    openInterpretationReviewDrawer();
+  } catch (error) {
+    if (pickerWindow) {
+      pickerWindow.close();
+    }
+    setGooglePhotosPickerFallback("", { visible: false });
+    throw error;
+  } finally {
+    if (googlePhotosUiState.sessionId && !importedSelection) {
+      await deleteGooglePhotosPickerSession(googlePhotosUiState.sessionId).catch(() => {});
+    }
+    if (!importedSelection) {
+      setGooglePhotosPickerFallback("", { visible: false });
+    }
+    await refreshGooglePhotosStatus().catch(() => {});
+  }
 }
 
 async function handleSave() {
@@ -3380,8 +3700,9 @@ function setBusy(buttonIds, busy, busyLabels = {}) {
   }
 }
 
-async function runWithBusy(buttonIds, busyLabels, action) {
-  if (buttonIds.some((id) => qs(id)?.disabled)) {
+export async function runWithBusy(buttonIds, busyLabels, action, options = {}) {
+  const guardIds = options.guardIds || buttonIds;
+  if (guardIds.some((id) => qs(id)?.disabled)) {
     return;
   }
   setBusy(buttonIds, true, busyLabels);
@@ -3478,6 +3799,31 @@ function wireEvents() {
         setDiagnostics("autofill", error, { hint: error.message || "Photo autofill failed.", open: true });
       }
     });
+  });
+
+  qs("google-photos-connect")?.addEventListener("click", async () => {
+    await runWithBusy(["google-photos-connect", "google-photos-choose"], { "google-photos-connect": "Connecting..." }, async () => {
+      try {
+        await handleGooglePhotosConnect();
+      } catch (error) {
+        setPanelStatus("autofill", "bad", error.message || "Google Photos connection failed.");
+        setDiagnostics("autofill", error, { hint: error.message || "Google Photos connection failed.", open: true });
+      }
+    }, { guardIds: ["google-photos-connect"] });
+    renderGooglePhotosStatus(googlePhotosUiState.status || {});
+  });
+
+  qs("google-photos-choose")?.addEventListener("click", async () => {
+    await runWithBusy(["google-photos-connect", "google-photos-choose", "photo-submit"], { "google-photos-choose": "Choosing..." }, async () => {
+      try {
+        await handleGooglePhotosChoose();
+      } catch (error) {
+        setPanelStatus("autofill", "bad", error.message || "Google Photos import failed.");
+        setDiagnostics("autofill", error, { hint: error.message || "Google Photos import failed.", open: true });
+        renderGooglePhotosSummary({ message: error.message || "Google Photos import failed." });
+      }
+    }, { guardIds: ["google-photos-choose"] });
+    renderGooglePhotosStatus(googlePhotosUiState.status || {});
   });
 
   qs("save-row").addEventListener("click", async () => {

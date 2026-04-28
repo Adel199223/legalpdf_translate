@@ -22,6 +22,7 @@
 
 ## Use when you need user-facing explanations
 - `docs/assistant/features/APP_USER_GUIDE.md`: beginner support guide covering the browser app as the normal daily-use surface, `live` vs isolated `shadow` mode, Gmail intake, OCR advisor, review queue, job log save/edit flows, interpretation honorários, and queue runs.
+- `docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md`: Google Photos Picker import runbook for Interpretation requests, including OAuth setup, Picker sessions, metadata provenance rules, troubleshooting, validation, and artifact hygiene.
 - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`: primary workflow guide covering browser-app-first translation, Gmail intake/reply flows, cost guardrails, review export, OCR advisor, queue runner behavior, and interpretation Job Log/honorários flows.
 - `docs/assistant/features/PRIMARY_FEATURE_USER_GUIDE.md`: compatibility shim to primary workflow guide.
 - `docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md`: plain-language guide for the saved multi-root VS Code workspace and the active LegalPDF Git worktrees on this machine.

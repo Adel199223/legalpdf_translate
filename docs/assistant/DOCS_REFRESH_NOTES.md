@@ -16,6 +16,42 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-04-28 — feat/google-photos-interpretation (Google Photos Interpretation docs sync)
+- Files changed:
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/HANDOFF.md
+  - docs/assistant/INDEX.md
+  - docs/assistant/ISSUE_MEMORY.md
+  - docs/assistant/ISSUE_MEMORY.json
+  - docs/assistant/VALIDATION.md
+  - docs/assistant/features/APP_USER_GUIDE.md
+  - docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md
+  - docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md
+  - docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md
+  - docs/assistant/exec_plans/completed/2026-04-28_google_photos_interpretation_import.md
+  - docs/assistant/manifest.json
+- Key symbols / entrypoints changed:
+  - docs-only sync for Google Photos Picker import into the existing Interpretation photo/OCR autofill flow
+  - `/api/interpretation/google-photos/status`
+  - `/api/interpretation/google-photos/connect`
+  - `/api/interpretation/google-photos/oauth/callback`
+  - `/api/interpretation/google-photos/session`
+  - `/api/interpretation/google-photos/session/{session}/media-items`
+  - `/api/interpretation/google-photos/import`
+- User-visible behavior:
+  - Google Photos is documented as Interpretation-only: select one non-private photo, import selected image/metadata, open `Review Case Details`, and continue through normal manual honorários review/export only after confirmation.
+  - Picker API setup now documents the minimal `photospicker.mediaitems.readonly` scope, exact local redirect URIs, no service-account support, visible sign-in/Picker fallbacks, and the successful route sequence.
+  - Metadata guidance now explicitly keeps Google Photos `createTime` and downloaded EXIF date as provenance only; `service_date`, `service_city`, and `case_city` remain OCR- or user-confirmed.
+  - Docs record that Google Photos place/location and downloaded EXIF GPS were absent or unproven in current validation.
+  - Docs record that a temporary OAuth client was exposed during troubleshooting and must be deleted or rotated before production-like use.
+- Tests:
+  - `.\.venv311\Scripts\python.exe -m pytest -q tests/test_google_photos_picker.py tests/test_interpretation_google_photos.py tests/test_metadata_autofill_photo.py` -> `22 passed`
+  - `.\.venv311\Scripts\python.exe -m pytest -q tests/test_shadow_web_api.py` -> `66 passed`
+  - `.\.venv311\Scripts\python.exe -m pytest -q tests/test_interpretation_review_state.py tests/test_honorarios_docx.py` -> `60 passed`
+  - `powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1` -> PASS; `dart run ...` hit the known missing `dartdev` AOT snapshot issue and both direct Dart fallbacks passed.
+
 ## 2026-04-19 — codex/gmail-honorarios-closeout-docs-sync (Gmail honorários local-court closeout)
 - Files changed:
   - APP_KNOWLEDGE.md
