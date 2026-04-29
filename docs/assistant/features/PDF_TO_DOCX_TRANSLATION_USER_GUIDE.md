@@ -209,8 +209,8 @@ Use this flow when you need a `Requerimento de Honorários` for interpreting wor
 3. Click `Choose from Google Photos`. If the Google Photos Picker does not visibly open, use `Open Google Photos Picker`.
 4. Select exactly one non-private photo first and finish the Picker flow. A Google Photos `Done` screen means selection has completed.
 5. LegalPDF imports the selected image into the existing photo/OCR autofill path and opens `Review Case Details`.
-6. Google Photos `createTime` and any downloaded EXIF date are provenance only. Confirm `service_date`, `service_city`, and `case_city` from OCR/document text or manual review before generating the honorários document.
-7. Current validation did not prove Google Photos place/location or downloaded EXIF GPS support, so do not depend on either field.
+6. Google Photos `createTime` and any downloaded EXIF date can help prefill the service date when OCR does not find one, but the date remains editable and should be checked before generating the honorários document.
+7. Google Photos place/location labels shown in Google Photos are not available through the Picker import used by LegalPDF. Confirm `service_city` and `case_city` from OCR/document text or manual review.
 
 ### Service city and distance rules
 1. `Service same as Case` starts enabled for interpretation rows unless the imported data already proves a different service location.
@@ -218,7 +218,8 @@ Use this flow when you need a `Requerimento de Honorários` for interpreting wor
 3. The service city is the travel-distance city for interpretation honorários.
 4. The visible KM field is the one-way distance only.
 5. When the current profile already has a saved distance for that service city, the app fills it in automatically.
-6. If you type a new one-way distance and save the row, the app remembers that value for that service city in the current profile.
+6. If you change the service city, the KM field refreshes from that city when the selected profile has a saved distance.
+7. If you type a new one-way distance and save the row, the app remembers that value for that service city in the current profile.
 
 ### Generate the document
 1. If you used `Tools > New Interpretation Honorários...`, save the row first and the export dialog opens automatically. Otherwise, open the saved interpretation row or keep the edit dialog open.

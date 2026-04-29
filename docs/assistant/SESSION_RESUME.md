@@ -43,6 +43,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Shadow Gmail intake can seed a safe demo PDF with `Load demo attachments` for feature-branch Review/Preview testing without live Gmail, native-host handoff, private attachments, or drafts.
 - Gmail batch finalization readiness now depends on a real Word export canary, not a launch-only Word probe.
 - Gmail translation honorários metadata now prefers the specific local court-unit city over a broader comarca city. The accepted April 19 live closeout on build `0b2687f` confirmed `case_city=Cuba`, `service_city=Cuba`, populated nested `result.artifacts.run_report_path`, `Processed pages: 2/2` for an intentional page-2 start, and finalization `draft_ready` with a Cuba honorários PDF.
+- Google Photos Interpretation Review Details follow-up is accepted in shadow validation: one selected Google Photos image reached Review Details with Beja case metadata, Beja court email, `Serviço de Turno | Moura`, service date `2026-04-25`, KM `26`, and `service_same=false`. Google Photos place/location remains unavailable from the Picker API; the service city is OCR/document evidence or user selection, while photo date is only an editable fallback when OCR has no date.
 - Report-restored completed Gmail translation batches are now secondary recovered history only; a fresh extension handoff or loaded Gmail message should supersede them automatically.
 - Browser-app live vs isolated-test mode remains a deliberate reusable system that should be preserved in later template-sync work.
 
@@ -81,6 +82,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
   - `docs/assistant/exec_plans/completed/2026-03-22_gmail_reply_address_fix.md`
   - `docs/assistant/exec_plans/completed/2026-03-22_interpretation_browser_ux_polish.md`
   - `docs/assistant/exec_plans/completed/2026-03-22_interpretation_city_distance_integrity.md`
+  - `docs/assistant/exec_plans/completed/2026-04-28_google_photos_service_city_distance_drawer.md`
 - Historical browser-to-Qt roadmap history remains available under `docs/assistant/exec_plans/completed/`.
 
 ## Next Concrete Action

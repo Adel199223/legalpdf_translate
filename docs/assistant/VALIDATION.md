@@ -55,7 +55,8 @@ Focused commands:
 ```powershell
 .\.venv311\Scripts\python.exe -m pytest -q tests/test_google_photos_picker.py tests/test_interpretation_google_photos.py tests/test_metadata_autofill_photo.py
 .\.venv311\Scripts\python.exe -m pytest -q tests/test_shadow_web_api.py
-.\.venv311\Scripts\python.exe -m pytest -q tests/test_interpretation_review_state.py tests/test_honorarios_docx.py
+.\.venv311\Scripts\python.exe -m pytest -q tests/test_interpretation_review_state.py tests/test_honorarios_docx.py tests/test_qt_app_state.py
+.\.venv311\Scripts\python.exe -m pytest -q tests/test_shadow_runtime_service.py
 powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1
 ```
 
@@ -80,8 +81,12 @@ Live validation acceptance checklist:
 - selected image imports into the existing Interpretation photo/OCR autofill flow.
 - `Review Case Details` opens.
 - Translation controls are avoided.
-- `createTime` and downloaded EXIF date are provenance only.
-- `service_date`, `service_city`, and `case_city` remain OCR- or user-confirmed.
+- `createTime` and downloaded EXIF date are photo-date provenance only; OCR/legal dates win, and photo date may prefill service date only as an editable fallback.
+- `service_city` and `case_city` remain OCR/document- or user-confirmed; Google Photos place/location is not available from the Picker API.
+- Review Details does not silently default blank service city or KM to the case city.
+- Recovered distinct case/service evidence stays distinct, for example case city `Beja` and service location `Serviço de Turno | Moura`.
+- KM is keyed to the effective service city and refreshes from profile distances when the service city changes.
+- City-aware court email options use the case city, not the service city.
 - Picker session cleanup succeeds.
 - No final honorários DOCX/PDF is generated unless explicitly approved and then manually reviewed.
 

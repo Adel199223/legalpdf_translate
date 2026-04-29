@@ -83,13 +83,12 @@ Important architecture rules:
 ## Metadata Policy
 Treat Google Photos metadata as provenance, not as final legal facts.
 
-- Google Photos `createTime` maps to photo-taken provenance only.
-- Downloaded EXIF date, when present, is also provenance only.
-- `service_date` must come from OCR/document text or explicit user confirmation.
+- Google Photos `createTime` maps to safe photo-taken provenance only.
+- Downloaded EXIF date, when present, is also safe photo-date provenance only.
+- OCR/legal text is the first source for `service_date`; when OCR does not recover a legal date, the app may prefill `service_date` from safe photo-date provenance as an editable fallback.
 - `service_city` and `case_city` must come from OCR/document text or explicit user confirmation.
-- Do not blindly set `service_date` from Google Photos `createTime`.
 - Do not blindly set `service_city` from a Google Photos place label.
-- Google Photos place/location fields were absent or unproven in current validation.
+- Google Photos place/location fields are unavailable from the official Picker selected-media payload used by this app, even when the Google Photos UI itself shows a place label.
 - Downloaded EXIF GPS was absent or unproven in current validation.
 - User confirmation remains required before generating the honorarios document.
 
@@ -161,8 +160,11 @@ Acceptance evidence:
 - Selected image imports.
 - Existing `Review Case Details` drawer opens.
 - Translation controls are avoided.
-- `createTime` remains provenance only.
-- `service_date`, `service_city`, and `case_city` remain OCR- or user-confirmed.
+- `createTime` and downloaded EXIF date remain photo-date provenance only, with OCR/legal date preferred.
+- `service_city` and `case_city` remain OCR/document- or user-confirmed.
+- Review Details does not silently copy case city or case-city distance into an unproven service city.
+- Distinct case/service evidence remains distinct and KM uses the effective service city profile distance.
+- Court email options follow the case city.
 - Picker session cleanup succeeds.
 - Focused tests and `scripts/validate_dev.ps1` pass.
 
@@ -195,7 +197,7 @@ Safe words such as `mediaItemsSet`, `pickerUri`, `baseUrl`, or `auth_url` may ap
 Review patches for this feature must include untracked Google Photos source, test, and docs files as well as tracked modifications. Do not rely on ordinary `git diff` alone when untracked feature files still exist.
 
 ## Validated State
-On `2026-04-28`, the feature branch validation proved:
+On `2026-04-29`, the feature branch validation proved:
 - config gate passed
 - OAuth reached `connected=true`
 - token store existed
@@ -203,10 +205,11 @@ On `2026-04-28`, the feature branch validation proved:
 - the Google Photos completion screen counted as completed selection
 - selected image import reached `Review Case Details`
 - Translation controls were avoided
-- `createTime` stayed provenance-only
-- service fields remained OCR- or user-confirmed
+- `createTime` and downloaded EXIF date stayed photo-date provenance only, with OCR/legal date preferred
+- service city stayed OCR/document- or user-confirmed; Google Photos place/location remained unavailable from Picker API
+- the accepted live Review Details result kept Beja case metadata, Beja court email, `Serviço de Turno | Moura`, service date `2026-04-25`, KM `26`, and `service_same=false`
 - no final DOCX/PDF was generated during the Google Photos validation
 - focused tests passed
 - sanitized artifact scan passed
 
-The temporary OAuth credential used during troubleshooting was exposed and must be deleted or rotated before production-like use.
+If any testing OAuth credential is exposed during troubleshooting, delete or rotate it before production-like use.

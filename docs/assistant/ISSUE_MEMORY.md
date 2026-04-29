@@ -133,6 +133,45 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - `C:\Users\FA507\Downloads\legalpdf_translate_google_photos_picker_manual_completion_report_20260428_155740.md`
   - `feat/google-photos-interpretation`
 
+### google-photos-interpretation-ocr-service-city-ranking
+- Title: Google Photos Interpretation OCR confused address/title fragments with case or service metadata
+- First seen timestamp: `2026-04-29T08:25:00Z`
+- Last seen timestamp: `2026-04-29T15:35:07Z`
+- Repeat count: `5`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - Google Photos selected-image import reached `Review Case Details`, but OCR noise sometimes left service entity/city blank.
+  - Address or title fragments such as `Palácio da Justiça`, `Justiça`, or subject text were sometimes treated as case city/entity candidates.
+  - A proven service location could be missed even though nearby service-turn/header evidence supported `Serviço de Turno | Moura`.
+  - KM refresh worked after manual city selection, proving the remaining bug was metadata extraction/ranking rather than distance mapping.
+- Likely root cause:
+  - Interpretation photo OCR used broad fallback text before ranking official case evidence and service-location evidence field by field. A first OCR pass could freeze weak case metadata and prevent stronger header/service-turn evidence from reaching the browser seed.
+- Attempted fix history:
+  - `2026-04-29T09:07:00Z` — added service-turn city-before-label extraction and kept case city Beja distinct from service city Moura; outcome: partial.
+  - `2026-04-29T12:38:00Z` — rejected placeholder values and strengthened official case evidence; outcome: partial.
+  - `2026-04-29T13:33:00Z` — added photo-date fallback and service-city distance refresh; outcome: distance/date accepted, service OCR still variable.
+  - `2026-04-29T16:17:44Z` — added strict address/title filtering plus field-by-field OCR variant ranking; outcome: accepted live Review Details behavior.
+- Accepted fix:
+  - Strictly reject placeholder/address/title fragments for case and service metadata, prefer official `Comarca`/court evidence for case city, prefer explicit service-turn/postcode/address evidence for service city, and leave fields blank/provisional rather than inventing a city when evidence is not trusted.
+- Regressed after accepted fix: `false`
+- Affected workflows/docs:
+  - `docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md`
+  - `docs/assistant/VALIDATION.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/exec_plans/completed/2026-04-28_google_photos_service_city_distance_drawer.md`
+- Bootstrap relevance: `possible`
+- Docs-sync relevance:
+  - Priority: `medium`
+  - Targets:
+    - Google Photos Interpretation metadata provenance
+    - OCR field-ranking rules for case city vs service city
+    - no Google Photos place/location claim
+    - blank/provisional fallback instead of invented address-fragment cities
+- Evidence refs:
+  - `docs/assistant/exec_plans/completed/2026-04-28_google_photos_service_city_distance_drawer.md`
+  - `feat/google-photos-service-city-distance-drawer`
+
 ### workflow-wrong-build-under-test
 - Title: Wrong app/build under test because of mixed branches/worktrees and noncanonical launch
 - First seen timestamp: `2026-03-06T00:00:00Z`

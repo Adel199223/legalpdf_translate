@@ -37,7 +37,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
   - `Recent Jobs`
   - `More`, which keeps `Dashboard`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab` reachable without crowding the first screen
 - `New Job` is translation-first by default and keeps interpretation inside the same shell through an in-page task switcher.
-- Interpretation now also supports a Google Photos Picker import path in shadow/live browser mode. The flow is Interpretation-only: connect Google Photos, choose one user-selected photo, import the selected image/metadata into the existing photo/OCR autofill path, review `Review Case Details`, and continue through the normal honorários review/export path only after user confirmation.
+- Interpretation now also supports a Google Photos Picker import path in shadow/live browser mode. The flow is Interpretation-only: connect Google Photos, choose one user-selected photo, import the selected image/metadata into the existing photo/OCR autofill path, review `Review Case Details`, and continue through the normal honorários review/export path only after user confirmation. The review drawer keeps case city and service city separate, uses city-aware court-email options, and keys distance to the effective service city.
 - `Gmail` is a dedicated browser view for exact-message context, attachment review, and continuation into translation or interpretation; deeper Gmail session/finalization work stays in same-tab drawers instead of crowding the intake screen.
 - Gmail intake now starts as one compact review-first surface instead of a stacked workspace. The first screen keeps message summary, supported attachments, workflow choice, target language, and one primary continue action visible.
 - Gmail translation continuation stays bounded in browser-native secondary surfaces:
@@ -249,12 +249,14 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - interpretation photo imports stay image-only and do not create a PDF-backed row contract
   - interpretation photo/screenshot imports tolerate missing service entity or city values and keep the form editable instead of failing autofill
   - Google Photos interpretation imports use the Picker API with the minimal `photospicker.mediaitems.readonly` scope, create a Picker session, open the Google Photos Picker or visible fallback, poll until `mediaItemsSet=true`, list the selected media item, download the selected image bytes, and feed the existing photo/OCR autofill path
-  - Google Photos `createTime` and downloaded EXIF dates are provenance only; `service_date`, `service_city`, and `case_city` remain OCR- or user-confirmed legal fields
-  - Google Photos place/location and downloaded EXIF GPS are not supported facts in the current validation state and must not be required or claimed unless a future sanitized live payload proves them
+  - Google Photos `createTime` and downloaded EXIF dates are safe photo-date provenance only; OCR/legal text still wins, but the photo date may prefill `service_date` as an editable fallback when OCR does not recover a legal date
+  - Google Photos place/location labels and downloaded EXIF GPS are not supported facts in the current validation state; `service_city` and `case_city` must come from OCR/document evidence or explicit user selection
+  - Google Photos/photo review now rejects placeholder and address/title fragments for city/entity fields, recovers service-turn evidence such as `Serviço de Turno | Moura`, and does not silently default blank service city/KM to the case city
+  - Review Case Details uses city-aware court-email options, a controlled service-entity selector, top-level add-city/add-email dialogs, and service-city distance refresh so switching the service city updates the one-way KM when the profile has a saved value
   - translation-only inputs are hidden in interpretation mode instead of shown as inactive clutter
   - the primary visible date in interpretation mode is the service date
   - interpretation distance is shown as one visible one-way value in the UI, keyed by `service_city`, and mirrored internally into outbound/return storage for compatibility
-  - `Service same as Case` defaults on for interpretation unless an explicit different service location already exists
+  - `Service same as Case` defaults on for interpretation unless an explicit different service location already exists; Google Photos/photo imports set it only when recovered service-city evidence matches the case city
   - interpretation edit mode now collapses `SERVICE` by default when it simply mirrors the case, and saved entity/city add actions use compact `+` buttons plus inline help affordances instead of long visible helper copy
   - profile-backed distance defaults are reused automatically by service city, and newly entered one-way values are persisted back to that profile-city mapping on save
 - Interpretation honorarios now use a kind-aware document branch:
