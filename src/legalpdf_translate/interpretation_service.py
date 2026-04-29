@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from contextlib import closing
 from dataclasses import asdict
 from datetime import datetime
@@ -48,6 +50,13 @@ if TYPE_CHECKING:
 
 INITIAL_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS = 45.0
 RETRY_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS = 90.0
+COURT_EMAIL_DOMAIN = "tribunais.org.pt"
+COURT_EMAIL_CITY_ALIASES = {
+    "reguengosdemonsaraz": "rmonsaraz",
+    "foroalentejo": "falentejo",
+    "ferreiradoalentejo": "falentejo",
+}
+COURT_EMAIL_RE = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
 
 
 class InterpretationValidationError(ValueError):
@@ -144,6 +153,102 @@ def _dedupe_casefolded(values: list[str]) -> list[str]:
         seen.add(key)
         deduped.append(cleaned)
     return deduped
+
+
+def _normalize_email(value: object) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _city_slug(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    ascii_text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    slug = re.sub(r"[^a-z0-9]+", "", ascii_text.casefold())
+    return COURT_EMAIL_CITY_ALIASES.get(slug, slug)
+
+
+def _email_local_matches_city(email: str, city: str) -> bool:
+    local_part, _sep, domain = _normalize_email(email).partition("@")
+    if domain != COURT_EMAIL_DOMAIN:
+        return False
+    slug = _city_slug(city)
+    if not slug:
+        return False
+    return (
+        local_part == slug
+        or local_part.startswith(f"{slug}.")
+        or local_part.endswith(f".{slug}")
+        or f".{slug}." in local_part
+    )
+
+
+def _canonical_city_from_available(city: object, available_cities: list[str]) -> str:
+    cleaned = _clean_city_value(city)
+    if not cleaned:
+        return ""
+    for available in available_cities:
+        if available.casefold() == cleaned.casefold():
+            return available
+    return ""
+
+
+def _email_list(values: object) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    if not isinstance(values, list):
+        return deduped
+    for value in values:
+        email = _normalize_email(value)
+        if not email or email in seen:
+            continue
+        if not COURT_EMAIL_RE.match(email):
+            continue
+        seen.add(email)
+        deduped.append(email)
+    return deduped
+
+
+def _derive_court_email_options_by_city(
+    *,
+    joblog_settings: Mapping[str, Any],
+    available_cities: list[str],
+) -> dict[str, list[str]]:
+    options: dict[str, list[str]] = {city: [] for city in available_cities}
+    explicit_email_keys: set[str] = set()
+    raw_mapping = joblog_settings.get("court_emails_by_city", {})
+    if isinstance(raw_mapping, Mapping):
+        for raw_city, raw_emails in raw_mapping.items():
+            canonical_city = _canonical_city_from_available(raw_city, available_cities)
+            if not canonical_city:
+                continue
+            for email in _email_list(raw_emails):
+                if email not in [item.casefold() for item in options[canonical_city]]:
+                    options[canonical_city].append(email)
+                explicit_email_keys.add(email.casefold())
+    for raw_email in list(joblog_settings.get("vocab_court_emails", [])):
+        email = _normalize_email(raw_email)
+        if not email or not COURT_EMAIL_RE.match(email) or email.casefold() in explicit_email_keys:
+            continue
+        for city in available_cities:
+            if not _email_local_matches_city(email, city):
+                continue
+            if email not in [item.casefold() for item in options[city]]:
+                options[city].append(email)
+            break
+    return {city: emails for city, emails in options.items() if emails}
+
+
+def _service_entity_options(joblog_settings: Mapping[str, Any]) -> list[str]:
+    defaults = [
+        "Serviço de Turno",
+        "GNR",
+        "PSP",
+        "Posto Territorial da GNR de {city}",
+        "Esquadra da PSP de {city}",
+    ]
+    return _dedupe_casefolded([
+        *[str(item or "") for item in list(joblog_settings.get("vocab_service_entities", []))],
+        *defaults,
+    ])
 
 
 def _metadata_config_from_settings_path(settings_path: Path) -> tuple[dict[str, Any], "MetadataAutofillConfig"]:
@@ -278,6 +383,11 @@ def build_interpretation_reference(
         "travel_origin_label": profile.travel_origin_label,
         "available_cities": available_cities,
         "travel_distances_by_city": known_distances,
+        "court_email_options_by_city": _derive_court_email_options_by_city(
+            joblog_settings=joblog_settings,
+            available_cities=available_cities,
+        ),
+        "service_entity_options": _service_entity_options(joblog_settings),
     }
 
 
@@ -337,13 +447,14 @@ def add_interpretation_city(
 
     _profiles, selected_profile_id, profile = _current_profile(settings_path=settings_path, profile_id=profile_id)
     persisted_distance: float | None = None
-    if include_transport_sentence:
+    distance_text = str(travel_km_outbound or "").strip()
+    if include_transport_sentence and distance_text:
         reference_after_city_save = build_interpretation_reference(
             settings_path=settings_path,
             profile_id=selected_profile_id,
         )
         persisted_distance = _resolve_transport_distance(
-            raw_value=travel_km_outbound,
+            raw_value=distance_text,
             city=city_clean,
             seed=build_blank_interpretation_seed(),
             reference=reference_after_city_save,
@@ -376,6 +487,76 @@ def add_interpretation_city(
             },
         },
         "diagnostics": {},
+        "capability_flags": _capability_flags_from_settings_path(settings_path),
+    }
+
+
+def add_interpretation_court_email(
+    *,
+    settings_path: Path,
+    city: str,
+    email: str,
+) -> dict[str, Any]:
+    settings = load_joblog_settings_from_path(settings_path)
+    _profiles, selected_profile_id, _profile = _current_profile(settings_path=settings_path)
+    reference_before = build_interpretation_reference(
+        settings_path=settings_path,
+        profile_id=selected_profile_id,
+    )
+    available_cities = [str(item or "").strip() for item in reference_before.get("available_cities", [])]
+    canonical_city = _canonical_city_from_available(city, available_cities)
+    if not canonical_city:
+        raise InterpretationValidationError(
+            code="unknown_case_city",
+            message="Case city must be selected from a known city before adding an email.",
+            field="case_city",
+            city=_clean_city_value(city),
+            travel_origin_label=str(reference_before.get("travel_origin_label", "") or ""),
+            city_source="current_selection",
+        )
+    normalized_email = _normalize_email(email)
+    if not normalized_email or not COURT_EMAIL_RE.match(normalized_email):
+        raise InterpretationValidationError(
+            code="invalid_court_email",
+            message="Court email must be a valid email address.",
+            field="court_email",
+            city=canonical_city,
+            travel_origin_label=str(reference_before.get("travel_origin_label", "") or ""),
+            city_source="current_selection",
+        )
+
+    mapping = {
+        str(map_city): list(emails)
+        for map_city, emails in dict(settings.get("court_emails_by_city", {})).items()
+    }
+    mapped_emails = _email_list(mapping.get(canonical_city, []))
+    if normalized_email.casefold() not in {item.casefold() for item in mapped_emails}:
+        mapped_emails.append(normalized_email)
+    mapping[canonical_city] = mapped_emails
+    flat_emails = _email_list(list(settings.get("vocab_court_emails", [])))
+    if normalized_email.casefold() not in {item.casefold() for item in flat_emails}:
+        flat_emails.append(normalized_email)
+    settings["court_emails_by_city"] = mapping
+    settings["vocab_court_emails"] = flat_emails
+    save_joblog_settings_to_path(
+        settings_path,
+        build_joblog_settings_save_bundle(settings),
+    )
+    reference = build_interpretation_reference(settings_path=settings_path, profile_id=selected_profile_id)
+    return {
+        "status": "ok",
+        "normalized_payload": {
+            "message": f"Added {normalized_email} for {canonical_city}.",
+            "city": canonical_city,
+            "email": normalized_email,
+            "interpretation_reference": reference,
+        },
+        "diagnostics": {
+            "validation": {
+                "city_known": True,
+                "email_valid": True,
+            },
+        },
         "capability_flags": _capability_flags_from_settings_path(settings_path),
     }
 
@@ -606,7 +787,15 @@ def autofill_interpretation_from_notification_pdf(
     if not extracted:
         extracted = [
             field_name
-            for field_name in ("case_entity", "case_city", "case_number", "court_email", "service_date")
+            for field_name in (
+                "case_entity",
+                "case_city",
+                "case_number",
+                "court_email",
+                "service_entity",
+                "service_city",
+                "service_date",
+            )
             if str(getattr(extraction.suggestion, field_name, "") or "").strip()
         ]
     return {
@@ -640,9 +829,10 @@ def autofill_interpretation_from_photo(
     )
     extracted_fields = [
         field_name
-        for field_name in ("case_entity", "case_city", "case_number", "service_date")
+        for field_name in ("case_entity", "case_city", "case_number", "service_entity", "service_city", "service_date")
         if str(getattr(suggestion, field_name, "") or "").strip()
     ]
+    service_city_source = "ocr" if str(getattr(suggestion, "service_city", "") or "").strip() else "not_available"
     return {
         "status": "ok" if extracted_fields else "failed",
         "normalized_payload": serialize_joblog_seed(seed),
@@ -650,6 +840,13 @@ def autofill_interpretation_from_photo(
             "metadata_extraction": {
                 "source": "photo",
                 "extracted_fields": extracted_fields,
+                "service_city_source": service_city_source,
+                "service_city_source_label": (
+                    "Service city source: OCR"
+                    if service_city_source == "ocr"
+                    else "Service city source: not available"
+                ),
+                "safe_diagnostics": dict(getattr(suggestion, "safe_diagnostics", None) or {}),
             }
         },
         "capability_flags": _capability_flags_from_settings_path(settings_path),

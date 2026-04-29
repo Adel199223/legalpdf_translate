@@ -46,11 +46,15 @@ import {
   buildInterpretationReference,
   deriveInterpretationDisclosurePresentation,
   deriveInterpretationDrawerLayout,
+  deriveInterpretationDistanceSync,
   deriveInterpretationGuardState,
   deriveInterpretationReviewPresentation,
+  deriveInterpretationSeedServiceDefaults,
   deriveInterpretationWorkspaceMode,
+  deriveCourtEmailSelection,
   normalizeCityName,
   resolveKnownCity,
+  serviceEntityOptionsForSelection,
 } from "./interpretation_review_state.js";
 import {
   appendMultilineText,
@@ -156,7 +160,21 @@ const googlePhotosUiState = {
   connectPollTimedOut: false,
   authUrl: "",
   pickerUrl: "",
+  disablePickerAutocloseOnce: false,
+  pickerDiagnostics: null,
 };
+
+const GOOGLE_PHOTOS_RECONNECT_GUIDANCE = "Google Photos could not add the selected photo. Reconnect Google Photos, then choose the image again. Make sure the Picker tab uses the same Google account.";
+const GOOGLE_PHOTOS_PICKER_FAILURE_CATEGORIES = new Set([
+  "picker_account_mismatch_possible",
+  "picker_stale_session_possible",
+  "picker_uri_not_opened",
+  "picker_user_did_not_click_done",
+  "picker_done_but_media_items_set_false",
+  "picker_reconnect_to_partner_app",
+  "picker_timeout",
+  "picker_unknown",
+]);
 
 const interpretationCityState = {
   provisionalCities: {
@@ -170,6 +188,7 @@ const interpretationCityState = {
     fieldName: "service_city",
     requireDistance: false,
   },
+  returnFocusId: "",
   autoDistanceCity: "",
   manualDistance: false,
 };
@@ -618,6 +637,58 @@ function refreshInterpretationCitySelectors() {
   populateInterpretationCitySelect("service_city", fieldValue("service-city"));
 }
 
+function populateCourtEmailSelect({ currentEmail = "", seedEmail = "" } = {}) {
+  const select = qs("court-email");
+  if (!select) {
+    return;
+  }
+  const reference = currentInterpretationReference();
+  const selection = deriveCourtEmailSelection({
+    reference,
+    caseCity: displayedInterpretationCity("case_city"),
+    currentEmail: currentEmail || select.value,
+    seedEmail,
+  });
+  select.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = selection.options.length ? "Select a court email" : "No email saved for this city";
+  select.appendChild(placeholder);
+  for (const email of selection.options) {
+    const option = document.createElement("option");
+    option.value = email;
+    option.textContent = email;
+    select.appendChild(option);
+  }
+  select.value = selection.email || "";
+}
+
+function populateServiceEntitySelect(selectedValue = "") {
+  const select = qs("service-entity");
+  if (!select) {
+    return;
+  }
+  const reference = currentInterpretationReference();
+  const options = serviceEntityOptionsForSelection(reference, selectedValue || select.value);
+  select.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Select service entity";
+  select.appendChild(placeholder);
+  for (const value of options) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  }
+  select.value = selectedValue || "";
+}
+
+function refreshInterpretationReferenceBoundControls({ seedEmail = "" } = {}) {
+  populateCourtEmailSelect({ currentEmail: fieldValue("court-email"), seedEmail });
+  populateServiceEntitySelect(fieldValue("service-entity"));
+}
+
 function normalizedField(value) {
   return String(value ?? "").trim().toLocaleLowerCase();
 }
@@ -635,6 +706,7 @@ function syncServiceFieldsFromCase() {
   if (!qs("service-same").checked) {
     return;
   }
+  populateServiceEntitySelect(fieldValue("case-entity"));
   setFieldValue("service-entity", fieldValue("case-entity"));
   setFieldValue("service-city", fieldValue("case-city"));
   setProvisionalCityValue("service_city", provisionalCityValue("case_city"));
@@ -1127,33 +1199,18 @@ function syncInterpretationDistanceFromReference() {
   if (!travelField || !hint) {
     return;
   }
-  const serviceCity = guard.effectiveServiceCity || "";
-  if (!guard.includeTransport) {
-    hint.textContent = deriveInterpretationDisclosurePresentation({
-      includeTransport: false,
-    }).transportDisabledHint;
-    return;
+  const syncState = deriveInterpretationDistanceSync({
+    guard,
+    travelKmOutbound: fieldValue("travel-km-outbound"),
+    autoDistanceCity: interpretationCityState.autoDistanceCity,
+    manualDistance: interpretationCityState.manualDistance,
+  });
+  if (fieldValue("travel-km-outbound") !== syncState.travelKmOutbound) {
+    setFieldValue("travel-km-outbound", syncState.travelKmOutbound);
   }
-  if (guard.parsedTravelDistanceState === "positive") {
-    interpretationCityState.autoDistanceCity = "";
-    interpretationCityState.manualDistance = true;
-    hint.textContent = guard.distanceHint || "Using the current one-way distance.";
-    return;
-  }
-  if (guard.knownDistance > 0 && serviceCity) {
-    if (!fieldValue("travel-km-outbound") || !interpretationCityState.manualDistance || interpretationCityState.autoDistanceCity !== serviceCity) {
-      setFieldValue("travel-km-outbound", String(guard.knownDistance));
-      interpretationCityState.autoDistanceCity = serviceCity;
-      interpretationCityState.manualDistance = false;
-    }
-    hint.textContent = guard.distanceHint || `Saved by city: ${guard.knownDistance} km one way.`;
-    return;
-  }
-  if (!fieldValue("travel-km-outbound")) {
-    interpretationCityState.autoDistanceCity = "";
-    interpretationCityState.manualDistance = false;
-  }
-  hint.textContent = guard.distanceHint || "Distance saved by city will appear here when available.";
+  interpretationCityState.autoDistanceCity = syncState.autoDistanceCity;
+  interpretationCityState.manualDistance = syncState.manualDistance;
+  hint.textContent = syncState.hintText || guard.distanceHint || "Distance saved by city will appear here when available.";
 }
 
 function updateInterpretationActionAvailability() {
@@ -1349,10 +1406,15 @@ function setInterpretationCityDialogOpen(open) {
 
 function closeInterpretationCityDialog(result = null) {
   const resolver = interpretationCityState.dialogResolver;
+  const returnFocusId = interpretationCityState.returnFocusId;
   interpretationCityState.dialogResolver = null;
+  interpretationCityState.returnFocusId = "";
   setInterpretationCityDialogOpen(false);
   if (typeof resolver === "function") {
     resolver(result);
+  }
+  if (returnFocusId) {
+    window.setTimeout(() => qs(returnFocusId)?.focus(), 0);
   }
 }
 
@@ -1380,13 +1442,20 @@ function openInterpretationCityDialog({
   const distanceHint = qs("interpretation-city-dialog-distance-hint");
   const confirmButton = qs("interpretation-city-dialog-confirm");
   const reference = currentInterpretationReference();
+  interpretationCityState.returnFocusId = document.activeElement?.id || interpretationCityAddButtonId(fieldName);
   if (title) {
-    title.textContent = interpretationCityState.activeDialog.mode === "distance" ? "Confirm One-Way Distance" : "Add City";
+    title.textContent = interpretationCityState.activeDialog.mode === "distance"
+      ? "Confirm One-Way Distance"
+      : (fieldName === "case_city" ? "Add Case City" : "Add Service City");
   }
   if (status) {
     status.textContent = interpretationCityState.activeDialog.mode === "distance"
       ? `Enter the one-way distance from ${reference.travelOriginLabel || "your travel origin"} to ${cityName}.`
-      : "Confirm the city details before continuing.";
+      : (
+        interpretationCityState.activeDialog.requireDistance
+          ? "Confirm the city details. Enter KM now to save a profile distance, or leave it blank."
+          : "Confirm the city details before continuing."
+      );
   }
   if (cityInput) {
     cityInput.readOnly = Boolean(lockedCity);
@@ -1396,8 +1465,8 @@ function openInterpretationCityDialog({
   }
   if (distanceHint) {
     distanceHint.textContent = reference.travelOriginLabel
-      ? `Use the one-way distance from ${reference.travelOriginLabel}.`
-      : "Use the one-way distance from your profile travel origin.";
+      ? `Optional one-way distance from ${reference.travelOriginLabel}.`
+      : "Optional one-way distance from your profile travel origin.";
   }
   if (confirmButton) {
     confirmButton.textContent = confirmLabel;
@@ -1431,6 +1500,7 @@ function applyInterpretationReferenceUpdate(interpretationReference, profileDist
       };
     });
   }
+  refreshInterpretationReferenceBoundControls();
 }
 
 async function persistInterpretationCity({ fieldName, cityName, distanceValue = "" } = {}) {
@@ -1450,14 +1520,19 @@ async function persistInterpretationCity({ fieldName, cityName, distanceValue = 
     payload.normalized_payload?.profile_distance_summary || null,
   );
   refreshInterpretationCitySelectors();
-  applyInterpretationCityValue(fieldName, payload.normalized_payload?.city || cityName);
+  const savedCity = payload.normalized_payload?.city || cityName;
+  applyInterpretationCityValue(fieldName, savedCity);
   if ((qs("service-same")?.checked ?? false) && fieldName === "case_city") {
-    applyInterpretationCityValue("service_city", payload.normalized_payload?.city || cityName);
+    applyInterpretationCityValue("service_city", savedCity);
   }
   if (String(distanceValue || "").trim()) {
     setFieldValue("travel-km-outbound", distanceValue);
     interpretationCityState.manualDistance = false;
-    interpretationCityState.autoDistanceCity = payload.normalized_payload?.city || cityName;
+    interpretationCityState.autoDistanceCity = savedCity;
+  } else if (fieldName === "service_city" || ((qs("service-same")?.checked ?? false) && fieldName === "case_city")) {
+    setFieldValue("travel-km-outbound", "");
+    interpretationCityState.manualDistance = false;
+    interpretationCityState.autoDistanceCity = "";
   }
   syncInterpretationCityControls();
   setPanelStatus("form", "ok", payload.normalized_payload?.message || "City saved.");
@@ -1465,6 +1540,46 @@ async function persistInterpretationCity({ fieldName, cityName, distanceValue = 
     hint: payload.normalized_payload?.message || "City saved.",
     open: false,
   });
+  return payload;
+}
+
+function setCourtEmailEditorOpen(open) {
+  const editor = qs("court-email-editor");
+  if (!editor) {
+    return;
+  }
+  editor.classList.toggle("hidden", !open);
+  if (open) {
+    setFieldValue("court-email-new", "");
+    const city = displayedInterpretationCity("case_city") || "selected city";
+    qs("court-email-status").textContent = `Add an email for ${city}.`;
+    window.setTimeout(() => qs("court-email-new")?.focus(), 0);
+  }
+}
+
+async function persistInterpretationCourtEmail() {
+  const city = displayedInterpretationCity("case_city");
+  const email = fieldValue("court-email-new");
+  const payload = await fetchJson("/api/interpretation/court-emails/add", appState, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      city,
+      email,
+    }),
+  });
+  applyInterpretationReferenceUpdate(
+    payload.normalized_payload?.interpretation_reference || null,
+    null,
+  );
+  populateCourtEmailSelect({ currentEmail: payload.normalized_payload?.email || email });
+  setCourtEmailEditorOpen(false);
+  setPanelStatus("form", "ok", payload.normalized_payload?.message || "Court email saved.");
+  setDiagnostics("form", payload, {
+    hint: payload.normalized_payload?.message || "Court email saved.",
+    open: false,
+  });
+  syncInterpretationReviewSurface();
   return payload;
 }
 
@@ -1953,7 +2068,8 @@ export function renderProfileDistanceRowsInto(container, rows, { onRemove } = {}
     const removeButton = document.createElement("button");
     removeButton.type = "button";
     removeButton.className = "ghost-button";
-    removeButton.textContent = "Remove";
+    removeButton.textContent = "Delete destination";
+    removeButton.setAttribute("aria-label", `Delete destination ${row.city}`);
     removeButton.addEventListener("click", () => onRemove?.(row));
     actions.appendChild(removeButton);
     article.appendChild(actions);
@@ -1971,7 +2087,7 @@ function renderProfileDistanceRows() {
       profileUiState.distanceRows = removeDistanceRow(profileUiState.distanceRows, row.city);
       syncProfileDistanceJsonField();
       renderProfileDistanceRows();
-      setProfileDistanceStatus("ok", `${row.city} removed from interpretation distances.`);
+      setProfileDistanceStatus("ok", `${row.city} deleted from interpretation distances. Save the profile to persist it.`);
     },
   });
 }
@@ -2086,7 +2202,7 @@ export function collectInterpretationFormValues() {
   };
 }
 
-export function applyInterpretationSeed(seed, { activateTask = true, openReview = false } = {}) {
+export function applyInterpretationSeed(seed, { activateTask = true, openReview = false, sourceKind = "" } = {}) {
   if (activateTask) {
     setNewJobTask("interpretation");
   }
@@ -2094,11 +2210,13 @@ export function applyInterpretationSeed(seed, { activateTask = true, openReview 
   appState.currentRowId = null;
   qs("row-id").value = "";
   setFieldValue("case-number", seed.case_number);
-  setFieldValue("court-email", seed.court_email);
   setFieldValue("case-entity", seed.case_entity);
   applyInterpretationCityValue("case_city", seed.case_city);
-  setFieldValue("service-entity", seed.service_entity || seed.case_entity || "");
-  applyInterpretationCityValue("service_city", seed.service_city || seed.case_city || "");
+  populateCourtEmailSelect({ seedEmail: seed.court_email });
+  const serviceDefaults = deriveInterpretationSeedServiceDefaults({ seed, sourceKind });
+  populateServiceEntitySelect(serviceDefaults.serviceEntity);
+  setFieldValue("service-entity", serviceDefaults.serviceEntity);
+  applyInterpretationCityValue("service_city", serviceDefaults.serviceCity);
   setFieldValue("service-date", seed.service_date);
   setFieldValue("travel-km-outbound", seed.travel_km_outbound ?? "");
   setFieldValue("pages", seed.pages ?? "");
@@ -2108,13 +2226,20 @@ export function applyInterpretationSeed(seed, { activateTask = true, openReview 
   setFieldValue("amount-paid", seed.amount_paid ?? "");
   setFieldValue("api-cost", seed.api_cost ?? "");
   setFieldValue("profit", seed.profit ?? "");
-  setCheckbox("service-same", inferServiceSame(seed.case_entity, seed.case_city, seed.service_entity, seed.service_city));
+  setCheckbox("service-same", serviceDefaults.serviceSame);
   setCheckbox("use-service-location", Boolean(seed.use_service_location_in_honorarios));
   setCheckbox("include-transport", seed.include_transport_sentence_in_honorarios !== false);
   qs("recipient-block").value = "";
-  updateServiceFieldState();
   interpretationCityState.manualDistance = Boolean(fieldValue("travel-km-outbound"));
   interpretationCityState.autoDistanceCity = "";
+  updateServiceFieldState();
+  if (sourceKind === "photo" || sourceKind === "google_photos") {
+    if (serviceDefaults.serviceSame) {
+      qs("interpretation-service-section")?.removeAttribute("open");
+    } else {
+      qs("interpretation-service-section")?.setAttribute("open", "open");
+    }
+  }
   resetInterpretationExportResult();
   syncInterpretationReviewSurface();
   if (openReview) {
@@ -2128,9 +2253,10 @@ function applyHistoryItem(item) {
   appState.currentRowId = item.row.id;
   qs("row-id").value = item.row.id;
   setFieldValue("case-number", item.row.case_number || "");
-  setFieldValue("court-email", item.row.court_email || "");
   setFieldValue("case-entity", item.row.case_entity || "");
   applyInterpretationCityValue("case_city", item.row.case_city || "");
+  populateCourtEmailSelect({ currentEmail: item.row.court_email || "" });
+  populateServiceEntitySelect(item.row.service_entity || "");
   setFieldValue("service-entity", item.row.service_entity || "");
   applyInterpretationCityValue("service_city", item.row.service_city || "");
   setFieldValue("service-date", item.row.service_date || "");
@@ -2997,6 +3123,7 @@ function renderBootstrap(payload) {
   renderTopbar(payload);
   renderProfiles(payload.normalized_payload.profiles || [], payload.normalized_payload.primary_profile_id);
   refreshInterpretationCitySelectors();
+  refreshInterpretationReferenceBoundControls();
   renderHistory(payload.normalized_payload.history || [], payload.normalized_payload.runtime.runtime_mode_label);
   renderRecentJobs(
     payload.normalized_payload.recent_jobs || [],
@@ -3023,6 +3150,7 @@ function renderBootstrap(payload) {
     applyInterpretationSeed(payload.normalized_payload.blank_seed, { activateTask: false });
   } else {
     refreshInterpretationCitySelectors();
+    refreshInterpretationReferenceBoundControls();
   }
   syncInterpretationReviewSurface();
   syncClientHydrationMarker({ payload: payload.normalized_payload });
@@ -3183,18 +3311,94 @@ async function refreshExtensionLab() {
   });
 }
 
-async function handleUpload(formId, endpoint) {
+async function handleUpload(formId, endpoint, { sourceKind = "" } = {}) {
   const form = qs(formId);
   const data = new FormData(form);
   const payload = await fetchJson(endpoint, appState, { method: "POST", body: data });
   if (payload.normalized_payload) {
-    applyInterpretationSeed(payload.normalized_payload);
+    applyInterpretationSeed(payload.normalized_payload, { sourceKind });
   }
   const extractedFields = payload.diagnostics?.metadata_extraction?.extracted_fields || [];
   const message = extractedFields.length ? `Recovered ${extractedFields.join(", ")} from the uploaded file.` : "No metadata fields were recovered automatically.";
   setPanelStatus("autofill", extractedFields.length ? "ok" : "warn", message);
   setDiagnostics("autofill", payload.diagnostics, { hint: message, open: !extractedFields.length });
   openInterpretationReviewDrawer();
+}
+
+function safeGooglePhotosPickerFailureCategory(value = "") {
+  const cleaned = String(value || "").trim();
+  return GOOGLE_PHOTOS_PICKER_FAILURE_CATEGORIES.has(cleaned) ? cleaned : "picker_unknown";
+}
+
+function googlePhotosBlockerCategory(value = "") {
+  const cleaned = String(value || "").trim();
+  if (cleaned === "reconnect_to_partner_app") {
+    return "picker_reconnect_to_partner_app";
+  }
+  if (cleaned === "could_not_add_photos") {
+    return "picker_done_but_media_items_set_false";
+  }
+  return "picker_unknown";
+}
+
+export function buildGooglePhotosPickerDiagnostics(updates = {}) {
+  const googleUiBlockerCategory = String(updates.google_ui_blocker_category || "").trim();
+  const inferredCategory = googleUiBlockerCategory
+    ? googlePhotosBlockerCategory(googleUiBlockerCategory)
+    : updates.safe_failure_category;
+  return {
+    picker_session_created: Boolean(updates.picker_session_created),
+    picker_fallback_visible: Boolean(updates.picker_fallback_visible),
+    picker_fallback_clicked: Boolean(updates.picker_fallback_clicked),
+    user_selected_one_photo: Boolean(updates.user_selected_one_photo),
+    user_clicked_done: Boolean(updates.user_clicked_done),
+    google_ui_blocker_seen: Boolean(updates.google_ui_blocker_seen),
+    google_ui_blocker_category: googleUiBlockerCategory || "unknown",
+    media_items_set_observed: Boolean(updates.media_items_set_observed),
+    media_items_list_called: Boolean(updates.media_items_list_called),
+    import_route_called: Boolean(updates.import_route_called),
+    picker_session_deleted: Boolean(updates.picker_session_deleted),
+    stale_picker_uri_possible: Boolean(updates.stale_picker_uri_possible),
+    safe_failure_category: safeGooglePhotosPickerFailureCategory(inferredCategory),
+  };
+}
+
+function updateGooglePhotosPickerDiagnostics(updates = {}) {
+  googlePhotosUiState.pickerDiagnostics = buildGooglePhotosPickerDiagnostics({
+    ...(googlePhotosUiState.pickerDiagnostics || {}),
+    ...updates,
+  });
+  return googlePhotosUiState.pickerDiagnostics;
+}
+
+export function resetGooglePhotosPickerState({ clearAuth = true, sessionDeleted = false } = {}) {
+  googlePhotosUiState.sessionId = "";
+  googlePhotosUiState.selectedItems = [];
+  googlePhotosUiState.pickerUrl = "";
+  googlePhotosUiState.disablePickerAutocloseOnce = false;
+  googlePhotosUiState.pickerDiagnostics = buildGooglePhotosPickerDiagnostics({
+    picker_session_deleted: sessionDeleted,
+    stale_picker_uri_possible: false,
+  });
+  setGooglePhotosPickerFallback("", { visible: false });
+  if (clearAuth) {
+    googlePhotosUiState.authUrl = "";
+    setGooglePhotosAuthFallback("", { visible: false });
+  }
+}
+
+export function googlePhotosUiSafeSnapshot() {
+  return {
+    hasSessionId: Boolean(googlePhotosUiState.sessionId),
+    selectedItemCount: googlePhotosUiState.selectedItems.length,
+    hasAuthUrl: Boolean(googlePhotosUiState.authUrl),
+    hasPickerUrl: Boolean(googlePhotosUiState.pickerUrl),
+    pickerDiagnostics: googlePhotosUiState.pickerDiagnostics || buildGooglePhotosPickerDiagnostics(),
+  };
+}
+
+export function setGooglePhotosPickerAutocloseDisabledForNextLaunch(disabled = true) {
+  googlePhotosUiState.disablePickerAutocloseOnce = Boolean(disabled);
 }
 
 function googlePhotosStatusMessage(status = {}) {
@@ -3236,10 +3440,13 @@ export function setGooglePhotosAuthFallback(authUrl = "", { visible = false } = 
   }
 }
 
-export function googlePhotosPickerBrowserUrl(pickerUri = "") {
+export function googlePhotosPickerBrowserUrl(pickerUri = "", { autoclose = true } = {}) {
   const cleanedUrl = String(pickerUri || "").trim();
   if (!cleanedUrl) {
     return "";
+  }
+  if (!autoclose) {
+    return cleanedUrl;
   }
   try {
     const parsed = new URL(cleanedUrl);
@@ -3255,8 +3462,15 @@ export function googlePhotosPickerBrowserUrl(pickerUri = "") {
 
 export function setGooglePhotosPickerFallback(pickerUri = "", { visible = false } = {}) {
   const fallback = qs("google-photos-open-picker");
-  const browserUrl = googlePhotosPickerBrowserUrl(pickerUri);
+  const browserUrl = googlePhotosPickerBrowserUrl(pickerUri, { autoclose: !googlePhotosUiState.disablePickerAutocloseOnce });
   googlePhotosUiState.pickerUrl = visible && browserUrl ? browserUrl : "";
+  updateGooglePhotosPickerDiagnostics({
+    picker_fallback_visible: Boolean(visible && browserUrl),
+    stale_picker_uri_possible: false,
+  });
+  if (visible && browserUrl) {
+    googlePhotosUiState.disablePickerAutocloseOnce = false;
+  }
   if (!fallback) {
     return;
   }
@@ -3317,7 +3531,8 @@ function renderGooglePhotosSummary({ selectedPhoto = null, diagnostics = null, m
   }));
   const grid = document.createElement("div");
   grid.className = "result-grid";
-  appendResultGridItem(grid, "Create Time", selectedPhoto?.create_time || "Unavailable", { className: "word-break" });
+  appendResultGridItem(grid, "Photo Taken Date", selectedPhoto?.photo_taken_at || selectedPhoto?.create_time || "Unavailable", { className: "word-break" });
+  appendResultGridItem(grid, "Photo Date Policy", diagnostics?.photo_taken_date_policy || "Photo taken date: provenance only", { className: "word-break" });
   appendResultGridItem(grid, "Filename", selectedPhoto?.source_filename || "Unavailable", { className: "word-break" });
   const camera = selectedPhoto?.camera || {};
   appendResultGridItem(grid, "Camera", [camera.make, camera.model].filter(Boolean).join(" ") || "Unavailable", { className: "word-break" });
@@ -3325,13 +3540,41 @@ function renderGooglePhotosSummary({ selectedPhoto = null, diagnostics = null, m
   const dimensionLabel = dimensions.width && dimensions.height ? `${dimensions.width} x ${dimensions.height}` : "Unavailable";
   appendResultGridItem(grid, "Dimensions", dimensionLabel, { className: "word-break" });
   appendResultGridItem(grid, "Downloaded EXIF Date", diagnostics?.downloaded_exif_date || "Unavailable", { className: "word-break" });
-  appendResultGridItem(grid, "Location Status", diagnostics?.location_status || selectedPhoto?.location_status || "unavailable", { className: "word-break" });
+  appendResultGridItem(grid, "Google Photos Location", diagnostics?.location_message || selectedPhoto?.location_message || "Google Photos location: unavailable from Picker API", { className: "word-break" });
+  appendResultGridItem(grid, "Service City Source", diagnostics?.service_city_source_label || "Service city source: not available", { className: "word-break" });
   container.appendChild(grid);
 }
 
 async function refreshGooglePhotosStatus() {
   const payload = await fetchJson("/api/interpretation/google-photos/status", appState);
   renderGooglePhotosStatus(payload.normalized_payload?.google_photos || {});
+  return payload;
+}
+
+async function handleGooglePhotosDisconnectForReconnect() {
+  const activeSessionId = googlePhotosUiState.sessionId;
+  let sessionDeleted = false;
+  if (activeSessionId) {
+    try {
+      await deleteGooglePhotosPickerSession(activeSessionId);
+      sessionDeleted = true;
+    } catch {
+      updateGooglePhotosPickerDiagnostics({
+        stale_picker_uri_possible: true,
+        safe_failure_category: "picker_stale_session_possible",
+      });
+    }
+  }
+  resetGooglePhotosPickerState({ clearAuth: true, sessionDeleted });
+  const payload = await fetchJson("/api/interpretation/google-photos/disconnect", appState, { method: "POST" });
+  const status = payload.normalized_payload?.google_photos || {};
+  renderGooglePhotosStatus(status);
+  setDiagnostics("autofill", payload.diagnostics || {}, {
+    hint: "Google Photos local connection was cleared. Connect again before choosing a photo.",
+    open: false,
+  });
+  setPanelStatus("autofill", "warn", "Google Photos local connection was cleared. Connect Google Photos again.");
+  renderGooglePhotosSummary({ message: "Google Photos local connection was cleared. Connect Google Photos again before choosing a photo." });
   return payload;
 }
 
@@ -3366,6 +3609,12 @@ async function waitForGooglePhotosConnection() {
 }
 
 async function handleGooglePhotosConnect() {
+  const currentStatus = googlePhotosUiState.status || {};
+  if (currentStatus.connected) {
+    await handleGooglePhotosDisconnectForReconnect();
+  } else {
+    resetGooglePhotosPickerState({ clearAuth: true });
+  }
   const payload = await fetchJson("/api/interpretation/google-photos/connect", appState, { method: "POST" });
   const authUrl = payload.normalized_payload?.google_photos?.auth_url || "";
   if (!authUrl) {
@@ -3377,9 +3626,9 @@ async function handleGooglePhotosConnect() {
   } catch {
     // The visible fallback link remains available when the browser blocks programmatic opening.
   }
-  const currentStatus = googlePhotosUiState.status || {};
+  const nextStatus = googlePhotosUiState.status || {};
   renderGooglePhotosStatus({
-    ...currentStatus,
+    ...nextStatus,
     configured: true,
     client_id_configured: true,
     client_secret_env_configured: true,
@@ -3399,6 +3648,10 @@ async function waitForGooglePhotosPickerSelection(sessionId, initialSession = {}
     const payload = await fetchJson(`/api/interpretation/google-photos/session/${encodedSessionId}`, appState);
     const session = payload.normalized_payload?.google_photos?.session || {};
     if (session.is_ready || session.media_items_set) {
+      updateGooglePhotosPickerDiagnostics({
+        media_items_set_observed: true,
+        safe_failure_category: "picker_unknown",
+      });
       setGooglePhotosPickerFallback("", { visible: false });
       return session;
     }
@@ -3408,6 +3661,10 @@ async function waitForGooglePhotosPickerSelection(sessionId, initialSession = {}
     });
     await delay(clampGooglePhotosPollMilliseconds(session.poll_interval_ms, pollIntervalMs, 1000, 10000));
   }
+  updateGooglePhotosPickerDiagnostics({
+    safe_failure_category: "picker_timeout",
+    stale_picker_uri_possible: true,
+  });
   setGooglePhotosPickerFallback("", { visible: false });
   throw new Error("Google Photos selection timed out before any media item was available.");
 }
@@ -3425,6 +3682,7 @@ async function deleteGooglePhotosPickerSession(sessionId) {
 async function handleGooglePhotosChoose() {
   const pickerWindow = window.open("about:blank", "_blank", "noopener");
   let importedSelection = false;
+  resetGooglePhotosPickerState({ clearAuth: false });
   try {
     const sessionPayload = await fetchJson("/api/interpretation/google-photos/session", appState, { method: "POST" });
     const session = sessionPayload.normalized_payload?.google_photos?.session || {};
@@ -3433,7 +3691,12 @@ async function handleGooglePhotosChoose() {
       throw new Error("Google Photos Picker did not return a usable session.");
     }
     googlePhotosUiState.sessionId = session.session_id;
-    const pickerBrowserUrl = googlePhotosPickerBrowserUrl(pickerUri);
+    updateGooglePhotosPickerDiagnostics({
+      picker_session_created: true,
+      media_items_set_observed: Boolean(session.is_ready || session.media_items_set),
+      safe_failure_category: "picker_unknown",
+    });
+    const pickerBrowserUrl = googlePhotosPickerBrowserUrl(pickerUri, { autoclose: !googlePhotosUiState.disablePickerAutocloseOnce });
     setGooglePhotosPickerFallback(pickerUri, { visible: true });
     if (pickerWindow) {
       pickerWindow.location.href = pickerBrowserUrl;
@@ -3444,6 +3707,7 @@ async function handleGooglePhotosChoose() {
     renderGooglePhotosSummary({ message: pickerMessage });
     setPanelStatus("autofill", "info", pickerMessage);
     await waitForGooglePhotosPickerSelection(session.session_id, session);
+    updateGooglePhotosPickerDiagnostics({ media_items_list_called: true });
     const mediaPayload = await fetchJson(
       `/api/interpretation/google-photos/session/${encodeURIComponent(session.session_id)}/media-items`,
       appState,
@@ -3452,6 +3716,10 @@ async function handleGooglePhotosChoose() {
     const mediaItems = googlePhotosPayload.media_items || [];
     googlePhotosUiState.selectedItems = mediaItems;
     if (!mediaItems.length) {
+      updateGooglePhotosPickerDiagnostics({
+        media_items_set_observed: false,
+        safe_failure_category: "picker_done_but_media_items_set_false",
+      });
       throw new Error("No Google Photos media item was selected.");
     }
     const selectionWarning = googlePhotosPayload.multiple_selection_warning || "";
@@ -3459,6 +3727,7 @@ async function handleGooglePhotosChoose() {
       selectedPhoto: mediaItems[0],
       message: selectionWarning || "Selected photo found. Recovering Interpretation metadata...",
     });
+    updateGooglePhotosPickerDiagnostics({ import_route_called: true });
     const importPayload = await fetchJson("/api/interpretation/google-photos/import", appState, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3470,9 +3739,16 @@ async function handleGooglePhotosChoose() {
       }),
     });
     importedSelection = true;
+    googlePhotosUiState.sessionId = "";
+    updateGooglePhotosPickerDiagnostics({
+      media_items_set_observed: true,
+      media_items_list_called: true,
+      import_route_called: true,
+      safe_failure_category: "picker_unknown",
+    });
     setGooglePhotosPickerFallback("", { visible: false });
     if (importPayload.normalized_payload) {
-      applyInterpretationSeed(importPayload.normalized_payload);
+      applyInterpretationSeed(importPayload.normalized_payload, { sourceKind: "google_photos" });
     }
     const extractedFields = importPayload.diagnostics?.metadata_extraction?.extracted_fields || [];
     const message = extractedFields.length
@@ -3490,11 +3766,31 @@ async function handleGooglePhotosChoose() {
     if (pickerWindow) {
       pickerWindow.close();
     }
+    const currentCategory = googlePhotosUiState.pickerDiagnostics?.safe_failure_category || "";
+    if (!currentCategory || currentCategory === "picker_unknown") {
+      updateGooglePhotosPickerDiagnostics({
+        safe_failure_category: String(error.message || "").includes("timed out") ? "picker_timeout" : "picker_unknown",
+      });
+    }
     setGooglePhotosPickerFallback("", { visible: false });
     throw error;
   } finally {
     if (googlePhotosUiState.sessionId && !importedSelection) {
-      await deleteGooglePhotosPickerSession(googlePhotosUiState.sessionId).catch(() => {});
+      await deleteGooglePhotosPickerSession(googlePhotosUiState.sessionId)
+        .then(() => {
+          updateGooglePhotosPickerDiagnostics({
+            picker_session_deleted: true,
+            stale_picker_uri_possible: false,
+          });
+        })
+        .catch(() => {
+          updateGooglePhotosPickerDiagnostics({
+            picker_session_deleted: false,
+            stale_picker_uri_possible: true,
+            safe_failure_category: "picker_stale_session_possible",
+          });
+        });
+      googlePhotosUiState.sessionId = "";
     }
     if (!importedSelection) {
       setGooglePhotosPickerFallback("", { visible: false });
@@ -3793,7 +4089,7 @@ function wireEvents() {
     await runWithBusy(["photo-submit"], { "photo-submit": "Autofilling..." }, async () => {
       try {
         setPanelStatus("autofill", "", "Running photo/screenshot metadata recovery...");
-        await handleUpload("photo-upload-form", "/api/interpretation/autofill-photo");
+        await handleUpload("photo-upload-form", "/api/interpretation/autofill-photo", { sourceKind: "photo" });
       } catch (error) {
         setPanelStatus("autofill", "bad", error.message || "Photo autofill failed.");
         setDiagnostics("autofill", error, { hint: error.message || "Photo autofill failed.", open: true });
@@ -3802,7 +4098,8 @@ function wireEvents() {
   });
 
   qs("google-photos-connect")?.addEventListener("click", async () => {
-    await runWithBusy(["google-photos-connect", "google-photos-choose"], { "google-photos-connect": "Connecting..." }, async () => {
+    const isReconnect = Boolean(googlePhotosUiState.status?.connected);
+    await runWithBusy(["google-photos-connect", "google-photos-choose"], { "google-photos-connect": isReconnect ? "Reconnecting..." : "Connecting..." }, async () => {
       try {
         await handleGooglePhotosConnect();
       } catch (error) {
@@ -3813,14 +4110,36 @@ function wireEvents() {
     renderGooglePhotosStatus(googlePhotosUiState.status || {});
   });
 
+  qs("google-photos-open-picker")?.addEventListener("click", () => {
+    updateGooglePhotosPickerDiagnostics({
+      picker_fallback_clicked: true,
+      safe_failure_category: "picker_unknown",
+    });
+  });
+
   qs("google-photos-choose")?.addEventListener("click", async () => {
     await runWithBusy(["google-photos-connect", "google-photos-choose", "photo-submit"], { "google-photos-choose": "Choosing..." }, async () => {
       try {
         await handleGooglePhotosChoose();
       } catch (error) {
-        setPanelStatus("autofill", "bad", error.message || "Google Photos import failed.");
-        setDiagnostics("autofill", error, { hint: error.message || "Google Photos import failed.", open: true });
-        renderGooglePhotosSummary({ message: error.message || "Google Photos import failed." });
+        const pickerDiagnostics = googlePhotosUiState.pickerDiagnostics || buildGooglePhotosPickerDiagnostics();
+        const reconnectNeeded = [
+          "picker_done_but_media_items_set_false",
+          "picker_reconnect_to_partner_app",
+          "picker_stale_session_possible",
+          "picker_account_mismatch_possible",
+        ].includes(pickerDiagnostics.safe_failure_category);
+        const message = reconnectNeeded
+          ? GOOGLE_PHOTOS_RECONNECT_GUIDANCE
+          : (error.message || "Google Photos import failed.");
+        setPanelStatus("autofill", "bad", message);
+        setDiagnostics("autofill", {
+          status: "failed",
+          message,
+          google_photos_picker: pickerDiagnostics,
+          request_error: error.payload || {},
+        }, { hint: message, open: true });
+        renderGooglePhotosSummary({ diagnostics: { location_message: "Google Photos location: unavailable from Picker API" }, message });
       }
     }, { guardIds: ["google-photos-choose"] });
     renderGooglePhotosStatus(googlePhotosUiState.status || {});
@@ -4024,8 +4343,15 @@ function wireEvents() {
 
   qs("clear-form").addEventListener("click", resetFormToBlank);
   qs("service-same").addEventListener("change", updateServiceFieldState);
-  qs("case-entity").addEventListener("input", updateServiceFieldState);
+  qs("case-entity").addEventListener("input", () => {
+    updateServiceFieldState();
+    populateCourtEmailSelect({ currentEmail: fieldValue("court-email") });
+  });
   qs("service-entity").addEventListener("input", () => {
+    interpretationUiState.validationField = "";
+    syncInterpretationReviewSurface();
+  });
+  qs("service-entity").addEventListener("change", () => {
     interpretationUiState.validationField = "";
     syncInterpretationReviewSurface();
   });
@@ -4038,6 +4364,7 @@ function wireEvents() {
   qs("case-city").addEventListener("change", () => {
     interpretationUiState.validationField = "";
     setProvisionalCityValue("case_city", "");
+    populateCourtEmailSelect({ currentEmail: fieldValue("court-email") });
     updateServiceFieldState();
   });
   qs("service-city").addEventListener("change", () => {
@@ -4059,7 +4386,20 @@ function wireEvents() {
     refreshInterpretationCitySelectors();
     applyInterpretationCityValue("case_city", displayedInterpretationCity("case_city"));
     applyInterpretationCityValue("service_city", displayedInterpretationCity("service_city"));
+    refreshInterpretationReferenceBoundControls();
     syncInterpretationCityControls();
+  });
+  qs("court-email-add")?.addEventListener("click", () => setCourtEmailEditorOpen(true));
+  qs("court-email-cancel")?.addEventListener("click", () => setCourtEmailEditorOpen(false));
+  qs("court-email-save")?.addEventListener("click", async () => {
+    try {
+      await persistInterpretationCourtEmail();
+    } catch (error) {
+      setPanelStatus("form", "bad", error.message || "Unable to save the court email yet.");
+      setDiagnostics("form", error, { hint: error.message || "Unable to save the court email yet.", open: true });
+      qs("court-email-status").textContent = error.message || "Unable to save the court email yet.";
+      qs("court-email-status").dataset.tone = "bad";
+    }
   });
   qs("case-city-add").addEventListener("click", async () => {
     try {
@@ -4095,7 +4435,7 @@ function wireEvents() {
       qs("interpretation-city-dialog-name")?.focus();
       return;
     }
-    if (requireDistance) {
+    if (String(distanceValue || "").trim()) {
       const numeric = Number(String(distanceValue || "").trim().replace(",", "."));
       if (!Number.isFinite(numeric) || numeric <= 0) {
         qs("interpretation-city-dialog-distance")?.focus();

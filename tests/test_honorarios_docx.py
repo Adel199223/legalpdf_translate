@@ -322,6 +322,28 @@ def test_build_interpretation_honorarios_paragraph_texts_uses_interpretation_tem
     assert paragraphs[20] == (profile.document_name, "center")
 
 
+def test_interpretation_honorarios_expands_service_entity_city_template() -> None:
+    profile = _profile(travel_origin_label="Marmelar")
+    draft = build_interpretation_honorarios_draft(
+        case_number="55/26.8GDODM",
+        case_entity="Ministério Público de Beja",
+        case_city="Beja",
+        service_date="2026-04-25",
+        service_entity="Posto Territorial da GNR de {city}",
+        service_city="Moura",
+        use_service_location_in_honorarios=True,
+        travel_km_outbound=40,
+        travel_km_return=40,
+        recipient_block=default_interpretation_recipient_block("Ministério Público de Beja"),
+        profile=profile,
+        today=date(2026, 4, 29),
+    )
+
+    paragraphs = build_honorarios_paragraph_texts(draft)
+
+    assert "no Posto Territorial da GNR de Moura" in paragraphs[7][0]
+
+
 def test_default_interpretation_recipient_block_uses_case_city_for_plain_ministerio_publico() -> None:
     recipient = default_interpretation_recipient_block("Ministério Público", "Beja")
 

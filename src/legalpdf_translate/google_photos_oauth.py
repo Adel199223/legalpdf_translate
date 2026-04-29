@@ -269,6 +269,13 @@ def delete_google_photos_token(config: GooglePhotosOAuthConfig) -> None:
         return
 
 
+def clear_google_photos_callback_diagnostic(config: GooglePhotosOAuthConfig) -> None:
+    try:
+        config.callback_diagnostic_path.unlink()
+    except FileNotFoundError:
+        return
+
+
 def google_photos_connection_status(config: GooglePhotosOAuthConfig) -> dict[str, Any]:
     token = load_google_photos_token(config)
     has_access_token = bool(str(token.get("access_token", "") or "").strip())

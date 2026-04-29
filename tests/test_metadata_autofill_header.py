@@ -145,6 +145,21 @@ def test_choose_court_email_suggestion_prefers_exact_email_when_present() -> Non
     assert selected == "header.found@example.org"
 
 
+def test_choose_court_email_suggestion_ignores_exact_email_from_other_case_city() -> None:
+    selected = choose_court_email_suggestion(
+        exact_email="moura.judicial@tribunais.org.pt",
+        case_entity="Ministério Público de Beja",
+        case_city="Beja",
+        vocab_court_emails=[
+            "beja.ministeriopublico@tribunais.org.pt",
+            "beja.judicial@tribunais.org.pt",
+            "moura.judicial@tribunais.org.pt",
+        ],
+    )
+
+    assert selected == "beja.ministeriopublico@tribunais.org.pt"
+
+
 def test_resolve_api_client_uses_bounded_retry_and_timeout(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

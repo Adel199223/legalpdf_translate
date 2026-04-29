@@ -34,6 +34,45 @@ export function resolveKnownCity(value, availableCities = []) {
   return "";
 }
 
+function normalizedField(value) {
+  return String(value ?? "").trim().toLocaleLowerCase();
+}
+
+export function isPhotoInterpretationSource(sourceKind = "") {
+  const normalized = String(sourceKind || "").trim().toLocaleLowerCase();
+  return normalized === "photo" || normalized === "google_photos";
+}
+
+export function deriveInterpretationSeedServiceDefaults({ seed = {}, sourceKind = "" } = {}) {
+  const caseEntity = String(seed?.case_entity ?? "").trim();
+  const caseCity = normalizeCityName(seed?.case_city ?? "");
+  const seedServiceEntity = String(seed?.service_entity ?? "").trim();
+  const seedServiceCity = normalizeCityName(seed?.service_city ?? "");
+  if (isPhotoInterpretationSource(sourceKind)) {
+    const explicitlySame = Boolean(seedServiceCity && caseCity && normalizedField(caseCity) === normalizedField(seedServiceCity));
+    return {
+      serviceEntity: explicitlySame ? caseEntity : seedServiceEntity,
+      serviceCity: explicitlySame ? caseCity : seedServiceCity,
+      serviceSame: explicitlySame,
+      serviceLocationProven: Boolean(seedServiceEntity || seedServiceCity),
+    };
+  }
+  const serviceEntity = seedServiceEntity || caseEntity;
+  const serviceCity = seedServiceCity || caseCity;
+  return {
+    serviceEntity,
+    serviceCity,
+    serviceSame: (
+      (!normalizedField(seedServiceEntity) && !normalizedField(seedServiceCity))
+      || (
+        normalizedField(caseEntity) === normalizedField(serviceEntity)
+        && normalizedField(caseCity) === normalizedField(serviceCity)
+      )
+    ),
+    serviceLocationProven: Boolean(seedServiceEntity || seedServiceCity),
+  };
+}
+
 export function buildInterpretationReference(rawReference = {}, profiles = [], selectedProfileId = "") {
   const baseAvailableCities = dedupeCities(rawReference?.available_cities || rawReference?.availableCities || []);
   const baseDistances = { ...(rawReference?.travel_distances_by_city || rawReference?.travelDistancesByCity || {}) };
@@ -68,7 +107,91 @@ export function buildInterpretationReference(rawReference = {}, profiles = [], s
     ).trim(),
     availableCities,
     travelDistancesByCity: knownDistances,
+    courtEmailOptionsByCity: normalizeCourtEmailOptionsByCity(
+      rawReference?.court_email_options_by_city || rawReference?.courtEmailOptionsByCity || {},
+      availableCities,
+    ),
+    serviceEntityOptions: serviceEntityOptionsForSelection(rawReference),
   };
+}
+
+function normalizeEmail(value) {
+  return String(value ?? "").trim().toLocaleLowerCase();
+}
+
+function dedupeStrings(values) {
+  const seen = new Set();
+  const ordered = [];
+  for (const value of values || []) {
+    const cleaned = String(value ?? "").trim();
+    if (!cleaned) {
+      continue;
+    }
+    const key = cleaned.toLocaleLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    ordered.push(cleaned);
+  }
+  return ordered;
+}
+
+function normalizeCourtEmailOptionsByCity(rawOptions = {}, availableCities = []) {
+  const output = {};
+  const source = rawOptions && typeof rawOptions === "object" ? rawOptions : {};
+  for (const city of availableCities || []) {
+    const rawKey = Object.keys(source).find((key) => normalizeCityName(key).toLocaleLowerCase() === city.toLocaleLowerCase());
+    const values = rawKey ? source[rawKey] : [];
+    const emails = dedupeStrings(Array.isArray(values) ? values : []);
+    if (emails.length) {
+      output[city] = emails;
+    }
+  }
+  return output;
+}
+
+export function courtEmailOptionsForCity(reference = {}, caseCity = "") {
+  const resolvedReference = buildInterpretationReference(reference);
+  const resolvedCity = resolveKnownCity(caseCity, resolvedReference.availableCities);
+  if (!resolvedCity) {
+    return [];
+  }
+  return [...(resolvedReference.courtEmailOptionsByCity[resolvedCity] || [])];
+}
+
+export function deriveCourtEmailSelection({
+  reference = {},
+  caseCity = "",
+  currentEmail = "",
+  seedEmail = "",
+} = {}) {
+  const options = courtEmailOptionsForCity(reference, caseCity);
+  const optionKeys = new Set(options.map((email) => normalizeEmail(email)));
+  const current = normalizeEmail(currentEmail);
+  const seed = normalizeEmail(seedEmail);
+  let email = "";
+  if (current && optionKeys.has(current)) {
+    email = options.find((option) => normalizeEmail(option) === current) || "";
+  } else if (seed && optionKeys.has(seed)) {
+    email = options.find((option) => normalizeEmail(option) === seed) || "";
+  } else {
+    email = options[0] || "";
+  }
+  return { email, options };
+}
+
+export function serviceEntityOptionsForSelection(reference = {}, selectedValue = "") {
+  const rawOptions = reference?.service_entity_options || reference?.serviceEntityOptions || [];
+  return dedupeStrings([
+    ...(Array.isArray(rawOptions) ? rawOptions : []),
+    "Serviço de Turno",
+    "GNR",
+    "PSP",
+    "Posto Territorial da GNR de {city}",
+    "Esquadra da PSP de {city}",
+    selectedValue,
+  ]);
 }
 
 function parsePositiveDistance(rawValue) {
@@ -218,6 +341,83 @@ export function deriveInterpretationGuardState({
     knownDistance: hasKnownDistance ? knownDistance : 0,
     parsedTravelDistance: parsedDistance.value,
     parsedTravelDistanceState: parsedDistance.state,
+  };
+}
+
+export function deriveInterpretationDistanceSync({
+  guard = {},
+  travelKmOutbound = "",
+  autoDistanceCity = "",
+  manualDistance = false,
+} = {}) {
+  const currentDistance = String(travelKmOutbound ?? "").trim();
+  const currentAutoCity = normalizeCityName(autoDistanceCity);
+  const effectiveServiceCity = normalizeCityName(guard?.effectiveServiceCity || guard?.serviceCity || "");
+  const knownDistance = Number(guard?.knownDistance || 0);
+  const hasKnownDistance = Number.isFinite(knownDistance) && knownDistance > 0;
+  const parsedState = guard?.parsedTravelDistanceState || parsePositiveDistance(currentDistance).state;
+  const wasAutoFilled = Boolean(currentAutoCity) && !manualDistance;
+
+  if (!guard?.includeTransport) {
+    return {
+      travelKmOutbound: currentDistance,
+      autoDistanceCity: currentAutoCity,
+      manualDistance: Boolean(currentDistance),
+      hintText: INTERPRETATION_DISCLOSURE_COPY.transportDisabledHint,
+    };
+  }
+
+  if (hasKnownDistance && effectiveServiceCity) {
+    if (!currentDistance || wasAutoFilled || !manualDistance) {
+      return {
+        travelKmOutbound: String(knownDistance),
+        autoDistanceCity: effectiveServiceCity,
+        manualDistance: false,
+        hintText: `Saved by city: ${knownDistance} km one way.`,
+      };
+    }
+  }
+
+  if (wasAutoFilled && !hasKnownDistance) {
+    const origin = String(guard?.reference?.travelOriginLabel || "").trim();
+    const hintText = effectiveServiceCity
+      ? (
+        origin
+          ? `No saved distance for ${effectiveServiceCity}. We'll ask for the one-way distance from ${origin} before save or export.`
+          : `No saved distance for ${effectiveServiceCity}.`
+      )
+      : "Select the service city before setting the transport distance.";
+    return {
+      travelKmOutbound: "",
+      autoDistanceCity: "",
+      manualDistance: false,
+      hintText,
+    };
+  }
+
+  if (manualDistance && currentDistance) {
+    return {
+      travelKmOutbound: currentDistance,
+      autoDistanceCity: "",
+      manualDistance: true,
+      hintText: guard?.distanceHint || (parsedState === "positive" ? `Using ${currentDistance} km one way.` : ""),
+    };
+  }
+
+  if (!currentDistance) {
+    return {
+      travelKmOutbound: "",
+      autoDistanceCity: "",
+      manualDistance: false,
+      hintText: guard?.distanceHint || "Distance saved by city will appear here when available.",
+    };
+  }
+
+  return {
+    travelKmOutbound: currentDistance,
+    autoDistanceCity: "",
+    manualDistance: true,
+    hintText: guard?.distanceHint || (parsedState === "positive" ? `Using ${currentDistance} km one way.` : ""),
   };
 }
 

@@ -57,6 +57,33 @@ def test_joblog_settings_persist_court_email_vocab(tmp_path: Path, monkeypatch) 
     ]
 
 
+def test_joblog_settings_persist_court_emails_by_city(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+
+    save_joblog_settings(
+        {
+            "court_emails_by_city": {
+                " Beja ": [
+                    "beja.judicial@tribunais.org.pt",
+                    "BEJA.JUDICIAL@tribunais.org.pt",
+                    "",
+                ],
+                "Moura": ["moura.judicial@tribunais.org.pt"],
+                "": ["ignored@example.test"],
+            }
+        }
+    )
+
+    loaded = load_joblog_settings()
+    assert loaded["court_emails_by_city"] == {
+        "Beja": ["beja.judicial@tribunais.org.pt"],
+        "Moura": ["moura.judicial@tribunais.org.pt"],
+    }
+    assert "Serviço de Turno" in loaded["vocab_service_entities"]
+    assert "Posto Territorial da GNR de {city}" in loaded["vocab_service_entities"]
+
+
 def test_joblog_column_widths_persist_and_sanitize(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     settings_file = tmp_path / "settings.json"
     monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)

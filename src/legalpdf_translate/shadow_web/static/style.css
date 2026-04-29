@@ -659,7 +659,23 @@ button:disabled,
 }
 
 .checkbox-field {
-  justify-content: end;
+  justify-content: start;
+}
+
+.checkbox-field label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.checkbox-field input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
 }
 
 label {
@@ -689,6 +705,19 @@ label {
 .compact-inline-button {
   flex: 0 0 auto;
   white-space: nowrap;
+}
+
+.inline-add-editor {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(118, 241, 255, 0.24);
+  border-radius: 12px;
+  background: rgba(4, 16, 27, 0.72);
+}
+
+.inline-add-editor.hidden {
+  display: none;
 }
 
 .field-hint.is-warning {
@@ -1344,7 +1373,7 @@ body[data-interpretation-city-dialog="open"] {
 }
 
 .workspace-dialog-backdrop {
-  z-index: 42;
+  z-index: 72;
   justify-content: center;
   align-items: center;
   padding: 24px;
@@ -1372,7 +1401,50 @@ body[data-interpretation-city-dialog="open"] {
 }
 
 .workspace-drawer-interpretation {
-  width: min(720px, calc(100vw - 24px));
+  box-sizing: border-box;
+  width: min(920px, calc(100vw - 24px));
+  scrollbar-gutter: stable;
+}
+
+.workspace-drawer-interpretation *,
+.workspace-drawer-interpretation *::before,
+.workspace-drawer-interpretation *::after {
+  box-sizing: border-box;
+}
+
+.workspace-drawer-interpretation .shell-collapsible,
+.workspace-drawer-interpretation .shell-collapsible-body,
+.workspace-drawer-interpretation .field,
+.workspace-drawer-interpretation .field-inline {
+  min-width: 0;
+}
+
+.workspace-drawer-interpretation .field-inline {
+  align-items: stretch;
+}
+
+.workspace-drawer-interpretation .field-inline > input,
+.workspace-drawer-interpretation .field-inline > select {
+  min-width: 0;
+}
+
+.workspace-drawer-interpretation .compact-inline-button {
+  min-height: 48px;
+}
+
+.workspace-drawer-interpretation .checkbox-field label {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+#interpretation-form .interpretation-court-email-field {
+  grid-column: span 2;
+}
+
+#interpretation-form .interpretation-court-email-field .field-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 #gmail-review-drawer.workspace-drawer-wide {
@@ -2322,6 +2394,14 @@ body[data-ui-variant="qt"] .simple-task-shell[data-task-panel="interpretation"] 
 
   .workspace-drawer-wide {
     width: 100%;
+  }
+
+  #interpretation-form .interpretation-court-email-field {
+    grid-column: 1 / -1;
+  }
+
+  #interpretation-form .interpretation-court-email-field .field-inline {
+    grid-template-columns: 1fr;
   }
 
   .simple-task-shell {

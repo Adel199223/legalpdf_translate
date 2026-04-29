@@ -586,6 +586,7 @@
                   <a id="google-photos-open-picker" class="ghost-button hidden" href="#" target="_blank" rel="noopener noreferrer" aria-hidden="true" tabindex="-1">Open Google Photos Picker</a>
                 </div>
                 <p class="panel-copy" id="google-photos-status">Google Photos connection status appears here.</p>
+                <p class="field-hint" id="google-photos-guidance">Use the same Google account in the Google Photos Picker tab that you used to connect LegalPDF. If Google Photos says it cannot add photos, click Reconnect Google Photos and connect again. After selecting one image, click Done.</p>
               </div>
             </div>
             <div id="google-photos-summary" class="result-card empty-state">No Google Photos selection yet.</div>
@@ -1851,9 +1852,21 @@
                 <label for="case-number">Case Number</label>
                 <input id="case-number" name="case_number" type="text">
               </div>
-              <div class="field">
+              <div class="field interpretation-court-email-field">
                 <label for="court-email">Court Email</label>
-                <input id="court-email" name="court_email" type="email">
+                <div class="field-inline">
+                  <select id="court-email" name="court_email"></select>
+                  <button type="button" class="ghost-button compact-inline-button" id="court-email-add">Add email...</button>
+                </div>
+                <div class="inline-add-editor hidden" id="court-email-editor" role="group" aria-labelledby="court-email-editor-label">
+                  <label id="court-email-editor-label" for="court-email-new">Add email for selected case city</label>
+                  <div class="field-inline">
+                    <input id="court-email-new" type="email" autocomplete="off" placeholder="name@tribunais.org.pt">
+                    <button type="button" class="ghost-button compact-inline-button" id="court-email-cancel">Cancel</button>
+                    <button type="button" class="primary-button compact-inline-button" id="court-email-save">Save</button>
+                  </div>
+                  <p class="field-hint" id="court-email-status">Email options follow the selected case city.</p>
+                </div>
               </div>
               <div class="field">
                 <label for="case-entity">Case Entity</label>
@@ -1881,7 +1894,7 @@
                   </div>
                   <div class="field">
                     <label for="service-entity">Service Entity</label>
-                    <input id="service-entity" name="service_entity" type="text">
+                    <select id="service-entity" name="service_entity"></select>
                   </div>
                   <div class="field">
                     <label for="service-city">Service City</label>
@@ -2004,8 +2017,8 @@
     </main>
 
     <!-- Legacy UI label preserved for legacy-template compatibility: Action Rail -->
-    <div class="workspace-dialog-backdrop hidden" id="interpretation-city-dialog-backdrop" aria-hidden="true">
-      <section class="workspace-drawer interpretation-city-dialog" id="interpretation-city-dialog" role="dialog" aria-modal="true" aria-labelledby="interpretation-city-dialog-title">
+    <div class="workspace-drawer-backdrop workspace-dialog-backdrop hidden" id="interpretation-city-dialog-backdrop" aria-hidden="true">
+      <section class="workspace-drawer interpretation-city-dialog" id="interpretation-city-dialog" role="dialog" aria-modal="true" aria-labelledby="interpretation-city-dialog-title" aria-describedby="interpretation-city-dialog-status">
         <div class="workspace-drawer-header">
           <div>
             <p class="eyebrow">Interpretation</p>
@@ -2024,7 +2037,7 @@
           <div class="field hidden" id="interpretation-city-dialog-distance-shell">
             <label for="interpretation-city-dialog-distance">KM (One Way)</label>
             <input id="interpretation-city-dialog-distance" type="number" step="0.01" min="0.01">
-            <p class="field-hint" id="interpretation-city-dialog-distance-hint">Use the one-way distance from your profile travel origin.</p>
+            <p class="field-hint" id="interpretation-city-dialog-distance-hint">Optional one-way distance from your profile travel origin.</p>
           </div>
         </form>
         <div class="form-actions drawer-action-row">

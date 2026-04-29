@@ -91,6 +91,185 @@ const transportDisabled = reviewModule.deriveInterpretationGuardState({{
   travelKmOutbound: "",
 }});
 
+const photoReferenceNoMouraDistance = reviewModule.buildInterpretationReference(
+  {{
+    profile_id: "primary",
+    travel_origin_label: "Marmelar",
+    available_cities: ["Beja", "Moura"],
+    travel_distances_by_city: {{ Beja: 39 }},
+  }},
+  [
+    {{
+      id: "primary",
+      travel_origin_label: "Marmelar",
+      travel_distances_by_city: {{ Beja: 39 }},
+    }},
+  ],
+  "primary",
+);
+
+const photoReferenceWithMouraDistance = reviewModule.buildInterpretationReference(
+  {{
+    profile_id: "primary",
+    travel_origin_label: "Marmelar",
+    available_cities: ["Beja", "Moura"],
+    travel_distances_by_city: {{ Beja: 39 }},
+  }},
+  [
+    {{
+      id: "primary",
+      travel_origin_label: "Marmelar",
+      travel_distances_by_city: {{ Beja: 39, Moura: 26 }},
+    }},
+  ],
+  "primary",
+);
+
+const photoMouraNoDistance = reviewModule.deriveInterpretationGuardState({{
+  reference: photoReferenceNoMouraDistance,
+  caseCity: "Beja",
+  serviceCity: "Moura",
+  serviceSame: false,
+  provisionalCaseCity: "",
+  provisionalServiceCity: "",
+  includeTransport: true,
+  travelKmOutbound: "",
+}});
+
+const photoMouraSavedDistance = reviewModule.deriveInterpretationGuardState({{
+  reference: photoReferenceWithMouraDistance,
+  caseCity: "Beja",
+  serviceCity: "Moura",
+  serviceSame: false,
+  provisionalCaseCity: "",
+  provisionalServiceCity: "",
+  includeTransport: true,
+  travelKmOutbound: "",
+}});
+
+const explicitSameUsesCaseDistance = reviewModule.deriveInterpretationGuardState({{
+  reference: photoReferenceNoMouraDistance,
+  caseCity: "Beja",
+  serviceCity: "",
+  serviceSame: true,
+  provisionalCaseCity: "",
+  provisionalServiceCity: "",
+  includeTransport: true,
+  travelKmOutbound: "",
+}});
+
+const autoDistanceMouraToBeja = reviewModule.deriveInterpretationDistanceSync({{
+  guard: reviewModule.deriveInterpretationGuardState({{
+    reference: photoReferenceWithMouraDistance,
+    caseCity: "Beja",
+    serviceCity: "Beja",
+    serviceSame: false,
+    provisionalCaseCity: "",
+    provisionalServiceCity: "",
+    includeTransport: true,
+    travelKmOutbound: "26",
+  }}),
+  travelKmOutbound: "26",
+  autoDistanceCity: "Moura",
+  manualDistance: false,
+}});
+
+const autoDistanceClearsForNoSavedDistance = reviewModule.deriveInterpretationDistanceSync({{
+  guard: knownNeedsPrompt,
+  travelKmOutbound: "26",
+  autoDistanceCity: "Moura",
+  manualDistance: false,
+}});
+
+const manualDistanceSurvivesCityChange = reviewModule.deriveInterpretationDistanceSync({{
+  guard: reviewModule.deriveInterpretationGuardState({{
+    reference: photoReferenceWithMouraDistance,
+    caseCity: "Beja",
+    serviceCity: "Beja",
+    serviceSame: false,
+    provisionalCaseCity: "",
+    provisionalServiceCity: "",
+    includeTransport: true,
+    travelKmOutbound: "99",
+  }}),
+  travelKmOutbound: "99",
+  autoDistanceCity: "",
+  manualDistance: true,
+}});
+
+const serviceSameAutoDistanceFollowsCaseCity = reviewModule.deriveInterpretationDistanceSync({{
+  guard: explicitSameUsesCaseDistance,
+  travelKmOutbound: "",
+  autoDistanceCity: "",
+  manualDistance: false,
+}});
+
+const photoCaseOnlyDefaults = reviewModule.deriveInterpretationSeedServiceDefaults({{
+  seed: {{
+    case_entity: "Ministério Público de Beja",
+    case_city: "Beja",
+    service_entity: "",
+    service_city: "",
+  }},
+  sourceKind: "google_photos",
+}});
+
+const photoExplicitServiceDefaults = reviewModule.deriveInterpretationSeedServiceDefaults({{
+  seed: {{
+    case_entity: "Ministério Público de Beja",
+    case_city: "Beja",
+    service_entity: "GNR",
+    service_city: "Moura",
+  }},
+  sourceKind: "photo",
+}});
+
+const notificationCaseOnlyDefaults = reviewModule.deriveInterpretationSeedServiceDefaults({{
+  seed: {{
+    case_entity: "Ministério Público de Beja",
+    case_city: "Beja",
+    service_entity: "",
+    service_city: "",
+  }},
+  sourceKind: "notification",
+}});
+
+const photoSameCityDefaults = reviewModule.deriveInterpretationSeedServiceDefaults({{
+  seed: {{
+    case_entity: "Ministério Público de Beja",
+    case_city: "Beja",
+    service_entity: "Serviço de Turno",
+    service_city: "Beja",
+  }},
+  sourceKind: "google_photos",
+}});
+
+const cityEmailReference = reviewModule.buildInterpretationReference(
+  {{
+    profile_id: "primary",
+    available_cities: ["Beja", "Moura"],
+    court_email_options_by_city: {{
+      Beja: ["beja.ministeriopublico@tribunais.org.pt", "beja.judicial@tribunais.org.pt"],
+      Moura: ["moura.judicial@tribunais.org.pt"],
+    }},
+    service_entity_options: ["Serviço de Turno", "Posto Territorial da GNR de {{city}}"],
+  }},
+  [],
+  "primary",
+);
+
+const bejaEmailSelection = reviewModule.deriveCourtEmailSelection({{
+  reference: cityEmailReference,
+  caseCity: "Beja",
+  currentEmail: "moura.judicial@tribunais.org.pt",
+  seedEmail: "moura.judicial@tribunais.org.pt",
+}});
+
+const serviceEntityOptions = reviewModule.serviceEntityOptionsForSelection(
+  cityEmailReference,
+  "Posto Territorial da GNR de Beja",
+);
+
 const workspaceModes = {{
   blank: reviewModule.deriveInterpretationWorkspaceMode({{
     snapshot: {{}},
@@ -256,6 +435,19 @@ console.log(JSON.stringify({{
   knownSavedDistance,
   invalidDistance,
   transportDisabled,
+  photoMouraNoDistance,
+  photoMouraSavedDistance,
+  explicitSameUsesCaseDistance,
+  autoDistanceMouraToBeja,
+  autoDistanceClearsForNoSavedDistance,
+  manualDistanceSurvivesCityChange,
+  serviceSameAutoDistanceFollowsCaseCity,
+  photoCaseOnlyDefaults,
+  photoExplicitServiceDefaults,
+  photoSameCityDefaults,
+  bejaEmailSelection,
+  serviceEntityOptions,
+  notificationCaseOnlyDefaults,
   workspaceModes,
   drawerLayouts,
   presentations,
@@ -291,6 +483,80 @@ def test_interpretation_review_state_blocks_unknown_city_and_guides_distance_pro
     assert results["invalidDistance"]["blocked"] is True
     assert results["invalidDistance"]["blockedCode"] == "distance_must_be_positive"
     assert results["transportDisabled"]["distanceHint"] == "Transport sentence is turned off for this document."
+    assert results["photoMouraNoDistance"]["blocked"] is False
+    assert results["photoMouraNoDistance"]["effectiveServiceCity"] == "Moura"
+    assert results["photoMouraNoDistance"]["knownDistance"] == 0
+    assert results["photoMouraNoDistance"]["distancePromptNeeded"] is True
+    assert results["photoMouraSavedDistance"]["blocked"] is False
+    assert results["photoMouraSavedDistance"]["effectiveServiceCity"] == "Moura"
+    assert results["photoMouraSavedDistance"]["knownDistance"] == 26
+    assert results["photoMouraSavedDistance"]["distancePromptNeeded"] is False
+    assert results["explicitSameUsesCaseDistance"]["effectiveServiceCity"] == "Beja"
+    assert results["explicitSameUsesCaseDistance"]["knownDistance"] == 39
+
+    assert results["autoDistanceMouraToBeja"] == {
+        "travelKmOutbound": "39",
+        "autoDistanceCity": "Beja",
+        "manualDistance": False,
+        "hintText": "Saved by city: 39 km one way.",
+    }
+    assert results["autoDistanceClearsForNoSavedDistance"] == {
+        "travelKmOutbound": "",
+        "autoDistanceCity": "",
+        "manualDistance": False,
+        "hintText": (
+            "No saved distance for Vidigueira. We'll ask for the one-way distance from Marmelar before save or export."
+        ),
+    }
+    assert results["manualDistanceSurvivesCityChange"] == {
+        "travelKmOutbound": "99",
+        "autoDistanceCity": "",
+        "manualDistance": True,
+        "hintText": "Using 99 km one way.",
+    }
+    assert results["serviceSameAutoDistanceFollowsCaseCity"] == {
+        "travelKmOutbound": "39",
+        "autoDistanceCity": "Beja",
+        "manualDistance": False,
+        "hintText": "Saved by city: 39 km one way.",
+    }
+
+    assert results["photoCaseOnlyDefaults"] == {
+        "serviceEntity": "",
+        "serviceCity": "",
+        "serviceSame": False,
+        "serviceLocationProven": False,
+    }
+    assert results["photoExplicitServiceDefaults"] == {
+        "serviceEntity": "GNR",
+        "serviceCity": "Moura",
+        "serviceSame": False,
+        "serviceLocationProven": True,
+    }
+    assert results["photoSameCityDefaults"] == {
+        "serviceEntity": "Ministério Público de Beja",
+        "serviceCity": "Beja",
+        "serviceSame": True,
+        "serviceLocationProven": True,
+    }
+    assert results["bejaEmailSelection"] == {
+        "email": "beja.ministeriopublico@tribunais.org.pt",
+        "options": ["beja.ministeriopublico@tribunais.org.pt", "beja.judicial@tribunais.org.pt"],
+    }
+    assert results["serviceEntityOptions"][:5] == [
+        "Serviço de Turno",
+        "Posto Territorial da GNR de {city}",
+        "GNR",
+        "PSP",
+        "Esquadra da PSP de {city}",
+    ]
+    assert results["serviceEntityOptions"][-1] == "Posto Territorial da GNR de Beja"
+    assert results["notificationCaseOnlyDefaults"] == {
+        "serviceEntity": "Ministério Público de Beja",
+        "serviceCity": "Beja",
+        "serviceSame": True,
+        "serviceLocationProven": False,
+    }
 
     assert results["workspaceModes"] == {
         "blank": "blank",

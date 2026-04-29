@@ -23,9 +23,14 @@ from legalpdf_translate.metadata_autofill import (
     MetadataExtractionResult,
     MetadataSuggestion,
 )
-from legalpdf_translate.user_settings import load_gui_settings_from_path, load_joblog_settings_from_path
-from legalpdf_translate.user_profile import distance_for_city, primary_profile
-from legalpdf_translate.user_settings import load_profile_settings_from_path
+from legalpdf_translate.user_settings import (
+    load_gui_settings_from_path,
+    load_joblog_settings_from_path,
+    load_profile_settings_from_path,
+    save_joblog_settings_to_path,
+    save_profile_settings_to_path,
+)
+from legalpdf_translate.user_profile import distance_for_city, default_primary_profile, primary_profile
 
 
 def _identity(*, head_sha: str = "abc1234") -> RuntimeBuildIdentity:
@@ -877,8 +882,13 @@ def test_shadow_bootstrap_exposes_interpretation_reference_from_vocab_and_profil
     reference = response["normalized_payload"]["interpretation_reference"]
     assert reference["travel_origin_label"] == "Marmelar"
     assert "Beja" in reference["available_cities"]
+    assert "Moura" in reference["available_cities"]
     assert "Vidigueira" in reference["available_cities"]
+    assert "Brinches" in reference["available_cities"]
     assert reference["travel_distances_by_city"]["Beja"] == 39.0
+    assert reference["travel_distances_by_city"]["Moura"] == 26.0
+    assert reference["travel_distances_by_city"]["Brinches"] == 23.0
+    assert "Mora" not in reference["travel_distances_by_city"]
 
 
 def test_save_interpretation_row_persists_to_isolated_settings_and_joblog(tmp_path: Path) -> None:
@@ -926,6 +936,10 @@ def test_save_interpretation_row_persists_to_isolated_settings_and_joblog(tmp_pa
 def test_save_interpretation_row_does_not_auto_grow_city_vocab_for_profile_known_city(tmp_path: Path) -> None:
     settings_file = tmp_path / "shadow" / "settings.json"
     db_path = tmp_path / "shadow" / "job_log.sqlite3"
+    profile = default_primary_profile()
+    profile.travel_distances_by_city = {"Aljustrel": 12.0}
+    save_profile_settings_to_path(settings_file, profiles=[profile], primary_profile_id=profile.id)
+    save_joblog_settings_to_path(settings_file, {"vocab_cities": ["Beja"]})
 
     response = interpretation_service.save_interpretation_row(
         settings_path=settings_file,
@@ -934,11 +948,11 @@ def test_save_interpretation_row_does_not_auto_grow_city_vocab_for_profile_known
             "case_number": "305/23.2GCBJA",
             "court_email": "beja.judicial@tribunais.org.pt",
             "case_entity": "Ministério Público",
-            "case_city": "Vidigueira",
+            "case_city": "Aljustrel",
             "service_entity": "Ministério Público",
-            "service_city": "Vidigueira",
+            "service_city": "Aljustrel",
             "service_date": "2026-03-20",
-            "travel_km_outbound": "15",
+            "travel_km_outbound": "12",
             "pages": "0",
             "word_count": "0",
             "rate_per_word": "0",
@@ -953,7 +967,7 @@ def test_save_interpretation_row_does_not_auto_grow_city_vocab_for_profile_known
 
     assert response["status"] == "ok"
     settings = load_joblog_settings_from_path(settings_file)
-    assert "Vidigueira" not in settings["vocab_cities"]
+    assert "Aljustrel" not in settings["vocab_cities"]
 
 
 def test_add_interpretation_city_persists_city_and_distance_for_browser_flow(tmp_path: Path) -> None:
@@ -977,7 +991,28 @@ def test_add_interpretation_city_persists_city_and_distance_for_browser_flow(tmp
     assert distance_for_city(profile, "Serpa") == 32.0
 
 
-def test_add_interpretation_city_requires_positive_distance_when_transport_enabled(tmp_path: Path) -> None:
+def test_add_interpretation_city_can_save_without_distance_when_transport_enabled(tmp_path: Path) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+
+    response = interpretation_service.add_interpretation_city(
+        settings_path=settings_file,
+        city="Aljustrel",
+        profile_id="primary",
+        include_transport_sentence=True,
+        travel_km_outbound="",
+        field_name="service_city",
+    )
+
+    assert response["status"] == "ok"
+    assert response["normalized_payload"]["city"] == "Aljustrel"
+    settings = load_joblog_settings_from_path(settings_file)
+    assert "Aljustrel" in settings["vocab_cities"]
+    profiles, primary_profile_id = load_profile_settings_from_path(settings_file)
+    profile = primary_profile(profiles, primary_profile_id)
+    assert distance_for_city(profile, "Aljustrel") is None
+
+
+def test_add_interpretation_city_rejects_explicit_nonpositive_distance(tmp_path: Path) -> None:
     settings_file = tmp_path / "shadow" / "settings.json"
 
     with pytest.raises(interpretation_service.InterpretationValidationError) as exc_info:
@@ -986,12 +1021,44 @@ def test_add_interpretation_city_requires_positive_distance_when_transport_enabl
             city="Serpa",
             profile_id="primary",
             include_transport_sentence=True,
-            travel_km_outbound="",
+            travel_km_outbound="0",
             field_name="service_city",
         )
 
-    assert exc_info.value.code == "distance_required"
+    assert exc_info.value.code == "distance_must_be_positive"
     assert exc_info.value.city == "Serpa"
+
+
+def test_interpretation_reference_groups_court_emails_by_city(tmp_path: Path) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+
+    reference = interpretation_service.build_interpretation_reference(
+        settings_path=settings_file,
+        profile_id="primary",
+    )
+
+    assert reference["court_email_options_by_city"]["Beja"][0] == "beja.ministeriopublico@tribunais.org.pt"
+    assert "moura.judicial@tribunais.org.pt" in reference["court_email_options_by_city"]["Moura"]
+    assert "falentejo.judicial@tribunais.org.pt" in reference["court_email_options_by_city"]["Ferreira do Alentejo"]
+    assert "Serviço de Turno" in reference["service_entity_options"]
+    assert "Posto Territorial da GNR de {city}" in reference["service_entity_options"]
+
+
+def test_add_interpretation_court_email_persists_city_mapping_and_flat_vocab(tmp_path: Path) -> None:
+    settings_file = tmp_path / "shadow" / "settings.json"
+
+    response = interpretation_service.add_interpretation_court_email(
+        settings_path=settings_file,
+        city="beja",
+        email="beja.novo@tribunais.org.pt",
+    )
+
+    assert response["status"] == "ok"
+    assert response["normalized_payload"]["city"] == "Beja"
+    assert response["normalized_payload"]["email"] == "beja.novo@tribunais.org.pt"
+    settings = load_joblog_settings_from_path(settings_file)
+    assert "beja.novo@tribunais.org.pt" in settings["court_emails_by_city"]["Beja"]
+    assert "beja.novo@tribunais.org.pt" in settings["vocab_court_emails"]
 
 
 def test_save_interpretation_row_rejects_unknown_case_city(tmp_path: Path) -> None:

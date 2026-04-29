@@ -80,6 +80,7 @@ class PickedMediaSummary:
             },
             "location_status": "unavailable",
             "location_source": "not_available_from_picker",
+            "location_message": "Google Photos location: unavailable from Picker API",
         }
 
 
@@ -178,6 +179,14 @@ class GooglePhotosPickerClient:
         return payload
 
 
+def _first_nonblank_string(*values: Any) -> str:
+    for value in values:
+        cleaned = str(value or "").strip()
+        if cleaned:
+            return cleaned
+    return ""
+
+
 def normalize_picker_session(payload: Mapping[str, Any]) -> GooglePhotosPickerSession:
     polling_config = payload.get("pollingConfig") if isinstance(payload.get("pollingConfig"), Mapping) else {}
     media_items_set = bool(payload.get("mediaItemsSet") or payload.get("media_items_set") or payload.get("isReady"))
@@ -206,12 +215,21 @@ def normalize_picked_media(payload: Mapping[str, Any]) -> PickedMediaSummary:
         photo_metadata = payload.get("photoMetadata")  # type: ignore[assignment]
 
     media_item_id = str(payload.get("id") or payload.get("mediaItemId") or "").strip()
+    create_time = _first_nonblank_string(
+        payload.get("createTime"),
+        media_file.get("createTime"),
+        metadata.get("createTime"),
+        photo_metadata.get("createTime"),
+        photo_metadata.get("creationTime"),
+        photo_metadata.get("dateTimeOriginal"),
+        photo_metadata.get("time"),
+    )
     return PickedMediaSummary(
         media_item_id=media_item_id,
         selection_key=media_item_selection_key(media_item_id),
         source_filename=str(media_file.get("filename") or payload.get("filename") or "").strip(),
         mime_type=str(media_file.get("mimeType") or payload.get("mimeType") or "").strip(),
-        create_time=str(payload.get("createTime") or media_file.get("createTime") or "").strip(),
+        create_time=create_time,
         width=_coerce_optional_int(metadata.get("width") or media_file.get("width") or payload.get("width")),
         height=_coerce_optional_int(metadata.get("height") or media_file.get("height") or payload.get("height")),
         camera_make=str(
