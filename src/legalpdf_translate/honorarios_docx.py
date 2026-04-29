@@ -261,9 +261,19 @@ def _interpretation_service_location_phrase(draft: HonorariosDraft) -> str:
     if city == "":
         return ""
     entity = draft.service_entity.strip()
+    if "{city}" in entity:
+        entity = entity.replace("{city}", city).strip()
     entity_norm = entity.casefold()
+    if entity and city.casefold() in entity_norm:
+        if entity_norm.startswith(("posto", "serviço", "servico")):
+            return f"no {entity}"
+        if entity_norm.startswith("esquadra"):
+            return f"na {entity}"
+        return f"em {entity}"
     if entity_norm in {"gnr", "psp"}:
         return f"na {entity} de {city}"
+    if entity_norm in {"serviço de turno", "servico de turno"}:
+        return f"no {entity} de {city}"
     return f"na cidade de {city}"
 
 

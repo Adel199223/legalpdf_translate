@@ -74,6 +74,7 @@ from legalpdf_translate.interpretation_google_photos import (
     build_google_photos_status,
     create_google_photos_picker_session,
     delete_google_photos_picker_session,
+    disconnect_google_photos,
     get_google_photos_picker_session,
     import_google_photos_selection,
     list_google_photos_picker_media,
@@ -81,6 +82,7 @@ from legalpdf_translate.interpretation_google_photos import (
 from legalpdf_translate.interpretation_service import (
     InterpretationValidationError,
     add_interpretation_city,
+    add_interpretation_court_email,
     autofill_interpretation_from_notification_pdf,
     autofill_interpretation_from_photo,
     build_interpretation_capability_flags,
@@ -2944,6 +2946,24 @@ def create_shadow_app(
             return _validation_error_response(context, target, message=str(exc))
         return JSONResponse(_merge_response(context, target, response))
 
+    @app.post("/api/interpretation/google-photos/disconnect")
+    async def api_google_photos_disconnect(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = disconnect_google_photos(
+                settings_path=target.data_paths.settings_path,
+                redirect_uri=_google_photos_redirect_uri(request),
+            )
+        except OSError:
+            return _validation_error_response(
+                context,
+                target,
+                message="Google Photos local reconnect cleanup failed.",
+                status_code=500,
+            )
+        return JSONResponse(_merge_response(context, target, response))
+
     @app.get("/api/interpretation/google-photos/oauth/callback", response_class=HTMLResponse)
     async def api_google_photos_oauth_callback(request: Request) -> HTMLResponse:
         state = str(request.query_params.get("state", "") or "")
@@ -3258,6 +3278,30 @@ def create_shadow_app(
                 include_transport_sentence=bool(payload.get("include_transport_sentence_in_honorarios", False)),
                 travel_km_outbound=payload.get("travel_km_outbound", ""),
                 field_name=str(payload.get("field_name", "") or "service_city").strip() or "service_city",
+            )
+        except ValueError as exc:
+            return _validation_error_response(
+                context,
+                target,
+                message=str(exc),
+                validation_error=_structured_validation_payload(exc),
+            )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/court-emails/add")
+    async def api_add_interpretation_court_email(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = add_interpretation_court_email(
+                settings_path=target.data_paths.settings_path,
+                city=str(payload.get("city", "") or "").strip(),
+                email=str(payload.get("email", "") or "").strip(),
             )
         except ValueError as exc:
             return _validation_error_response(

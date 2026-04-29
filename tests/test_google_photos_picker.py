@@ -255,7 +255,31 @@ def test_normalize_picked_media_exposes_safe_metadata_without_base_url() -> None
     assert payload["dimensions"] == {"width": 4032, "height": 3024}
     assert payload["camera"] == {"make": "Canon", "model": "R6"}
     assert payload["location_status"] == "unavailable"
+    assert payload["location_message"] == "Google Photos location: unavailable from Picker API"
     assert "baseUrl" not in payload
+    assert "media-secret-id" not in str(payload)
+
+
+def test_normalize_picked_media_reads_nested_picker_create_time() -> None:
+    media = normalize_picked_media(
+        {
+            "id": "media-secret-id",
+            "mediaFile": {
+                "mimeType": "image/jpeg",
+                "filename": "IMG_0002.JPG",
+                "mediaFileMetadata": {
+                    "createTime": "2026-04-25T13:46:37Z",
+                    "width": "4032",
+                    "height": "3024",
+                },
+            },
+        }
+    )
+
+    payload = media.to_safe_payload()
+    assert media.create_time == "2026-04-25T13:46:37Z"
+    assert payload["photo_taken_at"] == "2026-04-25T13:46:37Z"
+    assert payload["location_status"] == "unavailable"
     assert "media-secret-id" not in str(payload)
 
 

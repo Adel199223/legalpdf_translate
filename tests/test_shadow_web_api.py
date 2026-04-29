@@ -483,7 +483,7 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert 'id="service-city-add"' in text
         assert 'id="interpretation-location-guard-card"' in text
         assert 'id="travel-km-hint"' in text
-        assert 'id="interpretation-city-dialog-backdrop"' in text
+        assert 'class="workspace-drawer-backdrop workspace-dialog-backdrop hidden" id="interpretation-city-dialog-backdrop"' in text
         assert 'id="interpretation-city-dialog-name"' in text
         assert 'id="interpretation-city-dialog-distance"' in text
         assert "Preview the selected attachment to inspect it here." not in text
@@ -881,6 +881,10 @@ const elements = new Map([
     tagName: "A",
     textContent: "Open Google sign-in",
   })],
+  ["google-photos-open-picker", makeElement("google-photos-open-picker", {
+    tagName: "A",
+    textContent: "Open Google Photos Picker",
+  })],
 ]);
 
 const storageWrites = [];
@@ -970,6 +974,9 @@ appModule.renderGooglePhotosStatus({
   client_id_configured: true,
   client_secret_env_configured: true,
 });
+appModule.setGooglePhotosAuthFallback("https://oauth.example.invalid/stale", { visible: true });
+appModule.setGooglePhotosPickerFallback("https://picker.example.invalid/stale-session", { visible: true });
+appModule.resetGooglePhotosPickerState({ clearAuth: true, sessionDeleted: true });
 
 console.log(JSON.stringify({
   disconnectedSnapshot,
@@ -980,6 +987,13 @@ console.log(JSON.stringify({
     tabIndex: fallback.tabIndex,
     chooseDisabled: elements.get("google-photos-choose").disabled,
     statusText: elements.get("google-photos-status").textContent,
+  },
+  resetSnapshot: {
+    authFallbackHidden: elements.get("google-photos-open-signin").classList.contains("hidden"),
+    authFallbackHref: elements.get("google-photos-open-signin").href,
+    pickerFallbackHidden: elements.get("google-photos-open-picker").classList.contains("hidden"),
+    pickerFallbackHref: elements.get("google-photos-open-picker").href,
+    safeState: appModule.googlePhotosUiSafeSnapshot(),
   },
 }));
 """
@@ -1001,6 +1015,17 @@ console.log(JSON.stringify({
     assert connected["tabIndex"] == -1
     assert connected["chooseDisabled"] is False
     assert "Google Photos connected" in connected["statusText"]
+
+    reset = results["resetSnapshot"]
+    assert reset["authFallbackHidden"] is True
+    assert reset["authFallbackHref"] == ""
+    assert reset["pickerFallbackHidden"] is True
+    assert reset["pickerFallbackHref"] == ""
+    assert reset["safeState"]["hasSessionId"] is False
+    assert reset["safeState"]["hasAuthUrl"] is False
+    assert reset["safeState"]["hasPickerUrl"] is False
+    assert reset["safeState"]["selectedItemCount"] == 0
+    assert reset["safeState"]["pickerDiagnostics"]["picker_session_deleted"] is True
 
 
 def test_google_photos_picker_fallback_uses_autoclose_without_rendering_url_text() -> None:
@@ -1136,16 +1161,29 @@ const visibleSnapshot = {
   storageWrites: storageWrites.length,
   appendedOnce: appModule.googlePhotosPickerBrowserUrl(pickerWithSlash),
   alreadyAutoclose: appModule.googlePhotosPickerBrowserUrl(pickerWithAutoclose),
+  noAutoclose: appModule.googlePhotosPickerBrowserUrl("https://picker.example.invalid/session-no-auto", { autoclose: false }),
 };
 appModule.setGooglePhotosPickerFallback("", { visible: false });
+const hiddenSnapshot = {
+  fallbackHidden: fallback.classList.contains("hidden"),
+  fallbackHref: fallback.href,
+  ariaHidden: fallback.attributes["aria-hidden"],
+  tabIndex: fallback.tabIndex,
+};
+appModule.resetGooglePhotosPickerState({ clearAuth: false });
+const afterResetHref = fallback.href;
+appModule.setGooglePhotosPickerFallback("https://picker.example.invalid/session-new", { visible: true });
+const freshSessionHref = fallback.href;
+const reconnectDiagnostics = appModule.buildGooglePhotosPickerDiagnostics({
+  google_ui_blocker_seen: true,
+  google_ui_blocker_category: "reconnect_to_partner_app",
+});
 console.log(JSON.stringify({
   visibleSnapshot,
-  hiddenSnapshot: {
-    fallbackHidden: fallback.classList.contains("hidden"),
-    fallbackHref: fallback.href,
-    ariaHidden: fallback.attributes["aria-hidden"],
-    tabIndex: fallback.tabIndex,
-  },
+  hiddenSnapshot,
+  afterResetHref,
+  freshSessionHref,
+  reconnectDiagnostics,
 }));
 """
     results = run_browser_esm_json_probe(script, {"__APP_MODULE_URL__": "app.js"}, timeout_seconds=30)
@@ -1158,12 +1196,18 @@ console.log(JSON.stringify({
     assert visible["storageWrites"] == 0
     assert visible["appendedOnce"] == "https://picker.example.invalid/session-456/autoclose"
     assert visible["alreadyAutoclose"] == "https://picker.example.invalid/session-789/autoclose"
+    assert visible["noAutoclose"] == "https://picker.example.invalid/session-no-auto"
 
     hidden = results["hiddenSnapshot"]
     assert hidden["fallbackHidden"] is True
     assert hidden["fallbackHref"] == ""
     assert hidden["ariaHidden"] == "true"
     assert hidden["tabIndex"] == -1
+    assert results["afterResetHref"] == ""
+    assert results["freshSessionHref"] == "https://picker.example.invalid/session-new/autoclose"
+    assert results["reconnectDiagnostics"]["google_ui_blocker_seen"] is True
+    assert results["reconnectDiagnostics"]["google_ui_blocker_category"] == "reconnect_to_partner_app"
+    assert results["reconnectDiagnostics"]["safe_failure_category"] == "picker_reconnect_to_partner_app"
 
 
 def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
@@ -1181,6 +1225,12 @@ def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
     assert "export function setGooglePhotosAuthFallback" in app_js
     assert "export function setGooglePhotosPickerFallback" in app_js
     assert "export function googlePhotosPickerBrowserUrl" in app_js
+    assert "export function resetGooglePhotosPickerState" in app_js
+    assert "export function googlePhotosUiSafeSnapshot" in app_js
+    assert 'fetchJson("/api/interpretation/google-photos/disconnect"' in app_js
+    assert "GOOGLE_PHOTOS_RECONNECT_GUIDANCE" in app_js
+    assert 'handleUpload("photo-upload-form", "/api/interpretation/autofill-photo", { sourceKind: "photo" })' in app_js
+    assert 'applyInterpretationSeed(importPayload.normalized_payload, { sourceKind: "google_photos" })' in app_js
     assert "localStorage.setItem" not in app_js
     assert "sessionStorage.setItem" not in app_js
     assert 'window.open(authUrl, "_blank", "noopener,noreferrer")' in app_js
@@ -1286,6 +1336,30 @@ def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> Non
     shell_block = app_js[shell_start:shell_end]
     assert "setTopbarStatus(chrome.status, chrome.tone);" in shell_block
     assert "runtime.workspace_id || appState.bootstrap?.normalized_payload?.runtime" not in shell_block
+
+
+def test_interpretation_review_drawer_uses_city_scoped_email_and_service_entity_selectors() -> None:
+    root = Path(__file__).resolve().parents[1]
+    static_dir = root / "src" / "legalpdf_translate" / "shadow_web" / "static"
+    template = (root / "src" / "legalpdf_translate" / "shadow_web" / "templates" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    style_css = (static_dir / "style.css").read_text(encoding="utf-8")
+
+    assert '<select id="court-email" name="court_email"></select>' in template
+    assert 'id="court-email-add"' in template
+    assert 'id="court-email-editor"' in template
+    assert '<select id="service-entity" name="service_entity"></select>' in template
+    assert '"/api/interpretation/court-emails/add"' in app_js
+    assert "deriveCourtEmailSelection" in app_js
+    assert "interpretation-court-email-field" in template
+    assert "width: min(920px, calc(100vw - 24px));" in style_css
+    assert "#interpretation-form .interpretation-court-email-field" in style_css
+    assert ".checkbox-field label" in style_css
+    assert '.checkbox-field input[type="checkbox"]' in style_css
+    assert "width: auto;" in style_css
+    assert "align-items: center;" in style_css
 
 
 def test_shadow_web_tiny_presentation_cleanup_copy_is_distinct() -> None:
@@ -3774,6 +3848,50 @@ def test_shadow_web_google_photos_status_route_is_sanitized(tmp_path: Path, monk
     assert "refresh_token" not in str(payload)
 
 
+def test_shadow_web_google_photos_disconnect_clears_local_token_safely(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("LEGALPDF_GOOGLE_PHOTOS_CLIENT_SECRET", "configured-secret-value-12345")
+    settings_path = tmp_path / "shadow" / "settings.json"
+    token_path = tmp_path / "shadow" / "google-photos-token.json"
+    diagnostic_path = tmp_path / "shadow" / "google_photos_picker_last_callback_diagnostic.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "google_photos_client_id": "test-client-id",
+                "google_photos_token_path": str(token_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+    token_path.write_text(
+        json.dumps({"access_token": "test-access-token", "refresh_token": "test-refresh-token", "expires_at": 9999999999}),
+        encoding="utf-8",
+    )
+    diagnostic_path.write_text(json.dumps({"safe_failure_category": "connected"}), encoding="utf-8")
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.post("/api/interpretation/google-photos/disconnect?mode=shadow&workspace=google-photos-review")
+        status_response = client.get("/api/interpretation/google-photos/status?mode=shadow&workspace=google-photos-review")
+
+    payload = response.json()
+    google_photos = payload["normalized_payload"]["google_photos"]
+    serialized = json.dumps(payload)
+    status_payload = status_response.json()["normalized_payload"]["google_photos"]
+    assert response.status_code == 200
+    assert google_photos["connected"] is False
+    assert google_photos["disconnected"] is True
+    assert google_photos["token_deleted"] is True
+    assert google_photos["callback_diagnostic_cleared"] is True
+    assert google_photos["location_metadata_available"] is False
+    assert not token_path.exists()
+    assert not diagnostic_path.exists()
+    assert status_payload["connected"] is False
+    assert status_payload["last_callback_diagnostic"] == {}
+    assert "test-access-token" not in serialized
+    assert "test-refresh-token" not in serialized
+    assert "auth_url" not in google_photos
+
+
 def test_shadow_web_google_photos_connect_creates_pending_state_without_secrets(
     tmp_path: Path,
     monkeypatch,
@@ -4216,7 +4334,30 @@ def test_shadow_web_add_interpretation_city_route_returns_updated_reference(tmp_
     assert payload["normalized_payload"]["profile_distance_summary"]["travel_distances_by_city"]["Serpa"] == 32.0
 
 
-def test_shadow_web_add_interpretation_city_route_returns_structured_distance_validation(
+def test_shadow_web_add_interpretation_city_route_accepts_blank_distance(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/api/interpretation/cities/add",
+            json={
+                "field_name": "service_city",
+                "city": "Aljustrel",
+                "profile_id": "primary",
+                "include_transport_sentence_in_honorarios": True,
+                "travel_km_outbound": "",
+            },
+        )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["normalized_payload"]["city"] == "Aljustrel"
+    assert payload["normalized_payload"]["profile_distance_summary"]["travel_distances_by_city"].get("Aljustrel") is None
+
+
+def test_shadow_web_add_interpretation_city_route_rejects_explicit_bad_distance(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -4228,12 +4369,35 @@ def test_shadow_web_add_interpretation_city_route_returns_structured_distance_va
                 "city": "Serpa",
                 "profile_id": "primary",
                 "include_transport_sentence_in_honorarios": True,
-                "travel_km_outbound": "",
+                "travel_km_outbound": "0",
             },
         )
 
     payload = response.json()
     assert response.status_code == 422
     assert payload["status"] == "failed"
-    assert payload["diagnostics"]["validation_error"]["code"] == "distance_required"
+    assert payload["diagnostics"]["validation_error"]["code"] == "distance_must_be_positive"
     assert payload["diagnostics"]["validation_error"]["city"] == "Serpa"
+
+
+def test_shadow_web_add_interpretation_court_email_route_updates_city_options(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/api/interpretation/court-emails/add",
+            json={
+                "city": "Beja",
+                "email": "beja.novo@tribunais.org.pt",
+            },
+        )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["normalized_payload"]["city"] == "Beja"
+    assert payload["normalized_payload"]["email"] == "beja.novo@tribunais.org.pt"
+    assert "beja.novo@tribunais.org.pt" in (
+        payload["normalized_payload"]["interpretation_reference"]["court_email_options_by_city"]["Beja"]
+    )

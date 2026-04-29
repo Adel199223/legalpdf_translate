@@ -45,16 +45,22 @@ DEFAULT_VOCAB_CASE_ENTITIES = [
 DEFAULT_VOCAB_SERVICE_ENTITIES = [
     "Ministério Público",
     "Tribunal Judicial",
+    "Serviço de Turno",
     "GNR",
     "PSP",
+    "Posto Territorial da GNR de {city}",
+    "Esquadra da PSP de {city}",
     "Advogado",
 ]
 DEFAULT_VOCAB_CITIES = [
     "Beja",
     "Moura",
+    "Vidigueira",
     "Cuba",
+    "Odemira",
     "Ferreira do Alentejo",
     "Serpa",
+    "Brinches",
 ]
 DEFAULT_VOCAB_JOB_TYPES = ["Translation", "Interpretation"]
 DEFAULT_VOCAB_COURT_EMAILS = [
@@ -243,6 +249,7 @@ ALLOWED_JOBLOG_KEYS = {
     "vocab_cities",
     "vocab_job_types",
     "vocab_court_emails",
+    "court_emails_by_city",
     "default_rate_per_word",
     "joblog_visible_columns",
     "joblog_column_widths",
@@ -280,6 +287,7 @@ DEFAULT_JOBLOG_SETTINGS: dict[str, Any] = {
     "vocab_cities": list(DEFAULT_VOCAB_CITIES),
     "vocab_job_types": list(DEFAULT_VOCAB_JOB_TYPES),
     "vocab_court_emails": list(DEFAULT_VOCAB_COURT_EMAILS),
+    "court_emails_by_city": {},
     "default_rate_per_word": {"EN": 0.08, "FR": 0.08, "AR": 0.09},
     "joblog_visible_columns": list(DEFAULT_JOBLOG_VISIBLE_COLUMNS),
     "joblog_column_widths": {},
@@ -414,6 +422,23 @@ def _coerce_str_list(value: object, *, fallback: list[str]) -> list[str]:
         output.append(cleaned)
     if not output:
         return list(fallback)
+    return output
+
+
+def _coerce_court_emails_by_city(value: object) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    output: dict[str, list[str]] = {}
+    for raw_city, raw_emails in value.items():
+        if not isinstance(raw_city, str):
+            continue
+        city = " ".join(raw_city.split()).strip()
+        if not city:
+            continue
+        emails = _coerce_str_list(raw_emails, fallback=[])
+        if not emails:
+            continue
+        output[city] = emails
     return output
 
 
@@ -974,6 +999,9 @@ def _normalize_joblog_settings(data: dict[str, Any]) -> dict[str, Any]:
     merged["vocab_court_emails"] = _coerce_str_list(
         merged.get("vocab_court_emails"),
         fallback=DEFAULT_VOCAB_COURT_EMAILS,
+    )
+    merged["court_emails_by_city"] = _coerce_court_emails_by_city(
+        merged.get("court_emails_by_city"),
     )
     merged["vocab_entities"] = _coerce_str_list(
         merged.get("vocab_entities"),

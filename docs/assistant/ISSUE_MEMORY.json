@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-04-28T15:57:40Z",
+  "last_updated": "2026-04-29T15:35:07Z",
   "issues": [
     {
       "id": "google-photos-oauth-picker-validation-hygiene",
@@ -107,6 +107,87 @@
         {
           "type": "branch",
           "ref": "feat/google-photos-interpretation"
+        }
+      ]
+    },
+    {
+      "id": "google-photos-interpretation-ocr-service-city-ranking",
+      "title": "Google Photos Interpretation OCR confused address/title fragments with case or service metadata",
+      "first_seen_timestamp": "2026-04-29T08:25:00Z",
+      "last_seen_timestamp": "2026-04-29T15:35:07Z",
+      "repeat_count": 5,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Google Photos selected-image import reached Review Case Details, but OCR noise sometimes left service entity or city blank.",
+        "Address or title fragments such as Palácio da Justiça, Justiça, or subject text were sometimes treated as case city/entity candidates.",
+        "A proven service location could be missed even though nearby service-turn/header evidence supported Serviço de Turno | Moura.",
+        "KM refresh worked after manual city selection, proving the remaining bug was metadata extraction/ranking rather than distance mapping."
+      ],
+      "likely_root_cause": "Interpretation photo OCR used broad fallback text before ranking official case evidence and service-location evidence field by field. A first OCR pass could freeze weak case metadata and prevent stronger header/service-turn evidence from reaching the browser seed.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-04-29T09:07:00Z",
+          "summary": "Added service-turn city-before-label extraction and kept case city Beja distinct from service city Moura.",
+          "outcome": "partial"
+        },
+        {
+          "timestamp": "2026-04-29T12:38:00Z",
+          "summary": "Rejected placeholder values and strengthened official case evidence.",
+          "outcome": "partial"
+        },
+        {
+          "timestamp": "2026-04-29T13:33:00Z",
+          "summary": "Added photo-date fallback and service-city distance refresh.",
+          "outcome": "distance_and_date_accepted_service_ocr_still_variable"
+        },
+        {
+          "timestamp": "2026-04-29T16:17:44+01:00",
+          "summary": "Added strict address/title filtering plus field-by-field OCR variant ranking.",
+          "outcome": "accepted_live_review_details_behavior"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-04-29T16:17:44+01:00",
+        "summary": "Strictly reject placeholder/address/title fragments for case and service metadata, prefer official Comarca/court evidence for case city, prefer explicit service-turn/postcode/address evidence for service city, and leave fields blank/provisional rather than inventing a city when evidence is not trusted.",
+        "expected_result": "Future Google Photos Interpretation imports keep case and service metadata distinct, recover trusted service-turn evidence when present, and avoid invented address-fragment cities."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
+        "docs/assistant/VALIDATION.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/exec_plans/completed/2026-04-28_google_photos_service_city_distance_drawer.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/HANDOFF.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/ISSUE_MEMORY.md",
+        "docs/assistant/ISSUE_MEMORY.json",
+        "docs/assistant/VALIDATION.md",
+        "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "medium",
+        "targets": [
+          "Google Photos Interpretation metadata provenance",
+          "OCR field-ranking rules for case city versus service city",
+          "no Google Photos place/location claim",
+          "blank/provisional fallback instead of invented address-fragment cities"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-28_google_photos_service_city_distance_drawer.md"
+        },
+        {
+          "type": "branch",
+          "ref": "feat/google-photos-service-city-distance-drawer"
         }
       ]
     },

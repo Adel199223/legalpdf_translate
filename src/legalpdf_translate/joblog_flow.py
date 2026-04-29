@@ -381,6 +381,10 @@ def build_joblog_settings_save_bundle(settings: Mapping[str, Any]) -> dict[str, 
         "vocab_cities": list(settings["vocab_cities"]),
         "vocab_job_types": list(settings["vocab_job_types"]),
         "vocab_court_emails": list(settings["vocab_court_emails"]),
+        "court_emails_by_city": {
+            str(city): list(emails)
+            for city, emails in dict(settings.get("court_emails_by_city", {})).items()
+        },
         "default_rate_per_word": dict(settings["default_rate_per_word"]),
         "joblog_visible_columns": list(settings["joblog_visible_columns"]),
         "joblog_column_widths": dict(settings.get("joblog_column_widths", {})),

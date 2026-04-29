@@ -7,6 +7,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +30,25 @@ from .pdf_text_order import extract_ordered_page_text, get_page_count
 from .runtime_health import degraded_runtime_reason_from_env
 from .types import OcrApiProvider, OcrEnginePolicy, OcrMode
 
-GENERIC_CASE_ENTITIES = {"", "unknown", "desconhecido", "n/a", "na", "sem informação", "sem informacao"}
+GENERIC_CASE_ENTITIES = {
+    "",
+    "unknown",
+    "desconhecido",
+    "n/a",
+    "na",
+    "sem informação",
+    "sem informacao",
+    "não especificado",
+    "nao especificado",
+    "não aplicável",
+    "nao aplicavel",
+    "not specified",
+    "unspecified",
+}
+GENERIC_CASE_ENTITY_PREFIXES = (
+    "ministerio publico de ",
+    "ministério público de ",
+)
 
 CASE_NUMBER_PATTERNS = [
     re.compile(r"processo\s*(?:n[.ºo]\s*)?[:\-]?\s*([0-9]{1,8}/[0-9]{2}\.[0-9A-Za-z.]{3,})", re.IGNORECASE),
@@ -39,6 +58,10 @@ CASE_NUMBER_PATTERNS = [
 COURT_PATTERNS = [
     re.compile(r"(Ju[ií]zo[ \t]+Local[ \t]+[A-Za-zÀ-ÿ \-]+?[ \t]+de[ \t]+[A-Za-zÀ-ÿ \-]+)", re.IGNORECASE),
     re.compile(r"(Ju[ií]zo[ \t]+de[ \t]+[A-Za-zÀ-ÿ \-]+?[ \t]+de[ \t]+[A-Za-zÀ-ÿ \-]+(?:[ \t]+-[ \t]+Juiz[ \t]+\d+)?)", re.IGNORECASE),
+    re.compile(
+        r"(Procuradoria[ \t]+do[ \t]+Ju[ií]zo[ \t]+Local[ \t]+Criminal(?:[ \t]+-[ \t]+\d+[.ªa]?[ \t]+Sec(?:[cç][aã]o)?)?)",
+        re.IGNORECASE,
+    ),
     re.compile(r"(Minist[ée]rio[ \t]+P[úu]blico(?:[ \t]+de[ \t]+[A-Za-zÀ-ÿ \-]+)?)", re.IGNORECASE),
     re.compile(r"(Tribunal[ \t]+Judicial(?:[ \t]+da[ \t]+Comarca)?[ \t]+de[ \t]+[A-Za-zÀ-ÿ \-]+)", re.IGNORECASE),
     re.compile(r"(Tribunal[ \t]+do[ \t]+Trabalho[ \t]+de[ \t]+[A-Za-zÀ-ÿ \-]+)", re.IGNORECASE),
@@ -61,10 +84,19 @@ COURT_EMAIL_DOMAIN = "tribunais.org.pt"
 COURT_EMAIL_CITY_ALIASES = {
     "reguengos de monsaraz": "rmonsaraz",
     "foro alentejo": "falentejo",
+    "ferreira do alentejo": "falentejo",
 }
 METADATA_CITY_RE = (
     r"[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’\-]*"
     r"(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’\-]*){0,6}"
+)
+COMARCA_CITY_PREFIX_PATTERN = re.compile(
+    rf"\bcomarca\s+de\s+(?P<city>{METADATA_CITY_RE})(?=\s*(?:[-–—]|,|\n|$))",
+    re.IGNORECASE,
+)
+MINISTERIO_PUBLICO_CITY_PREFIX_PATTERN = re.compile(
+    rf"\bminist[ée]rio\s+p[úu]blico\s+de\s+(?P<city>{METADATA_CITY_RE})(?=\s*(?:[-–—]|,|\n|$))",
+    re.IGNORECASE,
 )
 SPECIFIC_CASE_ENTITY_PATTERNS: tuple[tuple[int, re.Pattern[str]], ...] = (
     (
@@ -138,7 +170,73 @@ LAW_ENFORCEMENT_SERVICE_PATTERNS = (
         r"(GNR|PSP)\s+(?:de|da|do)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s\-]{1,60}?)(?=,|\.|;|\n|\s+no\s+dia\b|\s+às\b|\s+as\b|$)",
         re.IGNORECASE,
     ),
+    re.compile(
+        r"\b(Servi[çc]o\s+de\s+Turno)\s+(?:de|da|do)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s\-]{1,60}?)(?=,|\.|;|\n|\s+no\s+dia\b|\s+às\b|\s+as\b|$)",
+        re.IGNORECASE,
+    ),
 )
+SERVICE_TURN_CITY_BEFORE_LABEL_PATTERN = re.compile(
+    r"(?m)^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ \t\-]{1,60}?)\s*[-–—]\s*(Servi[çc]o\s+de\s+Turno)\b",
+    re.IGNORECASE,
+)
+SERVICE_CITY_BEFORE_SHORT_LABEL_PATTERN = re.compile(
+    r"(?m)^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ \t\-]{1,60}?)\s*[-–—]\s*Servi[çc]o\b",
+    re.IGNORECASE,
+)
+PORTUGUESE_POSTCODE_CITY_PATTERN = re.compile(
+    r"\b\d{4}\s*(?:-\s*)?\d{3}\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s\-]{1,60}?)(?=,|\.|;|\n|$)",
+    re.IGNORECASE,
+)
+GENERIC_SERVICE_CITY_CANDIDATE_TERMS = {
+    "audiencia",
+    "cidadao",
+    "cidadao estrangeiro",
+    "contactos",
+    "documento",
+    "justica",
+    "palacio",
+    "palacio da justica",
+    "processo",
+    "referencia",
+    "servico",
+    "servico de turno",
+    "situacao",
+    "tribunal",
+}
+GENERIC_CASE_CITY_CANDIDATE_TERMS = {
+    "audiencia",
+    "cidadao",
+    "cidadao estrangeiro",
+    "contactos",
+    "documento",
+    "justica",
+    "largo",
+    "palacio",
+    "palacio da justica",
+    "processo",
+    "referencia",
+    "servico",
+    "servico de turno",
+    "situacao",
+    "tribunal",
+}
+GENERIC_CASE_CITY_CANDIDATE_WORDS = {
+    "avenida",
+    "contactos",
+    "documento",
+    "email",
+    "estrangeiro",
+    "justica",
+    "largo",
+    "palacio",
+    "processo",
+    "rua",
+    "servico",
+    "situacao",
+    "telefone",
+    "telef",
+    "tribunal",
+}
 
 
 @dataclass(slots=True)
@@ -151,6 +249,7 @@ class MetadataSuggestion:
     service_city: str | None = None
     service_date: str | None = None
     confidence: dict[str, float] | None = None
+    safe_diagnostics: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -250,6 +349,38 @@ def normalize_for_match(value: str) -> str:
     return ascii_like.casefold()
 
 
+def _normalized_metadata_value(value: str | None) -> str:
+    normalized = normalize_for_match(str(value or ""))
+    normalized = re.sub(r"\s+", " ", normalized).strip(" \t\r\n-–—:;,./")
+    return normalized
+
+
+def _is_placeholder_metadata_value(value: str | None) -> bool:
+    normalized = _normalized_metadata_value(value)
+    if normalized in {normalize_for_match(item) for item in GENERIC_CASE_ENTITIES}:
+        return True
+    for prefix in GENERIC_CASE_ENTITY_PREFIXES:
+        if normalized.startswith(normalize_for_match(prefix)):
+            tail = normalized[len(normalize_for_match(prefix)) :].strip()
+            if tail in {normalize_for_match(item) for item in GENERIC_CASE_ENTITIES}:
+                return True
+    return False
+
+
+def _is_generic_case_city_candidate(candidate: str | None) -> bool:
+    normalized = _normalized_metadata_value(candidate)
+    if not normalized:
+        return True
+    if normalized in GENERIC_CASE_CITY_CANDIDATE_TERMS:
+        return True
+    words = set(normalized.split())
+    if words & GENERIC_CASE_CITY_CANDIDATE_WORDS:
+        return True
+    if re.search(r"\b\d{4}\s*(?:-\s*)?\d{3}\b", str(candidate or "")):
+        return True
+    return "@" in str(candidate or "")
+
+
 def _first_city_match(text: str, vocab_cities: list[str]) -> str | None:
     lowered = normalize_for_match(text)
     matches: list[tuple[int, str]] = []
@@ -267,6 +398,45 @@ def _first_city_match(text: str, vocab_cities: list[str]) -> str | None:
     return matches[0][1]
 
 
+def _canonicalize_interpretation_case_city_candidate(
+    candidate: str,
+    vocab_cities: list[str],
+    *,
+    allow_unknown: bool = True,
+) -> str | None:
+    candidate_text = str(candidate or "").strip()
+    if candidate_text == "":
+        return None
+    vocab_match = _first_city_match(candidate_text, vocab_cities)
+    if vocab_match is not None:
+        city_index = normalize_for_match(candidate_text).find(normalize_for_match(vocab_match))
+        if _is_generic_case_city_candidate(candidate_text) and city_index > 0:
+            return None
+        return vocab_match
+    if _is_generic_case_city_candidate(candidate_text):
+        return None
+    if not allow_unknown:
+        return None
+    return _canonicalize_city_candidate(candidate_text, vocab_cities)
+
+
+def _case_header_tail_segment(tail: str) -> str:
+    segment = re.split(r"[-–—,;]|\b(?:e-?mail|telefone|telef)\b", str(tail or ""), maxsplit=1, flags=re.IGNORECASE)[0]
+    return segment.strip()
+
+
+def _case_entity_has_rejected_city_tail(entity: str | None) -> bool:
+    cleaned = _sanitize_entity(entity)
+    if cleaned is None:
+        return False
+    normalized = normalize_for_match(cleaned)
+    for prefix in ("ministerio publico de ", "comarca de "):
+        if normalized.startswith(prefix):
+            tail = cleaned[len(prefix) :]
+            return _is_generic_case_city_candidate(_case_header_tail_segment(tail))
+    return False
+
+
 def _collapse_metadata_text(text: str) -> str:
     return " ".join(str(text or "").replace("\xa0", " ").split())
 
@@ -277,6 +447,8 @@ def _sanitize_entity(value: str | None) -> str | None:
     cleaned = " ".join(value.strip().split())
     if cleaned == "":
         return None
+    if _is_placeholder_metadata_value(cleaned):
+        return None
     return cleaned
 
 
@@ -285,6 +457,8 @@ def _sanitize_city(value: str | None) -> str | None:
         return None
     cleaned = " ".join(value.strip().split())
     if cleaned == "":
+        return None
+    if _is_placeholder_metadata_value(cleaned):
         return None
     return cleaned
 
@@ -304,7 +478,9 @@ def _extract_case_entity(text: str) -> str | None:
     for pattern in COURT_PATTERNS:
         match = pattern.search(_collapse_metadata_text(text))
         if match:
-            return _sanitize_entity(match.group(1))
+            entity = _sanitize_entity(match.group(1))
+            if entity is not None and not _case_entity_has_rejected_city_tail(entity):
+                return entity
     return None
 
 
@@ -313,11 +489,14 @@ def _metadata_entity_candidates(text: str) -> list[_MetadataEntityCandidate]:
     matched = extract_best_case_entity_match(text)
     if matched is not None:
         entity = _sanitize_entity(matched.source_text)
-        if entity is not None:
+        city = _sanitize_city(matched.case_city)
+        if city is not None and _is_generic_case_city_candidate(city):
+            city = None
+        if entity is not None and city is not None and not _case_entity_has_rejected_city_tail(entity):
             candidates.append(
                 _MetadataEntityCandidate(
                     entity=entity,
-                    city=_sanitize_city(matched.case_city),
+                    city=city,
                     rank=int(matched.metadata_rank),
                     confidence=0.95,
                 )
@@ -327,12 +506,15 @@ def _metadata_entity_candidates(text: str) -> list[_MetadataEntityCandidate]:
     for rank, pattern in SPECIFIC_CASE_ENTITY_PATTERNS:
         for match in pattern.finditer(compact):
             entity = _sanitize_entity(match.group("entity"))
-            if entity is None:
+            city = _sanitize_city(match.group("city"))
+            if city is not None and _is_generic_case_city_candidate(city):
+                city = None
+            if entity is None or city is None or _case_entity_has_rejected_city_tail(entity):
                 continue
             candidates.append(
                 _MetadataEntityCandidate(
                     entity=entity,
-                    city=_sanitize_city(match.group("city")),
+                    city=city,
                     rank=rank,
                     confidence=0.97,
                 )
@@ -351,16 +533,106 @@ def _best_metadata_entity_candidate(text: str) -> _MetadataEntityCandidate | Non
 def _extract_city_heuristic(text: str) -> str | None:
     comarca = COMARCA_PATTERN.search(text)
     if comarca:
-        return _sanitize_city(comarca.group(1))
+        candidate = _sanitize_city(comarca.group(1))
+        if candidate and not _is_generic_case_city_candidate(candidate):
+            return candidate
     portugal = PORTUGAL_CITY_PATTERN.search(text)
     if portugal:
-        return _sanitize_city(portugal.group(1))
+        candidate = _sanitize_city(portugal.group(1))
+        if candidate and not _is_generic_case_city_candidate(candidate):
+            return candidate
     de_match = DE_CITY_PATTERN.search(text)
     if de_match:
         candidate = _sanitize_city(de_match.group(1))
-        if candidate is not None and len(candidate) <= 40:
+        if candidate is not None and len(candidate) <= 40 and not _is_generic_case_city_candidate(candidate):
             return candidate
     return None
+
+
+def _extract_case_city_from_official_photo_context(text: str, vocab_cities: list[str]) -> str | None:
+    for line in (line.strip() for line in text.splitlines() if line.strip()):
+        for pattern in (MINISTERIO_PUBLICO_CITY_PREFIX_PATTERN, COMARCA_CITY_PREFIX_PATTERN):
+            match = pattern.search(line)
+            if match:
+                city = _canonicalize_interpretation_case_city_candidate(
+                    _case_header_tail_segment(str(match.group("city") or "")),
+                    vocab_cities,
+                )
+                if city:
+                    return city
+
+        comarca_pos = normalize_for_match(line).find("comarca de")
+        if comarca_pos < 0:
+            mp_pos = normalize_for_match(line).find("ministerio publico de")
+            if mp_pos < 0:
+                continue
+            tail = line[mp_pos + len("ministerio publico de") :]
+        else:
+            tail = line[comarca_pos + len("comarca de") :]
+        city = _canonicalize_interpretation_case_city_candidate(
+            _case_header_tail_segment(tail),
+            vocab_cities,
+        )
+        if city:
+            return city
+    return None
+
+
+def _extract_case_city_from_court_email(email: str | None, vocab_cities: list[str]) -> str | None:
+    cleaned = _sanitize_email(email)
+    if cleaned is None:
+        return None
+    local_part = _court_email_local_part(cleaned)
+    for city in vocab_cities:
+        slug = _court_email_city_slug(city, None)
+        if slug and (local_part == slug or local_part.startswith(f"{slug}.")):
+            return city.strip() or None
+    return None
+
+
+def _extract_interpretation_photo_case_header(
+    text: str,
+    *,
+    vocab_cities: list[str],
+) -> MetadataSuggestion:
+    entity_candidate = _best_metadata_entity_candidate(text)
+    case_entity = entity_candidate.entity if entity_candidate is not None else _extract_case_entity(text)
+    case_city = entity_candidate.city if entity_candidate is not None else None
+    city_conf = entity_candidate.confidence if case_city else 0.0
+    if case_city is None and case_entity:
+        case_city = _first_city_match(case_entity, vocab_cities)
+        city_conf = 0.9 if case_city else city_conf
+    if case_city is None:
+        case_city = _extract_case_city_from_official_photo_context(text, vocab_cities)
+        city_conf = 0.92 if case_city else city_conf
+
+    related_email, first_email = _extract_court_email_candidates(text)
+    court_email = related_email or first_email
+    if case_city is None:
+        case_city = _extract_case_city_from_court_email(court_email, vocab_cities)
+        city_conf = 0.65 if case_city else city_conf
+
+    if case_city:
+        case_city = _canonicalize_interpretation_case_city_candidate(case_city, vocab_cities)
+    if case_entity and case_city and normalize_for_match(case_entity).startswith("ministerio publico de "):
+        case_entity = default_interpretation_case_entity_for_city(case_city)
+    if case_entity is None and case_city:
+        case_entity = default_interpretation_case_entity_for_city(case_city)
+    elif case_city and normalize_for_match(case_entity or "") in {*GENERIC_CASE_ENTITIES, "ministerio publico"}:
+        case_entity = default_interpretation_case_entity_for_city(case_city)
+
+    return MetadataSuggestion(
+        case_entity=case_entity,
+        case_city=case_city,
+        case_number=_extract_case_number(text),
+        court_email=court_email,
+        confidence={
+            "case_entity": entity_candidate.confidence if entity_candidate is not None else (0.8 if case_entity else 0.0),
+            "case_city": city_conf,
+            "case_number": 0.95 if _extract_case_number(text) else 0.0,
+            "court_email": 0.9 if related_email else (0.6 if first_email else 0.0),
+        },
+    )
 
 
 def _sanitize_email(value: str | None) -> str | None:
@@ -439,6 +711,32 @@ def _court_email_city_slug_from_vocab(email: str | None, vocab_cities: list[str]
     return None
 
 
+def _court_email_local_matches_city_slug(email: str, city_slug: str) -> bool:
+    local_part = _court_email_local_part(email)
+    slug = str(city_slug or "").strip().casefold()
+    if not slug:
+        return False
+    return (
+        local_part == slug
+        or local_part.startswith(f"{slug}.")
+        or local_part.endswith(f".{slug}")
+        or f".{slug}." in local_part
+    )
+
+
+def _court_email_matches_case_city(email: str | None, case_city: str | None, case_entity: str | None) -> bool:
+    cleaned = _sanitize_email(email)
+    if cleaned is None:
+        return False
+    _local, _at, domain = cleaned.partition("@")
+    if domain.casefold() != COURT_EMAIL_DOMAIN:
+        return True
+    city_slug = _court_email_city_slug(case_city, case_entity)
+    if city_slug is None:
+        return True
+    return _court_email_local_matches_city_slug(cleaned, city_slug)
+
+
 def _infer_court_email_candidates(
     *,
     case_entity: str | None,
@@ -493,7 +791,8 @@ def rank_court_email_suggestions(
     inferred = _infer_court_email_candidates(case_entity=case_entity, case_city=case_city)
     city_slug = _court_email_city_slug(case_city, case_entity)
 
-    _add(exact_email)
+    if _court_email_matches_case_city(exact_email, case_city, case_entity):
+        _add(exact_email)
 
     curated_by_local = {_court_email_local_part(email): email for email in curated}
     for inferred_email in inferred:
@@ -771,6 +1070,20 @@ def _parse_numeric_date_token(token: str) -> str | None:
     return parsed.date().isoformat()
 
 
+def _normalize_metadata_date(value: str | None) -> str | None:
+    cleaned = _sanitize_entity(value)
+    if cleaned is None:
+        return None
+    try:
+        return datetime.strptime(cleaned, "%Y-%m-%d").date().isoformat()
+    except ValueError:
+        pass
+    numeric_date = _parse_numeric_date_token(cleaned)
+    if numeric_date:
+        return numeric_date
+    return cleaned
+
+
 def _context_contains_any(context: str, hints: tuple[str, ...]) -> bool:
     normalized = normalize_for_match(context)
     return any(hint in normalized for hint in hints)
@@ -815,13 +1128,141 @@ def _canonicalize_city_candidate(candidate: str, vocab_cities: list[str]) -> str
     return cleaned or None
 
 
+def _is_generic_service_city_candidate(candidate: str | None) -> bool:
+    normalized = normalize_for_match(candidate or "")
+    if not normalized:
+        return True
+    if normalized in GENERIC_SERVICE_CITY_CANDIDATE_TERMS:
+        return True
+    words = set(normalized.split())
+    return bool(words & {"justica", "palacio", "tribunal", "documento", "processo"})
+
+
+def _canonicalize_service_city_candidate(
+    candidate: str,
+    vocab_cities: list[str],
+    *,
+    allow_unknown: bool = False,
+) -> str | None:
+    if _is_generic_service_city_candidate(candidate):
+        return None
+    vocab_match = _first_city_match(candidate, vocab_cities)
+    if vocab_match is not None:
+        return vocab_match
+    if not allow_unknown:
+        return None
+    return _canonicalize_city_candidate(candidate, vocab_cities)
+
+
+def _canonicalize_interpretation_service_entity(candidate: str) -> str | None:
+    cleaned = _sanitize_entity(candidate)
+    if cleaned is None:
+        return None
+    normalized = normalize_for_match(cleaned)
+    if normalized == "gnr":
+        return "GNR"
+    if normalized == "psp":
+        return "PSP"
+    if normalized == "servico de turno":
+        return "Serviço de Turno"
+    return cleaned
+
+
+def _is_case_jurisdiction_service_turn_line(line: str) -> bool:
+    normalized = normalize_for_match(line)
+    return (
+        "servico" in normalized
+        and (
+            "comarca de" in normalized
+            or "tribunal judicial" in normalized
+            or "ministerio publico" in normalized
+        )
+    )
+
+
+def _is_service_turn_context_line(line: str) -> bool:
+    normalized = normalize_for_match(line)
+    if "servico de turno" in normalized:
+        return True
+    return "servico" in normalized and "comarca de" in normalized
+
+
+def _city_from_postcode_or_vocab(line: str, vocab_cities: list[str]) -> str | None:
+    postcode_match = PORTUGUESE_POSTCODE_CITY_PATTERN.search(line)
+    if postcode_match:
+        city = _canonicalize_city_candidate(str(postcode_match.group(1) or ""), vocab_cities)
+        if city:
+            return city
+    city = _first_city_match(line, vocab_cities)
+    if city and not _is_generic_service_city_candidate(city):
+        return city
+    return None
+
+
+def _extract_service_turn_city_before_label(text: str, *, vocab_cities: list[str]) -> tuple[str | None, str | None]:
+    for match in SERVICE_TURN_CITY_BEFORE_LABEL_PATTERN.finditer(text):
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        line_end = text.find("\n", match.end())
+        if line_end == -1:
+            line_end = len(text)
+        line = text[line_start:line_end]
+        if _is_case_jurisdiction_service_turn_line(line):
+            continue
+        service_city = _canonicalize_service_city_candidate(str(match.group(1) or ""), vocab_cities)
+        service_entity = _canonicalize_interpretation_service_entity(str(match.group(2) or ""))
+        if service_entity and service_city:
+            return service_entity, service_city
+
+    for match in SERVICE_CITY_BEFORE_SHORT_LABEL_PATTERN.finditer(text):
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        line_end = text.find("\n", match.end())
+        if line_end == -1:
+            line_end = len(text)
+        line = text[line_start:line_end]
+        if _is_case_jurisdiction_service_turn_line(line):
+            continue
+        service_city = _canonicalize_service_city_candidate(str(match.group(1) or ""), vocab_cities)
+        if service_city:
+            return "Serviço de Turno", service_city
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        if not _is_service_turn_context_line(line):
+            continue
+        postcode_nearby_lines = [
+            item for nearby_index, item in enumerate(lines) if index - 2 <= nearby_index <= index + 6 and nearby_index != index
+        ]
+        for nearby in postcode_nearby_lines:
+            postcode_match = PORTUGUESE_POSTCODE_CITY_PATTERN.search(nearby)
+            if not postcode_match:
+                continue
+            service_city = _canonicalize_city_candidate(str(postcode_match.group(1) or ""), vocab_cities)
+            if service_city:
+                return "Serviço de Turno", service_city
+        for nearby in lines[index + 1 : index + 7]:
+            service_city = _city_from_postcode_or_vocab(nearby, vocab_cities)
+            if service_city:
+                return "Serviço de Turno", service_city
+    return None, None
+
+
 def _extract_interpretation_service_location(text: str, *, vocab_cities: list[str]) -> tuple[str | None, str | None]:
     for pattern in LAW_ENFORCEMENT_SERVICE_PATTERNS:
         for match in pattern.finditer(text):
-            service_entity = str(match.group(1) or "").strip().upper()
-            service_city = _canonicalize_city_candidate(str(match.group(2) or ""), vocab_cities)
-            if service_entity in {"GNR", "PSP"} and service_city:
+            service_entity = _canonicalize_interpretation_service_entity(str(match.group(1) or ""))
+            service_city = _canonicalize_service_city_candidate(
+                str(match.group(2) or ""),
+                vocab_cities,
+                allow_unknown=normalize_for_match(service_entity or "") in {"gnr", "psp"},
+            )
+            if service_entity and service_city:
                 return service_entity, service_city
+    service_entity, service_city = _extract_service_turn_city_before_label(
+        text,
+        vocab_cities=vocab_cities,
+    )
+    if service_entity and service_city:
+        return service_entity, service_city
     return None, None
 
 
@@ -909,7 +1350,7 @@ def extract_from_photo_ocr_text(
                 service_city = _sanitize_city(ai_data.get("service_city"))
                 city_conf = max(city_conf, 0.65)
             if not service_date and ai_data.get("service_date"):
-                service_date = _sanitize_entity(ai_data.get("service_date"))
+                service_date = _normalize_metadata_date(ai_data.get("service_date"))
                 date_conf = max(date_conf, 0.7)
             if not case_number and ai_data.get("case_number"):
                 case_number = _sanitize_entity(ai_data.get("case_number"))
@@ -917,7 +1358,7 @@ def extract_from_photo_ocr_text(
 
     return MetadataSuggestion(
         service_city=service_city,
-        service_date=service_date,
+        service_date=_normalize_metadata_date(service_date),
         case_number=case_number,
         confidence={
             "service_city": city_conf,
@@ -998,6 +1439,45 @@ def _metadata_extracted_fields(suggestion: MetadataSuggestion) -> tuple[str, ...
         if str(getattr(suggestion, field_name, "") or "").strip():
             extracted.append(field_name)
     return tuple(extracted)
+
+
+def _build_interpretation_photo_safe_diagnostics(
+    text: str,
+    *,
+    case_city: str | None,
+    service_city: str | None,
+    vocab_cities: list[str],
+) -> dict[str, Any]:
+    normalized_text = normalize_for_match(text)
+    placeholder_values_rejected = any(
+        placeholder in normalized_text
+        for placeholder in (
+            "nao especificado",
+            "nao aplicavel",
+            "not specified",
+            "unspecified",
+            "desconhecido",
+        )
+    )
+    official_case_city = _extract_case_city_from_official_photo_context(text, vocab_cities)
+    has_postcode = bool(re.search(r"\b\d{4}\s*(?:-\s*)?\d{3}\b", text))
+    field_sources: dict[str, str] = {}
+    if case_city and official_case_city and normalize_for_match(case_city) == normalize_for_match(official_case_city):
+        field_sources["case_city"] = "official_header"
+    if service_city:
+        field_sources["service_city"] = "ocr_service_location"
+    return {
+        "placeholder_values_rejected": bool(placeholder_values_rejected),
+        "placeholder_rejection_reasons": ["metadata_placeholder"] if placeholder_values_rejected else [],
+        "official_case_header_preferred": bool(field_sources.get("case_city") == "official_header"),
+        "service_location_evidence": "service_header_or_postcode" if service_city else "not_available",
+        "field_sources": field_sources,
+        "ocr_evidence_flags": {
+            "has_comarca": "comarca" in normalized_text,
+            "has_service_word": "servico" in normalized_text,
+            "has_postcode": has_postcode,
+        },
+    }
 
 
 def _interpretation_notice_ocr_config(config: MetadataAutofillConfig) -> MetadataAutofillConfig:
@@ -1354,6 +1834,118 @@ def _ocr_photo_text(image_path: Path, config: MetadataAutofillConfig) -> OcrResu
     return invoke_ocr_image(engine, image_bytes, lang_hint="PT", source_type="image")
 
 
+def _photo_header_crop_bytes(image_path: Path) -> bytes | None:
+    try:
+        with Image.open(image_path) as image:
+            width, height = image.size
+            if width <= 0 or height <= 0:
+                return None
+            crop_bottom = max(1, min(height, int(height * 0.52)))
+            cropped = image.crop((0, 0, width, crop_bottom))
+            output = BytesIO()
+            cropped.convert("RGB").save(output, format="JPEG", quality=92)
+            return output.getvalue()
+    except Exception:
+        return None
+
+
+def _ocr_photo_header_text(image_path: Path, config: MetadataAutofillConfig) -> OcrResult:
+    try:
+        engine = _build_ocr_engine_from_config(config)
+    except Exception as exc:  # noqa: BLE001
+        return OcrResult(text="", engine="none", failed_reason=str(exc), chars=0)
+    image_bytes = _photo_header_crop_bytes(image_path)
+    if not image_bytes:
+        return OcrResult(text="", engine="none", failed_reason="photo header crop unavailable", chars=0)
+    return invoke_ocr_image(engine, image_bytes, lang_hint="PT", source_type="image")
+
+
+def _has_trusted_interpretation_service_location(suggestion: MetadataSuggestion) -> bool:
+    return bool(str(suggestion.service_entity or "").strip() and str(suggestion.service_city or "").strip())
+
+
+def _merge_confidence(primary: dict[str, float] | None, recovery: dict[str, float] | None) -> dict[str, float] | None:
+    merged: dict[str, float] = {}
+    for source in (primary or {}, recovery or {}):
+        for key, value in source.items():
+            try:
+                merged[key] = max(float(value), merged.get(key, 0.0))
+            except (TypeError, ValueError):
+                continue
+    return merged or None
+
+
+def _merge_safe_diagnostics(primary: dict[str, Any] | None, recovery: dict[str, Any] | None) -> dict[str, Any]:
+    merged = dict(primary or {})
+    recovery_diag = dict(recovery or {})
+    if recovery_diag.get("service_location_evidence") and recovery_diag.get("service_location_evidence") != "not_available":
+        merged["service_location_evidence"] = recovery_diag.get("service_location_evidence")
+    merged_field_sources = dict(merged.get("field_sources") or {})
+    merged_field_sources.update(dict(recovery_diag.get("field_sources") or {}))
+    if merged_field_sources:
+        merged["field_sources"] = merged_field_sources
+    merged_flags = dict(merged.get("ocr_evidence_flags") or {})
+    for key, value in dict(recovery_diag.get("ocr_evidence_flags") or {}).items():
+        merged_flags[key] = bool(merged_flags.get(key)) or bool(value)
+    if merged_flags:
+        merged["ocr_evidence_flags"] = merged_flags
+    return merged
+
+
+def _merge_interpretation_photo_suggestions(
+    primary: MetadataSuggestion,
+    recovery: MetadataSuggestion,
+) -> MetadataSuggestion:
+    confidence = _merge_confidence(primary.confidence, recovery.confidence)
+    primary_case_confidence = float((primary.confidence or {}).get("case_city", 0.0) or 0.0)
+    recovery_case_confidence = float((recovery.confidence or {}).get("case_city", 0.0) or 0.0)
+    case_city = primary.case_city
+    case_entity = primary.case_entity
+    if recovery.case_city and (not primary.case_city or recovery_case_confidence >= primary_case_confidence):
+        case_city = recovery.case_city
+        case_entity = recovery.case_entity or (
+            default_interpretation_case_entity_for_city(recovery.case_city) if recovery.case_city else recovery.case_entity
+        )
+    elif not case_entity and case_city:
+        case_entity = default_interpretation_case_entity_for_city(case_city)
+    return MetadataSuggestion(
+        case_entity=case_entity,
+        case_city=case_city,
+        case_number=primary.case_number or recovery.case_number,
+        court_email=primary.court_email or recovery.court_email,
+        service_entity=primary.service_entity or recovery.service_entity,
+        service_city=primary.service_city or recovery.service_city,
+        service_date=primary.service_date or recovery.service_date,
+        confidence=confidence,
+        safe_diagnostics=_merge_safe_diagnostics(primary.safe_diagnostics, recovery.safe_diagnostics),
+    )
+
+
+def _annotate_interpretation_photo_ocr_diagnostics(
+    suggestion: MetadataSuggestion,
+    *,
+    ocr_variant_count: int,
+    service_location_recovery_attempted: bool,
+    service_location_initially_present: bool,
+) -> MetadataSuggestion:
+    safe_diagnostics = dict(suggestion.safe_diagnostics or {})
+    safe_diagnostics["ocr_variant_count"] = max(1, int(ocr_variant_count))
+    safe_diagnostics["service_location_recovery_attempted"] = bool(service_location_recovery_attempted)
+    safe_diagnostics["service_location_recovered"] = bool(
+        service_location_recovery_attempted
+        and not service_location_initially_present
+        and _has_trusted_interpretation_service_location(suggestion)
+    )
+    if safe_diagnostics.get("service_location_evidence") is None:
+        safe_diagnostics["service_location_evidence"] = (
+            "service_header_or_postcode"
+            if _has_trusted_interpretation_service_location(suggestion)
+            else "not_available"
+        )
+    suggestion.safe_diagnostics = safe_diagnostics
+    return suggestion
+
+
 def extract_photo_metadata_from_image(
     image_path: Path,
     *,
@@ -1373,7 +1965,7 @@ def extract_photo_metadata_from_image(
         ai_enabled=effective.metadata_ai_enabled,
         ai_config=effective,
     )
-    if exif_date and use_exif_date_as_service_date:
+    if exif_date and use_exif_date_as_service_date and not str(suggestion.service_date or "").strip():
         suggestion.service_date = exif_date
         if suggestion.confidence is None:
             suggestion.confidence = {}
@@ -1393,22 +1985,34 @@ def default_interpretation_case_entity_for_city(case_city: str) -> str:
 
 
 def extract_interpretation_photo_metadata_from_suggestion(suggestion: MetadataSuggestion) -> MetadataSuggestion:
-    case_city = _sanitize_city(suggestion.service_city) or _sanitize_city(suggestion.case_city)
-    case_entity = default_interpretation_case_entity_for_city(case_city or "") if case_city else None
+    explicit_service = bool(str(suggestion.service_entity or "").strip())
+    case_city = _sanitize_city(suggestion.case_city)
+    if case_city is None and not explicit_service:
+        case_city = _sanitize_city(suggestion.service_city)
+    case_entity = _sanitize_entity(suggestion.case_entity) or (
+        default_interpretation_case_entity_for_city(case_city or "") if case_city else None
+    )
     confidence = dict(suggestion.confidence or {})
     if case_entity:
         confidence["case_entity"] = 0.55
     if case_city:
         confidence["case_city"] = max(confidence.get("case_city", 0.0), confidence.get("service_city", 0.0))
+    service_entity = _sanitize_entity(suggestion.service_entity) if explicit_service else None
+    service_city = _sanitize_city(suggestion.service_city) if explicit_service else None
+    if service_entity:
+        confidence["service_entity"] = max(confidence.get("service_entity", 0.0), 0.9)
+    if service_city:
+        confidence["service_city"] = max(confidence.get("service_city", 0.0), 0.9)
     return MetadataSuggestion(
         case_entity=case_entity,
         case_city=case_city,
         case_number=_sanitize_entity(suggestion.case_number),
-        court_email=None,
-        service_entity=None,
-        service_city=None,
-        service_date=_sanitize_entity(suggestion.service_date),
+        court_email=_sanitize_entity(suggestion.court_email),
+        service_entity=service_entity,
+        service_city=service_city,
+        service_date=_normalize_metadata_date(suggestion.service_date),
         confidence=confidence or None,
+        safe_diagnostics=dict(suggestion.safe_diagnostics or {}),
     )
 
 
@@ -1419,13 +2023,57 @@ def extract_interpretation_photo_metadata_from_ocr_text(
     ai_enabled: bool,
     ai_config: MetadataAutofillConfig | None = None,
 ) -> MetadataSuggestion:
+    text = ocr_text.strip()
     base = extract_from_photo_ocr_text(
-        ocr_text,
+        text,
         vocab_cities=vocab_cities,
         ai_enabled=ai_enabled,
         ai_config=ai_config,
     )
-    return extract_interpretation_photo_metadata_from_suggestion(base)
+    header = _extract_interpretation_photo_case_header(
+        text,
+        vocab_cities=vocab_cities,
+    )
+    service_entity, service_city = _extract_interpretation_service_location(
+        text,
+        vocab_cities=vocab_cities,
+    )
+    confidence = dict(base.confidence or {})
+    if header.confidence:
+        confidence.update(header.confidence)
+    if service_entity:
+        confidence["service_entity"] = 0.9
+    if service_city:
+        confidence["service_city"] = 0.9
+
+    case_city = _sanitize_city(header.case_city)
+    if case_city is None and not service_city and not PORTUGUESE_POSTCODE_CITY_PATTERN.search(text):
+        case_city = _canonicalize_interpretation_case_city_candidate(
+            str(base.service_city or ""),
+            vocab_cities,
+        )
+    case_entity = _sanitize_entity(header.case_entity)
+    if case_entity is None and case_city:
+        case_entity = default_interpretation_case_entity_for_city(case_city)
+    elif case_city and normalize_for_match(case_entity or "") in {*GENERIC_CASE_ENTITIES, "ministerio publico"}:
+        case_entity = default_interpretation_case_entity_for_city(case_city)
+
+    return MetadataSuggestion(
+        case_entity=case_entity,
+        case_city=case_city,
+        case_number=_sanitize_entity(header.case_number) or _sanitize_entity(base.case_number),
+        court_email=_sanitize_entity(header.court_email),
+        service_entity=service_entity,
+        service_city=service_city,
+        service_date=_normalize_metadata_date(base.service_date),
+        confidence=confidence or None,
+        safe_diagnostics=_build_interpretation_photo_safe_diagnostics(
+            text,
+            case_city=case_city,
+            service_city=service_city,
+            vocab_cities=vocab_cities,
+        ),
+    )
 
 
 def extract_interpretation_photo_metadata_from_image(
@@ -1435,10 +2083,45 @@ def extract_interpretation_photo_metadata_from_image(
     config: MetadataAutofillConfig | None = None,
     use_exif_date_as_service_date: bool = True,
 ) -> MetadataSuggestion:
-    base = extract_photo_metadata_from_image(
-        image_path,
+    effective = config or MetadataAutofillConfig()
+    exif_date = _read_exif_date(image_path)
+    if effective.ocr_mode == OcrMode.OFF:
+        ocr_result = OcrResult(text="", engine="none", failed_reason="ocr disabled by mode=off", chars=0)
+    else:
+        ocr_result = _ocr_photo_text(image_path, effective)
+    suggestion = extract_interpretation_photo_metadata_from_ocr_text(
+        ocr_result.text,
         vocab_cities=vocab_cities,
-        config=config,
-        use_exif_date_as_service_date=use_exif_date_as_service_date,
+        ai_enabled=effective.metadata_ai_enabled,
+        ai_config=effective,
     )
-    return extract_interpretation_photo_metadata_from_suggestion(base)
+    service_location_initially_present = _has_trusted_interpretation_service_location(suggestion)
+    ocr_variant_count = 1
+    service_location_recovery_attempted = False
+    if effective.ocr_mode != OcrMode.OFF and not service_location_initially_present:
+        service_location_recovery_attempted = True
+        recovery_ocr_result = _ocr_photo_header_text(image_path, effective)
+        if str(recovery_ocr_result.text or "").strip():
+            ocr_variant_count = 2
+            recovery_suggestion = extract_interpretation_photo_metadata_from_ocr_text(
+                recovery_ocr_result.text,
+                vocab_cities=vocab_cities,
+                ai_enabled=effective.metadata_ai_enabled,
+                ai_config=effective,
+            )
+            suggestion = _merge_interpretation_photo_suggestions(suggestion, recovery_suggestion)
+    if exif_date and use_exif_date_as_service_date and not str(suggestion.service_date or "").strip():
+        suggestion.service_date = exif_date
+        if suggestion.confidence is None:
+            suggestion.confidence = {}
+        suggestion.confidence["service_date"] = 0.99
+    elif exif_date:
+        if suggestion.confidence is None:
+            suggestion.confidence = {}
+        suggestion.confidence["photo_taken_date"] = 0.99
+    return _annotate_interpretation_photo_ocr_diagnostics(
+        suggestion,
+        ocr_variant_count=ocr_variant_count,
+        service_location_recovery_attempted=service_location_recovery_attempted,
+        service_location_initially_present=service_location_initially_present,
+    )

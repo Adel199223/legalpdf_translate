@@ -324,7 +324,7 @@ appModule.renderProfileDistanceRowsInto(profileContainer, [
     removedCity = row.city;
   },
 });
-await firstButton(profileContainer, "Remove").click();
+await firstButton(profileContainer, "Delete destination").click();
 
 const recentContainer = document.createElement("div");
 appModule.renderRecentJobsInto(
@@ -515,7 +515,7 @@ def test_browser_dynamic_renderers_treat_external_values_as_text() -> None:
     assert '<img src=x onerror=alert(1)>' in results["profile"]["text"]
     assert results["profile"]["imgCount"] == 0
     assert results["profile"]["innerHTMLWrites"] == 0
-    assert "Remove" in results["profile"]["buttonLabels"]
+    assert "Delete destination" in results["profile"]["buttonLabels"]
     assert results["profile"]["removedCity"] == '<img src=x onerror=alert(1)>'
 
     assert '<img src=x onerror=alert(1)>' in results["recentWork"]["text"]

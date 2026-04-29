@@ -235,10 +235,15 @@ def test_load_gui_settings_repairs_legacy_default_primary_blank_travel_fields(
     assert loaded["profiles"][0]["travel_origin_label"] == "Marmelar"
     assert loaded["profiles"][0]["travel_distances_by_city"] == {
         "Beja": 39.0,
-        "Cuba": 26.0,
+        "Moura": 26.0,
         "Vidigueira": 15.0,
-        "Mora": 25.0,
+        "Cuba": 25.0,
+        "Odemira": 132.0,
+        "Ferreira do Alentejo": 50.0,
+        "Serpa": 34.0,
+        "Brinches": 23.0,
     }
+    assert "Mora" not in loaded["profiles"][0]["travel_distances_by_city"]
 
 
 def test_load_gui_settings_normalizes_missing_primary_profile_id(tmp_path: Path, monkeypatch) -> None:
@@ -345,10 +350,15 @@ def test_save_profile_settings_persists_repaired_legacy_default_primary_travel_f
     assert raw["profiles"][0]["travel_origin_label"] == "Marmelar"
     assert raw["profiles"][0]["travel_distances_by_city"] == {
         "Beja": 39.0,
-        "Cuba": 26.0,
+        "Moura": 26.0,
         "Vidigueira": 15.0,
-        "Mora": 25.0,
+        "Cuba": 25.0,
+        "Odemira": 132.0,
+        "Ferreira do Alentejo": 50.0,
+        "Serpa": 34.0,
+        "Brinches": 23.0,
     }
+    assert "Mora" not in raw["profiles"][0]["travel_distances_by_city"]
 
 
 def test_load_gui_settings_migrates_old_last_used_fields(tmp_path: Path, monkeypatch) -> None:

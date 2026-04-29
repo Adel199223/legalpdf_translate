@@ -16,9 +16,13 @@ LEGACY_DEFAULT_IBAN = "PT50003506490000832760029"
 LEGACY_DEFAULT_TRAVEL_ORIGIN_LABEL = "Marmelar"
 LEGACY_DEFAULT_TRAVEL_DISTANCES_BY_CITY = {
     "Beja": 39.0,
-    "Cuba": 26.0,
+    "Moura": 26.0,
     "Vidigueira": 15.0,
-    "Mora": 25.0,
+    "Cuba": 25.0,
+    "Odemira": 132.0,
+    "Ferreira do Alentejo": 50.0,
+    "Serpa": 34.0,
+    "Brinches": 23.0,
 }
 DEFAULT_PRIMARY_PROFILE_ID = "primary"
 PROFILE_REQUIRED_FIELDS = (

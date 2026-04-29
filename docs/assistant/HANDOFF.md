@@ -4,14 +4,14 @@
 - Canonical repo: `C:\Users\FA507\.codex\legalpdf_translate`.
 - Repository: `Adel199223/legalpdf_translate`.
 - Canonical branch: `main`.
-- Main after PR #47 merge: `77204f82e7992b00237fb218426c4ba0578cd8f3`.
+- Main after PR #49 merge: `24c30fe63d2237657e941d0cfb792e7836c62d03`.
 - Primary UI: local browser app on `127.0.0.1`, normally live on port `8877`.
 - Secondary UI: Qt/PySide6 shell.
 - Development UI review mode: browser `shadow` mode with isolated app data.
 
 PR #46 and the docs harness refresh PR #47 have been squash-merged into `main`. A post-merge setup pass launched the canonical-main live browser runtime and reported both `8877` and `8765` listening. Future live Gmail extension testing must happen from canonical `main`, not from feature branches.
 
-Google Photos Interpretation work is currently validated on feature branch `feat/google-photos-interpretation`, not merged. The feature is Interpretation-only and uses Google Photos Picker API OAuth/session flow to import one user-selected photo into the existing photo/OCR autofill and `Review Case Details` drawer. The temporary OAuth client used during troubleshooting was exposed and must be deleted or rotated before production-like use or PR review that depends on live credentials.
+Google Photos Interpretation import is merged and this follow-up closeout adds the accepted Review Details behavior: one selected Google Photos image imports through the Interpretation-only photo/OCR path, service-city evidence stays separate from case-city evidence, court email options are keyed to the case city, photo date can prefill service date only as an editable fallback, and distance is keyed to the effective service city. Google Photos place/location remains unavailable from the Picker API; if any testing credential was exposed during troubleshooting, rotate it before production-like use.
 
 ## What The App Does
 LegalPDF Translate is a Windows-first legal PDF translation and Gmail intake app. It translates PDFs page by page into DOCX, preserves run artifacts, supports browser and Qt workflows, records translation and interpretation work in the Job Log, and can continue from a real Gmail message through a browser extension/native-host bridge.
@@ -47,7 +47,7 @@ For feature-branch Review/Preview UI checks, use `mode=shadow` and the shadow-on
 - Live Gmail extension intake requires canonical `main` at the primary repo path. Feature branches should use `mode=shadow` for browser UI review; the shadow Gmail demo fixture is safe for Review/Preview drawer testing.
 - The Dart launcher can fail locally with `Unable to find AOT snapshot for dartdev`; when `scripts/validate_dev.ps1` detects this, the direct Dart fallback at `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe` is the expected path.
 - Generated DOCX/PDF files must be manually reviewed before any Gmail draft is sent.
-- The Google Photos validation intentionally did not generate the final honorários DOCX/PDF. Treat Google Photos `createTime` and downloaded EXIF dates as provenance only; do not claim Google Photos place/location or EXIF GPS support from the current validation.
+- The Google Photos validation intentionally did not generate the final honorários DOCX/PDF. Treat Google Photos `createTime` and downloaded EXIF dates as photo-date provenance only: OCR/legal text wins, and photo date is just an editable fallback when OCR has no service date. Do not claim Google Photos place/location or EXIF GPS support from the current validation.
 - Numeric mismatch warnings are serious in legal workflows; do not suppress or soften them without a focused safety review.
 - Do not print secrets, tokens, `.env` values, private app data, or live Gmail content in reports.
 
