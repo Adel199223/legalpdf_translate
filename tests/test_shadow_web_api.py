@@ -697,23 +697,116 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
 
 
 def test_shadow_web_operator_routes_expose_guided_qt_topbar_copy() -> None:
-    app_js = (
+    shell_js = (
         Path(__file__).resolve().parents[1]
         / "src"
         / "legalpdf_translate"
         / "shadow_web"
         / "static"
-        / "app.js"
+        / "shell_presentation.js"
     ).read_text(encoding="utf-8")
 
-    assert 'appState.activeView === "power-tools"' in app_js
-    assert 'eyebrow: "Advanced Tools"' in app_js
-    assert 'title: "LegalPDF Translate | Advanced Tools"' in app_js
-    assert 'status: "Use glossary, quality-check, and troubleshooting tools when you need more control."' in app_js
-    assert 'appState.activeView === "extension-lab"' in app_js
-    assert 'eyebrow: "Browser Helper"' in app_js
-    assert 'title: "LegalPDF Translate | Browser Helper Checks"' in app_js
-    assert 'status: "Check the browser helper used for Gmail intake. Technical details stay below."' in app_js
+    assert 'activeView === "power-tools"' in shell_js
+    assert 'eyebrow: "Advanced Tools"' in shell_js
+    assert 'title: "LegalPDF Translate | Advanced Tools"' in shell_js
+    assert 'status: "Use glossary, quality-check, and troubleshooting tools when you need more control."' in shell_js
+    assert 'activeView === "extension-lab"' in shell_js
+    assert 'eyebrow: "Browser Helper"' in shell_js
+    assert 'title: "LegalPDF Translate | Browser Helper Checks"' in shell_js
+    assert 'status: "Check the browser helper used for Gmail intake. Technical details stay below."' in shell_js
+
+
+def test_shadow_web_shell_presentation_module_centralizes_navigation_and_topbar_copy() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    shell_module = static_dir / "shell_presentation.js"
+
+    assert shell_module.exists()
+    assert 'from "./shell_presentation.js"' in app_js
+
+    script = """
+const shell = await import(__SHELL_MODULE_URL__);
+
+const navigation = [
+  { id: "dashboard", label: "Dashboard", status: "ready" },
+  { id: "settings", label: "Settings", status: "ready" },
+  { id: "new-job", label: "New Job", status: "ready" },
+  { id: "gmail-intake", label: "Gmail", status: "warming" },
+  { id: "recent-jobs", label: "Recent Work", status: "ready" },
+  { id: "profile", label: "Profile", status: "ready" },
+  { id: "power-tools", label: "Power Tools", status: "ready" },
+  { id: "extension-lab", label: "Extension Lab", status: "ready" },
+];
+
+const hiddenGmail = shell.buildNavigationGroups(navigation, { showGmailNav: false });
+const visibleGmail = shell.buildNavigationGroups(navigation, { showGmailNav: true });
+const payload = {
+  dashboard: shell.deriveRouteAwareTopbarStatus({
+    runtime: { live_data: false },
+    activeView: "dashboard",
+    uiVariant: "qt",
+    operatorChromeActive: false,
+  }),
+  powerTools: shell.deriveRouteAwareTopbarStatus({
+    runtime: { live_data: true },
+    activeView: "power-tools",
+    uiVariant: "qt",
+    operatorChromeActive: true,
+  }),
+  fallback: shell.deriveRouteAwareTopbarStatus({
+    runtime: { live_data: false },
+    activeView: "custom-view",
+    uiVariant: "legacy",
+    operatorChromeActive: false,
+    navLabel: "Custom View",
+  }),
+  hiddenPrimaryIds: hiddenGmail.primary.map((item) => item.id),
+  visiblePrimaryIds: visibleGmail.primary.map((item) => item.id),
+  moreIds: visibleGmail.more.map((item) => item.id),
+  dailyBanner: shell.shouldShowDailyRuntimeModeBanner({
+    uiVariant: "qt",
+    activeView: "new-job",
+    operatorChromeActive: false,
+  }),
+  operatorRoute: shell.isOperatorRoute("extension-lab"),
+  runtimeLabel: shell.runtimeModeDisplayLabel({ live_data: true }),
+  beginnerLabel: shell.beginnerSurfaceTargetLabel("profile"),
+};
+
+console.log(JSON.stringify(payload));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__SHELL_MODULE_URL__": "shell_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["dashboard"] == {
+        "eyebrow": "Overview",
+        "title": "LegalPDF Translate",
+        "status": "Check what is ready and choose what you want to do next.",
+        "tone": "ok",
+    }
+    assert results["powerTools"] == {
+        "eyebrow": "Advanced Tools",
+        "title": "LegalPDF Translate | Advanced Tools",
+        "status": "Use glossary, quality-check, and troubleshooting tools when you need more control.",
+        "tone": "info",
+    }
+    assert results["fallback"]["status"] == "Test mode: using isolated app data. Live Gmail and saved work may differ."
+    assert results["hiddenPrimaryIds"] == ["new-job", "recent-jobs"]
+    assert results["visiblePrimaryIds"] == ["new-job", "gmail-intake", "recent-jobs"]
+    assert results["moreIds"] == ["dashboard", "settings", "profile", "power-tools", "extension-lab"]
+    assert results["dailyBanner"] is True
+    assert results["operatorRoute"] is True
+    assert results["runtimeLabel"] == "Live mode"
+    assert results["beginnerLabel"] == "profile setup screen"
 
 
 def test_google_photos_busy_guard_allows_connect_when_choose_is_disabled() -> None:
@@ -1291,19 +1384,21 @@ def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> Non
         encoding="utf-8"
     )
     app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    shell_js = (static_dir / "shell_presentation.js").read_text(encoding="utf-8")
     guard_js = (static_dir / "gmail_runtime_guard.js").read_text(encoding="utf-8")
     dashboard_js = (static_dir / "dashboard_presentation.js").read_text(encoding="utf-8")
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
 
     assert 'id="runtime-mode-banner"' in template
-    assert '"Live mode: using your real settings, Gmail drafts, and saved work."' in app_js
-    assert '"Test mode: using isolated app data. Live Gmail and saved work may differ."' in app_js
-    assert "DAILY_RUNTIME_MODE_BANNER_ROUTES" in app_js
-    assert 'appState.runtimeMode === "live"' in app_js
+    assert '"Live mode: using your real settings, Gmail drafts, and saved work."' in shell_js
+    assert '"Test mode: using isolated app data. Live Gmail and saved work may differ."' in shell_js
+    assert "DAILY_RUNTIME_MODE_BANNER_ROUTES" in shell_js
+    assert 'runtimeMode === "live"' in shell_js
+    assert "appState.runtimeMode" in app_js
     assert '"Warming the browser shell and Gmail workspace..."' in app_js
     assert '"Warming the browser shell, Gmail bridge, and workspace..."' not in app_js
-    assert '"Live mode"' in app_js
-    assert '"Test mode"' in app_js
+    assert '"Live mode"' in shell_js
+    assert '"Test mode"' in shell_js
 
     assert '"Live Gmail needs the main app runtime"' in guard_js
     assert '"Restart live Gmail runtime"' in guard_js
@@ -1327,7 +1422,7 @@ def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> Non
     banner_start = app_js.index("function syncRuntimeModeBanner")
     banner_end = app_js.index("function syncShellChrome")
     banner_block = app_js[banner_start:banner_end]
-    assert "DAILY_RUNTIME_MODE_BANNER_ROUTES.has(appState.activeView)" in banner_block
+    assert "shouldShowDailyRuntimeModeBanner({" in banner_block
     assert "Boolean(appState.bootstrap?.normalized_payload?.runtime)" not in banner_block
     assert "operatorChromeActive()" in banner_block
 
