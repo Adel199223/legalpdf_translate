@@ -1,6 +1,7 @@
 import { fetchJson } from "./api.js";
 import { appState } from "./state.js";
 import { buildSettingsStatusPresentation } from "./settings_presentation.js";
+import { formatDiagnosticValue } from "./diagnostics_presentation.js";
 
 function qs(id) {
   return document.getElementById(id);
@@ -21,30 +22,6 @@ function setCheckbox(id, value) {
   const node = qs(id);
   if (node) {
     node.checked = Boolean(value);
-  }
-}
-
-function formatDiagnosticValue(value) {
-  if (value instanceof Error) {
-    const payload = { status: "failed", message: value.message || "Unexpected error." };
-    if (value.status) {
-      payload.http_status = value.status;
-    }
-    if (value.payload && Object.keys(value.payload).length) {
-      payload.payload = value.payload;
-    }
-    return JSON.stringify(payload, null, 2);
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value === undefined || value === null) {
-    return "";
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
   }
 }
 
