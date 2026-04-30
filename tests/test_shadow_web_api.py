@@ -1381,25 +1381,119 @@ def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
     assert '}, { guardIds: ["google-photos-choose"] });' in app_js
 
 
-def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
-    app_js = (
+def test_extension_lab_presentation_module_centralizes_card_copy() -> None:
+    static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
         / "legalpdf_translate"
         / "shadow_web"
         / "static"
-        / "app.js"
-    ).read_text(encoding="utf-8")
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    extension_lab_module = static_dir / "extension_lab_presentation.js"
 
-    readiness_start = app_js.index("function extensionReadinessCardText")
-    install_start = app_js.index("function extensionInstallCardText")
-    mode_start = app_js.index("function extensionModeCardText")
+    assert extension_lab_module.exists()
+    assert 'from "./extension_lab_presentation.js"' in app_js
+
+    script = """
+const lab = await import(__EXTENSION_LAB_PRESENTATION_MODULE_URL__);
+
+const payload = {
+  ready: lab.extensionReadinessCardText({ ok: true }, { status: "bad", message: "Stable ID: should stay hidden" }),
+  infoMode: lab.extensionReadinessCardText({ ok: false }, { status: "info", message: "UI owner: should stay hidden" }),
+  needsAttention: lab.extensionReadinessCardText({ ok: false }, { status: "warn", message: "Launch target: should stay hidden" }),
+  installed: lab.extensionInstallCardText({ active_extension_ids: ["abc"], stale_extension_ids: [] }),
+  stale: lab.extensionInstallCardText({ active_extension_ids: [], stale_extension_ids: ["old"] }),
+  missing: lab.extensionInstallCardText({ active_extension_ids: [], stale_extension_ids: [] }),
+  liveMode: lab.extensionModeCardText({ live_data: true }, { status: "warn", message: "Stable ID: should stay hidden" }),
+  isolatedInfo: lab.extensionModeCardText({ live_data: false }, { status: "info", message: "UI owner: should stay hidden" }),
+  isolatedWarn: lab.extensionModeCardText({ live_data: false }, { status: "warn", message: "Launch target: should stay hidden" }),
+  cards: lab.buildExtensionLabCards({
+    prepare: { ok: false },
+    extensionReport: { active_extension_ids: ["abc"], stale_extension_ids: ["old"] },
+    bridgeSummary: { status: "info", label: "Test mode" },
+    runtime: { live_data: false },
+  }),
+};
+console.log(JSON.stringify(payload));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__EXTENSION_LAB_PRESENTATION_MODULE_URL__": "extension_lab_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["ready"] == "Ready for Gmail intake in this mode."
+    assert (
+        results["infoMode"]
+        == "This test mode is isolated from live Gmail intake. Open technical details below when troubleshooting."
+    )
+    assert (
+        results["needsAttention"]
+        == "Needs attention before Gmail intake can start here. Open technical details below when troubleshooting."
+    )
+    assert results["installed"] == "Browser helper details were found. Open technical details below for installation IDs."
+    assert results["stale"] == "Older browser helper details were found. Open technical details below when troubleshooting."
+    assert results["missing"] == "No browser helper installation details were reported."
+    assert results["liveMode"] == (
+        "Using live app settings and saved work.\n"
+        "Use this page when Gmail intake needs a deeper technical check."
+    )
+    assert results["isolatedInfo"] == (
+        "Using isolated test settings and saved work.\n"
+        "This test mode is isolated from live Gmail intake. Open technical details below when troubleshooting."
+    )
+    assert results["isolatedWarn"] == (
+        "Using isolated test settings and saved work.\n"
+        "Live Gmail readiness can differ from this isolated test mode."
+    )
+    assert results["cards"] == [
+        {
+            "title": "Gmail helper readiness",
+            "text": "This test mode is isolated from live Gmail intake. Open technical details below when troubleshooting.",
+            "status": "info",
+            "label": "Test mode",
+        },
+        {
+            "title": "Installed browser helper",
+            "text": "Browser helper details were found. Open technical details below for installation IDs.",
+            "status": "ok",
+            "label": "Detected",
+        },
+        {
+            "title": "Current mode",
+            "text": (
+                "Using isolated test settings and saved work.\n"
+                "This test mode is isolated from live Gmail intake. Open technical details below when troubleshooting."
+            ),
+            "status": "info",
+            "label": "Test mode",
+        },
+    ]
+
+
+def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    extension_lab_js = (static_dir / "extension_lab_presentation.js").read_text(encoding="utf-8")
+
+    readiness_start = extension_lab_js.index("export function extensionReadinessCardText")
+    install_start = extension_lab_js.index("export function extensionInstallCardText")
+    mode_start = extension_lab_js.index("export function extensionModeCardText")
+    build_cards_start = extension_lab_js.index("export function buildExtensionLabCards")
     render_start = app_js.index("function renderExtensionLab")
     show_live_start = app_js.index("function showLiveBanner")
 
-    readiness_block = app_js[readiness_start:install_start]
-    install_block = app_js[install_start:mode_start]
-    mode_block = app_js[mode_start:render_start]
+    readiness_block = extension_lab_js[readiness_start:install_start]
+    install_block = extension_lab_js[install_start:mode_start]
+    mode_block = extension_lab_js[mode_start:build_cards_start]
+    card_builder_block = extension_lab_js[build_cards_start:]
     render_block = app_js[render_start:show_live_start]
 
     assert "bridgeSummary.message" not in readiness_block
@@ -1423,6 +1517,10 @@ def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     assert "UI owner" not in mode_block
     assert "Launch target" not in mode_block
 
+    assert '"Gmail helper readiness"' in card_builder_block
+    assert '"Installed browser helper"' in card_builder_block
+    assert '"Current mode"' in card_builder_block
+    assert 'const cards = buildExtensionLabCards({ prepare, extensionReport, bridgeSummary, runtime });' in render_block
     assert 'setDiagnostics("extension", { prepare_response: prepare, extension_report: extensionReport, bridge_summary: bridgeSummary, notes: data.notes || [] }, {' in render_block
 
 
@@ -3650,6 +3748,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert browser_pdf.status_code == 200
         assert browser_pdf.headers["content-type"].startswith("application/javascript")
         assert "resolveBrowserPdfAssetUrls" in browser_pdf.text
+        extension_lab_asset = client.get(f"/static-build/{asset_version}/extension_lab_presentation.js")
+        assert extension_lab_asset.status_code == 200
+        assert extension_lab_asset.headers["content-type"].startswith("application/javascript")
+        assert "buildExtensionLabCards" in extension_lab_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")
