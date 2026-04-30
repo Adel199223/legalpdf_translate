@@ -1524,6 +1524,70 @@ def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     assert 'setDiagnostics("extension", { prepare_response: prepare, extension_report: extensionReport, bridge_summary: bridgeSummary, notes: data.notes || [] }, {' in render_block
 
 
+def test_diagnostics_presentation_module_centralizes_safe_diagnostic_formatting(tmp_path: Path, monkeypatch) -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    diagnostics_module = static_dir / "diagnostics_presentation.js"
+
+    assert diagnostics_module.exists()
+    assert 'from "./diagnostics_presentation.js"' in app_js
+    assert 'from "./diagnostics_presentation.js"' in power_tools_js
+
+    script = """
+const diagnostics = await import(__DIAGNOSTICS_PRESENTATION_MODULE_URL__);
+const error = new Error("Bridge unavailable");
+error.status = 503;
+error.payload = { retryable: true };
+
+const circular = {};
+circular.self = circular;
+
+console.log(JSON.stringify({
+  stringValue: diagnostics.formatDiagnosticValue("already formatted"),
+  missingValue: diagnostics.formatDiagnosticValue(null),
+  objectValue: diagnostics.formatDiagnosticValue({ status: "ok", count: 2 }),
+  errorValue: diagnostics.formatDiagnosticValue(error),
+  circularValue: diagnostics.formatDiagnosticValue(circular),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__DIAGNOSTICS_PRESENTATION_MODULE_URL__": "diagnostics_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["stringValue"] == "already formatted"
+    assert results["missingValue"] == ""
+    assert results["objectValue"] == '{\n  "status": "ok",\n  "count": 2\n}'
+    assert results["errorValue"] == (
+        '{\n'
+        '  "status": "failed",\n'
+        '  "message": "Bridge unavailable",\n'
+        '  "http_status": 503,\n'
+        '  "payload": {\n'
+        '    "retryable": true\n'
+        "  }\n"
+        "}"
+    )
+    assert results["circularValue"] == "[object Object]"
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        shell = client.get("/api/bootstrap/shell", params={"mode": "live", "workspace": "dashboard"})
+        assert shell.status_code == 200
+        asset_version = shell.json()["normalized_payload"]["shell"]["asset_version"]
+        diagnostics_asset = client.get(f"/static-build/{asset_version}/diagnostics_presentation.js")
+        assert diagnostics_asset.status_code == 200
+        assert diagnostics_asset.headers["content-type"].startswith("application/javascript")
+        assert "formatDiagnosticValue" in diagnostics_asset.text
+
+
 def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> None:
     root = Path(__file__).resolve().parents[1]
     static_dir = root / "src" / "legalpdf_translate" / "shadow_web" / "static"
