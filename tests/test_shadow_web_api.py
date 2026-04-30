@@ -1814,6 +1814,251 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_dashboard_ui_module_centralizes_safe_card_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    dashboard_ui_module = static_dir / "dashboard_ui.js"
+
+    assert dashboard_ui_module.exists()
+    assert 'from "./dashboard_ui.js"' in app_js
+    assert "export function renderDashboardCardsInto" not in app_js
+    assert "export function renderSummaryGridInto" not in app_js
+    assert "export function renderCapabilityCardsInto" not in app_js
+    assert 'renderDashboardCardsInto(qs("dashboard-cards"), cards)' in app_js
+    assert "renderSummaryGridInto(qs(containerId), items)" in app_js
+    assert "renderCapabilityCardsInto(qs(containerId), cards)" in app_js
+
+    script = r"""
+const dashboardUi = await import(__DASHBOARD_UI_MODULE_URL__);
+
+function createClassList(element) {
+  return {
+    add(...names) {
+      const classes = new Set(String(element.className || "").split(/\s+/).filter(Boolean));
+      names.forEach((name) => classes.add(name));
+      element.className = Array.from(classes).join(" ");
+    },
+  };
+}
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    children: [],
+    parentNode: null,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  element.classList = createClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function collectClasses(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (String(current.className || "").trim()) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const dashboardContainer = document.createElement("div");
+dashboardUi.renderDashboardCardsInto(dashboardContainer, [
+  { title: malicious, description: `Description ${malicious}`, status: "ready" },
+  { title: "Queued", description: "Waiting", status: "warming_up" },
+]);
+
+const summaryContainer = document.createElement("div");
+dashboardUi.renderSummaryGridInto(summaryContainer, [
+  { label: `Saved ${malicious}`, value: `Value ${malicious}` },
+]);
+
+const capabilityContainer = document.createElement("div");
+dashboardUi.renderCapabilityCardsInto(capabilityContainer, [
+  { title: `Capability ${malicious}`, text: `Line one\nLine ${malicious}`, status: "bad", label: "Blocked" },
+  { title: "Info", text: "Status detail", status: "info", label: "Checking" },
+]);
+
+const nullDashboard = dashboardUi.renderDashboardCardsInto(null, []);
+const nullSummary = dashboardUi.renderSummaryGridInto(null, []);
+const nullCapability = dashboardUi.renderCapabilityCardsInto(null, []);
+
+console.log(JSON.stringify({
+  exportedTypes: {
+    dashboard: typeof dashboardUi.renderDashboardCardsInto,
+    summary: typeof dashboardUi.renderSummaryGridInto,
+    capability: typeof dashboardUi.renderCapabilityCardsInto,
+  },
+  dashboard: {
+    text: dashboardContainer.textContent,
+    articleCount: countTag(dashboardContainer, "article"),
+    imgCount: countTag(dashboardContainer, "img"),
+    scriptCount: countTag(dashboardContainer, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(dashboardContainer),
+    classes: collectClasses(dashboardContainer),
+  },
+  summary: {
+    text: summaryContainer.textContent,
+    articleCount: countTag(summaryContainer, "article"),
+    imgCount: countTag(summaryContainer, "img"),
+    scriptCount: countTag(summaryContainer, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(summaryContainer),
+    classes: collectClasses(summaryContainer),
+  },
+  capability: {
+    text: capabilityContainer.textContent,
+    articleCount: countTag(capabilityContainer, "article"),
+    brCount: countTag(capabilityContainer, "br"),
+    imgCount: countTag(capabilityContainer, "img"),
+    scriptCount: countTag(capabilityContainer, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(capabilityContainer),
+    classes: collectClasses(capabilityContainer),
+  },
+  nullResultTypes: [
+    nullDashboard === undefined ? "undefined" : typeof nullDashboard,
+    nullSummary === undefined ? "undefined" : typeof nullSummary,
+    nullCapability === undefined ? "undefined" : typeof nullCapability,
+  ],
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__DASHBOARD_UI_MODULE_URL__": "dashboard_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedTypes"] == {
+        "dashboard": "function",
+        "summary": "function",
+        "capability": "function",
+    }
+    assert "<img src=x onerror=alert(1)><script>bad()</script>" in results["dashboard"]["text"]
+    assert "Ready" in results["dashboard"]["text"]
+    assert "warming up" in results["dashboard"]["text"]
+    assert results["dashboard"]["articleCount"] == 2
+    assert results["dashboard"]["imgCount"] == 0
+    assert results["dashboard"]["scriptCount"] == 0
+    assert results["dashboard"]["innerHTMLWrites"] == 0
+    assert "launch-card ready" in results["dashboard"]["classes"]
+    assert "launch-card planned" in results["dashboard"]["classes"]
+    assert "status-chip ok" in results["dashboard"]["classes"]
+    assert "status-chip warn" in results["dashboard"]["classes"]
+
+    assert "Saved <img src=x onerror=alert(1)><script>bad()</script>" in results["summary"]["text"]
+    assert "Value <img src=x onerror=alert(1)><script>bad()</script>" in results["summary"]["text"]
+    assert results["summary"]["articleCount"] == 1
+    assert results["summary"]["imgCount"] == 0
+    assert results["summary"]["scriptCount"] == 0
+    assert results["summary"]["innerHTMLWrites"] == 0
+    assert "summary-card" in results["summary"]["classes"]
+    assert "word-break" in results["summary"]["classes"]
+
+    assert "Capability <img src=x onerror=alert(1)><script>bad()</script>" in results["capability"]["text"]
+    assert "Line <img src=x onerror=alert(1)><script>bad()</script>" in results["capability"]["text"]
+    assert "Blocked" in results["capability"]["text"]
+    assert "Checking" in results["capability"]["text"]
+    assert results["capability"]["articleCount"] == 2
+    assert results["capability"]["brCount"] == 1
+    assert results["capability"]["imgCount"] == 0
+    assert results["capability"]["scriptCount"] == 0
+    assert results["capability"]["innerHTMLWrites"] == 0
+    assert "status-card" in results["capability"]["classes"]
+    assert "status-chip bad" in results["capability"]["classes"]
+    assert "status-chip info" in results["capability"]["classes"]
+    assert results["nullResultTypes"] == ["undefined", "undefined", "undefined"]
+
+
 def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -4166,6 +4411,12 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert profile_ui_asset.status_code == 200
         assert profile_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderProfileDistanceRowsInto" in profile_ui_asset.text
+        dashboard_ui_asset = client.get(f"/static-build/{asset_version}/dashboard_ui.js")
+        assert dashboard_ui_asset.status_code == 200
+        assert dashboard_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderDashboardCardsInto" in dashboard_ui_asset.text
+        assert "renderSummaryGridInto" in dashboard_ui_asset.text
+        assert "renderCapabilityCardsInto" in dashboard_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")
