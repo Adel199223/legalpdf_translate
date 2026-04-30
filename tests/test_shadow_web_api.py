@@ -1618,6 +1618,202 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_profile_ui_module_centralizes_safe_distance_row_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    profile_ui_module = static_dir / "profile_ui.js"
+
+    assert profile_ui_module.exists()
+    assert 'from "./profile_ui.js"' in app_js
+    assert "export function renderProfileDistanceRowsInto" not in app_js
+    assert "renderProfileDistanceRowsInto(container, profileUiState.distanceRows, {" in app_js
+
+    script = r"""
+const profileUi = await import(__PROFILE_UI_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const listeners = new Map();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    attributes: {},
+    children: [],
+    parentNode: null,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    setAttribute(name, value) {
+      this.attributes[name] = String(value ?? "");
+    },
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+    addEventListener(type, handler) {
+      if (!listeners.has(type)) {
+        listeners.set(type, []);
+      }
+      listeners.get(type).push(handler);
+    },
+    click() {
+      for (const handler of listeners.get("click") || []) {
+        handler({ target: this, currentTarget: this, preventDefault() {} });
+      }
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function firstButton(node) {
+  let button = null;
+  walk(node, (current) => {
+    if (!button && current.tagName === "BUTTON") {
+      button = current;
+    }
+  });
+  return button;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const container = document.createElement("div");
+let removedCity = "";
+profileUi.renderProfileDistanceRowsInto(container, [
+  { city: malicious, distanceLabel: "12 km one way" },
+], {
+  onRemove(row) {
+    removedCity = row.city;
+  },
+});
+const button = firstButton(container);
+button.click();
+
+const emptyContainer = document.createElement("div");
+profileUi.renderProfileDistanceRowsInto(emptyContainer, []);
+const nullResult = profileUi.renderProfileDistanceRowsInto(null, [{ city: "ignored", distanceLabel: "1 km" }]);
+
+console.log(JSON.stringify({
+  exportedType: typeof profileUi.renderProfileDistanceRowsInto,
+  text: container.textContent,
+  articleCount: countTag(container, "article"),
+  imgCount: countTag(container, "img"),
+  scriptCount: countTag(container, "script"),
+  innerHTMLWrites: countInnerHtmlWrites(container),
+  buttonText: button.textContent,
+  buttonClass: button.className,
+  buttonType: button.type,
+  ariaLabel: button.attributes["aria-label"],
+  removedCity,
+  emptyText: emptyContainer.textContent,
+  emptyClass: emptyContainer.children[0]?.className || "",
+  nullResultType: nullResult === undefined ? "undefined" : typeof nullResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__PROFILE_UI_MODULE_URL__": "profile_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert "<img src=x onerror=alert(1)><script>bad()</script>" in results["text"]
+    assert "12 km one way" in results["text"]
+    assert results["articleCount"] == 1
+    assert results["imgCount"] == 0
+    assert results["scriptCount"] == 0
+    assert results["innerHTMLWrites"] == 0
+    assert results["buttonText"] == "Delete destination"
+    assert results["buttonClass"] == "ghost-button"
+    assert results["buttonType"] == "button"
+    assert results["ariaLabel"] == "Delete destination <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["removedCity"] == "<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["emptyText"] == "No city distances saved yet. Add the cities you use most often."
+    assert results["emptyClass"] == "result-card empty-state"
+    assert results["nullResultType"] == "undefined"
+
+
 def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -3966,6 +4162,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert extension_lab_ui_asset.status_code == 200
         assert extension_lab_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderExtensionPrepareReasonCatalogInto" in extension_lab_ui_asset.text
+        profile_ui_asset = client.get(f"/static-build/{asset_version}/profile_ui.js")
+        assert profile_ui_asset.status_code == 200
+        assert profile_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderProfileDistanceRowsInto" in profile_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")
