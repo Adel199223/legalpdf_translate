@@ -1472,6 +1472,152 @@ console.log(JSON.stringify(payload));
     ]
 
 
+def test_extension_lab_ui_module_centralizes_safe_prepare_reason_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    extension_lab_ui_module = static_dir / "extension_lab_ui.js"
+
+    assert extension_lab_ui_module.exists()
+    assert 'from "./extension_lab_ui.js"' in app_js
+    assert "export function renderExtensionPrepareReasonCatalogInto" not in app_js
+    assert "renderExtensionPrepareReasonCatalogInto(reasonCatalog, data.prepare_reason_catalog || [])" in app_js
+
+    script = r"""
+const labUi = await import(__EXTENSION_LAB_UI_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    children: [],
+    parentNode: null,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = node.tagName === target ? 1 : 0;
+  for (const child of node.children || []) {
+    total += countTag(child, target);
+  }
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = (node.innerHTMLAssignments || []).length;
+  for (const child of node.children || []) {
+    total += countInnerHtmlWrites(child);
+  }
+  return total;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const container = document.createElement("div");
+labUi.renderExtensionPrepareReasonCatalogInto(container, [
+  { reason: malicious, message: `Message ${malicious}` },
+  { reason: "", message: "" },
+]);
+const emptyContainer = document.createElement("div");
+labUi.renderExtensionPrepareReasonCatalogInto(emptyContainer, []);
+const nullResult = labUi.renderExtensionPrepareReasonCatalogInto(null, [{ reason: "ignored", message: "Ignored" }]);
+
+console.log(JSON.stringify({
+  exportedType: typeof labUi.renderExtensionPrepareReasonCatalogInto,
+  text: container.textContent,
+  articleCount: countTag(container, "article"),
+  imgCount: countTag(container, "img"),
+  scriptCount: countTag(container, "script"),
+  innerHTMLWrites: countInnerHtmlWrites(container),
+  fallbackText: container.children[1]?.textContent || "",
+  emptyText: emptyContainer.textContent,
+  emptyClass: emptyContainer.children[0]?.className || "",
+  nullResultType: nullResult === undefined ? "undefined" : typeof nullResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__EXTENSION_LAB_UI_MODULE_URL__": "extension_lab_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert "Message <img src=x onerror=alert(1)><script>bad()</script>" in results["text"]
+    assert "Code: <img src=x onerror=alert(1)><script>bad()</script>" in results["text"]
+    assert results["articleCount"] == 2
+    assert results["imgCount"] == 0
+    assert results["scriptCount"] == 0
+    assert results["innerHTMLWrites"] == 0
+    assert results["fallbackText"] == "No message available.Code: Unknown reason"
+    assert results["emptyText"] == "No prepare reasons are available."
+    assert results["emptyClass"] == "empty-state"
+    assert results["nullResultType"] == "undefined"
+
+
 def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -3816,6 +3962,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert extension_lab_asset.status_code == 200
         assert extension_lab_asset.headers["content-type"].startswith("application/javascript")
         assert "buildExtensionLabCards" in extension_lab_asset.text
+        extension_lab_ui_asset = client.get(f"/static-build/{asset_version}/extension_lab_ui.js")
+        assert extension_lab_ui_asset.status_code == 200
+        assert extension_lab_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderExtensionPrepareReasonCatalogInto" in extension_lab_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")
