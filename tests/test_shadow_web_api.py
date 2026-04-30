@@ -1303,31 +1303,80 @@ console.log(JSON.stringify({
     assert results["reconnectDiagnostics"]["safe_failure_category"] == "picker_reconnect_to_partner_app"
 
 
-def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
-    app_js = (
+def test_google_photos_ui_module_centralizes_picker_fallback_contracts() -> None:
+    static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
         / "legalpdf_translate"
         / "shadow_web"
         / "static"
-        / "app.js"
-    ).read_text(encoding="utf-8")
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    google_photos_ui_js = static_dir / "google_photos_ui.js"
+
+    assert google_photos_ui_js.exists()
+    assert 'from "./google_photos_ui.js"' in app_js
+
+    script = """
+const ui = await import(__GOOGLE_PHOTOS_UI_MODULE_URL__);
+
+const raw = "https://picker.example.invalid/session-1/";
+const alreadyAutoclose = "https://picker.example.invalid/session-2/autoclose";
+const direct = ui.googlePhotosPickerBrowserUrl(raw);
+const diagnostics = ui.buildGooglePhotosPickerDiagnostics({
+  google_ui_blocker_seen: true,
+  google_ui_blocker_category: "reconnect_to_partner_app",
+});
+console.log(JSON.stringify({
+  direct,
+  alreadyAutoclose: ui.googlePhotosPickerBrowserUrl(alreadyAutoclose),
+  noAutoclose: ui.googlePhotosPickerBrowserUrl("https://picker.example.invalid/session-3", { autoclose: false }),
+  diagnostics,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GOOGLE_PHOTOS_UI_MODULE_URL__": "google_photos_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["direct"] == "https://picker.example.invalid/session-1/autoclose"
+    assert results["alreadyAutoclose"] == "https://picker.example.invalid/session-2/autoclose"
+    assert results["noAutoclose"] == "https://picker.example.invalid/session-3"
+    assert results["diagnostics"]["google_ui_blocker_seen"] is True
+    assert results["diagnostics"]["google_ui_blocker_category"] == "reconnect_to_partner_app"
+    assert results["diagnostics"]["safe_failure_category"] == "picker_reconnect_to_partner_app"
+
+
+def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    google_photos_ui_js = (static_dir / "google_photos_ui.js").read_text(encoding="utf-8")
 
     assert "export async function runWithBusy(buttonIds, busyLabels, action, options = {})" in app_js
     assert "const guardIds = options.guardIds || buttonIds;" in app_js
-    assert "export function setGooglePhotosAuthFallback" in app_js
-    assert "export function setGooglePhotosPickerFallback" in app_js
-    assert "export function googlePhotosPickerBrowserUrl" in app_js
-    assert "export function resetGooglePhotosPickerState" in app_js
-    assert "export function googlePhotosUiSafeSnapshot" in app_js
+    assert 'from "./google_photos_ui.js"' in app_js
+    assert "export function setGooglePhotosAuthFallback" in google_photos_ui_js
+    assert "export function setGooglePhotosPickerFallback" in google_photos_ui_js
+    assert "export function googlePhotosPickerBrowserUrl" in google_photos_ui_js
+    assert "export function resetGooglePhotosPickerState" in google_photos_ui_js
+    assert "export function googlePhotosUiSafeSnapshot" in google_photos_ui_js
     assert 'fetchJson("/api/interpretation/google-photos/disconnect"' in app_js
     assert "GOOGLE_PHOTOS_RECONNECT_GUIDANCE" in app_js
     assert 'handleUpload("photo-upload-form", "/api/interpretation/autofill-photo", { sourceKind: "photo" })' in app_js
     assert 'applyInterpretationSeed(importPayload.normalized_payload, { sourceKind: "google_photos" })' in app_js
     assert "localStorage.setItem" not in app_js
     assert "sessionStorage.setItem" not in app_js
+    assert "localStorage.setItem" not in google_photos_ui_js
+    assert "sessionStorage.setItem" not in google_photos_ui_js
     assert 'window.open(authUrl, "_blank", "noopener,noreferrer")' in app_js
-    assert "/autoclose" in app_js
+    assert "/autoclose" in google_photos_ui_js
     assert '}, { guardIds: ["google-photos-connect"] });' in app_js
     assert '}, { guardIds: ["google-photos-choose"] });' in app_js
 
