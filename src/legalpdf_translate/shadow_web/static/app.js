@@ -29,6 +29,11 @@ import { closeSessionDrawer, initializeGmailUi, renderGmailBootstrap } from "./g
 import { initializePowerToolsUi, renderPowerToolsBootstrap } from "./power-tools.js";
 import { deriveDashboardPresentation } from "./dashboard_presentation.js";
 import {
+  renderCapabilityCardsInto,
+  renderDashboardCardsInto,
+  renderSummaryGridInto,
+} from "./dashboard_ui.js";
+import {
   buildSettingsCapabilityCards,
   buildSettingsStatusPresentation,
   buildSettingsSummaryItems,
@@ -105,6 +110,11 @@ export {
 
 export { renderExtensionPrepareReasonCatalogInto } from "./extension_lab_ui.js";
 export { renderProfileDistanceRowsInto } from "./profile_ui.js";
+export {
+  renderCapabilityCardsInto,
+  renderDashboardCardsInto,
+  renderSummaryGridInto,
+} from "./dashboard_ui.js";
 
 function qs(id) {
   return document.getElementById(id);
@@ -116,19 +126,6 @@ function qsa(selector) {
 
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function chipToneClass(status) {
-  if (status === "ok") {
-    return "ok";
-  }
-  if (status === "bad") {
-    return "bad";
-  }
-  if (status === "info") {
-    return "info";
-  }
-  return "warn";
 }
 
 function createStatusChip(label, toneClass) {
@@ -2215,40 +2212,8 @@ function renderShellVisibility() {
   syncOperatorChrome();
 }
 
-export function renderDashboardCardsInto(container, cards = []) {
-  if (!container) {
-    return;
-  }
-  clearNode(container);
-  for (const card of cards) {
-    const article = document.createElement("article");
-    article.className = "launch-card";
-    article.classList.add(card.status === "ready" ? "ready" : "planned");
-    const chipTone = card.status === "ready" ? "ok" : "warn";
-    const chipText = card.status === "ready" ? "Ready" : String(card.status || "").replaceAll("_", " ");
-    article.appendChild(createTextElement("h3", card.title));
-    article.appendChild(createTextElement("p", card.description));
-    article.appendChild(createStatusChip(chipText, chipTone));
-    container.appendChild(article);
-  }
-}
-
 function renderDashboardCards(cards) {
   renderDashboardCardsInto(qs("dashboard-cards"), cards);
-}
-
-export function renderSummaryGridInto(container, items = []) {
-  if (!container) {
-    return;
-  }
-  clearNode(container);
-  for (const item of items) {
-    const card = document.createElement("article");
-    card.className = "summary-card";
-    card.appendChild(createTextElement("h3", item.label));
-    card.appendChild(createTextElement("p", item.value, "word-break"));
-    container.appendChild(card);
-  }
 }
 
 function renderSummaryGrid(containerId, items) {
@@ -2369,23 +2334,6 @@ function describeCredentialSource(source) {
     return "not configured";
   }
   return kind || "unknown";
-}
-
-export function renderCapabilityCardsInto(container, cards = []) {
-  if (!container) {
-    return;
-  }
-  clearNode(container);
-  for (const card of cards) {
-    const article = document.createElement("article");
-    article.className = "status-card";
-    article.appendChild(createTextElement("h3", card.title));
-    const paragraph = document.createElement("p");
-    appendMultilineText(paragraph, card.text);
-    article.appendChild(paragraph);
-    article.appendChild(createStatusChip(card.label, chipToneClass(card.status)));
-    container.appendChild(article);
-  }
 }
 
 function renderCapabilityCards(containerId, cards) {
