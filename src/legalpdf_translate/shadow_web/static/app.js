@@ -54,7 +54,10 @@ import {
   serializeDistanceRows,
   upsertDistanceRow,
 } from "./profile_presentation.js";
-import { renderProfileDistanceRowsInto } from "./profile_ui.js";
+import {
+  renderProfileDistanceRowsInto,
+  renderProfileOptionsInto,
+} from "./profile_ui.js";
 import {
   buildInterpretationReference,
   deriveInterpretationDisclosurePresentation,
@@ -2014,27 +2017,7 @@ function applyHistoryItem(item) {
 }
 
 function renderProfiles(profiles, primaryProfileId) {
-  const select = qs("profile-id");
-  select.innerHTML = "";
-  if (!profiles.length) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "No profiles available";
-    option.selected = true;
-    select.appendChild(option);
-    select.disabled = true;
-    return;
-  }
-  select.disabled = false;
-  for (const profile of profiles) {
-    const option = document.createElement("option");
-    option.value = profile.id;
-    option.textContent = profile.document_name || profile.id;
-    if (profile.id === primaryProfileId) {
-      option.selected = true;
-    }
-    select.appendChild(option);
-  }
+  renderProfileOptionsInto(qs("profile-id"), profiles, primaryProfileId);
 }
 
 function renderNavigation(items) {
