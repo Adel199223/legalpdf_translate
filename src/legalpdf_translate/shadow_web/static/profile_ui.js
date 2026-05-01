@@ -1,4 +1,8 @@
-import { clearNode, createEmptyState, createTextElement } from "./safe_rendering.js";
+import {
+  deriveProfilePresentation,
+  normalizeDistanceRows,
+} from "./profile_presentation.js";
+import { clearNode, createEmptyState, createTextElement, setText } from "./safe_rendering.js";
 
 export function renderProfileOptionsInto(select, profiles = [], primaryProfileId = "") {
   if (!select) {
@@ -54,6 +58,110 @@ export function renderProfileDistanceRowsInto(container, rows, { onRemove } = {}
     removeButton.setAttribute("aria-label", `Delete destination ${row.city}`);
     removeButton.addEventListener("click", () => onRemove?.(row));
     actions.appendChild(removeButton);
+    article.appendChild(actions);
+    container.appendChild(article);
+  }
+}
+
+export function renderPrimaryProfileCardInto(card, primaryProfile) {
+  if (!card) {
+    return;
+  }
+  clearNode(card);
+  if (!primaryProfile) {
+    card.classList.add("empty-state");
+    setText(card, "No main profile is set yet. Add a profile or choose one from the list.");
+    return;
+  }
+  const presentation = deriveProfilePresentation(primaryProfile);
+  card.classList.remove("empty-state");
+
+  const header = document.createElement("div");
+  header.className = "result-header";
+  const details = document.createElement("div");
+  details.appendChild(createTextElement("p", "Main profile summary", "eyebrow"));
+  details.appendChild(createTextElement("strong", presentation.displayName));
+  details.appendChild(createTextElement("p", presentation.contactSummary));
+  header.appendChild(details);
+  header.appendChild(createTextElement("span", presentation.mainChipLabel, "status-chip ok"));
+  card.appendChild(header);
+
+  const meta = document.createElement("div");
+  meta.className = "history-meta";
+  meta.appendChild(createTextElement("small", presentation.travelOriginSummary));
+  meta.appendChild(createTextElement("small", presentation.distanceSummary));
+  card.appendChild(meta);
+}
+
+export function renderProfileListInto(
+  container,
+  profiles = [],
+  { count = 0, onEdit, onSetPrimary, onDelete } = {},
+) {
+  if (!container) {
+    return;
+  }
+  clearNode(container);
+  if (!profiles.length) {
+    container.appendChild(createEmptyState(
+      "No profiles yet. Add a profile to get started.",
+      "result-card empty-state",
+    ));
+    return;
+  }
+  for (const profile of profiles) {
+    const presentation = deriveProfilePresentation(profile);
+    const distanceCount = normalizeDistanceRows(profile.travel_distances_by_city || {}).length;
+    const article = document.createElement("article");
+    article.className = "profile-card";
+
+    const header = document.createElement("div");
+    header.className = "result-header";
+    const details = document.createElement("div");
+    details.appendChild(createTextElement("p", "Profile record", "eyebrow"));
+    details.appendChild(createTextElement("h3", presentation.displayName));
+    details.appendChild(createTextElement("p", presentation.contactSummary));
+    header.appendChild(details);
+    const chipLabel = profile.is_primary
+      ? presentation.mainChipLabel
+      : `${distanceCount} saved city distance${distanceCount === 1 ? "" : "s"}`;
+    header.appendChild(createTextElement(
+      "span",
+      chipLabel,
+      `status-chip ${profile.is_primary ? "ok" : "info"}`,
+    ));
+    article.appendChild(header);
+
+    const meta = document.createElement("div");
+    meta.className = "history-meta";
+    meta.appendChild(createTextElement("small", presentation.travelOriginSummary));
+    meta.appendChild(createTextElement("small", presentation.distanceSummary));
+    article.appendChild(meta);
+    article.appendChild(createTextElement(
+      "p",
+      "Edit this profile's contact, payment, and travel details.",
+      "profile-card-helper",
+    ));
+
+    const actions = document.createElement("div");
+    actions.className = "history-actions";
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.textContent = "Edit";
+    editButton.addEventListener("click", () => onEdit?.(profile));
+    const primaryButton = document.createElement("button");
+    primaryButton.type = "button";
+    primaryButton.textContent = presentation.useAsMainLabel;
+    primaryButton.disabled = Boolean(profile.is_primary);
+    primaryButton.addEventListener("click", () => onSetPrimary?.(profile));
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.textContent = "Delete profile";
+    deleteButton.disabled = Boolean(count <= 1);
+    deleteButton.addEventListener("click", () => onDelete?.(profile));
+    actions.appendChild(editButton);
+    actions.appendChild(primaryButton);
+    actions.appendChild(deleteButton);
     article.appendChild(actions);
     container.appendChild(article);
   }
