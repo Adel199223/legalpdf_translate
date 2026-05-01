@@ -49,6 +49,11 @@ import {
   renderInterpretationSessionCardInto,
 } from "./interpretation_result_ui.js";
 import {
+  renderCourtEmailOptionsInto,
+  renderInterpretationCityOptionsInto,
+  renderServiceEntityOptionsInto,
+} from "./interpretation_reference_ui.js";
+import {
   buildSettingsCapabilityCards,
   buildSettingsStatusPresentation,
   buildSettingsSummaryItems,
@@ -507,18 +512,7 @@ function populateInterpretationCitySelect(fieldName, selectedValue = "") {
   }
   const reference = currentInterpretationReference();
   const currentValue = resolveKnownCity(selectedValue || select.value, reference.availableCities);
-  select.innerHTML = "";
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = "Select a city";
-  select.appendChild(placeholder);
-  for (const city of reference.availableCities) {
-    const option = document.createElement("option");
-    option.value = city;
-    option.textContent = city;
-    select.appendChild(option);
-  }
-  select.value = currentValue || "";
+  renderInterpretationCityOptionsInto(select, reference.availableCities, currentValue);
 }
 
 function refreshInterpretationCitySelectors() {
@@ -538,18 +532,10 @@ function populateCourtEmailSelect({ currentEmail = "", seedEmail = "" } = {}) {
     currentEmail: currentEmail || select.value,
     seedEmail,
   });
-  select.innerHTML = "";
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = selection.options.length ? "Select a court email" : "No email saved for this city";
-  select.appendChild(placeholder);
-  for (const email of selection.options) {
-    const option = document.createElement("option");
-    option.value = email;
-    option.textContent = email;
-    select.appendChild(option);
-  }
-  select.value = selection.email || "";
+  renderCourtEmailOptionsInto(select, {
+    options: selection.options,
+    selectedEmail: selection.email,
+  });
 }
 
 function populateServiceEntitySelect(selectedValue = "") {
@@ -559,18 +545,7 @@ function populateServiceEntitySelect(selectedValue = "") {
   }
   const reference = currentInterpretationReference();
   const options = serviceEntityOptionsForSelection(reference, selectedValue || select.value);
-  select.innerHTML = "";
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = "Select service entity";
-  select.appendChild(placeholder);
-  for (const value of options) {
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = value;
-    select.appendChild(option);
-  }
-  select.value = selectedValue || "";
+  renderServiceEntityOptionsInto(select, options, selectedValue);
 }
 
 function refreshInterpretationReferenceBoundControls({ seedEmail = "" } = {}) {
