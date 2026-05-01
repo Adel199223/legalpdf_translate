@@ -1830,9 +1830,12 @@ def test_dashboard_ui_module_centralizes_safe_card_rendering() -> None:
     assert "export function renderDashboardCardsInto" not in app_js
     assert "export function renderSummaryGridInto" not in app_js
     assert "export function renderCapabilityCardsInto" not in app_js
+    assert "export function renderParityAuditInto" not in app_js
     assert 'renderDashboardCardsInto(qs("dashboard-cards"), cards)' in app_js
     assert "renderSummaryGridInto(qs(containerId), items)" in app_js
     assert "renderCapabilityCardsInto(qs(containerId), cards)" in app_js
+    assert "renderParityAuditInto({" in app_js
+    assert 'resultContainer: qs("parity-audit-result")' in app_js
 
     script = r"""
 const dashboardUi = await import(__DASHBOARD_UI_MODULE_URL__);
@@ -1842,6 +1845,11 @@ function createClassList(element) {
     add(...names) {
       const classes = new Set(String(element.className || "").split(/\s+/).filter(Boolean));
       names.forEach((name) => classes.add(name));
+      element.className = Array.from(classes).join(" ");
+    },
+    remove(...names) {
+      const classes = new Set(String(element.className || "").split(/\s+/).filter(Boolean));
+      names.forEach((name) => classes.delete(name));
       element.className = Array.from(classes).join(" ");
     },
   };
@@ -1970,15 +1978,81 @@ dashboardUi.renderCapabilityCardsInto(capabilityContainer, [
   { title: "Info", text: "Status detail", status: "info", label: "Checking" },
 ]);
 
+const parityStatus = document.createElement("div");
+const parityGrid = document.createElement("div");
+const parityResult = document.createElement("div");
+parityResult.className = "result-card empty-state";
+dashboardUi.renderParityAuditInto({
+  statusNode: parityStatus,
+  gridContainer: parityGrid,
+  resultContainer: parityResult,
+  audit: {
+    checklist: [
+      { title: `Ready ${malicious}`, description: `Ready detail ${malicious}`, status: "ready" },
+      { title: "Blocked item", description: "Blocked detail", status: "blocked" },
+      { title: "Needs review", description: "Review detail", status: "needs_review" },
+    ],
+    promotion_recommendation: {
+      status: "ready_for_daily_use",
+      headline: `Headline ${malicious}`,
+      recommended_workflows: [`Workflow ${malicious}`],
+    },
+    remaining_limitations: [`Limitation ${malicious}`],
+  },
+  presentation: {
+    parityStatus: `Parity status ${malicious}`,
+    readyCountLine: `Ready count ${malicious}`,
+    resultChipLabel: "Ready for daily use",
+    resultNextTitle: `Next ${malicious}`,
+    resultLimitsTitle: `Limits ${malicious}`,
+  },
+});
+
+const fallbackStatus = document.createElement("div");
+const fallbackGrid = document.createElement("div");
+const fallbackResult = document.createElement("div");
+fallbackResult.className = "result-card empty-state";
+dashboardUi.renderParityAuditInto({
+  statusNode: fallbackStatus,
+  gridContainer: fallbackGrid,
+  resultContainer: fallbackResult,
+  audit: {
+    checklist: [],
+    promotion_recommendation: { status: "blocked" },
+    remaining_limitations: [],
+  },
+  presentation: {
+    parityStatus: "Fallback parity status",
+    readyCountLine: "Fallback ready count",
+    resultChipLabel: "Not ready",
+    resultNextTitle: "Fallback next",
+    resultLimitsTitle: "Fallback limits",
+  },
+});
+
 const nullDashboard = dashboardUi.renderDashboardCardsInto(null, []);
 const nullSummary = dashboardUi.renderSummaryGridInto(null, []);
 const nullCapability = dashboardUi.renderCapabilityCardsInto(null, []);
+const nullParity = dashboardUi.renderParityAuditInto({
+  statusNode: null,
+  gridContainer: null,
+  resultContainer: null,
+  audit: {},
+  presentation: {
+    parityStatus: "",
+    readyCountLine: "",
+    resultChipLabel: "",
+    resultNextTitle: "",
+    resultLimitsTitle: "",
+  },
+});
 
 console.log(JSON.stringify({
   exportedTypes: {
     dashboard: typeof dashboardUi.renderDashboardCardsInto,
     summary: typeof dashboardUi.renderSummaryGridInto,
     capability: typeof dashboardUi.renderCapabilityCardsInto,
+    parity: typeof dashboardUi.renderParityAuditInto,
   },
   dashboard: {
     text: dashboardContainer.textContent,
@@ -2005,10 +2079,33 @@ console.log(JSON.stringify({
     innerHTMLWrites: countInnerHtmlWrites(capabilityContainer),
     classes: collectClasses(capabilityContainer),
   },
+  parity: {
+    statusText: parityStatus.textContent,
+    gridText: parityGrid.textContent,
+    resultText: parityResult.textContent,
+    gridArticleCount: countTag(parityGrid, "article"),
+    resultHeaderCount: collectClasses(parityResult).filter((name) => name === "result-header").length,
+    gridImgCount: countTag(parityGrid, "img"),
+    gridScriptCount: countTag(parityGrid, "script"),
+    resultImgCount: countTag(parityResult, "img"),
+    resultScriptCount: countTag(parityResult, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(parityGrid) + countInnerHtmlWrites(parityResult),
+    gridClasses: collectClasses(parityGrid),
+    resultClasses: collectClasses(parityResult),
+    resultContainerClass: parityResult.className,
+  },
+  fallbackParity: {
+    statusText: fallbackStatus.textContent,
+    gridArticleCount: countTag(fallbackGrid, "article"),
+    resultText: fallbackResult.textContent,
+    resultClasses: collectClasses(fallbackResult),
+    resultContainerClass: fallbackResult.className,
+  },
   nullResultTypes: [
     nullDashboard === undefined ? "undefined" : typeof nullDashboard,
     nullSummary === undefined ? "undefined" : typeof nullSummary,
     nullCapability === undefined ? "undefined" : typeof nullCapability,
+    nullParity === undefined ? "undefined" : typeof nullParity,
   ],
 }));
 """
@@ -2022,6 +2119,7 @@ console.log(JSON.stringify({
         "dashboard": "function",
         "summary": "function",
         "capability": "function",
+        "parity": "function",
     }
     assert "<img src=x onerror=alert(1)><script>bad()</script>" in results["dashboard"]["text"]
     assert "Ready" in results["dashboard"]["text"]
@@ -2056,7 +2154,38 @@ console.log(JSON.stringify({
     assert "status-card" in results["capability"]["classes"]
     assert "status-chip bad" in results["capability"]["classes"]
     assert "status-chip info" in results["capability"]["classes"]
-    assert results["nullResultTypes"] == ["undefined", "undefined", "undefined"]
+
+    assert "Parity status <img src=x onerror=alert(1)><script>bad()</script>" == results["parity"]["statusText"]
+    assert "Ready <img src=x onerror=alert(1)><script>bad()</script>" in results["parity"]["gridText"]
+    assert "Ready detail <img src=x onerror=alert(1)><script>bad()</script>" in results["parity"]["gridText"]
+    assert "blocked" in results["parity"]["gridText"]
+    assert "needs review" in results["parity"]["gridText"]
+    assert "Headline <img src=x onerror=alert(1)><script>bad()</script>" in results["parity"]["resultText"]
+    assert "Ready count <img src=x onerror=alert(1)><script>bad()</script>" in results["parity"]["resultText"]
+    assert "Workflow <img src=x onerror=alert(1)><script>bad()</script>" in results["parity"]["resultText"]
+    assert "Limitation <img src=x onerror=alert(1)><script>bad()</script>" in results["parity"]["resultText"]
+    assert "Next <img src=x onerror=alert(1)><script>bad()</script>" in results["parity"]["resultText"]
+    assert "Limits <img src=x onerror=alert(1)><script>bad()</script>" in results["parity"]["resultText"]
+    assert results["parity"]["gridArticleCount"] == 3
+    assert results["parity"]["resultHeaderCount"] == 1
+    assert results["parity"]["gridImgCount"] == 0
+    assert results["parity"]["gridScriptCount"] == 0
+    assert results["parity"]["resultImgCount"] == 0
+    assert results["parity"]["resultScriptCount"] == 0
+    assert results["parity"]["innerHTMLWrites"] == 0
+    assert "status-chip ok" in results["parity"]["gridClasses"]
+    assert "status-chip bad" in results["parity"]["gridClasses"]
+    assert "status-chip warn" in results["parity"]["gridClasses"]
+    assert "status-chip ok" in results["parity"]["resultClasses"]
+    assert results["parity"]["resultContainerClass"] == "result-card"
+    assert results["fallbackParity"]["statusText"] == "Fallback parity status"
+    assert results["fallbackParity"]["gridArticleCount"] == 0
+    assert "Promotion recommendation unavailable." in results["fallbackParity"]["resultText"]
+    assert "No recommendation items available." in results["fallbackParity"]["resultText"]
+    assert "No limitations recorded." in results["fallbackParity"]["resultText"]
+    assert "status-chip warn" in results["fallbackParity"]["resultClasses"]
+    assert results["fallbackParity"]["resultContainerClass"] == "result-card"
+    assert results["nullResultTypes"] == ["undefined", "undefined", "undefined", "undefined"]
 
 
 def test_result_card_ui_module_centralizes_safe_result_helpers() -> None:
@@ -5005,6 +5134,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderDashboardCardsInto" in dashboard_ui_asset.text
         assert "renderSummaryGridInto" in dashboard_ui_asset.text
         assert "renderCapabilityCardsInto" in dashboard_ui_asset.text
+        assert "renderParityAuditInto" in dashboard_ui_asset.text
         recent_work_ui_asset = client.get(f"/static-build/{asset_version}/recent_work_ui.js")
         assert recent_work_ui_asset.status_code == 200
         assert recent_work_ui_asset.headers["content-type"].startswith("application/javascript")

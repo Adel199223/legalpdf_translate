@@ -3,6 +3,7 @@ import {
   clearNode,
   createTextElement,
 } from "./safe_rendering.js";
+import { createResultHeader } from "./result_card_ui.js";
 
 function chipToneClass(status) {
   if (status === "ok") {
@@ -68,4 +69,69 @@ export function renderCapabilityCardsInto(container, cards = []) {
     article.appendChild(createStatusChip(card.label, chipToneClass(card.status)));
     container.appendChild(article);
   }
+}
+
+function parityChecklistCard(item) {
+  const status = String(item?.status || "");
+  return {
+    title: item?.title,
+    text: item?.description,
+    status: status === "ready" ? "ok" : status === "blocked" ? "bad" : "warn",
+    label: status === "ready" ? "Ready" : status.replaceAll("_", " "),
+  };
+}
+
+function appendListItems(list, items = [], emptyText) {
+  if (items.length) {
+    items.forEach((item) => list.appendChild(createTextElement("li", item)));
+    return;
+  }
+  list.appendChild(createTextElement("li", emptyText));
+}
+
+export function renderParityAuditInto({
+  statusNode = null,
+  gridContainer = null,
+  resultContainer = null,
+  audit = {},
+  presentation = {},
+} = {}) {
+  const checklist = audit.checklist || [];
+  const cards = checklist.map((item) => parityChecklistCard(item));
+  if (statusNode) {
+    statusNode.textContent = presentation.parityStatus;
+  }
+  renderCapabilityCardsInto(gridContainer, cards);
+  if (!resultContainer) {
+    return;
+  }
+  const recommendation = audit.promotion_recommendation || {};
+  const recommendationReady = recommendation.status === "ready_for_daily_use";
+  resultContainer.classList.remove("empty-state");
+  clearNode(resultContainer);
+  resultContainer.appendChild(createResultHeader({
+    title: recommendation.headline || "Promotion recommendation unavailable.",
+    message: presentation.readyCountLine,
+    label: presentation.resultChipLabel,
+    tone: recommendationReady ? "ok" : "warn",
+  }));
+  const grid = document.createElement("div");
+  grid.className = "result-grid";
+  const nextBox = document.createElement("div");
+  nextBox.appendChild(createTextElement("h3", presentation.resultNextTitle));
+  const workflowList = document.createElement("ul");
+  appendListItems(
+    workflowList,
+    recommendation.recommended_workflows || [],
+    "No recommendation items available.",
+  );
+  nextBox.appendChild(workflowList);
+  const limitsBox = document.createElement("div");
+  limitsBox.appendChild(createTextElement("h3", presentation.resultLimitsTitle));
+  const remainingList = document.createElement("ul");
+  appendListItems(remainingList, audit.remaining_limitations || [], "No limitations recorded.");
+  limitsBox.appendChild(remainingList);
+  grid.appendChild(nextBox);
+  grid.appendChild(limitsBox);
+  resultContainer.appendChild(grid);
 }
