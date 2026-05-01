@@ -25,6 +25,7 @@ import {
   renderTranslationBootstrap,
   startTranslationLaunch,
 } from "./translation.js";
+import { renderRecoveryResultInto } from "./recovery_result_ui.js";
 import { closeSessionDrawer, initializeGmailUi, renderGmailBootstrap } from "./gmail.js";
 import { initializePowerToolsUi, renderPowerToolsBootstrap } from "./power-tools.js";
 import { deriveDashboardPresentation } from "./dashboard_presentation.js";
@@ -430,41 +431,6 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function renderRecoveryResult(containerId, details) {
-  const container = qs(containerId);
-  if (!container) {
-    return;
-  }
-  container.classList.remove("empty-state");
-  const steps = details.recoverySteps
-    .map((step) => `<li>${escapeHtml(step)}</li>`)
-    .join("");
-  container.innerHTML = `
-    <div class="result-header">
-      <div><strong>${escapeHtml(details.title)}</strong></div>
-      <span class="status-chip bad">Unavailable</span>
-    </div>
-    <div class="result-grid">
-      <div>
-        <h3>Listener</h3>
-        <p class="word-break">${escapeHtml(`${details.host}:${details.port}`)}</p>
-      </div>
-      <div>
-        <h3>Recommended URL</h3>
-        <p class="word-break">${escapeHtml(details.recommendedUrl)}</p>
-      </div>
-      <div>
-        <h3>Launcher</h3>
-        <p class="word-break">${escapeHtml(details.launcherCommand)}</p>
-      </div>
-    </div>
-    <div>
-      <h3>Recovery</h3>
-      <ul>${steps}</ul>
-    </div>
-  `;
-}
-
 function applyBootstrapFailureState(error) {
   setClientHydrationMarker("client_boot_failed", {
     reason: error?.payload?.diagnostics?.error || error?.name || "bootstrap_failed",
@@ -498,10 +464,14 @@ function applyBootstrapFailureState(error) {
     setPanelStatus("translation", "bad", details.message);
     setPanelStatus("gmail", "bad", details.message);
     setDiagnostics("runtime", error, { hint: details.diagnosticsHint, open: true });
-    renderRecoveryResult("parity-audit-result", details);
-    renderRecoveryResult("translation-result", details);
-    renderRecoveryResult("gmail-message-result", details);
-    renderRecoveryResult("gmail-session-result", details);
+    for (const containerId of [
+      "parity-audit-result",
+      "translation-result",
+      "gmail-message-result",
+      "gmail-session-result",
+    ]) {
+      renderRecoveryResultInto(qs(containerId), details);
+    }
     return;
   }
   setTopbarStatus(error.message || "Browser app bootstrap failed.", "bad");

@@ -1618,6 +1618,219 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_recovery_result_ui_module_centralizes_safe_card_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    recovery_ui_module = static_dir / "recovery_result_ui.js"
+
+    assert recovery_ui_module.exists()
+    assert 'from "./recovery_result_ui.js"' in app_js
+    assert "function renderRecoveryResult(" not in app_js
+    assert '"Recommended URL"' not in app_js
+    assert "renderRecoveryResultInto(qs(containerId), details)" in app_js
+    assert '"parity-audit-result"' in app_js
+    assert '"translation-result"' in app_js
+    assert '"gmail-message-result"' in app_js
+    assert '"gmail-session-result"' in app_js
+
+    script = r"""
+const recoveryUi = await import(__RECOVERY_UI_MODULE_URL__);
+
+function createClassList(element) {
+  return {
+    add(...names) {
+      const classes = new Set(String(element.className || "").split(/\s+/).filter(Boolean));
+      names.forEach((name) => classes.add(name));
+      element.className = Array.from(classes).join(" ");
+    },
+    remove(...names) {
+      const classes = new Set(String(element.className || "").split(/\s+/).filter(Boolean));
+      names.forEach((name) => classes.delete(name));
+      element.className = Array.from(classes).join(" ");
+    },
+    contains(name) {
+      return String(element.className || "").split(/\s+/).filter(Boolean).includes(name);
+    },
+  };
+}
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    children: [],
+    parentNode: null,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  element.classList = createClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function collectClasses(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (String(current.className || "").trim()) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const container = document.createElement("div");
+container.className = "result-card empty-state";
+recoveryUi.renderRecoveryResultInto(container, {
+  title: `Server unavailable ${malicious}`,
+  host: `127.0.0.1${malicious}`,
+  port: `8877${malicious}`,
+  recommendedUrl: `http://127.0.0.1:8877/${malicious}`,
+  launcherCommand: `python tooling/launch_browser_app.py ${malicious}`,
+  recoverySteps: [`Restart ${malicious}`, "Open the current browser workspace again"],
+});
+const nullResult = recoveryUi.renderRecoveryResultInto(null, {
+  title: "Ignored",
+  host: "127.0.0.1",
+  port: "8877",
+  recommendedUrl: "http://127.0.0.1:8877/",
+  launcherCommand: "python launch.py",
+  recoverySteps: ["ignored"],
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof recoveryUi.renderRecoveryResultInto,
+  text: container.textContent,
+  className: container.className,
+  directChildClasses: container.children.map((child) => child.className || ""),
+  classes: collectClasses(container),
+  childTags: container.children.map((child) => child.tagName),
+  gridText: container.children[1]?.textContent || "",
+  recoveryText: container.children[2]?.textContent || "",
+  listItemCount: countTag(container, "li"),
+  imgCount: countTag(container, "img"),
+  scriptCount: countTag(container, "script"),
+  innerHTMLWrites: countInnerHtmlWrites(container),
+  nullResultType: nullResult === undefined ? "undefined" : typeof nullResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__RECOVERY_UI_MODULE_URL__": "recovery_result_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["className"] == "result-card"
+    assert results["childTags"] == ["DIV", "DIV", "DIV"]
+    assert results["directChildClasses"] == ["result-header", "result-grid", ""]
+    assert "status-chip bad" in results["classes"]
+    assert "word-break" in results["classes"]
+    assert "Server unavailable <img src=x onerror=alert(1)><script>bad()</script>" in results["text"]
+    assert "Unavailable" in results["text"]
+    assert "Listener" in results["gridText"]
+    assert "127.0.0.1<img src=x onerror=alert(1)><script>bad()</script>:8877<img src=x onerror=alert(1)><script>bad()</script>" in results["gridText"]
+    assert "Recommended URL" in results["gridText"]
+    assert "http://127.0.0.1:8877/<img src=x onerror=alert(1)><script>bad()</script>" in results["gridText"]
+    assert "Launcher" in results["gridText"]
+    assert "python tooling/launch_browser_app.py <img src=x onerror=alert(1)><script>bad()</script>" in results["gridText"]
+    assert "Recovery" in results["recoveryText"]
+    assert "Restart <img src=x onerror=alert(1)><script>bad()</script>" in results["recoveryText"]
+    assert "Open the current browser workspace again" in results["recoveryText"]
+    assert results["listItemCount"] == 2
+    assert results["imgCount"] == 0
+    assert results["scriptCount"] == 0
+    assert results["innerHTMLWrites"] == 0
+    assert results["nullResultType"] == "undefined"
+
+
 def test_profile_ui_module_centralizes_safe_distance_row_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -5145,6 +5358,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert result_card_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "createResultHeader" in result_card_ui_asset.text
         assert "appendResultGridItem" in result_card_ui_asset.text
+        recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
+        assert recovery_ui_asset.status_code == 200
+        assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderRecoveryResultInto" in recovery_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")
