@@ -83,7 +83,11 @@ import {
   runtimeModeDisplayLabel,
   shouldShowDailyRuntimeModeBanner,
 } from "./shell_presentation.js";
-import { renderNavigationInto } from "./shell_ui.js";
+import {
+  renderLiveBannerInto,
+  renderNavigationInto,
+  renderRuntimeModeSelectorInto,
+} from "./shell_ui.js";
 import {
   GOOGLE_PHOTOS_RECONNECT_GUIDANCE,
   buildGooglePhotosPickerDiagnostics,
@@ -2467,14 +2471,7 @@ function renderExtensionLab(payload) {
 }
 
 function showLiveBanner(runtime) {
-  const banner = qs("live-banner");
-  if (runtime.live_data) {
-    banner.textContent = "Live mode: using your real settings, Gmail drafts, and saved work.";
-    banner.classList.remove("hidden");
-  } else {
-    banner.classList.add("hidden");
-    banner.textContent = "";
-  }
+  renderLiveBannerInto(qs("live-banner"), runtime);
 }
 
 function renderTopbar(payload) {
@@ -2487,17 +2484,7 @@ function renderTopbar(payload) {
 
 function renderRuntimeModeSelector(payload) {
   const runtimeMode = payload.normalized_payload.runtime_mode || {};
-  const select = qs("runtime-mode-select");
-  select.innerHTML = "";
-  for (const mode of runtimeMode.supported_modes || []) {
-    const option = document.createElement("option");
-    option.value = mode.id;
-    option.textContent = mode.label;
-    if (mode.id === runtimeMode.current_mode) {
-      option.selected = true;
-    }
-    select.appendChild(option);
-  }
+  renderRuntimeModeSelectorInto(qs("runtime-mode-select"), runtimeMode);
 }
 
 function renderBootstrap(payload) {

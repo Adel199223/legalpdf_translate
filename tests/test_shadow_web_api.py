@@ -819,12 +819,18 @@ def test_shadow_web_shell_ui_module_centralizes_safe_navigation_rendering() -> N
     )
     app_js = (static_dir / "app.js").read_text(encoding="utf-8")
     shell_ui_js = static_dir / "shell_ui.js"
+    shell_ui_source = shell_ui_js.read_text(encoding="utf-8")
 
     assert shell_ui_js.exists()
     assert 'from "./shell_ui.js"' in app_js
-    assert "export function renderNavigationInto" in shell_ui_js.read_text(encoding="utf-8")
+    assert "export function renderNavigationInto" in shell_ui_source
+    assert "export function renderLiveBannerInto" in shell_ui_source
+    assert "export function renderRuntimeModeSelectorInto" in shell_ui_source
     assert "renderNavigationInto({" in app_js
+    assert 'renderLiveBannerInto(qs("live-banner"), runtime);' in app_js
+    assert 'renderRuntimeModeSelectorInto(qs("runtime-mode-select"), runtimeMode);' in app_js
     assert "button.innerHTML" not in app_js
+    assert "innerHTML" not in shell_ui_source
 
     script = r"""
 const shellUi = await import(__SHELL_UI_MODULE_URL__);
@@ -981,6 +987,15 @@ function serializeButtons(container) {
   }));
 }
 
+function serializeOptions(select) {
+  return select.children.map((option) => ({
+    tagName: option.tagName,
+    value: option.value,
+    text: option.textContent,
+    selected: Boolean(option.selected),
+  }));
+}
+
 globalThis.document = {
   createElement(tagName) {
     return makeElement(tagName);
@@ -1026,8 +1041,41 @@ shellUi.renderNavigationInto({
   showGmailNav: true,
 });
 
+const runtimeSelect = document.createElement("select");
+shellUi.renderRuntimeModeSelectorInto(runtimeSelect, {
+  current_mode: "live",
+  supported_modes: [
+    { id: "shadow", label: `Shadow ${malicious}` },
+    { id: "live", label: `Live ${malicious}` },
+  ],
+});
+
+const emptyRuntimeSelect = document.createElement("select");
+emptyRuntimeSelect.appendChild(document.createElement("option"));
+shellUi.renderRuntimeModeSelectorInto(emptyRuntimeSelect, {
+  current_mode: "",
+  supported_modes: [],
+});
+
+const liveBanner = document.createElement("div");
+liveBanner.className = "live-banner hidden";
+shellUi.renderLiveBannerInto(liveBanner, { live_data: true });
+const liveBannerSnapshot = {
+  text: liveBanner.textContent,
+  className: liveBanner.className,
+};
+shellUi.renderLiveBannerInto(liveBanner, { live_data: false });
+const shadowBannerSnapshot = {
+  text: liveBanner.textContent,
+  className: liveBanner.className,
+};
+
 console.log(JSON.stringify({
   exportedType: typeof shellUi.renderNavigationInto,
+  runtimeControlExportTypes: {
+    liveBanner: typeof shellUi.renderLiveBannerInto,
+    runtimeSelector: typeof shellUi.renderRuntimeModeSelectorInto,
+  },
   hidden: hiddenSnapshot,
   visible: {
     primary: serializeButtons(primaryContainer),
@@ -1039,6 +1087,21 @@ console.log(JSON.stringify({
     scriptCount: countTag(primaryContainer, "script") + countTag(moreContainer, "script"),
     innerHTMLWrites: countInnerHtmlWrites(primaryContainer, moreContainer, moreShell),
   },
+  runtimeControls: {
+    options: serializeOptions(runtimeSelect),
+    text: runtimeSelect.textContent,
+    imgCount: countTag(runtimeSelect, "img"),
+    scriptCount: countTag(runtimeSelect, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(runtimeSelect),
+    emptyOptions: serializeOptions(emptyRuntimeSelect),
+    emptyInnerHTMLWrites: countInnerHtmlWrites(emptyRuntimeSelect),
+    liveBanner: liveBannerSnapshot,
+    shadowBanner: shadowBannerSnapshot,
+    missingRuntimeResultType: typeof shellUi.renderRuntimeModeSelectorInto(null, {
+      supported_modes: [{ id: "ignored", label: "Ignored" }],
+    }),
+    missingBannerResultType: typeof shellUi.renderLiveBannerInto(null, { live_data: true }),
+  },
 }));
 """
     results = run_browser_esm_json_probe(
@@ -1048,6 +1111,10 @@ console.log(JSON.stringify({
     )
 
     assert results["exportedType"] == "function"
+    assert results["runtimeControlExportTypes"] == {
+        "liveBanner": "function",
+        "runtimeSelector": "function",
+    }
     assert [button["view"] for button in results["hidden"]["primary"]] == ["new-job", "recent-jobs"]
     assert [button["view"] for button in results["hidden"]["more"]] == [
         "dashboard",
@@ -1088,6 +1155,33 @@ console.log(JSON.stringify({
     assert results["visible"]["imgCount"] == 0
     assert results["visible"]["scriptCount"] == 0
     assert results["visible"]["innerHTMLWrites"] == 0
+    assert results["runtimeControls"]["options"] == [
+        {
+            "tagName": "OPTION",
+            "value": "shadow",
+            "text": "Shadow <img src=x onerror=alert(1)><script>bad()</script>",
+            "selected": False,
+        },
+        {
+            "tagName": "OPTION",
+            "value": "live",
+            "text": "Live <img src=x onerror=alert(1)><script>bad()</script>",
+            "selected": True,
+        },
+    ]
+    assert "Shadow <img src=x onerror=alert(1)><script>bad()</script>" in results["runtimeControls"]["text"]
+    assert results["runtimeControls"]["imgCount"] == 0
+    assert results["runtimeControls"]["scriptCount"] == 0
+    assert results["runtimeControls"]["innerHTMLWrites"] == 0
+    assert results["runtimeControls"]["emptyOptions"] == []
+    assert results["runtimeControls"]["emptyInnerHTMLWrites"] == 0
+    assert results["runtimeControls"]["liveBanner"] == {
+        "text": "Live mode: using your real settings, Gmail drafts, and saved work.",
+        "className": "live-banner",
+    }
+    assert results["runtimeControls"]["shadowBanner"] == {"text": "", "className": "live-banner hidden"}
+    assert results["runtimeControls"]["missingRuntimeResultType"] == "undefined"
+    assert results["runtimeControls"]["missingBannerResultType"] == "undefined"
 
 
 def test_google_photos_busy_guard_allows_connect_when_choose_is_disabled() -> None:
@@ -6461,6 +6555,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderNavigationInto" in shell_ui_asset.text
+        assert "renderLiveBannerInto" in shell_ui_asset.text
+        assert "renderRuntimeModeSelectorInto" in shell_ui_asset.text
         diagnostics_ui_asset = client.get(f"/static-build/{asset_version}/diagnostics_ui.js")
         assert diagnostics_ui_asset.status_code == 200
         assert diagnostics_ui_asset.headers["content-type"].startswith("application/javascript")
