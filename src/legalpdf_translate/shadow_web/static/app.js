@@ -31,6 +31,7 @@ import { deriveDashboardPresentation } from "./dashboard_presentation.js";
 import {
   renderCapabilityCardsInto,
   renderDashboardCardsInto,
+  renderParityAuditInto,
   renderSummaryGridInto,
 } from "./dashboard_ui.js";
 import {
@@ -97,7 +98,6 @@ import { buildExtensionLabCards } from "./extension_lab_presentation.js";
 import { renderExtensionPrepareReasonCatalogInto } from "./extension_lab_ui.js";
 import {
   clearNode,
-  createTextElement,
 } from "./safe_rendering.js";
 import { formatDiagnosticValue } from "./diagnostics_presentation.js";
 
@@ -117,6 +117,7 @@ export { renderProfileDistanceRowsInto } from "./profile_ui.js";
 export {
   renderCapabilityCardsInto,
   renderDashboardCardsInto,
+  renderParityAuditInto,
   renderSummaryGridInto,
 } from "./dashboard_ui.js";
 export {
@@ -2448,52 +2449,13 @@ function renderDashboard(payload) {
 }
 
 function renderParityAudit(payload, presentation = deriveDashboardPresentation(payload)) {
-  const audit = payload.normalized_payload.parity_audit || {};
-  const checklist = audit.checklist || [];
-  const cards = checklist.map((item) => ({
-    title: item.title,
-    text: item.description,
-    status: item.status === "ready" ? "ok" : item.status === "blocked" ? "bad" : "warn",
-    label: item.status === "ready" ? "Ready" : item.status.replaceAll("_", " "),
-  }));
-  qs("parity-audit-status").textContent = presentation.parityStatus;
-  renderCapabilityCards("parity-audit-grid", cards);
-  const recommendation = audit.promotion_recommendation || {};
-  const result = qs("parity-audit-result");
-  const recommendationReady = recommendation.status === "ready_for_daily_use";
-  result.classList.remove("empty-state");
-  clearNode(result);
-  result.appendChild(createResultHeader({
-    title: recommendation.headline || "Promotion recommendation unavailable.",
-    message: presentation.readyCountLine,
-    label: presentation.resultChipLabel,
-    tone: recommendationReady ? "ok" : "warn",
-  }));
-  const grid = document.createElement("div");
-  grid.className = "result-grid";
-  const nextBox = document.createElement("div");
-  nextBox.appendChild(createTextElement("h3", presentation.resultNextTitle));
-  const workflowList = document.createElement("ul");
-  const workflows = recommendation.recommended_workflows || [];
-  if (workflows.length) {
-    workflows.forEach((item) => workflowList.appendChild(createTextElement("li", item)));
-  } else {
-    workflowList.appendChild(createTextElement("li", "No recommendation items available."));
-  }
-  nextBox.appendChild(workflowList);
-  const limitsBox = document.createElement("div");
-  limitsBox.appendChild(createTextElement("h3", presentation.resultLimitsTitle));
-  const remainingList = document.createElement("ul");
-  const remaining = audit.remaining_limitations || [];
-  if (remaining.length) {
-    remaining.forEach((item) => remainingList.appendChild(createTextElement("li", item)));
-  } else {
-    remainingList.appendChild(createTextElement("li", "No limitations recorded."));
-  }
-  limitsBox.appendChild(remainingList);
-  grid.appendChild(nextBox);
-  grid.appendChild(limitsBox);
-  result.appendChild(grid);
+  renderParityAuditInto({
+    statusNode: qs("parity-audit-status"),
+    gridContainer: qs("parity-audit-grid"),
+    resultContainer: qs("parity-audit-result"),
+    audit: payload.normalized_payload.parity_audit || {},
+    presentation,
+  });
 }
 
 function renderSettings(payload) {
