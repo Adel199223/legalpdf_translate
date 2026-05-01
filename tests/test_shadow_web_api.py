@@ -3888,10 +3888,12 @@ def test_diagnostics_presentation_module_centralizes_safe_diagnostic_formatting(
     )
     app_js = (static_dir / "app.js").read_text(encoding="utf-8")
     power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    diagnostics_ui_js = (static_dir / "diagnostics_ui.js").read_text(encoding="utf-8")
     diagnostics_module = static_dir / "diagnostics_presentation.js"
 
     assert diagnostics_module.exists()
-    assert 'from "./diagnostics_presentation.js"' in app_js
+    assert 'from "./diagnostics_presentation.js"' not in app_js
+    assert 'from "./diagnostics_presentation.js"' in diagnostics_ui_js
     assert 'from "./diagnostics_presentation.js"' in power_tools_js
 
     script = """
@@ -3940,6 +3942,184 @@ console.log(JSON.stringify({
         assert diagnostics_asset.status_code == 200
         assert diagnostics_asset.headers["content-type"].startswith("application/javascript")
         assert "formatDiagnosticValue" in diagnostics_asset.text
+
+
+def test_diagnostics_ui_module_centralizes_safe_status_rendering(tmp_path: Path, monkeypatch) -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    diagnostics_ui_module = static_dir / "diagnostics_ui.js"
+
+    assert diagnostics_ui_module.exists()
+    diagnostics_ui_js = diagnostics_ui_module.read_text(encoding="utf-8")
+    assert 'from "./diagnostics_ui.js"' in app_js
+    assert 'from "./diagnostics_presentation.js"' in diagnostics_ui_js
+    assert 'from "./diagnostics_presentation.js"' not in app_js
+    assert "export function setDiagnostics" in diagnostics_ui_js
+    assert "export function setPanelStatus" in diagnostics_ui_js
+    assert "export function setTopbarStatus" in diagnostics_ui_js
+
+    script = """
+const diagnosticsUi = await import(__DIAGNOSTICS_UI_MODULE_URL__);
+
+class Element {
+  constructor(id) {
+    this.id = id;
+    this.textContent = "";
+    this.dataset = {};
+    this.open = false;
+    this.innerHTMLAssignments = [];
+    this._innerHTML = "";
+  }
+}
+
+Object.defineProperty(Element.prototype, "innerHTML", {
+  get() {
+    return this._innerHTML;
+  },
+  set(value) {
+    this._innerHTML = value;
+    this.innerHTMLAssignments.push(value);
+  },
+});
+
+const nodes = new Map();
+function createNode(id) {
+  const element = new Element(id);
+  nodes.set(id, element);
+  return element;
+}
+
+const diagnostics = createNode("review-diagnostics");
+const hint = createNode("review-hint");
+const details = createNode("review-details");
+const panelStatus = createNode("review-status");
+const topbarStatus = createNode("topbar-status");
+
+globalThis.document = {
+  getElementById(id) {
+    return nodes.get(id) || null;
+  },
+};
+
+diagnosticsUi.setDiagnostics(
+  "review",
+  { message: "<img src=x onerror=alert(1)>", ok: true },
+  { hint: "Safe <hint>", open: true },
+);
+const firstDiagnostics = {
+  text: diagnostics.textContent,
+  hint: hint.textContent,
+  detailsOpen: details.open,
+  reveal: details.dataset.reveal || null,
+};
+
+diagnosticsUi.setDiagnostics("review", "Plain <b>diagnostic</b>", { open: false });
+const secondDiagnostics = {
+  text: diagnostics.textContent,
+  preservedHint: hint.textContent,
+  detailsOpen: details.open,
+  reveal: details.dataset.reveal || null,
+};
+
+diagnosticsUi.setPanelStatus("review", "warning", "Careful <b>status</b>");
+const firstPanelStatus = {
+  text: panelStatus.textContent,
+  tone: panelStatus.dataset.tone || null,
+};
+
+diagnosticsUi.setPanelStatus("review", "", "Cleared <script>");
+const secondPanelStatus = {
+  text: panelStatus.textContent,
+  tone: panelStatus.dataset.tone || null,
+};
+
+diagnosticsUi.setTopbarStatus("Topbar <em>ready</em>", "success");
+const firstTopbarStatus = {
+  text: topbarStatus.textContent,
+  tone: topbarStatus.dataset.tone || null,
+};
+
+diagnosticsUi.setTopbarStatus("Topbar neutral", "");
+const secondTopbarStatus = {
+  text: topbarStatus.textContent,
+  tone: topbarStatus.dataset.tone || null,
+};
+
+diagnosticsUi.setDiagnostics("missing", { ignored: true }, { hint: "Ignored", open: true });
+diagnosticsUi.setPanelStatus("missing", "warning", "Ignored");
+nodes.delete("topbar-status");
+diagnosticsUi.setTopbarStatus("Ignored", "warning");
+
+const innerHTMLWrites = [
+  diagnostics,
+  hint,
+  details,
+  panelStatus,
+  topbarStatus,
+].reduce((total, node) => total + node.innerHTMLAssignments.length, 0);
+
+console.log(JSON.stringify({
+  firstDiagnostics,
+  secondDiagnostics,
+  firstPanelStatus,
+  secondPanelStatus,
+  firstTopbarStatus,
+  secondTopbarStatus,
+  innerHTMLWrites,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__DIAGNOSTICS_UI_MODULE_URL__": "diagnostics_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["firstDiagnostics"] == {
+        "text": '{\n  "message": "<img src=x onerror=alert(1)>",\n  "ok": true\n}',
+        "hint": "Safe <hint>",
+        "detailsOpen": True,
+        "reveal": "true",
+    }
+    assert results["secondDiagnostics"] == {
+        "text": "Plain <b>diagnostic</b>",
+        "preservedHint": "Safe <hint>",
+        "detailsOpen": False,
+        "reveal": None,
+    }
+    assert results["firstPanelStatus"] == {
+        "text": "Careful <b>status</b>",
+        "tone": "warning",
+    }
+    assert results["secondPanelStatus"] == {
+        "text": "Cleared <script>",
+        "tone": None,
+    }
+    assert results["firstTopbarStatus"] == {
+        "text": "Topbar <em>ready</em>",
+        "tone": "success",
+    }
+    assert results["secondTopbarStatus"] == {
+        "text": "Topbar neutral",
+        "tone": None,
+    }
+    assert results["innerHTMLWrites"] == 0
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        shell = client.get("/api/bootstrap/shell", params={"mode": "live", "workspace": "dashboard"})
+        assert shell.status_code == 200
+        asset_version = shell.json()["normalized_payload"]["shell"]["asset_version"]
+        diagnostics_asset = client.get(f"/static-build/{asset_version}/diagnostics_ui.js")
+        assert diagnostics_asset.status_code == 200
+        assert diagnostics_asset.headers["content-type"].startswith("application/javascript")
+        assert "setDiagnostics" in diagnostics_asset.text
+        assert "setPanelStatus" in diagnostics_asset.text
+        assert "setTopbarStatus" in diagnostics_asset.text
 
 
 def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> None:
@@ -6208,6 +6388,12 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderNavigationInto" in shell_ui_asset.text
+        diagnostics_ui_asset = client.get(f"/static-build/{asset_version}/diagnostics_ui.js")
+        assert diagnostics_ui_asset.status_code == 200
+        assert diagnostics_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "setDiagnostics" in diagnostics_ui_asset.text
+        assert "setPanelStatus" in diagnostics_ui_asset.text
+        assert "setTopbarStatus" in diagnostics_ui_asset.text
         interpretation_result_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_result_ui.js")
         assert interpretation_result_ui_asset.status_code == 200
         assert interpretation_result_ui_asset.headers["content-type"].startswith("application/javascript")
