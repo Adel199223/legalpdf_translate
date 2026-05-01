@@ -3679,6 +3679,256 @@ console.log(JSON.stringify({
     assert results["grid"]["innerHTMLWrites"] == 0
 
 
+def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_reference_ui_js = static_dir / "interpretation_reference_ui.js"
+
+    assert interpretation_reference_ui_js.exists()
+    interpretation_reference_ui_text = interpretation_reference_ui_js.read_text(encoding="utf-8")
+    assert 'from "./interpretation_reference_ui.js"' in app_js
+    assert "export function renderInterpretationCityOptionsInto" in interpretation_reference_ui_text
+    assert "export function renderCourtEmailOptionsInto" in interpretation_reference_ui_text
+    assert "export function renderServiceEntityOptionsInto" in interpretation_reference_ui_text
+    assert "renderInterpretationCityOptionsInto(select, reference.availableCities, currentValue);" in app_js
+    assert "renderCourtEmailOptionsInto(select, {" in app_js
+    assert "renderServiceEntityOptionsInto(select, options, selectedValue);" in app_js
+
+    city_start = app_js.index("function populateInterpretationCitySelect")
+    court_email_start = app_js.index("function populateCourtEmailSelect", city_start)
+    city_block = app_js[city_start:court_email_start]
+    assert "innerHTML" not in city_block
+    assert "document.createElement(\"option\")" not in city_block
+
+    service_entity_start = app_js.index("function populateServiceEntitySelect", court_email_start)
+    court_email_block = app_js[court_email_start:service_entity_start]
+    assert "innerHTML" not in court_email_block
+    assert "document.createElement(\"option\")" not in court_email_block
+
+    refresh_reference_start = app_js.index("function refreshInterpretationReferenceBoundControls", service_entity_start)
+    service_entity_block = app_js[service_entity_start:refresh_reference_start]
+    assert "innerHTML" not in service_entity_block
+    assert "document.createElement(\"option\")" not in service_entity_block
+
+    script = r"""
+const interpretationReferenceUi = await import(__INTERPRETATION_REFERENCE_UI_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    children: [],
+    parentNode: null,
+    value: "",
+    selected: false,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function summarizeSelect(select) {
+  return {
+    value: select.value,
+    optionValues: select.children.map((option) => option.value),
+    optionTexts: select.children.map((option) => option.textContent),
+    selectedFlags: select.children.map((option) => Boolean(option.selected)),
+    text: select.textContent,
+    imgCount: countTag(select, "img"),
+    scriptCount: countTag(select, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(select),
+  };
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const citySelect = document.createElement("select");
+const staleCityOption = document.createElement("option");
+staleCityOption.value = "stale";
+staleCityOption.textContent = "stale";
+citySelect.appendChild(staleCityOption);
+interpretationReferenceUi.renderInterpretationCityOptionsInto(
+  citySelect,
+  [`Beja ${malicious}`, "Cuba"],
+  `Beja ${malicious}`,
+);
+
+const emailSelect = document.createElement("select");
+const staleEmailOption = document.createElement("option");
+staleEmailOption.value = "stale";
+staleEmailOption.textContent = "stale";
+emailSelect.appendChild(staleEmailOption);
+interpretationReferenceUi.renderCourtEmailOptionsInto(emailSelect, {
+  options: [`court-${malicious}@example.test`, "second@example.test"],
+  selectedEmail: `court-${malicious}@example.test`,
+});
+
+const emptyEmailSelect = document.createElement("select");
+interpretationReferenceUi.renderCourtEmailOptionsInto(emptyEmailSelect, {
+  options: [],
+  selectedEmail: "",
+});
+
+const serviceSelect = document.createElement("select");
+const staleServiceOption = document.createElement("option");
+staleServiceOption.value = "stale";
+staleServiceOption.textContent = "stale";
+serviceSelect.appendChild(staleServiceOption);
+interpretationReferenceUi.renderServiceEntityOptionsInto(
+  serviceSelect,
+  [`GNR ${malicious}`, "PSP"],
+  `GNR ${malicious}`,
+);
+
+const nullCityResult = interpretationReferenceUi.renderInterpretationCityOptionsInto(null, ["Ignored"], "Ignored");
+const nullEmailResult = interpretationReferenceUi.renderCourtEmailOptionsInto(null, {
+  options: ["ignored@example.test"],
+  selectedEmail: "ignored@example.test",
+});
+const nullServiceResult = interpretationReferenceUi.renderServiceEntityOptionsInto(null, ["Ignored"], "Ignored");
+
+console.log(JSON.stringify({
+  exportedTypes: {
+    city: typeof interpretationReferenceUi.renderInterpretationCityOptionsInto,
+    email: typeof interpretationReferenceUi.renderCourtEmailOptionsInto,
+    service: typeof interpretationReferenceUi.renderServiceEntityOptionsInto,
+  },
+  city: summarizeSelect(citySelect),
+  email: summarizeSelect(emailSelect),
+  emptyEmail: summarizeSelect(emptyEmailSelect),
+  service: summarizeSelect(serviceSelect),
+  nullCityResult,
+  nullEmailResult,
+  nullServiceResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REFERENCE_UI_MODULE_URL__": "interpretation_reference_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedTypes"] == {
+        "city": "function",
+        "email": "function",
+        "service": "function",
+    }
+    assert results["city"]["optionTexts"][0] == "Select a city"
+    assert results["city"]["optionValues"][0] == ""
+    assert "Beja <img src=x onerror=alert(1)><script>bad()</script>" in results["city"]["text"]
+    assert results["city"]["optionValues"][1] == "Beja <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["city"]["value"] == "Beja <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["city"]["imgCount"] == 0
+    assert results["city"]["scriptCount"] == 0
+    assert results["city"]["innerHTMLWrites"] == 0
+
+    assert results["email"]["optionTexts"][0] == "Select a court email"
+    assert "court-<img src=x onerror=alert(1)><script>bad()</script>@example.test" in results["email"]["text"]
+    assert results["email"]["value"] == "court-<img src=x onerror=alert(1)><script>bad()</script>@example.test"
+    assert results["email"]["innerHTMLWrites"] == 0
+    assert results["emptyEmail"]["optionTexts"] == ["No email saved for this city"]
+    assert results["emptyEmail"]["optionValues"] == [""]
+    assert results["emptyEmail"]["value"] == ""
+
+    assert results["service"]["optionTexts"][0] == "Select service entity"
+    assert "GNR <img src=x onerror=alert(1)><script>bad()</script>" in results["service"]["text"]
+    assert results["service"]["value"] == "GNR <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["service"]["imgCount"] == 0
+    assert results["service"]["scriptCount"] == 0
+    assert results["service"]["innerHTMLWrites"] == 0
+
+    assert "nullCityResult" not in results
+    assert "nullEmailResult" not in results
+    assert "nullServiceResult" not in results
+
+
 def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -7396,6 +7646,12 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "setDiagnostics" in diagnostics_ui_asset.text
         assert "setPanelStatus" in diagnostics_ui_asset.text
         assert "setTopbarStatus" in diagnostics_ui_asset.text
+        interpretation_reference_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_reference_ui.js")
+        assert interpretation_reference_ui_asset.status_code == 200
+        assert interpretation_reference_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderInterpretationCityOptionsInto" in interpretation_reference_ui_asset.text
+        assert "renderCourtEmailOptionsInto" in interpretation_reference_ui_asset.text
+        assert "renderServiceEntityOptionsInto" in interpretation_reference_ui_asset.text
         interpretation_result_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_result_ui.js")
         assert interpretation_result_ui_asset.status_code == 200
         assert interpretation_result_ui_asset.headers["content-type"].startswith("application/javascript")
