@@ -3699,12 +3699,14 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "export function renderInterpretationSessionCardInto" in interpretation_result_ui_text
     assert "export function renderInterpretationSeedCardInto" in interpretation_result_ui_text
     assert "export function renderInterpretationReviewSummaryCardInto" in interpretation_result_ui_text
+    assert "export function renderInterpretationLocationGuardInto" in interpretation_result_ui_text
     assert "renderInterpretationExportResultInto(container, payload, currentInterpretationPresentation());" in app_js
     assert "renderInterpretationGmailResultInto(container, payload, currentInterpretationPresentation());" in app_js
     assert "renderInterpretationCompletionCardInto(container, {" in app_js
     assert "renderInterpretationSessionCardInto(result, {" in app_js
     assert "renderInterpretationSeedCardInto(container, {" in app_js
     assert "renderInterpretationReviewSummaryCardInto(container, {" in app_js
+    assert "renderInterpretationLocationGuardInto(card, { message, tone });" in app_js
     assert 'qs("interpretation-review-export-panel")?.classList.remove("hidden");' in app_js
     session_start = app_js.index("function renderInterpretationSessionShell")
     seed_start = app_js.index("function renderInterpretationSeedCard", session_start)
@@ -3749,6 +3751,13 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "interpretationServiceLocation(snapshot)" in completion_block
     assert "innerHTML" not in completion_block
     assert "escapeHtml" not in completion_block
+    guard_start = app_js.index("function setInterpretationLocationGuard", warning_start)
+    reference_start = app_js.index("function applyInterpretationCityValue", guard_start)
+    guard_block = app_js[guard_start:reference_start]
+    assert 'const message = String(rawMessage || "").trim();' in guard_block
+    assert "renderInterpretationLocationGuardInto(card, { message, tone });" in guard_block
+    assert "innerHTML" not in guard_block
+    assert "escapeHtml" not in guard_block
     assert 'appendResultGridItem(grid, "DOCX"' not in app_js
     assert 'appendResultGridItem(grid, "PDF Export"' not in app_js
 
@@ -3894,6 +3903,18 @@ function summarize(container) {
     childClasses: container.children.map((child) => child.className || ""),
     gridLabels: grid.children.map((child) => child.children[0]?.textContent || ""),
     gridValues: grid.children.map((child) => child.children[1]?.textContent || ""),
+    classes: collectClasses(container),
+    imgCount: countTag(container, "img"),
+    scriptCount: countTag(container, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(container),
+  };
+}
+
+function summarizeGuard(container) {
+  return {
+    className: container.className,
+    text: container.textContent,
+    childClasses: container.children.map((child) => child.className || ""),
     classes: collectClasses(container),
     imgCount: countTag(container, "img"),
     scriptCount: countTag(container, "script"),
@@ -4140,6 +4161,38 @@ const nullSessionResult = interpretationResultUi.renderInterpretationSessionCard
 const nullSeedResult = interpretationResultUi.renderInterpretationSeedCardInto(null, {});
 const nullReviewSummaryResult = interpretationResultUi.renderInterpretationReviewSummaryCardInto(null, {});
 
+const guardWarningContainer = document.createElement("div");
+guardWarningContainer.className = "result-card hidden empty-state";
+interpretationResultUi.renderInterpretationLocationGuardInto(guardWarningContainer, {
+  message: `Choose city ${malicious}`,
+  tone: "warning",
+});
+
+const guardDangerContainer = document.createElement("div");
+guardDangerContainer.className = "result-card hidden empty-state";
+interpretationResultUi.renderInterpretationLocationGuardInto(guardDangerContainer, {
+  message: `Blocked city ${malicious}`,
+  tone: "danger",
+});
+
+const guardOtherToneContainer = document.createElement("div");
+guardOtherToneContainer.className = "result-card hidden empty-state";
+interpretationResultUi.renderInterpretationLocationGuardInto(guardOtherToneContainer, {
+  message: `Review city ${malicious}`,
+  tone: "info",
+});
+
+const guardEmptyContainer = document.createElement("div");
+guardEmptyContainer.className = "result-card";
+interpretationResultUi.renderInterpretationLocationGuardInto(guardEmptyContainer, {
+  message: "",
+  tone: "danger",
+});
+const nullGuardResult = interpretationResultUi.renderInterpretationLocationGuardInto(null, {
+  message: `Ignored ${malicious}`,
+  tone: "danger",
+});
+
 console.log(JSON.stringify({
   exportedTypes: {
     export: typeof interpretationResultUi.renderInterpretationExportResultInto,
@@ -4148,6 +4201,7 @@ console.log(JSON.stringify({
     session: typeof interpretationResultUi.renderInterpretationSessionCardInto,
     seed: typeof interpretationResultUi.renderInterpretationSeedCardInto,
     reviewSummary: typeof interpretationResultUi.renderInterpretationReviewSummaryCardInto,
+    locationGuard: typeof interpretationResultUi.renderInterpretationLocationGuardInto,
   },
   ok: summarize(okContainer),
   localOnly: summarize(localOnlyContainer),
@@ -4164,11 +4218,16 @@ console.log(JSON.stringify({
   seedFallback: summarize(seedFallbackContainer),
   reviewSummary: summarize(reviewSummaryContainer),
   reviewSummaryFallback: summarize(reviewSummaryFallbackContainer),
+  guardWarning: summarizeGuard(guardWarningContainer),
+  guardDanger: summarizeGuard(guardDangerContainer),
+  guardOtherTone: summarizeGuard(guardOtherToneContainer),
+  guardEmpty: summarizeGuard(guardEmptyContainer),
   nullContainerResult,
   nullCompletionResult,
   nullSessionResult,
   nullSeedResult,
   nullReviewSummaryResult,
+  nullGuardResult,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -4184,6 +4243,7 @@ console.log(JSON.stringify({
         "session": "function",
         "seed": "function",
         "reviewSummary": "function",
+        "locationGuard": "function",
     }
     assert results["ok"]["className"] == "result-card"
     assert results["ok"]["childClasses"] == ["result-header", "result-grid"]
@@ -4391,6 +4451,34 @@ console.log(JSON.stringify({
     assert "nullSessionResult" not in results
     assert "nullSeedResult" not in results
     assert "nullReviewSummaryResult" not in results
+    assert results["guardWarning"]["className"] == "result-card"
+    assert results["guardWarning"]["childClasses"] == ["result-header"]
+    assert "Choose city <img src=x onerror=alert(1)><script>bad()</script>" in results["guardWarning"]["text"]
+    assert "Needs review" in results["guardWarning"]["text"]
+    assert "status-chip warn" in results["guardWarning"]["classes"]
+    assert results["guardWarning"]["imgCount"] == 0
+    assert results["guardWarning"]["scriptCount"] == 0
+    assert results["guardWarning"]["innerHTMLWrites"] == 0
+
+    assert results["guardDanger"]["className"] == "result-card"
+    assert "Blocked city <img src=x onerror=alert(1)><script>bad()</script>" in results["guardDanger"]["text"]
+    assert "Action blocked" in results["guardDanger"]["text"]
+    assert "status-chip bad" in results["guardDanger"]["classes"]
+    assert results["guardDanger"]["imgCount"] == 0
+    assert results["guardDanger"]["scriptCount"] == 0
+    assert results["guardDanger"]["innerHTMLWrites"] == 0
+
+    assert results["guardOtherTone"]["className"] == "result-card"
+    assert "Review city <img src=x onerror=alert(1)><script>bad()</script>" in results["guardOtherTone"]["text"]
+    assert "Needs review" in results["guardOtherTone"]["text"]
+    assert "status-chip warn" in results["guardOtherTone"]["classes"]
+    assert results["guardOtherTone"]["innerHTMLWrites"] == 0
+
+    assert results["guardEmpty"]["className"] == "result-card hidden empty-state"
+    assert results["guardEmpty"]["text"] == ""
+    assert results["guardEmpty"]["childClasses"] == []
+    assert results["guardEmpty"]["innerHTMLWrites"] == 0
+    assert "nullGuardResult" not in results
 
 
 def test_recent_work_ui_module_centralizes_safe_history_rendering() -> None:
@@ -7317,6 +7405,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationSessionCardInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationSeedCardInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationReviewSummaryCardInto" in interpretation_result_ui_asset.text
+        assert "renderInterpretationLocationGuardInto" in interpretation_result_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")

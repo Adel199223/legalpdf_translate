@@ -69,6 +69,28 @@ export function renderInterpretationReviewSummaryCardInto(container, card = {}) 
   });
 }
 
+export function renderInterpretationLocationGuardInto(card, { message = "", tone = "warning" } = {}) {
+  if (!card) {
+    return;
+  }
+  const text = String(message || "").trim();
+  if (!text) {
+    card.classList.add("hidden");
+    card.classList.add("empty-state");
+    card.textContent = "";
+    return;
+  }
+  card.classList.remove("hidden", "empty-state");
+  clearNode(card);
+  const isDanger = tone === "danger";
+  card.appendChild(createResultHeader({
+    title: text,
+    message: "",
+    label: isDanger ? "Action blocked" : "Needs review",
+    tone: isDanger ? "bad" : "warn",
+  }));
+}
+
 export function renderInterpretationExportResultInto(container, payload, presentation) {
   const result = payload.normalized_payload || {};
   const pdf = payload.diagnostics?.pdf_export || {};
