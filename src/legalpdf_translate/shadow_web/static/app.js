@@ -89,6 +89,7 @@ import {
   buildGooglePhotosPickerDiagnostics,
   googlePhotosPickerBrowserUrl,
   googlePhotosUiState,
+  renderGooglePhotosSummaryInto,
   renderGooglePhotosStatus,
   resetGooglePhotosPickerState,
   setGooglePhotosAuthFallback,
@@ -106,6 +107,7 @@ export {
   buildGooglePhotosPickerDiagnostics,
   googlePhotosPickerBrowserUrl,
   googlePhotosUiSafeSnapshot,
+  renderGooglePhotosSummaryInto,
   renderGooglePhotosStatus,
   resetGooglePhotosPickerState,
   setGooglePhotosAuthFallback,
@@ -2829,37 +2831,11 @@ async function handleUpload(formId, endpoint, { sourceKind = "" } = {}) {
 }
 
 function renderGooglePhotosSummary({ selectedPhoto = null, diagnostics = null, message = "" } = {}) {
-  const container = qs("google-photos-summary");
-  if (!container) {
-    return;
-  }
-  clearNode(container);
-  if (!selectedPhoto && !diagnostics && !message) {
-    container.classList.add("empty-state");
-    container.textContent = "No Google Photos selection yet.";
-    return;
-  }
-  container.classList.remove("empty-state");
-  container.appendChild(createResultHeader({
-    title: selectedPhoto?.source_filename || "Google Photos selection",
-    message: message || "Review the recovered fields before creating the fee-request document.",
-    label: selectedPhoto ? "Selected" : "Pending",
-    tone: selectedPhoto ? "ok" : "info",
-  }));
-  const grid = document.createElement("div");
-  grid.className = "result-grid";
-  appendResultGridItem(grid, "Photo Taken Date", selectedPhoto?.photo_taken_at || selectedPhoto?.create_time || "Unavailable", { className: "word-break" });
-  appendResultGridItem(grid, "Photo Date Policy", diagnostics?.photo_taken_date_policy || "Photo taken date: provenance only", { className: "word-break" });
-  appendResultGridItem(grid, "Filename", selectedPhoto?.source_filename || "Unavailable", { className: "word-break" });
-  const camera = selectedPhoto?.camera || {};
-  appendResultGridItem(grid, "Camera", [camera.make, camera.model].filter(Boolean).join(" ") || "Unavailable", { className: "word-break" });
-  const dimensions = selectedPhoto?.dimensions || {};
-  const dimensionLabel = dimensions.width && dimensions.height ? `${dimensions.width} x ${dimensions.height}` : "Unavailable";
-  appendResultGridItem(grid, "Dimensions", dimensionLabel, { className: "word-break" });
-  appendResultGridItem(grid, "Downloaded EXIF Date", diagnostics?.downloaded_exif_date || "Unavailable", { className: "word-break" });
-  appendResultGridItem(grid, "Google Photos Location", diagnostics?.location_message || selectedPhoto?.location_message || "Google Photos location: unavailable from Picker API", { className: "word-break" });
-  appendResultGridItem(grid, "Service City Source", diagnostics?.service_city_source_label || "Service city source: not available", { className: "word-break" });
-  container.appendChild(grid);
+  renderGooglePhotosSummaryInto(qs("google-photos-summary"), {
+    selectedPhoto,
+    diagnostics,
+    message,
+  });
 }
 
 async function refreshGooglePhotosStatus() {

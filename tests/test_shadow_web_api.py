@@ -1348,6 +1348,280 @@ console.log(JSON.stringify({
     assert results["diagnostics"]["safe_failure_category"] == "picker_reconnect_to_partner_app"
 
 
+def test_google_photos_ui_module_centralizes_safe_summary_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    google_photos_ui_js = (static_dir / "google_photos_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./google_photos_ui.js"' in app_js
+    assert "export function renderGooglePhotosSummaryInto" in google_photos_ui_js
+    assert "renderGooglePhotosSummaryInto(qs(\"google-photos-summary\"), {" in app_js
+    assert "renderGooglePhotosSummaryInto," in app_js
+    assert 'appendResultGridItem(grid, "Photo Taken Date"' not in app_js
+    assert 'appendResultGridItem(grid, "Google Photos Location"' not in app_js
+
+    script = r"""
+const googlePhotosUi = await import(__GOOGLE_PHOTOS_UI_MODULE_URL__);
+
+function syncClassList(element, classes) {
+  element.className = Array.from(classes).join(" ");
+}
+
+function makeElement(tagName = "div") {
+  const classNames = new Set();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    _className: "",
+    children: [],
+    parentNode: null,
+    title: "",
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    classList: {
+      add(...names) {
+        names.forEach((name) => {
+          if (name) {
+            classNames.add(String(name));
+          }
+        });
+        syncClassList(element, classNames);
+      },
+      remove(...names) {
+        names.forEach((name) => classNames.delete(String(name)));
+        syncClassList(element, classNames);
+      },
+      contains(name) {
+        return classNames.has(String(name));
+      },
+    },
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "className", {
+    get() {
+      return this._className;
+    },
+    set(value) {
+      this._className = String(value ?? "");
+      classNames.clear();
+      this._className.split(/\s+/).filter(Boolean).forEach((name) => classNames.add(name));
+    },
+  });
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function collectClasses(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (String(current.className || "").trim()) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const container = document.createElement("div");
+container.className = "result-card empty-state";
+googlePhotosUi.renderGooglePhotosSummaryInto(container, {
+  selectedPhoto: {
+    source_filename: `Photo ${malicious}.jpg`,
+    photo_taken_at: `2026-04-29 ${malicious}`,
+    create_time: "fallback-not-used",
+    camera: {
+      make: `Canon ${malicious}`,
+      model: `R5 ${malicious}`,
+    },
+    dimensions: {
+      width: `800${malicious}`,
+      height: "600",
+    },
+    location_message: `Selected location ${malicious}`,
+  },
+  diagnostics: {
+    photo_taken_date_policy: `Policy ${malicious}`,
+    downloaded_exif_date: `Exif ${malicious}`,
+    location_message: `Diagnostics location ${malicious}`,
+    service_city_source_label: `Service city ${malicious}`,
+  },
+  message: `Message ${malicious}`,
+});
+
+const selectedGrid = container.children[1];
+const pendingContainer = document.createElement("div");
+pendingContainer.className = "result-card empty-state";
+googlePhotosUi.renderGooglePhotosSummaryInto(pendingContainer, {
+  diagnostics: {},
+});
+
+const emptyContainer = document.createElement("div");
+googlePhotosUi.renderGooglePhotosSummaryInto(emptyContainer, {});
+const nullResult = googlePhotosUi.renderGooglePhotosSummaryInto(null, {
+  selectedPhoto: { source_filename: "ignored.jpg" },
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof googlePhotosUi.renderGooglePhotosSummaryInto,
+  selected: {
+    className: container.className,
+    text: container.textContent,
+    childClasses: container.children.map((child) => child.className || ""),
+    gridLabels: selectedGrid.children.map((child) => child.children[0]?.textContent || ""),
+    gridValues: selectedGrid.children.map((child) => child.children[1]?.textContent || ""),
+    classes: collectClasses(container),
+    imgCount: countTag(container, "img"),
+    scriptCount: countTag(container, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(container),
+  },
+  pending: {
+    className: pendingContainer.className,
+    text: pendingContainer.textContent,
+    classes: collectClasses(pendingContainer),
+    imgCount: countTag(pendingContainer, "img"),
+    scriptCount: countTag(pendingContainer, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(pendingContainer),
+  },
+  empty: {
+    className: emptyContainer.className,
+    text: emptyContainer.textContent,
+    childCount: emptyContainer.children.length,
+  },
+  nullResultType: nullResult === undefined ? "undefined" : typeof nullResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GOOGLE_PHOTOS_UI_MODULE_URL__": "google_photos_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["selected"]["className"] == "result-card"
+    assert results["selected"]["childClasses"] == ["result-header", "result-grid"]
+    assert results["selected"]["gridLabels"] == [
+        "Photo Taken Date",
+        "Photo Date Policy",
+        "Filename",
+        "Camera",
+        "Dimensions",
+        "Downloaded EXIF Date",
+        "Google Photos Location",
+        "Service City Source",
+    ]
+    assert "Photo <img src=x onerror=alert(1)><script>bad()</script>.jpg" in results["selected"]["text"]
+    assert "Message <img src=x onerror=alert(1)><script>bad()</script>" in results["selected"]["text"]
+    assert "Policy <img src=x onerror=alert(1)><script>bad()</script>" in results["selected"]["gridValues"]
+    assert "Diagnostics location <img src=x onerror=alert(1)><script>bad()</script>" in results["selected"]["gridValues"]
+    assert "Selected location <img src=x onerror=alert(1)><script>bad()</script>" not in results["selected"]["gridValues"]
+    assert "status-chip ok" in results["selected"]["classes"]
+    assert results["selected"]["classes"].count("word-break") == 8
+    assert results["selected"]["imgCount"] == 0
+    assert results["selected"]["scriptCount"] == 0
+    assert results["selected"]["innerHTMLWrites"] == 0
+
+    assert results["pending"]["className"] == "result-card"
+    assert "Google Photos selection" in results["pending"]["text"]
+    assert "Pending" in results["pending"]["text"]
+    assert "Photo taken date: provenance only" in results["pending"]["text"]
+    assert "Google Photos location: unavailable from Picker API" in results["pending"]["text"]
+    assert "Service city source: not available" in results["pending"]["text"]
+    assert "status-chip info" in results["pending"]["classes"]
+    assert results["pending"]["imgCount"] == 0
+    assert results["pending"]["scriptCount"] == 0
+    assert results["pending"]["innerHTMLWrites"] == 0
+
+    assert results["empty"]["className"] == "empty-state"
+    assert results["empty"]["text"] == "No Google Photos selection yet."
+    assert results["empty"]["childCount"] == 0
+    assert results["nullResultType"] == "undefined"
+
+
 def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -2419,7 +2693,7 @@ def test_result_card_ui_module_centralizes_safe_result_helpers() -> None:
     assert "function appendResultGridItem" not in app_js
     assert "container.appendChild(createResultHeader({" in app_js
     assert 'appendResultGridItem(grid, "DOCX", result.docx_path || "Unavailable", { className: "word-break" })' in app_js
-    assert "appendResultGridItem(grid, \"Photo Taken Date\"" in app_js
+    assert "appendResultGridItem(grid, \"Photo Taken Date\"" not in app_js
 
     script = r"""
 const resultCardUi = await import(__RESULT_CARD_UI_MODULE_URL__);
@@ -5362,6 +5636,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderRecoveryResultInto" in recovery_ui_asset.text
+        google_photos_ui_asset = client.get(f"/static-build/{asset_version}/google_photos_ui.js")
+        assert google_photos_ui_asset.status_code == 200
+        assert google_photos_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGooglePhotosSummaryInto" in google_photos_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")
