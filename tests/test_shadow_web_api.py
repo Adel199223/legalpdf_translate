@@ -2059,6 +2059,252 @@ console.log(JSON.stringify({
     assert results["nullResultTypes"] == ["undefined", "undefined", "undefined"]
 
 
+def test_result_card_ui_module_centralizes_safe_result_helpers() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    result_card_ui_module = static_dir / "result_card_ui.js"
+
+    assert result_card_ui_module.exists()
+    assert 'from "./result_card_ui.js"' in app_js
+    assert "function createStatusChip" not in app_js
+    assert "function createResultHeader" not in app_js
+    assert "function appendResultGridItem" not in app_js
+    assert "container.appendChild(createResultHeader({" in app_js
+    assert 'appendResultGridItem(grid, "DOCX", result.docx_path || "Unavailable", { className: "word-break" })' in app_js
+    assert "appendResultGridItem(grid, \"Photo Taken Date\"" in app_js
+
+    script = r"""
+const resultCardUi = await import(__RESULT_CARD_UI_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    children: [],
+    parentNode: null,
+    title: "",
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function collectClasses(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (String(current.className || "").trim()) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+function firstTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let found = null;
+  walk(node, (current) => {
+    if (!found && current.tagName === target) {
+      found = current;
+    }
+  });
+  return found;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const header = resultCardUi.createResultHeader({
+  title: `Title ${malicious}`,
+  message: `Message ${malicious}`,
+  label: `Label ${malicious}`,
+  tone: "bad",
+});
+const emptyMessageHeader = resultCardUi.createResultHeader({
+  title: "No message header",
+  message: "",
+  label: "Ready",
+  tone: "ok",
+});
+const chip = resultCardUi.createStatusChip(`Chip ${malicious}`, "warn");
+const grid = document.createElement("div");
+grid.className = "result-grid";
+const returnedItem = resultCardUi.appendResultGridItem(
+  grid,
+  `Grid ${malicious}`,
+  `Line one\nLine ${malicious}`,
+  {
+    className: "word-break",
+    multiline: true,
+    titleValue: `Tooltip ${malicious}`,
+  },
+);
+const paragraph = firstTag(returnedItem, "p");
+
+console.log(JSON.stringify({
+  exportedTypes: {
+    chip: typeof resultCardUi.createStatusChip,
+    header: typeof resultCardUi.createResultHeader,
+    gridItem: typeof resultCardUi.appendResultGridItem,
+  },
+  header: {
+    text: header.textContent,
+    paragraphCount: countTag(header, "p"),
+    imgCount: countTag(header, "img"),
+    scriptCount: countTag(header, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(header),
+    classes: collectClasses(header),
+  },
+  emptyMessageHeader: {
+    paragraphCount: countTag(emptyMessageHeader, "p"),
+    text: emptyMessageHeader.textContent,
+  },
+  chip: {
+    text: chip.textContent,
+    className: chip.className,
+    imgCount: countTag(chip, "img"),
+    scriptCount: countTag(chip, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(chip),
+  },
+  grid: {
+    returnedIsAppended: grid.children[0] === returnedItem,
+    text: grid.textContent,
+    itemTag: returnedItem.tagName,
+    brCount: countTag(grid, "br"),
+    paragraphClass: paragraph?.className || "",
+    paragraphTitle: paragraph?.title || "",
+    imgCount: countTag(grid, "img"),
+    scriptCount: countTag(grid, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(grid),
+  },
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__RESULT_CARD_UI_MODULE_URL__": "result_card_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedTypes"] == {
+        "chip": "function",
+        "header": "function",
+        "gridItem": "function",
+    }
+    assert "Title <img src=x onerror=alert(1)><script>bad()</script>" in results["header"]["text"]
+    assert "Message <img src=x onerror=alert(1)><script>bad()</script>" in results["header"]["text"]
+    assert "Label <img src=x onerror=alert(1)><script>bad()</script>" in results["header"]["text"]
+    assert results["header"]["paragraphCount"] == 1
+    assert results["header"]["imgCount"] == 0
+    assert results["header"]["scriptCount"] == 0
+    assert results["header"]["innerHTMLWrites"] == 0
+    assert "result-header" in results["header"]["classes"]
+    assert "status-chip bad" in results["header"]["classes"]
+    assert results["emptyMessageHeader"]["paragraphCount"] == 0
+    assert results["emptyMessageHeader"]["text"] == "No message headerReady"
+
+    assert results["chip"]["text"] == "Chip <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["chip"]["className"] == "status-chip warn"
+    assert results["chip"]["imgCount"] == 0
+    assert results["chip"]["scriptCount"] == 0
+    assert results["chip"]["innerHTMLWrites"] == 0
+
+    assert results["grid"]["returnedIsAppended"] is True
+    assert "Grid <img src=x onerror=alert(1)><script>bad()</script>" in results["grid"]["text"]
+    assert "Line <img src=x onerror=alert(1)><script>bad()</script>" in results["grid"]["text"]
+    assert results["grid"]["itemTag"] == "DIV"
+    assert results["grid"]["brCount"] == 1
+    assert results["grid"]["paragraphClass"] == "word-break"
+    assert results["grid"]["paragraphTitle"] == "Tooltip <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["grid"]["imgCount"] == 0
+    assert results["grid"]["scriptCount"] == 0
+    assert results["grid"]["innerHTMLWrites"] == 0
+
+
 def test_recent_work_ui_module_centralizes_safe_history_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -4764,6 +5010,11 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert recent_work_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderRecentJobsInto" in recent_work_ui_asset.text
         assert "renderInterpretationHistoryInto" in recent_work_ui_asset.text
+        result_card_ui_asset = client.get(f"/static-build/{asset_version}/result_card_ui.js")
+        assert result_card_ui_asset.status_code == 200
+        assert result_card_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "createResultHeader" in result_card_ui_asset.text
+        assert "appendResultGridItem" in result_card_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")

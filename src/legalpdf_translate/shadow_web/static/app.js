@@ -38,6 +38,10 @@ import {
   renderRecentJobsInto,
 } from "./recent_work_ui.js";
 import {
+  appendResultGridItem,
+  createResultHeader,
+} from "./result_card_ui.js";
+import {
   buildSettingsCapabilityCards,
   buildSettingsStatusPresentation,
   buildSettingsSummaryItems,
@@ -92,11 +96,8 @@ import {
 import { buildExtensionLabCards } from "./extension_lab_presentation.js";
 import { renderExtensionPrepareReasonCatalogInto } from "./extension_lab_ui.js";
 import {
-  appendMultilineText,
   clearNode,
   createTextElement,
-  setNodeTitle,
-  setText,
 } from "./safe_rendering.js";
 import { formatDiagnosticValue } from "./diagnostics_presentation.js";
 
@@ -133,43 +134,6 @@ function qsa(selector) {
 
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function createStatusChip(label, toneClass) {
-  return createTextElement("span", label, `status-chip ${toneClass}`);
-}
-
-function createResultHeader({ title = "", message = "", label = "", tone = "info" }) {
-  const header = document.createElement("div");
-  header.className = "result-header";
-  const copy = document.createElement("div");
-  copy.appendChild(createTextElement("strong", title));
-  if (String(message ?? "")) {
-    copy.appendChild(createTextElement("p", message));
-  }
-  header.appendChild(copy);
-  header.appendChild(createStatusChip(label, tone));
-  return header;
-}
-
-function appendResultGridItem(container, title, value, { className = "", multiline = false, titleValue = null } = {}) {
-  const item = document.createElement("div");
-  item.appendChild(createTextElement("h3", title));
-  const paragraph = document.createElement("p");
-  if (className) {
-    paragraph.className = className;
-  }
-  if (titleValue !== null && titleValue !== undefined) {
-    setNodeTitle(paragraph, titleValue);
-  }
-  if (multiline) {
-    appendMultilineText(paragraph, value);
-  } else {
-    setText(paragraph, value);
-  }
-  item.appendChild(paragraph);
-  container.appendChild(item);
-  return item;
 }
 
 const profileState = {
