@@ -39,3 +39,41 @@ export function renderInterpretationExportResultInto(container, payload, present
   );
   container.appendChild(grid);
 }
+
+export function renderInterpretationGmailResultInto(container, payload, presentation) {
+  if (!container) {
+    return;
+  }
+  const result = payload.normalized_payload || {};
+  const status = payload.status || "ok";
+  const draftMessage = result.gmail_draft_result?.message
+    || result.draft_prereqs?.message
+    || result.pdf_path
+    || result.docx_path
+    || presentation.drawer.gmailResultEmpty;
+  const title = status === "ok"
+    ? presentation.gmailResult.createdTitle
+    : status === "local_only"
+      ? presentation.gmailResult.localOnlyTitle
+      : presentation.gmailResult.warningTitle;
+  const label = status === "ok"
+    ? presentation.gmailResult.createdLabel
+    : status === "local_only"
+      ? presentation.gmailResult.localOnlyLabel
+      : presentation.gmailResult.warningLabel;
+  const tone = status === "ok" ? "ok" : status === "local_only" ? "warn" : "bad";
+  container.classList.remove("empty-state");
+  clearNode(container);
+  container.appendChild(createResultHeader({
+    title,
+    message: draftMessage,
+    label,
+    tone,
+  }));
+  const grid = document.createElement("div");
+  grid.className = "result-grid";
+  appendResultGridItem(grid, "DOCX", result.docx_path || "Unavailable", { className: "word-break" });
+  appendResultGridItem(grid, "PDF", result.pdf_path || "Unavailable", { className: "word-break" });
+  appendResultGridItem(grid, "Reply status", label);
+  container.appendChild(grid);
+}

@@ -39,7 +39,10 @@ import {
   renderInterpretationHistoryInto,
   renderRecentJobsInto,
 } from "./recent_work_ui.js";
-import { renderInterpretationExportResultInto } from "./interpretation_result_ui.js";
+import {
+  renderInterpretationExportResultInto,
+  renderInterpretationGmailResultInto,
+} from "./interpretation_result_ui.js";
 import {
   buildSettingsCapabilityCards,
   buildSettingsStatusPresentation,
@@ -2263,37 +2266,8 @@ export function renderInterpretationGmailResult(payload) {
   if (!container) {
     return;
   }
-  const presentation = currentInterpretationPresentation();
-  const result = payload.normalized_payload || {};
-  const status = payload.status || "ok";
-  const draftMessage = result.gmail_draft_result?.message || result.draft_prereqs?.message || result.pdf_path || result.docx_path || presentation.drawer.gmailResultEmpty;
-  const title = status === "ok"
-    ? presentation.gmailResult.createdTitle
-    : status === "local_only"
-      ? presentation.gmailResult.localOnlyTitle
-      : presentation.gmailResult.warningTitle;
-  const label = status === "ok"
-    ? presentation.gmailResult.createdLabel
-    : status === "local_only"
-      ? presentation.gmailResult.localOnlyLabel
-      : presentation.gmailResult.warningLabel;
-  const tone = status === "ok" ? "ok" : status === "local_only" ? "warn" : "bad";
   interpretationUiState.completionPayload = payload;
-  container.classList.remove("empty-state");
-  container.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(title)}</strong>
-        <p>${escapeHtml(draftMessage)}</p>
-      </div>
-      <span class="status-chip ${tone === "ok" ? "ok" : tone === "warn" ? "warn" : "bad"}">${escapeHtml(label)}</span>
-    </div>
-    <div class="result-grid">
-      <div><h3>DOCX</h3><p class="word-break">${escapeHtml(result.docx_path || "Unavailable")}</p></div>
-      <div><h3>PDF</h3><p class="word-break">${escapeHtml(result.pdf_path || "Unavailable")}</p></div>
-      <div><h3>Reply status</h3><p>${escapeHtml(label)}</p></div>
-    </div>
-  `;
+  renderInterpretationGmailResultInto(container, payload, currentInterpretationPresentation());
   openInterpretationReviewDrawer();
   syncInterpretationReviewSurface();
   notifyInterpretationUiStateChanged();
