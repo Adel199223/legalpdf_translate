@@ -809,6 +809,287 @@ console.log(JSON.stringify(payload));
     assert results["beginnerLabel"] == "profile setup screen"
 
 
+def test_shadow_web_shell_ui_module_centralizes_safe_navigation_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    shell_ui_js = static_dir / "shell_ui.js"
+
+    assert shell_ui_js.exists()
+    assert 'from "./shell_ui.js"' in app_js
+    assert "export function renderNavigationInto" in shell_ui_js.read_text(encoding="utf-8")
+    assert "renderNavigationInto({" in app_js
+    assert "button.innerHTML" not in app_js
+
+    script = r"""
+const shellUi = await import(__SHELL_UI_MODULE_URL__);
+
+function syncClassList(element, classes) {
+  element.className = Array.from(classes).join(" ");
+}
+
+function makeElement(tagName = "div") {
+  const classNames = new Set();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    _className: "",
+    children: [],
+    parentNode: null,
+    dataset: {},
+    attributes: {},
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    open: false,
+    classList: {
+      add(...names) {
+        names.forEach((name) => {
+          if (name) {
+            classNames.add(String(name));
+          }
+        });
+        syncClassList(element, classNames);
+      },
+      remove(...names) {
+        names.forEach((name) => classNames.delete(String(name)));
+        syncClassList(element, classNames);
+      },
+      contains(name) {
+        return classNames.has(String(name));
+      },
+      toggle(name, force) {
+        const key = String(name);
+        const enabled = force === undefined ? !classNames.has(key) : Boolean(force);
+        if (enabled) {
+          classNames.add(key);
+        } else {
+          classNames.delete(key);
+        }
+        syncClassList(element, classNames);
+        return enabled;
+      },
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value ?? "");
+    },
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "className", {
+    get() {
+      return this._className;
+    },
+    set(value) {
+      this._className = String(value ?? "");
+      classNames.clear();
+      this._className.split(/\s+/).filter(Boolean).forEach((name) => classNames.add(name));
+    },
+  });
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  let total = 0;
+  nodes.forEach((node) => {
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
+  });
+  return total;
+}
+
+function serializeButtons(container) {
+  return container.children.map((button) => ({
+    tagName: button.tagName,
+    type: button.type,
+    className: button.className,
+    view: button.dataset.view,
+    labelTag: button.children[0]?.tagName || "",
+    label: button.children[0]?.textContent || "",
+    metaClass: button.children[1]?.className || "",
+    meta: button.children[1]?.textContent || "",
+  }));
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const items = [
+  { id: "dashboard", label: `Dashboard ${malicious}`, status: "ready" },
+  { id: "settings", label: "Settings", status: `warming ${malicious}` },
+  { id: "new-job", label: `New Job ${malicious}`, status: "ready" },
+  { id: "gmail-intake", label: `Gmail ${malicious}`, status: `warming ${malicious}` },
+  { id: "recent-jobs", label: "Recent Work", status: "blocked" },
+  { id: "profile", label: "Profile", status: "ready" },
+  { id: "power-tools", label: "Power Tools", status: "ready" },
+  { id: "extension-lab", label: "Extension Lab", status: "ready" },
+];
+
+const primaryContainer = document.createElement("nav");
+const moreContainer = document.createElement("nav");
+const moreShell = document.createElement("details");
+shellUi.renderNavigationInto({
+  primaryContainer,
+  moreContainer,
+  moreShell,
+  items,
+  activeView: "new-job",
+  showGmailNav: false,
+});
+const hiddenSnapshot = {
+  primary: serializeButtons(primaryContainer),
+  more: serializeButtons(moreContainer),
+  moreOpen: moreShell.open,
+  moreClass: moreShell.className,
+};
+
+shellUi.renderNavigationInto({
+  primaryContainer,
+  moreContainer,
+  moreShell,
+  items,
+  activeView: "settings",
+  showGmailNav: true,
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof shellUi.renderNavigationInto,
+  hidden: hiddenSnapshot,
+  visible: {
+    primary: serializeButtons(primaryContainer),
+    more: serializeButtons(moreContainer),
+    moreOpen: moreShell.open,
+    moreClass: moreShell.className,
+    text: `${primaryContainer.textContent}${moreContainer.textContent}`,
+    imgCount: countTag(primaryContainer, "img") + countTag(moreContainer, "img"),
+    scriptCount: countTag(primaryContainer, "script") + countTag(moreContainer, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(primaryContainer, moreContainer, moreShell),
+  },
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__SHELL_UI_MODULE_URL__": "shell_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert [button["view"] for button in results["hidden"]["primary"]] == ["new-job", "recent-jobs"]
+    assert [button["view"] for button in results["hidden"]["more"]] == [
+        "dashboard",
+        "settings",
+        "profile",
+        "power-tools",
+        "extension-lab",
+    ]
+    assert results["hidden"]["moreOpen"] is False
+    assert results["hidden"]["moreClass"] == ""
+    assert results["hidden"]["primary"][0]["className"] == "nav-button active"
+    assert results["hidden"]["primary"][0]["labelTag"] == "SPAN"
+    assert results["hidden"]["primary"][0]["label"] == "New Job <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["hidden"]["primary"][0]["metaClass"] == "nav-meta"
+    assert results["hidden"]["primary"][0]["meta"] == "Ready"
+    assert results["hidden"]["primary"][1]["meta"] == "blocked"
+
+    assert [button["view"] for button in results["visible"]["primary"]] == ["new-job", "gmail-intake", "recent-jobs"]
+    assert [button["view"] for button in results["visible"]["more"]] == [
+        "dashboard",
+        "settings",
+        "profile",
+        "power-tools",
+        "extension-lab",
+    ]
+    assert results["visible"]["moreOpen"] is True
+    assert results["visible"]["moreClass"] == "has-active-view"
+    active_buttons = [
+        button for button in [*results["visible"]["primary"], *results["visible"]["more"]]
+        if "active" in button["className"].split()
+    ]
+    assert [button["view"] for button in active_buttons] == ["settings"]
+    gmail_button = results["visible"]["primary"][1]
+    assert gmail_button["label"] == "Gmail <img src=x onerror=alert(1)><script>bad()</script>"
+    assert gmail_button["meta"] == "warming <img src=x onerror=alert(1)><script>bad()</script>"
+    assert gmail_button["metaClass"] == "nav-meta"
+    assert "Dashboard <img src=x onerror=alert(1)><script>bad()</script>" in results["visible"]["text"]
+    assert results["visible"]["imgCount"] == 0
+    assert results["visible"]["scriptCount"] == 0
+    assert results["visible"]["innerHTMLWrites"] == 0
+
+
 def test_google_photos_busy_guard_allows_connect_when_choose_is_disabled() -> None:
     script = """
 function makeButton(id, { disabled = false, textContent = id } = {}) {
@@ -5640,6 +5921,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert google_photos_ui_asset.status_code == 200
         assert google_photos_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGooglePhotosSummaryInto" in google_photos_ui_asset.text
+        shell_ui_asset = client.get(f"/static-build/{asset_version}/shell_ui.js")
+        assert shell_ui_asset.status_code == 200
+        assert shell_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderNavigationInto" in shell_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")

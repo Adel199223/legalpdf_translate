@@ -75,7 +75,6 @@ import {
 import {
   MORE_NAV_ORDER,
   beginnerSurfaceTargetLabel as deriveBeginnerSurfaceTargetLabel,
-  buildNavigationGroups as buildShellNavigationGroups,
   deriveBeginnerPrimarySurface,
   deriveRouteAwareTopbarStatus,
   isLiveRuntimeMode as deriveLiveRuntimeMode,
@@ -84,6 +83,7 @@ import {
   runtimeModeDisplayLabel,
   shouldShowDailyRuntimeModeBanner,
 } from "./shell_presentation.js";
+import { renderNavigationInto } from "./shell_ui.js";
 import {
   GOOGLE_PHOTOS_RECONNECT_GUIDANCE,
   buildGooglePhotosPickerDiagnostics,
@@ -127,6 +127,7 @@ export {
   renderInterpretationHistoryInto,
   renderRecentJobsInto,
 } from "./recent_work_ui.js";
+export { renderNavigationInto } from "./shell_ui.js";
 
 function qs(id) {
   return document.getElementById(id);
@@ -1641,10 +1642,6 @@ function shouldShowGmailNav(payload = appState.bootstrap) {
   );
 }
 
-function buildNavigationGroups(items) {
-  return buildShellNavigationGroups(items, { showGmailNav: shouldShowGmailNav() });
-}
-
 function setNewJobTask(task) {
   appState.newJobTask = task === "interpretation" ? "interpretation" : "translation";
   qsa("[data-task-panel]").forEach((panel) => {
@@ -2088,34 +2085,14 @@ function renderProfiles(profiles, primaryProfileId) {
 }
 
 function renderNavigation(items) {
-  const primaryContainer = qs("section-nav");
-  const moreContainer = qs("more-nav");
-  const moreShell = qs("more-nav-shell");
-  const { primary, more } = buildNavigationGroups(items);
-
-  primaryContainer.innerHTML = "";
-  moreContainer.innerHTML = "";
-
-  for (const collection of [
-    { container: primaryContainer, items: primary },
-    { container: moreContainer, items: more },
-  ]) {
-    for (const item of collection.items) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "nav-button";
-      button.dataset.view = item.id;
-      button.innerHTML = `<span>${item.label}</span><span class="nav-meta">${item.status === "ready" ? "Ready" : item.status}</span>`;
-      if (item.id === appState.activeView) {
-        button.classList.add("active");
-      }
-      collection.container.appendChild(button);
-    }
-  }
-
-  const moreActive = MORE_NAV_ORDER.includes(appState.activeView);
-  moreShell.open = moreActive;
-  moreShell.classList.toggle("has-active-view", moreActive);
+  renderNavigationInto({
+    primaryContainer: qs("section-nav"),
+    moreContainer: qs("more-nav"),
+    moreShell: qs("more-nav-shell"),
+    items,
+    activeView: appState.activeView,
+    showGmailNav: shouldShowGmailNav(),
+  });
 }
 
 function renderShellVisibility() {
