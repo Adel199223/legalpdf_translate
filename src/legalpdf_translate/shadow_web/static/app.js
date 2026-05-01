@@ -39,10 +39,7 @@ import {
   renderInterpretationHistoryInto,
   renderRecentJobsInto,
 } from "./recent_work_ui.js";
-import {
-  appendResultGridItem,
-  createResultHeader,
-} from "./result_card_ui.js";
+import { renderInterpretationExportResultInto } from "./interpretation_result_ui.js";
 import {
   buildSettingsCapabilityCards,
   buildSettingsStatusPresentation,
@@ -98,9 +95,6 @@ import {
 } from "./google_photos_ui.js";
 import { buildExtensionLabCards } from "./extension_lab_presentation.js";
 import { renderExtensionPrepareReasonCatalogInto } from "./extension_lab_ui.js";
-import {
-  clearNode,
-} from "./safe_rendering.js";
 import { formatDiagnosticValue } from "./diagnostics_presentation.js";
 
 export {
@@ -128,6 +122,7 @@ export {
   renderRecentJobsInto,
 } from "./recent_work_ui.js";
 export { renderNavigationInto } from "./shell_ui.js";
+export { renderInterpretationExportResultInto } from "./interpretation_result_ui.js";
 
 function qs(id) {
   return document.getElementById(id);
@@ -2310,40 +2305,7 @@ function renderStatus(payload) {
 export function renderInterpretationExportResult(payload) {
   const container = qs("export-result");
   qs("interpretation-review-export-panel")?.classList.remove("hidden");
-  const presentation = currentInterpretationPresentation();
-  const result = payload.normalized_payload || {};
-  const pdf = payload.diagnostics?.pdf_export || {};
-  const isOk = payload.status === "ok";
-  const isLocalOnly = payload.status === "local_only";
-  const tone = isOk ? "ok" : isLocalOnly ? "warn" : "bad";
-  const label = isOk
-    ? presentation.export.readyLabel
-    : isLocalOnly
-      ? presentation.export.localOnlyLabel
-      : presentation.export.failedLabel;
-  const message = isOk
-    ? presentation.export.readyTitle
-    : isLocalOnly
-      ? pdf.failure_message || presentation.export.localOnlyTitle
-      : presentation.export.failedTitle;
-  container.classList.remove("empty-state");
-  clearNode(container);
-  container.appendChild(createResultHeader({
-    title: message,
-    message: "",
-    label,
-    tone: tone === "ok" ? "ok" : tone === "bad" ? "bad" : "warn",
-  }));
-  const grid = document.createElement("div");
-  grid.className = "result-grid";
-  appendResultGridItem(grid, "DOCX", result.docx_path || "Unavailable", { className: "word-break" });
-  appendResultGridItem(grid, "PDF", result.pdf_path || "Unavailable", { className: "word-break" });
-  appendResultGridItem(
-    grid,
-    "PDF Export",
-    pdf.ok ? presentation.export.pdfReadyLabel : pdf.failure_message || "Unavailable",
-  );
-  container.appendChild(grid);
+  renderInterpretationExportResultInto(container, payload, currentInterpretationPresentation());
   openInterpretationReviewDrawer();
   syncInterpretationReviewSurface();
   notifyInterpretationUiStateChanged();
