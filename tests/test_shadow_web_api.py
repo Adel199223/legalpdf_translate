@@ -2059,6 +2059,347 @@ console.log(JSON.stringify({
     assert results["nullResultTypes"] == ["undefined", "undefined", "undefined"]
 
 
+def test_recent_work_ui_module_centralizes_safe_history_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    recent_work_ui_module = static_dir / "recent_work_ui.js"
+
+    assert recent_work_ui_module.exists()
+    assert 'from "./recent_work_ui.js"' in app_js
+    assert "function appendHistoryMetaBits" not in app_js
+    assert "export function renderRecentJobsInto" not in app_js
+    assert "export function renderInterpretationHistoryInto" not in app_js
+    assert "renderRecentJobsInto(container, items, historyById, translationHistoryById, {" in app_js
+    assert "renderInterpretationHistoryInto(container, items, {" in app_js
+
+    script = r"""
+const recentWorkUi = await import(__RECENT_WORK_UI_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const listeners = new Map();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    children: [],
+    parentNode: null,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    disabled: false,
+    type: "",
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+    addEventListener(type, handler) {
+      if (!listeners.has(type)) {
+        listeners.set(type, []);
+      }
+      listeners.get(type).push(handler);
+    },
+    click() {
+      for (const handler of listeners.get("click") || []) {
+        handler({ target: this, currentTarget: this, preventDefault() {} });
+      }
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function collectClasses(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (String(current.className || "").trim()) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+function allButtons(node) {
+  const buttons = [];
+  walk(node, (current) => {
+    if (current.tagName === "BUTTON") {
+      buttons.push(current);
+    }
+  });
+  return buttons;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const translationRecord = { row: { id: 7 }, kind: "translation-record" };
+const interpretationRecord = { row: { id: 8 }, kind: "interpretation-record" };
+let openedTranslation = "";
+let openedInterpretation = "";
+let deletedRecentId = "";
+const recentContainer = document.createElement("div");
+recentWorkUi.renderRecentJobsInto(
+  recentContainer,
+  [
+    {
+      id: "7",
+      job_type: "Translation",
+      case_number: malicious,
+      case_entity: "Entity <b>unsafe</b>",
+      case_city: "Beja<script>",
+      service_date: "2026-04-21",
+      completed_at: "",
+      target_lang: "AR",
+    },
+    {
+      id: "8",
+      job_type: "Interpretation",
+      case_number: "Interpretation case",
+      case_entity: "Court",
+      case_city: "Lisbon",
+      service_date: "",
+      completed_at: "2026-04-22",
+      target_lang: "",
+    },
+    {
+      id: "9",
+      job_type: "Translation",
+      case_number: "Unavailable",
+      case_entity: "",
+      case_city: "",
+      service_date: "",
+      completed_at: "",
+      target_lang: "",
+    },
+  ],
+  new Map([[8, interpretationRecord]]),
+  new Map([[7, translationRecord]]),
+  {
+    onOpenInterpretation(item) {
+      openedInterpretation = item.kind;
+    },
+    onOpenTranslation(item) {
+      openedTranslation = item.kind;
+    },
+    onDelete(item) {
+      deletedRecentId = item.id;
+    },
+  },
+);
+
+const recentButtons = allButtons(recentContainer);
+recentButtons[0].click();
+recentButtons[1].click();
+recentButtons[2].click();
+
+const recentEmptyContainer = document.createElement("div");
+recentWorkUi.renderRecentJobsInto(recentEmptyContainer, [], new Map(), new Map());
+
+const historyItem = {
+  row: {
+    id: 11,
+    case_number: malicious,
+    case_entity: "Tribunal <svg>",
+    case_city: "Cuba<img>",
+    service_date: "2026-05-01",
+  },
+};
+let openedHistoryId = 0;
+let deletedHistoryId = 0;
+const historyContainer = document.createElement("div");
+recentWorkUi.renderInterpretationHistoryInto(historyContainer, [historyItem], {
+  onOpen(item) {
+    openedHistoryId = item.row.id;
+  },
+  onDelete(item) {
+    deletedHistoryId = item.row.id;
+  },
+});
+const historyButtons = allButtons(historyContainer);
+historyButtons[0].click();
+historyButtons[1].click();
+
+const historyEmptyContainer = document.createElement("div");
+recentWorkUi.renderInterpretationHistoryInto(historyEmptyContainer, []);
+
+const nullRecent = recentWorkUi.renderRecentJobsInto(null, [], new Map(), new Map());
+const nullHistory = recentWorkUi.renderInterpretationHistoryInto(null, []);
+
+console.log(JSON.stringify({
+  exportedTypes: {
+    recent: typeof recentWorkUi.renderRecentJobsInto,
+    interpretationHistory: typeof recentWorkUi.renderInterpretationHistoryInto,
+  },
+  recent: {
+    text: recentContainer.textContent,
+    articleCount: countTag(recentContainer, "article"),
+    buttonTexts: recentButtons.map((button) => button.textContent),
+    disabledButtons: recentButtons.filter((button) => button.disabled).map((button) => button.textContent),
+    imgCount: countTag(recentContainer, "img"),
+    scriptCount: countTag(recentContainer, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(recentContainer),
+    classes: collectClasses(recentContainer),
+    openedTranslation,
+    openedInterpretation,
+    deletedRecentId,
+  },
+  recentEmpty: {
+    text: recentEmptyContainer.textContent,
+    className: recentEmptyContainer.children[0]?.className || "",
+  },
+  history: {
+    text: historyContainer.textContent,
+    articleCount: countTag(historyContainer, "article"),
+    buttonTexts: historyButtons.map((button) => button.textContent),
+    imgCount: countTag(historyContainer, "img"),
+    scriptCount: countTag(historyContainer, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(historyContainer),
+    classes: collectClasses(historyContainer),
+    openedHistoryId,
+    deletedHistoryId,
+  },
+  historyEmpty: {
+    text: historyEmptyContainer.textContent,
+    className: historyEmptyContainer.children[0]?.className || "",
+  },
+  nullResultTypes: [
+    nullRecent === undefined ? "undefined" : typeof nullRecent,
+    nullHistory === undefined ? "undefined" : typeof nullHistory,
+  ],
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__RECENT_WORK_UI_MODULE_URL__": "recent_work_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedTypes"] == {
+        "recent": "function",
+        "interpretationHistory": "function",
+    }
+    assert "<img src=x onerror=alert(1)><script>bad()</script>" in results["recent"]["text"]
+    assert "Entity <b>unsafe</b> | Beja<script> | 2026-04-21" in results["recent"]["text"]
+    assert "Translation" in results["recent"]["text"]
+    assert "Interpretation" in results["recent"]["text"]
+    assert "AR" in results["recent"]["text"]
+    assert "Open unavailable" in results["recent"]["text"]
+    assert results["recent"]["articleCount"] == 3
+    assert results["recent"]["buttonTexts"] == [
+        "Open",
+        "Delete record",
+        "Open",
+        "Delete record",
+        "Open unavailable",
+        "Delete record",
+    ]
+    assert results["recent"]["disabledButtons"] == ["Open unavailable"]
+    assert results["recent"]["imgCount"] == 0
+    assert results["recent"]["scriptCount"] == 0
+    assert results["recent"]["innerHTMLWrites"] == 0
+    assert "history-item" in results["recent"]["classes"]
+    assert "history-meta" in results["recent"]["classes"]
+    assert "history-actions" in results["recent"]["classes"]
+    assert results["recent"]["openedTranslation"] == "translation-record"
+    assert results["recent"]["openedInterpretation"] == "interpretation-record"
+    assert results["recent"]["deletedRecentId"] == "7"
+    assert results["recentEmpty"]["text"] == "No saved cases yet."
+    assert results["recentEmpty"]["className"] == "empty-state"
+
+    assert "<img src=x onerror=alert(1)><script>bad()</script>" in results["history"]["text"]
+    assert "Tribunal <svg> | Cuba<img> | 2026-05-01" in results["history"]["text"]
+    assert results["history"]["articleCount"] == 1
+    assert results["history"]["buttonTexts"] == ["Open", "Delete record"]
+    assert results["history"]["imgCount"] == 0
+    assert results["history"]["scriptCount"] == 0
+    assert results["history"]["innerHTMLWrites"] == 0
+    assert "history-item" in results["history"]["classes"]
+    assert "history-actions" in results["history"]["classes"]
+    assert results["history"]["openedHistoryId"] == 11
+    assert results["history"]["deletedHistoryId"] == 11
+    assert results["historyEmpty"]["text"] == "No saved interpretation requests yet."
+    assert results["historyEmpty"]["className"] == "empty-state"
+    assert results["nullResultTypes"] == ["undefined", "undefined"]
+
+
 def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -2262,11 +2603,12 @@ def test_shadow_web_tiny_presentation_cleanup_copy_is_distinct() -> None:
         encoding="utf-8"
     )
     app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    recent_work_ui_js = (static_dir / "recent_work_ui.js").read_text(encoding="utf-8")
     translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
 
     assert '"No saved work yet. Completed translations and interpretation requests will appear here."' in translation_js
     assert '"No saved cases yet."' in translation_js
-    assert "deriveRecentWorkPresentation().recentCasesEmpty" in app_js
+    assert "deriveRecentWorkPresentation().recentCasesEmpty" in recent_work_ui_js
     assert "presentation.recentWorkEmpty" in app_js
 
     assert "Main profile summary" in template
@@ -4417,6 +4759,11 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderDashboardCardsInto" in dashboard_ui_asset.text
         assert "renderSummaryGridInto" in dashboard_ui_asset.text
         assert "renderCapabilityCardsInto" in dashboard_ui_asset.text
+        recent_work_ui_asset = client.get(f"/static-build/{asset_version}/recent_work_ui.js")
+        assert recent_work_ui_asset.status_code == 200
+        assert recent_work_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderRecentJobsInto" in recent_work_ui_asset.text
+        assert "renderInterpretationHistoryInto" in recent_work_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")
