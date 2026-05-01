@@ -40,6 +40,7 @@ import {
   renderRecentJobsInto,
 } from "./recent_work_ui.js";
 import {
+  renderInterpretationCompletionCardInto,
   renderInterpretationExportResultInto,
   renderInterpretationGmailResultInto,
 } from "./interpretation_result_ui.js";
@@ -1017,22 +1018,15 @@ function renderInterpretationCompletionCard(snapshot = interpretationSnapshot())
       : (completionStatus === "draft_unavailable" || activeSession?.draft_failure_reason || activeSession?.status === "draft_failed")
         ? presentation.gmailResult.warningTitle
         : presentation.gmailResult.localOnlyTitle;
-  container.classList.remove("empty-state");
-  container.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(title)}</strong>
-        <p>${escapeHtml(draftMessage)}</p>
-      </div>
-      <span class="status-chip ${chip.tone}">${escapeHtml(chip.label)}</span>
-    </div>
-    <div class="result-grid">
-      <div><h3>DOCX</h3><p class="word-break">${escapeHtml(docxPath || "Unavailable in this session view")}</p></div>
-      <div><h3>PDF</h3><p class="word-break">${escapeHtml(pdfPath || "Unavailable")}</p></div>
-      <div><h3>Case Location</h3><p class="word-break">${escapeHtml(interpretationCaseLocation(snapshot))}</p></div>
-      <div><h3>Service Location</h3><p class="word-break">${escapeHtml(interpretationServiceLocation(snapshot))}</p></div>
-    </div>
-  `;
+  renderInterpretationCompletionCardInto(container, {
+    title,
+    message: draftMessage,
+    chip,
+    docxPath,
+    pdfPath,
+    caseLocation: interpretationCaseLocation(snapshot),
+    serviceLocation: interpretationServiceLocation(snapshot),
+  });
 }
 
 function setInterpretationFieldWarning(fieldName, message = "", tone = "warning") {

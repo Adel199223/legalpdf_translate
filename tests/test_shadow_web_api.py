@@ -3695,8 +3695,10 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert 'from "./interpretation_result_ui.js"' in app_js
     assert "export function renderInterpretationExportResultInto" in interpretation_result_ui_text
     assert "export function renderInterpretationGmailResultInto" in interpretation_result_ui_text
+    assert "export function renderInterpretationCompletionCardInto" in interpretation_result_ui_text
     assert "renderInterpretationExportResultInto(container, payload, currentInterpretationPresentation());" in app_js
     assert "renderInterpretationGmailResultInto(container, payload, currentInterpretationPresentation());" in app_js
+    assert "renderInterpretationCompletionCardInto(container, {" in app_js
     assert 'qs("interpretation-review-export-panel")?.classList.remove("hidden");' in app_js
     gmail_start = app_js.index("export function renderInterpretationGmailResult")
     dashboard_start = app_js.index("function renderDashboard", gmail_start)
@@ -3708,6 +3710,15 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "innerHTML" not in gmail_block
     assert "escapeHtml" not in gmail_block
     assert 'appendResultGridItem(grid, "Reply status"' not in gmail_block
+    completion_start = app_js.index("function renderInterpretationCompletionCard")
+    warning_start = app_js.index("function setInterpretationFieldWarning", completion_start)
+    completion_block = app_js[completion_start:warning_start]
+    assert 'container.classList.toggle("hidden", !completed);' in completion_block
+    assert "syncInterpretationReviewDetailsShell(completed);" in completion_block
+    assert "interpretationCaseLocation(snapshot)" in completion_block
+    assert "interpretationServiceLocation(snapshot)" in completion_block
+    assert "innerHTML" not in completion_block
+    assert "escapeHtml" not in completion_block
     assert 'appendResultGridItem(grid, "DOCX"' not in app_js
     assert 'appendResultGridItem(grid, "PDF Export"' not in app_js
 
@@ -3973,10 +3984,44 @@ const nullContainerResult = interpretationResultUi.renderInterpretationGmailResu
   normalized_payload: {},
 }, presentation);
 
+const completionContainer = document.createElement("div");
+completionContainer.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationCompletionCardInto(completionContainer, {
+  title: `Completion title ${malicious}`,
+  message: `Completion message ${malicious}`,
+  chip: {
+    tone: "warn",
+    label: `Completion label ${malicious}`,
+  },
+  docxPath: `C:/cases/completion ${malicious}.docx`,
+  pdfPath: `C:/cases/completion ${malicious}.pdf`,
+  caseLocation: `Case ${malicious}`,
+  serviceLocation: `Service ${malicious}`,
+});
+
+const completionFallbackContainer = document.createElement("div");
+completionFallbackContainer.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationCompletionCardInto(completionFallbackContainer, {
+  title: `Fallback title ${malicious}`,
+  message: "",
+  chip: {
+    tone: "bad",
+    label: `Fallback label ${malicious}`,
+  },
+  docxPath: "",
+  pdfPath: "",
+  caseLocation: `Fallback case ${malicious}`,
+  serviceLocation: `Fallback service ${malicious}`,
+});
+const nullCompletionResult = interpretationResultUi.renderInterpretationCompletionCardInto(null, {
+  title: "Ignored",
+});
+
 console.log(JSON.stringify({
   exportedTypes: {
     export: typeof interpretationResultUi.renderInterpretationExportResultInto,
     gmail: typeof interpretationResultUi.renderInterpretationGmailResultInto,
+    completion: typeof interpretationResultUi.renderInterpretationCompletionCardInto,
   },
   ok: summarize(okContainer),
   localOnly: summarize(localOnlyContainer),
@@ -3985,7 +4030,10 @@ console.log(JSON.stringify({
   gmailLocalOnly: summarize(gmailLocalOnlyContainer),
   gmailWarning: summarize(gmailWarningContainer),
   gmailEmpty: summarize(gmailEmptyContainer),
+  completion: summarize(completionContainer),
+  completionFallback: summarize(completionFallbackContainer),
   nullContainerResult,
+  nullCompletionResult,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -3994,7 +4042,11 @@ console.log(JSON.stringify({
         timeout_seconds=30,
     )
 
-    assert results["exportedTypes"] == {"export": "function", "gmail": "function"}
+    assert results["exportedTypes"] == {
+        "export": "function",
+        "gmail": "function",
+        "completion": "function",
+    }
     assert results["ok"]["className"] == "result-card"
     assert results["ok"]["childClasses"] == ["result-header", "result-grid"]
     assert results["ok"]["gridLabels"] == ["DOCX", "PDF", "PDF Export"]
@@ -4084,6 +4136,39 @@ console.log(JSON.stringify({
     assert results["gmailEmpty"]["scriptCount"] == 0
     assert results["gmailEmpty"]["innerHTMLWrites"] == 0
     assert "nullContainerResult" not in results
+
+    assert results["completion"]["className"] == "result-card"
+    assert results["completion"]["childClasses"] == ["result-header", "result-grid"]
+    assert results["completion"]["gridLabels"] == ["DOCX", "PDF", "Case Location", "Service Location"]
+    assert "Completion title <img src=x onerror=alert(1)><script>bad()</script>" in results["completion"]["text"]
+    assert "Completion message <img src=x onerror=alert(1)><script>bad()</script>" in results["completion"]["text"]
+    assert "Completion label <img src=x onerror=alert(1)><script>bad()</script>" in results["completion"]["text"]
+    assert results["completion"]["gridValues"] == [
+        "C:/cases/completion <img src=x onerror=alert(1)><script>bad()</script>.docx",
+        "C:/cases/completion <img src=x onerror=alert(1)><script>bad()</script>.pdf",
+        "Case <img src=x onerror=alert(1)><script>bad()</script>",
+        "Service <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert "status-chip warn" in results["completion"]["classes"]
+    assert results["completion"]["classes"].count("word-break") == 4
+    assert results["completion"]["imgCount"] == 0
+    assert results["completion"]["scriptCount"] == 0
+    assert results["completion"]["innerHTMLWrites"] == 0
+
+    assert results["completionFallback"]["className"] == "result-card"
+    assert results["completionFallback"]["gridValues"] == [
+        "Unavailable in this session view",
+        "Unavailable",
+        "Fallback case <img src=x onerror=alert(1)><script>bad()</script>",
+        "Fallback service <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert "Fallback title <img src=x onerror=alert(1)><script>bad()</script>" in results["completionFallback"]["text"]
+    assert "Fallback label <img src=x onerror=alert(1)><script>bad()</script>" in results["completionFallback"]["text"]
+    assert "status-chip bad" in results["completionFallback"]["classes"]
+    assert results["completionFallback"]["imgCount"] == 0
+    assert results["completionFallback"]["scriptCount"] == 0
+    assert results["completionFallback"]["innerHTMLWrites"] == 0
+    assert "nullCompletionResult" not in results
 
 
 def test_recent_work_ui_module_centralizes_safe_history_rendering() -> None:
@@ -7006,6 +7091,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert interpretation_result_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderInterpretationExportResultInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationGmailResultInto" in interpretation_result_ui_asset.text
+        assert "renderInterpretationCompletionCardInto" in interpretation_result_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")
