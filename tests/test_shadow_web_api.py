@@ -3679,7 +3679,7 @@ console.log(JSON.stringify({
     assert results["grid"]["innerHTMLWrites"] == 0
 
 
-def test_interpretation_result_ui_module_centralizes_safe_export_result_rendering() -> None:
+def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -3694,11 +3694,20 @@ def test_interpretation_result_ui_module_centralizes_safe_export_result_renderin
     interpretation_result_ui_text = interpretation_result_ui_js.read_text(encoding="utf-8")
     assert 'from "./interpretation_result_ui.js"' in app_js
     assert "export function renderInterpretationExportResultInto" in interpretation_result_ui_text
+    assert "export function renderInterpretationGmailResultInto" in interpretation_result_ui_text
     assert "renderInterpretationExportResultInto(container, payload, currentInterpretationPresentation());" in app_js
+    assert "renderInterpretationGmailResultInto(container, payload, currentInterpretationPresentation());" in app_js
     assert 'qs("interpretation-review-export-panel")?.classList.remove("hidden");' in app_js
-    assert "openInterpretationReviewDrawer();" in app_js
-    assert "syncInterpretationReviewSurface();" in app_js
-    assert "notifyInterpretationUiStateChanged();" in app_js
+    gmail_start = app_js.index("export function renderInterpretationGmailResult")
+    dashboard_start = app_js.index("function renderDashboard", gmail_start)
+    gmail_block = app_js[gmail_start:dashboard_start]
+    assert "interpretationUiState.completionPayload = payload;" in gmail_block
+    assert "openInterpretationReviewDrawer();" in gmail_block
+    assert "syncInterpretationReviewSurface();" in gmail_block
+    assert "notifyInterpretationUiStateChanged();" in gmail_block
+    assert "innerHTML" not in gmail_block
+    assert "escapeHtml" not in gmail_block
+    assert 'appendResultGridItem(grid, "Reply status"' not in gmail_block
     assert 'appendResultGridItem(grid, "DOCX"' not in app_js
     assert 'appendResultGridItem(grid, "PDF Export"' not in app_js
 
@@ -3868,6 +3877,17 @@ const presentation = {
     failedTitle: `Failed title ${malicious}`,
     pdfReadyLabel: `PDF ready ${malicious}`,
   },
+  drawer: {
+    gmailResultEmpty: `No Gmail result ${malicious}`,
+  },
+  gmailResult: {
+    createdTitle: `Gmail reply created ${malicious}`,
+    localOnlyTitle: `Local-only Gmail reply ${malicious}`,
+    warningTitle: `Gmail reply needs attention ${malicious}`,
+    createdLabel: `Created ${malicious}`,
+    localOnlyLabel: `Local only ${malicious}`,
+    warningLabel: `Needs attention ${malicious}`,
+  },
 };
 const okContainer = document.createElement("div");
 okContainer.className = "result-card empty-state";
@@ -3909,11 +3929,63 @@ interpretationResultUi.renderInterpretationExportResultInto(failedContainer, {
   },
 }, presentation);
 
+const gmailOkContainer = document.createElement("div");
+gmailOkContainer.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationGmailResultInto(gmailOkContainer, {
+  status: "ok",
+  normalized_payload: {
+    docx_path: `C:/cases/gmail ${malicious}.docx`,
+    pdf_path: `C:/cases/gmail ${malicious}.pdf`,
+    gmail_draft_result: {
+      message: `Draft ready ${malicious}`,
+    },
+  },
+}, presentation);
+
+const gmailLocalOnlyContainer = document.createElement("div");
+gmailLocalOnlyContainer.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationGmailResultInto(gmailLocalOnlyContainer, {
+  status: "local_only",
+  normalized_payload: {
+    draft_prereqs: {
+      message: `Draft prerequisites ${malicious}`,
+    },
+  },
+}, presentation);
+
+const gmailWarningContainer = document.createElement("div");
+gmailWarningContainer.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationGmailResultInto(gmailWarningContainer, {
+  status: "warning",
+  normalized_payload: {
+    pdf_path: `C:/cases/fallback ${malicious}.pdf`,
+  },
+}, presentation);
+
+const gmailEmptyContainer = document.createElement("div");
+gmailEmptyContainer.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationGmailResultInto(gmailEmptyContainer, {
+  status: "error",
+  normalized_payload: {},
+}, presentation);
+const nullContainerResult = interpretationResultUi.renderInterpretationGmailResultInto(null, {
+  status: "ok",
+  normalized_payload: {},
+}, presentation);
+
 console.log(JSON.stringify({
-  exportedType: typeof interpretationResultUi.renderInterpretationExportResultInto,
+  exportedTypes: {
+    export: typeof interpretationResultUi.renderInterpretationExportResultInto,
+    gmail: typeof interpretationResultUi.renderInterpretationGmailResultInto,
+  },
   ok: summarize(okContainer),
   localOnly: summarize(localOnlyContainer),
   failed: summarize(failedContainer),
+  gmailOk: summarize(gmailOkContainer),
+  gmailLocalOnly: summarize(gmailLocalOnlyContainer),
+  gmailWarning: summarize(gmailWarningContainer),
+  gmailEmpty: summarize(gmailEmptyContainer),
+  nullContainerResult,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -3922,7 +3994,7 @@ console.log(JSON.stringify({
         timeout_seconds=30,
     )
 
-    assert results["exportedType"] == "function"
+    assert results["exportedTypes"] == {"export": "function", "gmail": "function"}
     assert results["ok"]["className"] == "result-card"
     assert results["ok"]["childClasses"] == ["result-header", "result-grid"]
     assert results["ok"]["gridLabels"] == ["DOCX", "PDF", "PDF Export"]
@@ -3958,6 +4030,60 @@ console.log(JSON.stringify({
     assert results["failed"]["imgCount"] == 0
     assert results["failed"]["scriptCount"] == 0
     assert results["failed"]["innerHTMLWrites"] == 0
+
+    assert results["gmailOk"]["className"] == "result-card"
+    assert results["gmailOk"]["childClasses"] == ["result-header", "result-grid"]
+    assert results["gmailOk"]["gridLabels"] == ["DOCX", "PDF", "Reply status"]
+    assert "Gmail reply created <img src=x onerror=alert(1)><script>bad()</script>" in results["gmailOk"]["text"]
+    assert "Draft ready <img src=x onerror=alert(1)><script>bad()</script>" in results["gmailOk"]["text"]
+    assert "Created <img src=x onerror=alert(1)><script>bad()</script>" in results["gmailOk"]["text"]
+    assert "C:/cases/gmail <img src=x onerror=alert(1)><script>bad()</script>.docx" in results["gmailOk"]["gridValues"]
+    assert "C:/cases/gmail <img src=x onerror=alert(1)><script>bad()</script>.pdf" in results["gmailOk"]["gridValues"]
+    assert "status-chip ok" in results["gmailOk"]["classes"]
+    assert results["gmailOk"]["classes"].count("word-break") == 2
+    assert results["gmailOk"]["imgCount"] == 0
+    assert results["gmailOk"]["scriptCount"] == 0
+    assert results["gmailOk"]["innerHTMLWrites"] == 0
+
+    assert results["gmailLocalOnly"]["className"] == "result-card"
+    assert "Local-only Gmail reply <img src=x onerror=alert(1)><script>bad()</script>" in results["gmailLocalOnly"]["text"]
+    assert "Draft prerequisites <img src=x onerror=alert(1)><script>bad()</script>" in results["gmailLocalOnly"]["text"]
+    assert "Local only <img src=x onerror=alert(1)><script>bad()</script>" in results["gmailLocalOnly"]["text"]
+    assert results["gmailLocalOnly"]["gridValues"] == [
+        "Unavailable",
+        "Unavailable",
+        "Local only <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert "status-chip warn" in results["gmailLocalOnly"]["classes"]
+    assert results["gmailLocalOnly"]["imgCount"] == 0
+    assert results["gmailLocalOnly"]["scriptCount"] == 0
+    assert results["gmailLocalOnly"]["innerHTMLWrites"] == 0
+
+    assert results["gmailWarning"]["className"] == "result-card"
+    assert "Gmail reply needs attention <img src=x onerror=alert(1)><script>bad()</script>" in results["gmailWarning"]["text"]
+    assert "C:/cases/fallback <img src=x onerror=alert(1)><script>bad()</script>.pdf" in results["gmailWarning"]["text"]
+    assert "Needs attention <img src=x onerror=alert(1)><script>bad()</script>" in results["gmailWarning"]["text"]
+    assert results["gmailWarning"]["gridValues"] == [
+        "Unavailable",
+        "C:/cases/fallback <img src=x onerror=alert(1)><script>bad()</script>.pdf",
+        "Needs attention <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert "status-chip bad" in results["gmailWarning"]["classes"]
+    assert results["gmailWarning"]["imgCount"] == 0
+    assert results["gmailWarning"]["scriptCount"] == 0
+    assert results["gmailWarning"]["innerHTMLWrites"] == 0
+
+    assert results["gmailEmpty"]["className"] == "result-card"
+    assert "No Gmail result <img src=x onerror=alert(1)><script>bad()</script>" in results["gmailEmpty"]["text"]
+    assert results["gmailEmpty"]["gridValues"] == [
+        "Unavailable",
+        "Unavailable",
+        "Needs attention <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert results["gmailEmpty"]["imgCount"] == 0
+    assert results["gmailEmpty"]["scriptCount"] == 0
+    assert results["gmailEmpty"]["innerHTMLWrites"] == 0
+    assert "nullContainerResult" not in results
 
 
 def test_recent_work_ui_module_centralizes_safe_history_rendering() -> None:
@@ -6879,6 +7005,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert interpretation_result_ui_asset.status_code == 200
         assert interpretation_result_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderInterpretationExportResultInto" in interpretation_result_ui_asset.text
+        assert "renderInterpretationGmailResultInto" in interpretation_result_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")
