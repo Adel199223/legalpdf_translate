@@ -48,6 +48,7 @@ import {
   renderInterpretationSeedCardInto,
   renderInterpretationSessionCardInto,
 } from "./interpretation_result_ui.js";
+import { renderInterpretationReviewContextInto } from "./interpretation_review_ui.js";
 import {
   renderCourtEmailOptionsInto,
   renderInterpretationCityOptionsInto,
@@ -898,28 +899,23 @@ function renderInterpretationReviewContext(snapshot = interpretationSnapshot()) 
   const workspaceMode = interpretationWorkspaceMode(snapshot, activeSession);
   const presentation = currentInterpretationPresentation(snapshot);
   const reviewMode = workspaceMode === "gmail_review";
-  container.classList.toggle("hidden", !reviewMode);
-  if (!reviewMode) {
-    return;
-  }
-  if (titleNode) {
-    titleNode.textContent = presentation.drawer.contextTitle;
-  }
-  if (copyNode) {
-    copyNode.textContent = presentation.drawer.contextCopy;
-  }
-  if (chipNode) {
-    const chip = interpretationSessionChip(activeSession, workspaceMode);
-    chipNode.className = `status-chip ${chip.tone}`;
-    chipNode.textContent = chip.label;
-  }
   const gmailButton = qs("interpretation-finalize-gmail");
-  if (gmailButton) {
-    gmailButton.textContent = presentation.actions.finalizeGmail;
-  }
-  if (result && result.classList.contains("empty-state")) {
-    result.textContent = presentation.drawer.gmailResultEmpty;
-  }
+  const chip = reviewMode ? interpretationSessionChip(activeSession, workspaceMode) : {};
+  renderInterpretationReviewContextInto({
+    container,
+    titleNode,
+    copyNode,
+    chipNode,
+    gmailButton,
+    result,
+  }, {
+    reviewMode,
+    title: presentation.drawer.contextTitle,
+    copy: presentation.drawer.contextCopy,
+    chip,
+    finalizeGmailLabel: presentation.actions.finalizeGmail,
+    gmailResultEmpty: presentation.drawer.gmailResultEmpty,
+  });
 }
 
 function syncInterpretationReviewDetailsShell(completed) {

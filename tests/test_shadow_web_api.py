@@ -3929,6 +3929,360 @@ console.log(JSON.stringify({
     assert "nullServiceResult" not in results
 
 
+def test_interpretation_review_ui_module_centralizes_safe_context_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_review_ui_js = static_dir / "interpretation_review_ui.js"
+
+    assert interpretation_review_ui_js.exists()
+    interpretation_review_ui_text = interpretation_review_ui_js.read_text(encoding="utf-8")
+    assert 'from "./interpretation_review_ui.js"' in app_js
+    assert "export function renderInterpretationReviewContextInto" in interpretation_review_ui_text
+    assert "renderInterpretationReviewContextInto({" in app_js
+    assert "reviewMode," in app_js
+    assert "gmailResultEmpty: presentation.drawer.gmailResultEmpty," in app_js
+
+    review_context_start = app_js.index("function renderInterpretationReviewContext")
+    details_shell_start = app_js.index("function syncInterpretationReviewDetailsShell", review_context_start)
+    review_context_block = app_js[review_context_start:details_shell_start]
+    assert "currentInterpretationPresentation(snapshot)" in review_context_block
+    assert "interpretationSessionChip(activeSession, workspaceMode)" in review_context_block
+    assert "presentation.actions.finalizeGmail" in review_context_block
+    assert "innerHTML" not in review_context_block
+    assert "escapeHtml" not in review_context_block
+    assert "textContent = presentation.drawer.contextTitle" not in review_context_block
+    assert "textContent = presentation.drawer.contextCopy" not in review_context_block
+
+    script = r"""
+const interpretationReviewUi = await import(__INTERPRETATION_REVIEW_UI_MODULE_URL__);
+
+function syncClassList(element, classes) {
+  element.className = Array.from(classes).join(" ");
+}
+
+function makeElement(tagName = "div") {
+  const classNames = new Set();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    _className: "",
+    children: [],
+    parentNode: null,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    classList: {
+      add(...names) {
+        names.forEach((name) => {
+          if (name) {
+            classNames.add(String(name));
+          }
+        });
+        syncClassList(element, classNames);
+      },
+      remove(...names) {
+        names.forEach((name) => classNames.delete(String(name)));
+        syncClassList(element, classNames);
+      },
+      toggle(name, force) {
+        const key = String(name);
+        const shouldAdd = force === undefined ? !classNames.has(key) : Boolean(force);
+        if (shouldAdd) {
+          classNames.add(key);
+        } else {
+          classNames.delete(key);
+        }
+        syncClassList(element, classNames);
+        return shouldAdd;
+      },
+      contains(name) {
+        return classNames.has(String(name));
+      },
+    },
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "className", {
+    get() {
+      return this._className;
+    },
+    set(value) {
+      this._className = String(value ?? "");
+      classNames.clear();
+      this._className.split(/\s+/).filter(Boolean).forEach((name) => classNames.add(name));
+    },
+  });
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  let total = 0;
+  nodes.forEach((node) => {
+    if (!node) {
+      return;
+    }
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
+  });
+  return total;
+}
+
+function summarize(nodes) {
+  return {
+    containerClass: nodes.container.className,
+    title: nodes.titleNode.textContent,
+    copy: nodes.copyNode.textContent,
+    chipClass: nodes.chipNode.className,
+    chipText: nodes.chipNode.textContent,
+    buttonText: nodes.gmailButton.textContent,
+    resultClass: nodes.result.className,
+    resultText: nodes.result.textContent,
+    imgCount: countTag(nodes.container, "img")
+      + countTag(nodes.titleNode, "img")
+      + countTag(nodes.copyNode, "img")
+      + countTag(nodes.chipNode, "img")
+      + countTag(nodes.gmailButton, "img")
+      + countTag(nodes.result, "img"),
+    scriptCount: countTag(nodes.container, "script")
+      + countTag(nodes.titleNode, "script")
+      + countTag(nodes.copyNode, "script")
+      + countTag(nodes.chipNode, "script")
+      + countTag(nodes.gmailButton, "script")
+      + countTag(nodes.result, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(
+      nodes.container,
+      nodes.titleNode,
+      nodes.copyNode,
+      nodes.chipNode,
+      nodes.gmailButton,
+      nodes.result,
+    ),
+  };
+}
+
+function makeNodes({ resultEmpty = true } = {}) {
+  const nodes = {
+    container: makeElement("article"),
+    titleNode: makeElement("h2"),
+    copyNode: makeElement("p"),
+    chipNode: makeElement("span"),
+    gmailButton: makeElement("button"),
+    result: makeElement("div"),
+  };
+  nodes.container.className = "context-card hidden";
+  nodes.result.className = resultEmpty ? "result-card empty-state" : "result-card";
+  return nodes;
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const visibleNodes = makeNodes();
+interpretationReviewUi.renderInterpretationReviewContextInto(visibleNodes, {
+  reviewMode: true,
+  title: `Review title ${malicious}`,
+  copy: `Review copy ${malicious}`,
+  chip: {
+    tone: "bad",
+    label: `Chip label ${malicious}`,
+  },
+  finalizeGmailLabel: `Finalize ${malicious}`,
+  gmailResultEmpty: `Gmail empty ${malicious}`,
+});
+
+const hiddenNodes = makeNodes();
+hiddenNodes.titleNode.textContent = "Old title";
+hiddenNodes.copyNode.textContent = "Old copy";
+hiddenNodes.chipNode.className = "status-chip old";
+hiddenNodes.chipNode.textContent = "Old chip";
+hiddenNodes.gmailButton.textContent = "Old button";
+hiddenNodes.result.textContent = "Old result";
+interpretationReviewUi.renderInterpretationReviewContextInto(hiddenNodes, {
+  reviewMode: false,
+  title: `Hidden title ${malicious}`,
+  copy: `Hidden copy ${malicious}`,
+  chip: {
+    tone: "warn",
+    label: `Hidden chip ${malicious}`,
+  },
+  finalizeGmailLabel: `Hidden button ${malicious}`,
+  gmailResultEmpty: `Hidden result ${malicious}`,
+});
+
+const nonEmptyResultNodes = makeNodes({ resultEmpty: false });
+nonEmptyResultNodes.result.textContent = "Existing rendered result";
+interpretationReviewUi.renderInterpretationReviewContextInto(nonEmptyResultNodes, {
+  reviewMode: true,
+  title: "Visible title",
+  copy: "Visible copy",
+  chip: {
+    tone: "ok",
+    label: "Ready",
+  },
+  finalizeGmailLabel: "Finalize",
+  gmailResultEmpty: `Should not replace ${malicious}`,
+});
+
+const missingNodesContainer = makeElement("article");
+missingNodesContainer.className = "context-card hidden";
+const missingResult = makeElement("div");
+missingResult.className = "empty-state";
+interpretationReviewUi.renderInterpretationReviewContextInto({
+  container: missingNodesContainer,
+  titleNode: null,
+  copyNode: null,
+  chipNode: null,
+  gmailButton: null,
+  result: missingResult,
+}, {
+  reviewMode: true,
+  title: `Ignored title ${malicious}`,
+  copy: `Ignored copy ${malicious}`,
+  chip: {
+    tone: "warn",
+    label: `Ignored chip ${malicious}`,
+  },
+  finalizeGmailLabel: `Ignored button ${malicious}`,
+  gmailResultEmpty: `Fallback ${malicious}`,
+});
+
+const nullContainerResult = interpretationReviewUi.renderInterpretationReviewContextInto({
+  container: null,
+  titleNode: makeElement("h2"),
+  copyNode: makeElement("p"),
+  chipNode: makeElement("span"),
+  gmailButton: makeElement("button"),
+  result: makeElement("div"),
+}, {
+  reviewMode: true,
+  title: "Ignored",
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationReviewUi.renderInterpretationReviewContextInto,
+  visible: summarize(visibleNodes),
+  hidden: summarize(hiddenNodes),
+  nonEmptyResult: summarize(nonEmptyResultNodes),
+  missingNodes: {
+    containerClass: missingNodesContainer.className,
+    resultText: missingResult.textContent,
+    innerHTMLWrites: countInnerHtmlWrites(missingNodesContainer, missingResult),
+    imgCount: countTag(missingNodesContainer, "img") + countTag(missingResult, "img"),
+    scriptCount: countTag(missingNodesContainer, "script") + countTag(missingResult, "script"),
+  },
+  nullContainerResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REVIEW_UI_MODULE_URL__": "interpretation_review_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["visible"]["containerClass"] == "context-card"
+    assert results["visible"]["title"] == "Review title <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["copy"] == "Review copy <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["chipClass"] == "status-chip bad"
+    assert results["visible"]["chipText"] == "Chip label <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["buttonText"] == "Finalize <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["resultText"] == "Gmail empty <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["imgCount"] == 0
+    assert results["visible"]["scriptCount"] == 0
+    assert results["visible"]["innerHTMLWrites"] == 0
+
+    assert results["hidden"]["containerClass"] == "context-card hidden"
+    assert results["hidden"]["title"] == "Old title"
+    assert results["hidden"]["copy"] == "Old copy"
+    assert results["hidden"]["chipClass"] == "status-chip old"
+    assert results["hidden"]["chipText"] == "Old chip"
+    assert results["hidden"]["buttonText"] == "Old button"
+    assert results["hidden"]["resultText"] == "Old result"
+    assert results["hidden"]["innerHTMLWrites"] == 0
+
+    assert results["nonEmptyResult"]["containerClass"] == "context-card"
+    assert results["nonEmptyResult"]["resultText"] == "Existing rendered result"
+    assert results["nonEmptyResult"]["chipClass"] == "status-chip ok"
+    assert results["nonEmptyResult"]["innerHTMLWrites"] == 0
+
+    assert results["missingNodes"]["containerClass"] == "context-card"
+    assert results["missingNodes"]["resultText"] == "Fallback <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["missingNodes"]["imgCount"] == 0
+    assert results["missingNodes"]["scriptCount"] == 0
+    assert results["missingNodes"]["innerHTMLWrites"] == 0
+    assert "nullContainerResult" not in results
+
+
 def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -7652,6 +8006,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationCityOptionsInto" in interpretation_reference_ui_asset.text
         assert "renderCourtEmailOptionsInto" in interpretation_reference_ui_asset.text
         assert "renderServiceEntityOptionsInto" in interpretation_reference_ui_asset.text
+        interpretation_review_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_review_ui.js")
+        assert interpretation_review_ui_asset.status_code == 200
+        assert interpretation_review_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderInterpretationReviewContextInto" in interpretation_review_ui_asset.text
         interpretation_result_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_result_ui.js")
         assert interpretation_result_ui_asset.status_code == 200
         assert interpretation_result_ui_asset.headers["content-type"].startswith("application/javascript")
