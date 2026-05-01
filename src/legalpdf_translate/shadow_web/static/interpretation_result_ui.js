@@ -77,3 +77,30 @@ export function renderInterpretationGmailResultInto(container, payload, presenta
   appendResultGridItem(grid, "Reply status", label);
   container.appendChild(grid);
 }
+
+export function renderInterpretationCompletionCardInto(container, card = {}) {
+  if (!container) {
+    return;
+  }
+  const chip = card.chip || {};
+  container.classList.remove("empty-state");
+  clearNode(container);
+  container.appendChild(createResultHeader({
+    title: card.title || "",
+    message: card.message || "",
+    label: chip.label || "",
+    tone: chip.tone || "info",
+  }));
+  const grid = document.createElement("div");
+  grid.className = "result-grid";
+  appendResultGridItem(
+    grid,
+    "DOCX",
+    card.docxPath || "Unavailable in this session view",
+    { className: "word-break" },
+  );
+  appendResultGridItem(grid, "PDF", card.pdfPath || "Unavailable", { className: "word-break" });
+  appendResultGridItem(grid, "Case Location", card.caseLocation || "", { className: "word-break" });
+  appendResultGridItem(grid, "Service Location", card.serviceLocation || "", { className: "word-break" });
+  container.appendChild(grid);
+}
