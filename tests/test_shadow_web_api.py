@@ -2966,14 +2966,16 @@ def test_result_card_ui_module_centralizes_safe_result_helpers() -> None:
     )
     app_js = (static_dir / "app.js").read_text(encoding="utf-8")
     result_card_ui_module = static_dir / "result_card_ui.js"
+    interpretation_result_ui_js = (static_dir / "interpretation_result_ui.js").read_text(encoding="utf-8")
 
     assert result_card_ui_module.exists()
-    assert 'from "./result_card_ui.js"' in app_js
+    assert 'from "./result_card_ui.js"' in interpretation_result_ui_js
+    assert 'from "./result_card_ui.js"' not in app_js
     assert "function createStatusChip" not in app_js
     assert "function createResultHeader" not in app_js
     assert "function appendResultGridItem" not in app_js
-    assert "container.appendChild(createResultHeader({" in app_js
-    assert 'appendResultGridItem(grid, "DOCX", result.docx_path || "Unavailable", { className: "word-break" })' in app_js
+    assert "container.appendChild(createResultHeader({" not in app_js
+    assert 'appendResultGridItem(grid, "DOCX", result.docx_path || "Unavailable", { className: "word-break" })' not in app_js
     assert "appendResultGridItem(grid, \"Photo Taken Date\"" not in app_js
 
     script = r"""
@@ -3200,6 +3202,287 @@ console.log(JSON.stringify({
     assert results["grid"]["imgCount"] == 0
     assert results["grid"]["scriptCount"] == 0
     assert results["grid"]["innerHTMLWrites"] == 0
+
+
+def test_interpretation_result_ui_module_centralizes_safe_export_result_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_result_ui_js = static_dir / "interpretation_result_ui.js"
+
+    assert interpretation_result_ui_js.exists()
+    interpretation_result_ui_text = interpretation_result_ui_js.read_text(encoding="utf-8")
+    assert 'from "./interpretation_result_ui.js"' in app_js
+    assert "export function renderInterpretationExportResultInto" in interpretation_result_ui_text
+    assert "renderInterpretationExportResultInto(container, payload, currentInterpretationPresentation());" in app_js
+    assert 'qs("interpretation-review-export-panel")?.classList.remove("hidden");' in app_js
+    assert "openInterpretationReviewDrawer();" in app_js
+    assert "syncInterpretationReviewSurface();" in app_js
+    assert "notifyInterpretationUiStateChanged();" in app_js
+    assert 'appendResultGridItem(grid, "DOCX"' not in app_js
+    assert 'appendResultGridItem(grid, "PDF Export"' not in app_js
+
+    script = r"""
+const interpretationResultUi = await import(__INTERPRETATION_RESULT_UI_MODULE_URL__);
+
+function syncClassList(element, classes) {
+  element.className = Array.from(classes).join(" ");
+}
+
+function makeElement(tagName = "div") {
+  const classNames = new Set();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    _className: "",
+    children: [],
+    parentNode: null,
+    title: "",
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    classList: {
+      add(...names) {
+        names.forEach((name) => {
+          if (name) {
+            classNames.add(String(name));
+          }
+        });
+        syncClassList(element, classNames);
+      },
+      remove(...names) {
+        names.forEach((name) => classNames.delete(String(name)));
+        syncClassList(element, classNames);
+      },
+      contains(name) {
+        return classNames.has(String(name));
+      },
+    },
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "className", {
+    get() {
+      return this._className;
+    },
+    set(value) {
+      this._className = String(value ?? "");
+      classNames.clear();
+      this._className.split(/\s+/).filter(Boolean).forEach((name) => classNames.add(name));
+    },
+  });
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function collectClasses(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (String(current.className || "").trim()) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+function summarize(container) {
+  const grid = container.children[1];
+  return {
+    className: container.className,
+    text: container.textContent,
+    childClasses: container.children.map((child) => child.className || ""),
+    gridLabels: grid.children.map((child) => child.children[0]?.textContent || ""),
+    gridValues: grid.children.map((child) => child.children[1]?.textContent || ""),
+    classes: collectClasses(container),
+    imgCount: countTag(container, "img"),
+    scriptCount: countTag(container, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(container),
+  };
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const presentation = {
+  export: {
+    readyLabel: `Ready ${malicious}`,
+    localOnlyLabel: `Local only ${malicious}`,
+    failedLabel: `Failed ${malicious}`,
+    readyTitle: `Ready title ${malicious}`,
+    localOnlyTitle: `Local title ${malicious}`,
+    failedTitle: `Failed title ${malicious}`,
+    pdfReadyLabel: `PDF ready ${malicious}`,
+  },
+};
+const okContainer = document.createElement("div");
+okContainer.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationExportResultInto(okContainer, {
+  status: "ok",
+  normalized_payload: {
+    docx_path: `C:/cases/result ${malicious}.docx`,
+    pdf_path: `C:/cases/result ${malicious}.pdf`,
+  },
+  diagnostics: {
+    pdf_export: {
+      ok: true,
+      failure_message: `Ignored ${malicious}`,
+    },
+  },
+}, presentation);
+
+const localOnlyContainer = document.createElement("div");
+localOnlyContainer.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationExportResultInto(localOnlyContainer, {
+  status: "local_only",
+  normalized_payload: {},
+  diagnostics: {
+    pdf_export: {
+      ok: false,
+      failure_message: `PDF failure ${malicious}`,
+    },
+  },
+}, presentation);
+
+const failedContainer = document.createElement("div");
+failedContainer.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationExportResultInto(failedContainer, {
+  status: "error",
+  diagnostics: {
+    pdf_export: {
+      ok: false,
+    },
+  },
+}, presentation);
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationResultUi.renderInterpretationExportResultInto,
+  ok: summarize(okContainer),
+  localOnly: summarize(localOnlyContainer),
+  failed: summarize(failedContainer),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_RESULT_UI_MODULE_URL__": "interpretation_result_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["ok"]["className"] == "result-card"
+    assert results["ok"]["childClasses"] == ["result-header", "result-grid"]
+    assert results["ok"]["gridLabels"] == ["DOCX", "PDF", "PDF Export"]
+    assert "Ready title <img src=x onerror=alert(1)><script>bad()</script>" in results["ok"]["text"]
+    assert "Ready <img src=x onerror=alert(1)><script>bad()</script>" in results["ok"]["text"]
+    assert "C:/cases/result <img src=x onerror=alert(1)><script>bad()</script>.docx" in results["ok"]["gridValues"]
+    assert "C:/cases/result <img src=x onerror=alert(1)><script>bad()</script>.pdf" in results["ok"]["gridValues"]
+    assert "PDF ready <img src=x onerror=alert(1)><script>bad()</script>" in results["ok"]["gridValues"]
+    assert "status-chip ok" in results["ok"]["classes"]
+    assert results["ok"]["classes"].count("word-break") == 2
+    assert results["ok"]["imgCount"] == 0
+    assert results["ok"]["scriptCount"] == 0
+    assert results["ok"]["innerHTMLWrites"] == 0
+
+    assert results["localOnly"]["className"] == "result-card"
+    assert "PDF failure <img src=x onerror=alert(1)><script>bad()</script>" in results["localOnly"]["text"]
+    assert "Local only <img src=x onerror=alert(1)><script>bad()</script>" in results["localOnly"]["text"]
+    assert results["localOnly"]["gridValues"] == [
+        "Unavailable",
+        "Unavailable",
+        "PDF failure <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert "status-chip warn" in results["localOnly"]["classes"]
+    assert results["localOnly"]["imgCount"] == 0
+    assert results["localOnly"]["scriptCount"] == 0
+    assert results["localOnly"]["innerHTMLWrites"] == 0
+
+    assert results["failed"]["className"] == "result-card"
+    assert "Failed title <img src=x onerror=alert(1)><script>bad()</script>" in results["failed"]["text"]
+    assert "Failed <img src=x onerror=alert(1)><script>bad()</script>" in results["failed"]["text"]
+    assert results["failed"]["gridValues"] == ["Unavailable", "Unavailable", "Unavailable"]
+    assert "status-chip bad" in results["failed"]["classes"]
+    assert results["failed"]["imgCount"] == 0
+    assert results["failed"]["scriptCount"] == 0
+    assert results["failed"]["innerHTMLWrites"] == 0
 
 
 def test_recent_work_ui_module_centralizes_safe_history_rendering() -> None:
@@ -5925,6 +6208,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderNavigationInto" in shell_ui_asset.text
+        interpretation_result_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_result_ui.js")
+        assert interpretation_result_ui_asset.status_code == 200
+        assert interpretation_result_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderInterpretationExportResultInto" in interpretation_result_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")
