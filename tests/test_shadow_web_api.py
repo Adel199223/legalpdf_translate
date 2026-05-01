@@ -2398,9 +2398,13 @@ def test_profile_ui_module_centralizes_safe_distance_row_rendering() -> None:
     profile_ui_module = static_dir / "profile_ui.js"
 
     assert profile_ui_module.exists()
+    profile_ui_js = profile_ui_module.read_text(encoding="utf-8")
     assert 'from "./profile_ui.js"' in app_js
     assert "export function renderProfileDistanceRowsInto" not in app_js
+    assert "export function renderProfileOptionsInto" not in app_js
+    assert "export function renderProfileOptionsInto" in profile_ui_js
     assert "renderProfileDistanceRowsInto(container, profileUiState.distanceRows, {" in app_js
+    assert 'renderProfileOptionsInto(qs("profile-id"), profiles, primaryProfileId);' in app_js
 
     script = r"""
 const profileUi = await import(__PROFILE_UI_MODULE_URL__);
@@ -2542,8 +2546,21 @@ const emptyContainer = document.createElement("div");
 profileUi.renderProfileDistanceRowsInto(emptyContainer, []);
 const nullResult = profileUi.renderProfileDistanceRowsInto(null, [{ city: "ignored", distanceLabel: "1 km" }]);
 
+const profileSelect = document.createElement("select");
+profileUi.renderProfileOptionsInto(profileSelect, [
+  { id: "safe-profile", document_name: "Safe Profile" },
+  { id: malicious, document_name: `Unsafe ${malicious}` },
+  { id: "fallback-profile", document_name: "" },
+], malicious);
+
+const emptySelect = document.createElement("select");
+profileUi.renderProfileOptionsInto(emptySelect, [], "");
+
+const nullSelectResult = profileUi.renderProfileOptionsInto(null, [{ id: "ignored", document_name: "Ignored" }], "ignored");
+
 console.log(JSON.stringify({
   exportedType: typeof profileUi.renderProfileDistanceRowsInto,
+  profileOptionsExportedType: typeof profileUi.renderProfileOptionsInto,
   text: container.textContent,
   articleCount: countTag(container, "article"),
   imgCount: countTag(container, "img"),
@@ -2557,6 +2574,25 @@ console.log(JSON.stringify({
   emptyText: emptyContainer.textContent,
   emptyClass: emptyContainer.children[0]?.className || "",
   nullResultType: nullResult === undefined ? "undefined" : typeof nullResult,
+  profileSelectDisabled: profileSelect.disabled,
+  profileOptions: profileSelect.children.map((option) => ({
+    tagName: option.tagName,
+    value: option.value,
+    text: option.textContent,
+    selected: Boolean(option.selected),
+  })),
+  profileSelectText: profileSelect.textContent,
+  profileSelectImgCount: countTag(profileSelect, "img"),
+  profileSelectScriptCount: countTag(profileSelect, "script"),
+  profileSelectInnerHTMLWrites: countInnerHtmlWrites(profileSelect),
+  emptySelectDisabled: emptySelect.disabled,
+  emptyOptions: emptySelect.children.map((option) => ({
+    tagName: option.tagName,
+    value: option.value,
+    text: option.textContent,
+    selected: Boolean(option.selected),
+  })),
+  nullSelectResultType: nullSelectResult === undefined ? "undefined" : typeof nullSelectResult,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -2566,6 +2602,7 @@ console.log(JSON.stringify({
     )
 
     assert results["exportedType"] == "function"
+    assert results["profileOptionsExportedType"] == "function"
     assert "<img src=x onerror=alert(1)><script>bad()</script>" in results["text"]
     assert "12 km one way" in results["text"]
     assert results["articleCount"] == 1
@@ -2580,6 +2617,41 @@ console.log(JSON.stringify({
     assert results["emptyText"] == "No city distances saved yet. Add the cities you use most often."
     assert results["emptyClass"] == "result-card empty-state"
     assert results["nullResultType"] == "undefined"
+    assert results["profileSelectDisabled"] is False
+    assert results["profileOptions"] == [
+        {
+            "tagName": "OPTION",
+            "value": "safe-profile",
+            "text": "Safe Profile",
+            "selected": False,
+        },
+        {
+            "tagName": "OPTION",
+            "value": "<img src=x onerror=alert(1)><script>bad()</script>",
+            "text": "Unsafe <img src=x onerror=alert(1)><script>bad()</script>",
+            "selected": True,
+        },
+        {
+            "tagName": "OPTION",
+            "value": "fallback-profile",
+            "text": "fallback-profile",
+            "selected": False,
+        },
+    ]
+    assert "Unsafe <img src=x onerror=alert(1)><script>bad()</script>" in results["profileSelectText"]
+    assert results["profileSelectImgCount"] == 0
+    assert results["profileSelectScriptCount"] == 0
+    assert results["profileSelectInnerHTMLWrites"] == 0
+    assert results["emptySelectDisabled"] is True
+    assert results["emptyOptions"] == [
+        {
+            "tagName": "OPTION",
+            "value": "",
+            "text": "No profiles available",
+            "selected": True,
+        },
+    ]
+    assert results["nullSelectResultType"] == "undefined"
 
 
 def test_dashboard_ui_module_centralizes_safe_card_rendering() -> None:
@@ -6359,6 +6431,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert profile_ui_asset.status_code == 200
         assert profile_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderProfileDistanceRowsInto" in profile_ui_asset.text
+        assert "renderProfileOptionsInto" in profile_ui_asset.text
         dashboard_ui_asset = client.get(f"/static-build/{asset_version}/dashboard_ui.js")
         assert dashboard_ui_asset.status_code == 200
         assert dashboard_ui_asset.headers["content-type"].startswith("application/javascript")
