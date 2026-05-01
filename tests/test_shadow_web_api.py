@@ -4283,6 +4283,255 @@ console.log(JSON.stringify({
     assert "nullContainerResult" not in results
 
 
+def test_interpretation_review_ui_module_centralizes_safe_details_shell_sync() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_review_ui_js = static_dir / "interpretation_review_ui.js"
+
+    assert interpretation_review_ui_js.exists()
+    interpretation_review_ui_text = interpretation_review_ui_js.read_text(encoding="utf-8")
+    assert 'from "./interpretation_review_ui.js"' in app_js
+    assert "export function syncInterpretationReviewDetailsShellInto" in interpretation_review_ui_text
+    assert "syncInterpretationReviewDetailsShellInto(details, summaryNode, {" in app_js
+    assert "openSummary: presentation.drawer.detailsSummaryOpen," in app_js
+    assert "closedSummary: presentation.drawer.detailsSummaryClosed," in app_js
+
+    details_shell_start = app_js.index("function syncInterpretationReviewDetailsShell")
+    completion_start = app_js.index("function renderInterpretationCompletionCard", details_shell_start)
+    details_shell_block = app_js[details_shell_start:completion_start]
+    assert "currentInterpretationPresentation()" in details_shell_block
+    assert "innerHTML" not in details_shell_block
+    assert "escapeHtml" not in details_shell_block
+    assert "details.open =" not in details_shell_block
+    assert "dataset.autocollapsed" not in details_shell_block
+    assert "summaryNode.textContent" not in details_shell_block
+
+    script = r"""
+const interpretationReviewUi = await import(__INTERPRETATION_REVIEW_UI_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    children: [],
+    parentNode: null,
+    dataset: {},
+    open: false,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  let total = 0;
+  nodes.forEach((node) => {
+    if (!node) {
+      return;
+    }
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
+  });
+  return total;
+}
+
+function summarize(details, summaryNode = null) {
+  return {
+    open: details.open,
+    autocollapsed: details.dataset.autocollapsed || "",
+    hasAutocollapsed: Object.prototype.hasOwnProperty.call(details.dataset, "autocollapsed"),
+    summary: summaryNode ? summaryNode.textContent : "",
+    imgCount: countTag(details, "img") + (summaryNode ? countTag(summaryNode, "img") : 0),
+    scriptCount: countTag(details, "script") + (summaryNode ? countTag(summaryNode, "script") : 0),
+    innerHTMLWrites: countInnerHtmlWrites(details, summaryNode),
+  };
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const incompleteDetails = makeElement("details");
+incompleteDetails.open = false;
+incompleteDetails.dataset.autocollapsed = "done";
+const incompleteSummary = makeElement("summary");
+interpretationReviewUi.syncInterpretationReviewDetailsShellInto(
+  incompleteDetails,
+  incompleteSummary,
+  {
+    completed: false,
+    openSummary: `Open ${malicious}`,
+    closedSummary: `Closed ${malicious}`,
+  },
+);
+
+const completedDetails = makeElement("details");
+completedDetails.open = true;
+const completedSummary = makeElement("summary");
+interpretationReviewUi.syncInterpretationReviewDetailsShellInto(
+  completedDetails,
+  completedSummary,
+  {
+    completed: true,
+    openSummary: `Open ${malicious}`,
+    closedSummary: `Closed ${malicious}`,
+  },
+);
+
+const alreadyAutocollapsedDetails = makeElement("details");
+alreadyAutocollapsedDetails.open = true;
+alreadyAutocollapsedDetails.dataset.autocollapsed = "done";
+const alreadyAutocollapsedSummary = makeElement("summary");
+interpretationReviewUi.syncInterpretationReviewDetailsShellInto(
+  alreadyAutocollapsedDetails,
+  alreadyAutocollapsedSummary,
+  {
+    completed: true,
+    openSummary: "Open again",
+    closedSummary: `Closed again ${malicious}`,
+  },
+);
+
+const missingSummaryDetails = makeElement("details");
+missingSummaryDetails.open = true;
+interpretationReviewUi.syncInterpretationReviewDetailsShellInto(
+  missingSummaryDetails,
+  null,
+  {
+    completed: true,
+    openSummary: `Ignored open ${malicious}`,
+    closedSummary: `Ignored closed ${malicious}`,
+  },
+);
+
+const nullDetailsSummary = makeElement("summary");
+const nullDetailsResult = interpretationReviewUi.syncInterpretationReviewDetailsShellInto(
+  null,
+  nullDetailsSummary,
+  {
+    completed: false,
+    openSummary: `Null open ${malicious}`,
+    closedSummary: `Null closed ${malicious}`,
+  },
+);
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationReviewUi.syncInterpretationReviewDetailsShellInto,
+  incomplete: summarize(incompleteDetails, incompleteSummary),
+  completed: summarize(completedDetails, completedSummary),
+  alreadyAutocollapsed: summarize(alreadyAutocollapsedDetails, alreadyAutocollapsedSummary),
+  missingSummary: summarize(missingSummaryDetails),
+  nullDetailsSummaryText: nullDetailsSummary.textContent,
+  nullDetailsInnerHTMLWrites: countInnerHtmlWrites(nullDetailsSummary),
+  nullDetailsResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REVIEW_UI_MODULE_URL__": "interpretation_review_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["incomplete"]["open"] is True
+    assert results["incomplete"]["hasAutocollapsed"] is False
+    assert results["incomplete"]["summary"] == "Open <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["incomplete"]["imgCount"] == 0
+    assert results["incomplete"]["scriptCount"] == 0
+    assert results["incomplete"]["innerHTMLWrites"] == 0
+
+    assert results["completed"]["open"] is False
+    assert results["completed"]["autocollapsed"] == "done"
+    assert results["completed"]["summary"] == "Closed <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["completed"]["imgCount"] == 0
+    assert results["completed"]["scriptCount"] == 0
+    assert results["completed"]["innerHTMLWrites"] == 0
+
+    assert results["alreadyAutocollapsed"]["open"] is True
+    assert results["alreadyAutocollapsed"]["autocollapsed"] == "done"
+    assert results["alreadyAutocollapsed"]["summary"] == "Closed again <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["alreadyAutocollapsed"]["innerHTMLWrites"] == 0
+
+    assert results["missingSummary"]["open"] is False
+    assert results["missingSummary"]["autocollapsed"] == "done"
+    assert results["missingSummary"]["innerHTMLWrites"] == 0
+    assert results["nullDetailsSummaryText"] == ""
+    assert results["nullDetailsInnerHTMLWrites"] == 0
+    assert "nullDetailsResult" not in results
+
+
 def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -8010,6 +8259,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert interpretation_review_ui_asset.status_code == 200
         assert interpretation_review_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderInterpretationReviewContextInto" in interpretation_review_ui_asset.text
+        assert "syncInterpretationReviewDetailsShellInto" in interpretation_review_ui_asset.text
         interpretation_result_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_result_ui.js")
         assert interpretation_result_ui_asset.status_code == 200
         assert interpretation_result_ui_asset.headers["content-type"].startswith("application/javascript")

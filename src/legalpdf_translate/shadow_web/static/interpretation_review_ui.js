@@ -33,3 +33,24 @@ export function renderInterpretationReviewContextInto(nodes = {}, card = {}) {
     result.textContent = card.gmailResultEmpty || "";
   }
 }
+
+export function syncInterpretationReviewDetailsShellInto(details, summaryNode, shell = {}) {
+  if (!details) {
+    return;
+  }
+  if (!shell.completed) {
+    details.open = true;
+    delete details.dataset.autocollapsed;
+    if (summaryNode) {
+      summaryNode.textContent = shell.openSummary || "";
+    }
+    return;
+  }
+  if (details.dataset.autocollapsed !== "done") {
+    details.open = false;
+    details.dataset.autocollapsed = "done";
+  }
+  if (summaryNode) {
+    summaryNode.textContent = shell.closedSummary || "";
+  }
+}

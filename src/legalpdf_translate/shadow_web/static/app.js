@@ -48,7 +48,10 @@ import {
   renderInterpretationSeedCardInto,
   renderInterpretationSessionCardInto,
 } from "./interpretation_result_ui.js";
-import { renderInterpretationReviewContextInto } from "./interpretation_review_ui.js";
+import {
+  renderInterpretationReviewContextInto,
+  syncInterpretationReviewDetailsShellInto,
+} from "./interpretation_review_ui.js";
 import {
   renderCourtEmailOptionsInto,
   renderInterpretationCityOptionsInto,
@@ -925,21 +928,11 @@ function syncInterpretationReviewDetailsShell(completed) {
   }
   const summaryNode = qs("interpretation-review-details-summary");
   const presentation = currentInterpretationPresentation();
-  if (!completed) {
-    details.open = true;
-    delete details.dataset.autocollapsed;
-    if (summaryNode) {
-      summaryNode.textContent = presentation.drawer.detailsSummaryOpen;
-    }
-    return;
-  }
-  if (details.dataset.autocollapsed !== "done") {
-    details.open = false;
-    details.dataset.autocollapsed = "done";
-  }
-  if (summaryNode) {
-    summaryNode.textContent = presentation.drawer.detailsSummaryClosed;
-  }
+  syncInterpretationReviewDetailsShellInto(details, summaryNode, {
+    completed,
+    openSummary: presentation.drawer.detailsSummaryOpen,
+    closedSummary: presentation.drawer.detailsSummaryClosed,
+  });
 }
 
 function renderInterpretationCompletionCard(snapshot = interpretationSnapshot()) {
