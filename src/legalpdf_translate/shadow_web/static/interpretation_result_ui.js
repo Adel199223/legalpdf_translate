@@ -4,6 +4,71 @@ import {
 } from "./result_card_ui.js";
 import { clearNode } from "./safe_rendering.js";
 
+function valueOrNotSet(value) {
+  return value || "Not set yet";
+}
+
+function renderCardGridInto(container, { title = "", message = "", chip = {}, items = [] } = {}) {
+  if (!container) {
+    return;
+  }
+  clearNode(container);
+  container.appendChild(createResultHeader({
+    title,
+    message,
+    label: chip.label || "",
+    tone: chip.tone || "info",
+  }));
+  const grid = document.createElement("div");
+  grid.className = "result-grid";
+  for (const item of items) {
+    appendResultGridItem(grid, item.label, valueOrNotSet(item.value), { className: "word-break" });
+  }
+  container.appendChild(grid);
+}
+
+export function renderInterpretationSessionCardInto(container, card = {}) {
+  renderCardGridInto(container, {
+    title: card.title || "",
+    message: card.message || "",
+    chip: card.chip || {},
+    items: [
+      { label: "Case Number", value: card.caseNumber },
+      { label: "Court Email", value: card.courtEmail },
+      { label: "Service Date", value: card.serviceDate },
+      { label: "Location", value: card.location },
+    ],
+  });
+}
+
+export function renderInterpretationSeedCardInto(container, card = {}) {
+  renderCardGridInto(container, {
+    title: card.title || "",
+    message: card.message || "",
+    chip: card.chip || {},
+    items: [
+      { label: "Case", value: card.caseValue },
+      { label: "Court Email", value: card.courtEmail },
+      { label: "Service Date", value: card.serviceDate },
+      { label: "Location", value: card.location },
+    ],
+  });
+}
+
+export function renderInterpretationReviewSummaryCardInto(container, card = {}) {
+  renderCardGridInto(container, {
+    title: card.title || "",
+    message: card.message || "",
+    chip: card.chip || {},
+    items: [
+      { label: "Case Number", value: card.caseNumber },
+      { label: "Court Email", value: card.courtEmail },
+      { label: "Service Date", value: card.serviceDate },
+      { label: "Location", value: card.location },
+    ],
+  });
+}
+
 export function renderInterpretationExportResultInto(container, payload, presentation) {
   const result = payload.normalized_payload || {};
   const pdf = payload.diagnostics?.pdf_export || {};

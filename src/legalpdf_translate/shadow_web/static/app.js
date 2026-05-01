@@ -43,6 +43,9 @@ import {
   renderInterpretationCompletionCardInto,
   renderInterpretationExportResultInto,
   renderInterpretationGmailResultInto,
+  renderInterpretationReviewSummaryCardInto,
+  renderInterpretationSeedCardInto,
+  renderInterpretationSessionCardInto,
 } from "./interpretation_result_ui.js";
 import {
   buildSettingsCapabilityCards,
@@ -838,21 +841,15 @@ function renderInterpretationSessionShell(snapshot = interpretationSnapshot()) {
     statusNode.textContent = presentation.home.status;
   }
   result.classList.remove("empty-state");
-  result.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(presentation.home.resultTitle)}</strong>
-        <p>${escapeHtml(noticeFilename)}</p>
-      </div>
-      <span class="status-chip ${chip.tone}">${escapeHtml(chip.label)}</span>
-    </div>
-    <div class="result-grid">
-      <div><h3>Case Number</h3><p class="word-break">${escapeHtml(snapshot.caseNumber || "Not set yet")}</p></div>
-      <div><h3>Court Email</h3><p class="word-break">${escapeHtml(snapshot.courtEmail || "Not set yet")}</p></div>
-      <div><h3>Service Date</h3><p class="word-break">${escapeHtml(snapshot.serviceDate || "Not set yet")}</p></div>
-      <div><h3>Location</h3><p class="word-break">${escapeHtml(locationSummary)}</p></div>
-    </div>
-  `;
+  renderInterpretationSessionCardInto(result, {
+    title: presentation.home.resultTitle,
+    message: noticeFilename,
+    chip,
+    caseNumber: snapshot.caseNumber,
+    courtEmail: snapshot.courtEmail,
+    serviceDate: snapshot.serviceDate,
+    location: locationSummary,
+  });
 }
 
 function renderInterpretationSeedCard(containerId) {
@@ -868,21 +865,18 @@ function renderInterpretationSeedCard(containerId) {
     return;
   }
   container.classList.remove("empty-state");
-  container.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(presentation.reviewHome.title)}</strong>
-        <p>${escapeHtml(presentation.reviewHome.subtitle)}</p>
-      </div>
-      <span class="status-chip ${snapshot.rowId ? "ok" : "info"}">${snapshot.rowId ? "Saved" : "Ready"}</span>
-    </div>
-    <div class="result-grid">
-      <div><h3>Case</h3><p class="word-break">${escapeHtml(snapshot.caseNumber || "Not set yet")}</p></div>
-      <div><h3>Court Email</h3><p class="word-break">${escapeHtml(snapshot.courtEmail || "Not set yet")}</p></div>
-      <div><h3>Service Date</h3><p class="word-break">${escapeHtml(snapshot.serviceDate || "Not set yet")}</p></div>
-      <div><h3>Location</h3><p class="word-break">${escapeHtml([snapshot.caseEntity, snapshot.caseCity].filter(Boolean).join(" | ") || "Not set yet")}</p></div>
-    </div>
-  `;
+  renderInterpretationSeedCardInto(container, {
+    title: presentation.reviewHome.title,
+    message: presentation.reviewHome.subtitle,
+    chip: {
+      tone: snapshot.rowId ? "ok" : "info",
+      label: snapshot.rowId ? "Saved" : "Ready",
+    },
+    caseValue: snapshot.caseNumber,
+    courtEmail: snapshot.courtEmail,
+    serviceDate: snapshot.serviceDate,
+    location: [snapshot.caseEntity, snapshot.caseCity].filter(Boolean).join(" | "),
+  });
 }
 
 function renderInterpretationReviewSummary(snapshot = interpretationSnapshot()) {
@@ -904,21 +898,15 @@ function renderInterpretationReviewSummary(snapshot = interpretationSnapshot()) 
     ? noticeFilename
     : presentation.drawer.summarySubtitle;
   container.classList.remove("empty-state");
-  container.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(presentation.drawer.summaryTitle)}</strong>
-        <p>${escapeHtml(subtitle)}</p>
-      </div>
-      <span class="status-chip ${chip.tone}">${escapeHtml(chip.label)}</span>
-    </div>
-    <div class="result-grid">
-      <div><h3>Case Number</h3><p class="word-break">${escapeHtml(snapshot.caseNumber || "Not set yet")}</p></div>
-      <div><h3>Court Email</h3><p class="word-break">${escapeHtml(snapshot.courtEmail || "Not set yet")}</p></div>
-      <div><h3>Service Date</h3><p class="word-break">${escapeHtml(snapshot.serviceDate || "Not set yet")}</p></div>
-      <div><h3>Location</h3><p class="word-break">${escapeHtml(interpretationLocationSummary(snapshot))}</p></div>
-    </div>
-  `;
+  renderInterpretationReviewSummaryCardInto(container, {
+    title: presentation.drawer.summaryTitle,
+    message: subtitle,
+    chip,
+    caseNumber: snapshot.caseNumber,
+    courtEmail: snapshot.courtEmail,
+    serviceDate: snapshot.serviceDate,
+    location: interpretationLocationSummary(snapshot),
+  });
 }
 
 function renderInterpretationReviewContext(snapshot = interpretationSnapshot()) {

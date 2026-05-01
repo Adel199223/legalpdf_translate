@@ -3696,10 +3696,40 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "export function renderInterpretationExportResultInto" in interpretation_result_ui_text
     assert "export function renderInterpretationGmailResultInto" in interpretation_result_ui_text
     assert "export function renderInterpretationCompletionCardInto" in interpretation_result_ui_text
+    assert "export function renderInterpretationSessionCardInto" in interpretation_result_ui_text
+    assert "export function renderInterpretationSeedCardInto" in interpretation_result_ui_text
+    assert "export function renderInterpretationReviewSummaryCardInto" in interpretation_result_ui_text
     assert "renderInterpretationExportResultInto(container, payload, currentInterpretationPresentation());" in app_js
     assert "renderInterpretationGmailResultInto(container, payload, currentInterpretationPresentation());" in app_js
     assert "renderInterpretationCompletionCardInto(container, {" in app_js
+    assert "renderInterpretationSessionCardInto(result, {" in app_js
+    assert "renderInterpretationSeedCardInto(container, {" in app_js
+    assert "renderInterpretationReviewSummaryCardInto(container, {" in app_js
     assert 'qs("interpretation-review-export-panel")?.classList.remove("hidden");' in app_js
+    session_start = app_js.index("function renderInterpretationSessionShell")
+    seed_start = app_js.index("function renderInterpretationSeedCard", session_start)
+    session_block = app_js[session_start:seed_start]
+    assert 'result.classList.remove("empty-state");' in session_block
+    assert "presentation.home.resultTitle" in session_block
+    assert "interpretationLocationSummary(snapshot)" in session_block
+    assert "innerHTML" not in session_block
+    assert "escapeHtml" not in session_block
+    review_summary_start = app_js.index("function renderInterpretationReviewSummary", seed_start)
+    seed_block = app_js[seed_start:review_summary_start]
+    assert 'container.classList.add("empty-state");' in seed_block
+    assert 'container.classList.remove("empty-state");' in seed_block
+    assert "presentation.reviewHome.emptyState" in seed_block
+    assert "hasInterpretationReviewData(snapshot)" in seed_block
+    assert "innerHTML" not in seed_block
+    assert "escapeHtml" not in seed_block
+    review_context_start = app_js.index("function renderInterpretationReviewContext", review_summary_start)
+    review_summary_block = app_js[review_summary_start:review_context_start]
+    assert 'container.classList.add("empty-state");' in review_summary_block
+    assert 'container.classList.remove("empty-state");' in review_summary_block
+    assert "presentation.drawer.summaryEmpty" in review_summary_block
+    assert "interpretationLocationSummary(snapshot)" in review_summary_block
+    assert "innerHTML" not in review_summary_block
+    assert "escapeHtml" not in review_summary_block
     gmail_start = app_js.index("export function renderInterpretationGmailResult")
     dashboard_start = app_js.index("function renderDashboard", gmail_start)
     gmail_block = app_js[gmail_start:dashboard_start]
@@ -4017,11 +4047,107 @@ const nullCompletionResult = interpretationResultUi.renderInterpretationCompleti
   title: "Ignored",
 });
 
+const sessionContainer = document.createElement("div");
+sessionContainer.className = "result-card";
+interpretationResultUi.renderInterpretationSessionCardInto(sessionContainer, {
+  title: `Session title ${malicious}`,
+  message: `Notice ${malicious}.pdf`,
+  chip: {
+    tone: "ok",
+    label: `Session label ${malicious}`,
+  },
+  caseNumber: `Case number ${malicious}`,
+  courtEmail: `court-${malicious}@example.test`,
+  serviceDate: `2026-05-01 ${malicious}`,
+  location: `Location ${malicious}`,
+});
+
+const sessionFallbackContainer = document.createElement("div");
+sessionFallbackContainer.className = "result-card";
+interpretationResultUi.renderInterpretationSessionCardInto(sessionFallbackContainer, {
+  title: `Session fallback ${malicious}`,
+  message: "",
+  chip: {
+    tone: "info",
+    label: `Session fallback label ${malicious}`,
+  },
+  caseNumber: "",
+  courtEmail: "",
+  serviceDate: "",
+  location: "",
+});
+
+const seedContainer = document.createElement("div");
+seedContainer.className = "result-card";
+interpretationResultUi.renderInterpretationSeedCardInto(seedContainer, {
+  title: `Seed title ${malicious}`,
+  message: `Seed message ${malicious}`,
+  chip: {
+    tone: "info",
+    label: `Seed label ${malicious}`,
+  },
+  caseValue: `Seed case ${malicious}`,
+  courtEmail: `seed-${malicious}@example.test`,
+  serviceDate: `2026-05-02 ${malicious}`,
+  location: `Seed location ${malicious}`,
+});
+
+const seedFallbackContainer = document.createElement("div");
+seedFallbackContainer.className = "result-card";
+interpretationResultUi.renderInterpretationSeedCardInto(seedFallbackContainer, {
+  title: `Seed fallback ${malicious}`,
+  message: "",
+  chip: {
+    tone: "ok",
+    label: `Seed fallback label ${malicious}`,
+  },
+  caseValue: "",
+  courtEmail: "",
+  serviceDate: "",
+  location: "",
+});
+
+const reviewSummaryContainer = document.createElement("div");
+reviewSummaryContainer.className = "result-card";
+interpretationResultUi.renderInterpretationReviewSummaryCardInto(reviewSummaryContainer, {
+  title: `Review title ${malicious}`,
+  message: `Review subtitle ${malicious}`,
+  chip: {
+    tone: "warn",
+    label: `Review label ${malicious}`,
+  },
+  caseNumber: `Review case ${malicious}`,
+  courtEmail: `review-${malicious}@example.test`,
+  serviceDate: `2026-05-03 ${malicious}`,
+  location: `Review location ${malicious}`,
+});
+
+const reviewSummaryFallbackContainer = document.createElement("div");
+reviewSummaryFallbackContainer.className = "result-card";
+interpretationResultUi.renderInterpretationReviewSummaryCardInto(reviewSummaryFallbackContainer, {
+  title: `Review fallback ${malicious}`,
+  message: "",
+  chip: {
+    tone: "bad",
+    label: `Review fallback label ${malicious}`,
+  },
+  caseNumber: "",
+  courtEmail: "",
+  serviceDate: "",
+  location: "",
+});
+const nullSessionResult = interpretationResultUi.renderInterpretationSessionCardInto(null, {});
+const nullSeedResult = interpretationResultUi.renderInterpretationSeedCardInto(null, {});
+const nullReviewSummaryResult = interpretationResultUi.renderInterpretationReviewSummaryCardInto(null, {});
+
 console.log(JSON.stringify({
   exportedTypes: {
     export: typeof interpretationResultUi.renderInterpretationExportResultInto,
     gmail: typeof interpretationResultUi.renderInterpretationGmailResultInto,
     completion: typeof interpretationResultUi.renderInterpretationCompletionCardInto,
+    session: typeof interpretationResultUi.renderInterpretationSessionCardInto,
+    seed: typeof interpretationResultUi.renderInterpretationSeedCardInto,
+    reviewSummary: typeof interpretationResultUi.renderInterpretationReviewSummaryCardInto,
   },
   ok: summarize(okContainer),
   localOnly: summarize(localOnlyContainer),
@@ -4032,8 +4158,17 @@ console.log(JSON.stringify({
   gmailEmpty: summarize(gmailEmptyContainer),
   completion: summarize(completionContainer),
   completionFallback: summarize(completionFallbackContainer),
+  session: summarize(sessionContainer),
+  sessionFallback: summarize(sessionFallbackContainer),
+  seed: summarize(seedContainer),
+  seedFallback: summarize(seedFallbackContainer),
+  reviewSummary: summarize(reviewSummaryContainer),
+  reviewSummaryFallback: summarize(reviewSummaryFallbackContainer),
   nullContainerResult,
   nullCompletionResult,
+  nullSessionResult,
+  nullSeedResult,
+  nullReviewSummaryResult,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -4046,6 +4181,9 @@ console.log(JSON.stringify({
         "export": "function",
         "gmail": "function",
         "completion": "function",
+        "session": "function",
+        "seed": "function",
+        "reviewSummary": "function",
     }
     assert results["ok"]["className"] == "result-card"
     assert results["ok"]["childClasses"] == ["result-header", "result-grid"]
@@ -4169,6 +4307,90 @@ console.log(JSON.stringify({
     assert results["completionFallback"]["scriptCount"] == 0
     assert results["completionFallback"]["innerHTMLWrites"] == 0
     assert "nullCompletionResult" not in results
+
+    assert results["session"]["className"] == "result-card"
+    assert results["session"]["childClasses"] == ["result-header", "result-grid"]
+    assert results["session"]["gridLabels"] == ["Case Number", "Court Email", "Service Date", "Location"]
+    assert "Session title <img src=x onerror=alert(1)><script>bad()</script>" in results["session"]["text"]
+    assert "Notice <img src=x onerror=alert(1)><script>bad()</script>.pdf" in results["session"]["text"]
+    assert "Session label <img src=x onerror=alert(1)><script>bad()</script>" in results["session"]["text"]
+    assert results["session"]["gridValues"] == [
+        "Case number <img src=x onerror=alert(1)><script>bad()</script>",
+        "court-<img src=x onerror=alert(1)><script>bad()</script>@example.test",
+        "2026-05-01 <img src=x onerror=alert(1)><script>bad()</script>",
+        "Location <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert "status-chip ok" in results["session"]["classes"]
+    assert results["session"]["classes"].count("word-break") == 4
+    assert results["session"]["imgCount"] == 0
+    assert results["session"]["scriptCount"] == 0
+    assert results["session"]["innerHTMLWrites"] == 0
+
+    assert results["sessionFallback"]["gridValues"] == [
+        "Not set yet",
+        "Not set yet",
+        "Not set yet",
+        "Not set yet",
+    ]
+    assert "status-chip info" in results["sessionFallback"]["classes"]
+    assert results["sessionFallback"]["innerHTMLWrites"] == 0
+
+    assert results["seed"]["className"] == "result-card"
+    assert results["seed"]["childClasses"] == ["result-header", "result-grid"]
+    assert results["seed"]["gridLabels"] == ["Case", "Court Email", "Service Date", "Location"]
+    assert "Seed title <img src=x onerror=alert(1)><script>bad()</script>" in results["seed"]["text"]
+    assert "Seed message <img src=x onerror=alert(1)><script>bad()</script>" in results["seed"]["text"]
+    assert "Seed label <img src=x onerror=alert(1)><script>bad()</script>" in results["seed"]["text"]
+    assert results["seed"]["gridValues"] == [
+        "Seed case <img src=x onerror=alert(1)><script>bad()</script>",
+        "seed-<img src=x onerror=alert(1)><script>bad()</script>@example.test",
+        "2026-05-02 <img src=x onerror=alert(1)><script>bad()</script>",
+        "Seed location <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert "status-chip info" in results["seed"]["classes"]
+    assert results["seed"]["classes"].count("word-break") == 4
+    assert results["seed"]["imgCount"] == 0
+    assert results["seed"]["scriptCount"] == 0
+    assert results["seed"]["innerHTMLWrites"] == 0
+
+    assert results["seedFallback"]["gridValues"] == [
+        "Not set yet",
+        "Not set yet",
+        "Not set yet",
+        "Not set yet",
+    ]
+    assert "status-chip ok" in results["seedFallback"]["classes"]
+    assert results["seedFallback"]["innerHTMLWrites"] == 0
+
+    assert results["reviewSummary"]["className"] == "result-card"
+    assert results["reviewSummary"]["childClasses"] == ["result-header", "result-grid"]
+    assert results["reviewSummary"]["gridLabels"] == ["Case Number", "Court Email", "Service Date", "Location"]
+    assert "Review title <img src=x onerror=alert(1)><script>bad()</script>" in results["reviewSummary"]["text"]
+    assert "Review subtitle <img src=x onerror=alert(1)><script>bad()</script>" in results["reviewSummary"]["text"]
+    assert "Review label <img src=x onerror=alert(1)><script>bad()</script>" in results["reviewSummary"]["text"]
+    assert results["reviewSummary"]["gridValues"] == [
+        "Review case <img src=x onerror=alert(1)><script>bad()</script>",
+        "review-<img src=x onerror=alert(1)><script>bad()</script>@example.test",
+        "2026-05-03 <img src=x onerror=alert(1)><script>bad()</script>",
+        "Review location <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert "status-chip warn" in results["reviewSummary"]["classes"]
+    assert results["reviewSummary"]["classes"].count("word-break") == 4
+    assert results["reviewSummary"]["imgCount"] == 0
+    assert results["reviewSummary"]["scriptCount"] == 0
+    assert results["reviewSummary"]["innerHTMLWrites"] == 0
+
+    assert results["reviewSummaryFallback"]["gridValues"] == [
+        "Not set yet",
+        "Not set yet",
+        "Not set yet",
+        "Not set yet",
+    ]
+    assert "status-chip bad" in results["reviewSummaryFallback"]["classes"]
+    assert results["reviewSummaryFallback"]["innerHTMLWrites"] == 0
+    assert "nullSessionResult" not in results
+    assert "nullSeedResult" not in results
+    assert "nullReviewSummaryResult" not in results
 
 
 def test_recent_work_ui_module_centralizes_safe_history_rendering() -> None:
@@ -7092,6 +7314,9 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationExportResultInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationGmailResultInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationCompletionCardInto" in interpretation_result_ui_asset.text
+        assert "renderInterpretationSessionCardInto" in interpretation_result_ui_asset.text
+        assert "renderInterpretationSeedCardInto" in interpretation_result_ui_asset.text
+        assert "renderInterpretationReviewSummaryCardInto" in interpretation_result_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")
