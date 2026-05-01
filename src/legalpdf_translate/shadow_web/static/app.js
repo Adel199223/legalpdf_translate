@@ -55,7 +55,9 @@ import {
   upsertDistanceRow,
 } from "./profile_presentation.js";
 import {
+  renderPrimaryProfileCardInto,
   renderProfileDistanceRowsInto,
+  renderProfileListInto,
   renderProfileOptionsInto,
 } from "./profile_ui.js";
 import {
@@ -2335,88 +2337,30 @@ function renderProfile(payload) {
   if (newButton) {
     newButton.disabled = false;
   }
-  if (!primary) {
-    primaryCard.classList.add("empty-state");
-    primaryCard.innerHTML = "No main profile is set yet. Add a profile or choose one from the list.";
-  } else {
-    const presentation = deriveProfilePresentation(primary);
-    primaryCard.classList.remove("empty-state");
-    primaryCard.innerHTML = `
-      <div class="result-header">
-        <div>
-          <p class="eyebrow">Main profile summary</p>
-          <strong>${escapeHtml(presentation.displayName)}</strong>
-          <p>${escapeHtml(presentation.contactSummary)}</p>
-        </div>
-        <span class="status-chip ok">${escapeHtml(presentation.mainChipLabel)}</span>
-      </div>
-      <div class="history-meta">
-        <small>${escapeHtml(presentation.travelOriginSummary)}</small>
-        <small>${escapeHtml(presentation.distanceSummary)}</small>
-      </div>
-    `;
-  }
+  renderPrimaryProfileCardInto(primaryCard, primary);
   const container = qs("profile-list");
-  container.innerHTML = "";
-  if (!(summary.profiles || []).length) {
-    container.innerHTML = '<div class="result-card empty-state">No profiles yet. Add a profile to get started.</div>';
-  }
-  for (const profile of summary.profiles || []) {
-    const presentation = deriveProfilePresentation(profile);
-    const distanceCount = normalizeDistanceRows(profile.travel_distances_by_city || {}).length;
-    const article = document.createElement("article");
-    article.className = "profile-card";
-    article.innerHTML = `
-      <div class="result-header">
-        <div>
-          <p class="eyebrow">Profile record</p>
-          <h3>${escapeHtml(presentation.displayName)}</h3>
-          <p>${escapeHtml(presentation.contactSummary)}</p>
-        </div>
-        <span class="status-chip ${profile.is_primary ? "ok" : "info"}">${escapeHtml(profile.is_primary ? presentation.mainChipLabel : `${distanceCount} saved city distance${distanceCount === 1 ? "" : "s"}`)}</span>
-      </div>
-      <div class="history-meta">
-        <small>${escapeHtml(presentation.travelOriginSummary)}</small>
-        <small>${escapeHtml(presentation.distanceSummary)}</small>
-      </div>
-      <p class="profile-card-helper">Edit this profile's contact, payment, and travel details.</p>
-    `;
-    const actions = document.createElement("div");
-    actions.className = "history-actions";
-    const editButton = document.createElement("button");
-    editButton.type = "button";
-    editButton.textContent = "Edit";
-    editButton.addEventListener("click", () => applyProfileEditor(cloneJson(profile), { openDrawer: true }));
-    const primaryButton = document.createElement("button");
-    primaryButton.type = "button";
-    primaryButton.textContent = presentation.useAsMainLabel;
-    primaryButton.disabled = Boolean(profile.is_primary);
-    primaryButton.addEventListener("click", async () => {
+  renderProfileListInto(container, summary.profiles || [], {
+    count: summary.count || 0,
+    onEdit(profile) {
+      applyProfileEditor(cloneJson(profile), { openDrawer: true });
+    },
+    async onSetPrimary(profile) {
       try {
         await handleSetPrimaryProfile(profile.id);
       } catch (error) {
         setPanelStatus("profile", "bad", error.message || "Set-primary failed.");
         setDiagnostics("profile", error, { hint: error.message || "Set-primary failed.", open: true });
       }
-    });
-    const deleteButton = document.createElement("button");
-    deleteButton.type = "button";
-    deleteButton.textContent = "Delete profile";
-    deleteButton.disabled = Boolean(summary.count <= 1);
-    deleteButton.addEventListener("click", async () => {
+    },
+    async onDelete(profile) {
       try {
         await handleDeleteProfile(profile.id);
       } catch (error) {
         setPanelStatus("profile", "bad", error.message || "Profile delete failed.");
         setDiagnostics("profile", error, { hint: error.message || "Profile delete failed.", open: true });
       }
-    });
-    actions.appendChild(editButton);
-    actions.appendChild(primaryButton);
-    actions.appendChild(deleteButton);
-    article.appendChild(actions);
-    container.appendChild(article);
-  }
+    },
+  });
   setPanelStatus("profile", "", formatProfileCountStatus(summary.count || 0));
   setDiagnostics("profile", summary, {
     hint: "Profile summaries, required fields, and saved distance data appear here.",

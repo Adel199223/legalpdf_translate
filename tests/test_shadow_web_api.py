@@ -2748,6 +2748,315 @@ console.log(JSON.stringify({
     assert results["nullSelectResultType"] == "undefined"
 
 
+def test_profile_ui_module_centralizes_safe_profile_card_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    profile_ui_module = static_dir / "profile_ui.js"
+
+    assert profile_ui_module.exists()
+    profile_ui_js = profile_ui_module.read_text(encoding="utf-8")
+    assert "export function renderPrimaryProfileCardInto" in profile_ui_js
+    assert "export function renderProfileListInto" in profile_ui_js
+    assert "renderPrimaryProfileCardInto(primaryCard, primary);" in app_js
+    assert "renderProfileListInto(container, summary.profiles || [], {" in app_js
+    assert "primaryCard.innerHTML" not in app_js
+    assert "article.innerHTML" not in app_js
+    assert "profile-card-helper" not in app_js
+
+    script = r"""
+const profileUi = await import(__PROFILE_UI_MODULE_URL__);
+
+function createClassList(element) {
+  return {
+    add(...names) {
+      const classes = new Set(String(element.className || "").split(/\s+/).filter(Boolean));
+      names.forEach((name) => classes.add(name));
+      element.className = Array.from(classes).join(" ");
+    },
+    remove(...names) {
+      const classes = new Set(String(element.className || "").split(/\s+/).filter(Boolean));
+      names.forEach((name) => classes.delete(name));
+      element.className = Array.from(classes).join(" ");
+    },
+    contains(name) {
+      return String(element.className || "").split(/\s+/).filter(Boolean).includes(name);
+    },
+  };
+}
+
+function makeElement(tagName = "div") {
+  const listeners = new Map();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    attributes: {},
+    children: [],
+    parentNode: null,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    disabled: false,
+    setAttribute(name, value) {
+      this.attributes[name] = String(value ?? "");
+    },
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+    addEventListener(type, handler) {
+      if (!listeners.has(type)) {
+        listeners.set(type, []);
+      }
+      listeners.get(type).push(handler);
+    },
+    click() {
+      for (const handler of listeners.get("click") || []) {
+        handler({ target: this, currentTarget: this, preventDefault() {} });
+      }
+    },
+  };
+  element.classList = createClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function buttonSummaries(node) {
+  const buttons = [];
+  walk(node, (current) => {
+    if (current.tagName === "BUTTON") {
+      buttons.push({
+        text: current.textContent,
+        type: current.type,
+        disabled: Boolean(current.disabled),
+      });
+    }
+  });
+  return buttons;
+}
+
+function classNames(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (current.className) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const primaryProfile = {
+  id: `primary-${malicious}`,
+  document_name: `Main ${malicious}`,
+  email: `main@example.com${malicious}`,
+  phone_number: "555-0101",
+  travel_origin_label: `Lisbon ${malicious}`,
+  travel_distances_by_city: { Porto: 313, Faro: 278 },
+  is_primary: true,
+};
+const secondaryProfile = {
+  id: "secondary",
+  document_name: `Second ${malicious}`,
+  email: "",
+  phone_number: "",
+  travel_origin_label: "",
+  travel_distances_by_city: { Porto: 313 },
+  is_primary: false,
+};
+
+const primaryCard = document.createElement("article");
+profileUi.renderPrimaryProfileCardInto(primaryCard, primaryProfile);
+
+const emptyPrimaryCard = document.createElement("article");
+profileUi.renderPrimaryProfileCardInto(emptyPrimaryCard, null);
+
+const list = document.createElement("div");
+const calls = [];
+profileUi.renderProfileListInto(list, [primaryProfile, secondaryProfile], {
+  count: 2,
+  onEdit(profile) {
+    calls.push(`edit:${profile.id}`);
+  },
+  onSetPrimary(profile) {
+    calls.push(`primary:${profile.id}`);
+  },
+  onDelete(profile) {
+    calls.push(`delete:${profile.id}`);
+  },
+});
+const buttons = buttonSummaries(list);
+walk(list, (node) => {
+  if (node.tagName === "BUTTON" && !node.disabled) {
+    node.click();
+  }
+});
+
+const singleList = document.createElement("div");
+profileUi.renderProfileListInto(singleList, [primaryProfile], { count: 1 });
+
+const emptyList = document.createElement("div");
+profileUi.renderProfileListInto(emptyList, [], { count: 0 });
+
+const nullPrimaryResult = profileUi.renderPrimaryProfileCardInto(null, primaryProfile);
+const nullListResult = profileUi.renderProfileListInto(null, [primaryProfile], { count: 1 });
+
+console.log(JSON.stringify({
+  primaryExportedType: typeof profileUi.renderPrimaryProfileCardInto,
+  listExportedType: typeof profileUi.renderProfileListInto,
+  primaryText: primaryCard.textContent,
+  primaryClass: primaryCard.className,
+  emptyPrimaryText: emptyPrimaryCard.textContent,
+  emptyPrimaryClass: emptyPrimaryCard.className,
+  listText: list.textContent,
+  listClasses: classNames(list),
+  articleCount: countTag(list, "article"),
+  buttonSummaries: buttons,
+  singleButtonSummaries: buttonSummaries(singleList),
+  calls,
+  emptyListText: emptyList.textContent,
+  emptyListClass: emptyList.children[0]?.className || "",
+  imgCount: countTag(primaryCard, "img") + countTag(list, "img"),
+  scriptCount: countTag(primaryCard, "script") + countTag(list, "script"),
+  innerHTMLWrites: countInnerHtmlWrites(primaryCard) + countInnerHtmlWrites(list),
+  nullPrimaryResultType: nullPrimaryResult === undefined ? "undefined" : typeof nullPrimaryResult,
+  nullListResultType: nullListResult === undefined ? "undefined" : typeof nullListResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__PROFILE_UI_MODULE_URL__": "profile_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["primaryExportedType"] == "function"
+    assert results["listExportedType"] == "function"
+    assert "Main <img src=x onerror=alert(1)><script>bad()</script>" in results["primaryText"]
+    assert "main@example.com<img src=x onerror=alert(1)><script>bad()</script> | 555-0101" in results["primaryText"]
+    assert "Travel origin: Lisbon <img src=x onerror=alert(1)><script>bad()</script>" in results["primaryText"]
+    assert "2 saved city distances." in results["primaryText"]
+    assert "Main profile" in results["primaryText"]
+    assert results["primaryClass"] == ""
+    assert results["emptyPrimaryText"] == "No main profile is set yet. Add a profile or choose one from the list."
+    assert results["emptyPrimaryClass"] == "empty-state"
+    assert "Profile record" in results["listText"]
+    assert "Second <img src=x onerror=alert(1)><script>bad()</script>" in results["listText"]
+    assert "Add email or phone details to use them in Gmail replies." in results["listText"]
+    assert "Edit this profile's contact, payment, and travel details." in results["listText"]
+    assert "1 saved city distance" in results["listText"]
+    assert results["articleCount"] == 2
+    assert "profile-card" in results["listClasses"]
+    assert "history-actions" in results["listClasses"]
+    assert results["buttonSummaries"] == [
+        {"text": "Edit", "type": "button", "disabled": False},
+        {"text": "Main profile", "type": "button", "disabled": True},
+        {"text": "Delete profile", "type": "button", "disabled": False},
+        {"text": "Edit", "type": "button", "disabled": False},
+        {"text": "Use as main profile", "type": "button", "disabled": False},
+        {"text": "Delete profile", "type": "button", "disabled": False},
+    ]
+    assert results["singleButtonSummaries"][2] == {
+        "text": "Delete profile",
+        "type": "button",
+        "disabled": True,
+    }
+    assert results["calls"] == [
+        "edit:primary-<img src=x onerror=alert(1)><script>bad()</script>",
+        "delete:primary-<img src=x onerror=alert(1)><script>bad()</script>",
+        "edit:secondary",
+        "primary:secondary",
+        "delete:secondary",
+    ]
+    assert results["emptyListText"] == "No profiles yet. Add a profile to get started."
+    assert results["emptyListClass"] == "result-card empty-state"
+    assert results["imgCount"] == 0
+    assert results["scriptCount"] == 0
+    assert results["innerHTMLWrites"] == 0
+    assert results["nullPrimaryResultType"] == "undefined"
+    assert results["nullListResultType"] == "undefined"
+
+
 def test_dashboard_ui_module_centralizes_safe_card_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -4375,6 +4684,7 @@ def test_shadow_web_tiny_presentation_cleanup_copy_is_distinct() -> None:
         encoding="utf-8"
     )
     app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    profile_ui_js = (static_dir / "profile_ui.js").read_text(encoding="utf-8")
     recent_work_ui_js = (static_dir / "recent_work_ui.js").read_text(encoding="utf-8")
     translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
 
@@ -4386,8 +4696,8 @@ def test_shadow_web_tiny_presentation_cleanup_copy_is_distinct() -> None:
     assert "Main profile summary" in template
     assert "Profile records" in template
     assert "Edit saved contact, payment, and travel details here." in template
-    assert "Profile record" in app_js
-    assert "Edit this profile's contact, payment, and travel details." in app_js
+    assert "Profile record" in profile_ui_js
+    assert "Edit this profile's contact, payment, and travel details." in profile_ui_js
 
 
 def test_shadow_web_client_prefers_url_launch_session_state_over_stale_bootstrap() -> None:
@@ -6526,6 +6836,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert profile_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderProfileDistanceRowsInto" in profile_ui_asset.text
         assert "renderProfileOptionsInto" in profile_ui_asset.text
+        assert "renderPrimaryProfileCardInto" in profile_ui_asset.text
+        assert "renderProfileListInto" in profile_ui_asset.text
         dashboard_ui_asset = client.get(f"/static-build/{asset_version}/dashboard_ui.js")
         assert dashboard_ui_asset.status_code == 200
         assert dashboard_ui_asset.headers["content-type"].startswith("application/javascript")
