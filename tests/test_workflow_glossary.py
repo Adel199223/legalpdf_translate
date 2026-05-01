@@ -138,3 +138,101 @@ def test_append_glossary_prompt_ignores_study_glossary_data() -> None:
     assert "<<<BEGIN GLOSSARY>>>" in prompt
     assert "الاتهام" in prompt
     assert "نص دراسة" not in prompt
+
+
+def test_append_glossary_prompt_prepends_header_priority_matches_before_generic_rows() -> None:
+    workflow = TranslationWorkflow(client=object())
+    workflow._prompt_glossaries_by_lang = {
+        "EN": [
+            GlossaryEntry("Ministério Público", "Public Prosecutor's Office", "exact", "PT", 2),
+            GlossaryEntry("arguido", "defendant", "exact", "PT", 2),
+        ],
+        "FR": [],
+        "AR": [],
+    }
+    workflow._enabled_glossary_tiers_by_lang = {"EN": [1, 2], "FR": [1, 2], "AR": [1, 2]}
+
+    prompt = workflow._append_glossary_prompt(
+        "BASE",
+        TargetLang.EN,
+        source_text="Ministério Público - Procuradoria da República da Comarca de Beja",
+    )
+
+    assert "Public Prosecutor's Office - Republic Prosecutor's Office of the District of Beja" in prompt
+    header_idx = prompt.index("Ministério Público - Procuradoria da República da Comarca de Beja")
+    generic_idx = prompt.index("'Ministério Público' => 'Public Prosecutor's Office'")
+    assert header_idx < generic_idx
+
+
+def test_append_glossary_prompt_keeps_header_matches_when_generic_rows_hit_prompt_cap() -> None:
+    workflow = TranslationWorkflow(client=object())
+    workflow._prompt_glossaries_by_lang = {
+        "EN": [GlossaryEntry(f"src-{i}", f"dst-{i}", "exact", "PT", 1) for i in range(120)],
+        "FR": [],
+        "AR": [],
+    }
+    workflow._enabled_glossary_tiers_by_lang = {"EN": [1, 2], "FR": [1, 2], "AR": [1, 2]}
+
+    prompt = workflow._append_glossary_prompt(
+        "BASE",
+        TargetLang.EN,
+        source_text="Juízo Local Criminal de Beja\n" + "\n".join(f"src-{i}" for i in range(120)),
+    )
+
+    assert "'Juízo Local Criminal de Beja' => 'Local Criminal Division of Beja'" in prompt
+
+
+def test_append_glossary_prompt_injects_o_juiz_de_direito_under_default_tiers() -> None:
+    workflow = TranslationWorkflow(client=object())
+    workflow._prompt_glossaries_by_lang = {"EN": [], "FR": [], "AR": []}
+    workflow._enabled_glossary_tiers_by_lang = {"EN": [1, 2], "FR": [1, 2], "AR": [1, 2]}
+
+    prompt = workflow._append_glossary_prompt(
+        "BASE",
+        TargetLang.AR,
+        source_text="Juiz de Direito\nAssinado digitalmente",
+    )
+
+    assert "'O Juiz de Direito' => 'القاضي'" in prompt
+
+
+def test_append_glossary_prompt_promotes_citation_aliases_without_enabling_higher_tiers() -> None:
+    workflow = TranslationWorkflow(client=object())
+    workflow._prompt_glossaries_by_lang = {
+        "EN": [],
+        "FR": [],
+        "AR": [
+            GlossaryEntry("p. e p. pelos artigos", "المعاقب عليها بمقتضى المواد", "contains", "PT", 4),
+            GlossaryEntry("alínea", "الفقرة", "exact", "PT", 4),
+            GlossaryEntry("n.º", "رقم", "exact", "PT", 4),
+        ],
+    }
+    workflow._enabled_glossary_tiers_by_lang = {"EN": [1, 2], "FR": [1, 2], "AR": [1, 2]}
+
+    prompt = workflow._append_glossary_prompt(
+        "BASE",
+        TargetLang.AR,
+        source_text="crime p. e p. pelos arts. 153.º, n° 1, al. a) do Código Penal",
+    )
+
+    assert "'p. e p. pelos artigos' => 'المعاقب عليها بمقتضى المواد'" in prompt
+    assert "'n.º' => 'رقم'" in prompt
+    assert "'alínea' => 'الفقرة'" in prompt
+
+
+def test_append_glossary_prompt_does_not_trigger_citation_aliases_in_plain_prose() -> None:
+    workflow = TranslationWorkflow(client=object())
+    workflow._prompt_glossaries_by_lang = {
+        "EN": [],
+        "FR": [],
+        "AR": [GlossaryEntry("alínea", "الفقرة", "exact", "PT", 4)],
+    }
+    workflow._enabled_glossary_tiers_by_lang = {"EN": [1, 2], "FR": [1, 2], "AR": [1, 2]}
+
+    prompt = workflow._append_glossary_prompt(
+        "BASE",
+        TargetLang.AR,
+        source_text="Nota interna: o al. seguinte foi cortado na digitalização.",
+    )
+
+    assert prompt == "BASE"

@@ -15,6 +15,8 @@ It is intentionally tracked here because this repo is a personal harness and the
 
 ## Routing Rules
 ### Prefer Windows When
+- launching the local browser app in `live` mode for real user work
+- validating browser-app Gmail bridge ownership and extension handoff
 - launching the Qt app for visible end-user testing
 - validating Gmail draft creation through Windows `gog`
 - validating the Arabic DOCX Word review gate or `Align Right + Save`
@@ -30,14 +32,32 @@ It is intentionally tracked here because this repo is a personal harness and the
 If the feature depends on local auth state, browser state, or desktop runtime state, validate it on the same host where the app runs.
 
 Examples in this repo:
+- browser-app `live` mode, Gmail bridge ownership, and extension handoff
+- browser-app `shadow` mode when a risky isolated test should not touch live data
 - Gmail draft creation through Windows `gog`
 - visible Qt app testing
 - Arabic DOCX review through Windows Word / PowerShell COM automation
 - browser/account-linked local tooling
+- browser-app live daily-use URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job`
+- browser-app isolated test URL: `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#new-job`
+- browser-app Gmail handoff URL: `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`
+- fixed browser review-preview URL: `http://127.0.0.1:8888/?mode=shadow&workspace=workspace-preview#new-job`
 
 Before browser/app or bridge triage on Windows, verify any required localhost listener is owned by the expected process. Unexpected listener ownership is a preflight `unavailable` condition, not a product failure.
 
+For browser-shell review work, keep `8877` for the normal daily browser app and `8888` for the fixed feature-preview contract. If an old cached preview tab shows fetch failures on `8888`, relaunch the preview instead of treating it as a product-runtime regression on the daily app.
+
+For this local source checkout, Edge native-host registration should prefer the app-data wrapper `AppData\\Roaming\\LegalPDFTranslate\\native_messaging\\LegalPDFGmailFocusHost.cmd` instead of relying on `dist\\legalpdf_translate\\LegalPDFGmailFocusHost.exe`. Windows App Control on this machine can block the packaged host executable even when the repo venv/module path is healthy.
+
+Live Gmail bridge ownership must stay on the browser app listener at `8877`. Fixed review previews on `8888` are for branch review only and must not become the real live Gmail bridge owner.
+
+Canonical browser-automation preflight on this machine is `dart tooling/automation_preflight.dart`. If the package-run launcher form fails here with `Unable to find AOT snapshot for dartdev`, treat that as a launcher-path issue and use the direct script form instead of treating browser automation as unavailable.
+
 For the Arabic DOCX review gate, WSL-only validation is insufficient because Word automation, visible Word editing, and save-detection behavior are Windows-host runtime facts.
+
+For Gmail batch finalization, Windows validation must prove the real Word DOCX-to-PDF export path, not just that Word can launch. A launch-only preflight is insufficient for the last-mile reply step on this machine.
+
+For visual DOCX review of generated artifacts, this host now supports `tooling/render_docx.py` using the installed LibreOffice binary plus Poppler (`pdftoppm`) and `.venv311` `pdf2image`.
 
 ## Performance and Tolerance Guidance
 - This machine can tolerate local Qt/UI testing, OCR validation, and moderate local automation work.

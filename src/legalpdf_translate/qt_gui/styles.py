@@ -2,39 +2,240 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsDropShadowEffect, QWidget
 
-PALETTE = {
-    "text": "#EAF9FF",
-    "muted": "#9AB9CE",
-    "muted_soft": "#7CA4B7",
-    "accent": "#59E8FF",
-    "accent_strong": "#2DD4F0",
-    "accent_soft": "#8CF6FF",
-    "danger": "#E98E98",
-    "danger_strong": "#F39CA7",
-    "line": "rgba(124, 232, 255, 140)",
-    "card": "rgba(5, 18, 38, 176)",
-    "surface_alt": "rgba(6, 21, 43, 182)",
-    "surface_panel": "rgba(6, 19, 36, 142)",
-    "field": "rgba(3, 12, 27, 226)",
-    "field_focus": "rgba(8, 31, 62, 236)",
-    "sidebar": "rgba(4, 12, 24, 202)",
+_BASE_PALETTE = {
+    "text": "#EFFCFF",
+    "text_soft": "#DFF4FB",
+    "muted": "#A7C9D7",
+    "muted_soft": "#86AEBD",
+    "accent": "#70F1FF",
+    "accent_strong": "#47DCF4",
+    "accent_soft": "#9EFBFF",
+    "accent_hot": "#D9FFFF",
+    "danger": "#F1A1A7",
+    "danger_strong": "#F7B0B6",
+    "line": "rgba(142, 239, 255, 166)",
+    "card": "rgba(8, 30, 60, 168)",
+    "surface_alt": "rgba(10, 35, 66, 182)",
+    "surface_panel": "rgba(10, 33, 60, 148)",
+    "field": "rgba(5, 20, 42, 220)",
+    "field_focus": "rgba(14, 48, 82, 238)",
+    "sidebar": "rgba(6, 20, 38, 188)",
+    "dialog_bg": "rgba(5, 15, 31, 244)",
+    "dialog_border": "rgba(136, 238, 255, 144)",
+    "field_border": "rgba(118, 220, 242, 156)",
+    "field_focus_border": "#8CFBFF",
+    "scroll_track": "rgba(4, 14, 29, 200)",
+    "scroll_handle": "rgba(138, 214, 235, 138)",
+    "scroll_handle_hover": "rgba(155, 228, 245, 194)",
+    "button_bg": "rgba(9, 40, 72, 220)",
+    "button_hover": "rgba(18, 64, 101, 232)",
+    "button_pressed": "rgba(12, 51, 86, 236)",
+    "button_border": "rgba(133, 228, 244, 164)",
+    "group_title": "#9EFBFF",
+    "table_header_bg": "rgba(16, 48, 78, 214)",
+    "table_header_border": "rgba(128, 225, 245, 126)",
+    "selection": "rgba(55, 173, 210, 220)",
+    "menubar_bg": "rgba(66, 48, 34, 154)",
+    "menubar_hover": "rgba(106, 79, 54, 196)",
+    "menu_bg": "rgba(7, 22, 42, 244)",
+    "menu_hover": "rgba(24, 98, 126, 214)",
+    "menu_separator": "rgba(141, 234, 248, 112)",
+    "shell_border": "rgba(138, 245, 255, 188)",
+    "panel_border": "rgba(124, 234, 255, 136)",
+    "field_shell_border": "rgba(124, 234, 255, 148)",
+    "metric_border": "rgba(121, 228, 250, 128)",
+    "action_rail_border": "rgba(137, 244, 255, 172)",
+    "primary_fill": "rgba(130, 240, 255, 238)",
+    "primary_fill_hover": "rgba(160, 245, 255, 244)",
+    "primary_fill_pressed": "rgba(114, 228, 244, 236)",
+    "primary_text": "#08212B",
+    "primary_border": "rgba(214, 252, 255, 248)",
+    "danger_fill": "rgba(236, 154, 160, 238)",
+    "danger_fill_hover": "rgba(244, 175, 180, 244)",
+    "danger_fill_disabled": "rgba(92, 50, 56, 148)",
+    "danger_border": "rgba(255, 210, 214, 188)",
 }
 
+_THEME_OVERRIDES = {
+    "dark_simple": {
+        "text_soft": "#E0EDF3",
+        "muted": "#A7BBC6",
+        "muted_soft": "#869CA9",
+        "accent": "#6CD8F0",
+        "accent_strong": "#54C8E2",
+        "accent_soft": "#B4E9F5",
+        "accent_hot": "#E7F7FC",
+        "line": "rgba(134, 176, 192, 112)",
+        "card": "rgba(11, 16, 24, 212)",
+        "surface_alt": "rgba(12, 18, 27, 220)",
+        "surface_panel": "rgba(12, 18, 27, 196)",
+        "field": "rgba(7, 11, 17, 236)",
+        "field_focus": "rgba(14, 24, 35, 244)",
+        "sidebar": "rgba(11, 15, 22, 224)",
+        "dialog_bg": "rgba(10, 15, 24, 242)",
+        "dialog_border": "rgba(142, 176, 194, 118)",
+        "field_border": "rgba(108, 148, 164, 132)",
+        "field_focus_border": "#C3E9F5",
+        "scroll_track": "rgba(10, 15, 23, 212)",
+        "scroll_handle": "rgba(114, 150, 166, 132)",
+        "scroll_handle_hover": "rgba(145, 186, 201, 182)",
+        "button_bg": "rgba(18, 30, 42, 232)",
+        "button_hover": "rgba(26, 40, 55, 238)",
+        "button_pressed": "rgba(20, 31, 43, 242)",
+        "button_border": "rgba(108, 145, 162, 142)",
+        "group_title": "#D4EEF7",
+        "table_header_bg": "rgba(20, 29, 40, 220)",
+        "table_header_border": "rgba(114, 146, 161, 100)",
+        "selection": "rgba(88, 146, 169, 194)",
+        "menubar_bg": "rgba(35, 34, 35, 170)",
+        "menubar_hover": "rgba(54, 57, 60, 208)",
+        "menu_bg": "rgba(10, 15, 24, 242)",
+        "menu_hover": "rgba(38, 67, 86, 214)",
+        "menu_separator": "rgba(132, 170, 186, 94)",
+        "shell_border": "rgba(148, 188, 204, 132)",
+        "panel_border": "rgba(126, 167, 184, 108)",
+        "field_shell_border": "rgba(120, 161, 178, 118)",
+        "metric_border": "rgba(120, 160, 178, 104)",
+        "action_rail_border": "rgba(130, 172, 188, 128)",
+        "primary_fill": "rgba(170, 219, 230, 218)",
+        "primary_fill_hover": "rgba(188, 231, 240, 226)",
+        "primary_fill_pressed": "rgba(153, 205, 218, 220)",
+        "primary_text": "#10222B",
+        "primary_border": "rgba(221, 241, 247, 220)",
+        "danger_fill": "rgba(196, 136, 142, 218)",
+        "danger_fill_hover": "rgba(206, 150, 155, 224)",
+        "danger_fill_disabled": "rgba(82, 54, 58, 138)",
+        "danger_border": "rgba(222, 189, 194, 160)",
+    },
+}
 
-def build_stylesheet() -> str:
+_BASE_EFFECT_TOKENS: dict[str, tuple[int, int, int, int]] = {
+    "title_glow": (120, 246, 255, 164),
+    "dashboard_shadow": (18, 98, 134, 142),
+    "panel_shadow": (7, 48, 80, 128),
+    "advisor_shadow": (10, 58, 92, 120),
+    "details_shadow": (8, 42, 70, 112),
+    "footer_glow": (112, 236, 255, 148),
+    "primary_glow": (132, 242, 255, 164),
+}
+
+_THEME_EFFECT_OVERRIDES: dict[str, Mapping[str, tuple[int, int, int, int]]] = {
+    "dark_simple": {
+        "title_glow": (164, 218, 228, 98),
+        "dashboard_shadow": (24, 42, 56, 136),
+        "panel_shadow": (18, 32, 44, 124),
+        "advisor_shadow": (20, 34, 46, 118),
+        "details_shadow": (18, 30, 42, 116),
+        "footer_glow": (120, 168, 182, 110),
+        "primary_glow": (164, 214, 226, 122),
+    },
+}
+
+_BASE_EFFECT_LAYOUT: dict[str, Mapping[str, int]] = {
+    "title_glow": {"blur_radius": 38, "offset_y": 0},
+    "dashboard_shadow": {"blur_radius": 52, "offset_y": 8},
+    "panel_shadow": {"blur_radius": 38, "offset_y": 8},
+    "advisor_shadow": {"blur_radius": 28, "offset_y": 6},
+    "details_shadow": {"blur_radius": 28, "offset_y": 6},
+    "footer_glow": {"blur_radius": 22, "offset_y": 0},
+    "primary_glow": {"blur_radius": 24, "offset_y": 0},
+}
+
+_THEME_EFFECT_LAYOUT_OVERRIDES: dict[str, Mapping[str, Mapping[str, int]]] = {
+    "dark_simple": {
+        "title_glow": {"blur_radius": 30},
+        "dashboard_shadow": {"blur_radius": 42, "offset_y": 6},
+        "panel_shadow": {"blur_radius": 30, "offset_y": 6},
+        "advisor_shadow": {"blur_radius": 24, "offset_y": 4},
+        "details_shadow": {"blur_radius": 24, "offset_y": 4},
+        "footer_glow": {"blur_radius": 18},
+        "primary_glow": {"blur_radius": 20},
+    },
+}
+
+_BODY_FONT_STACK = '"Segoe UI Variable", "Segoe UI", "Corbel", "Calibri", "DejaVu Sans", "Arial"'
+_HEADING_FONT_STACK = '"Candara", "Segoe UI Variable", "Segoe UI Semibold", "Corbel", "Segoe UI", "DejaVu Sans", "Arial"'
+_SECTION_HEADING_FONT_STACK = '"Segoe UI Variable", "Candara", "Segoe UI Semibold", "Corbel", "Segoe UI", "DejaVu Sans", "Arial"'
+
+
+def normalize_ui_theme(theme: str | None) -> str:
+    value = str(theme or "").strip().lower()
+    return value if value in {"dark_futuristic", "dark_simple"} else "dark_futuristic"
+
+
+def theme_palette(theme: str | None) -> dict[str, str]:
+    normalized = normalize_ui_theme(theme)
+    palette = dict(_BASE_PALETTE)
+    palette.update(_THEME_OVERRIDES.get(normalized, {}))
+    return palette
+
+
+def _rgba_to_qcolor(value: tuple[int, int, int, int]) -> QColor:
+    red, green, blue, alpha = value
+    return QColor(int(red), int(green), int(blue), int(alpha))
+
+
+def theme_effect_colors(theme: str | None) -> dict[str, QColor]:
+    normalized = normalize_ui_theme(theme)
+    tokens = dict(_BASE_EFFECT_TOKENS)
+    tokens.update(_THEME_EFFECT_OVERRIDES.get(normalized, {}))
+    return {key: _rgba_to_qcolor(value) for key, value in tokens.items()}
+
+
+def theme_effect_specs(theme: str | None) -> dict[str, dict[str, object]]:
+    normalized = normalize_ui_theme(theme)
+    colors = theme_effect_colors(normalized)
+    specs: dict[str, dict[str, object]] = {
+        key: dict(values) for key, values in _BASE_EFFECT_LAYOUT.items()
+    }
+    for key, overrides in _THEME_EFFECT_LAYOUT_OVERRIDES.get(normalized, {}).items():
+        merged = specs.setdefault(key, {})
+        merged.update(overrides)
+    for key, color in colors.items():
+        merged = specs.setdefault(key, {})
+        merged["color"] = color
+    return specs
+
+
+def build_stylesheet(theme: str = "dark_futuristic") -> str:
+    PALETTE = theme_palette(theme)
     return f"""
-    QWidget#RootWidget {{
-        background: transparent;
+    QWidget {{
         color: {PALETTE['text']};
-        font-family: "Segoe UI", "DejaVu Sans", "Arial";
+        font-family: {_BODY_FONT_STACK};
         font-size: 12pt;
     }}
 
+    QWidget#RootWidget {{
+        background: transparent;
+    }}
+
+    QWidget#ContentCard,
+    QWidget#ShellScrollContent,
+    QWidget#DialogScrollContent {{
+        background: transparent;
+    }}
+
+    QScrollArea#ShellScrollArea,
+    QScrollArea#DialogScrollArea {{
+        background: transparent;
+        border: none;
+    }}
+
+    QDialog, QMessageBox {{
+        background-color: {PALETTE['dialog_bg']};
+        color: {PALETTE['text']};
+        border: 1px solid {PALETTE['dialog_border']};
+        border-radius: 22px;
+    }}
+
     QMenuBar {{
-        background: rgba(4, 10, 20, 148);
+        background: {PALETTE['menubar_bg']};
         color: {PALETTE['text']};
         padding: 2px 10px;
     }}
@@ -46,13 +247,13 @@ def build_stylesheet() -> str:
     }}
 
     QMenuBar::item:selected {{
-        background: rgba(18, 61, 90, 180);
+        background: {PALETTE['menubar_hover']};
     }}
 
     QMenu {{
-        background-color: rgba(4, 14, 29, 248);
+        background-color: {PALETTE['menu_bg']};
         color: {PALETTE['text']};
-        border: 1px solid rgba(113, 230, 255, 120);
+        border: 1px solid {PALETTE['dialog_border']};
         border-radius: 18px;
         padding: 12px;
     }}
@@ -64,18 +265,26 @@ def build_stylesheet() -> str:
     }}
 
     QMenu::item:selected {{
-        background: rgba(20, 83, 121, 212);
+        background: {PALETTE['menu_hover']};
     }}
 
     QMenu::separator {{
         height: 1px;
         margin: 6px 10px;
-        background: rgba(116, 211, 237, 90);
+        background: {PALETTE['menu_separator']};
+    }}
+
+    QToolTip {{
+        background-color: rgba(6, 20, 38, 246);
+        color: {PALETTE['text']};
+        border: 1px solid {PALETTE['dialog_border']};
+        border-radius: 10px;
+        padding: 6px 8px;
     }}
 
     QFrame#SidebarPanel {{
         background-color: {PALETTE['sidebar']};
-        border-right: 1px solid rgba(112, 235, 255, 64);
+        border-right: 1px solid rgba(132, 241, 255, 102);
     }}
 
     QLabel#SidebarLogoLabel {{
@@ -102,15 +311,15 @@ def build_stylesheet() -> str:
     }}
 
     QToolButton#SidebarNavButton:hover {{
-        background: rgba(10, 42, 66, 126);
-        border-color: rgba(89, 232, 255, 82);
+        background: rgba(20, 83, 116, 164);
+        border-color: rgba(117, 240, 255, 118);
     }}
 
     QToolButton#SidebarNavButton[navRole=\"active\"] {{
-        background: rgba(15, 72, 100, 148);
-        border-color: rgba(112, 240, 255, 124);
+        background: rgba(24, 110, 138, 190);
+        border-color: rgba(142, 245, 255, 172);
         border-left: 4px solid {PALETTE['accent']};
-        color: {PALETTE['accent_soft']};
+        color: {PALETTE['accent_hot']};
     }}
 
     QToolButton#SidebarNavButton[comingSoon=\"true\"] {{
@@ -119,52 +328,72 @@ def build_stylesheet() -> str:
 
     QLabel#HeroTitleLabel {{
         color: {PALETTE['accent_soft']};
-        font-family: "Bahnschrift", "Segoe UI", "DejaVu Sans";
+        font-family: {_HEADING_FONT_STACK};
         font-size: 30pt;
-        font-weight: 700;
-        letter-spacing: 0.8px;
+        font-weight: 600;
+        letter-spacing: 0.82px;
     }}
 
     QLabel#HeroStatusLabel {{
         color: rgba(182, 239, 255, 228);
-        font-family: "Bahnschrift", "Segoe UI", "DejaVu Sans";
-        font-size: 13pt;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 12.6pt;
         font-weight: 500;
+        letter-spacing: 0.24px;
     }}
 
     QFrame#DashboardFrame {{
-        background-color: rgba(7, 20, 40, 82);
-        border: 1px solid rgba(118, 243, 255, 178);
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 16),
+            stop:0.10 {PALETTE['card']},
+            stop:0.72 {PALETTE['surface_alt']},
+            stop:1 rgba(5, 22, 46, 228)
+        );
+        border: 1px solid {PALETTE['shell_border']};
         border-radius: 28px;
     }}
 
     QFrame#ShellPanel {{
-        background-color: rgba(8, 23, 45, 108);
-        border: 1px solid rgba(116, 231, 255, 82);
-        border-radius: 18px;
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 18),
+            stop:0.14 {PALETTE['surface_panel']},
+            stop:1 rgba(6, 24, 46, 226)
+        );
+        border: 1px solid {PALETTE['panel_border']};
+        border-radius: 20px;
     }}
 
     QLabel#PanelHeading {{
         color: {PALETTE['accent_soft']};
-        font-family: "Bahnschrift", "Segoe UI";
-        font-size: 19.5pt;
-        font-weight: 500;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 18.9pt;
+        font-weight: 600;
+        letter-spacing: 0.28px;
     }}
 
     QLabel#FieldLabel {{
         color: rgba(236, 249, 255, 224);
-        font-size: 12.2pt;
-        font-weight: 500;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 12pt;
+        font-weight: 600;
+        letter-spacing: 0.16px;
     }}
 
     QFrame#FieldChrome {{
-        background-color: rgba(8, 19, 34, 170);
-        border: 1px solid rgba(120, 232, 255, 112);
-        border-radius: 14px;
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 18),
+            stop:0.16 rgba(10, 29, 51, 192),
+            stop:1 rgba(5, 20, 40, 228)
+        );
+        border: 1px solid {PALETTE['field_shell_border']};
+        border-radius: 16px;
     }}
 
     QFrame#InlineDivider {{
-        background: rgba(120, 232, 255, 52);
+        background: rgba(136, 241, 255, 62);
         border: none;
         min-width: 1px;
         max-width: 1px;
@@ -176,6 +405,10 @@ def build_stylesheet() -> str:
         border: none;
         padding: 8px 0;
         color: {PALETTE['text']};
+        font-family: {_BODY_FONT_STACK};
+        font-size: 12.15pt;
+        font-weight: 520;
+        letter-spacing: 0.08px;
         selection-background-color: rgba(35, 138, 185, 220);
     }}
 
@@ -196,11 +429,28 @@ def build_stylesheet() -> str:
     }}
 
     QComboBox[langField=\"true\"] {{
-        padding: 8px 0;
+        padding: 8px 2px;
         min-width: 46px;
         color: rgba(238, 251, 255, 236);
-        font-size: 11.5pt;
-        font-weight: 500;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 11.4pt;
+        font-weight: 600;
+        letter-spacing: 0.12px;
+    }}
+
+    QFrame#FieldChrome[sharedChromeCombo=\"true\"][hovered=\"true\"],
+    QFrame#FieldChrome[sharedChromeCombo=\"true\"][focused=\"true\"],
+    QFrame#FieldChrome[sharedChromeCombo=\"true\"][popupOpen=\"true\"],
+    QFrame#FieldChrome[sharedChromeDate=\"true\"][hovered=\"true\"],
+    QFrame#FieldChrome[sharedChromeDate=\"true\"][focused=\"true\"],
+    QFrame#FieldChrome[sharedChromeDate=\"true\"][popupOpen=\"true\"] {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 18),
+            stop:0.16 rgba(8, 31, 62, 198),
+            stop:1 rgba(4, 16, 31, 238)
+        );
+        border: 1px solid {PALETTE['field_focus_border']};
     }}
 
     QLabel#FlagLabel {{
@@ -210,14 +460,18 @@ def build_stylesheet() -> str:
 
     QLabel#FieldSupportLabel {{
         color: rgba(216, 240, 248, 214);
+        font-family: {_BODY_FONT_STACK};
         font-size: 10.7pt;
-        font-weight: 500;
+        font-weight: 520;
+        letter-spacing: 0.06px;
     }}
 
     QLabel#FieldValueLabel {{
         color: rgba(238, 251, 255, 236);
+        font-family: {_BODY_FONT_STACK};
         font-size: 11.3pt;
-        font-weight: 500;
+        font-weight: 560;
+        letter-spacing: 0.08px;
     }}
 
     QLabel#FieldValueLabel[accent=\"true\"] {{
@@ -225,14 +479,74 @@ def build_stylesheet() -> str:
     }}
 
     QToolButton#FieldBrowseButton {{
-        background-color: rgba(9, 29, 54, 228);
-        border: 1px solid rgba(116, 231, 255, 128);
-        border-radius: 11px;
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 22),
+            stop:0.22 {PALETTE['button_bg']},
+            stop:1 rgba(9, 36, 62, 244)
+        );
+        border: 1px solid rgba(132, 239, 255, 166);
+        border-radius: 12px;
         padding: 8px;
     }}
 
     QToolButton#FieldBrowseButton:hover {{
-        background-color: rgba(12, 42, 74, 238);
+        background-color: {PALETTE['button_hover']};
+    }}
+
+    QToolButton#CompactAddButton {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 18),
+            stop:0.22 {PALETTE['button_bg']},
+            stop:1 rgba(7, 27, 48, 240)
+        );
+        border: 1px solid rgba(132, 239, 255, 154);
+        border-radius: 15px;
+        color: {PALETTE['accent_hot']};
+        min-width: 30px;
+        max-width: 30px;
+        min-height: 30px;
+        max-height: 30px;
+        padding: 0;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 14pt;
+        font-weight: 700;
+    }}
+
+    QToolButton#CompactAddButton:hover {{
+        background-color: {PALETTE['button_hover']};
+        border-color: {PALETTE['field_focus_border']};
+    }}
+
+    QToolButton#CompactAddButton:focus {{
+        border-color: {PALETTE['field_focus_border']};
+    }}
+
+    QToolButton#InlineInfoButton {{
+        background: rgba(9, 33, 58, 212);
+        border: 1px solid rgba(122, 214, 238, 132);
+        border-radius: 12px;
+        color: {PALETTE['muted']};
+        min-width: 24px;
+        max-width: 24px;
+        min-height: 24px;
+        max-height: 24px;
+        padding: 0;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 10.5pt;
+        font-weight: 700;
+    }}
+
+    QToolButton#InlineInfoButton:hover {{
+        color: {PALETTE['accent_hot']};
+        border-color: {PALETTE['field_focus_border']};
+        background: rgba(16, 53, 84, 226);
+    }}
+
+    QToolButton#InlineInfoButton:focus {{
+        border-color: {PALETTE['field_focus_border']};
+        color: {PALETTE['accent_hot']};
     }}
 
     QToolButton#LangCaretButton {{
@@ -246,35 +560,129 @@ def build_stylesheet() -> str:
         background: transparent;
     }}
 
+    QToolButton#LangCaretButton[hovered=\"true\"],
+    QToolButton#LangCaretButton[focused=\"true\"],
+    QToolButton#LangCaretButton[popupOpen=\"true\"] {{
+        color: {PALETTE['accent_soft']};
+    }}
+
+    QToolButton#DatePickerButton {{
+        background: transparent;
+        border: none;
+        min-width: 18px;
+        padding: 0 2px;
+        color: rgba(226, 249, 255, 218);
+    }}
+
+    QToolButton#DatePickerButton:hover {{
+        background: transparent;
+        color: {PALETTE['accent_soft']};
+    }}
+
     QToolButton#SectionToggleButton {{
         color: rgba(229, 247, 255, 228);
-        background-color: rgba(7, 19, 35, 180);
-        border: 1px solid rgba(116, 231, 255, 120);
-        border-radius: 15px;
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 14),
+            stop:0.22 {PALETTE['button_bg']},
+            stop:1 rgba(6, 24, 43, 238)
+        );
+        border: 1px solid rgba(116, 231, 255, 128);
+        border-radius: 16px;
         padding: 12px 15px;
-        font-size: 12pt;
-        font-weight: 500;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 11.8pt;
+        font-weight: 600;
+        letter-spacing: 0.18px;
     }}
 
     QToolButton#SectionToggleButton:hover {{
-        background-color: rgba(12, 35, 60, 192);
+        background-color: {PALETTE['button_hover']};
+        border-color: {PALETTE['field_focus_border']};
+    }}
+
+    QFrame#DeclutterSectionHeader {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 10),
+            stop:0.18 rgba(8, 29, 51, 182),
+            stop:1 rgba(6, 21, 39, 228)
+        );
+        border: 1px solid rgba(116, 231, 255, 118);
+        border-radius: 16px;
+    }}
+
+    QFrame#DeclutterSectionHeader[attention=\"true\"] {{
+        border-color: {PALETTE['field_focus_border']};
+    }}
+
+    QToolButton#DeclutterSectionToggle {{
+        color: rgba(229, 247, 255, 228);
+        background: transparent;
+        border: none;
+        padding: 2px 0;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 11.5pt;
+        font-weight: 600;
+        letter-spacing: 0.16px;
+    }}
+
+    QToolButton#DeclutterSectionToggle:hover {{
+        color: {PALETTE['accent_hot']};
+    }}
+
+    QToolButton#DeclutterSectionToggle:focus {{
+        color: {PALETTE['accent_hot']};
+    }}
+
+    QLabel#DeclutterSectionSummary {{
+        color: {PALETTE['muted']};
+        font-family: {_BODY_FONT_STACK};
+        font-size: 10.2pt;
+        font-weight: 520;
+        letter-spacing: 0.04px;
+    }}
+
+    QFrame#DeclutterSectionContent {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 8),
+            stop:0.16 {PALETTE['surface_panel']},
+            stop:1 rgba(4, 15, 28, 216)
+        );
+        border: 1px solid rgba(114, 193, 227, 104);
+        border-radius: 16px;
+    }}
+
+    QFrame#DeclutterSectionContent[attention=\"true\"] {{
+        border-color: {PALETTE['field_focus_border']};
     }}
 
     QLabel#ProgressSummaryLabel {{
         color: rgba(238, 251, 255, 230);
-        font-size: 13.5pt;
-        font-weight: 500;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 13.2pt;
+        font-weight: 600;
+        letter-spacing: 0.18px;
     }}
 
     QLabel#CurrentTaskLabel {{
         color: rgba(235, 247, 255, 214);
+        font-family: {_BODY_FONT_STACK};
         font-size: 10.8pt;
+        font-weight: 520;
+        letter-spacing: 0.06px;
     }}
 
     QFrame#MetricGridFrame {{
-        background-color: rgba(6, 16, 30, 142);
-        border: 1px solid rgba(110, 230, 255, 94);
-        border-radius: 16px;
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 12),
+            stop:0.14 rgba(9, 26, 46, 164),
+            stop:1 rgba(5, 20, 39, 216)
+        );
+        border: 1px solid {PALETTE['metric_border']};
+        border-radius: 18px;
     }}
 
     QFrame#MetricCell {{
@@ -284,20 +692,26 @@ def build_stylesheet() -> str:
 
     QLabel#MetricTitle {{
         color: rgba(227, 244, 252, 214);
-        font-size: 11.2pt;
-        font-weight: 500;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 11pt;
+        font-weight: 600;
+        letter-spacing: 0.14px;
     }}
 
     QLabel#MetricValue {{
         color: rgba(240, 250, 255, 236);
-        font-size: 13.2pt;
-        font-weight: 500;
+        font-family: {_BODY_FONT_STACK};
+        font-size: 13pt;
+        font-weight: 560;
+        letter-spacing: 0.06px;
     }}
 
     QLabel#MetricRetryValue {{
         color: rgba(222, 242, 250, 216);
+        font-family: {_BODY_FONT_STACK};
         font-size: 12pt;
-        font-weight: 500;
+        font-weight: 540;
+        letter-spacing: 0.05px;
     }}
 
     QFrame#RetryBadge {{
@@ -307,26 +721,46 @@ def build_stylesheet() -> str:
 
     QLabel#OutputFormatLabel {{
         color: rgba(219, 241, 251, 218);
+        font-family: {_SECTION_HEADING_FONT_STACK};
         font-size: 12pt;
-        font-weight: 500;
+        font-weight: 600;
+        letter-spacing: 0.12px;
     }}
 
     QLabel#FooterMetaLabel {{
         color: rgba(191, 224, 238, 186);
+        font-family: {_BODY_FONT_STACK};
         font-size: 10.5pt;
-        font-weight: 500;
+        font-weight: 520;
+        letter-spacing: 0.04px;
     }}
 
     QFrame#ActionRail {{
-        background-color: rgba(7, 22, 40, 124);
-        border: 1px solid rgba(106, 236, 255, 108);
-        border-radius: 18px;
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 14),
+            stop:0.15 rgba(9, 30, 52, 162),
+            stop:1 rgba(6, 22, 40, 226)
+        );
+        border: 1px solid {PALETTE['action_rail_border']};
+        border-radius: 20px;
+    }}
+
+    QWidget#DialogActionBar {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 10),
+            stop:0.18 rgba(8, 24, 42, 176),
+            stop:1 rgba(5, 17, 31, 220)
+        );
+        border: 1px solid rgba(108, 222, 244, 98);
+        border-radius: 16px;
     }}
 
     QToolButton#OverflowMenuButton {{
-        background-color: rgba(7, 26, 46, 224);
+        background-color: rgba(8, 30, 55, 228);
         color: {PALETTE['text']};
-        border: 1px solid rgba(116, 231, 255, 132);
+        border: 1px solid rgba(136, 239, 255, 166);
         border-radius: 14px;
         padding: 0 14px 4px 14px;
         font-size: 17pt;
@@ -335,7 +769,7 @@ def build_stylesheet() -> str:
     }}
 
     QToolButton#OverflowMenuButton:hover {{
-        background-color: rgba(11, 41, 68, 240);
+        background-color: rgba(16, 53, 84, 242);
     }}
 
     QFrame#HiddenUtilityPanel {{
@@ -346,12 +780,12 @@ def build_stylesheet() -> str:
     QFrame#HeaderStrip {{
         background: qlineargradient(
             x1:0, y1:0, x2:1, y2:0,
-            stop:0 rgba(8, 36, 66, 175),
-            stop:0.5 rgba(11, 52, 88, 212),
-            stop:1 rgba(8, 36, 66, 175)
+            stop:0 rgba(8, 36, 66, 198),
+            stop:0.5 rgba(11, 52, 88, 228),
+            stop:1 rgba(8, 36, 66, 198)
         );
-        border: 1px solid rgba(120, 214, 255, 130);
-        border-radius: 15px;
+        border: 1px solid rgba(120, 214, 255, 146);
+        border-radius: 16px;
     }}
 
     QLabel#TitleLabel {{
@@ -384,23 +818,112 @@ def build_stylesheet() -> str:
     }}
 
     QFrame#SurfacePanel {{
-        background-color: {PALETTE['surface_panel']};
-        border: 1px solid rgba(114, 193, 227, 94);
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 10),
+            stop:0.16 {PALETTE['surface_panel']},
+            stop:1 rgba(4, 15, 28, 220)
+        );
+        border: 1px solid rgba(114, 193, 227, 108);
+        border-radius: 18px;
+    }}
+
+    QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox {{
+        background-color: {PALETTE['field']};
+        color: {PALETTE['text']};
+        border: 1px solid {PALETTE['field_border']};
+        border-radius: 12px;
+        padding: 8px 10px;
+        selection-background-color: {PALETTE['selection']};
+    }}
+
+    QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus {{
+        border: 1px solid {PALETTE['field_focus_border']};
+        background-color: {PALETTE['field_focus']};
+    }}
+
+    QComboBox[sharedChromeCombo=\"true\"][hovered=\"true\"],
+    QComboBox[sharedChromeCombo=\"true\"][focused=\"true\"],
+    QComboBox[sharedChromeCombo=\"true\"][popupOpen=\"true\"] {{
+        border: 1px solid {PALETTE['field_focus_border']};
+        background-color: {PALETTE['field_focus']};
+    }}
+
+    QComboBox[sharedChromeCombo=\"true\"][embeddedField=\"true\"][hovered=\"true\"],
+    QComboBox[sharedChromeCombo=\"true\"][embeddedField=\"true\"][focused=\"true\"],
+    QComboBox[sharedChromeCombo=\"true\"][embeddedField=\"true\"][popupOpen=\"true\"] {{
+        border: none;
+        background: transparent;
+    }}
+
+    QFrame#CalendarPopup {{
+        background: {PALETTE['dialog_bg']};
+        border: 1px solid {PALETTE['dialog_border']};
         border-radius: 16px;
     }}
 
-    QLineEdit, QPlainTextEdit, QComboBox, QSpinBox {{
-        background-color: {PALETTE['field']};
+    QCalendarWidget#CalendarPopupWidget {{
+        background: transparent;
         color: {PALETTE['text']};
-        border: 1px solid rgba(103, 181, 215, 130);
-        border-radius: 10px;
-        padding: 8px 10px;
-        selection-background-color: rgba(35, 138, 185, 220);
     }}
 
-    QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus {{
-        border: 1px solid {PALETTE['accent']};
-        background-color: {PALETTE['field_focus']};
+    QCalendarWidget#CalendarPopupWidget QWidget#qt_calendar_navigationbar {{
+        background: transparent;
+        border: none;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QToolButton {{
+        background-color: {PALETTE['button_bg']};
+        color: {PALETTE['text']};
+        border: 1px solid {PALETTE['button_border']};
+        border-radius: 10px;
+        padding: 4px 10px;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-weight: 600;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QToolButton:hover {{
+        background-color: {PALETTE['button_hover']};
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QMenu {{
+        background-color: rgba(4, 14, 29, 248);
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QSpinBox {{
+        min-width: 72px;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QAbstractItemView:enabled {{
+        background: {PALETTE['dialog_bg']};
+        color: {PALETTE['text']};
+        selection-background-color: {PALETTE['selection']};
+        selection-color: {PALETTE['accent_hot']};
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QWidget {{
+        alternate-background-color: transparent;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QTableView {{
+        background: transparent;
+        border: none;
+        outline: none;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QTableView::item {{
+        border-radius: 8px;
+        padding: 4px;
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QTableView::item:hover {{
+        background: rgba(20, 83, 121, 212);
+        color: {PALETTE['accent_hot']};
+    }}
+
+    QCalendarWidget#CalendarPopupWidget QTableView::item:selected {{
+        background: {PALETTE['selection']};
+        color: {PALETTE['accent_hot']};
     }}
 
     QComboBox#GlossaryTableCombo {{
@@ -413,16 +936,34 @@ def build_stylesheet() -> str:
     }}
 
     QComboBox::drop-down {{
-        border-left: 1px solid rgba(116, 187, 217, 112);
+        border-left: 1px solid {PALETTE['field_border']};
         width: 26px;
     }}
 
     QComboBox QAbstractItemView {{
-        background-color: rgba(6, 19, 37, 235);
+        background-color: {PALETTE['dialog_bg']};
         color: {PALETTE['text']};
-        selection-background-color: rgba(24, 106, 148, 230);
-        border: 1px solid rgba(82, 164, 198, 122);
+        selection-background-color: {PALETTE['selection']};
+        border: 1px solid {PALETTE['dialog_border']};
         outline: none;
+        border-radius: 12px;
+        padding: 6px;
+    }}
+
+    QComboBox QAbstractItemView::item {{
+        padding: 8px 12px;
+        border-radius: 8px;
+        margin: 2px;
+    }}
+
+    QComboBox QAbstractItemView::item:hover {{
+        background: rgba(20, 83, 121, 212);
+        color: {PALETTE['accent_hot']};
+    }}
+
+    QComboBox QAbstractItemView::item:selected {{
+        background: {PALETTE['selection']};
+        color: {PALETTE['accent_hot']};
     }}
 
     QCheckBox {{
@@ -432,8 +973,8 @@ def build_stylesheet() -> str:
     QCheckBox::indicator {{
         width: 16px;
         height: 16px;
-        border: 1px solid rgba(112, 182, 214, 104);
-        border-radius: 3px;
+        border: 1px solid {PALETTE['field_border']};
+        border-radius: 4px;
         background: rgba(4, 14, 29, 210);
     }}
 
@@ -443,73 +984,112 @@ def build_stylesheet() -> str:
     }}
 
     QPushButton {{
-        background-color: rgba(8, 31, 57, 228);
+        background-color: {PALETTE['button_bg']};
         color: {PALETTE['text']};
-        border: 1px solid rgba(113, 185, 216, 145);
-        border-radius: 11px;
+        border: 1px solid {PALETTE['button_border']};
+        border-radius: 12px;
         padding: 0 16px;
+        font-family: {_SECTION_HEADING_FONT_STACK};
         font-weight: 600;
+        letter-spacing: 0.18px;
     }}
 
     QPushButton:hover {{
-        border-color: rgba(125, 226, 255, 235);
-        background-color: rgba(13, 45, 80, 236);
+        border-color: {PALETTE['field_focus_border']};
+        background-color: {PALETTE['button_hover']};
     }}
 
     QPushButton:pressed {{
-        background-color: rgba(14, 44, 76, 236);
+        background-color: {PALETTE['button_pressed']};
     }}
 
     QPushButton:disabled {{
+        background-color: rgba(18, 38, 60, 196);
         color: rgba(151, 182, 206, 120);
         border-color: rgba(72, 104, 128, 110);
     }}
 
     QPushButton#PrimaryButton {{
-        background-color: rgba(110, 236, 255, 230);
-        color: #0A1C27;
-        border: 1px solid rgba(199, 249, 255, 250);
+        background-color: {PALETTE['primary_fill']};
+        color: {PALETTE['primary_text']};
+        border: 1px solid {PALETTE['primary_border']};
+        font-family: {_SECTION_HEADING_FONT_STACK};
         font-weight: 700;
         border-radius: 14px;
         padding: 0 28px;
-        font-size: 12.2pt;
+        font-size: 12pt;
+        letter-spacing: 0.2px;
+    }}
+
+    QPushButton#PrimaryButton:default {{
+        background-color: {PALETTE['primary_fill']};
+        color: {PALETTE['primary_text']};
+        border: 1px solid {PALETTE['primary_border']};
+        border-radius: 14px;
     }}
 
     QPushButton#PrimaryButton:hover {{
-        background-color: rgba(140, 242, 255, 236);
+        background-color: {PALETTE['primary_fill_hover']};
+    }}
+
+    QPushButton#PrimaryButton:default:hover {{
+        background-color: {PALETTE['primary_fill_hover']};
+    }}
+
+    QPushButton#PrimaryButton:default:pressed {{
+        background-color: {PALETTE['primary_fill_pressed']};
+    }}
+
+    QWidget#DialogActionBar QPushButton {{
+        min-height: 34px;
+    }}
+
+    QWidget#DialogActionBar QPushButton#PrimaryButton {{
+        border-radius: 18px;
+        padding: 0 30px;
+    }}
+
+    QWidget#DialogActionBar QPushButton#PrimaryButton:default {{
+        border-radius: 18px;
     }}
 
     QPushButton#DangerButton {{
-        background-color: rgba(226, 145, 150, 232);
-        border-color: rgba(255, 202, 208, 180);
+        background-color: {PALETTE['danger_fill']};
+        border-color: {PALETTE['danger_border']};
         color: #321115;
         border-radius: 14px;
         padding: 0 24px;
-        font-size: 11.7pt;
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 11.5pt;
+        letter-spacing: 0.16px;
     }}
 
     QPushButton#PrimaryButton:disabled {{
-        background-color: rgba(58, 88, 105, 112);
-        border-color: rgba(146, 193, 207, 96);
-        color: rgba(225, 242, 248, 146);
+        background-color: rgba(72, 108, 124, 154);
+        border-color: rgba(164, 211, 224, 132);
+        color: rgba(225, 242, 248, 174);
     }}
 
     QPushButton#DangerButton:disabled {{
-        background-color: rgba(88, 46, 52, 122);
+        background-color: {PALETTE['danger_fill_disabled']};
         border-color: rgba(172, 112, 121, 110);
         color: rgba(228, 199, 205, 150);
     }}
 
+    QPushButton#DangerButton:hover {{
+        background-color: {PALETTE['danger_fill_hover']};
+    }}
+
     QToolButton#OverflowMenuButton:disabled {{
-        background-color: rgba(25, 37, 51, 168);
-        border-color: rgba(106, 145, 162, 96);
-        color: rgba(208, 226, 236, 150);
+        background-color: rgba(25, 37, 51, 196);
+        border-color: rgba(106, 145, 162, 122);
+        color: rgba(208, 226, 236, 172);
     }}
 
     QProgressBar {{
-        background-color: rgba(7, 22, 39, 214);
-        border: 1px solid rgba(121, 236, 255, 112);
-        border-radius: 14px;
+        background-color: rgba(7, 24, 44, 220);
+        border: 1px solid rgba(134, 240, 255, 136);
+        border-radius: 15px;
         min-height: 26px;
         padding: 2px;
         text-align: center;
@@ -517,11 +1097,11 @@ def build_stylesheet() -> str:
     }}
 
     QProgressBar::chunk {{
-        border-radius: 10px;
+        border-radius: 11px;
         background: qlineargradient(
             x1:0, y1:0, x2:1, y2:0,
-            stop:0 rgba(94, 230, 255, 255),
-            stop:1 rgba(57, 216, 255, 255)
+            stop:0 {PALETTE['accent_soft']},
+            stop:1 {PALETTE['accent_strong']}
         );
     }}
 
@@ -533,19 +1113,90 @@ def build_stylesheet() -> str:
         padding: 4px;
     }}
 
+    QGroupBox {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:1,
+            stop:0 rgba(255, 255, 255, 8),
+            stop:0.16 {PALETTE['surface_panel']},
+            stop:1 rgba(4, 15, 28, 220)
+        );
+        border: 1px solid rgba(114, 193, 227, 108);
+        border-radius: 18px;
+        margin-top: 18px;
+        padding: 16px 12px 12px 12px;
+        font-weight: 600;
+    }}
+
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        left: 14px;
+        padding: 0 6px;
+        color: {PALETTE['group_title']};
+        font-family: {_SECTION_HEADING_FONT_STACK};
+        font-size: 12.3pt;
+        font-weight: 600;
+        letter-spacing: 0.18px;
+    }}
+
+    QTabWidget::pane {{
+        background: rgba(6, 17, 34, 176);
+        border: 1px solid rgba(108, 204, 230, 104);
+        border-radius: 18px;
+        margin-top: 10px;
+    }}
+
+    QTabBar::tab {{
+        background: rgba(8, 24, 43, 170);
+        border: 1px solid rgba(108, 204, 230, 104);
+        border-bottom: none;
+        color: {PALETTE['text_soft']};
+        padding: 8px 14px;
+        margin-right: 6px;
+        border-top-left-radius: 12px;
+        border-top-right-radius: 12px;
+        min-width: 110px;
+    }}
+
+    QTabBar::tab:hover {{
+        background: rgba(12, 39, 68, 198);
+    }}
+
+    QTabBar::tab:selected {{
+        background: rgba(18, 83, 118, 212);
+        border-color: rgba(126, 236, 255, 152);
+        color: {PALETTE['accent_hot']};
+    }}
+
+    QTableWidget, QListWidget, QTreeWidget {{
+        background: {PALETTE['field']};
+        color: {PALETTE['text']};
+        border: 1px solid {PALETTE['field_border']};
+        border-radius: 12px;
+        gridline-color: rgba(130, 182, 199, 52);
+        selection-background-color: {PALETTE['selection']};
+    }}
+
+    QHeaderView::section {{
+        background: {PALETTE['table_header_bg']};
+        color: {PALETTE['text_soft']};
+        border: 1px solid {PALETTE['table_header_border']};
+        padding: 8px;
+        font-weight: 600;
+    }}
+
     QScrollBar:vertical {{
-        background: rgba(4, 14, 29, 200);
+        background: {PALETTE['scroll_track']};
         width: 10px;
         border-radius: 5px;
         margin: 2px;
     }}
     QScrollBar::handle:vertical {{
-        background: rgba(114, 193, 227, 120);
+        background: {PALETTE['scroll_handle']};
         border-radius: 4px;
         min-height: 30px;
     }}
     QScrollBar::handle:vertical:hover {{
-        background: rgba(114, 193, 227, 180);
+        background: {PALETTE['scroll_handle_hover']};
     }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
         height: 0px;
@@ -554,18 +1205,18 @@ def build_stylesheet() -> str:
         background: transparent;
     }}
     QScrollBar:horizontal {{
-        background: rgba(4, 14, 29, 200);
+        background: {PALETTE['scroll_track']};
         height: 10px;
         border-radius: 5px;
         margin: 2px;
     }}
     QScrollBar::handle:horizontal {{
-        background: rgba(114, 193, 227, 120);
+        background: {PALETTE['scroll_handle']};
         border-radius: 4px;
         min-width: 30px;
     }}
     QScrollBar::handle:horizontal:hover {{
-        background: rgba(114, 193, 227, 180);
+        background: {PALETTE['scroll_handle_hover']};
     }}
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
         width: 0px;
@@ -576,6 +1227,18 @@ def build_stylesheet() -> str:
     """
 
 
+def apply_app_appearance(app: object, *, theme: str) -> str:
+    normalized_theme = normalize_ui_theme(theme)
+    stylesheet = build_stylesheet(normalized_theme)
+    set_property = getattr(app, "setProperty", None)
+    if callable(set_property):
+        set_property("uiTheme", normalized_theme)
+    set_stylesheet = getattr(app, "setStyleSheet", None)
+    if callable(set_stylesheet):
+        set_stylesheet(stylesheet)
+    return stylesheet
+
+
 def make_blur_effect(parent: QWidget, *, radius: int = 24) -> QGraphicsBlurEffect:
     effect = QGraphicsBlurEffect(parent)
     effect.setBlurRadius(float(radius))
@@ -583,17 +1246,46 @@ def make_blur_effect(parent: QWidget, *, radius: int = 24) -> QGraphicsBlurEffec
     return effect
 
 
-def apply_soft_shadow(widget: QWidget, *, blur_radius: int = 48, offset_y: int = 12) -> None:
+def _coerce_effect_color(color: QColor | tuple[int, int, int, int] | None, *, fallback: tuple[int, int, int, int]) -> QColor:
+    if isinstance(color, QColor):
+        return QColor(color)
+    if isinstance(color, tuple):
+        return _rgba_to_qcolor(color)
+    return _rgba_to_qcolor(fallback)
+
+
+def _reuse_or_create_shadow_effect(widget: QWidget, *, role: str) -> QGraphicsDropShadowEffect:
+    current = widget.graphicsEffect()
+    if isinstance(current, QGraphicsDropShadowEffect) and str(current.property("effectRole") or "") == role:
+        return current
     effect = QGraphicsDropShadowEffect(widget)
+    effect.setProperty("effectRole", role)
+    widget.setGraphicsEffect(effect)
+    return effect
+
+
+def apply_soft_shadow(
+    widget: QWidget,
+    *,
+    role: str = "soft_shadow",
+    blur_radius: int = 48,
+    offset_y: int = 12,
+    color: QColor | tuple[int, int, int, int] | None = None,
+) -> None:
+    effect = _reuse_or_create_shadow_effect(widget, role=role)
     effect.setBlurRadius(float(blur_radius))
     effect.setOffset(0.0, float(offset_y))
-    effect.setColor(QColor(12, 58, 96, 104))
-    widget.setGraphicsEffect(effect)
+    effect.setColor(_coerce_effect_color(color, fallback=(7, 26, 54, 146)))
 
 
-def apply_primary_glow(widget: QWidget, *, blur_radius: int = 30) -> None:
-    effect = QGraphicsDropShadowEffect(widget)
+def apply_primary_glow(
+    widget: QWidget,
+    *,
+    role: str = "primary_glow",
+    blur_radius: int = 30,
+    color: QColor | tuple[int, int, int, int] | None = None,
+) -> None:
+    effect = _reuse_or_create_shadow_effect(widget, role=role)
     effect.setBlurRadius(float(blur_radius))
     effect.setOffset(0.0, 0.0)
-    effect.setColor(QColor(57, 216, 255, 126))
-    widget.setGraphicsEffect(effect)
+    effect.setColor(_coerce_effect_color(color, fallback=(89, 232, 255, 146)))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, Mapping
+
 from .types import TargetLang
 
 
@@ -55,7 +57,10 @@ def build_ar_token_retry_prompt(
     prior_output: str,
     expected_tokens: list[str],
     *,
+    source_text: str | None = None,
     violation_kind: str | None = None,
+    defect_reason: str | None = None,
+    token_details: Mapping[str, Any] | None = None,
 ) -> str:
     tokens = [token for token in expected_tokens if isinstance(token, str) and token != ""]
     token_lines = [f"{index}. [[{token}]]" for index, token in enumerate(tokens, start=1)]
@@ -74,17 +79,71 @@ def build_ar_token_retry_prompt(
             "CURRENT DEFECT TO FIX: Latin letters or digits still appear outside [[...]] tokens. "
             "Wrap every verbatim identifier span in [[...]] and keep the remaining text Arabic."
         )
+
+    mismatch_lines: list[str] = []
+    if defect_reason or violation_kind or isinstance(token_details, Mapping):
+        mismatch_lines.extend(
+            [
+                "<<<BEGIN TOKEN MISMATCH SUMMARY>>>",
+                f"Validator reason: {str(defect_reason or '').strip() or 'Arabic token mismatch.'}",
+            ]
+        )
+        if violation_kind:
+            mismatch_lines.append(f"Violation kind: {violation_kind}")
+        if isinstance(token_details, Mapping):
+            missing_count = int(token_details.get("missing_count", 0) or 0)
+            altered_count = int(token_details.get("altered_count", 0) or 0)
+            unexpected_count = int(token_details.get("unexpected_count", 0) or 0)
+            mismatch_lines.extend(
+                [
+                    f"Missing protected tokens: {missing_count}",
+                    f"Altered protected tokens: {altered_count}",
+                    f"Unexpected protected tokens: {unexpected_count}",
+                ]
+            )
+            missing_samples = [
+                str(item).strip()
+                for item in token_details.get("missing_token_samples", [])
+                if str(item or "").strip() != ""
+            ] if isinstance(token_details.get("missing_token_samples"), list) else []
+            unexpected_samples = [
+                str(item).strip()
+                for item in token_details.get("unexpected_token_samples", [])
+                if str(item or "").strip() != ""
+            ] if isinstance(token_details.get("unexpected_token_samples"), list) else []
+            if missing_samples:
+                mismatch_lines.append("Missing token samples:")
+                mismatch_lines.extend(f"- [[{item}]]" for item in missing_samples[:3])
+            if unexpected_samples:
+                mismatch_lines.append("Unexpected or altered token samples:")
+                mismatch_lines.extend(f"- [[{item}]]" for item in unexpected_samples[:3])
+        mismatch_lines.append("<<<END TOKEN MISMATCH SUMMARY>>>")
+
     lines = [
         header,
         "<<<BEGIN LOCKED TOKENS>>>",
         *token_lines,
         "<<<END LOCKED TOKENS>>>",
-        "<<<BEGIN PRIOR OUTPUT>>>",
-        prior_output,
-        "<<<END PRIOR OUTPUT>>>",
     ]
     if defect_hint:
         lines.insert(1, defect_hint)
+    if mismatch_lines:
+        lines.extend(mismatch_lines)
+    if source_text:
+        lines.extend(
+            [
+                "<<<BEGIN SOURCE PAGE>>>",
+                source_text,
+                "<<<END SOURCE PAGE>>>",
+            ]
+        )
+    lines.extend(
+        [
+            "<<<BEGIN PRIOR OUTPUT>>>",
+            prior_output,
+            "<<<END PRIOR OUTPUT>>>",
+        ]
+    )
     return "\n".join(lines)
 
 

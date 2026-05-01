@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "output_mappings": [
+    {
+      "resolved_output": "docs/assistant/START_HERE.md",
+      "sync_targets": [
+        "README.md"
+      ]
+    },
+    {
+      "resolved_output": "docs/assistant/SAFE_COMMANDS.md",
+      "sync_targets": [
+        "README.md"
+      ]
+    },
+    {
+      "resolved_output": "docs/assistant/TERMS_IN_PLAIN_ENGLISH.md",
+      "sync_targets": [
+        "README.md"
+      ]
+    },
+    {
+      "resolved_output": "docs/assistant/CAPABILITY_DISCOVERY.md",
+      "sync_targets": [
+        "docs/assistant/LOCAL_CAPABILITIES.md"
+      ]
+    },
+    {
+      "resolved_output": "docs/assistant/DIAGNOSTICS.md",
+      "sync_targets": [
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md"
+      ]
+    },
+    {
+      "resolved_output": "docs/assistant/HOST_INTEGRATION.md",
+      "sync_targets": [
+        "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md"
+      ]
+    },
+    {
+      "resolved_output": "docs/assistant/LOCAL_ENVIRONMENT.md",
+      "sync_targets": [
+        "docs/assistant/LOCAL_ENV_PROFILE.local.md"
+      ]
+    },
+    {
+      "resolved_output": "docs/assistant/QA_CHECKS.md",
+      "sync_targets": [
+        "README.md",
+        "docs/assistant/INDEX.md",
+        "docs/assistant/manifest.json"
+      ]
+    },
+    {
+      "resolved_output": "docs/assistant/workflows/SESSION_RESUME.md",
+      "sync_targets": [
+        "docs/assistant/SESSION_RESUME.md"
+      ]
+    },
+    {
+      "resolved_output": "scripts/run_app.ps1",
+      "sync_targets": [
+        "Launch LegalPDF Translate.bat",
+        "tooling/launch_qt_build.py"
+      ]
+    },
+    {
+      "resolved_output": "scripts/repair_env.ps1",
+      "sync_targets": [
+        "scripts/setup_python311_env.ps1"
+      ]
+    }
+  ]
+}

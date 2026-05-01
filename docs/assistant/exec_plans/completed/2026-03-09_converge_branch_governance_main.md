@@ -129,3 +129,37 @@
 - Stage 2 boundary status:
   - governance/docs retarget ready for PR stage
   - exact continuation token required for the next pass: `NEXT_STAGE_3`
+
+## Stage 3 execution log
+- Published and validated the convergence branch:
+  - pushed `chore/converge-main-approved-base`
+  - opened PR `#13` to `main`
+  - addressed PR-check failures caused by detached-HEAD build-identity assumptions through follow-up commits:
+    - `b8c1048` `test(build): isolate launch identity dry-run config`
+    - `ecee94d` `fix(build): handle detached branch identity`
+- Final PR CI state before merge:
+  - `docs_tooling_contracts` -> pass
+  - `test (3.11)` -> pass
+- Merged PR `#13` into `main` with merge commit `ea91cb84d0fda719f98a559e981b1c7237345fd9`.
+- Post-merge local/mainline actions:
+  - fast-forwarded local `main` to `origin/main`
+  - switched the canonical worktree back to `main`
+  - removed the temporary convergence worktree
+  - deleted `feat/ai-docs-bootstrap` locally/remotely
+  - deleted `chore/converge-main-approved-base` locally/remotely
+  - pruned refs
+- Post-merge validations from canonical `main`:
+  - `PYTHONPATH=src ./.venv311/Scripts/python.exe -m pytest -q`
+    - result: `786 passed in 29.15s`
+  - `python3 -m compileall src tests tooling`
+    - result: pass
+  - `dart run tooling/validate_agent_docs.dart`
+    - result: `PASS: agent docs validation succeeded.`
+  - `dart run tooling/validate_workspace_hygiene.dart`
+    - result: `PASS: workspace hygiene validation succeeded.`
+  - `PYTHONPATH=src ./.venv311/Scripts/python.exe tooling/launch_qt_build.py --worktree /mnt/c/Users/FA507/.codex/legalpdf_translate --dry-run`
+    - result: canonical `main` identity packet with `branch=main`, `is_canonical=true`, and `is_lineage_valid=true`
+- Stage 3 completion status:
+  - completed
+  - `main` restored as the approved integration base and canonical branch
+  - only `main` remains as the active worktree; preserved local-only WIP branches remain untouched outside this plan

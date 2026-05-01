@@ -62,8 +62,14 @@ def _recommended_action(*, status: str, reasons: list[str]) -> str:
     reason_set = set(reasons)
     if status == "failed":
         return "rerun_page"
+    if "visual_recovery_failed" in reason_set:
+        return "manual_review"
+    if "extraction_integrity_suspect" in reason_set:
+        return "manual_review"
     if "ocr_required_not_used" in reason_set:
         return "rerun_with_ocr"
+    if "numeric_mismatch" in reason_set or "citation_structure_drift" in reason_set:
+        return "manual_review"
     if "rate_limit_hit" in reason_set or "transport_retries" in reason_set or "api_exception" in reason_set:
         return "check_api_reliability"
     if "validator_failed" in reason_set or "parser_failed" in reason_set or "outside_text_detected" in reason_set:
@@ -73,6 +79,8 @@ def _recommended_action(*, status: str, reasons: list[str]) -> str:
 
 def build_quality_risk_summary(
     page_rows: Sequence[tuple[int, Mapping[str, Any]]],
+    *,
+    target_lang: str | None = None,
 ) -> dict[str, Any]:
     """Return overall and per-page risk signals for run summary payloads."""
     if not page_rows:
@@ -89,6 +97,8 @@ def build_quality_risk_summary(
 
     per_page_scores: list[float] = []
     review_queue: list[dict[str, Any]] = []
+    target_lang_code = _to_text(target_lang).upper()
+    arabic_mode = target_lang_code == "AR"
 
     for page_number, page in page_rows:
         status = _to_text(page.get("status", "")).lower()
@@ -96,6 +106,15 @@ def build_quality_risk_summary(
         transport_retries = max(0, _to_int(page.get("transport_retries_count", 0)))
         reasoning_tokens = max(0, _to_int(page.get("reasoning_tokens", 0)))
         wall_seconds = max(0.0, _to_float(page.get("wall_seconds", 0.0)))
+        numeric_mismatches = max(0, _to_int(page.get("numeric_mismatches_count", 0)))
+        citation_mismatches = max(0, _to_int(page.get("citation_mismatches_count", 0)))
+        structure_warnings = max(0, _to_int(page.get("structure_warnings_count", 0)))
+        bidi_warnings = max(0, _to_int(page.get("bidi_warnings_count", 0)))
+        bidi_controls = max(0, _to_int(page.get("bidi_control_count", 0)))
+        replacement_chars = max(0, _to_int(page.get("replacement_char_count", 0)))
+        extraction_integrity_suspect = _to_bool(page.get("extraction_integrity_suspect", False))
+        visual_recovery_used = _to_bool(page.get("visual_recovery_used", False))
+        visual_recovery_failed = _to_bool(page.get("visual_recovery_failed", False))
 
         score = 0.0
         reasons: list[str] = []
@@ -154,6 +173,44 @@ def build_quality_risk_summary(
             score += 0.24
             reasons.append("api_exception")
 
+        if extraction_integrity_suspect:
+            score += 0.34
+            reasons.append("extraction_integrity_suspect")
+        if visual_recovery_failed:
+            score += 0.24
+            reasons.append("visual_recovery_failed")
+        elif visual_recovery_used:
+            score += 0.08
+            reasons.append("visual_recovery_used")
+
+        if arabic_mode:
+            if numeric_mismatches > 0:
+                score += min(0.6, 0.45 + min(0.15, float(max(0, numeric_mismatches - 1)) * 0.05))
+                reasons.append("numeric_mismatch")
+
+            citation_drift_score = 0.0
+            citation_drift = False
+            if citation_mismatches >= 20:
+                citation_drift = True
+                citation_drift_score += min(0.42, 0.12 + max(0.0, float(citation_mismatches - 20)) * 0.004)
+            if structure_warnings > 0 and citation_mismatches >= 10:
+                citation_drift = True
+                citation_drift_score += min(0.12, float(structure_warnings) * 0.08)
+            if citation_drift:
+                score += min(0.48, citation_drift_score)
+                reasons.append("citation_structure_drift")
+
+            bidi_signal_score = 0.0
+            if bidi_warnings > 0:
+                bidi_signal_score += min(0.10, float(bidi_warnings) * 0.04)
+            if replacement_chars > 0:
+                bidi_signal_score += min(0.08, float(replacement_chars) * 0.02)
+            elif bidi_controls >= 25:
+                bidi_signal_score += 0.02
+            if bidi_signal_score > 0.0:
+                score += min(0.12, bidi_signal_score)
+                reasons.append("bidi_warning")
+
         score = min(1.0, round(score, 4))
         per_page_scores.append(score)
 
@@ -163,6 +220,10 @@ def build_quality_risk_summary(
             or "validator_failed" in reasons
             or "parser_failed" in reasons
             or "outside_text_detected" in reasons
+            or "extraction_integrity_suspect" in reasons
+            or "visual_recovery_failed" in reasons
+            or "numeric_mismatch" in reasons
+            or ("citation_structure_drift" in reasons and citation_mismatches >= 45)
         )
         if not include_in_queue:
             continue

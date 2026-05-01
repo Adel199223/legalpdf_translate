@@ -39,14 +39,22 @@ String _fixtureRoot() {
   final List<String> seedPaths = <String>[
     'AGENTS.md',
     'agent.md',
+    'README.md',
     'APP_KNOWLEDGE.md',
+    '.vscode/mcp.json.example',
     '.vscode/settings.json',
     'docs/assistant',
+    'tooling/bootstrap_profile_wizard.py',
+    'tooling/check_harness_profile.py',
+    'tooling/harness_profile_lib.py',
     'tooling/launch_qt_build.py',
+    'tooling/preview_harness_sync.py',
+    'tooling/qt_render_review.py',
     'tooling/validate_agent_docs.dart',
     'tooling/validate_workspace_hygiene.dart',
     'tooling/automation_preflight.dart',
     'tooling/cloud_eval_preflight.dart',
+    'tests/tooling/test_harness_tools.py',
     'test/tooling/validate_agent_docs_test.dart',
     'test/tooling/validate_workspace_hygiene_test.dart',
     'test/tooling/automation_preflight_test.dart',
@@ -109,6 +117,59 @@ void _replaceInFile(String root, String relPath, String from, String to) {
   file.writeAsStringSync(text.replaceAll(from, to));
 }
 
+void _replaceSessionResumeBranch(String root, String branchName) {
+  final File file = File(_resolve(root, 'docs/assistant/SESSION_RESUME.md'));
+  final String text = file.readAsStringSync();
+  final String expectedLine = '- Branch: `$branchName`';
+  final String updated = text.replaceFirstMapped(
+    RegExp(r'^- Branch:\s+`[^`]+`$', multiLine: true),
+    (Match _) => expectedLine,
+  );
+  if (identical(updated, text) || updated == text) {
+    if (text.contains(expectedLine)) {
+      return;
+    }
+    throw _CaseFailure('SESSION_RESUME.md did not contain a branch line to replace.');
+  }
+  file.writeAsStringSync(updated);
+}
+
+void _runGit(String root, List<String> args) {
+  final ProcessResult result = Process.runSync('git', <String>[
+    '-C',
+    root,
+    ...args,
+  ]);
+  if (result.exitCode != 0) {
+    throw _CaseFailure(
+      'Git command failed: git -C $root ${args.join(' ')}\n${result.stderr}',
+    );
+  }
+}
+
+String _runGitCapture(String root, List<String> args) {
+  final ProcessResult result = Process.runSync('git', <String>[
+    '-C',
+    root,
+    ...args,
+  ]);
+  if (result.exitCode != 0) {
+    throw _CaseFailure(
+      'Git command failed: git -C $root ${args.join(' ')}\n${result.stderr}',
+    );
+  }
+  return result.stdout.toString().trim();
+}
+
+void _initGitFixtureRepo(String root) {
+  _runGit(root, <String>['init']);
+  _runGit(root, <String>['checkout', '-b', 'main']);
+  _runGit(root, <String>['config', 'user.name', 'Fixture User']);
+  _runGit(root, <String>['config', 'user.email', 'fixture@example.com']);
+  _runGit(root, <String>['add', '.']);
+  _runGit(root, <String>['commit', '-m', 'fixture baseline']);
+}
+
 Map<String, dynamic> _readJson(String root, String relPath) {
   final File file = File(_resolve(root, relPath));
   return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
@@ -135,6 +196,62 @@ void main() {
     );
     _expect(issues.isEmpty, 'Expected no issues, got: $issues');
   }, failures);
+
+  _runCase(
+    'passes when HARNESS_PROFILE is absent and validator falls back to legacy behavior',
+    () {
+      final String root = _fixtureRoot();
+      _removePath(root, 'docs/assistant/HARNESS_PROFILE.json');
+      final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+        rootPath: root,
+      );
+      _expect(
+        !_hasRule(issues, 'AD001') && !_hasRule(issues, 'AD048'),
+        'Expected legacy fallback without profile-driven failures, got: $issues',
+      );
+    },
+    failures,
+  );
+
+  _runCase('fails when alias-enabled openai docs outputs are missing', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> profile = _readJson(
+      root,
+      'docs/assistant/HARNESS_PROFILE.json',
+    );
+    final Map<String, dynamic> bootstrap =
+        profile['bootstrap'] as Map<String, dynamic>;
+    bootstrap['uses_openai'] = false;
+    bootstrap['enabled_modules'] = <String>['openai_docs'];
+    _writeJson(root, 'docs/assistant/HARNESS_PROFILE.json', profile);
+    _removePath(root, 'docs/assistant/CODEX_ENVIRONMENT.md');
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD001'), 'Expected AD001');
+  }, failures);
+
+  _runCase(
+    'fails when stale bootstrap state is ignored in favor of live profile resolution',
+    () {
+      final String root = _fixtureRoot();
+      _writeJson(
+        root,
+        'docs/assistant/runtime/BOOTSTRAP_STATE.json',
+        <String, dynamic>{
+          'schema_version': 1,
+          'profile_fingerprint': 'deadbeef0000',
+          'resolved': <String, dynamic>{'modules': <String>[]},
+        },
+      );
+      _removePath(root, 'docs/assistant/CODEX_ENVIRONMENT.md');
+      final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+        rootPath: root,
+      );
+      _expect(_hasRule(issues, 'AD001'), 'Expected AD001');
+    },
+    failures,
+  );
 
   _runCase('fails when required workflow file missing', () {
     final String root = _fixtureRoot();
@@ -317,13 +434,44 @@ void main() {
     _replaceInFile(
       root,
       'AGENTS.md',
-      'Ask it only when relevant touched-scope docs still remain unsynced.',
+      'Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary.',
       'Ask it whenever the change is significant.',
     );
     final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
       rootPath: root,
     );
     _expect(_hasRule(issues, 'AD020'), 'Expected AD020');
+  }, failures);
+
+  _runCase('fails when AGENTS omits docs-sync deferral wording', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'AGENTS.md',
+      'If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass.',
+      'If immediate same-task synchronization is not necessary, do it now.',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD020'), 'Expected AD020');
+  }, failures);
+
+  _runCase('fails when manifest docs-sync contract omits deferred default', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> manifest = _readJson(
+      root,
+      'docs/assistant/manifest.json',
+    );
+    final Map<String, dynamic> contracts =
+        manifest['contracts'] as Map<String, dynamic>;
+    contracts['docs_sync_prompt_policy'] =
+        'After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced.';
+    _writeJson(root, 'docs/assistant/manifest.json', manifest);
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD017'), 'Expected AD017');
   }, failures);
 
   _runCase('fails when GOLDEN_PRINCIPLES missing', () {
@@ -825,8 +973,8 @@ void main() {
     _replaceInFile(
       root,
       'docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md',
-      '## Same-Host Validation Rule',
-      '## Same Runtime Validation Guidance',
+      'verify required installs before feature work',
+      'verify installs sometime later',
     );
     final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
       rootPath: root,
@@ -839,8 +987,8 @@ void main() {
     _replaceInFile(
       root,
       'docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md',
-      '## Listener Ownership and Runtime Conflict Rules',
-      '## Runtime Conflict Guidance',
+      'one durable session artifact',
+      'session notes when helpful',
     );
     final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
       rootPath: root,
@@ -881,6 +1029,20 @@ void main() {
       'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md',
       'UCBS',
       'UCB',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD040'), 'Expected AD040');
+  }, failures);
+
+  _runCase('fails when standalone Dart validator commands use package-run form', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_UPDATE_POLICY.md',
+      'dart tooling/validate_agent_docs.dart',
+      'dart ' 'run tooling/validate_agent_docs.dart',
     );
     final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
       rootPath: root,
@@ -995,6 +1157,332 @@ void main() {
     failures,
   );
 
+  _runCase('fails when project harness sync template file missing', () {
+    final String root = _fixtureRoot();
+    _removePath(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_PROJECT_HARNESS_SYNC_POLICY.md',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(
+      _hasRule(issues, 'AD001') || _hasRule(issues, 'AD039'),
+      'Expected AD001 or AD039',
+    );
+  }, failures);
+
+  _runCase('fails when roadmap governance template file missing', () {
+    final String root = _fixtureRoot();
+    _removePath(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_ROADMAP_GOVERNANCE.md',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(
+      _hasRule(issues, 'AD001') || _hasRule(issues, 'AD039'),
+      'Expected AD001 or AD039',
+    );
+  }, failures);
+
+  _runCase('fails when roadmap bootstrap dormant marker drifts', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_ROADMAP_GOVERNANCE.md',
+      'dormant roadmap state on `main`',
+      'inactive roadmap placeholder',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD040'), 'Expected AD040');
+  }, failures);
+
+  _runCase('fails when bootstrap core cleanup markers drift', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_CORE_CONTRACT.md',
+      'branch-scoped ExecPlan closeout before merge',
+      'close branch tasks later if convenient',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD040'), 'Expected AD040');
+  }, failures);
+
+  _runCase('fails when bootstrap prompt scratch-root guidance drifts', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md',
+      'ignored `tmp/`',
+      'ignored scratch root',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD040'), 'Expected AD040');
+  }, failures);
+
+  _runCase('fails when bootstrap template map cleanup topic drifts', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json',
+      '"cleanup-complete push semantics"',
+      '"cleanup push maybe"',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD039'), 'Expected AD039');
+  }, failures);
+
+  _runCase('fails when bootstrap template map targets are missing', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> templateMap = _readJson(
+      root,
+      'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json',
+    );
+    templateMap.remove('targets');
+    _writeJson(root, 'docs/assistant/templates/BOOTSTRAP_TEMPLATE_MAP.json', templateMap);
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD039'), 'Expected AD039');
+  }, failures);
+
+  _runCase('fails when project harness sync workflow missing', () {
+    final String root = _fixtureRoot();
+    _removePath(
+      root,
+      'docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(
+      _hasRule(issues, 'AD001') ||
+          _hasRule(issues, 'AD030') ||
+          _hasRule(issues, 'AD045'),
+      'Expected AD001, AD030, or AD045',
+    );
+  }, failures);
+
+  _runCase('fails when SESSION_RESUME missing under roadmap governance', () {
+    final String root = _fixtureRoot();
+    _removePath(root, 'docs/assistant/SESSION_RESUME.md');
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD046'), 'Expected AD046');
+  }, failures);
+
+  _runCase('fails when local harness/apply boundary becomes ambiguous', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'agent.md',
+      'docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md',
+      'docs/assistant/workflows/HARNESS_SYNC_REMOVED.md',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD045'), 'Expected AD045');
+  }, failures);
+
+  _runCase(
+    'fails when project harness workflow omits continuity cleanup resync guidance',
+    () {
+      final String root = _fixtureRoot();
+      _replaceInFile(
+        root,
+        'docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md',
+        'continuity or merge cleanup behavior',
+        'cleanup behavior',
+      );
+      final List<validator.ValidationIssue> issues = validator
+          .validateAgentDocs(rootPath: root);
+      _expect(_hasRule(issues, 'AD045'), 'Expected AD045');
+    },
+    failures,
+  );
+
+  _runCase(
+    'fails when project harness workflow loses resolution-first sync guidance',
+    () {
+      final String root = _fixtureRoot();
+      _replaceInFile(
+        root,
+        'docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md',
+        '## Resolution-first sync workflow',
+        '## Sync workflow',
+      );
+      final List<validator.ValidationIssue> issues = validator
+          .validateAgentDocs(rootPath: root);
+      _expect(_hasRule(issues, 'AD045'), 'Expected AD045');
+    },
+    failures,
+  );
+
+  _runCase(
+    'fails when project harness manifest primary files omit continuity docs',
+    () {
+      final String root = _fixtureRoot();
+      final Map<String, dynamic> manifest = _readJson(
+        root,
+        'docs/assistant/manifest.json',
+      );
+      final List<dynamic> workflows = manifest['workflows'] as List<dynamic>;
+      final Map<String, dynamic> harnessWorkflow = workflows
+          .whereType<Map<String, dynamic>>()
+          .firstWhere(
+            (Map<String, dynamic> item) =>
+                item['id'] == 'project_harness_sync_workflow',
+          );
+      final List<dynamic> primaryFiles =
+          harnessWorkflow['primary_files'] as List<dynamic>;
+      primaryFiles.remove(
+        'docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md',
+      );
+      _writeJson(root, 'docs/assistant/manifest.json', manifest);
+      final List<validator.ValidationIssue> issues = validator
+          .validateAgentDocs(rootPath: root);
+      _expect(_hasRule(issues, 'AD045'), 'Expected AD045');
+    },
+    failures,
+  );
+
+  _runCase('fails when cleanup-complete push contract is missing', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> manifest = _readJson(
+      root,
+      'docs/assistant/manifest.json',
+    );
+    final Map<String, dynamic> contracts =
+        manifest['contracts'] as Map<String, dynamic>;
+    contracts.remove('cleanup_complete_push_policy');
+    _writeJson(root, 'docs/assistant/manifest.json', manifest);
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD033'), 'Expected AD033');
+  }, failures);
+
+  _runCase('fails when post-merge repair default contract is missing', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> manifest = _readJson(
+      root,
+      'docs/assistant/manifest.json',
+    );
+    final Map<String, dynamic> contracts =
+        manifest['contracts'] as Map<String, dynamic>;
+    contracts.remove('post_merge_repair_default_policy');
+    _writeJson(root, 'docs/assistant/manifest.json', manifest);
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD033'), 'Expected AD033');
+  }, failures);
+
+  _runCase('fails when scratch-root default contract is missing', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> manifest = _readJson(
+      root,
+      'docs/assistant/manifest.json',
+    );
+    final Map<String, dynamic> contracts =
+        manifest['contracts'] as Map<String, dynamic>;
+    contracts.remove('scratch_root_default_policy');
+    _writeJson(root, 'docs/assistant/manifest.json', manifest);
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD033'), 'Expected AD033');
+  }, failures);
+
+  _runCase('fails when dormant-main roadmap contract is missing', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> manifest = _readJson(
+      root,
+      'docs/assistant/manifest.json',
+    );
+    final Map<String, dynamic> contracts =
+        manifest['contracts'] as Map<String, dynamic>;
+    contracts.remove('roadmap_dormant_main_policy');
+    _writeJson(root, 'docs/assistant/manifest.json', manifest);
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD033'), 'Expected AD033');
+  }, failures);
+
+  _runCase('fails when dormant roadmap state markers drift', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(
+      root,
+      'docs/assistant/SESSION_RESUME.md',
+      '- No active roadmap currently open on this worktree.',
+      '- Roadmap status pending clarification.',
+    );
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+      rootPath: root,
+    );
+    _expect(_hasRule(issues, 'AD046'), 'Expected AD046');
+  }, failures);
+
+  _runCase(
+    'passes when SESSION_RESUME points to canonical main in detached git repo',
+    () {
+      final String root = _fixtureRoot();
+      _replaceSessionResumeBranch(root, 'main');
+      _initGitFixtureRepo(root);
+      final String sha = _runGitCapture(root, <String>['rev-parse', 'HEAD']);
+      _runGit(root, <String>['checkout', '--detach', sha]);
+      _runGit(root, <String>['branch', '-D', 'main']);
+      final List<validator.ValidationIssue> issues = validator
+          .validateAgentDocs(rootPath: root);
+      _expect(!_hasRule(issues, 'AD046'), 'Did not expect AD046');
+    },
+    failures,
+  );
+
+  _runCase(
+    'fails when SESSION_RESUME points to a deleted branch in a git repo',
+    () {
+      final String root = _fixtureRoot();
+      _replaceSessionResumeBranch(root, 'feat/deleted-branch');
+      _initGitFixtureRepo(root);
+      final List<validator.ValidationIssue> issues = validator
+          .validateAgentDocs(rootPath: root);
+      _expect(_hasRule(issues, 'AD046'), 'Expected AD046');
+    },
+    failures,
+  );
+
+  _runCase(
+    'fails when Qt render review guidance uses legacy tmp_ui_review path',
+    () {
+      final String root = _fixtureRoot();
+      _replaceInFile(
+        root,
+        'docs/assistant/QT_UI_PLAYBOOK.md',
+        'tmp/qt_ui_review',
+        'tmp_ui_review',
+      );
+      final List<validator.ValidationIssue> issues = validator
+          .validateAgentDocs(rootPath: root);
+      _expect(_hasRule(issues, 'AD047'), 'Expected AD047');
+    },
+    failures,
+  );
+
   if (failures.isNotEmpty) {
     stderr.writeln(
       'Agent docs validator tests failed: ${failures.length} case(s).',
@@ -1005,5 +1493,5 @@ void main() {
     exit(1);
   }
 
-  stdout.writeln('All agent docs validator tests passed (48 cases).');
+  stdout.writeln('All agent docs validator tests passed (72 cases).');
 }

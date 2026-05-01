@@ -26,16 +26,16 @@ Keeping workspace/editor performance predictable through canonical baseline poli
 PowerShell:
 ```powershell
 code --status
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_workspace_hygiene.dart
 ```
 POSIX:
 ```bash
 code --status
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_workspace_hygiene.dart
 ```
 
 ## Targeted Tests
-- `dart run test/tooling/validate_workspace_hygiene_test.dart`
+- `dart test/tooling/validate_workspace_hygiene_test.dart`
 
 ## Failure Modes and Fallback Steps
 - Watcher excludes missing: apply baseline entries idempotently.

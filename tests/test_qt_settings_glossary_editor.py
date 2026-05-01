@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+if os.name != "nt" and "DISPLAY" not in os.environ:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication
 
 import legalpdf_translate.qt_gui.dialogs as dialogs
 from legalpdf_translate.qt_gui.dialogs import QtSettingsDialog
@@ -153,3 +160,24 @@ def test_use_builtin_clears_custom_path(monkeypatch) -> None:
 
     assert fake.glossary_file_edit.text() == ""
 
+
+def test_glossary_editor_save_button_uses_primary_style(tmp_path: Path) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    dialog = dialogs.QtGlossaryEditorDialog(
+        parent=None,
+        initial_text='{"version": 1, "rules": []}',
+        source_label="Built-in glossary",
+        initial_path=None,
+        default_save_path=tmp_path / "glossary.json",
+    )
+    try:
+        assert dialog.save_btn.objectName() == "PrimaryButton"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()

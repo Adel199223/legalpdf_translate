@@ -1,0 +1,3360 @@
+"""FastAPI app for the local LegalPDF Translate browser app."""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from dataclasses import asdict, dataclass
+from datetime import datetime
+import hashlib
+import html
+import json
+import mimetypes
+import os
+from pathlib import Path
+import re
+import sys
+from typing import Any, Mapping
+from urllib.parse import quote
+
+from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from legalpdf_translate.browser_arabic_review import ArabicDocxReviewManager, job_requires_arabic_review
+from legalpdf_translate.browser_gmail_bridge import BrowserLiveGmailBridgeManager
+from legalpdf_translate.browser_pdf_bundle import (
+    browser_pdf_bundle_manifest_path,
+    write_browser_pdf_bundle,
+)
+from legalpdf_translate.browser_app_service import (
+    build_blank_browser_profile,
+    build_browser_capability_snapshot,
+    build_browser_bootstrap,
+    build_browser_parity_audit,
+    build_browser_profile_summary,
+    build_browser_settings_summary,
+    delete_browser_joblog_rows,
+    delete_browser_profile,
+    build_extension_lab_summary,
+    list_browser_recent_jobs,
+    save_browser_profile,
+    set_browser_primary_profile,
+    simulate_extension_handoff,
+)
+from legalpdf_translate.build_identity import RuntimeBuildIdentity, detect_runtime_build_identity
+from legalpdf_translate.gmail_browser_service import (
+    GmailBrowserSessionManager,
+    extension_prepare_reason_catalog,
+)
+from legalpdf_translate.gmail_focus_host import (
+    inspect_edge_native_host,
+    prepare_gmail_intake,
+    restart_canonical_browser_runtime,
+)
+from legalpdf_translate.google_photos_oauth import (
+    GooglePhotosOAuthTokenExchangeError,
+    GooglePhotosOAuthTokenSaveError,
+    consume_pending_google_photos_oauth_state,
+    decode_google_photos_oauth_state_hint,
+    google_photos_callback_token_path_diagnostics,
+    google_photos_callback_token_status_label,
+    google_photos_connection_status,
+    load_google_photos_oauth_config,
+    new_google_photos_callback_diagnostic,
+    request_google_photos_authorization_token,
+    save_google_photos_callback_diagnostic,
+    save_google_photos_token,
+    safe_google_photos_workspace_label,
+    verify_pending_google_photos_oauth_state,
+)
+from legalpdf_translate.google_photos_picker import GooglePhotosPickerError
+from legalpdf_translate.interpretation_google_photos import (
+    build_google_photos_connect_response,
+    build_google_photos_status,
+    create_google_photos_picker_session,
+    delete_google_photos_picker_session,
+    disconnect_google_photos,
+    get_google_photos_picker_session,
+    import_google_photos_selection,
+    list_google_photos_picker_media,
+)
+from legalpdf_translate.interpretation_service import (
+    InterpretationValidationError,
+    add_interpretation_city,
+    add_interpretation_court_email,
+    autofill_interpretation_from_notification_pdf,
+    autofill_interpretation_from_photo,
+    build_interpretation_capability_flags,
+    export_interpretation_honorarios,
+    import_live_profile_settings,
+    list_interpretation_history,
+    save_interpretation_row,
+)
+from legalpdf_translate.power_tools_service import (
+    apply_builder_suggestions,
+    arm_browser_window_trace,
+    build_browser_provider_state,
+    build_power_tools_bootstrap,
+    clear_browser_ocr_key,
+    clear_browser_translation_key,
+    create_browser_debug_bundle,
+    document_runtime_state_payload,
+    export_glossary_markdown,
+    generate_browser_run_report,
+    repair_browser_native_host,
+    run_browser_calibration_audit,
+    run_gmail_draft_preflight,
+    run_glossary_builder,
+    run_native_host_test,
+    run_ocr_provider_test,
+    run_word_pdf_export_test,
+    run_translation_provider_test,
+    run_settings_preflight,
+    save_browser_settings,
+    save_browser_ocr_key,
+    save_browser_translation_key,
+    save_glossary_workspace,
+)
+from legalpdf_translate.gmail_window_trace import latest_window_trace_status, update_launch_session_state
+from legalpdf_translate.translation_service import (
+    TranslationJobManager,
+    build_translation_bootstrap,
+    build_translation_capability_flags,
+    export_translation_review_queue_for_job,
+    list_translation_history,
+    save_translation_row,
+    upload_translation_source,
+)
+from legalpdf_translate.shadow_runtime import (
+    BrowserDataPaths,
+    RUNTIME_MODE_LIVE,
+    RUNTIME_MODE_SHADOW,
+    SHADOW_DEFAULT_PORT,
+    SHADOW_HOST,
+    ShadowRuntimePaths,
+    build_shadow_runtime_metadata,
+    classify_shadow_listener,
+    clear_shadow_runtime_metadata,
+    detect_browser_data_paths,
+    detect_shadow_runtime_paths,
+    load_shadow_runtime_metadata,
+    normalize_workspace_id,
+    run_browser_automation_preflight,
+    runtime_build_identity_payload,
+    write_shadow_runtime_metadata,
+)
+from legalpdf_translate.user_settings import load_settings_from_path
+_SAFE_UPLOAD_TOKEN_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_PREPARE_REASON_MESSAGES = {item["reason"]: item["message"] for item in extension_prepare_reason_catalog()}
+_EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION = 4
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowWebContext:
+    repo_root: Path
+    port: int
+    static_dir: Path
+    asset_version: str
+    server_runtime_paths: ShadowRuntimePaths
+    build_identity: RuntimeBuildIdentity
+    automation_preflight: dict[str, object]
+    translation_jobs: TranslationJobManager
+    arabic_reviews: ArabicDocxReviewManager
+    gmail_sessions: GmailBrowserSessionManager
+    live_gmail_bridge: BrowserLiveGmailBridgeManager
+    enable_live_gmail_bridge: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveBrowserTarget:
+    mode: str
+    workspace_id: str
+    data_paths: BrowserDataPaths
+
+
+def _safe_upload_name(filename: str, *, fallback_suffix: str) -> str:
+    cleaned = _SAFE_UPLOAD_TOKEN_RE.sub("_", str(filename or "").strip()).strip("._")
+    if cleaned:
+        return cleaned
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"upload_{timestamp}{fallback_suffix}"
+
+
+async def _save_upload(upload: UploadFile, target_dir: Path, *, fallback_suffix: str) -> Path:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    original_name = getattr(upload, "filename", "") or ""
+    safe_name = _safe_upload_name(str(original_name), fallback_suffix=fallback_suffix)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    target_path = (target_dir / f"{timestamp}_{safe_name}").expanduser().resolve()
+    contents = await upload.read()
+    target_path.write_bytes(contents)
+    return target_path
+
+
+def _parse_browser_pdf_bundle_manifest(raw_manifest: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(str(raw_manifest or "").strip())
+    except json.JSONDecodeError as exc:
+        raise ValueError("Browser PDF bundle manifest must be valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Browser PDF bundle manifest must be an object.")
+    return payload
+
+
+def compute_browser_asset_version(static_dir: Path) -> str:
+    tracked_suffixes = {".js", ".mjs", ".css"}
+    hasher = hashlib.sha256()
+    static_root = static_dir.expanduser().resolve()
+    tracked_count = 0
+    for path in sorted(static_root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in tracked_suffixes:
+            continue
+        stat = path.stat()
+        relative = path.relative_to(static_root).as_posix()
+        hasher.update(relative.encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(str(int(stat.st_size)).encode("ascii"))
+        hasher.update(b"\0")
+        hasher.update(path.read_bytes())
+        hasher.update(b"\n")
+        tracked_count += 1
+    if tracked_count == 0:
+        return "static-empty"
+    return hasher.hexdigest()[:12]
+
+
+def _extension_background_source_hash(repo_root: Path) -> str:
+    extension_path = (repo_root / "extensions" / "gmail_intake" / "background.js").expanduser().resolve()
+    if not extension_path.exists():
+        return ""
+    return hashlib.sha256(extension_path.read_bytes()).hexdigest()[:12]
+
+
+def _versioned_static_base_url(request: Request, context: ShadowWebContext) -> str:
+    base_url = str(request.base_url).rstrip("/")
+    encoded_version = quote(context.asset_version, safe="")
+    return f"{base_url}/static-build/{encoded_version}/"
+
+
+def _versioned_static_url(request: Request, context: ShadowWebContext, asset_path: str) -> str:
+    relative_path = quote(str(asset_path or "").lstrip("/"), safe="/")
+    return f"{_versioned_static_base_url(request, context)}{relative_path}"
+
+
+def _google_photos_redirect_uri(request: Request) -> str:
+    return str(request.url_for("api_google_photos_oauth_callback"))
+
+
+def _google_photos_callback_html(*, title: str, message: str, ok: bool) -> str:
+    escaped_title = html.escape(title)
+    escaped_message = html.escape(message)
+    tone = "#166534" if ok else "#991b1b"
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{escaped_title}</title>
+    <style>
+      body {{
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #f8fafc;
+        color: #0f172a;
+      }}
+      main {{
+        width: min(520px, calc(100vw - 32px));
+        border: 1px solid #dbe3ef;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 24px;
+        box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+      }}
+      strong {{ color: {tone}; }}
+      p {{ line-height: 1.5; }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <strong>{escaped_title}</strong>
+      <p>{escaped_message}</p>
+    </main>
+  </body>
+</html>"""
+
+
+def _resolve_static_asset(static_dir: Path, asset_path: str) -> Path | None:
+    candidate = (static_dir / str(asset_path or "")).expanduser().resolve()
+    root = static_dir.expanduser().resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    if not candidate.exists() or not candidate.is_file():
+        return None
+    return candidate
+
+
+def _static_asset_media_type(asset_path: str) -> str | None:
+    suffix = Path(str(asset_path or "")).suffix.lower()
+    if suffix in {".js", ".mjs"}:
+        return "application/javascript"
+    if suffix == ".css":
+        return "text/css"
+    guessed, _encoding = mimetypes.guess_type(str(asset_path or ""))
+    return guessed
+
+
+async def _json_payload_or_empty(request: Request) -> dict[str, Any]:
+    content_length = str(request.headers.get("content-length", "") or "").strip()
+    if content_length in {"", "0"}:
+        return {}
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _context(request: Request) -> ShadowWebContext:
+    return request.app.state.shadow_context
+
+
+def _active_target(
+    request: Request,
+    *,
+    mode_override: object | None = None,
+    workspace_override: object | None = None,
+) -> ActiveBrowserTarget:
+    context = _context(request)
+    raw_mode = (
+        mode_override
+        if mode_override is not None
+        else request.query_params.get("mode")
+        or request.headers.get("X-LegalPDF-Runtime-Mode")
+    )
+    mode = _default_browser_mode(raw_mode)
+    workspace_id = normalize_workspace_id(
+        workspace_override
+        if workspace_override is not None
+        else request.query_params.get("workspace")
+        or request.query_params.get("workspace_id")
+        or request.headers.get("X-LegalPDF-Workspace-Id")
+    )
+    data_paths = detect_browser_data_paths(
+        mode=mode,
+        repo=context.repo_root,
+        identity=context.build_identity,
+    )
+    return ActiveBrowserTarget(
+        mode=mode,
+        workspace_id=workspace_id,
+        data_paths=data_paths,
+    )
+
+
+def _default_browser_mode(raw_value: object | None) -> str:
+    candidate = str(raw_value or "").strip().lower()
+    if candidate == RUNTIME_MODE_SHADOW:
+        return RUNTIME_MODE_SHADOW
+    return RUNTIME_MODE_LIVE
+
+
+def _supported_browser_modes() -> list[dict[str, str]]:
+    return [
+        {"id": RUNTIME_MODE_LIVE, "label": "Live App Data (recommended)"},
+        {"id": RUNTIME_MODE_SHADOW, "label": "Isolated Test Data"},
+    ]
+
+
+def _normalize_ui_variant(raw_value: object | None) -> str:
+    candidate = str(raw_value or "").strip().lower()
+    if candidate == "legacy":
+        return "legacy"
+    return "qt"
+
+
+def _runtime_payload(context: ShadowWebContext, target: ActiveBrowserTarget) -> dict[str, Any]:
+    return {
+        "host": SHADOW_HOST,
+        "port": context.port,
+        "build_branch": context.build_identity.branch,
+        "build_sha": context.build_identity.head_sha,
+        "build_identity": runtime_build_identity_payload(context.build_identity),
+        "asset_version": context.asset_version,
+        "runtime_mode": target.mode,
+        "runtime_mode_label": target.data_paths.label,
+        "workspace_id": target.workspace_id,
+        "live_data": target.data_paths.live_data,
+        "banner_text": target.data_paths.banner_text,
+        "settings_path": str(target.data_paths.settings_path),
+        "job_log_db_path": str(target.data_paths.job_log_db_path),
+        "outputs_dir": str(target.data_paths.outputs_dir),
+        "app_data_dir": str(target.data_paths.app_data_dir),
+        "runtime_state_root": str(target.data_paths.app_data_dir),
+    }
+
+
+def _runtime_diagnostics(context: ShadowWebContext, target: ActiveBrowserTarget) -> dict[str, object]:
+    listener = classify_shadow_listener(port=context.port, expected_pid=os.getpid())
+    runtime_metadata = build_shadow_runtime_metadata(
+        repo=context.repo_root,
+        identity=context.build_identity,
+        port=context.port,
+        listener=listener,
+        automation_preflight=context.automation_preflight,
+        capabilities={"runtime_mode": target.mode},
+    )
+    existing_runtime_metadata = load_shadow_runtime_metadata(context.server_runtime_paths.runtime_metadata_path)
+    normalized_existing = dict(existing_runtime_metadata or {})
+    normalized_existing.pop("updated_at", None)
+    normalized_runtime_metadata = dict(runtime_metadata)
+    normalized_runtime_metadata.pop("updated_at", None)
+    if normalized_existing != normalized_runtime_metadata:
+        write_shadow_runtime_metadata(context.server_runtime_paths.runtime_metadata_path, runtime_metadata)
+    return {
+        "listener_ownership": asdict(listener),
+        "runtime_metadata": runtime_metadata,
+        "runtime_metadata_path": str(context.server_runtime_paths.runtime_metadata_path),
+        "shadow_paths": {
+            "app_data_dir": str(context.server_runtime_paths.app_data_dir),
+            "settings_path": str(context.server_runtime_paths.settings_path),
+            "job_log_db_path": str(context.server_runtime_paths.job_log_db_path),
+            "outputs_dir": str(context.server_runtime_paths.outputs_dir),
+            "uploads_dir": str(context.server_runtime_paths.uploads_dir),
+        },
+        "active_data_target": {
+            "mode": target.mode,
+            "label": target.data_paths.label,
+            "app_data_dir": str(target.data_paths.app_data_dir),
+            "settings_path": str(target.data_paths.settings_path),
+            "job_log_db_path": str(target.data_paths.job_log_db_path),
+            "outputs_dir": str(target.data_paths.outputs_dir),
+            "live_data": target.data_paths.live_data,
+            "banner_text": target.data_paths.banner_text,
+            "workspace_id": target.workspace_id,
+        },
+        "failure_semantics": {
+            "unavailable": "host/toolchain cannot execute automation preflight or flow",
+            "failed": "automation executed but flow assertions failed",
+        },
+    }
+
+
+def _runtime_ready_payload(context: ShadowWebContext, target: ActiveBrowserTarget) -> dict[str, Any]:
+    runtime_payload = _runtime_payload(context, target)
+    bridge_sync = asdict(context.live_gmail_bridge.last_result)
+    listener = classify_shadow_listener(port=context.port, expected_pid=os.getpid())
+    launch_session = latest_window_trace_status(target.data_paths.app_data_dir)
+    return {
+        "runtime": runtime_payload,
+        "readiness": {
+            "browser_app": {
+                "ready": True,
+                "status": "ready",
+                "mode": target.mode,
+                "workspace_id": target.workspace_id,
+                "listener": asdict(listener),
+            },
+            "gmail_bridge": {
+                "ready": str(bridge_sync.get("status", "") or "").strip() == "ready",
+                "status": str(bridge_sync.get("status", "") or "").strip(),
+                "reason": str(bridge_sync.get("reason", "") or "").strip(),
+                "bridge_enabled": bool(bridge_sync.get("bridge_enabled")),
+                "bridge_port": bridge_sync.get("bridge_port"),
+                "owner_kind": str(bridge_sync.get("owner_kind", "") or "").strip() or "none",
+                "browser_url": str(bridge_sync.get("browser_url", "") or "").strip(),
+                "workspace_id": str(bridge_sync.get("workspace_id", "") or "").strip(),
+                "started": bool(bridge_sync.get("started")),
+                "registration_ok": bool(bridge_sync.get("registration_ok")),
+                "registration_reason": str(bridge_sync.get("registration_reason", "") or "").strip(),
+                "launch_session_id": str(launch_session.get("launch_session_id", "") or "").strip(),
+            },
+        },
+        "launch_session": launch_session,
+        "state_contract": {
+            "runtime_state_root": str(target.data_paths.app_data_dir),
+            "extension_schema_version": _EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION,
+            "extension_source_hash": _extension_background_source_hash(context.repo_root),
+            "listener_build_identity": runtime_build_identity_payload(context.build_identity),
+            "native_host_path_kind": str(launch_session.get("native_host_path_kind", "") or "").strip(),
+        },
+    }
+
+
+def _shell_bridge_mode_state(
+    *,
+    target: ActiveBrowserTarget,
+    build_identity: RuntimeBuildIdentity,
+) -> dict[str, Any]:
+    settings_payload = load_settings_from_path(target.data_paths.settings_path)
+    launch_session = latest_window_trace_status(target.data_paths.app_data_dir)
+    if _is_noncanonical_live_gmail_runtime(target=target, build_identity=build_identity):
+        prepare_response = _noncanonical_live_gmail_prepare_response(
+            target=target,
+            build_identity=build_identity,
+            settings_payload=settings_payload,
+        )
+    else:
+        prepare_response = prepare_gmail_intake(
+            base_dir=target.data_paths.app_data_dir,
+            request_focus=False,
+            include_token=False,
+            settings_loader=lambda: load_settings_from_path(target.data_paths.settings_path),
+        )
+    if (
+        str(prepare_response.get("launch_session_id", "") or "").strip() == ""
+        and str(launch_session.get("launch_session_id", "") or "").strip() != ""
+    ):
+        prepare_response["launch_session_id"] = str(launch_session.get("launch_session_id", "") or "").strip()
+    bridge_port = prepare_response.get("bridgePort")
+    if not isinstance(bridge_port, int):
+        try:
+            bridge_port = int(settings_payload.get("gmail_intake_port", 0))
+        except (TypeError, ValueError):
+            bridge_port = None
+    reason = str(prepare_response.get("reason", "") or "").strip()
+    return {
+        "mode": target.data_paths.mode,
+        "label": target.data_paths.label,
+        "live_data": target.data_paths.live_data,
+        "bridge_enabled": bool(settings_payload.get("gmail_intake_bridge_enabled", False)),
+        "bridge_port": bridge_port if isinstance(bridge_port, int) and 1 <= int(bridge_port) <= 65535 else None,
+        "account_email": str(settings_payload.get("gmail_account_email", "") or "").strip(),
+        "ready": bool(prepare_response.get("ok")),
+        "reason": reason,
+        "reason_message": _PREPARE_REASON_MESSAGES.get(reason, reason.replace("_", " ").strip() or "Unknown state."),
+        "owner_kind": str(prepare_response.get("ui_owner", "") or "none").strip() or "none",
+        "browser_url": str(prepare_response.get("browser_url", "") or "").strip(),
+        "workspace_id": str(prepare_response.get("workspace_id", "") or target.workspace_id).strip() or target.workspace_id,
+        "runtime_mode": str(prepare_response.get("runtime_mode", "") or target.mode).strip() or target.mode,
+        "launch_session": launch_session,
+        "prepare_response": prepare_response,
+    }
+
+
+def _shell_bridge_mode_state_snapshot(
+    *,
+    target: ActiveBrowserTarget,
+    bridge_sync: Mapping[str, Any],
+    build_identity: RuntimeBuildIdentity,
+) -> dict[str, Any]:
+    settings_payload = load_settings_from_path(target.data_paths.settings_path)
+    launch_session = latest_window_trace_status(target.data_paths.app_data_dir)
+    if _is_noncanonical_live_gmail_runtime(target=target, build_identity=build_identity):
+        prepare_response = _noncanonical_live_gmail_prepare_response(
+            target=target,
+            build_identity=build_identity,
+            settings_payload=settings_payload,
+        )
+        return {
+            "mode": target.data_paths.mode,
+            "label": target.data_paths.label,
+            "live_data": target.data_paths.live_data,
+            "bridge_enabled": bool(settings_payload.get("gmail_intake_bridge_enabled", False)),
+            "bridge_port": prepare_response.get("bridgePort"),
+            "account_email": str(settings_payload.get("gmail_account_email", "") or "").strip(),
+            "ready": False,
+            "reason": str(prepare_response.get("reason", "") or "").strip(),
+            "reason_message": _PREPARE_REASON_MESSAGES.get(
+                str(prepare_response.get("reason", "") or "").strip(),
+                "Unknown state.",
+            ),
+            "owner_kind": "none",
+            "browser_url": str(prepare_response.get("browser_url", "") or "").strip(),
+            "workspace_id": str(prepare_response.get("workspace_id", "") or target.workspace_id).strip() or target.workspace_id,
+            "runtime_mode": target.mode,
+            "launch_session": launch_session,
+            "prepare_response": prepare_response,
+        }
+    bridge_port = bridge_sync.get("bridge_port")
+    if not isinstance(bridge_port, int):
+        try:
+            bridge_port = int(settings_payload.get("gmail_intake_port", 0))
+        except (TypeError, ValueError):
+            bridge_port = None
+    reason = str(bridge_sync.get("reason", "") or "").strip()
+    owner_kind = str(bridge_sync.get("owner_kind", "") or "").strip() or "none"
+    browser_url = str(bridge_sync.get("browser_url", "") or "").strip()
+    workspace_id = str(bridge_sync.get("workspace_id", "") or "").strip() or target.workspace_id
+    ready = str(bridge_sync.get("status", "") or "").strip() == "ready"
+    prepare_response = {
+        "ok": ready,
+        "focused": False,
+        "flashed": False,
+        "bridgeTokenPresent": bool(str(settings_payload.get("gmail_intake_bridge_token", "") or "").strip()),
+        "launched": False,
+        "autoLaunchReady": True,
+        "launchTarget": str(build_identity.worktree_path or "").strip(),
+        "launchTargetReason": "launch_target_ready" if str(build_identity.worktree_path or "").strip() else "",
+        "ui_owner": owner_kind,
+        "browser_url": browser_url,
+        "browser_open_owned_by": "extension" if owner_kind == "browser_app" else "",
+        "workspace_id": workspace_id,
+        "runtime_mode": target.mode,
+        "launch_session_id": str(launch_session.get("launch_session_id", "") or "").strip(),
+        "bridgePort": bridge_port if isinstance(bridge_port, int) and 1 <= int(bridge_port) <= 65535 else None,
+        "reason": reason,
+    }
+    if prepare_response["launchTarget"] == "":
+        prepare_response.pop("launchTarget", None)
+    if prepare_response["launchTargetReason"] == "":
+        prepare_response.pop("launchTargetReason", None)
+    if prepare_response["browser_open_owned_by"] == "":
+        prepare_response.pop("browser_open_owned_by", None)
+    return {
+        "mode": target.data_paths.mode,
+        "label": target.data_paths.label,
+        "live_data": target.data_paths.live_data,
+        "bridge_enabled": bool(settings_payload.get("gmail_intake_bridge_enabled", False)),
+        "bridge_port": bridge_port if isinstance(bridge_port, int) and 1 <= int(bridge_port) <= 65535 else None,
+        "account_email": str(settings_payload.get("gmail_account_email", "") or "").strip(),
+        "ready": ready,
+        "reason": reason,
+        "reason_message": _PREPARE_REASON_MESSAGES.get(reason, reason.replace("_", " ").strip() or "Unknown state."),
+        "owner_kind": owner_kind,
+        "browser_url": browser_url,
+        "workspace_id": workspace_id,
+        "runtime_mode": target.mode,
+        "launch_session": launch_session,
+        "prepare_response": prepare_response,
+    }
+
+
+def _shell_ready_capability_flags(
+    *,
+    current_mode_bridge: Mapping[str, Any],
+    bridge_sync: Mapping[str, Any],
+) -> dict[str, Any]:
+    reason = str(current_mode_bridge.get("reason", "") or "").strip() or str(bridge_sync.get("reason", "") or "").strip()
+    bridge_ready = bool(current_mode_bridge.get("ready"))
+    status = "ok" if bridge_ready else "bad" if reason in {"bridge_browser_mismatch", "split_brain_browser_owner"} else "warn"
+    label = "Ready" if bridge_ready else "Host issue" if status == "bad" else "Needs attention"
+    message = (
+        "The Gmail bridge is ready for workspace handoff."
+        if bridge_ready
+        else str(current_mode_bridge.get("reason_message", "") or "The Gmail bridge is still warming.")
+    )
+    return {
+        "gmail_bridge": {
+            "status": status,
+            "label": label,
+            "message": message,
+            "reason": reason,
+            "owner_kind": str(current_mode_bridge.get("owner_kind", "") or bridge_sync.get("owner_kind", "") or "none"),
+            "current_mode": dict(current_mode_bridge),
+        }
+    }
+
+
+def _shell_bridge_capability_flags(
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+    *,
+    current_mode_bridge: Mapping[str, Any],
+    native_host_state: Mapping[str, Any],
+    document_runtime_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    bridge_sync = asdict(context.live_gmail_bridge.last_result)
+    reason = str(current_mode_bridge.get("reason", "") or "").strip() or str(bridge_sync.get("reason", "") or "").strip()
+    ready = bool(current_mode_bridge.get("ready"))
+    status = "ok" if ready else "bad" if reason in {"bridge_browser_mismatch", "split_brain_browser_owner"} else "warn"
+    label = "Ready" if ready else "Host issue" if status == "bad" else "Needs attention"
+    message = (
+        "The browser workspace is ready for Gmail handoff."
+        if ready
+        else str(current_mode_bridge.get("reason_message", "") or "The browser workspace is not ready for Gmail handoff.")
+    )
+    return {
+        "native_host": {
+            "status": "ok" if native_host_state.get("ready") else "warn" if native_host_state.get("repairable") else "bad",
+            "label": "Ready" if native_host_state.get("ready") else "Repairable" if native_host_state.get("repairable") else "Blocked",
+            "message": str(native_host_state.get("message", "") or "Edge native host status is unavailable."),
+            "reason": str(native_host_state.get("reason", "") or ""),
+            "repairable": bool(native_host_state.get("repairable")),
+            "self_test_status": str(native_host_state.get("self_test_status", "") or ""),
+            "current_runtime_python": str(native_host_state.get("current_runtime_python", "") or ""),
+        },
+        "gmail_bridge": {
+            "status": status,
+            "label": label,
+            "message": message,
+            "reason": reason,
+            "owner_kind": str(current_mode_bridge.get("owner_kind", "") or bridge_sync.get("owner_kind", "") or "none"),
+            "current_mode": dict(current_mode_bridge),
+            "live_desktop": None,
+            "shadow_isolation_active": bool(target.mode == RUNTIME_MODE_SHADOW and not current_mode_bridge.get("bridge_enabled")),
+            "live_desktop_ready_while_shadow_disabled": False,
+            "user_action_needed": not ready,
+        },
+        "document_runtime": {
+            "status": "ok" if document_runtime_state.get("native_pdf_available") else "warn",
+            "label": "Ready" if document_runtime_state.get("native_pdf_available") else "Browser-managed",
+            "message": str(document_runtime_state.get("message", "") or "Document runtime status is unavailable."),
+            "reason": str(document_runtime_state.get("reason", "") or ""),
+            "native_pdf_available": bool(document_runtime_state.get("native_pdf_available")),
+            "browser_pdf_bundle_supported": bool(document_runtime_state.get("browser_pdf_bundle_supported", False)),
+        },
+    }
+
+
+def _browser_capability_flags(
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+    *,
+    extension_summary: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    provider_state = build_browser_provider_state(settings_path=target.data_paths.settings_path)
+    flags = build_browser_capability_snapshot(
+        data_paths=target.data_paths,
+        automation_preflight=context.automation_preflight,
+        word_pdf_preflight=provider_state.get("word_pdf_export", {}) if isinstance(provider_state, Mapping) else {},
+        extension_summary=extension_summary,
+    )
+    native_host_state = provider_state.get("native_host", {}) if isinstance(provider_state, Mapping) else {}
+    flags["native_host"] = {
+        "status": "ok" if native_host_state.get("ready") else "warn" if native_host_state.get("repairable") else "bad",
+        "label": "Ready" if native_host_state.get("ready") else "Repairable" if native_host_state.get("repairable") else "Blocked",
+        "message": str(native_host_state.get("message", "") or "Edge native host status is unavailable."),
+        "reason": str(native_host_state.get("reason", "") or ""),
+        "repairable": bool(native_host_state.get("repairable")),
+        "self_test_status": str(native_host_state.get("self_test_status", "") or ""),
+        "wrapper_target_python": str(native_host_state.get("wrapper_target_python", "") or ""),
+    }
+    document_runtime_state = provider_state.get("document_runtime", {}) if isinstance(provider_state, Mapping) else {}
+    flags["document_runtime"] = {
+        "status": "ok" if document_runtime_state.get("native_pdf_available") else "warn",
+        "label": "Ready" if document_runtime_state.get("native_pdf_available") else "Browser-managed",
+        "message": str(document_runtime_state.get("message", "") or "Document runtime status is unavailable."),
+        "reason": str(document_runtime_state.get("reason", "") or ""),
+        "native_pdf_available": bool(document_runtime_state.get("native_pdf_available")),
+        "browser_pdf_bundle_supported": bool(document_runtime_state.get("browser_pdf_bundle_supported", False)),
+    }
+    return flags
+
+
+def _augment_finalization_report_context(
+    raw_context: object,
+    *,
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+) -> dict[str, Any] | None:
+    if not isinstance(raw_context, Mapping):
+        return None
+    report_context = dict(raw_context)
+    report_context["runtime_mode"] = str(report_context.get("runtime_mode") or target.mode).strip() or target.mode
+    report_context["workspace_id"] = (
+        str(report_context.get("workspace_id") or target.workspace_id).strip() or target.workspace_id
+    )
+    report_context["build_sha"] = (
+        str(report_context.get("build_sha") or context.build_identity.head_sha).strip()
+        or context.build_identity.head_sha
+    )
+    report_context["asset_version"] = (
+        str(report_context.get("asset_version") or context.asset_version).strip() or context.asset_version
+    )
+    report_context["active_view"] = str(report_context.get("active_view") or "").strip()
+    return report_context
+
+
+def _augment_browser_failure_report_context(
+    raw_context: object,
+    *,
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+) -> dict[str, Any] | None:
+    if not isinstance(raw_context, Mapping):
+        return None
+    report_context = dict(raw_context)
+    report_context["runtime_mode"] = str(report_context.get("runtime_mode") or target.mode).strip() or target.mode
+    report_context["workspace_id"] = (
+        str(report_context.get("workspace_id") or target.workspace_id).strip() or target.workspace_id
+    )
+    report_context["build_sha"] = (
+        str(report_context.get("build_sha") or context.build_identity.head_sha).strip()
+        or context.build_identity.head_sha
+    )
+    report_context["asset_version"] = (
+        str(report_context.get("asset_version") or context.asset_version).strip() or context.asset_version
+    )
+    report_context["active_view"] = str(report_context.get("active_view") or "").strip()
+    report_context["build_identity"] = runtime_build_identity_payload(context.build_identity)
+    return report_context
+
+
+def _augment_gmail_finalization_report_payloads(
+    normalized_payload: dict[str, Any],
+    *,
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+) -> None:
+    top_level_context = _augment_finalization_report_context(
+        normalized_payload.get("finalization_report_context"),
+        context=context,
+        target=target,
+    )
+    if top_level_context is not None:
+        normalized_payload["finalization_report_context"] = top_level_context
+    active_session = normalized_payload.get("active_session")
+    if isinstance(active_session, Mapping):
+        active_session_payload = dict(active_session)
+        session_report_context = _augment_finalization_report_context(
+            active_session_payload.get("finalization_report_context"),
+            context=context,
+            target=target,
+        )
+        if session_report_context is not None:
+            active_session_payload["finalization_report_context"] = session_report_context
+        normalized_payload["active_session"] = active_session_payload
+
+
+def _merge_response(
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+    response: dict[str, object],
+) -> dict[str, object]:
+    diagnostics = dict(response.get("diagnostics", {}) if isinstance(response.get("diagnostics"), dict) else {})
+    diagnostics.setdefault("runtime", _runtime_diagnostics(context, target))
+    normalized_payload = dict(
+        response.get("normalized_payload", {}) if isinstance(response.get("normalized_payload"), dict) else {}
+    )
+    runtime_payload = dict(normalized_payload.get("runtime", {}) if isinstance(normalized_payload.get("runtime"), dict) else {})
+    runtime_payload.update(_runtime_payload(context, target))
+    normalized_payload["runtime"] = runtime_payload
+    normalized_payload.setdefault(
+        "workspace",
+        {
+            "id": target.workspace_id,
+            "runtime_mode": target.mode,
+            "runtime_mode_label": target.data_paths.label,
+        },
+    )
+    _augment_gmail_finalization_report_payloads(
+        normalized_payload,
+        context=context,
+        target=target,
+    )
+    capability_flags = response.get("capability_flags")
+    if capability_flags is None:
+        capability_flags = _browser_capability_flags(context, target)
+    merged = {
+        "status": str(response.get("status", "ok") or "ok"),
+        "normalized_payload": normalized_payload,
+        "diagnostics": diagnostics,
+        "capability_flags": capability_flags,
+    }
+    for key, value in response.items():
+        if key in merged or key in {"diagnostics", "capability_flags", "normalized_payload"}:
+            continue
+        merged[key] = value
+    return merged
+
+
+def _validation_error_response(
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+    *,
+    message: str,
+    validation_error: Mapping[str, Any] | None = None,
+    status_code: int = 422,
+) -> JSONResponse:
+    normalized_payload: dict[str, Any] = {}
+    diagnostics: dict[str, Any] = {"error": message}
+    if validation_error:
+        normalized_payload["validation_error"] = dict(validation_error)
+        diagnostics["validation_error"] = dict(validation_error)
+    return JSONResponse(
+        _merge_response(
+            context,
+            target,
+            {
+                "status": "failed",
+                "normalized_payload": normalized_payload,
+                "diagnostics": diagnostics,
+            },
+        ),
+        status_code=status_code,
+    )
+
+
+def _is_noncanonical_live_gmail_runtime(
+    *,
+    target: ActiveBrowserTarget,
+    build_identity: RuntimeBuildIdentity,
+) -> bool:
+    return bool(target.mode == RUNTIME_MODE_LIVE and not build_identity.is_canonical)
+
+
+def _noncanonical_live_gmail_prepare_response(
+    *,
+    target: ActiveBrowserTarget,
+    build_identity: RuntimeBuildIdentity,
+    settings_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    bridge_port = settings_payload.get("gmail_intake_port")
+    if not isinstance(bridge_port, int):
+        try:
+            bridge_port = int(settings_payload.get("gmail_intake_port", 0))
+        except (TypeError, ValueError):
+            bridge_port = None
+    canonical_worktree = str(build_identity.canonical_worktree_path or "").strip()
+    response: dict[str, Any] = {
+        "ok": False,
+        "focused": False,
+        "flashed": False,
+        "bridgeTokenPresent": bool(str(settings_payload.get("gmail_intake_bridge_token", "") or "").strip()),
+        "launched": False,
+        "autoLaunchReady": False,
+        "launchTargetReason": "canonical_restart_required",
+        "ui_owner": "none",
+        "browser_url": f"http://{SHADOW_HOST}:{SHADOW_DEFAULT_PORT}/?mode=live&workspace={target.workspace_id}#gmail-intake",
+        "workspace_id": target.workspace_id,
+        "runtime_mode": target.mode,
+        "reason": "canonical_restart_required",
+    }
+    if canonical_worktree:
+        response["launchTarget"] = canonical_worktree
+    if isinstance(bridge_port, int) and 1 <= int(bridge_port) <= 65535:
+        response["bridgePort"] = bridge_port
+    return response
+
+
+def _noncanonical_live_gmail_block_response(
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+    *,
+    operation: str,
+    status_code: int = 409,
+) -> JSONResponse:
+    action_label = "Preview" if operation == "gmail_preview_attachment" else "Prepare"
+    message = (
+        f"{action_label} is blocked because the live browser app is not running from the canonical runtime. "
+        "Use Restart from Canonical Main, then retry."
+    )
+    diagnostics = {
+        "error": "noncanonical_live_runtime",
+        "operation": operation,
+        "message": message,
+        "build_identity": runtime_build_identity_payload(context.build_identity),
+    }
+    return JSONResponse(
+        _merge_response(
+            context,
+            target,
+            {
+                "status": "failed",
+                "normalized_payload": {
+                    "validation_error": {
+                        "reason": "canonical_restart_required",
+                        "message": message,
+                        "operation": operation,
+                    }
+                },
+                "diagnostics": diagnostics,
+            },
+        ),
+        status_code=status_code,
+    )
+
+
+def _translation_job_or_error(
+    context: ShadowWebContext,
+    *,
+    job_id: str,
+) -> dict[str, Any]:
+    cleaned_job_id = str(job_id or "").strip()
+    if cleaned_job_id == "":
+        raise ValueError("Arabic DOCX review requires the current browser translation job id.")
+    job = context.translation_jobs.get_job(cleaned_job_id)
+    if job is None:
+        raise ValueError("Browser translation job was not found for Arabic DOCX review.")
+    return job
+
+
+def _arabic_review_validation_payload(
+    context: ShadowWebContext,
+    target: ActiveBrowserTarget,
+    *,
+    job: Mapping[str, Any] | None = None,
+    completion_key: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "arabic_review": context.arabic_reviews.state_for_workspace(
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            job=job,
+            completion_key=completion_key,
+        )
+    }
+
+
+def create_shadow_app(
+    *,
+    repo_root: Path | None = None,
+    port: int = SHADOW_DEFAULT_PORT,
+    enable_live_gmail_bridge: bool = True,
+) -> FastAPI:
+    root = (repo_root or Path(__file__).resolve().parents[3]).expanduser().resolve()
+    build_identity = detect_runtime_build_identity(repo=root, labels=("shadow-web",))
+    server_runtime_paths = detect_shadow_runtime_paths(repo=root, identity=build_identity)
+    automation_preflight = run_browser_automation_preflight(repo=root)
+    templates_dir = Path(__file__).resolve().parent / "templates"
+    static_dir = Path(__file__).resolve().parent / "static"
+    asset_version = compute_browser_asset_version(static_dir)
+    templates = Jinja2Templates(directory=str(templates_dir))
+    gmail_sessions = GmailBrowserSessionManager()
+
+    shadow_context = ShadowWebContext(
+        repo_root=root,
+        port=int(port),
+        static_dir=static_dir,
+        asset_version=asset_version,
+        server_runtime_paths=server_runtime_paths,
+        build_identity=build_identity,
+        automation_preflight=automation_preflight,
+        translation_jobs=TranslationJobManager(),
+        arabic_reviews=ArabicDocxReviewManager(),
+        gmail_sessions=gmail_sessions,
+        live_gmail_bridge=BrowserLiveGmailBridgeManager(
+            repo_root=root,
+            build_identity=build_identity,
+            server_port=int(port),
+            gmail_sessions=gmail_sessions,
+        ),
+        enable_live_gmail_bridge=bool(enable_live_gmail_bridge),
+    )
+
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        context = app.state.shadow_context
+        payload = build_shadow_runtime_metadata(
+            repo=context.repo_root,
+            identity=context.build_identity,
+            port=context.port,
+            listener=classify_shadow_listener(port=context.port, expected_pid=os.getpid()),
+            automation_preflight=context.automation_preflight,
+        )
+        write_shadow_runtime_metadata(context.server_runtime_paths.runtime_metadata_path, payload)
+        if context.enable_live_gmail_bridge:
+            context.live_gmail_bridge.sync()
+        try:
+            yield
+        finally:
+            if context.enable_live_gmail_bridge:
+                context.live_gmail_bridge.stop()
+            clear_shadow_runtime_metadata(app.state.shadow_context.server_runtime_paths.runtime_metadata_path)
+
+    app = FastAPI(title="LegalPDF Translate Browser Parity", version="0.2.0", lifespan=_lifespan)
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    app.state.shadow_context = shadow_context
+
+    @app.get("/static-build/{asset_version}/{asset_path:path}", name="static_build")
+    async def versioned_static_asset(asset_version: str, asset_path: str) -> Response:
+        context = app.state.shadow_context
+        if str(asset_version or "").strip() != context.asset_version:
+            return Response(status_code=404)
+        asset = _resolve_static_asset(context.static_dir, asset_path)
+        if asset is None:
+            return Response(status_code=404)
+        return FileResponse(
+            asset,
+            media_type=_static_asset_media_type(asset_path),
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+            },
+        )
+
+    def _structured_validation_payload(exc: Exception) -> dict[str, Any] | None:
+        if isinstance(exc, InterpretationValidationError):
+            return exc.to_payload()
+        return None
+
+    @app.get("/", response_class=HTMLResponse)
+    async def index(request: Request) -> HTMLResponse:
+        context = _context(request)
+        response = templates.TemplateResponse(
+            request,
+            "index.html",
+            {
+                "shadow_host": SHADOW_HOST,
+                "shadow_port": context.port,
+                "build_branch": context.build_identity.branch,
+                "build_sha": context.build_identity.head_sha,
+                "build_identity": runtime_build_identity_payload(context.build_identity),
+                "asset_version": context.asset_version,
+                "static_base_url": _versioned_static_base_url(request, context),
+                "style_css_url": _versioned_static_url(request, context, "style.css"),
+                "app_js_url": _versioned_static_url(request, context, "app.js"),
+                "default_runtime_mode": _default_browser_mode(request.query_params.get("mode")),
+                "default_workspace_id": normalize_workspace_id(request.query_params.get("workspace")),
+                "ui_variant": _normalize_ui_variant(request.query_params.get("ui")),
+            },
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> Response:
+        return Response(status_code=204)
+
+    @app.get("/api/bootstrap")
+    async def api_bootstrap(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = build_browser_bootstrap(
+            data_paths=target.data_paths,
+            history_limit=25,
+        )
+        response["normalized_payload"].update(
+            build_power_tools_bootstrap(
+                data_paths=target.data_paths,
+                runtime_metadata_path=context.server_runtime_paths.runtime_metadata_path,
+            )
+        )
+        translation_bootstrap = build_translation_bootstrap(
+            settings_path=target.data_paths.settings_path,
+            job_log_db_path=target.data_paths.job_log_db_path,
+            outputs_dir=target.data_paths.outputs_dir,
+            active_jobs=context.translation_jobs.list_jobs(runtime_mode=target.mode, limit=12),
+            history_limit=25,
+        )
+        response["normalized_payload"]["translation"] = translation_bootstrap["normalized_payload"]
+        gmail_bootstrap = context.gmail_sessions.build_bootstrap(
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            settings_path=target.data_paths.settings_path,
+            outputs_dir=target.data_paths.outputs_dir,
+            runtime_state_root=target.data_paths.app_data_dir,
+            build_sha=context.build_identity.head_sha,
+            asset_version=context.asset_version,
+        )
+        response["normalized_payload"]["gmail"] = gmail_bootstrap["normalized_payload"]
+        google_photos_bootstrap = build_google_photos_status(
+            settings_path=target.data_paths.settings_path,
+            redirect_uri=_google_photos_redirect_uri(request),
+            mode=target.mode,
+            workspace_id=target.workspace_id,
+        )
+        response["normalized_payload"]["google_photos"] = google_photos_bootstrap["normalized_payload"]["google_photos"]
+        extension_payload = response["normalized_payload"].get("extension_lab", {})
+        if isinstance(extension_payload, dict):
+            extension_payload["prepare_reason_catalog"] = extension_prepare_reason_catalog()
+            response["normalized_payload"]["extension_lab"] = extension_payload
+        response["capability_flags"] = _browser_capability_flags(
+            context,
+            target,
+            extension_summary=extension_payload if isinstance(extension_payload, dict) else None,
+        )
+        response["normalized_payload"]["shell"] = {
+            "extension_launch_session_schema_version": _EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION,
+            "extension_source_hash": _extension_background_source_hash(context.repo_root),
+            "runtime_state_root": str(target.data_paths.app_data_dir),
+            "build_identity": runtime_build_identity_payload(context.build_identity),
+            "launch_session": latest_window_trace_status(target.data_paths.app_data_dir),
+        }
+        response["normalized_payload"]["automation_preflight"] = context.automation_preflight
+        payload = JSONResponse(_merge_response(context, target, response))
+        payload.headers["Cache-Control"] = "no-store"
+        return payload
+
+    @app.get("/api/runtime")
+    async def api_runtime(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        payload = JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {},
+                    "diagnostics": {},
+                },
+            )
+        )
+        payload.headers["Cache-Control"] = "no-store"
+        return payload
+
+    @app.get("/api/runtime/ready")
+    async def api_runtime_ready(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        payload = JSONResponse(
+            {
+                "status": "ok",
+                "normalized_payload": _runtime_ready_payload(context, target),
+                "diagnostics": {},
+            }
+        )
+        payload.headers["Cache-Control"] = "no-store"
+        return payload
+
+    @app.get("/api/bootstrap/shell")
+    async def api_bootstrap_shell(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        gmail_bootstrap = context.gmail_sessions.build_bootstrap(
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            settings_path=target.data_paths.settings_path,
+            outputs_dir=target.data_paths.outputs_dir,
+            runtime_state_root=target.data_paths.app_data_dir,
+            build_sha=context.build_identity.head_sha,
+            asset_version=context.asset_version,
+        )
+        current_mode_bridge = _shell_bridge_mode_state(target=target, build_identity=context.build_identity)
+        document_runtime_state = document_runtime_state_payload()
+        native_host_state = inspect_edge_native_host(
+            base_dir=target.data_paths.app_data_dir,
+            preferred_python_executable=Path(sys.executable),
+            runtime_path=Path(sys.executable),
+            run_self_test=False,
+        )
+        response = {
+            "status": "ok",
+            "normalized_payload": {
+                "shell": {
+                    "ready": bool(current_mode_bridge.get("ready")),
+                    "native_host_ready": bool(native_host_state.get("ready")),
+                    "asset_version": context.asset_version,
+                    "extension_launch_session_schema_version": _EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION,
+                    "extension_source_hash": _extension_background_source_hash(context.repo_root),
+                    "build_identity": runtime_build_identity_payload(context.build_identity),
+                    "runtime_mode": target.mode,
+                    "workspace_id": target.workspace_id,
+                    "owner_kind": current_mode_bridge.get("owner_kind", "none"),
+                    "runtime_state_root": str(target.data_paths.app_data_dir),
+                },
+                "gmail": gmail_bootstrap["normalized_payload"],
+                "document_runtime": document_runtime_state,
+                "native_host": native_host_state,
+                "extension_lab": {
+                    "prepare_response": current_mode_bridge["prepare_response"],
+                },
+            },
+            "diagnostics": {
+                "gmail_bridge_sync": asdict(context.live_gmail_bridge.last_result),
+                "document_runtime": document_runtime_state,
+                "native_host": native_host_state,
+            },
+            "capability_flags": _shell_bridge_capability_flags(
+                context,
+                target,
+                current_mode_bridge=current_mode_bridge,
+                native_host_state=native_host_state,
+                document_runtime_state=document_runtime_state,
+            ),
+        }
+        payload = JSONResponse(_merge_response(context, target, response))
+        payload.headers["Cache-Control"] = "no-store"
+        return payload
+
+    @app.get("/api/bootstrap/shell/ready")
+    async def api_bootstrap_shell_ready(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        bridge_sync = asdict(context.live_gmail_bridge.last_result)
+        current_mode_bridge = _shell_bridge_mode_state_snapshot(
+            target=target,
+            bridge_sync=bridge_sync,
+            build_identity=context.build_identity,
+        )
+        gmail_shell = context.gmail_sessions.build_shell_ready(
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            settings_path=target.data_paths.settings_path,
+            runtime_state_root=target.data_paths.app_data_dir,
+        )
+        payload = JSONResponse(
+            {
+                "status": "ok",
+                "normalized_payload": {
+                    "runtime": _runtime_payload(context, target),
+                    "workspace": {
+                        "id": target.workspace_id,
+                        "runtime_mode": target.mode,
+                        "runtime_mode_label": target.data_paths.label,
+                    },
+                    "shell": {
+                        "ready": True,
+                        "gmail_bridge_ready": bool(current_mode_bridge.get("ready")),
+                        "asset_version": context.asset_version,
+                        "extension_launch_session_schema_version": _EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION,
+                        "extension_source_hash": _extension_background_source_hash(context.repo_root),
+                        "build_identity": runtime_build_identity_payload(context.build_identity),
+                        "runtime_mode": target.mode,
+                        "workspace_id": target.workspace_id,
+                        "owner_kind": current_mode_bridge.get("owner_kind", "none"),
+                        "runtime_state_root": str(target.data_paths.app_data_dir),
+                        "launch_session": dict(current_mode_bridge.get("launch_session", {}) or {}),
+                    },
+                    "gmail": gmail_shell["normalized_payload"],
+                    "extension_lab": {
+                        "prepare_response": current_mode_bridge["prepare_response"],
+                    },
+                    "automation_preflight": dict(context.automation_preflight),
+                },
+                "diagnostics": {
+                    "gmail_bridge_sync": bridge_sync,
+                },
+                "capability_flags": _shell_ready_capability_flags(
+                    current_mode_bridge=current_mode_bridge,
+                    bridge_sync=bridge_sync,
+                ),
+            }
+        )
+        payload.headers["Cache-Control"] = "no-store"
+        return payload
+
+    @app.get("/api/capabilities")
+    async def api_capabilities(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        extension_payload = build_extension_lab_summary(data_paths=target.data_paths)
+        extension_payload["prepare_reason_catalog"] = extension_prepare_reason_catalog()
+        capability_flags = _browser_capability_flags(
+            context,
+            target,
+            extension_summary=extension_payload,
+        )
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {
+                        "capability_snapshot": capability_flags,
+                        "extension_lab": extension_payload,
+                    },
+                    "diagnostics": {
+                        "word_pdf_export": capability_flags["word_pdf_export"]["preflight"],
+                    },
+                    "capability_flags": capability_flags,
+                },
+            )
+        )
+
+    @app.get("/api/runtime-mode")
+    async def api_runtime_mode(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = {
+            "status": "ok",
+            "normalized_payload": {
+                "current_mode": target.mode,
+                "workspace_id": target.workspace_id,
+                "supported_modes": _supported_browser_modes(),
+            },
+            "diagnostics": {},
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/runtime-mode")
+    async def api_runtime_mode_post(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        response = {
+            "status": "ok",
+            "normalized_payload": {
+                "current_mode": target.mode,
+                "workspace_id": target.workspace_id,
+                "supported_modes": _supported_browser_modes(),
+            },
+            "diagnostics": {},
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/workspaces/current")
+    async def api_workspace_current(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = {
+            "status": "ok",
+            "normalized_payload": {
+                "workspace": {
+                    "id": target.workspace_id,
+                    "runtime_mode": target.mode,
+                    "runtime_label": target.data_paths.label,
+                    "live_data": target.data_paths.live_data,
+                    "available_sections": [
+                        "dashboard",
+                        "new-job",
+                        "recent-jobs",
+                        "settings",
+                        "profile",
+                        "extension-lab",
+                        "power-tools",
+                    ],
+                }
+            },
+            "diagnostics": {},
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/joblog/recent")
+    async def api_recent_jobs(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        limit_raw = request.query_params.get("limit", "12")
+        try:
+            limit = max(1, min(100, int(limit_raw)))
+        except ValueError:
+            limit = 12
+        recent = list_browser_recent_jobs(db_path=target.data_paths.job_log_db_path, limit=limit)
+        response = {
+            "status": "ok",
+            "normalized_payload": recent,
+            "diagnostics": {},
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/joblog/delete")
+    async def api_joblog_delete(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        raw_row_ids = payload.get("row_ids")
+        if not isinstance(raw_row_ids, list):
+            raw_single = payload.get("row_id")
+            raw_row_ids = [] if raw_single in (None, "") else [raw_single]
+        try:
+            response = delete_browser_joblog_rows(
+                db_path=target.data_paths.job_log_db_path,
+                row_ids=[int(row_id) for row_id in raw_row_ids],
+            )
+        except (TypeError, ValueError) as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/settings/summary")
+    async def api_settings_summary(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = {
+            "status": "ok",
+            "normalized_payload": build_browser_settings_summary(
+                settings_path=target.data_paths.settings_path,
+                data_paths=target.data_paths,
+            ),
+            "diagnostics": {},
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/settings/admin")
+    async def api_settings_admin(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = {
+            "status": "ok",
+            "normalized_payload": build_power_tools_bootstrap(
+                data_paths=target.data_paths,
+                runtime_metadata_path=context.server_runtime_paths.runtime_metadata_path,
+            )["settings_admin"],
+            "diagnostics": {},
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/save")
+    async def api_settings_save(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = save_browser_settings(
+                settings_path=target.data_paths.settings_path,
+                values=dict(payload.get("form_values", {})),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        if target.mode == RUNTIME_MODE_LIVE and context.enable_live_gmail_bridge:
+            context.live_gmail_bridge.sync()
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/preflight")
+    async def api_settings_preflight(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        response = run_settings_preflight(settings_path=target.data_paths.settings_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/ocr-test")
+    async def api_settings_ocr_test(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = run_ocr_provider_test(settings_path=target.data_paths.settings_path)
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/translation-test")
+    async def api_settings_translation_test(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = run_translation_provider_test(settings_path=target.data_paths.settings_path)
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/native-host-test")
+    async def api_settings_native_host_test(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        response = run_native_host_test(settings_path=target.data_paths.settings_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/word-pdf-test")
+    async def api_settings_word_pdf_test(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        response = run_word_pdf_export_test(settings_path=target.data_paths.settings_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/native-host-repair")
+    async def api_settings_native_host_repair(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        response = repair_browser_native_host(settings_path=target.data_paths.settings_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/translation-key/save")
+    async def api_settings_translation_key_save(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = save_browser_translation_key(
+                settings_path=target.data_paths.settings_path,
+                key=payload.get("key") if isinstance(payload, dict) else "",
+            )
+        except (ValueError, RuntimeError) as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/translation-key/clear")
+    async def api_settings_translation_key_clear(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = clear_browser_translation_key(settings_path=target.data_paths.settings_path)
+        except RuntimeError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/ocr-key/save")
+    async def api_settings_ocr_key_save(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = save_browser_ocr_key(
+                settings_path=target.data_paths.settings_path,
+                key=payload.get("key") if isinstance(payload, dict) else "",
+            )
+        except (ValueError, RuntimeError) as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/ocr-key/clear")
+    async def api_settings_ocr_key_clear(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = clear_browser_ocr_key(settings_path=target.data_paths.settings_path)
+        except RuntimeError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/gmail-prereqs")
+    async def api_settings_gmail_prereqs(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        response = run_gmail_draft_preflight(settings_path=target.data_paths.settings_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/profile/summary")
+    async def api_profile_summary(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = {
+            "status": "ok",
+            "normalized_payload": build_browser_profile_summary(settings_path=target.data_paths.settings_path),
+            "diagnostics": {},
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/profile/new")
+    async def api_profile_new(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = {
+            "status": "ok",
+            "normalized_payload": {
+                "profile": build_blank_browser_profile(),
+            },
+            "diagnostics": {},
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/profile/save")
+    async def api_profile_save(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = save_browser_profile(
+                settings_path=target.data_paths.settings_path,
+                profile_payload=dict(payload.get("profile", {})),
+                make_primary=bool(payload.get("make_primary", False)),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/profile/delete")
+    async def api_profile_delete(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = delete_browser_profile(
+                settings_path=target.data_paths.settings_path,
+                profile_id=str(payload.get("profile_id", "") or "").strip(),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/profile/set-primary")
+    async def api_profile_set_primary(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = set_browser_primary_profile(
+                settings_path=target.data_paths.settings_path,
+                profile_id=str(payload.get("profile_id", "") or "").strip(),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/parity-audit")
+    async def api_parity_audit(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = {
+            "status": "ok",
+            "normalized_payload": build_browser_parity_audit(data_paths=target.data_paths),
+            "diagnostics": {},
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/extension/diagnostics")
+    async def api_extension_diagnostics(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        extension_payload = build_extension_lab_summary(data_paths=target.data_paths)
+        extension_payload["prepare_reason_catalog"] = extension_prepare_reason_catalog()
+        response = {
+            "status": "ok",
+            "normalized_payload": extension_payload,
+            "diagnostics": {},
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/extension/launch-session-diagnostics")
+    async def api_extension_launch_session_diagnostics(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        launch_session_id = str(payload.get("launch_session_id", "") or "").strip()
+        if launch_session_id == "":
+            return _validation_error_response(context, target, message="launch_session_id is required.")
+        launch_session_fields: dict[str, object] = {
+            "handoff_session_id": str(payload.get("handoff_session_id", "") or "").strip(),
+            "click_phase": str(payload.get("click_phase", "") or "").strip(),
+            "click_failure_reason": str(payload.get("click_failure_reason", "") or "").strip(),
+            "source_gmail_url": str(payload.get("source_gmail_url", "") or "").strip(),
+            "tab_resolution_strategy": str(payload.get("tab_resolution_strategy", "") or "").strip(),
+            "workspace_surface_confirmed": bool(payload.get("workspace_surface_confirmed")),
+            "client_hydration_status": str(payload.get("client_hydration_status", "") or "").strip(),
+            "extension_surface_outcome": str(payload.get("outcome", "") or "").strip(),
+            "extension_surface_reason": str(payload.get("reason", "") or "").strip(),
+            "extension_surface_tab_id": int(payload.get("tab_id", 0) or 0),
+            "surface_candidate_source": str(payload.get("surface_candidate_source", "") or "").strip(),
+            "surface_candidate_valid": bool(payload.get("surface_candidate_valid")),
+            "surface_invalidation_reason": str(payload.get("surface_invalidation_reason", "") or "").strip(),
+            "fresh_tab_created_after_invalidation": bool(payload.get("fresh_tab_created_after_invalidation")),
+            "bridge_context_posted": bool(payload.get("bridge_context_posted")),
+            "surface_visibility_status": str(payload.get("surface_visibility_status", "") or "").strip(),
+            "browser_url": str(payload.get("browser_url", "") or "").strip(),
+        }
+        should_infer_compatible_runtime_root = (
+            bool(payload.get("bridge_context_posted"))
+            and str(payload.get("click_phase", "") or "").strip() == "bridge_context_posted"
+            and bool(payload.get("workspace_surface_confirmed"))
+            and str(payload.get("outcome", "") or "").strip() != "runtime_state_root_mismatch"
+        )
+        if should_infer_compatible_runtime_root:
+            launch_session_fields["runtime_state_root_compatible"] = True
+            launch_session_fields["expected_runtime_state_root"] = str(target.data_paths.app_data_dir)
+            launch_session_fields["observed_runtime_state_root"] = str(target.data_paths.app_data_dir)
+        elif "runtime_state_root_compatible" in payload:
+            launch_session_fields["runtime_state_root_compatible"] = bool(payload.get("runtime_state_root_compatible"))
+        if "expected_runtime_state_root" in payload and (
+            not should_infer_compatible_runtime_root
+            or str(payload.get("expected_runtime_state_root", "") or "").strip() != ""
+        ):
+            launch_session_fields["expected_runtime_state_root"] = str(
+                payload.get("expected_runtime_state_root", "") or ""
+            ).strip()
+        if "observed_runtime_state_root" in payload and (
+            not should_infer_compatible_runtime_root
+            or str(payload.get("observed_runtime_state_root", "") or "").strip() != ""
+        ):
+            launch_session_fields["observed_runtime_state_root"] = str(
+                payload.get("observed_runtime_state_root", "") or ""
+            ).strip()
+        launch_session = update_launch_session_state(
+            target.data_paths.app_data_dir,
+            launch_session_id=launch_session_id,
+            **launch_session_fields,
+        )
+        response = {
+            "status": "ok",
+            "normalized_payload": {
+                "launch_session": latest_window_trace_status(target.data_paths.app_data_dir),
+            },
+            "diagnostics": {
+                "launch_session_updated": launch_session,
+            },
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/power-tools/bootstrap")
+    async def api_power_tools_bootstrap(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = {
+            "status": "ok",
+            "normalized_payload": build_power_tools_bootstrap(
+                data_paths=target.data_paths,
+                runtime_metadata_path=context.server_runtime_paths.runtime_metadata_path,
+            )["power_tools"],
+            "diagnostics": {},
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/power-tools/glossary/save")
+    async def api_power_tools_glossary_save(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = save_glossary_workspace(
+                settings_path=target.data_paths.settings_path,
+                personal_glossaries_payload=payload.get("personal_glossaries_by_lang"),
+                project_glossaries_payload=payload.get("project_glossaries_by_lang"),
+                enabled_tiers_payload=payload.get("enabled_tiers_by_target_lang"),
+                prompt_addendum_payload=payload.get("prompt_addendum_by_lang"),
+                project_glossary_path_text=payload.get("project_glossary_path"),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/power-tools/glossary/export-markdown")
+    async def api_power_tools_glossary_export_markdown(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = export_glossary_markdown(
+                outputs_dir=target.data_paths.outputs_dir,
+                personal_glossaries_payload=payload.get("personal_glossaries_by_lang"),
+                project_glossaries_payload=payload.get("project_glossaries_by_lang"),
+                enabled_tiers_payload=payload.get("enabled_tiers_by_target_lang"),
+                title=str(payload.get("title", "") or "").strip(),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/power-tools/glossary-builder/run")
+    async def api_power_tools_glossary_builder_run(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = run_glossary_builder(
+                settings_path=target.data_paths.settings_path,
+                outputs_dir=target.data_paths.outputs_dir,
+                source_mode=str(payload.get("source_mode", "run_folders") or "run_folders"),
+                run_dirs=list(payload.get("run_dirs", []) or []),
+                pdf_paths=list(payload.get("pdf_paths", []) or []),
+                target_lang=str(payload.get("target_lang", "EN") or "EN"),
+                mode=str(payload.get("builder_mode", "full_text") or "full_text"),
+                lemma_enabled=bool(payload.get("lemma_enabled", False)),
+                lemma_effort=str(payload.get("lemma_effort", "high") or "high"),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/power-tools/glossary-builder/apply")
+    async def api_power_tools_glossary_builder_apply(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = apply_builder_suggestions(
+                settings_path=target.data_paths.settings_path,
+                suggestions_payload=payload.get("suggestions"),
+                project_glossary_path_text=payload.get("project_glossary_path"),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/power-tools/calibration/run")
+    async def api_power_tools_calibration_run(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = run_browser_calibration_audit(
+                settings_path=target.data_paths.settings_path,
+                pdf_path_text=payload.get("pdf_path"),
+                output_dir_text=payload.get("output_dir"),
+                target_lang=payload.get("target_lang"),
+                sample_pages=payload.get("sample_pages"),
+                user_seed=payload.get("user_seed"),
+                include_excerpts=payload.get("include_excerpts"),
+                excerpt_max_chars=payload.get("excerpt_max_chars"),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/power-tools/diagnostics/debug-bundle")
+    async def api_power_tools_debug_bundle(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        response = create_browser_debug_bundle(
+            settings_path=target.data_paths.settings_path,
+            outputs_dir=target.data_paths.outputs_dir,
+            runtime_metadata_path=context.server_runtime_paths.runtime_metadata_path,
+            selected_run_dir_text=payload.get("run_dir") if isinstance(payload, dict) else None,
+        )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/power-tools/diagnostics/arm-window-trace")
+    async def api_power_tools_arm_window_trace(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        response = arm_browser_window_trace(
+            settings_path=target.data_paths.settings_path,
+            duration_seconds=float(payload.get("duration_seconds", 15.0) or 15.0) if isinstance(payload, dict) else 15.0,
+            sample_interval_ms=int(payload.get("sample_interval_ms", 200) or 200) if isinstance(payload, dict) else 200,
+        )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/power-tools/diagnostics/run-report")
+    async def api_power_tools_run_report(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        gmail_finalization_context = _augment_finalization_report_context(
+            payload.get("gmail_finalization_context") if isinstance(payload, dict) else None,
+            context=context,
+            target=target,
+        )
+        browser_failure_context = _augment_browser_failure_report_context(
+            payload.get("browser_failure_context") if isinstance(payload, dict) else None,
+            context=context,
+            target=target,
+        )
+        try:
+            response = generate_browser_run_report(
+                settings_path=target.data_paths.settings_path,
+                outputs_dir=target.data_paths.outputs_dir,
+                run_dir_text=payload.get("run_dir") if isinstance(payload, dict) else None,
+                browser_failure_context=browser_failure_context,
+                gmail_finalization_context=gmail_finalization_context,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/extension/simulate-handoff")
+    async def api_extension_simulate_handoff(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = simulate_extension_handoff(
+                data_paths=target.data_paths,
+                context_payload=dict(payload.get("message_context", {})),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/gmail/bootstrap")
+    async def api_gmail_bootstrap(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = context.gmail_sessions.build_bootstrap(
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            settings_path=target.data_paths.settings_path,
+            outputs_dir=target.data_paths.outputs_dir,
+            runtime_state_root=target.data_paths.app_data_dir,
+            build_sha=context.build_identity.head_sha,
+            asset_version=context.asset_version,
+        )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/gmail/runtime/restart-canonical")
+    async def api_gmail_restart_canonical_runtime(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        restart_payload = restart_canonical_browser_runtime(
+            current_listener_pid=os.getpid(),
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            runtime_path=context.repo_root,
+        )
+        status_code = 200 if bool(restart_payload.get("ok")) else 409
+        response = JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok" if bool(restart_payload.get("ok")) else "failed",
+                    "normalized_payload": restart_payload,
+                    "diagnostics": {} if bool(restart_payload.get("ok")) else {"error": restart_payload.get("reason", "")},
+                },
+            ),
+            status_code=status_code,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.post("/api/gmail/load-message")
+    async def api_gmail_load_message(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = context.gmail_sessions.load_message(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                settings_path=target.data_paths.settings_path,
+                context_payload=dict(payload.get("message_context", {})),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/gmail/demo-review")
+    async def api_gmail_demo_review(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = context.gmail_sessions.load_demo_review(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                settings_path=target.data_paths.settings_path,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/gmail/preview-attachment")
+    async def api_gmail_preview_attachment(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        if _is_noncanonical_live_gmail_runtime(target=target, build_identity=context.build_identity):
+            return _noncanonical_live_gmail_block_response(
+                context,
+                target,
+                operation="gmail_preview_attachment",
+            )
+        try:
+            response = context.gmail_sessions.preview_attachment(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                settings_path=target.data_paths.settings_path,
+                attachment_id=str(payload.get("attachment_id", "") or "").strip(),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        normalized = dict(response.get("normalized_payload", {}))
+        attachment_id = str(normalized.get("attachment", {}).get("attachment_id", "") or "").strip()
+        if attachment_id:
+            normalized["preview_href"] = (
+                f"/api/gmail/attachment/{attachment_id}"
+                f"?mode={target.mode}&workspace={target.workspace_id}"
+            )
+        response["normalized_payload"] = normalized
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/gmail/attachment/{attachment_id}")
+    async def api_gmail_attachment_file(request: Request, attachment_id: str):
+        context = _context(request)
+        target = _active_target(request)
+        path = context.gmail_sessions.current_attachment_file(
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            attachment_id=str(attachment_id or "").strip(),
+        )
+        if path is None or not path.exists():
+            return JSONResponse(
+                {"status": "failed", "diagnostics": {"error": "Gmail attachment file was not found."}},
+                status_code=404,
+            )
+        media_type = "application/octet-stream"
+        content_disposition_type = "attachment"
+        if path.suffix.lower() == ".pdf":
+            media_type = "application/pdf"
+            content_disposition_type = "inline"
+        elif path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+            media_type = f"image/{path.suffix.lower().lstrip('.')}"
+            content_disposition_type = "inline"
+        # Gmail review preview embeds this route in an iframe/new tab, so previewable
+        # attachment types must not inherit the generic download disposition.
+        return FileResponse(
+            path,
+            media_type=media_type,
+            filename=path.name,
+            content_disposition_type=content_disposition_type,
+        )
+
+    @app.post("/api/browser-pdf/bundle")
+    async def api_browser_pdf_bundle(
+        request: Request,
+        manifest: str = Form(...),
+        page_images: list[UploadFile] = File(...),
+    ) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            manifest_payload = _parse_browser_pdf_bundle_manifest(manifest)
+            source_path_text = str(manifest_payload.get("source_path", "") or "").strip()
+            if source_path_text == "":
+                raise ValueError("Browser PDF bundle source_path is required.")
+            source_path = Path(source_path_text).expanduser().resolve()
+            if source_path.suffix.lower() != ".pdf":
+                raise ValueError("Browser PDF bundles are only supported for PDF sources.")
+            page_count = int(manifest_payload.get("page_count", 0) or 0)
+            if page_count <= 0:
+                raise ValueError("Browser PDF bundle page_count must be >= 1.")
+            raw_pages = manifest_payload.get("pages")
+            if not isinstance(raw_pages, list) or not raw_pages:
+                raise ValueError("Browser PDF bundle pages are required.")
+            uploads_by_name = {
+                str(upload.filename or "").strip(): upload
+                for upload in page_images
+                if str(upload.filename or "").strip()
+            }
+            if not uploads_by_name:
+                raise ValueError("Browser PDF bundle page images are required.")
+            pages: list[dict[str, Any]] = []
+            for item in raw_pages:
+                if not isinstance(item, dict):
+                    raise ValueError("Browser PDF bundle pages must be objects.")
+                upload_name = str(item.get("file_name", "") or "").strip()
+                if upload_name == "":
+                    raise ValueError("Browser PDF bundle page file_name is required.")
+                upload = uploads_by_name.get(upload_name)
+                if upload is None:
+                    raise ValueError(f"Browser PDF bundle upload is missing: {upload_name}")
+                image_bytes = await upload.read()
+                pages.append(
+                    {
+                        "page_number": item.get("page_number"),
+                        "mime_type": item.get("mime_type"),
+                        "width_px": item.get("width_px"),
+                        "height_px": item.get("height_px"),
+                        "image_bytes": image_bytes,
+                    }
+                )
+            written_manifest = write_browser_pdf_bundle(
+                source_path=source_path,
+                page_count=page_count,
+                pages=pages,
+            )
+            attachment_id = str(manifest_payload.get("attachment_id", "") or "").strip()
+            if attachment_id:
+                context.gmail_sessions.record_browser_pdf_bundle(
+                    runtime_mode=target.mode,
+                    workspace_id=target.workspace_id,
+                    attachment_id=attachment_id,
+                    source_path=source_path,
+                    page_count=page_count,
+                )
+            response = {
+                "status": "ok",
+                "normalized_payload": {
+                    "source_path": str(source_path),
+                    "source_name": source_path.name,
+                    "page_count": int(written_manifest.get("page_count", page_count) or page_count),
+                    "manifest_path": str(browser_pdf_bundle_manifest_path(source_path)),
+                    "attachment_id": attachment_id,
+                },
+                "diagnostics": {
+                    "page_upload_count": len(page_images),
+                    "workspace_cached": bool(attachment_id),
+                    "render_engine": "browser_pdf",
+                },
+            }
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/gmail/prepare-session")
+    async def api_gmail_prepare_session(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        if _is_noncanonical_live_gmail_runtime(target=target, build_identity=context.build_identity):
+            return _noncanonical_live_gmail_block_response(
+                context,
+                target,
+                operation="gmail_prepare_session",
+            )
+        try:
+            response = context.gmail_sessions.prepare_session(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                settings_path=target.data_paths.settings_path,
+                outputs_dir=target.data_paths.outputs_dir,
+                workflow_kind=payload.get("workflow_kind"),
+                target_lang=str(payload.get("target_lang", "") or "").strip(),
+                output_dir_text=str(payload.get("output_dir", "") or "").strip(),
+                selections_payload=list(payload.get("selections", [])),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/gmail/session/current")
+    async def api_gmail_session_current(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = context.gmail_sessions.build_bootstrap(
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            settings_path=target.data_paths.settings_path,
+            outputs_dir=target.data_paths.outputs_dir,
+            runtime_state_root=target.data_paths.app_data_dir,
+            build_sha=context.build_identity.head_sha,
+            asset_version=context.asset_version,
+        )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/gmail/batch/confirm-current")
+    async def api_gmail_batch_confirm_current(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        job_id = str(payload.get("job_id", "") or "").strip()
+        completion_key = str(payload.get("completion_key", "") or "").strip() or None
+        if job_id:
+            job = context.translation_jobs.get_job(job_id)
+            if job_requires_arabic_review(job):
+                try:
+                    context.arabic_reviews.require_resolved(
+                        runtime_mode=target.mode,
+                        workspace_id=target.workspace_id,
+                        job=job,
+                        completion_key=completion_key,
+                    )
+                except ValueError as exc:
+                    return _validation_error_response(
+                        context,
+                        target,
+                        message=str(exc),
+                        validation_error=_arabic_review_validation_payload(
+                            context,
+                            target,
+                            job=job,
+                            completion_key=completion_key,
+                        ),
+                    )
+        try:
+            response = context.gmail_sessions.confirm_current_batch_translation(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                settings_path=target.data_paths.settings_path,
+                job_log_db_path=target.data_paths.job_log_db_path,
+                translation_jobs=context.translation_jobs,
+                job_id=job_id,
+                form_values=dict(payload.get("form_values", {})),
+                row_id=payload.get("row_id"),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/gmail/batch/finalize")
+    async def api_gmail_batch_finalize(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = context.gmail_sessions.finalize_batch(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                settings_path=target.data_paths.settings_path,
+                output_filename=str(payload.get("output_filename", "") or "").strip() or None,
+                profile_id=str(payload.get("profile_id", "") or "").strip() or None,
+                build_sha=context.build_identity.head_sha,
+                asset_version=context.asset_version,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/gmail/batch/finalize-preflight")
+    async def api_gmail_batch_finalize_preflight(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = context.gmail_sessions.preflight_batch_finalization(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                settings_path=target.data_paths.settings_path,
+                force_refresh=bool(payload.get("force_refresh")) if isinstance(payload, dict) else False,
+                build_sha=context.build_identity.head_sha,
+                asset_version=context.asset_version,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/gmail/interpretation/finalize")
+    async def api_gmail_interpretation_finalize(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = context.gmail_sessions.finalize_interpretation(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                settings_path=target.data_paths.settings_path,
+                form_values=dict(payload.get("form_values", {})),
+                profile_id=str(payload.get("profile_id", "") or "").strip() or None,
+                service_same_checked=bool(payload.get("service_same_checked", True)),
+                output_filename=str(payload.get("output_filename", "") or "").strip() or None,
+            )
+        except ValueError as exc:
+            return _validation_error_response(
+                context,
+                target,
+                message=str(exc),
+                validation_error=_structured_validation_payload(exc),
+            )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/gmail/reset")
+    async def api_gmail_reset(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        context.gmail_sessions.clear_workspace(runtime_mode=target.mode, workspace_id=target.workspace_id)
+        response = context.gmail_sessions.build_bootstrap(
+            runtime_mode=target.mode,
+            workspace_id=target.workspace_id,
+            settings_path=target.data_paths.settings_path,
+            outputs_dir=target.data_paths.outputs_dir,
+            runtime_state_root=target.data_paths.app_data_dir,
+            build_sha=context.build_identity.head_sha,
+            asset_version=context.asset_version,
+        )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/translation/bootstrap")
+    async def api_translation_bootstrap(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = build_translation_bootstrap(
+            settings_path=target.data_paths.settings_path,
+            job_log_db_path=target.data_paths.job_log_db_path,
+            outputs_dir=target.data_paths.outputs_dir,
+            active_jobs=context.translation_jobs.list_jobs(runtime_mode=target.mode, limit=12),
+            history_limit=50,
+        )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/translation/upload-source")
+    async def api_translation_upload_source(request: Request, file: UploadFile = File(...)) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        suffix = Path(str(file.filename or "")).suffix or ".pdf"
+        upload_root = context.server_runtime_paths.uploads_dir / "translation" / target.mode / target.workspace_id
+        saved_path = await _save_upload(file, upload_root, fallback_suffix=suffix)
+        try:
+            response = upload_translation_source(
+                source_path=saved_path,
+                settings_path=target.data_paths.settings_path,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        response.setdefault("diagnostics", {})
+        response["diagnostics"]["uploaded_file"] = str(saved_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/translation/jobs/analyze")
+    async def api_translation_start_analyze(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            job = context.translation_jobs.start_analyze(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                form_values=dict(payload.get("form_values", {})),
+                settings_path=target.data_paths.settings_path,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"job": job},
+                    "diagnostics": {},
+                    "capability_flags": build_translation_capability_flags(settings_path=target.data_paths.settings_path),
+                },
+            )
+        )
+
+    @app.post("/api/translation/jobs/translate")
+    async def api_translation_start_translate(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            job = context.translation_jobs.start_translate(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                form_values=dict(payload.get("form_values", {})),
+                settings_path=target.data_paths.settings_path,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"job": job},
+                    "diagnostics": {},
+                    "capability_flags": build_translation_capability_flags(settings_path=target.data_paths.settings_path),
+                },
+            )
+        )
+
+    @app.get("/api/translation/jobs/{job_id}")
+    async def api_translation_job_status(request: Request, job_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        job = context.translation_jobs.get_job(job_id)
+        if job is None:
+            return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"job": job},
+                    "diagnostics": {},
+                    "capability_flags": build_translation_capability_flags(settings_path=target.data_paths.settings_path),
+                },
+            )
+        )
+
+    @app.post("/api/translation/jobs/{job_id}/cancel")
+    async def api_translation_job_cancel(request: Request, job_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        cancelled = context.translation_jobs.cancel_job(job_id=job_id)
+        if not cancelled:
+            return _validation_error_response(
+                context,
+                target,
+                message="Translation job cannot be cancelled in its current state.",
+            )
+        job = context.translation_jobs.get_job(job_id)
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"job": job},
+                    "diagnostics": {},
+                    "capability_flags": build_translation_capability_flags(settings_path=target.data_paths.settings_path),
+                },
+            )
+        )
+
+    @app.post("/api/translation/jobs/{job_id}/resume")
+    async def api_translation_job_resume(request: Request, job_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            job = context.translation_jobs.resume_job(
+                job_id=job_id,
+                settings_path=target.data_paths.settings_path,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"job": job},
+                    "diagnostics": {},
+                    "capability_flags": build_translation_capability_flags(settings_path=target.data_paths.settings_path),
+                },
+            )
+        )
+
+    @app.post("/api/translation/jobs/{job_id}/rebuild")
+    async def api_translation_job_rebuild(request: Request, job_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            job = context.translation_jobs.rebuild_job(
+                job_id=job_id,
+                settings_path=target.data_paths.settings_path,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"job": job},
+                    "diagnostics": {},
+                    "capability_flags": build_translation_capability_flags(settings_path=target.data_paths.settings_path),
+                },
+            )
+        )
+
+    @app.post("/api/translation/jobs/{job_id}/review-export")
+    async def api_translation_job_review_export(request: Request, job_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        job = context.translation_jobs.get_job(job_id)
+        if job is None:
+            return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
+        summary_path = str(job.get("artifacts", {}).get("run_summary_path", "") or "").strip()
+        if summary_path == "":
+            return _validation_error_response(context, target, message="Run summary is unavailable for review export.")
+        try:
+            response = export_translation_review_queue_for_job(summary_path=Path(summary_path))
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        response["capability_flags"] = build_translation_capability_flags(settings_path=target.data_paths.settings_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/translation/jobs/{job_id}/run-report")
+    async def api_translation_job_run_report(request: Request, job_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = context.translation_jobs.generate_run_report(
+                job_id=job_id,
+                settings_path=target.data_paths.settings_path,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        response["capability_flags"] = build_translation_capability_flags(settings_path=target.data_paths.settings_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/translation/jobs/{job_id}/artifact/{artifact_kind}")
+    async def api_translation_job_artifact(request: Request, job_id: str, artifact_kind: str):
+        context = _context(request)
+        _target = _active_target(request)
+        try:
+            path = context.translation_jobs.job_artifact_path(job_id=job_id, artifact_kind=artifact_kind)
+        except ValueError as exc:
+            return JSONResponse(
+                {"status": "failed", "diagnostics": {"error": str(exc)}},
+                status_code=404,
+            )
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        if path.suffix.lower() == ".docx":
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif path.suffix.lower() == ".json":
+            media_type = "application/json"
+        elif path.suffix.lower() == ".md":
+            media_type = "text/markdown; charset=utf-8"
+        return FileResponse(path, media_type=media_type, filename=path.name)
+
+    @app.post("/api/translation/save-row")
+    async def api_translation_save_row(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        job_id = str(payload.get("job_id", "") or "").strip()
+        completion_key = str(payload.get("completion_key", "") or "").strip() or None
+        row_id = payload.get("row_id")
+        if job_id and row_id in (None, ""):
+            job = context.translation_jobs.get_job(job_id)
+            if job_requires_arabic_review(job):
+                try:
+                    context.arabic_reviews.require_resolved(
+                        runtime_mode=target.mode,
+                        workspace_id=target.workspace_id,
+                        job=job,
+                        completion_key=completion_key,
+                    )
+                except ValueError as exc:
+                    return _validation_error_response(
+                        context,
+                        target,
+                        message=str(exc),
+                        validation_error=_arabic_review_validation_payload(
+                            context,
+                            target,
+                            job=job,
+                            completion_key=completion_key,
+                        ),
+                    )
+        try:
+            response = save_translation_row(
+                settings_path=target.data_paths.settings_path,
+                job_log_db_path=target.data_paths.job_log_db_path,
+                form_values=dict(payload.get("form_values", {})),
+                seed_payload=payload.get("seed_payload"),
+                row_id=row_id,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/translation/arabic-review/state")
+    async def api_translation_arabic_review_state(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        job_id = str(request.query_params.get("job_id", "") or "").strip()
+        completion_key = str(request.query_params.get("completion_key", "") or "").strip() or None
+        try:
+            job = _translation_job_or_error(context, job_id=job_id) if job_id else None
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc), status_code=404)
+        try:
+            payload = context.arabic_reviews.state_for_workspace(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                job=job,
+                completion_key=completion_key,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"arabic_review": payload},
+                    "diagnostics": {},
+                },
+            )
+        )
+
+    @app.post("/api/translation/arabic-review/open")
+    async def api_translation_arabic_review_open(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        completion_key = str(payload.get("completion_key", "") or "").strip() or None
+        try:
+            job = _translation_job_or_error(context, job_id=str(payload.get("job_id", "") or "").strip())
+            arabic_review, diagnostics = context.arabic_reviews.open_review(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                job=job,
+                completion_key=completion_key,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"arabic_review": arabic_review},
+                    "diagnostics": diagnostics,
+                },
+            )
+        )
+
+    @app.post("/api/translation/arabic-review/align-right-save")
+    async def api_translation_arabic_review_align_right_save(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        completion_key = str(payload.get("completion_key", "") or "").strip() or None
+        try:
+            job = _translation_job_or_error(context, job_id=str(payload.get("job_id", "") or "").strip())
+            arabic_review, diagnostics = context.arabic_reviews.align_right_and_save(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                job=job,
+                completion_key=completion_key,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"arabic_review": arabic_review},
+                    "diagnostics": diagnostics,
+                },
+            )
+        )
+
+    @app.post("/api/translation/arabic-review/continue")
+    async def api_translation_arabic_review_continue(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        completion_key = str(payload.get("completion_key", "") or "").strip() or None
+        try:
+            job = _translation_job_or_error(context, job_id=str(payload.get("job_id", "") or "").strip())
+            arabic_review = context.arabic_reviews.continue_review(
+                runtime_mode=target.mode,
+                workspace_id=target.workspace_id,
+                job=job,
+                continuation=str(payload.get("continuation", "") or "").strip(),
+                completion_key=completion_key,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(
+            _merge_response(
+                context,
+                target,
+                {
+                    "status": "ok",
+                    "normalized_payload": {"arabic_review": arabic_review},
+                    "diagnostics": {},
+                },
+            )
+        )
+
+    @app.get("/api/translation/history")
+    async def api_translation_history(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        limit_raw = request.query_params.get("limit", "100")
+        try:
+            limit = max(1, min(500, int(limit_raw)))
+        except ValueError:
+            limit = 100
+        response = {
+            "status": "ok",
+            "normalized_payload": {
+                "history": list_translation_history(
+                    db_path=target.data_paths.job_log_db_path,
+                    limit=limit,
+                ),
+                "active_jobs": context.translation_jobs.list_jobs(runtime_mode=target.mode, limit=12),
+            },
+            "diagnostics": {},
+            "capability_flags": build_translation_capability_flags(settings_path=target.data_paths.settings_path),
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/autofill-notification")
+    async def api_autofill_notification(request: Request, file: UploadFile = File(...)) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        if not str(file.filename or "").lower().endswith(".pdf"):
+            return JSONResponse(
+                _merge_response(
+                    context,
+                    target,
+                    {
+                        "status": "failed",
+                        "normalized_payload": {},
+                        "diagnostics": {"error": "Notification upload must be a PDF."},
+                    },
+                ),
+                status_code=400,
+            )
+        saved_path = await _save_upload(file, context.server_runtime_paths.uploads_dir, fallback_suffix=".pdf")
+        response = autofill_interpretation_from_notification_pdf(
+            pdf_path=saved_path,
+            settings_path=target.data_paths.settings_path,
+        )
+        response.setdefault("diagnostics", {})
+        response["diagnostics"]["uploaded_file"] = str(saved_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/autofill-photo")
+    async def api_autofill_photo(request: Request, file: UploadFile = File(...)) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        suffix = Path(str(file.filename or "")).suffix or ".png"
+        saved_path = await _save_upload(file, context.server_runtime_paths.uploads_dir, fallback_suffix=suffix)
+        response = autofill_interpretation_from_photo(
+            image_path=saved_path,
+            settings_path=target.data_paths.settings_path,
+        )
+        response.setdefault("diagnostics", {})
+        response["diagnostics"]["uploaded_file"] = str(saved_path)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/interpretation/google-photos/status")
+    async def api_google_photos_status(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        response = build_google_photos_status(
+            settings_path=target.data_paths.settings_path,
+            redirect_uri=_google_photos_redirect_uri(request),
+            mode=target.mode,
+            workspace_id=target.workspace_id,
+        )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/google-photos/connect")
+    async def api_google_photos_connect(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = build_google_photos_connect_response(
+                settings_path=target.data_paths.settings_path,
+                redirect_uri=_google_photos_redirect_uri(request),
+                mode=target.mode,
+                workspace_id=target.workspace_id,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/google-photos/disconnect")
+    async def api_google_photos_disconnect(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = disconnect_google_photos(
+                settings_path=target.data_paths.settings_path,
+                redirect_uri=_google_photos_redirect_uri(request),
+            )
+        except OSError:
+            return _validation_error_response(
+                context,
+                target,
+                message="Google Photos local reconnect cleanup failed.",
+                status_code=500,
+            )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/interpretation/google-photos/oauth/callback", response_class=HTMLResponse)
+    async def api_google_photos_oauth_callback(request: Request) -> HTMLResponse:
+        state = str(request.query_params.get("state", "") or "")
+        code = str(request.query_params.get("code", "") or "")
+        oauth_error = str(request.query_params.get("error", "") or "").strip()
+        state_payload = decode_google_photos_oauth_state_hint(state)
+        target = _active_target(
+            request,
+            mode_override=state_payload.get("mode"),
+            workspace_override=state_payload.get("workspace_id"),
+        )
+        config = load_google_photos_oauth_config(
+            settings_path=target.data_paths.settings_path,
+            redirect_uri=_google_photos_redirect_uri(request),
+        )
+        diagnostic = new_google_photos_callback_diagnostic(
+            callback_received=True,
+            state_present=bool(state.strip()),
+            oauth_error_param_present=bool(oauth_error),
+            code_present=bool(code.strip()),
+            connect_workspace_id=safe_google_photos_workspace_label(state_payload.get("workspace_id", "")),
+            callback_workspace_id=safe_google_photos_workspace_label(target.workspace_id),
+        )
+
+        def _finalize_callback_diagnostic(
+            *,
+            category: str,
+            status_config: Any | None = None,
+            status_target: Any | None = None,
+        ) -> dict[str, Any]:
+            nonlocal diagnostic
+            checked_config = status_config or config
+            status = google_photos_connection_status(checked_config)
+            checked_target = status_target or target
+            diagnostic.update(
+                {
+                    "safe_failure_category": category,
+                    "token_status_after_callback": google_photos_callback_token_status_label(status),
+                    "status_workspace_id": safe_google_photos_workspace_label(checked_target.workspace_id),
+                }
+            )
+            diagnostic.update(
+                google_photos_callback_token_path_diagnostics(
+                    config,
+                    status_config=checked_config,
+                )
+            )
+            diagnostic = save_google_photos_callback_diagnostic(config, diagnostic)
+            return diagnostic
+
+        def _callback_failure(category: str, *, status_code: int = 400) -> HTMLResponse:
+            _finalize_callback_diagnostic(category=category)
+            return HTMLResponse(
+                _google_photos_callback_html(
+                    title="Google Photos connection failed",
+                    message=f"Google Photos connection failed: {category}.",
+                    ok=False,
+                ),
+                status_code=status_code,
+            )
+
+        if not state.strip():
+            return _callback_failure("state_missing")
+        try:
+            verified_state = verify_pending_google_photos_oauth_state(config, state=state)
+        except ValueError:
+            return _callback_failure("state_invalid_or_expired")
+        diagnostic["state_verified"] = True
+        target = _active_target(
+            request,
+            mode_override=verified_state.get("mode"),
+            workspace_override=verified_state.get("workspace_id"),
+        )
+        config = load_google_photos_oauth_config(
+            settings_path=target.data_paths.settings_path,
+            redirect_uri=_google_photos_redirect_uri(request),
+        )
+        diagnostic.update(
+            {
+                "connect_workspace_id": safe_google_photos_workspace_label(verified_state.get("workspace_id", "")),
+                "callback_workspace_id": safe_google_photos_workspace_label(target.workspace_id),
+            }
+        )
+        if oauth_error:
+            return _callback_failure("oauth_error_param_present")
+        if not code.strip():
+            return _callback_failure("code_missing")
+        try:
+            diagnostic["token_exchange_attempted"] = True
+            token_payload = request_google_photos_authorization_token(config, code=code)
+            diagnostic["token_exchange_succeeded"] = True
+            diagnostic["token_save_attempted"] = True
+            save_google_photos_token(config, token_payload)
+            diagnostic["token_save_succeeded"] = True
+        except GooglePhotosOAuthTokenExchangeError as exc:
+            return _callback_failure(exc.safe_category, status_code=502)
+        except GooglePhotosOAuthTokenSaveError:
+            return _callback_failure("token_save_failed")
+        except OSError:
+            return _callback_failure("token_save_failed")
+
+        status_config = load_google_photos_oauth_config(
+            settings_path=target.data_paths.settings_path,
+            redirect_uri=_google_photos_redirect_uri(request),
+        )
+        status = google_photos_connection_status(status_config)
+        consume_pending_google_photos_oauth_state(config, state=state)
+        path_flags = google_photos_callback_token_path_diagnostics(config, status_config=status_config)
+        if not path_flags["token_path_same_for_callback_and_status"]:
+            category = "token_path_mismatch"
+        elif not bool(status.get("connected", False)):
+            category = "token_saved_but_status_empty"
+        else:
+            category = "connected"
+        diagnostic.update(path_flags)
+        _finalize_callback_diagnostic(
+            category=category,
+            status_config=status_config,
+            status_target=target,
+        )
+        if category != "connected":
+            return HTMLResponse(
+                _google_photos_callback_html(
+                    title="Google Photos connection failed",
+                    message=f"Google Photos connection failed: {category}.",
+                    ok=False,
+                ),
+                status_code=400,
+            )
+        return HTMLResponse(
+            _google_photos_callback_html(
+                title="Google Photos connected",
+                message="You can close this tab and return to LegalPDF to choose a photo.",
+                ok=True,
+            )
+        )
+
+    @app.post("/api/interpretation/google-photos/session")
+    async def api_google_photos_session_create(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = create_google_photos_picker_session(
+                settings_path=target.data_paths.settings_path,
+                redirect_uri=_google_photos_redirect_uri(request),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        except GooglePhotosPickerError as exc:
+            return _validation_error_response(context, target, message=str(exc), status_code=502)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/interpretation/google-photos/session/{session_id}")
+    async def api_google_photos_session_get(request: Request, session_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = get_google_photos_picker_session(
+                settings_path=target.data_paths.settings_path,
+                redirect_uri=_google_photos_redirect_uri(request),
+                session_id=session_id,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        except GooglePhotosPickerError as exc:
+            return _validation_error_response(context, target, message=str(exc), status_code=502)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/interpretation/google-photos/session/{session_id}/media-items")
+    async def api_google_photos_media_items(request: Request, session_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = list_google_photos_picker_media(
+                settings_path=target.data_paths.settings_path,
+                redirect_uri=_google_photos_redirect_uri(request),
+                session_id=session_id,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        except GooglePhotosPickerError as exc:
+            return _validation_error_response(context, target, message=str(exc), status_code=502)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.delete("/api/interpretation/google-photos/session/{session_id}")
+    async def api_google_photos_session_delete(request: Request, session_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        try:
+            response = delete_google_photos_picker_session(
+                settings_path=target.data_paths.settings_path,
+                redirect_uri=_google_photos_redirect_uri(request),
+                session_id=session_id,
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        except GooglePhotosPickerError as exc:
+            return _validation_error_response(context, target, message=str(exc), status_code=502)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/google-photos/import")
+    async def api_google_photos_import(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = import_google_photos_selection(
+                settings_path=target.data_paths.settings_path,
+                uploads_dir=context.server_runtime_paths.uploads_dir,
+                redirect_uri=_google_photos_redirect_uri(request),
+                session_id=str(payload.get("session_id", "") or "").strip(),
+                selection_key=str(payload.get("selection_key", "") or "").strip(),
+            )
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        except GooglePhotosPickerError as exc:
+            return _validation_error_response(context, target, message=str(exc), status_code=502)
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/save-row")
+    async def api_save_row(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = save_interpretation_row(
+                settings_path=target.data_paths.settings_path,
+                job_log_db_path=target.data_paths.job_log_db_path,
+                form_values=dict(payload.get("form_values", {})),
+                seed_payload=payload.get("seed_payload"),
+                row_id=payload.get("row_id"),
+                service_same_checked=bool(payload.get("service_same_checked", True)),
+                use_service_location_in_honorarios_checked=bool(
+                    payload.get("use_service_location_in_honorarios_checked", False)
+                ),
+                include_transport_sentence_in_honorarios_checked=bool(
+                    payload.get("include_transport_sentence_in_honorarios_checked", True)
+                ),
+                profile_id=str(payload.get("profile_id", "") or "").strip() or None,
+            )
+        except ValueError as exc:
+            return _validation_error_response(
+                context,
+                target,
+                message=str(exc),
+                validation_error=_structured_validation_payload(exc),
+            )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/export-honorarios")
+    async def api_export_honorarios(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        form_values = dict(payload.get("form_values", {}))
+        form_values["include_transport_sentence_in_honorarios"] = bool(
+            payload.get(
+                "include_transport_sentence_in_honorarios_checked",
+                form_values.get("include_transport_sentence_in_honorarios", True),
+            )
+        )
+        form_values["use_service_location_in_honorarios"] = bool(
+            payload.get(
+                "use_service_location_in_honorarios_checked",
+                form_values.get("use_service_location_in_honorarios", False),
+            )
+        )
+        try:
+            response = export_interpretation_honorarios(
+                settings_path=target.data_paths.settings_path,
+                outputs_dir=target.data_paths.outputs_dir,
+                form_values=form_values,
+                profile_id=str(payload.get("profile_id", "") or "").strip() or None,
+                output_filename=str(payload.get("output_filename", "") or "").strip() or None,
+                service_same_checked=bool(payload.get("service_same_checked", True)),
+            )
+        except ValueError as exc:
+            return _validation_error_response(
+                context,
+                target,
+                message=str(exc),
+                validation_error=_structured_validation_payload(exc),
+            )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/cities/add")
+    async def api_add_interpretation_city(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = add_interpretation_city(
+                settings_path=target.data_paths.settings_path,
+                city=str(payload.get("city", "") or "").strip(),
+                profile_id=str(payload.get("profile_id", "") or "").strip() or None,
+                include_transport_sentence=bool(payload.get("include_transport_sentence_in_honorarios", False)),
+                travel_km_outbound=payload.get("travel_km_outbound", ""),
+                field_name=str(payload.get("field_name", "") or "service_city").strip() or "service_city",
+            )
+        except ValueError as exc:
+            return _validation_error_response(
+                context,
+                target,
+                message=str(exc),
+                validation_error=_structured_validation_payload(exc),
+            )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/interpretation/court-emails/add")
+    async def api_add_interpretation_court_email(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await request.json()
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode"),
+            workspace_override=payload.get("workspace_id"),
+        )
+        try:
+            response = add_interpretation_court_email(
+                settings_path=target.data_paths.settings_path,
+                city=str(payload.get("city", "") or "").strip(),
+                email=str(payload.get("email", "") or "").strip(),
+            )
+        except ValueError as exc:
+            return _validation_error_response(
+                context,
+                target,
+                message=str(exc),
+                validation_error=_structured_validation_payload(exc),
+            )
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.get("/api/interpretation/history")
+    async def api_history(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        limit_raw = request.query_params.get("limit", "100")
+        try:
+            limit = max(1, min(500, int(limit_raw)))
+        except ValueError:
+            limit = 100
+        response = {
+            "status": "ok",
+            "normalized_payload": {
+                "history": list_interpretation_history(
+                    db_path=target.data_paths.job_log_db_path,
+                    limit=limit,
+                )
+            },
+            "diagnostics": {},
+            "capability_flags": build_interpretation_capability_flags(settings_path=target.data_paths.settings_path),
+        }
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/profiles/import-live")
+    async def api_import_live_profiles(request: Request) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        if target.mode == RUNTIME_MODE_LIVE:
+            response = {
+                "status": "ok",
+                "normalized_payload": {
+                    "imported_profile_count": 0,
+                    "message": "Live mode already uses the live desktop profiles directly.",
+                },
+                "diagnostics": {},
+            }
+            return JSONResponse(_merge_response(context, target, response))
+        response = import_live_profile_settings(
+            shadow_settings_path=target.data_paths.settings_path,
+            live_settings_path=detect_browser_data_paths(mode=RUNTIME_MODE_LIVE).settings_path,
+        )
+        response.setdefault("normalized_payload", {})
+        profiles = response["normalized_payload"].get("profiles", [])
+        response["normalized_payload"]["imported_profile_count"] = len(profiles)
+        return JSONResponse(_merge_response(context, target, response))
+
+    return app

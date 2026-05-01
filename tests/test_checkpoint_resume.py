@@ -340,3 +340,98 @@ def test_completed_checkpoint_with_missing_page_outputs_starts_fresh_run(
     assert refreshed is not None
     assert refreshed.run_started_at != stale_run_id
     assert any("saved page files are missing" in line for line in logs)
+
+
+def test_gmail_scoped_run_ignores_legacy_generic_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "Auto.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    generic_config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.FR,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.OFF,
+        max_pages=1,
+        workers=1,
+        resume=True,
+        page_breaks=True,
+        keep_intermediates=True,
+    )
+    generic_paths = build_run_paths(generic_config.output_dir, generic_config.pdf_path, generic_config.target_lang)
+    ensure_run_dirs(generic_paths)
+    legacy_state = new_run_state(
+        config=generic_config,
+        paths=generic_paths,
+        pdf_fingerprint=sha256_of_text("pdf-fingerprint"),
+        context_hash=sha256_of_text(None),
+        total_pages=1,
+        selected_pages=[1],
+    )
+    legacy_state.settings["image_mode"] = "off"
+    legacy_state.settings["ocr_mode"] = "off"
+    save_run_state_atomic(generic_paths.run_state_path, legacy_state)
+
+    gmail_context = {
+        "source": "gmail_intake",
+        "session_id": "gmail_batch_65b70fa72fec",
+        "message_id": "msg-1",
+        "thread_id": "thr-1",
+        "attachment_id": "att-1",
+        "selected_attachment_filename": "Auto.pdf",
+        "selected_attachment_count": 1,
+        "selected_target_lang": "FR",
+        "selected_start_page": 1,
+        "gmail_batch_session_report_path": str(tmp_path / "gmail_batch_session.json"),
+    }
+    gmail_config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.FR,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.OFF,
+        max_pages=1,
+        workers=1,
+        resume=True,
+        page_breaks=True,
+        keep_intermediates=True,
+        gmail_batch_context=gmail_context,
+    )
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "sha256_of_file", lambda _pdf: sha256_of_text("pdf-fingerprint"))
+
+    def _fake_process_page(
+        self, *, client, config, paths, instructions, context_text, page_number, total_pages, ocr_engine
+    ):  # type: ignore[no-untyped-def]
+        page_path = paths.pages_dir / f"page_{page_number:04d}.txt"
+        page_path.write_text("OK", encoding="utf-8")
+        return _PageOutcome(
+            status=PageStatus.DONE,
+            image_used=False,
+            retry_used=False,
+            usage={},
+            error=None,
+        )
+
+    monkeypatch.setattr(TranslationWorkflow, "_process_page", _fake_process_page)
+
+    summary = TranslationWorkflow(client=object()).run(gmail_config)
+
+    gmail_paths = build_run_paths(
+        gmail_config.output_dir,
+        gmail_config.pdf_path,
+        gmail_config.target_lang,
+        gmail_batch_context=gmail_context,
+    )
+    assert summary.success is True
+    assert gmail_paths.run_dir != generic_paths.run_dir
+    assert gmail_paths.run_state_path.exists()
+    assert load_run_state(gmail_paths.run_state_path) is not None
+    assert generic_paths.run_state_path.exists()

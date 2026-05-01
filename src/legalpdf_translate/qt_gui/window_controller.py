@@ -10,8 +10,9 @@ from uuid import uuid4
 from PySide6.QtCore import QObject, Signal
 
 from legalpdf_translate.build_identity import RuntimeBuildIdentity, normalize_path_identity
-from legalpdf_translate.gmail_focus import clear_bridge_runtime_metadata
+from legalpdf_translate.gmail_focus import clear_bridge_runtime_metadata, validate_bridge_owner
 from legalpdf_translate.gmail_intake import InboundMailContext, LocalGmailIntakeBridge
+from legalpdf_translate.qt_gui.styles import apply_app_appearance
 from legalpdf_translate.user_settings import app_data_dir, load_gui_settings
 
 if TYPE_CHECKING:
@@ -273,6 +274,9 @@ class WorkspaceWindowController:
             }
         else:
             shared_settings = dict(values)
+        theme_value = shared_settings.get("ui_theme")
+        if theme_value is not None:
+            apply_app_appearance(self._app, theme=str(theme_value))
         for window in self.windows():
             refresh_shared_settings = getattr(window, "reload_shared_settings", None)
             if callable(refresh_shared_settings):
@@ -332,6 +336,21 @@ class WorkspaceWindowController:
             return
         if token == "":
             self._append_log(anchor, "Gmail intake bridge is enabled but token is blank; bridge not started.")
+            return
+
+        existing_owner = validate_bridge_owner(
+            bridge_port=port,
+            base_dir=app_data_dir(),
+        )
+        if existing_owner.ok and existing_owner.owner_kind == "browser_app":
+            browser_url = str(existing_owner.browser_url or "").strip()
+            status_text = "Gmail intake bridge handled by browser app"
+            self._set_bridge_status(anchor, status_text)
+            details = (
+                f"Gmail intake bridge already owned by browser app on 127.0.0.1:{port}."
+                + (f" Browser target: {browser_url}" if browser_url else "")
+            )
+            self._append_log(anchor, details)
             return
 
         bridge = LocalGmailIntakeBridge(

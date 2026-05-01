@@ -26,16 +26,16 @@ Enforcing hard stage-gate execution for risk-triggered complex tasks.
 PowerShell:
 ```powershell
 git status --short --branch
-dart run tooling/validate_agent_docs.dart
+dart tooling/validate_agent_docs.dart
 ```
 POSIX:
 ```bash
 git status --short --branch
-dart run tooling/validate_agent_docs.dart
+dart tooling/validate_agent_docs.dart
 ```
 
 ## Targeted Tests
-- `dart run test/tooling/validate_agent_docs_test.dart`
+- `dart test/tooling/validate_agent_docs_test.dart`
 
 ## Failure Modes and Fallback Steps
 - Stage drift discovered late: re-adapt next-stage prompt pack before proceeding.

@@ -5,6 +5,25 @@ from pathlib import Path
 
 import legalpdf_translate.user_settings as user_settings
 from legalpdf_translate.glossary import default_ar_entries, default_en_entries, default_fr_entries
+from legalpdf_translate.user_profile import DEFAULT_PRIMARY_PROFILE_ID, default_primary_profile
+
+
+def _legacy_blank_default_primary_profile_payload() -> dict[str, object]:
+    profile = default_primary_profile()
+    return {
+        "id": profile.id,
+        "first_name": profile.first_name,
+        "last_name": profile.last_name,
+        "document_name_override": profile.document_name_override,
+        "email": profile.email,
+        "phone_number": profile.phone_number,
+        "postal_address": profile.postal_address,
+        "iban": profile.iban,
+        "iva_text": profile.iva_text,
+        "irs_text": profile.irs_text,
+        "travel_origin_label": "",
+        "travel_distances_by_city": {},
+    }
 
 
 def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypatch) -> None:
@@ -59,6 +78,13 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert loaded["ocr_engine"] == "local_then_api"
     assert loaded["gmail_gog_path"] == ""
     assert loaded["gmail_account_email"] == ""
+    assert isinstance(loaded["profiles"], list)
+    assert len(loaded["profiles"]) == 1
+    assert loaded["primary_profile_id"] == DEFAULT_PRIMARY_PROFILE_ID
+    assert loaded["profiles"][0]["id"] == DEFAULT_PRIMARY_PROFILE_ID
+    assert loaded["profiles"][0]["phone_number"] == ""
+    assert loaded["profiles"][0]["travel_origin_label"] == "Marmelar"
+    assert loaded["profiles"][0]["travel_distances_by_city"]["Beja"] == 39.0
     assert loaded["gmail_intake_bridge_enabled"] is False
     assert loaded["gmail_intake_bridge_token"] == ""
     assert loaded["gmail_intake_port"] == 8765
@@ -67,6 +93,7 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert loaded["perf_timeout_image_seconds"] == 720
     assert loaded["ocr_api_provider"] in {"openai", "gemini"}
     assert loaded["ocr_api_provider_default"] in {"openai", "gemini"}
+    assert loaded["ocr_api_key_env_name"] == "OPENAI_API_KEY"
 
 
 def test_load_gui_settings_coerces_gmail_intake_bridge_fields(tmp_path: Path, monkeypatch) -> None:
@@ -91,6 +118,247 @@ def test_load_gui_settings_coerces_gmail_intake_bridge_fields(tmp_path: Path, mo
     assert loaded["gmail_intake_bridge_enabled"] is True
     assert loaded["gmail_intake_bridge_token"] == "shared-token"
     assert loaded["gmail_intake_port"] == 65535
+
+
+def test_load_gui_settings_seeds_profile_email_from_existing_gmail_account(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "gmail_account_email": "translator@example.com",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["profiles"][0]["email"] == "translator@example.com"
+    assert loaded["profiles"][0]["phone_number"] == ""
+
+
+def test_load_gui_settings_preserves_profile_email_when_profiles_exist(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "gmail_account_email": "translator@example.com",
+                "profiles": [
+                    {
+                        "id": "alt",
+                        "first_name": "Jane",
+                        "last_name": "Doe",
+                        "document_name_override": "",
+                        "email": "custom@example.com",
+                        "phone_number": "+351912345678",
+                        "postal_address": "Rua A",
+                        "iban": "PT50003506490000832760029",
+                        "iva_text": "23%",
+                        "irs_text": "Sem retenção",
+                        "travel_origin_label": "Marmelar",
+                        "travel_distances_by_city": {"Beja": 39.0},
+                    }
+                ],
+                "primary_profile_id": "alt",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["profiles"][0]["email"] == "custom@example.com"
+    assert loaded["profiles"][0]["phone_number"] == "+351912345678"
+    assert loaded["profiles"][0]["travel_origin_label"] == "Marmelar"
+    assert loaded["profiles"][0]["travel_distances_by_city"]["Beja"] == 39.0
+    assert loaded["primary_profile_id"] == "alt"
+
+
+def test_load_gui_settings_backfills_blank_phone_when_profile_payload_is_legacy(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 8,
+                "profiles": [
+                    {
+                        "id": "alt",
+                        "first_name": "Jane",
+                        "last_name": "Doe",
+                        "document_name_override": "",
+                        "email": "custom@example.com",
+                        "postal_address": "Rua A",
+                        "iban": "PT50003506490000832760029",
+                        "iva_text": "23%",
+                        "irs_text": "Sem retenção",
+                    }
+                ],
+                "primary_profile_id": "alt",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["profiles"][0]["phone_number"] == ""
+    assert loaded["profiles"][0]["travel_origin_label"] == ""
+    assert loaded["profiles"][0]["travel_distances_by_city"] == {}
+
+
+def test_load_gui_settings_repairs_legacy_default_primary_blank_travel_fields(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 8,
+                "profiles": [_legacy_blank_default_primary_profile_payload()],
+                "primary_profile_id": DEFAULT_PRIMARY_PROFILE_ID,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["settings_schema_version"] == 8
+    assert loaded["profiles"][0]["travel_origin_label"] == "Marmelar"
+    assert loaded["profiles"][0]["travel_distances_by_city"] == {
+        "Beja": 39.0,
+        "Moura": 26.0,
+        "Vidigueira": 15.0,
+        "Cuba": 25.0,
+        "Odemira": 132.0,
+        "Ferreira do Alentejo": 50.0,
+        "Serpa": 34.0,
+        "Brinches": 23.0,
+    }
+    assert "Mora" not in loaded["profiles"][0]["travel_distances_by_city"]
+
+
+def test_load_gui_settings_normalizes_missing_primary_profile_id(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "id": "secondary",
+                        "first_name": "Jane",
+                        "last_name": "Doe",
+                        "document_name_override": "",
+                        "email": "",
+                        "phone_number": "",
+                        "postal_address": "Rua A",
+                        "iban": "PT50003506490000832760029",
+                        "iva_text": "23%",
+                        "irs_text": "Sem retenção",
+                        "travel_origin_label": "Marmelar",
+                        "travel_distances_by_city": {"Beja": 39.0},
+                    }
+                ],
+                "primary_profile_id": "missing",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["primary_profile_id"] == "secondary"
+
+
+def test_save_profile_settings_persists_profiles_and_primary(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+
+    profiles, primary_profile_id = user_settings.load_profile_settings()
+    extra_profile = {
+        "id": "secondary",
+        "first_name": "Jane",
+        "last_name": "Doe",
+        "document_name_override": "",
+        "email": "",
+        "phone_number": "+351911111111",
+        "postal_address": "Rua B",
+        "iban": "PT50003506490000832760029",
+        "iva_text": "23%",
+        "irs_text": "Sem retenção",
+        "travel_origin_label": "Rua B",
+        "travel_distances_by_city": {"Cuba": 12.5},
+    }
+    normalized = user_settings.load_gui_settings()
+    profile_objects, _ = user_settings.normalize_profiles(
+        normalized["profiles"] + [extra_profile],
+        "secondary",
+    )
+
+    user_settings.save_profile_settings(
+        profiles=profile_objects,
+        primary_profile_id="secondary",
+    )
+
+    reloaded = user_settings.load_gui_settings()
+
+    assert reloaded["primary_profile_id"] == "secondary"
+    assert len(reloaded["profiles"]) == 2
+    assert reloaded["profiles"][1]["phone_number"] == "+351911111111"
+    assert reloaded["profiles"][1]["travel_origin_label"] == "Rua B"
+    assert reloaded["profiles"][1]["travel_distances_by_city"]["Cuba"] == 12.5
+
+
+def test_save_profile_settings_persists_repaired_legacy_default_primary_travel_fields(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 8,
+                "profiles": [_legacy_blank_default_primary_profile_payload()],
+                "primary_profile_id": DEFAULT_PRIMARY_PROFILE_ID,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    profiles, primary_profile_id = user_settings.load_profile_settings()
+
+    user_settings.save_profile_settings(
+        profiles=profiles,
+        primary_profile_id=primary_profile_id,
+    )
+
+    raw = json.loads(settings_file.read_text(encoding="utf-8"))
+
+    assert raw["settings_schema_version"] == user_settings.SETTINGS_SCHEMA_VERSION
+    assert raw["primary_profile_id"] == DEFAULT_PRIMARY_PROFILE_ID
+    assert raw["profiles"][0]["travel_origin_label"] == "Marmelar"
+    assert raw["profiles"][0]["travel_distances_by_city"] == {
+        "Beja": 39.0,
+        "Moura": 26.0,
+        "Vidigueira": 15.0,
+        "Cuba": 25.0,
+        "Odemira": 132.0,
+        "Ferreira do Alentejo": 50.0,
+        "Serpa": 34.0,
+        "Brinches": 23.0,
+    }
+    assert "Mora" not in raw["profiles"][0]["travel_distances_by_city"]
 
 
 def test_load_gui_settings_migrates_old_last_used_fields(tmp_path: Path, monkeypatch) -> None:
@@ -135,6 +403,36 @@ def test_load_gui_settings_uses_provider_aware_ocr_env_default(tmp_path: Path, m
 
     assert loaded["ocr_api_provider"] == "gemini"
     assert loaded["ocr_api_key_env_name"] == "GEMINI_API_KEY"
+
+
+def test_load_gui_settings_normalizes_openai_legacy_ocr_env_default(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps({"ocr_api_provider": "openai", "ocr_api_key_env_name": "DEEPSEEK_API_KEY"}),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["ocr_api_provider"] == "openai"
+    assert loaded["ocr_api_key_env_name"] == "OPENAI_API_KEY"
+
+
+def test_load_joblog_settings_normalizes_openai_legacy_ocr_env_default(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps({"ocr_api_provider": "openai", "ocr_api_key_env_name": "DEEPSEEK_API_KEY"}),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_joblog_settings()
+
+    assert loaded["ocr_api_provider"] == "openai"
+    assert loaded["ocr_api_key_env_name"] == "OPENAI_API_KEY"
 
 
 def test_load_gui_settings_migrates_legacy_single_scope_to_personal(tmp_path: Path, monkeypatch) -> None:

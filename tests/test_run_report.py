@@ -940,6 +940,30 @@ def test_run_report_renders_budget_guardrail_section_when_present(tmp_path: Path
     assert "Budget decision reason: `estimate_exceeds_budget_cap`." in markdown
 
 
+def test_run_report_summary_distinguishes_run_tokens_from_billed_total(tmp_path: Path) -> None:
+    run_dir = _seed_run_dir(tmp_path)
+    summary_path = run_dir / "run_summary.json"
+    run_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    run_summary["budget_post_run"] = {
+        "input_tokens": 220,
+        "output_tokens": 90,
+        "reasoning_tokens": 27,
+        "total_tokens": 337,
+        "estimated_cost_usd": 0.003,
+        "estimation_status": "available",
+    }
+    _write_json(summary_path, run_summary)
+
+    markdown = build_run_report_markdown(
+        run_dir=run_dir,
+        admin_mode=True,
+        include_sanitized_snippets=False,
+    )
+
+    assert "run tokens `323`" in markdown
+    assert "billed total `337` (includes reasoning)" in markdown
+
+
 def test_run_report_legacy_summary_without_budget_keys_remains_compatible(tmp_path: Path) -> None:
     run_dir = _seed_run_dir(tmp_path)
     markdown = build_run_report_markdown(

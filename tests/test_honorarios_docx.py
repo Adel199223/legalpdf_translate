@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import date, datetime
@@ -12,28 +13,35 @@ if os.name != "nt" and "DISPLAY" not in os.environ:
 import pytest
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QDate, QRect, Qt, QUrl
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
+import legalpdf_translate.user_settings as user_settings
 from legalpdf_translate.honorarios_docx import (
-    FIXED_ADDRESS,
-    FIXED_IBAN,
-    FIXED_NAME,
     HonorariosDraft,
+    HonorariosKind,
     build_honorarios_draft,
+    build_interpretation_honorarios_draft,
     build_honorarios_paragraph_texts,
+    default_interpretation_recipient_block,
     default_honorarios_filename,
     format_portuguese_date,
     generate_honorarios_docx,
 )
+from legalpdf_translate.user_profile import default_primary_profile
 from legalpdf_translate.joblog_db import insert_job_run, open_job_log
 from legalpdf_translate.qt_gui.dialogs import (
     JobLogSeed,
     QtHonorariosExportDialog,
     QtJobLogWindow,
+    QtProfileManagerDialog,
     QtSaveToJobLogDialog,
     _default_documents_dir,
+    build_blank_interpretation_seed,
 )
+from legalpdf_translate.qt_gui.guarded_inputs import CALENDAR_WEEKEND_COLOR, GuardedDateEdit
+from legalpdf_translate.qt_gui.worker import HonorariosPdfExportWorker
+import legalpdf_translate.qt_gui.worker as worker_module
 
 
 def _write_docx_with_paragraphs(path: Path, *paragraphs: str) -> None:
@@ -43,16 +51,61 @@ def _write_docx_with_paragraphs(path: Path, *paragraphs: str) -> None:
     document.save(path)
 
 
+def _profile(**overrides: str):
+    profile = default_primary_profile(email="adel@example.com")
+    for key, value in overrides.items():
+        setattr(profile, key, value)
+    return profile
+
+
+def _patch_settings_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    return settings_file
+
+
+def _write_legacy_blank_primary_settings(settings_file: Path) -> None:
+    profile = default_primary_profile()
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 8,
+                "profiles": [
+                    {
+                        "id": profile.id,
+                        "first_name": profile.first_name,
+                        "last_name": profile.last_name,
+                        "document_name_override": profile.document_name_override,
+                        "email": profile.email,
+                        "phone_number": profile.phone_number,
+                        "postal_address": profile.postal_address,
+                        "iban": profile.iban,
+                        "iva_text": profile.iva_text,
+                        "irs_text": profile.irs_text,
+                        "travel_origin_label": "",
+                        "travel_distances_by_city": {},
+                    }
+                ],
+                "primary_profile_id": profile.id,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_format_portuguese_date_uses_full_month_name() -> None:
     assert format_portuguese_date(date(2026, 3, 6)) == "06 de março de 2026"
 
 
 def test_build_honorarios_paragraph_texts_uses_locked_template() -> None:
+    profile = _profile()
     draft = build_honorarios_draft(
         case_number="109/26.0PBBJA",
         word_count=1666,
         case_entity="Juízo Local Criminal de Beja",
         case_city="Beja",
+        profile=profile,
         today=date(2026, 3, 6),
     )
 
@@ -62,8 +115,8 @@ def test_build_honorarios_paragraph_texts_uses_locked_template() -> None:
         ("", "left"),
         ("Exmo. Sr(a). Procurador(a) da república do Juízo Local Criminal de Beja", "address"),
         ("", "left"),
-        (f"Nome: {FIXED_NAME}", "left"),
-        (f"Morada: {FIXED_ADDRESS}", "left"),
+        (f"Nome: {profile.document_name}", "left"),
+        (f"Morada: {profile.postal_address}", "left"),
         ("", "left"),
         (
             "Venho por este meio requerer o pagamento dos honorários devidos, em virtude de ter sido nomeado "
@@ -72,7 +125,7 @@ def test_build_honorarios_paragraph_texts_uses_locked_template() -> None:
         ),
         ("O documento traduzido contém 1666 palavras.", "left"),
         ("Este serviço inclui a taxa IVA de 23% e não tem retenção de IRS.", "left"),
-        (f"O Pagamento deverá ser efetuado para o seguinte IBAN: {FIXED_IBAN}", "left"),
+        (f"O Pagamento deverá ser efetuado para o seguinte IBAN: {profile.iban}", "left"),
         ("", "left"),
         ("Melhores cumprimentos,", "left"),
         ("", "left"),
@@ -80,17 +133,19 @@ def test_build_honorarios_paragraph_texts_uses_locked_template() -> None:
         ("", "left"),
         ("Beja, 06 de março de 2026", "center"),
         ("", "left"),
-        (FIXED_NAME, "center"),
+        (profile.document_name, "center"),
     ]
 
 
 def test_generate_honorarios_docx_has_expected_text_and_alignment(tmp_path: Path) -> None:
+    profile = _profile()
     draft = HonorariosDraft(
         case_number="109/26.0PBBJA",
         word_count=1666,
         case_entity="Juízo Local Criminal de Beja",
         case_city="Beja",
         date_pt="06 de março de 2026",
+        profile=profile,
     )
     output = tmp_path / "honorarios.docx"
 
@@ -104,7 +159,7 @@ def test_generate_honorarios_docx_has_expected_text_and_alignment(tmp_path: Path
     assert paragraphs[12].text == "Melhores cumprimentos,"
     assert paragraphs[14].text == "Espera deferimento,"
     assert paragraphs[16].text == "Beja, 06 de março de 2026"
-    assert paragraphs[18].text == FIXED_NAME
+    assert paragraphs[18].text == profile.document_name
     assert paragraphs[14].alignment == WD_ALIGN_PARAGRAPH.CENTER
     assert paragraphs[16].alignment == WD_ALIGN_PARAGRAPH.CENTER
     assert paragraphs[18].alignment == WD_ALIGN_PARAGRAPH.CENTER
@@ -112,12 +167,14 @@ def test_generate_honorarios_docx_has_expected_text_and_alignment(tmp_path: Path
 
 
 def test_generate_honorarios_docx_avoids_overwriting_existing_translation(tmp_path: Path) -> None:
+    profile = _profile()
     draft = HonorariosDraft(
         case_number="21/25.0FBPTM",
         word_count=264,
         case_entity="Tribunal Judicial da Comarca de Beja",
         case_city="Beja",
         date_pt="08 de março de 2026",
+        profile=profile,
     )
     translated = tmp_path / "21-25_AR_20260308_064339.docx"
     translated.write_bytes(b"translated-bytes")
@@ -139,6 +196,7 @@ def test_build_honorarios_paragraph_texts_keeps_case_city_only_in_closing_date()
         word_count=306,
         case_entity="Tribunal Judicial da Comarca de Beja",
         case_city="Moura",
+        profile=_profile(),
         today=date(2026, 3, 7),
     )
 
@@ -153,6 +211,63 @@ def test_build_honorarios_paragraph_texts_keeps_case_city_only_in_closing_date()
     assert paragraphs[16] == ("Moura, 07 de março de 2026", "center")
 
 
+def test_build_honorarios_paragraph_texts_uses_case_city_for_plain_ministerio_publico() -> None:
+    draft = build_honorarios_draft(
+        case_number="1117/25.4T8BJA",
+        word_count=120,
+        case_entity="Ministério Público",
+        case_city="Beja",
+        profile=_profile(),
+        today=date(2026, 3, 10),
+    )
+
+    paragraphs = build_honorarios_paragraph_texts(draft)
+
+    assert paragraphs[2] == (
+        "Exmo. Sr(a). Procurador(a) da república do Ministério Público de Beja",
+        "address",
+    )
+    assert "\n" not in paragraphs[2][0]
+
+
+def test_build_honorarios_paragraph_texts_uses_cuba_for_plain_ministerio_publico_when_seed_city_is_cuba() -> None:
+    draft = build_honorarios_draft(
+        case_number="48/26.5GACUB",
+        word_count=437,
+        case_entity="Ministério Público",
+        case_city="Cuba",
+        profile=_profile(),
+        today=date(2026, 4, 19),
+    )
+
+    paragraphs = build_honorarios_paragraph_texts(draft)
+
+    assert paragraphs[2] == (
+        "Exmo. Sr(a). Procurador(a) da república do Ministério Público de Cuba",
+        "address",
+    )
+    assert paragraphs[16] == ("Cuba, 19 de abril de 2026", "center")
+
+
+def test_build_honorarios_paragraph_texts_appends_case_city_for_generic_entity() -> None:
+    draft = build_honorarios_draft(
+        case_number="66/26.3GAFAL",
+        word_count=120,
+        case_entity="Tribunal do Trabalho",
+        case_city="Beja",
+        profile=_profile(),
+        today=date(2026, 3, 10),
+    )
+
+    paragraphs = build_honorarios_paragraph_texts(draft)
+
+    assert paragraphs[2] == (
+        "Exmo. Sr(a). Procurador(a) da república do Tribunal do Trabalho de Beja",
+        "address",
+    )
+    assert "\n" not in paragraphs[2][0]
+
+
 def test_default_honorarios_filename_sanitizes_case_number() -> None:
     assert (
         default_honorarios_filename("109/26.0PBBJA", today=date(2026, 3, 6))
@@ -160,7 +275,239 @@ def test_default_honorarios_filename_sanitizes_case_number() -> None:
     )
 
 
-def test_honorarios_dialog_validates_required_fields(tmp_path: Path) -> None:
+def test_default_honorarios_filename_adds_interpretation_suffix() -> None:
+    assert (
+        default_honorarios_filename(
+            "109/26.0PBBJA",
+            today=date(2026, 3, 6),
+            kind=HonorariosKind.INTERPRETATION,
+        )
+        == "Requerimento_Honorarios_Interpretacao_109_26.0PBBJA_20260306.docx"
+    )
+
+
+def test_build_interpretation_honorarios_paragraph_texts_uses_interpretation_template() -> None:
+    profile = _profile(travel_origin_label="Marmelar")
+    draft = build_interpretation_honorarios_draft(
+        case_number="000055/25.5GAFAL",
+        case_entity="Ministério Público de Beja",
+        case_city="Beja",
+        service_date="2025-04-09",
+        service_entity="GNR",
+        service_city="Vidigueira",
+        use_service_location_in_honorarios=True,
+        travel_km_outbound=50,
+        travel_km_return=50,
+        recipient_block=default_interpretation_recipient_block("Ministério Público de Beja"),
+        profile=profile,
+        today=date(2025, 4, 28),
+    )
+
+    paragraphs = build_honorarios_paragraph_texts(draft)
+
+    assert paragraphs[2] == ("Exmo. Senhor Procurador do Ministério Público de Beja", "address")
+    assert "intérprete" in paragraphs[7][0]
+    assert "no dia 09/04/2025, na GNR de Vidigueira" in paragraphs[7][0]
+    assert "entre Marmelar e Vidigueira" in paragraphs[7][0]
+    assert "50 km em cada sentido" in paragraphs[7][0]
+    assert "não está sujeito a retenção de IRS" in paragraphs[8][0]
+    assert paragraphs[10] == (
+        f"O Pagamento deverá ser efetuado para o seguinte IBAN: {profile.iban}",
+        "left",
+    )
+    assert paragraphs[12] == ("Melhores cumprimentos,", "left")
+    assert paragraphs[14] == ("Espera deferimento,", "center")
+    assert paragraphs[16] == ("Beja, 28 de abril de 2025", "center")
+    assert paragraphs[18] == ("O Requerente,", "center")
+    assert paragraphs[20] == (profile.document_name, "center")
+
+
+def test_interpretation_honorarios_expands_service_entity_city_template() -> None:
+    profile = _profile(travel_origin_label="Marmelar")
+    draft = build_interpretation_honorarios_draft(
+        case_number="55/26.8GDODM",
+        case_entity="Ministério Público de Beja",
+        case_city="Beja",
+        service_date="2026-04-25",
+        service_entity="Posto Territorial da GNR de {city}",
+        service_city="Moura",
+        use_service_location_in_honorarios=True,
+        travel_km_outbound=40,
+        travel_km_return=40,
+        recipient_block=default_interpretation_recipient_block("Ministério Público de Beja"),
+        profile=profile,
+        today=date(2026, 4, 29),
+    )
+
+    paragraphs = build_honorarios_paragraph_texts(draft)
+
+    assert "no Posto Territorial da GNR de Moura" in paragraphs[7][0]
+
+
+def test_default_interpretation_recipient_block_uses_case_city_for_plain_ministerio_publico() -> None:
+    recipient = default_interpretation_recipient_block("Ministério Público", "Beja")
+
+    assert recipient == "Exmo. Senhor Procurador do Ministério Público de Beja"
+    assert "\n" not in recipient
+
+
+def test_default_interpretation_recipient_block_appends_case_city_for_generic_entity() -> None:
+    recipient = default_interpretation_recipient_block("Tribunal Judicial", "Ferreira do Alentejo")
+
+    assert recipient == (
+        "Exmo. Senhor Procurador da República do Tribunal Judicial de Ferreira do Alentejo"
+    )
+
+
+def test_default_interpretation_recipient_block_keeps_existing_city_accent_insensitively() -> None:
+    recipient = default_interpretation_recipient_block("Tribunal Judicial de Évora", "Evora")
+
+    assert recipient == "Exmo. Senhor Procurador da República do Tribunal Judicial de Évora"
+
+
+def test_default_interpretation_recipient_block_handles_trailing_preposition_without_duplication() -> None:
+    recipient = default_interpretation_recipient_block("Tribunal Judicial de", "Beja")
+
+    assert recipient == "Exmo. Senhor Procurador da República do Tribunal Judicial de Beja"
+
+
+def test_default_interpretation_recipient_block_completes_generic_suffix_with_city() -> None:
+    recipient = default_interpretation_recipient_block("Tribunal Judicial da Comarca", "Beja")
+
+    assert recipient == "Exmo. Senhor Procurador da República do Tribunal Judicial da Comarca de Beja"
+
+
+def test_build_interpretation_honorarios_draft_falls_back_to_service_city_for_case_city() -> None:
+    draft = build_interpretation_honorarios_draft(
+        case_number="1117/25.4TBJA",
+        case_entity="Ministério Público",
+        case_city="",
+        service_date="2026-03-26",
+        service_entity="Ministério Público",
+        service_city="Beja",
+        profile=_profile(travel_origin_label="Marmelar"),
+        today=date(2026, 3, 27),
+    )
+
+    paragraphs = build_honorarios_paragraph_texts(draft)
+
+    assert draft.case_city == "Beja"
+    assert paragraphs[2] == ("Exmo. Senhor Procurador do Ministério Público de Beja", "address")
+    assert paragraphs[16] == ("Beja, 27 de março de 2026", "center")
+
+
+def test_build_interpretation_honorarios_draft_uses_creation_date_for_footer() -> None:
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="Juízo Local Criminal de Beja",
+        service_city="Beja",
+        travel_km_outbound=39,
+        travel_km_return=39,
+        profile=_profile(),
+        today=date(2026, 3, 10),
+    )
+
+    assert draft.date_pt == "10 de março de 2026"
+
+
+def test_build_interpretation_honorarios_short_form_omits_service_location_phrase() -> None:
+    profile = _profile(travel_origin_label="Marmelar")
+    draft = build_interpretation_honorarios_draft(
+        case_number="000055/25.5GAFAL",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2025-04-09",
+        service_entity="Juízo Local Criminal",
+        service_city="Beja",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=39,
+        travel_km_return=39,
+        profile=profile,
+        today=date(2025, 4, 28),
+    )
+
+    body_text = next(
+        text
+        for text, _kind in build_honorarios_paragraph_texts(draft)
+        if "Venho, por este meio, requerer o pagamento dos honorários devidos" in text
+    )
+    assert "na GNR de" not in body_text
+    assert "na cidade de" not in body_text
+    assert "entre Marmelar e Beja" in body_text
+
+
+def test_build_interpretation_honorarios_can_omit_transport_clause() -> None:
+    profile = _profile(travel_origin_label="Marmelar")
+    draft = build_interpretation_honorarios_draft(
+        case_number="000055/25.5GAFAL",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2025-04-09",
+        service_entity="Juízo Local Criminal",
+        service_city="Beja",
+        use_service_location_in_honorarios=False,
+        include_transport_sentence_in_honorarios=False,
+        travel_km_outbound=39,
+        travel_km_return=39,
+        profile=profile,
+        today=date(2025, 4, 28),
+    )
+
+    body_text = next(
+        text
+        for text, _kind in build_honorarios_paragraph_texts(draft)
+        if "Venho, por este meio, requerer o pagamento dos honorários devidos" in text
+    )
+
+    assert "despesas de transporte" not in body_text
+    assert "km em cada sentido" not in body_text
+    assert body_text.endswith("no dia 09/04/2025.")
+
+
+def test_generate_interpretation_honorarios_docx_includes_completed_case_city_in_recipient(tmp_path: Path) -> None:
+    profile = _profile(travel_origin_label="Marmelar")
+    draft = build_interpretation_honorarios_draft(
+        case_number="66/26.3GAFAL",
+        case_entity="Tribunal Judicial",
+        case_city="Ferreira do Alentejo",
+        service_date="2026-03-11",
+        service_entity="Tribunal Judicial",
+        service_city="Ferreira do Alentejo",
+        travel_km_outbound=42,
+        travel_km_return=42,
+        recipient_block=default_interpretation_recipient_block(
+            "Tribunal Judicial",
+            "Ferreira do Alentejo",
+        ),
+        profile=profile,
+        today=date(2026, 3, 12),
+    )
+    output = tmp_path / "interpretation_honorarios.docx"
+
+    generate_honorarios_docx(draft, output)
+
+    doc = Document(output)
+    paragraphs = doc.paragraphs
+    assert paragraphs[2].text == (
+        "Exmo. Senhor Procurador da República do Tribunal Judicial de Ferreira do Alentejo"
+    )
+    assert "no dia 11/03/2026" in paragraphs[7].text
+    assert paragraphs[10].text == f"O Pagamento deverá ser efetuado para o seguinte IBAN: {profile.iban}"
+    assert paragraphs[12].text == "Melhores cumprimentos,"
+    assert paragraphs[14].text == "Espera deferimento,"
+    assert paragraphs[14].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert paragraphs[16].text == "Ferreira do Alentejo, 12 de março de 2026"
+    assert paragraphs[18].text == "O Requerente,"
+    assert paragraphs[18].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert paragraphs[20].text == profile.document_name
+    assert paragraphs[20].alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+
+def test_honorarios_dialog_validates_required_fields(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
     app = QApplication.instance()
     owns_app = app is None
     if app is None:
@@ -168,7 +515,7 @@ def test_honorarios_dialog_validates_required_fields(tmp_path: Path) -> None:
 
     dialog = QtHonorariosExportDialog(
         parent=None,
-        draft=HonorariosDraft("", 0, "", "", "06 de março de 2026"),
+        draft=HonorariosDraft("", 0, "", "", "06 de março de 2026", _profile()),
         default_directory=tmp_path,
     )
     try:
@@ -187,6 +534,7 @@ def test_honorarios_dialog_validates_required_fields(tmp_path: Path) -> None:
 
 
 def test_honorarios_dialog_reports_auto_renamed_save_path(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
     app = QApplication.instance()
     owns_app = app is None
     if app is None:
@@ -203,12 +551,28 @@ def test_honorarios_dialog_reports_auto_renamed_save_path(tmp_path: Path, monkey
         lambda *args, **kwargs: (requested, "Word Document (*.docx)"),
     )
     monkeypatch.setattr(
-        "legalpdf_translate.qt_gui.dialogs.QMessageBox.information",
-        lambda *args, **kwargs: infos.append(args[2] if len(args) > 2 else kwargs.get("text", "")),
+        QtHonorariosExportDialog,
+        "_begin_pdf_export",
+        lambda self, *, docx_path, pdf_path, timeout_seconds: QtHonorariosExportDialog._on_pdf_export_finished(
+            self,
+            SimpleNamespace(
+                docx_path=docx_path,
+                pdf_path=pdf_path,
+                automation=SimpleNamespace(
+                    ok=True,
+                    action="export_pdf",
+                    message="Word document exported to PDF.",
+                    failure_code="",
+                    details="",
+                    elapsed_ms=45,
+                ),
+            ),
+        ),
     )
     monkeypatch.setattr(
-        "legalpdf_translate.qt_gui.dialogs.QMessageBox.question",
-        lambda *args, **kwargs: 65536,
+        QtHonorariosExportDialog,
+        "_show_pdf_export_success_box",
+        lambda self: infos.append("\n".join(self._export_result_info_lines())) or "continue",
     )
 
     dialog = QtHonorariosExportDialog(
@@ -219,6 +583,7 @@ def test_honorarios_dialog_reports_auto_renamed_save_path(tmp_path: Path, monkey
             case_entity="Tribunal Judicial da Comarca de Beja",
             case_city="Beja",
             date_pt="08 de março de 2026",
+            profile=_profile(),
         ),
         default_directory=tmp_path,
     )
@@ -230,6 +595,976 @@ def test_honorarios_dialog_reports_auto_renamed_save_path(tmp_path: Path, monkey
         assert infos
         assert str(dialog.saved_path) in infos[0]
         assert translated.read_bytes() == b"translated-bytes"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_records_saved_pdf_path_after_docx_save(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    requested = str(tmp_path / "honorarios.docx")
+    calls: dict[str, Path] = {}
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (requested, "Word Document (*.docx)"),
+    )
+    monkeypatch.setattr(
+        QtHonorariosExportDialog,
+        "_begin_pdf_export",
+        lambda self, *, docx_path, pdf_path, timeout_seconds: calls.update({"docx": docx_path, "pdf": pdf_path})
+        or QtHonorariosExportDialog._on_pdf_export_finished(
+            self,
+            SimpleNamespace(
+                docx_path=docx_path,
+                pdf_path=pdf_path,
+                automation=SimpleNamespace(
+                    ok=True,
+                    action="export_pdf",
+                    message="Word document exported to PDF.",
+                    failure_code="",
+                    details="",
+                    elapsed_ms=87,
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(QtHonorariosExportDialog, "_show_pdf_export_success_box", lambda self: "continue")
+
+    dialog = QtHonorariosExportDialog(
+        parent=None,
+        draft=HonorariosDraft(
+            case_number="109/26.0PBBJA",
+            word_count=1666,
+            case_entity="Juízo Local Criminal de Beja",
+            case_city="Beja",
+            date_pt="06 de março de 2026",
+            profile=_profile(),
+        ),
+        default_directory=tmp_path,
+    )
+    try:
+        dialog._generate()
+        assert dialog.saved_path == Path(requested).resolve()
+        assert dialog.docx_saved_path == Path(requested).resolve()
+        assert dialog.saved_pdf_path == Path(requested).resolve().with_suffix(".pdf")
+        assert dialog.pdf_saved_path == dialog.saved_pdf_path
+        assert dialog.pdf_export_error == ""
+        assert dialog.pdf_failure_code == ""
+        assert dialog.pdf_failure_details == ""
+        assert dialog.pdf_export_elapsed_ms == 87
+        assert calls["docx"] == dialog.saved_path
+        assert calls["pdf"] == dialog.saved_pdf_path
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_enters_async_pdf_export_state_before_worker_finishes(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    requested = str(tmp_path / "honorarios.docx")
+    calls: dict[str, Path] = {}
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (requested, "Word Document (*.docx)"),
+    )
+    monkeypatch.setattr(
+        QtHonorariosExportDialog,
+        "_begin_pdf_export",
+        lambda self, *, docx_path, pdf_path, timeout_seconds: calls.update({"docx": docx_path, "pdf": pdf_path}),
+    )
+    monkeypatch.setattr(QtHonorariosExportDialog, "_show_pdf_export_success_box", lambda self: "continue")
+
+    dialog = QtHonorariosExportDialog(
+        parent=None,
+        draft=HonorariosDraft(
+            case_number="109/26.0PBBJA",
+            word_count=1666,
+            case_entity="Juízo Local Criminal de Beja",
+            case_city="Beja",
+            date_pt="06 de março de 2026",
+            profile=_profile(),
+        ),
+        default_directory=tmp_path,
+    )
+    try:
+        dialog._generate()
+        assert dialog.docx_saved_path == Path(requested).resolve()
+        assert dialog.saved_pdf_path is None
+        assert dialog._pdf_export_in_flight is True
+        assert dialog.generate_btn.isEnabled() is False
+        assert dialog.cancel_btn.isEnabled() is False
+        assert dialog.export_status_label.text().startswith("DOCX saved.")
+        assert calls["docx"] == dialog.docx_saved_path
+        assert calls["pdf"] == dialog.docx_saved_path.with_suffix(".pdf")
+        QtHonorariosExportDialog._on_pdf_export_finished(
+            dialog,
+            SimpleNamespace(
+                docx_path=dialog.docx_saved_path,
+                pdf_path=dialog.docx_saved_path.with_suffix(".pdf"),
+                automation=SimpleNamespace(
+                    ok=True,
+                    action="export_pdf",
+                    message="Word document exported to PDF.",
+                    failure_code="",
+                    details="",
+                    elapsed_ms=12,
+                ),
+            ),
+        )
+        assert dialog.result() == QDialog.DialogCode.Accepted
+    finally:
+        dialog._set_pdf_export_busy(False)
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_keeps_docx_when_pdf_export_fails(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    requested = str(tmp_path / "honorarios.docx")
+    warnings: list[tuple[str, str, str]] = []
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (requested, "Word Document (*.docx)"),
+    )
+    monkeypatch.setattr(
+        QtHonorariosExportDialog,
+        "_begin_pdf_export",
+        lambda self, *, docx_path, pdf_path, timeout_seconds: QtHonorariosExportDialog._on_pdf_export_finished(
+            self,
+            SimpleNamespace(
+                docx_path=docx_path,
+                pdf_path=None,
+                automation=SimpleNamespace(
+                    ok=False,
+                    action="export_pdf",
+                    message="Microsoft Word could not be started for PDF export.",
+                    failure_code="com_launch_failed",
+                    details="Failure code: com_launch_failed\nElapsed: 8123 ms\n\nRaw diagnostic:\n0x80080005",
+                    elapsed_ms=8123,
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        QtHonorariosExportDialog,
+        "_show_pdf_export_failure_box",
+        lambda self: warnings.append(
+            (self.pdf_failure_code, self.pdf_failure_message, self.pdf_failure_details)
+        ),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.question",
+        lambda *args, **kwargs: 65536,
+    )
+
+    dialog = QtHonorariosExportDialog(
+        parent=None,
+        draft=HonorariosDraft(
+            case_number="109/26.0PBBJA",
+            word_count=1666,
+            case_entity="Juízo Local Criminal de Beja",
+            case_city="Beja",
+            date_pt="06 de março de 2026",
+            profile=_profile(),
+        ),
+        default_directory=tmp_path,
+    )
+    try:
+        dialog._generate()
+        assert dialog.saved_path == Path(requested).resolve()
+        assert dialog.docx_saved_path == Path(requested).resolve()
+        assert dialog.saved_path.exists()
+        assert dialog.saved_pdf_path is None
+        assert dialog.pdf_saved_path is None
+        assert dialog.pdf_failure_code == "com_launch_failed"
+        assert dialog.pdf_failure_message == "Microsoft Word could not be started for PDF export."
+        assert dialog.pdf_failure_details.startswith("Failure code: com_launch_failed")
+        assert dialog.pdf_export_error == "Microsoft Word could not be started for PDF export."
+        assert dialog.pdf_export_elapsed_ms == 8123
+        assert dialog.pdf_unavailable_explained is True
+        assert warnings
+        assert warnings[0][0] == "com_launch_failed"
+        assert "Microsoft Word could not be started" in warnings[0][1]
+        assert "0x80080005" in warnings[0][2]
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_partial_success_can_retry_pdf_export(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    requested = str(tmp_path / "honorarios.docx")
+    begin_calls: list[tuple[Path, Path, float]] = []
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (requested, "Word Document (*.docx)"),
+    )
+    monkeypatch.setattr(QtHonorariosExportDialog, "_show_pdf_export_failure_box", lambda self: "retry_pdf")
+    monkeypatch.setattr("legalpdf_translate.qt_gui.dialogs.QTimer.singleShot", lambda _ms, callback: callback())
+
+    def _begin_export(self, *, docx_path: Path, pdf_path: Path, timeout_seconds: float) -> None:
+        begin_calls.append((docx_path, pdf_path, float(timeout_seconds)))
+        if len(begin_calls) == 1:
+            QtHonorariosExportDialog._on_pdf_export_finished(
+                self,
+                SimpleNamespace(
+                    docx_path=docx_path,
+                    pdf_path=None,
+                    automation=SimpleNamespace(
+                        ok=False,
+                        action="export_pdf",
+                        message="Word PDF export timed out.",
+                        failure_code="timeout",
+                        details="Failure code: timeout",
+                        elapsed_ms=20000,
+                    ),
+                ),
+            )
+
+    monkeypatch.setattr(QtHonorariosExportDialog, "_begin_pdf_export", _begin_export)
+
+    dialog = QtHonorariosExportDialog(
+        parent=None,
+        draft=HonorariosDraft(
+            case_number="109/26.0PBBJA",
+            word_count=1666,
+            case_entity="Juízo Local Criminal de Beja",
+            case_city="Beja",
+            date_pt="06 de março de 2026",
+            profile=_profile(),
+        ),
+        default_directory=tmp_path,
+    )
+    try:
+        dialog._generate()
+        expected_docx = Path(requested).resolve()
+        expected_pdf = expected_docx.with_suffix(".pdf")
+        assert begin_calls == [
+            (expected_docx, expected_pdf, 45.0),
+            (expected_docx, expected_pdf, 90.0),
+        ]
+        assert dialog._pdf_export_in_flight is True
+        assert dialog.saved_pdf_path is None
+        assert dialog.export_status_label.text().startswith("Word PDF export timed out once.")
+    finally:
+        dialog._set_pdf_export_busy(False)
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_pdf_export_worker_uses_export_timeout_for_preflight(tmp_path: Path, monkeypatch) -> None:
+    docx_path = tmp_path / "honorarios.docx"
+    docx_path.write_bytes(b"docx")
+    pdf_path = tmp_path / "honorarios.pdf"
+    preflight_calls: list[float] = []
+    export_calls: list[float] = []
+    results: list[object] = []
+
+    monkeypatch.setattr(
+        worker_module,
+        "probe_word_pdf_export_support",
+        lambda *, timeout_seconds=8.0: preflight_calls.append(float(timeout_seconds)) or SimpleNamespace(ok=True),
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "export_docx_to_pdf_in_word",
+        lambda _docx_path, _pdf_path, *, timeout_seconds=45.0: export_calls.append(float(timeout_seconds))
+        or SimpleNamespace(ok=True),
+    )
+
+    worker = HonorariosPdfExportWorker(docx_path=docx_path, pdf_path=pdf_path, timeout_seconds=90.0)
+    worker.finished.connect(results.append)
+    worker.run()
+
+    assert preflight_calls == [90.0]
+    assert export_calls == [90.0]
+    assert len(results) == 1
+    assert results[0].pdf_path == pdf_path.resolve()
+
+
+def test_honorarios_dialog_partial_success_can_accept_existing_pdf(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    requested = str(tmp_path / "honorarios.docx")
+    selected_pdf = tmp_path / "manual_honorarios.pdf"
+    selected_pdf.write_bytes(b"%PDF-1.7")
+    actions = iter(["select_existing_pdf", "continue"])
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (requested, "Word Document (*.docx)"),
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(selected_pdf), "PDF Files (*.pdf)"),
+    )
+    monkeypatch.setattr(QtHonorariosExportDialog, "_show_pdf_export_failure_box", lambda self: next(actions))
+    monkeypatch.setattr(QtHonorariosExportDialog, "_show_pdf_export_success_box", lambda self: next(actions))
+    monkeypatch.setattr(
+        QtHonorariosExportDialog,
+        "_begin_pdf_export",
+        lambda self, *, docx_path, pdf_path, timeout_seconds: QtHonorariosExportDialog._on_pdf_export_finished(
+            self,
+            SimpleNamespace(
+                docx_path=docx_path,
+                pdf_path=None,
+                automation=SimpleNamespace(
+                    ok=False,
+                    action="export_pdf",
+                    message="Microsoft Word could not export the PDF.",
+                    failure_code="export_failed",
+                    details="Failure code: export_failed",
+                    elapsed_ms=3200,
+                ),
+            ),
+        ),
+    )
+
+    dialog = QtHonorariosExportDialog(
+        parent=None,
+        draft=HonorariosDraft(
+            case_number="109/26.0PBBJA",
+            word_count=1666,
+            case_entity="Juízo Local Criminal de Beja",
+            case_city="Beja",
+            date_pt="06 de março de 2026",
+            profile=_profile(),
+        ),
+        default_directory=tmp_path,
+    )
+    try:
+        dialog._generate()
+        assert dialog.saved_pdf_path == selected_pdf.resolve()
+        assert dialog.pdf_saved_path == selected_pdf.resolve()
+        assert dialog.pdf_export_error == ""
+        assert dialog.pdf_failure_code == ""
+        assert dialog.result() == QDialog.DialogCode.Accepted
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_defaults_to_primary_profile_and_secondary_override_is_one_off(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    primary = _profile(id="primary", email="primary@example.com")
+    secondary = _profile(
+        id="secondary",
+        first_name="Jane",
+        last_name="Doe",
+        document_name_override="Jane Doe",
+        email="jane@example.com",
+        postal_address="Rua B",
+        iban="PT50003506490000832760030",
+        iva_text="6%",
+        irs_text="Isento",
+    )
+    user_settings.save_profile_settings(profiles=[primary, secondary], primary_profile_id=primary.id)
+
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = HonorariosDraft(
+        case_number="109/26.0PBBJA",
+        word_count=1666,
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        date_pt="06 de março de 2026",
+        profile=primary,
+    )
+
+    first_dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    second_dialog = None
+    try:
+        assert first_dialog.profile_combo.currentData() == "primary"
+        first_dialog.profile_combo.setCurrentIndex(first_dialog.profile_combo.findData("secondary"))
+        rebuilt = first_dialog._build_draft()
+        assert rebuilt.profile.id == "secondary"
+        assert rebuilt.profile.document_name == "Jane Doe"
+
+        second_dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+        assert second_dialog.profile_combo.currentData() == "primary"
+    finally:
+        first_dialog.close()
+        first_dialog.deleteLater()
+        if second_dialog is not None:
+            second_dialog.close()
+            second_dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_small_screen_uses_scrollable_body_and_fixed_action_bar(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.window_adaptive.available_screen_geometry",
+        lambda _widget: QRect(0, 0, 820, 620),
+    )
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="Juízo Local Criminal de Beja",
+        service_city="Beja",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=0.0,
+        travel_km_return=0.0,
+        recipient_block=default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=_profile(),
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.profile_combo.isEditable() is False
+        assert dialog.generate_btn.objectName() == "PrimaryButton"
+        assert dialog.width() <= 672
+        assert dialog.height() <= 545
+        assert dialog.form_scroll_area.widgetResizable() is True
+        assert dialog.cancel_btn.parentWidget() is dialog.action_bar
+        assert dialog.generate_btn.parentWidget() is dialog.action_bar
+        assert dialog.recipient_block_edit.minimumHeight() == 72
+        assert dialog.service_same_check.isChecked() is True
+        assert dialog.include_transport_sentence_check.isChecked() is True
+        assert dialog.travel_km_return_edit is dialog.travel_km_outbound_edit
+        assert dialog.travel_km_outbound_edit.text() == "39"
+        assert dialog.travel_km_outbound_edit.isEnabled() is True
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_defaults_service_same_and_one_way_distance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    user_settings.save_profile_settings(profiles=[_profile()], primary_profile_id="primary")
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="",
+        service_city="",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=0.0,
+        travel_km_return=0.0,
+        recipient_block=default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=_profile(),
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert isinstance(dialog.service_date_edit, GuardedDateEdit)
+        dialog.service_date_edit.setCalendarDate(QDate(2026, 3, 11))
+        assert dialog.service_date_edit.text() == "2026-03-11"
+        calendar = dialog.service_date_edit.calendarWidget()
+        assert calendar.firstDayOfWeek() == Qt.DayOfWeek.Monday
+        assert calendar.minimumWidth() >= 336
+        calendar.setCurrentPage(2026, 3)
+        app.processEvents()
+        assert (
+            calendar.dateTextFormat(QDate(2026, 2, 28)).foreground().color().name().lower()
+            == CALENDAR_WEEKEND_COLOR.lower()
+        )
+        assert dialog.service_same_check.isChecked() is True
+        assert dialog.service_entity_edit.text() == "Juízo Local Criminal de Beja"
+        assert dialog.service_city_edit.text() == "Beja"
+        assert dialog.service_entity_edit.isEnabled() is False
+        assert dialog.service_city_edit.isEnabled() is False
+        assert dialog.include_transport_sentence_check.isChecked() is True
+        assert dialog.travel_km_outbound_edit.text() == "39"
+        assert dialog.travel_km_return_edit is dialog.travel_km_outbound_edit
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_transport_toggle_disables_distance_and_omits_clause(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    user_settings.save_profile_settings(profiles=[_profile()], primary_profile_id="primary")
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="Juízo Local Criminal de Beja",
+        service_city="Beja",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=39.0,
+        travel_km_return=39.0,
+        recipient_block=default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=_profile(),
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog.include_transport_sentence_check.setChecked(False)
+        app.processEvents()
+        assert dialog.travel_km_outbound_edit.isEnabled() is False
+        dialog.travel_km_outbound_edit.setText("not-a-number")
+        rebuilt = dialog._build_draft()
+        assert rebuilt.include_transport_sentence_in_honorarios is False
+        body_text = next(
+            text
+            for text, _kind in build_honorarios_paragraph_texts(rebuilt)
+            if "Venho, por este meio, requerer o pagamento dos honorários devidos" in text
+        )
+        assert "despesas de transporte" not in body_text
+        assert "km em cada sentido" not in body_text
+        dialog.include_transport_sentence_check.setChecked(True)
+        app.processEvents()
+        assert dialog.travel_km_outbound_edit.isEnabled() is True
+        assert dialog.travel_km_outbound_edit.text() == "39"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_recipient_default_tracks_case_city(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    user_settings.save_profile_settings(profiles=[_profile()], primary_profile_id="primary")
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="1117/25.4TBJA",
+        case_entity="Ministério Público",
+        case_city="Beja",
+        service_date="2026-03-26",
+        service_entity="Ministério Público",
+        service_city="Beja",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=39.0,
+        travel_km_return=39.0,
+        recipient_block="",
+        profile=_profile(),
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.recipient_block_edit.toPlainText() == "Exmo. Senhor Procurador do Ministério Público de Beja"
+        dialog.case_city_edit.setText("Serpa")
+        app.processEvents()
+        assert dialog.recipient_block_edit.toPlainText() == "Exmo. Senhor Procurador do Ministério Público de Serpa"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_recipient_default_tracks_case_city_for_generic_entity(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    user_settings.save_profile_settings(profiles=[_profile()], primary_profile_id="primary")
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="66/26.3GAFAL",
+        case_entity="Tribunal Judicial",
+        case_city="Ferreira do Alentejo",
+        service_date="2026-03-11",
+        service_entity="Tribunal Judicial",
+        service_city="Ferreira do Alentejo",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=42.0,
+        travel_km_return=42.0,
+        recipient_block="",
+        profile=_profile(),
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.recipient_block_edit.toPlainText() == (
+            "Exmo. Senhor Procurador da República do Tribunal Judicial de Ferreira do Alentejo"
+        )
+        dialog.case_city_edit.setText("Beja")
+        app.processEvents()
+        assert dialog.recipient_block_edit.toPlainText() == (
+            "Exmo. Senhor Procurador da República do Tribunal Judicial de Beja"
+        )
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_manual_recipient_override_stops_auto_sync(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    user_settings.save_profile_settings(profiles=[_profile()], primary_profile_id="primary")
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="66/26.3GAFAL",
+        case_entity="Tribunal Judicial",
+        case_city="Ferreira do Alentejo",
+        service_date="2026-03-11",
+        service_entity="Tribunal Judicial",
+        service_city="Ferreira do Alentejo",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=42.0,
+        travel_km_return=42.0,
+        recipient_block="",
+        profile=_profile(),
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog.recipient_block_edit.setPlainText("Destinatário manual")
+        app.processEvents()
+        dialog.case_city_edit.setText("Beja")
+        app.processEvents()
+        assert dialog.recipient_block_edit.toPlainText() == "Destinatário manual"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_uses_repaired_legacy_primary_profile_distance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings_file = _patch_settings_file(monkeypatch, tmp_path)
+    _write_legacy_blank_primary_settings(settings_file)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="",
+        service_city="",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=0.0,
+        travel_km_return=0.0,
+        recipient_block=default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=_profile(),
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.service_city_edit.text() == "Beja"
+        assert dialog.travel_km_outbound_edit.text() == "39"
+        profiles, primary_profile_id = user_settings.load_profile_settings()
+        stored_profile = next(profile for profile in profiles if profile.id == primary_profile_id)
+        assert stored_profile.travel_origin_label == "Marmelar"
+        assert stored_profile.travel_distances_by_city["Beja"] == 39.0
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_profile_change_refreshes_known_distance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    primary = _profile(id="primary")
+    primary.travel_distances_by_city = {"Beja": 39.0}
+    secondary = _profile(
+        id="secondary",
+        first_name="Jane",
+        last_name="Doe",
+        document_name_override="Jane Doe",
+        postal_address="Rua B",
+        iban="PT50003506490000832760030",
+        travel_origin_label="Marmelar",
+        travel_distances_by_city={"Beja": 44.0},
+    )
+    user_settings.save_profile_settings(profiles=[primary, secondary], primary_profile_id=primary.id)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="",
+        service_city="",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=0.0,
+        travel_km_return=0.0,
+        recipient_block=default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=primary,
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.travel_km_outbound_edit.text() == "39"
+        dialog.profile_combo.setCurrentIndex(dialog.profile_combo.findData("secondary"))
+        app.processEvents()
+        assert dialog.travel_km_outbound_edit.text() == "44"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_honorarios_dialog_interpretation_service_city_change_updates_distance_and_persists_one_way(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    profile = _profile()
+    profile.travel_distances_by_city = {"Beja": 39.0, "Cuba": 26.0}
+    user_settings.save_profile_settings(profiles=[profile], primary_profile_id=profile.id)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    draft = build_interpretation_honorarios_draft(
+        case_number="109/26.0PBBJA",
+        case_entity="Juízo Local Criminal de Beja",
+        case_city="Beja",
+        service_date="2026-03-09",
+        service_entity="Juízo Local Criminal de Beja",
+        service_city="Beja",
+        use_service_location_in_honorarios=False,
+        travel_km_outbound=39.0,
+        travel_km_return=39.0,
+        recipient_block=default_interpretation_recipient_block("Juízo Local Criminal de Beja"),
+        profile=profile,
+    )
+
+    dialog = QtHonorariosExportDialog(parent=None, draft=draft, default_directory=tmp_path)
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog.service_same_check.setChecked(False)
+        dialog.service_date_edit.setCalendarDate(QDate(2026, 3, 10))
+        dialog.service_city_edit.setText("Cuba")
+        app.processEvents()
+        assert dialog.travel_km_outbound_edit.text() == "26"
+        dialog.travel_km_outbound_edit.setText("27")
+        rebuilt = dialog._build_draft()
+        assert rebuilt.service_date == "2026-03-10"
+        assert rebuilt.travel_km_outbound == 27.0
+        assert rebuilt.travel_km_return == 27.0
+        profiles, primary_profile_id = user_settings.load_profile_settings()
+        stored_profile = next(profile for profile in profiles if profile.id == primary_profile_id)
+        assert stored_profile.travel_distances_by_city["Cuba"] == 27.0
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_profile_manager_save_rejects_missing_required_fields(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    saved: dict[str, object] = {}
+    criticals: list[str] = []
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.critical",
+        lambda *args, **kwargs: criticals.append(args[2] if len(args) > 2 else kwargs.get("text", "")),
+    )
+
+    dialog = QtProfileManagerDialog(
+        parent=None,
+        settings=user_settings.load_gui_settings(),
+        save_callback=lambda profiles, primary_id: saved.update(
+            profiles=profiles,
+            primary_profile_id=primary_id,
+        ),
+    )
+    try:
+        dialog._new_profile()
+        dialog.first_name_edit.setText("Jane")
+        dialog.last_name_edit.setText("Doe")
+        dialog.phone_edit.setText("+351912345678")
+        dialog._save()
+        assert "profiles" not in saved
+        assert criticals
+        assert "Postal address" in criticals[0]
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
+def test_profile_manager_can_set_primary_and_prevents_last_profile_delete(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    primary = _profile(id="primary")
+    secondary = _profile(
+        id="secondary",
+        first_name="Jane",
+        last_name="Doe",
+        document_name_override="Jane Doe",
+        email="jane@example.com",
+        phone_number="+351911111111",
+        postal_address="Rua B",
+        iban="PT50003506490000832760030",
+        iva_text="6%",
+        irs_text="Isento",
+    )
+    user_settings.save_profile_settings(profiles=[primary, secondary], primary_profile_id=primary.id)
+
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    saved: dict[str, object] = {}
+    infos: list[str] = []
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QMessageBox.information",
+        lambda *args, **kwargs: infos.append(args[2] if len(args) > 2 else kwargs.get("text", "")),
+    )
+
+    dialog = QtProfileManagerDialog(
+        parent=None,
+        settings=user_settings.load_gui_settings(),
+        save_callback=lambda profiles, primary_id: saved.update(
+            profiles=profiles,
+            primary_profile_id=primary_id,
+        ),
+    )
+    try:
+        assert dialog.save_btn.objectName() == "PrimaryButton"
+        assert dialog.delete_profile_btn.objectName() == "DangerButton"
+        assert dialog.delete_distance_btn.objectName() == "DangerButton"
+        dialog.profile_list.setCurrentRow(1)
+        dialog._set_primary()
+        dialog._save()
+        assert saved["primary_profile_id"] == "secondary"
+        assert saved["profiles"][1].phone_number == "+351911111111"
+
+        last_dialog = QtProfileManagerDialog(
+            parent=None,
+            settings={"profiles": [user_settings.load_gui_settings()["profiles"][0]], "primary_profile_id": "primary"},
+            save_callback=lambda profiles, primary_id: None,
+        )
+        try:
+            last_dialog._delete_profile()
+            assert infos
+            assert "At least one profile must remain." in infos[-1]
+        finally:
+            last_dialog.close()
+            last_dialog.deleteLater()
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -292,7 +1627,9 @@ def test_save_to_joblog_dialog_opens_honorarios_dialog_with_current_values(tmp_p
     dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
     try:
         dialog.case_number_edit.setText("109/26.0PBBJA")
+        dialog.case_entity_combo.addItem("Juízo Local Criminal de Beja")
         dialog.case_entity_combo.setCurrentText("Juízo Local Criminal de Beja")
+        dialog.case_city_combo.addItem("Beja")
         dialog.case_city_combo.setCurrentText("Beja")
         dialog._open_honorarios_dialog()
     finally:
@@ -309,6 +1646,55 @@ def test_save_to_joblog_dialog_opens_honorarios_dialog_with_current_values(tmp_p
     assert draft.case_city == "Beja"
     assert captured["default_directory"] == seed.output_docx.parent.resolve()
     assert captured["exec"] is True
+
+
+def test_save_to_joblog_dialog_honorarios_export_syncs_transport_toggle(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    seed = build_blank_interpretation_seed()
+    seed.case_number = "109/26.0PBBJA"
+    seed.case_entity = "Juízo Local Criminal de Beja"
+    seed.case_city = "Beja"
+    seed.service_entity = "Juízo Local Criminal de Beja"
+    seed.service_city = "Beja"
+    seed.service_date = "2026-03-09"
+
+    generated = build_interpretation_honorarios_draft(
+        case_number=seed.case_number,
+        case_entity=seed.case_entity,
+        case_city=seed.case_city,
+        service_date=seed.service_date,
+        service_entity=seed.service_entity,
+        service_city=seed.service_city,
+        include_transport_sentence_in_honorarios=False,
+        profile=_profile(),
+    )
+
+    class _FakeHonorariosDialog:
+        def __init__(self, *, parent, draft, default_directory) -> None:
+            self.saved_path = tmp_path / "honorarios.docx"
+            self.saved_pdf_path = tmp_path / "honorarios.pdf"
+            self.generated_draft = generated
+
+        def exec(self) -> int:
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr("legalpdf_translate.qt_gui.dialogs.QtHonorariosExportDialog", _FakeHonorariosDialog)
+
+    dialog = QtSaveToJobLogDialog(parent=None, db_path=tmp_path / "joblog.sqlite3", seed=seed)
+    try:
+        monkeypatch.setattr(dialog, "_offer_gmail_draft_for_interpretation_honorarios", lambda *args: None)
+        assert dialog.include_transport_sentence_check.isChecked() is True
+        dialog._open_honorarios_dialog()
+        assert dialog.include_transport_sentence_check.isChecked() is False
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
 
 
 def test_joblog_window_generates_honorarios_from_selected_row(tmp_path: Path, monkeypatch) -> None:
@@ -377,6 +1763,94 @@ def test_joblog_window_generates_honorarios_from_selected_row(tmp_path: Path, mo
             app.quit()
 
 
+def test_joblog_window_honorarios_export_persists_transport_toggle_for_interpretation_row(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    db_path = tmp_path / "joblog.sqlite3"
+    with open_job_log(db_path) as conn:
+        insert_job_run(
+            conn,
+            {
+                "completed_at": "2026-03-11T10:30:00",
+                "translation_date": "2026-03-11",
+                "job_type": "Interpretation",
+                "case_number": "66/26.3GAFAL",
+                "court_email": "",
+                "case_entity": "Tribunal Judicial",
+                "case_city": "Ferreira do Alentejo",
+                "service_entity": "Tribunal Judicial",
+                "service_city": "Ferreira do Alentejo",
+                "service_date": "2026-03-11",
+                "travel_km_outbound": 42.0,
+                "travel_km_return": 42.0,
+                "include_transport_sentence_in_honorarios": 1,
+                "lang": "",
+                "target_lang": "",
+                "run_id": "",
+                "pages": 0,
+                "word_count": 0,
+                "total_tokens": None,
+                "rate_per_word": 0.0,
+                "expected_total": 0.0,
+                "amount_paid": 0.0,
+                "api_cost": 0.0,
+                "estimated_api_cost": 0.0,
+                "quality_risk_score": None,
+                "profit": 0.0,
+            },
+        )
+
+    generated = build_interpretation_honorarios_draft(
+        case_number="66/26.3GAFAL",
+        case_entity="Tribunal Judicial",
+        case_city="Ferreira do Alentejo",
+        service_date="2026-03-11",
+        service_entity="Tribunal Judicial",
+        service_city="Ferreira do Alentejo",
+        include_transport_sentence_in_honorarios=False,
+        travel_km_outbound=42.0,
+        travel_km_return=42.0,
+        recipient_block=default_interpretation_recipient_block("Tribunal Judicial", "Ferreira do Alentejo"),
+        profile=_profile(),
+    )
+
+    class _FakeHonorariosDialog:
+        def __init__(self, *, parent, draft, default_directory) -> None:
+            self.saved_path = tmp_path / "honorarios.docx"
+            self.saved_pdf_path = tmp_path / "honorarios.pdf"
+            self.generated_draft = generated
+
+        def exec(self) -> int:
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr("legalpdf_translate.qt_gui.dialogs.QtHonorariosExportDialog", _FakeHonorariosDialog)
+
+    window = QtJobLogWindow(parent=None, db_path=db_path)
+    try:
+        monkeypatch.setattr(window, "_offer_gmail_draft_for_interpretation_honorarios", lambda *args: None)
+        window.table.selectRow(0)
+        QApplication.processEvents()
+        window._open_honorarios_dialog()
+    finally:
+        window.close()
+        window.deleteLater()
+        if owns_app:
+            app.quit()
+
+    with open_job_log(db_path) as conn:
+        stored = conn.execute(
+            "SELECT include_transport_sentence_in_honorarios FROM job_runs WHERE case_number = ?",
+            ("66/26.3GAFAL",),
+        ).fetchone()
+    assert stored is not None
+    assert int(stored[0]) == 0
+
+
 def test_save_to_joblog_dialog_offers_gmail_draft_for_current_run_export(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -388,8 +1862,8 @@ def test_save_to_joblog_dialog_offers_gmail_draft_for_current_run_export(
     translated = tmp_path / "out" / "translated.docx"
     translated.parent.mkdir(parents=True)
     translated.write_bytes(b"docx")
-    honorarios = tmp_path / "honorarios.docx"
-    honorarios.write_bytes(b"docx")
+    honorarios_pdf = tmp_path / "honorarios.pdf"
+    honorarios_pdf.write_bytes(b"%PDF-1.7")
     seed = JobLogSeed(
         completed_at=datetime.now().isoformat(timespec="seconds"),
         translation_date="2026-03-06",
@@ -422,7 +1896,9 @@ def test_save_to_joblog_dialog_offers_gmail_draft_for_current_run_export(
 
     class _FakeHonorariosDialog:
         def __init__(self, *, parent, draft, default_directory) -> None:
-            self.saved_path = honorarios
+            self.saved_path = tmp_path / "honorarios.docx"
+            self.saved_path.write_bytes(b"docx")
+            self.saved_pdf_path = honorarios_pdf
 
         def exec(self) -> int:
             return 1
@@ -433,7 +1909,7 @@ def test_save_to_joblog_dialog_offers_gmail_draft_for_current_run_export(
             self.to_email = "beja.judicial@tribunais.org.pt"
             self.subject = "subject"
             self.body = "body"
-            self.attachments = (translated, honorarios)
+            self.attachments = (translated, honorarios_pdf)
             self.gog_path = Path(r"C:\gog.exe")
 
     monkeypatch.setattr("legalpdf_translate.qt_gui.dialogs.QtHonorariosExportDialog", _FakeHonorariosDialog)
@@ -491,7 +1967,8 @@ def test_save_to_joblog_dialog_offers_gmail_draft_for_current_run_export(
     assert captured["request_kwargs"]["to_email"] == "beja.judicial@tribunais.org.pt"
     assert captured["request_kwargs"]["case_number"] == "109/26.0PBBJA"
     assert captured["request_kwargs"]["translation_docx"] == translated
-    assert captured["request_kwargs"]["honorarios_docx"] == honorarios
+    assert captured["request_kwargs"]["honorarios_pdf"] == honorarios_pdf
+    assert captured["request_kwargs"]["profile"].document_name == "Adel Belghali"
     opened = captured["url"]
     assert isinstance(opened, QUrl)
     assert opened.toString() == "https://mail.google.com/mail/u/0/#drafts"
@@ -508,8 +1985,8 @@ def test_save_to_joblog_dialog_uses_partial_docx_for_gmail_when_final_output_mis
     partial = tmp_path / "out" / "partial.docx"
     partial.parent.mkdir(parents=True)
     partial.write_bytes(b"docx")
-    honorarios = tmp_path / "honorarios.docx"
-    honorarios.write_bytes(b"docx")
+    honorarios_pdf = tmp_path / "honorarios.pdf"
+    honorarios_pdf.write_bytes(b"%PDF-1.7")
     seed = JobLogSeed(
         completed_at=datetime.now().isoformat(timespec="seconds"),
         translation_date="2026-03-06",
@@ -543,7 +2020,9 @@ def test_save_to_joblog_dialog_uses_partial_docx_for_gmail_when_final_output_mis
 
     class _FakeHonorariosDialog:
         def __init__(self, *, parent, draft, default_directory) -> None:
-            self.saved_path = honorarios
+            self.saved_path = tmp_path / "honorarios.docx"
+            self.saved_path.write_bytes(b"docx")
+            self.saved_pdf_path = honorarios_pdf
 
         def exec(self) -> int:
             return 1
@@ -579,7 +2058,7 @@ def test_save_to_joblog_dialog_uses_partial_docx_for_gmail_when_final_output_mis
                 "to_email": kwargs["to_email"],
                 "subject": "subject",
                 "body": "body",
-                "attachments": (kwargs["translation_docx"], kwargs["honorarios_docx"]),
+                "attachments": (kwargs["translation_docx"], kwargs["honorarios_pdf"]),
                 "gog_path": kwargs["gog_path"],
             },
         )()
@@ -610,7 +2089,7 @@ def test_save_to_joblog_dialog_uses_partial_docx_for_gmail_when_final_output_mis
             app.quit()
 
     assert captured["request_kwargs"]["translation_docx"] == partial
-    assert captured["request_kwargs"]["honorarios_docx"] == honorarios
+    assert captured["request_kwargs"]["honorarios_pdf"] == honorarios_pdf
 
 
 def test_save_to_joblog_dialog_skips_gmail_when_court_email_missing(
@@ -726,6 +2205,8 @@ def test_joblog_window_honorarios_export_offers_gmail_draft_for_selected_row(
             captured["draft"] = draft
             captured["default_directory"] = default_directory
             self.saved_path = tmp_path / "historical.docx"
+            self.saved_pdf_path = tmp_path / "historical.pdf"
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
 
         def exec(self) -> int:
             captured["exec"] = True
@@ -737,7 +2218,7 @@ def test_joblog_window_honorarios_export_offers_gmail_draft_for_selected_row(
             self.to_email = "beja.judicial@tribunais.org.pt"
             self.subject = "subject"
             self.body = "body"
-            self.attachments = (translated, tmp_path / "historical.docx")
+            self.attachments = (translated, tmp_path / "historical.pdf")
             self.gog_path = Path(r"C:\gog.exe")
 
     monkeypatch.setattr("legalpdf_translate.qt_gui.dialogs.QtHonorariosExportDialog", _FakeHonorariosDialog)
@@ -803,7 +2284,8 @@ def test_joblog_window_honorarios_export_offers_gmail_draft_for_selected_row(
     assert captured["request_kwargs"]["to_email"] == "beja.judicial@tribunais.org.pt"
     assert captured["request_kwargs"]["case_number"] == "109/26.0PBBJA"
     assert captured["request_kwargs"]["translation_docx"] == translated
-    assert captured["request_kwargs"]["honorarios_docx"] == tmp_path / "historical.docx"
+    assert captured["request_kwargs"]["honorarios_pdf"] == tmp_path / "historical.pdf"
+    assert captured["request_kwargs"]["profile"].document_name == "Adel Belghali"
     opened = captured["url"]
     assert isinstance(opened, QUrl)
     assert opened.toString() == "https://mail.google.com/mail/u/0/#drafts"
@@ -856,6 +2338,12 @@ def test_joblog_window_honorarios_export_falls_back_to_stored_partial_docx(
     class _FakeHonorariosDialog:
         def __init__(self, *, parent, draft, default_directory) -> None:
             self.saved_path = tmp_path / "historical.docx"
+            self.saved_pdf_path = tmp_path / "historical.pdf"
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
+            self.saved_pdf_path = tmp_path / "historical.pdf"
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
+            self.saved_pdf_path = tmp_path / "historical.pdf"
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
 
         def exec(self) -> int:
             return 1
@@ -893,7 +2381,7 @@ def test_joblog_window_honorarios_export_falls_back_to_stored_partial_docx(
                 "to_email": kwargs["to_email"],
                 "subject": "subject",
                 "body": "body",
-                "attachments": (kwargs["translation_docx"], kwargs["honorarios_docx"]),
+                "attachments": (kwargs["translation_docx"], kwargs["honorarios_pdf"]),
                 "gog_path": kwargs["gog_path"],
             },
         )()
@@ -966,6 +2454,10 @@ def test_joblog_window_honorarios_export_informs_when_court_email_missing(tmp_pa
     class _FakeHonorariosDialog:
         def __init__(self, *, parent, draft, default_directory) -> None:
             self.saved_path = tmp_path / "historical.docx"
+            self.saved_pdf_path = tmp_path / "historical.pdf"
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
+            self.saved_pdf_path = tmp_path / "historical.pdf"
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
 
         def exec(self) -> int:
             return 1
@@ -1036,6 +2528,8 @@ def test_joblog_window_honorarios_export_stops_when_translation_docx_picker_canc
     class _FakeHonorariosDialog:
         def __init__(self, *, parent, draft, default_directory) -> None:
             self.saved_path = tmp_path / "historical.docx"
+            self.saved_pdf_path = tmp_path / "historical.pdf"
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
 
         def exec(self) -> int:
             return 1
@@ -1128,6 +2622,8 @@ def test_joblog_window_honorarios_export_persists_selected_translation_docx_for_
     class _FakeHonorariosDialog:
         def __init__(self, *, parent, draft, default_directory) -> None:
             self.saved_path = tmp_path / "historical.docx"
+            self.saved_pdf_path = tmp_path / "historical.pdf"
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
 
         def exec(self) -> int:
             return 1
@@ -1167,7 +2663,7 @@ def test_joblog_window_honorarios_export_persists_selected_translation_docx_for_
                 "to_email": kwargs["to_email"],
                 "subject": "subject",
                 "body": "body",
-                "attachments": (kwargs["translation_docx"], kwargs["honorarios_docx"]),
+                "attachments": (kwargs["translation_docx"], kwargs["honorarios_pdf"]),
                 "gog_path": kwargs["gog_path"],
             },
         )(),
@@ -1257,6 +2753,8 @@ def test_joblog_window_honorarios_export_recovers_exact_run_id_translation_docx(
         def __init__(self, *, parent, draft, default_directory) -> None:
             self.saved_path = downloads_dir / "Requerimento_Honorarios_109_26.0PBBJA_20260307.docx"
             self.saved_path.write_bytes(b"docx")
+            self.saved_pdf_path = self.saved_path.with_suffix(".pdf")
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
 
         def exec(self) -> int:
             return 1
@@ -1296,7 +2794,7 @@ def test_joblog_window_honorarios_export_recovers_exact_run_id_translation_docx(
                 "to_email": kwargs["to_email"],
                 "subject": "subject",
                 "body": "body",
-                "attachments": (kwargs["translation_docx"], kwargs["honorarios_docx"]),
+                "attachments": (kwargs["translation_docx"], kwargs["honorarios_pdf"]),
                 "gog_path": kwargs["gog_path"],
             },
         )()
@@ -1387,6 +2885,8 @@ def test_joblog_window_honorarios_export_recovers_exact_run_id_partial_docx(
         def __init__(self, *, parent, draft, default_directory) -> None:
             self.saved_path = downloads_dir / "Requerimento_Honorarios_109_26.0PBBJA_20260307.docx"
             self.saved_path.write_bytes(b"docx")
+            self.saved_pdf_path = self.saved_path.with_suffix(".pdf")
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
 
         def exec(self) -> int:
             return 1
@@ -1426,7 +2926,7 @@ def test_joblog_window_honorarios_export_recovers_exact_run_id_partial_docx(
                 "to_email": kwargs["to_email"],
                 "subject": "subject",
                 "body": "body",
-                "attachments": (kwargs["translation_docx"], kwargs["honorarios_docx"]),
+                "attachments": (kwargs["translation_docx"], kwargs["honorarios_pdf"]),
                 "gog_path": kwargs["gog_path"],
             },
         )()
@@ -1521,6 +3021,8 @@ def test_joblog_window_honorarios_export_falls_back_to_picker_when_run_id_matche
         def __init__(self, *, parent, draft, default_directory) -> None:
             self.saved_path = downloads_dir / "Requerimento_Honorarios_109_26.0PBBJA_20260307.docx"
             self.saved_path.write_bytes(b"docx")
+            self.saved_pdf_path = self.saved_path.with_suffix(".pdf")
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
 
         def exec(self) -> int:
             return 1
@@ -1560,7 +3062,7 @@ def test_joblog_window_honorarios_export_falls_back_to_picker_when_run_id_matche
                 "to_email": kwargs["to_email"],
                 "subject": "subject",
                 "body": "body",
-                "attachments": (kwargs["translation_docx"], kwargs["honorarios_docx"]),
+                "attachments": (kwargs["translation_docx"], kwargs["honorarios_pdf"]),
                 "gog_path": kwargs["gog_path"],
             },
         )()
@@ -1634,6 +3136,8 @@ def test_joblog_window_honorarios_export_warns_when_gmail_not_ready(tmp_path: Pa
     class _FakeHonorariosDialog:
         def __init__(self, *, parent, draft, default_directory) -> None:
             self.saved_path = tmp_path / "historical.docx"
+            self.saved_pdf_path = tmp_path / "historical.pdf"
+            self.saved_pdf_path.write_bytes(b"%PDF-1.7")
 
         def exec(self) -> int:
             return 1
@@ -1675,14 +3179,14 @@ def test_joblog_window_honorarios_export_warns_when_gmail_not_ready(tmp_path: Pa
 
 def test_save_to_joblog_gmail_draft_blocks_contaminated_translation_docx(tmp_path: Path, monkeypatch) -> None:
     translated = tmp_path / "translated.docx"
-    honorarios = tmp_path / "honorarios.docx"
+    honorarios = tmp_path / "honorarios.pdf"
     _write_docx_with_paragraphs(
         translated,
         "Venho por este meio requerer o pagamento dos honorários devidos.",
         "O documento traduzido contém 264 palavras.",
         "O Pagamento deverá ser efetuado para o seguinte IBAN: PT50003506490000832760029",
     )
-    _write_docx_with_paragraphs(honorarios, "Requerimento de honorários distinto.")
+    honorarios.write_bytes(b"%PDF-1.7")
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -1718,7 +3222,12 @@ def test_save_to_joblog_gmail_draft_blocks_contaminated_translation_docx(tmp_pat
         _current_translation_docx_path=lambda: translated.resolve(),
     )
 
-    QtSaveToJobLogDialog._offer_gmail_draft_for_honorarios(fake, honorarios.resolve())
+    QtSaveToJobLogDialog._offer_gmail_draft_for_honorarios(
+        fake,
+        tmp_path / "unused.docx",
+        honorarios.resolve(),
+        default_primary_profile(),
+    )
 
     assert "contaminated with honorários content" in captured["critical"]
     assert str(translated.resolve()) in captured["critical"]
@@ -1729,13 +3238,13 @@ def test_joblog_gmail_draft_blocks_contaminated_historical_translation_docx(
     monkeypatch,
 ) -> None:
     translated = tmp_path / "translated.docx"
-    honorarios = tmp_path / "honorarios.docx"
+    honorarios = tmp_path / "honorarios.pdf"
     _write_docx_with_paragraphs(
         translated,
         "Venho por este meio requerer o pagamento dos honorários devidos.",
         "O documento traduzido contém 264 palavras.",
     )
-    _write_docx_with_paragraphs(honorarios, "Requerimento de honorários distinto.")
+    honorarios.write_bytes(b"%PDF-1.7")
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -1774,7 +3283,13 @@ def test_joblog_gmail_draft_blocks_contaminated_historical_translation_docx(
         "case_number": "21/25.0FBPTM",
     }
 
-    QtJobLogWindow._offer_gmail_draft_for_honorarios(fake, row, honorarios.resolve())
+    QtJobLogWindow._offer_gmail_draft_for_honorarios(
+        fake,
+        row,
+        tmp_path / "unused.docx",
+        honorarios.resolve(),
+        default_primary_profile(),
+    )
 
     assert "contaminated with honorários content" in captured["critical"]
     assert str(translated.resolve()) in captured["critical"]

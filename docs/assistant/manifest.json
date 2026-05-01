@@ -3,8 +3,16 @@
   "module_flags": {
     "core_contract": true,
     "beginner_layer": true,
+    "issue_memory_system": true,
+    "project_harness_sync": true,
     "localization_performance": true,
+    "local_env_overlay": true,
+    "capability_discovery": true,
+    "worktree_build_identity": true,
+    "roadmap_governance": true,
     "reference_discovery": true,
+    "host_integration_preflight": true,
+    "harness_isolation_diagnostics": true,
     "browser_automation_environment_provenance": true,
     "cloud_machine_evaluation_local_acceptance": true,
     "staged_execution": true,
@@ -17,7 +25,8 @@
     "docs/assistant/PERFORMANCE_BASELINES.md",
     "docs/assistant/ISSUE_MEMORY.md",
     "docs/assistant/LOCAL_ENV_PROFILE.local.md",
-    "docs/assistant/LOCAL_CAPABILITIES.md"
+    "docs/assistant/LOCAL_CAPABILITIES.md",
+    "docs/assistant/SESSION_RESUME.md"
   ],
   "bridges": [
     {
@@ -28,6 +37,7 @@
   ],
   "user_guides": [
     "docs/assistant/features/APP_USER_GUIDE.md",
+    "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
     "docs/assistant/features/PRIMARY_FEATURE_USER_GUIDE.md",
     "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
     "docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md"
@@ -41,10 +51,10 @@
         "docs/assistant/workflows/TRANSLATION_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -55,10 +65,10 @@
         "docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -105,10 +115,10 @@
         "docs/assistant/manifest.json"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart --scope localization"
+        "dart tooling/validate_agent_docs.dart --scope localization"
       ]
     },
     {
@@ -120,10 +130,10 @@
         ".vscode/settings.json"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_workspace_hygiene_test.dart"
+        "dart test/tooling/validate_workspace_hygiene_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_workspace_hygiene.dart"
+        "dart tooling/validate_workspace_hygiene.dart"
       ]
     },
     {
@@ -135,10 +145,10 @@
         "docs/assistant/EXTERNAL_SOURCE_REGISTRY.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -155,7 +165,7 @@
       ],
       "validation_commands": [
         "python tooling/qt_render_review.py --help",
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -186,10 +196,10 @@
         "docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -201,10 +211,10 @@
         "docs/assistant/exec_plans/active"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -217,11 +227,11 @@
         "docs/assistant/workflows/BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/automation_preflight_test.dart"
+        "dart test/tooling/automation_preflight_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/automation_preflight.dart",
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/automation_preflight.dart",
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -234,11 +244,11 @@
         "docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/cloud_eval_preflight_test.dart"
+        "dart test/tooling/cloud_eval_preflight_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/cloud_eval_preflight.dart",
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/cloud_eval_preflight.dart",
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -250,10 +260,10 @@
         "docs/assistant/EXTERNAL_SOURCE_REGISTRY.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -265,12 +275,12 @@
         "docs/assistant/workflows/CI_REPO_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart",
-        "dart run test/tooling/validate_workspace_hygiene_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart",
+        "dart test/tooling/validate_workspace_hygiene_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart",
-        "dart run tooling/validate_workspace_hygiene.dart"
+        "dart tooling/validate_agent_docs.dart",
+        "dart tooling/validate_workspace_hygiene.dart"
       ]
     },
     {
@@ -281,10 +291,10 @@
         "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart"
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -295,17 +305,57 @@
         "APP_KNOWLEDGE.md",
         "docs/assistant/APP_KNOWLEDGE.md",
         "docs/assistant/INDEX.md",
+        "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
         "docs/assistant/manifest.json",
         "docs/assistant/ISSUE_MEMORY.md",
         "docs/assistant/ISSUE_MEMORY.json"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart",
-        "dart run test/tooling/validate_workspace_hygiene_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart",
+        "dart test/tooling/validate_workspace_hygiene_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart",
-        "dart run tooling/validate_workspace_hygiene.dart"
+        "dart tooling/validate_agent_docs.dart",
+        "dart tooling/validate_workspace_hygiene.dart"
+      ]
+    },
+    {
+      "id": "project_harness_sync_workflow",
+      "doc": "docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md",
+      "scope": "project-local application of vendored assistant templates without editing the template folder",
+      "primary_files": [
+        "agent.md",
+        "docs/assistant/manifest.json",
+        "docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md",
+        "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md",
+        "docs/assistant/workflows/ROADMAP_WORKFLOW.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "tooling/validate_agent_docs.dart"
+      ],
+      "targeted_tests": [
+        "dart test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart tooling/validate_agent_docs.dart",
+        "dart tooling/validate_workspace_hygiene.dart"
+      ]
+    },
+    {
+      "id": "roadmap_workflow",
+      "doc": "docs/assistant/workflows/ROADMAP_WORKFLOW.md",
+      "scope": "adaptive roadmap governance, resume anchor routing, and active-worktree continuity",
+      "primary_files": [
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/workflows/ROADMAP_WORKFLOW.md",
+        "docs/assistant/exec_plans/active",
+        "docs/assistant/manifest.json"
+      ],
+      "targeted_tests": [
+        "dart test/tooling/validate_agent_docs_test.dart"
+      ],
+      "validation_commands": [
+        "dart tooling/validate_agent_docs.dart"
       ]
     },
     {
@@ -318,11 +368,11 @@
         "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart",
-        "dart run tooling/validate_workspace_hygiene.dart"
+        "dart tooling/validate_agent_docs.dart",
+        "dart tooling/validate_workspace_hygiene.dart"
       ]
     },
     {
@@ -337,28 +387,29 @@
         "docs/assistant/LOCAL_CAPABILITIES.md"
       ],
       "targeted_tests": [
-        "dart run test/tooling/validate_agent_docs_test.dart"
+        "dart test/tooling/validate_agent_docs_test.dart"
       ],
       "validation_commands": [
-        "dart run tooling/validate_agent_docs.dart",
-        "dart run tooling/validate_workspace_hygiene.dart"
+        "dart tooling/validate_agent_docs.dart",
+        "dart tooling/validate_workspace_hygiene.dart"
       ]
     }
   ],
   "global_commands": [
     "python -m pytest -q",
     "python -m compileall src tests",
-    "dart run tooling/validate_agent_docs.dart",
-    "dart run tooling/validate_workspace_hygiene.dart",
-    "dart run tooling/automation_preflight.dart",
-    "dart run tooling/cloud_eval_preflight.dart"
+    "dart tooling/validate_agent_docs.dart",
+    "dart tooling/validate_workspace_hygiene.dart",
+    "dart tooling/automation_preflight.dart",
+    "dart tooling/cloud_eval_preflight.dart",
+    "python tooling/render_docx.py --help"
   ],
   "contracts": {
     "template_read_policy": "docs/assistant/templates/* is read-on-demand only unless explicitly requested.",
     "localization_glossary_source_of_truth": "docs/assistant/LOCALIZATION_GLOSSARY.md",
     "workspace_performance_source_of_truth": "docs/assistant/PERFORMANCE_BASELINES.md",
     "environment_outside_workspace_default_policy": "Keep heavyweight environments/artifacts outside workspace root when feasible.",
-    "post_change_docs_sync_prompt_policy": "After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced, and do not ask again after the same-pass sync already happened.",
+    "post_change_docs_sync_prompt_policy": "After significant implementation changes keep the exact prompt available: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary. If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass. If the relevant docs sync already ran during the same task/pass, do not ask again.",
     "inspiration_reference_discovery_policy": "Named parity/inspiration requests must run REFERENCE_DISCOVERY_WORKFLOW before implementation decisions.",
     "golden_principles_source_of_truth": "docs/assistant/GOLDEN_PRINCIPLES.md",
     "execplan_policy": "Major/multi-file work requires ExecPlans in docs/assistant/exec_plans/active/.",
@@ -366,6 +417,15 @@
     "worktree_isolation_policy": "Parallel work uses git worktree isolation, approved baseline locks, and branch safety gates.",
     "worktree_baseline_identity_policy": "Parallel work must record worktree path, branch, base SHA, target integration branch, and build-under-test identity before major execution or GUI handoff.",
     "doc_gardening_policy": "Docs sync updates only touched-scope docs and avoids blanket rewrites.",
+    "project_harness_sync_policy": "implement the template files and sync project harness apply vendored templates to this repo's local harness without editing docs/assistant/templates/*.",
+    "vendored_template_protection_policy": "Vendored docs/assistant/templates/* files are committed project assets, not cleanup candidates, and require explicit template-system intent before any edits.",
+    "roadmap_dormant_main_policy": "When roadmap governance is installed, main may intentionally carry a dormant roadmap state that explicitly says no active roadmap is currently open and routes normal work back to ExecPlan flow until roadmap mode is reactivated.",
+    "roadmap_resume_anchor_policy": "When roadmap governance is active, docs/assistant/SESSION_RESUME.md is the roadmap anchor file and the stable first resume stop for resume master plan and equivalent fresh-session resume intents.",
+    "roadmap_active_worktree_authority_policy": "During active roadmap work, the current worktree's SESSION_RESUME.md, active roadmap tracker, and active wave ExecPlan are authoritative for live roadmap state.",
+    "roadmap_update_order_policy": "After roadmap changes or detours update the active wave ExecPlan first, the active roadmap tracker second, and docs/assistant/SESSION_RESUME.md third.",
+    "cleanup_complete_push_policy": "Bare push means continuity-closeout plus cleanup: close completed ExecPlans, close roadmap state when active, update docs/assistant/SESSION_RESUME.md before merge, and remove known scratch outputs.",
+    "post_merge_repair_default_policy": "If post-merge continuity or cleanup was missed, default to a follow-up branch/PR; direct repair on main requires explicit user intent.",
+    "scratch_root_default_policy": "Deterministic assistant review/debug artifacts should default under ignored tmp/ unless a stricter local scratch root is documented.",
     "user_guides_support_usage_policy": "Support/non-technical tasks route to APP_USER_GUIDE and primary workflow user guide first.",
     "user_guides_canonical_deference_policy": "User guides are explanatory and defer to canonical technical docs.",
     "user_guides_update_sync_policy": "Major feature changes update relevant user-guide sections with matching technical docs.",
@@ -374,7 +434,7 @@
     "test_live_state_isolation_policy": "Tests must default to temporary filesystem/environment state, explicit opt-in live machine state, and non-live or ephemeral ports for host-bound features.",
     "multi_surface_diagnostics_packet_policy": "For multi-surface workflows keep per-run artifacts primary, add workflow_context when a run belongs to a larger session, and use one durable app-owned session artifact instead of separate browser-only report files.",
     "canonical_precedence_policy": "Source code is final truth; APP_KNOWLEDGE.md is canonical; bridge/user guides defer to canonical.",
-    "docs_sync_prompt_policy": "After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced, and do not ask again after the same-pass sync already happened.",
+    "docs_sync_prompt_policy": "After significant implementation changes keep the exact prompt available: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary. If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass. If the relevant docs sync already ran during the same task/pass, do not ask again.",
     "stage_gate_policy": "For risk-triggered complex work stop at each stage and require exact continuation token format NEXT_STAGE_X.",
     "reference_discovery_policy": "Parity/inspiration requests against named products/sites/apps require REFERENCE_DISCOVERY_WORKFLOW first.",
     "openai_docs_citation_freshness_policy": "OpenAI/external unstable claims must use official primary sources with explicit verification date in EXTERNAL_SOURCE_REGISTRY.md.",
@@ -384,12 +444,22 @@
     "machine_operator_split_validation_policy": "Run deterministic machine checks first; reserve manual checks for perceptual outcomes.",
     "restricted_browser_page_policy": "Restricted browser pages must use normal-webpage/manual-input fallback when scripting is blocked.",
     "browser_binary_strategy_policy": "Prefer healthy existing browser first; use Chrome for Testing only when reproducibility/mismatch risk appears.",
+    "browser_app_primary_local_surface_policy": "The local browser app on 127.0.0.1 in live mode is the preferred daily-use surface for this repo; Qt remains a supported secondary shell/fallback.",
+    "browser_app_live_mode_policy": "Browser live mode uses the real settings, profiles, job log, outputs, and Gmail-linked workflows.",
+    "browser_app_isolated_shadow_mode_policy": "Browser shadow mode is explicit isolated test mode with separate runtime roots, separate state, and no silent fallback into live data.",
+    "browser_gmail_bridge_owner_policy": "When available, the browser app is the primary live Gmail bridge owner and the real extension opens or focuses the browser app workspace rather than relying on desktop-window focus helpers.",
+    "browser_asset_provenance_policy": "Browser app JS, CSS, and module-worker assets must be versioned as one graph, and localhost handoff should verify client/server asset_version agreement before declaring success.",
+    "browser_failure_report_policy": "When Gmail/browser preparation fails before a translation run exists, the browser UI should preserve selection state and offer a direct browser failure report instead of forcing Power Tools-only recovery.",
+    "browser_extension_lab_companion_policy": "Extension Lab is a browser diagnostics and simulation companion for the real Gmail extension, not a replacement for the extension.",
+    "template_sync_deferral_policy": "Project docs must capture reusable browser live-vs-isolated mode patterns before any later template-folder sync, but template updates still require explicit template-system intent.",
     "chromium_for_testing_conditional_install_policy": "Do not force browser install for API-only/non-UI tasks; allow conditional install only for automation reproducibility risk.",
     "automation_binary_provenance_packet_policy": "Automation packet must emit automation_browser_binary, automation_browser_version, automation_browser_source.",
+    "word_pdf_export_canary_policy": "Host-bound Gmail finalization that depends on Word PDF export must use launch_preflight plus a real export canary; launch-only readiness is insufficient.",
+    "gmail_finalization_report_policy": "Blocked or recoverable Gmail finalization states should offer a direct finalization report artifact rather than relying on a normal translation run report.",
     "cloud_heavy_scoring_default_policy": "Heavy machine evaluation runs default to cloud execution venue with local-only smoke/acceptance/apply checks.",
     "cloud_scoring_preflight_gate_policy": "Cloud evaluation requires dispatch/secrets/tooling preflight before heavy run start.",
     "cloud_scoring_failure_recovery_policy": "Cloud failure semantics use unavailable|failed and recovery order is cloud-fix-rerun before local-heavy fallback.",
     "cloud_local_apply_separation_policy": "Cloud evaluation outputs must not auto-apply runtime config/state; local manual acceptance gate is required before final apply."
   },
-  "last_updated": "2026-03-08"
+  "last_updated": "2026-04-28"
 }

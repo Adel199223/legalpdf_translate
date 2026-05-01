@@ -36,6 +36,55 @@ def test_build_safe_probe_config_locks_runtime_safe_settings(tmp_path: Path) -> 
     assert config.end_page == 2
 
 
+def test_build_safe_probe_config_defaults_openai_env_name(tmp_path: Path) -> None:
+    config = probe_tool.build_safe_probe_config(
+        pdf_path=tmp_path / "doc.pdf",
+        outdir=tmp_path / "out",
+        lang=TargetLang.AR,
+        pages=[1],
+        settings={},
+    )
+    assert config.ocr_api_key_env_name == "OPENAI_API_KEY"
+
+
+def test_collect_probe_packet_passes_effective_ocr_env_name_to_preflight(tmp_path: Path, monkeypatch) -> None:
+    pdf_path = tmp_path / "doc.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4")
+    captured_env: dict[str, str] = {}
+
+    def _run_ocr_preflight(*, environment):
+        captured_env.update(environment)
+        return {
+            "tool": "ocr_preflight",
+            "overall_status": "available",
+            "fallback_readiness": {"local_only": "available", "local_then_api_required_only": "available"},
+        }
+
+    monkeypatch.setattr(probe_tool, "run_ocr_preflight", _run_ocr_preflight)
+    monkeypatch.setattr(
+        probe_tool,
+        "load_gui_settings",
+        lambda: {"ocr_api_provider": "gemini", "ocr_api_key_env_name": "GEMINI_API_KEY"},
+    )
+    monkeypatch.setattr(probe_tool, "get_page_count", lambda _pdf: 2)
+    monkeypatch.setattr(
+        probe_tool,
+        "extract_ordered_page_text",
+        lambda _pdf, _idx: SimpleNamespace(text="header", extraction_failed=False, fragmented=False),
+    )
+
+    probe_tool.collect_probe_packet(
+        pdf_path=pdf_path,
+        lang=TargetLang.FR,
+        outdir=tmp_path / "out",
+        pages=[1],
+        run_workflow=False,
+        environment={},
+    )
+
+    assert captured_env["OCR_API_KEY_ENV_NAME"] == "GEMINI_API_KEY"
+
+
 def test_collect_probe_packet_without_workflow_run(tmp_path: Path, monkeypatch) -> None:
     pdf_path = tmp_path / "doc.pdf"
     pdf_path.write_bytes(b"%PDF-1.4")

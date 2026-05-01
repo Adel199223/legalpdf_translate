@@ -1,0 +1,77 @@
+import { MORE_NAV_ORDER, buildNavigationGroups } from "./shell_presentation.js";
+import { clearNode, createTextElement, setText } from "./safe_rendering.js";
+
+const LIVE_BANNER_TEXT = "Live mode: using your real settings, Gmail drafts, and saved work.";
+
+function createNavigationButton(item, activeView = "") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "nav-button";
+  button.dataset.view = item.id;
+  button.appendChild(createTextElement("span", String(item.label)));
+  button.appendChild(createTextElement(
+    "span",
+    item.status === "ready" ? "Ready" : String(item.status),
+    "nav-meta",
+  ));
+  if (item.id === activeView) {
+    button.classList.add("active");
+  }
+  return button;
+}
+
+export function renderNavigationInto({
+  primaryContainer,
+  moreContainer,
+  moreShell,
+  items = [],
+  activeView = "",
+  showGmailNav = false,
+} = {}) {
+  const { primary, more } = buildNavigationGroups(items, { showGmailNav });
+
+  clearNode(primaryContainer);
+  clearNode(moreContainer);
+
+  for (const collection of [
+    { container: primaryContainer, items: primary },
+    { container: moreContainer, items: more },
+  ]) {
+    for (const item of collection.items) {
+      collection.container.appendChild(createNavigationButton(item, activeView));
+    }
+  }
+
+  const moreActive = MORE_NAV_ORDER.includes(activeView);
+  moreShell.open = moreActive;
+  moreShell.classList.toggle("has-active-view", moreActive);
+}
+
+export function renderLiveBannerInto(banner, runtime = {}) {
+  if (!banner) {
+    return;
+  }
+  if (runtime.live_data) {
+    setText(banner, LIVE_BANNER_TEXT);
+    banner.classList.remove("hidden");
+  } else {
+    banner.classList.add("hidden");
+    setText(banner, "");
+  }
+}
+
+export function renderRuntimeModeSelectorInto(select, runtimeMode = {}) {
+  if (!select) {
+    return;
+  }
+  clearNode(select);
+  for (const mode of runtimeMode.supported_modes || []) {
+    const option = document.createElement("option");
+    option.value = mode.id;
+    option.textContent = mode.label;
+    if (mode.id === runtimeMode.current_mode) {
+      option.selected = true;
+    }
+    select.appendChild(option);
+  }
+}

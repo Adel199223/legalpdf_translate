@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Iterable
-
-import fitz
 
 from .config import BOTTOM_ZONE_RATIO, TOP_ZONE_RATIO
 
@@ -42,6 +40,9 @@ class OrderedPageText:
     barcode_blocks_count: int
     body_blocks_count: int
     two_column_detected: bool
+    page_width: float = 0.0
+    page_height: float = 0.0
+    body_blocks: tuple[TextBlock, ...] = field(default_factory=tuple)
 
 
 HEADER_ANCHORS = [
@@ -81,6 +82,8 @@ BARCODE_PATTERNS = [
 
 
 def get_page_count(pdf_path: Path) -> int:
+    import fitz
+
     with fitz.open(pdf_path) as doc:
         return doc.page_count
 
@@ -192,6 +195,7 @@ def order_text_blocks_with_metadata(
                 "barcode_blocks_count": 0,
                 "body_blocks_count": 0,
                 "two_column_detected": False,
+                "ordered_body_blocks": tuple(),
             },
         )
     _classify_blocks(blocks, page_width=page_width, page_height=page_height)
@@ -221,6 +225,7 @@ def order_text_blocks_with_metadata(
             "barcode_blocks_count": len(barcode),
             "body_blocks_count": len(body),
             "two_column_detected": is_two_col,
+            "ordered_body_blocks": tuple(ordered_body),
         },
     )
 
@@ -235,15 +240,21 @@ def _fragmented_heuristic(text: str) -> bool:
 
 
 def extract_ordered_page_text(pdf_path: Path, page_index: int) -> OrderedPageText:
+    page_width = 0.0
+    page_height = 0.0
     try:
+        import fitz
+
         with fitz.open(pdf_path) as doc:
             page = doc.load_page(page_index)
+            page_width = float(page.rect.width)
+            page_height = float(page.rect.height)
             page_dict = page.get_text("dict")
             blocks = build_text_blocks_from_page_dict(page_dict)
             ordered_text, metadata = order_text_blocks_with_metadata(
                 blocks,
-                page_width=float(page.rect.width),
-                page_height=float(page.rect.height),
+                page_width=page_width,
+                page_height=page_height,
             )
     except Exception:
         return OrderedPageText(
@@ -257,6 +268,9 @@ def extract_ordered_page_text(pdf_path: Path, page_index: int) -> OrderedPageTex
             barcode_blocks_count=0,
             body_blocks_count=0,
             two_column_detected=False,
+            page_width=0.0,
+            page_height=0.0,
+            body_blocks=tuple(),
         )
 
     char_count = len(ordered_text)
@@ -272,4 +286,7 @@ def extract_ordered_page_text(pdf_path: Path, page_index: int) -> OrderedPageTex
         barcode_blocks_count=int(metadata["barcode_blocks_count"]),
         body_blocks_count=int(metadata["body_blocks_count"]),
         two_column_detected=bool(metadata["two_column_detected"]),
+        page_width=page_width,
+        page_height=page_height,
+        body_blocks=tuple(metadata.get("ordered_body_blocks", tuple())),
     )

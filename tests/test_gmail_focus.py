@@ -153,6 +153,25 @@ def test_detect_listener_pid_falls_back_to_netstat_after_retries(monkeypatch) ->
     assert netstat_attempts["count"] == 2
 
 
+def test_detect_listener_pid_trusts_listener_probe_without_extra_liveness_gate(monkeypatch) -> None:
+    monkeypatch.setattr(gmail_focus, "_is_windows", lambda: True)
+    monkeypatch.setattr(gmail_focus, "_detect_listener_pid_from_tcp_table", lambda _port: 4321)
+    monkeypatch.setattr(gmail_focus, "_detect_listener_pid_from_netstat", lambda _port: None)
+    monkeypatch.setattr(gmail_focus, "_pid_is_running", lambda pid: False if pid == 4321 else True)
+    monkeypatch.setattr(gmail_focus.time, "sleep", lambda _seconds: None)
+
+    assert gmail_focus.detect_listener_pid(9011) == 4321
+
+
+def test_pid_is_running_handles_windows_invalid_handle_systemerror(monkeypatch) -> None:
+    def fake_kill(_pid: int, _signal: int) -> None:
+        raise SystemError("<built-in function kill> returned a result with an exception set")
+
+    monkeypatch.setattr(gmail_focus.os, "kill", fake_kill)
+
+    assert gmail_focus._pid_is_running(4321) is False
+
+
 def test_focus_bridge_owner_rejects_missing_runtime_metadata(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(gmail_focus, "_is_windows", lambda: True)
 
@@ -179,6 +198,7 @@ def test_validate_bridge_owner_recovers_from_legacy_listener_without_runtime_met
         pid=4321,
         hwnd=101,
         reason="legacy_bridge_owner_ready",
+        owner_kind="qt_app",
     )
 
 
@@ -243,4 +263,90 @@ def test_focus_bridge_owner_focuses_visible_window_for_matching_pid(monkeypatch,
         focused=False,
         flashed=True,
         reason="foreground_blocked",
+    )
+
+
+def test_validate_bridge_owner_accepts_browser_owned_runtime_without_window(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(gmail_focus, "_is_windows", lambda: True)
+    gmail_focus.write_bridge_runtime_metadata(
+        base_dir=tmp_path,
+        port=9011,
+        pid=4321,
+        window_title="LegalPDF Translate Browser App",
+        build_identity=None,
+        running=True,
+        owner_kind="browser_app",
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+    )
+    monkeypatch.setattr(gmail_focus, "detect_listener_pid", lambda _port: 4321)
+    monkeypatch.setattr(gmail_focus, "_visible_window_hwnds_for_pid", lambda _pid: [])
+
+    result = gmail_focus.validate_bridge_owner(bridge_port=9011, base_dir=tmp_path)
+
+    assert result == gmail_focus.BridgeOwnerValidationResult(
+        ok=True,
+        pid=4321,
+        hwnd=None,
+        reason="bridge_owner_ready",
+        owner_kind="browser_app",
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+    )
+
+
+def test_validate_bridge_owner_treats_dead_runtime_metadata_pid_as_stale(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(gmail_focus, "_is_windows", lambda: True)
+    gmail_focus.write_bridge_runtime_metadata(
+        base_dir=tmp_path,
+        port=9011,
+        pid=4321,
+        window_title="LegalPDF Translate Browser App",
+        build_identity=None,
+        running=True,
+        owner_kind="browser_app",
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+    )
+    monkeypatch.setattr(gmail_focus, "_pid_is_running", lambda pid: False if pid == 4321 else True)
+    monkeypatch.setattr(gmail_focus, "detect_listener_pid", lambda _port: None)
+
+    result = gmail_focus.validate_bridge_owner(bridge_port=9011, base_dir=tmp_path)
+
+    assert result == gmail_focus.BridgeOwnerValidationResult(
+        ok=False,
+        pid=None,
+        hwnd=None,
+        reason="bridge_owner_stale",
+        owner_kind="none",
+    )
+
+
+def test_focus_bridge_owner_treats_browser_owned_bridge_as_delegated(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(gmail_focus, "_is_windows", lambda: True)
+    gmail_focus.write_bridge_runtime_metadata(
+        base_dir=tmp_path,
+        port=9011,
+        pid=4321,
+        window_title="LegalPDF Translate Browser App",
+        build_identity=None,
+        running=True,
+        owner_kind="browser_app",
+        runtime_mode="live",
+        workspace_id="gmail-intake",
+        browser_url="http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake",
+    )
+    monkeypatch.setattr(gmail_focus, "detect_listener_pid", lambda _port: 4321)
+    monkeypatch.setattr(gmail_focus, "_visible_window_hwnds_for_pid", lambda _pid: [])
+
+    result = gmail_focus.focus_bridge_owner(bridge_port=9011, base_dir=tmp_path)
+
+    assert result == gmail_focus.BridgeFocusResult(
+        ok=True,
+        focused=False,
+        flashed=False,
+        reason="browser_tab_focus_delegated",
     )

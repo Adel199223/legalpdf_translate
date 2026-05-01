@@ -8,7 +8,12 @@ import pytest
 
 import legalpdf_translate.workflow as workflow_module
 from legalpdf_translate.ocr_engine import OcrResult
-from legalpdf_translate.openai_client import ApiCallError, ApiCallResult
+from legalpdf_translate.openai_client import (
+    ApiCallError,
+    ApiCallResult,
+    OpenAICredentialSourceInfo,
+    TranslationAuthTestResult,
+)
 from legalpdf_translate.types import ImageMode, OcrEnginePolicy, OcrMode, ReasoningEffort, RunConfig, TargetLang
 from legalpdf_translate.workflow import (
     TranslationWorkflow,
@@ -54,6 +59,45 @@ class _FailingClient:
         )
 
 
+class _UnauthorizedPreflightClient:
+    def run_translation_auth_test(self) -> TranslationAuthTestResult:
+        return TranslationAuthTestResult(
+            ok=False,
+            status="unauthorized",
+            message="OpenAI authentication failed.",
+            credential_source=OpenAICredentialSourceInfo(kind="stored", name=""),
+            status_code=401,
+            exception_class="AuthenticationError",
+        )
+
+    def create_page_response(self, **kwargs) -> ApiCallResult:  # noqa: ANN003
+        _ = kwargs
+        raise AssertionError("create_page_response should not run when auth preflight fails")
+
+
+class _AuthFailingPageClient:
+    def run_translation_auth_test(self) -> TranslationAuthTestResult:
+        return TranslationAuthTestResult(
+            ok=True,
+            status="ok",
+            message="OpenAI translation auth test passed.",
+            credential_source=OpenAICredentialSourceInfo(kind="stored", name=""),
+            latency_ms=5,
+        )
+
+    def create_page_response(self, **kwargs) -> ApiCallResult:  # noqa: ANN003
+        _ = kwargs
+        raise ApiCallError(
+            message="AuthenticationError: invalid key",
+            status_code=401,
+            exception_class="AuthenticationError",
+            transport_retries_count=0,
+            last_backoff_seconds=0.0,
+            total_backoff_seconds=0.0,
+            rate_limit_hit=False,
+        )
+
+
 def _ordered_text_result(text: str) -> SimpleNamespace:
     ratio = float(text.count("\n")) / float(max(1, len(text)))
     return SimpleNamespace(
@@ -67,6 +111,82 @@ def _ordered_text_result(text: str) -> SimpleNamespace:
         two_column_detected=False,
         extraction_failed=False,
         fragmented=False,
+    )
+
+
+def _integrity_ordered_text_result() -> SimpleNamespace:
+    text = (
+        "10. A última remuneração registada ascende a\n"
+        "e três cêntimos)."
+    )
+    ratio = float(text.count("\n")) / float(max(1, len(text)))
+    return SimpleNamespace(
+        text=text,
+        newline_to_char_ratio=ratio,
+        block_count=2,
+        header_blocks_count=0,
+        footer_blocks_count=0,
+        barcode_blocks_count=0,
+        body_blocks_count=2,
+        two_column_detected=False,
+        extraction_failed=False,
+        fragmented=False,
+        page_width=720.0,
+        page_height=1024.0,
+        body_blocks=(
+            SimpleNamespace(
+                x0=76.0,
+                y0=735.0,
+                x1=320.0,
+                y1=748.0,
+                text="10. A última remuneração registada ascende a",
+            ),
+            SimpleNamespace(
+                x0=505.0,
+                y0=739.0,
+                x1=648.0,
+                y1=752.0,
+                text="e três cêntimos).",
+            ),
+        ),
+    )
+
+
+def _integrity_wrapped_line_ordered_text_result() -> SimpleNamespace:
+    text = (
+        "10. A última remuneração registada ascende a\n"
+        "e três cêntimos)."
+    )
+    ratio = float(text.count("\n")) / float(max(1, len(text)))
+    return SimpleNamespace(
+        text=text,
+        newline_to_char_ratio=ratio,
+        block_count=2,
+        header_blocks_count=0,
+        footer_blocks_count=0,
+        barcode_blocks_count=0,
+        body_blocks_count=2,
+        two_column_detected=False,
+        extraction_failed=False,
+        fragmented=False,
+        page_width=595.32,
+        page_height=841.92,
+        body_blocks=(
+            SimpleNamespace(
+                x0=103.08,
+                y0=733.78,
+                x1=321.17,
+                y1=747.07,
+                text="10. A última remuneração registada ascende a",
+            ),
+            SimpleNamespace(
+                x0=121.08,
+                y0=754.55,
+                x1=200.02,
+                y1=767.83,
+                text="e três cêntimos).",
+            ),
+        ),
     )
 
 
@@ -156,6 +276,39 @@ def test_classify_extracted_text_quality_address_list_exemption() -> None:
     stats = classify_extracted_text_quality(text)
     assert stats["ocr_required"] is False
     assert stats["ocr_helpful"] is False
+
+
+def test_inline_integrity_detector_flags_amount_gap_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(workflow_module, "_count_vector_gap_drawings", lambda *_args, **_kwargs: 38)
+
+    assessment = workflow_module._assess_extraction_integrity(
+        pdf_path=Path("sample.pdf"),
+        page_number=4,
+        target_lang=TargetLang.FR,
+        ordered=_integrity_ordered_text_result(),
+    )
+
+    assert assessment.suspect is True
+    assert assessment.vector_gap_count == 38
+    assert "dangling_amount_clause" in assessment.reasons
+    assert "orphan_amount_tail" in assessment.reasons
+    assert "vector_gap_cluster" in assessment.reasons
+
+
+def test_inline_integrity_detector_flags_wrapped_line_amount_gap_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(workflow_module, "_count_vector_gap_drawings", lambda *_args, **_kwargs: 38)
+
+    assessment = workflow_module._assess_extraction_integrity(
+        pdf_path=Path("sample.pdf"),
+        page_number=4,
+        target_lang=TargetLang.FR,
+        ordered=_integrity_wrapped_line_ordered_text_result(),
+    )
+
+    assert assessment.suspect is True
+    assert assessment.vector_gap_count == 38
+    assert "wrapped_line_gap" in assessment.reasons
+    assert "vector_gap_cluster" in assessment.reasons
 
 
 def test_auto_mode_direct_text_skips_lazy_ocr_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -423,6 +576,154 @@ def test_ocr_success_uses_text_route_without_auto_attaching_image(
     assert page["image_decision_reason"] == "ocr_success_text_sufficient"
 
 
+def test_inline_integrity_crop_recovery_merges_amount_into_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", lambda _pdf, _idx: _integrity_ordered_text_result())
+    monkeypatch.setattr(workflow_module, "_count_vector_gap_drawings", lambda *_args, **_kwargs: 38)
+    monkeypatch.setattr(workflow_module, "build_ocr_engine", lambda _cfg: object())
+    monkeypatch.setattr(
+        workflow_module,
+        "ocr_pdf_page_crop_text",
+        lambda *_args, **_kwargs: OcrResult(
+            text=(
+                "10. A última remuneração registada ascende a 498,03 € "
+                "(quatrocentos e noventa e oito euros e três cêntimos)."
+            ),
+            engine="api",
+            failed_reason=None,
+            chars=111,
+            quality_score=0.96,
+        ),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "ocr_pdf_page_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("full-page OCR should not run when crop recovery succeeds")
+        ),
+    )
+
+    client = _CapturingClient()
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.FR,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.AUTO,
+        max_pages=1,
+        workers=1,
+        resume=False,
+        page_breaks=True,
+        keep_intermediates=True,
+        ocr_mode=OcrMode.AUTO,
+        ocr_engine=OcrEnginePolicy.API,
+        diagnostics_admin_mode=True,
+    )
+
+    summary = TranslationWorkflow(client=client).run(config)
+    assert summary.success is True
+    assert len(client.calls) == 1
+    assert "498,03 €" in str(client.calls[0]["prompt_text"])
+
+    run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
+    page = run_state["pages"]["1"]
+    assert page["source_route"] == "ocr"
+    assert page["source_route_reason"] == "visual_recovery_crop_merged"
+    assert page["ocr_request_reason"] == "required"
+    assert page["image_used"] is False
+    assert page["extraction_integrity_suspect"] is True
+    assert page["visual_recovery_used"] is True
+    assert page["visual_recovery_failed"] is False
+    assert page["visual_recovery_strategy"] == "crop_ocr_merge"
+
+
+def test_inline_integrity_crop_failure_forces_image_grounding_and_review_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", lambda _pdf, _idx: _integrity_ordered_text_result())
+    monkeypatch.setattr(workflow_module, "_count_vector_gap_drawings", lambda *_args, **_kwargs: 38)
+    monkeypatch.setattr(workflow_module, "build_ocr_engine", lambda _cfg: object())
+    monkeypatch.setattr(
+        workflow_module,
+        "ocr_pdf_page_crop_text",
+        lambda *_args, **_kwargs: OcrResult(
+            text="",
+            engine="api",
+            failed_reason="empty_result",
+            chars=0,
+            quality_score=0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "render_page_image_data_url",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            data_url="data:image/jpeg;base64,ZmFrZQ==",
+            image_format="jpg",
+            encoded_bytes=4,
+            width_px=100,
+            height_px=100,
+            compress_steps=0,
+        ),
+    )
+
+    client = _CapturingClient()
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.FR,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.OFF,
+        max_pages=1,
+        workers=1,
+        resume=False,
+        page_breaks=True,
+        keep_intermediates=True,
+        ocr_mode=OcrMode.AUTO,
+        ocr_engine=OcrEnginePolicy.API,
+        diagnostics_admin_mode=True,
+    )
+
+    summary = TranslationWorkflow(client=client).run(config)
+    assert summary.success is True
+    assert len(client.calls) == 1
+    assert str(client.calls[0]["image_data_url"]).startswith("data:image/jpeg;base64,")
+
+    run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
+    page = run_state["pages"]["1"]
+    assert page["source_route"] == "direct_text"
+    assert str(page["source_route_reason"]).startswith("visual_recovery_crop_fallback:")
+    assert page["ocr_request_reason"] == "required"
+    assert page["image_used"] is True
+    assert page["image_decision_reason"] == "visual_recovery_required"
+    assert page["visual_recovery_used"] is True
+    assert page["visual_recovery_failed"] is False
+    assert page["visual_recovery_strategy"] == "image_grounding_fallback"
+
+    run_summary = json.loads((summary.run_dir / "run_summary.json").read_text(encoding="utf-8"))
+    assert run_summary["review_queue_count"] == 1
+    assert float(run_summary["quality_risk_score"]) >= 0.35
+
+
 def test_text_only_pages_use_text_timeout_budget(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -587,6 +888,131 @@ def test_failed_run_summary_includes_failure_context(
     assert failure_context["request_timeout_budget_seconds"] == 480.0
     assert failure_context["exception_class"] == "APITimeoutError"
     assert failure_context["cancel_requested_before_failure"] is False
+
+
+def test_translate_auth_preflight_failure_stops_before_page_processing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(
+        workflow_module,
+        "load_gui_settings",
+        lambda: {"perf_timeout_text_seconds": 480, "perf_timeout_image_seconds": 720},
+    )
+
+    def _extract_should_not_run(_pdf, _idx):  # type: ignore[no-untyped-def]
+        raise AssertionError("Page extraction should not run when translation auth preflight fails")
+
+    monkeypatch.setattr(workflow_module, "extract_ordered_page_text", _extract_should_not_run)
+
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.OFF,
+        max_pages=1,
+        workers=1,
+        resume=False,
+        page_breaks=True,
+        keep_intermediates=True,
+        ocr_mode=OcrMode.AUTO,
+        ocr_engine=OcrEnginePolicy.LOCAL_THEN_API,
+        diagnostics_admin_mode=True,
+    )
+
+    summary = TranslationWorkflow(client=_UnauthorizedPreflightClient()).run(config)
+
+    assert summary.success is False
+    assert summary.failed_page is None
+    assert summary.error == "authentication_failure"
+    assert summary.run_summary_path is not None
+    payload = json.loads(summary.run_summary_path.read_text(encoding="utf-8"))
+    assert payload["run_status"] == "authentication_failure"
+    assert payload["suspected_cause"] == "authentication_failure"
+    failure_context = payload["failure_context"]
+    assert failure_context["scope"] == "preflight"
+    assert failure_context["status_code"] == 401
+    assert failure_context["exception_class"] == "AuthenticationError"
+    assert failure_context["credential_source"] == {"kind": "stored", "name": ""}
+    assert failure_context["message"] == "OpenAI authentication failed."
+    event_types = {str(item.get("event_type", "")) for item in _events(summary.run_dir / "run_events.jsonl")}
+    assert "translate_auth_preflight_failed" in event_types
+
+
+def test_page_level_auth_failure_is_classified_as_authentication_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
+    monkeypatch.setattr(workflow_module, "get_page_count", lambda _pdf: 1)
+    monkeypatch.setattr(workflow_module, "load_system_instructions", lambda _lang: "SYS")
+    monkeypatch.setattr(
+        workflow_module,
+        "load_gui_settings",
+        lambda: {"perf_timeout_text_seconds": 480, "perf_timeout_image_seconds": 720},
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "extract_ordered_page_text",
+        lambda _pdf, _idx: _ordered_text_result(
+            "This page has enough extracted text to stay on the direct-text route."
+        ),
+    )
+    monkeypatch.setattr(workflow_module, "should_include_image", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        workflow_module,
+        "resolve_openai_key_with_source",
+        lambda *_args, **_kwargs: (
+            "stored-key",
+            OpenAICredentialSourceInfo(kind="stored", name=""),
+        ),
+    )
+
+    config = RunConfig(
+        pdf_path=pdf,
+        output_dir=outdir,
+        target_lang=TargetLang.EN,
+        effort=ReasoningEffort.HIGH,
+        image_mode=ImageMode.OFF,
+        max_pages=1,
+        workers=1,
+        resume=False,
+        page_breaks=True,
+        keep_intermediates=True,
+        ocr_mode=OcrMode.AUTO,
+        ocr_engine=OcrEnginePolicy.LOCAL_THEN_API,
+        diagnostics_admin_mode=True,
+    )
+
+    summary = TranslationWorkflow(client=_AuthFailingPageClient()).run(config)
+
+    assert summary.success is False
+    assert summary.failed_page == 1
+    assert summary.error == "authentication_failure"
+    payload = json.loads((summary.run_dir / "run_summary.json").read_text(encoding="utf-8"))
+    assert payload["run_status"] == "authentication_failure"
+    assert payload["suspected_cause"] == "authentication_failure"
+    failure_context = payload["failure_context"]
+    assert failure_context["scope"] == "page"
+    assert failure_context["page_number"] == 1
+    assert failure_context["error"] == "authentication_failure"
+    assert failure_context["status_code"] == 401
+    assert failure_context["exception_class"] == "AuthenticationError"
+    assert failure_context["credential_source"] == {"kind": "stored", "name": ""}
 
 
 def test_cancel_halt_reason_prefers_timeout_after_cancel() -> None:

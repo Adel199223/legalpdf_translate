@@ -55,6 +55,9 @@ class _FakeQApplication:
     def setStyleSheet(self, stylesheet: str) -> None:
         self.stylesheet = stylesheet
 
+    def setProperty(self, _name: str, _value: object) -> None:
+        return None
+
     def setWindowIcon(self, icon: _FakeQIcon) -> None:
         self.window_icon = icon
 
@@ -109,9 +112,18 @@ def test_qt_app_run_smoke(monkeypatch) -> None:
     pyside_mod = types.ModuleType("PySide6")
 
     styles_mod = types.ModuleType("legalpdf_translate.qt_gui.styles")
-    styles_mod.build_stylesheet = lambda: "fake-style"
+    applied_themes: list[str] = []
+
+    def _fake_apply_app_appearance(app, *, theme: str) -> str:
+        applied_themes.append(theme)
+        app.setStyleSheet(f"fake-style:{theme}")
+        return app.stylesheet
+
+    styles_mod.apply_app_appearance = _fake_apply_app_appearance
     controller_mod = types.ModuleType("legalpdf_translate.qt_gui.window_controller")
     controller_mod.WorkspaceWindowController = _FakeWindowController
+    settings_mod = types.ModuleType("legalpdf_translate.user_settings")
+    settings_mod.load_gui_settings = lambda: {"ui_theme": "dark_simple"}
 
     monkeypatch.setitem(sys.modules, "PySide6", pyside_mod)
     monkeypatch.setitem(sys.modules, "PySide6.QtCore", qtcore_mod)
@@ -119,6 +131,7 @@ def test_qt_app_run_smoke(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "PySide6.QtWidgets", qtwidgets_mod)
     monkeypatch.setitem(sys.modules, "legalpdf_translate.qt_gui.styles", styles_mod)
     monkeypatch.setitem(sys.modules, "legalpdf_translate.qt_gui.window_controller", controller_mod)
+    monkeypatch.setitem(sys.modules, "legalpdf_translate.user_settings", settings_mod)
 
     from legalpdf_translate import qt_app
 
@@ -127,7 +140,8 @@ def test_qt_app_run_smoke(monkeypatch) -> None:
     app = _FakeQApplication.last_instance
     assert app is not None
     assert app.exec_called is True
-    assert app.stylesheet == "fake-style"
+    assert app.stylesheet == "fake-style:dark_simple"
+    assert applied_themes == ["dark_simple"]
     assert app.window_icon is not None
     assert app.window_icon.path.replace("\\", "/").endswith("resources/icons/LegalPDFTranslate.png")
     controller = _FakeWindowController.last_instance
@@ -161,3 +175,30 @@ def test_qt_app_module_main_guard_invokes_run() -> None:
     source = Path("src/legalpdf_translate/qt_app.py").read_text(encoding="utf-8")
     assert 'if __name__ == "__main__":' in source
     assert "raise SystemExit(run())" in source
+
+
+def test_build_stylesheet_supports_runtime_theme_variants() -> None:
+    from legalpdf_translate.qt_gui.styles import build_stylesheet, normalize_ui_theme, theme_effect_colors
+
+    futuristic = build_stylesheet("dark_futuristic")
+    simple = build_stylesheet("dark_simple")
+    futuristic_effects = theme_effect_colors("dark_futuristic")
+    simple_effects = theme_effect_colors("dark_simple")
+
+    assert normalize_ui_theme("unknown") == "dark_futuristic"
+    assert futuristic != simple
+    assert "QFrame#DashboardFrame" in futuristic
+    assert "QDialog, QMessageBox" in simple
+    assert '"Segoe UI Variable", "Segoe UI", "Corbel", "Calibri", "DejaVu Sans", "Arial"' in futuristic
+    assert '"Candara", "Segoe UI Variable", "Segoe UI Semibold", "Corbel", "Segoe UI", "DejaVu Sans", "Arial"' in futuristic
+    assert '"Segoe UI Variable", "Candara", "Segoe UI Semibold", "Corbel", "Segoe UI", "DejaVu Sans", "Arial"' in futuristic
+    assert 'QComboBox[sharedChromeCombo="true"][embeddedField="true"][hovered="true"]' in futuristic
+    assert 'QFrame#FieldChrome[sharedChromeDate="true"][hovered="true"]' in futuristic
+    assert "QFrame#CalendarPopup" in futuristic
+    assert "QPushButton#PrimaryButton:default" in futuristic
+    assert "QWidget#DialogActionBar QPushButton#PrimaryButton" in futuristic
+    assert "Bahnschrift" not in futuristic
+    assert "Aptos" not in futuristic
+    assert "letter-spacing: 0.82px;" in futuristic
+    assert futuristic_effects["title_glow"].getRgb() != simple_effects["title_glow"].getRgb()
+    assert futuristic_effects["footer_glow"].getRgb() != simple_effects["footer_glow"].getRgb()

@@ -24,15 +24,15 @@ Ensuring OpenAI product/API decisions are based on official docs with explicit f
 ## Minimal Commands
 PowerShell:
 ```powershell
-dart run tooling/validate_agent_docs.dart
+dart tooling/validate_agent_docs.dart
 ```
 POSIX:
 ```bash
-dart run tooling/validate_agent_docs.dart
+dart tooling/validate_agent_docs.dart
 ```
 
 ## Targeted Tests
-- `dart run test/tooling/validate_agent_docs_test.dart`
+- `dart test/tooling/validate_agent_docs_test.dart`
 
 ## Failure Modes and Fallback Steps
 - Missing official citation for a material claim: block merge and add source + date.

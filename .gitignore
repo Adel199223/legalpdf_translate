@@ -18,6 +18,8 @@ build/*
 *_run/
 *.docx
 tmp/
+diagnostics/
+native_messaging/
 
 # assistant scratch docs (local archive only)
 docs/assistant/_scratch/
@@ -28,8 +30,11 @@ docs/assistant/_scratch/
 # Investigation scratch artifacts
 rg_*_hotspots*.txt
 ui_*_search*.txt
+.playwright-cli/
+output/playwright/
 
 # Local Claude Code settings
 .claude/
+.vscode/settings.json.bak_*
 
 requirements_freeze.txt

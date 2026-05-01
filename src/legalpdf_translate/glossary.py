@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from .legal_header_glossary import header_seed_rows_for_target_lang
 from .types import TargetLang
 
 _ISOLATE_CONTROL_RE = re.compile(r"[\u2066-\u2069]")
@@ -114,6 +115,8 @@ _DEFAULT_AR_ENTRIES: tuple[GlossaryEntry, ...] = (
     GlossaryEntry("audiência de julgamento", "جلسة المحاكمة", "exact", "PT", 2),
     GlossaryEntry("autos", "ملف الدعوى", "exact", "PT", 2),
     GlossaryEntry("absolvição", "البراءة", "exact", "PT", 2),
+    GlossaryEntry("registo criminal", "السجل العدلي", "exact", "PT", 2),
+    GlossaryEntry("certificado do registo criminal", "شهادة السجل العدلي", "exact", "PT", 2),
     # Tier 3
     GlossaryEntry("Fica V. Exª notificado", "يُخطر سيادتكم", "contains", "PT", 3),
     GlossaryEntry("na qualidade de", "بصفتكم", "exact", "PT", 3),
@@ -267,10 +270,50 @@ _DEFAULT_FR_ENTRIES: tuple[GlossaryEntry, ...] = (
     GlossaryEntry("O Juiz de Direito", "Le juge", "exact", "PT", 6),
 )
 
+def _merge_header_seed_rows(
+    target_lang: str,
+    base_entries: tuple[GlossaryEntry, ...],
+) -> tuple[GlossaryEntry, ...]:
+    def _dedupe_key(entry: GlossaryEntry) -> tuple[str, str, str, int]:
+        source_lang = str(entry.source_lang or "ANY").strip().upper()
+        if source_lang not in _VALID_SOURCE_LANGS:
+            source_lang = "ANY"
+        return (
+            source_lang,
+            entry.source_text.strip(),
+            entry.preferred_translation.strip(),
+            int(entry.tier),
+        )
+
+    merged: list[GlossaryEntry] = []
+    seen: set[tuple[str, str, str, int]] = set()
+    for tier, source_text, preferred_translation in header_seed_rows_for_target_lang(target_lang):
+        entry = GlossaryEntry(
+            source_text=source_text,
+            preferred_translation=preferred_translation,
+            match_mode="exact",
+            source_lang="PT",
+            tier=tier,
+        )
+        key = _dedupe_key(entry)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(entry)
+    for entry in base_entries:
+        key = _dedupe_key(entry)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(entry)
+    merged.sort(key=lambda item: (int(item.tier), item.source_text.casefold()))
+    return tuple(merged)
+
+
 _DEFAULT_TIERED_PRESET_ENTRIES_BY_LANG: dict[str, tuple[GlossaryEntry, ...]] = {
-    "AR": _DEFAULT_AR_ENTRIES,
-    "EN": _DEFAULT_EN_ENTRIES,
-    "FR": _DEFAULT_FR_ENTRIES,
+    "AR": _merge_header_seed_rows("AR", _DEFAULT_AR_ENTRIES),
+    "EN": _merge_header_seed_rows("EN", _DEFAULT_EN_ENTRIES),
+    "FR": _merge_header_seed_rows("FR", _DEFAULT_FR_ENTRIES),
 }
 
 
@@ -312,15 +355,15 @@ def coerce_glossary_tier(value: object, *, default: int = 2) -> int:
 
 
 def default_ar_entries() -> list[GlossaryEntry]:
-    return list(_DEFAULT_AR_ENTRIES)
+    return list(_DEFAULT_TIERED_PRESET_ENTRIES_BY_LANG["AR"])
 
 
 def default_en_entries() -> list[GlossaryEntry]:
-    return list(_DEFAULT_EN_ENTRIES)
+    return list(_DEFAULT_TIERED_PRESET_ENTRIES_BY_LANG["EN"])
 
 
 def default_fr_entries() -> list[GlossaryEntry]:
-    return list(_DEFAULT_FR_ENTRIES)
+    return list(_DEFAULT_TIERED_PRESET_ENTRIES_BY_LANG["FR"])
 
 
 def default_ar_seed_preset_name() -> str:

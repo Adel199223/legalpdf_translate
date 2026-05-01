@@ -42,17 +42,25 @@ git ls-files --others --exclude-standard
 
 ## Targeted Tests
 - `python -m pytest -q <targeted paths>`
-- `dart run tooling/validate_agent_docs.dart` (when docs changed)
-- `dart run tooling/validate_workspace_hygiene.dart` (when perf/workspace docs changed)
+- `dart tooling/validate_agent_docs.dart` (when docs changed)
+- `dart tooling/validate_workspace_hygiene.dart` (when perf/workspace docs changed)
 
 ## Failure Modes and Fallback Steps
 - Wrong branch for major work: create/switch to `feat/<scope-name>`.
 - Wrong worktree base for the current branch: stop before commit/push, compare against the latest approved baseline SHA, and transplant/rebase first.
 - Current branch does not contain the approved-base floor from `docs/assistant/runtime/CANONICAL_BUILD.json`: stop before commit/push and fix branch lineage first.
 - User-accepted functionality exists only on a side branch: stop publish flow, promote that branch into the approved base immediately, then continue.
+- User-accepted overlapping functionality is stranded across multiple dirty side worktrees: stop publish flow, take local-only safety checkpoints on each side branch, build one clean integration branch from `main`, transplant the accepted scopes there, and publish only that integrated branch.
+- Live launcher/native-host wrapper still points at a validation worktree after browser or Gmail testing: stop before calling cleanup complete, restore the launcher to canonical `main`, and verify the next live open no longer resolves to the validation build or its recovered session state.
 - Unintended staged files: `git restore --staged <path>` and restage explicitly.
 - Push safety risk: never force-push `main`; use PR flow.
 - User said `push`, but checks are red, merge is blocked, or cleanup is unsafe: report the exact blocker and stop at the highest clean point instead of silently stopping after the raw branch push.
+- Branch-scoped closeout is missing before merge:
+  - update completed ExecPlans, roadmap artifacts, and `docs/assistant/SESSION_RESUME.md` on the feature branch before merge
+  - remove known scratch outputs such as Qt render-review directories before calling the branch clean
+- Something was missed after merge:
+  - do not repair it by default through a direct push to `main`
+  - open a follow-up branch/PR unless the user explicitly asks for a direct post-merge repair
 
 ## Handoff Checklist
 1. Branch safety gate (before staging):
@@ -64,6 +72,7 @@ git ls-files --others --exclude-standard
    - verify the current branch contains the approved-base floor recorded in `docs/assistant/runtime/CANONICAL_BUILD.json`
    - verify the current branch still matches or intentionally overrides the canonical build declared in `docs/assistant/runtime/CANONICAL_BUILD.json`
    - if newer approved work is missing from the current branch, stop and fix branch lineage first
+   - if multiple dirty side worktrees contain overlapping accepted work, do not push them independently; build a fresh integration branch from `main` and publish from there
 2. Default shorthand semantics:
    - bare `commit` means full pending-tree triage, logical grouped commits, validation, then immediate push suggestion
    - bare `push` means Push+PR+Merge+Cleanup by default
@@ -78,6 +87,7 @@ git ls-files --others --exclude-standard
    - what to ignore
    - what to remove from repo state
    - what to split into separate logical commits
+   - if overlapping dirty side worktrees must ship together, create local-only checkpoint commits on those side branches first, then transplant their intended scopes into the clean integration branch
    - do not mix unrelated scopes such as product code, docs, tooling/governance, and tests unless the change is inseparable
 5. Validate:
    - targeted tests for touched area
@@ -92,6 +102,12 @@ git ls-files --others --exclude-standard
    - create or update the PR
    - verify the latest SHA is the one under review
    - wait for required checks or CI
+   - before merge, make branch-scoped closeout decision-complete:
+     - close or archive completed ExecPlans
+     - close or archive completed roadmap artifacts
+     - update `docs/assistant/SESSION_RESUME.md`
+     - remove known scratch outputs
+     - when the work started from multiple accepted side worktrees, verify the clean integration branch is the only branch being pushed and that the side-branch checkpoint commits remain unpublished
    - merge when:
      - checks are green
      - the PR base is correct
@@ -109,4 +125,8 @@ git ls-files --others --exclude-standard
    - delete the source branch when it is no longer needed
    - prune refs
    - remove stale local branch state when safe
+   - remove temporary side worktrees that were harvested into the integration branch once their changes are confirmed on `main`
+   - restore the configured canonical worktree path and launcher/native-host wrapper back to clean `main` if testing had pointed them at a feature worktree
+   - when the publish wave touched Gmail/browser session bootstrap or live launcher routing, verify the next extension click or live browser open comes from canonical `main` and not from a recovered validation-session surface
+   - remove known scratch outputs if they still exist locally
    - verify final clean repo state

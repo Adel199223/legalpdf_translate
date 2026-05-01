@@ -1282,8 +1282,10 @@ def _render_translation_diagnostics_markdown(
         lines.append("")
         lines.append("### D. Translation Quality Checks")
         lines.append("")
-        lines.append("| Page | Lang OK | Detected | Numeric Δ | Citation Δ | Struct Warn | Bidi Warn | Src Para | Out Para |")
-        lines.append("|------|---------|----------|-----------|------------|-------------|-----------|----------|----------|")
+        lines.append("> Citation Marker Δ counts legal-reference marker drift; Paren Δ counts parenthesis/bracket punctuation drift. Moderate drift is diagnostic unless the quality-risk policy also flags the page.")
+        lines.append("")
+        lines.append("| Page | Lang OK | Detected | Numeric Δ | Citation Marker Δ | Paren Δ | Struct Warn | Bidi Warn | Src Para | Out Para |")
+        lines.append("|------|---------|----------|-----------|-------------------|---------|-------------|-----------|----------|----------|")
         _numeric_sample_lines: list[str] = []
         _flagged_pages: set[int | str] = set()
         for row in vp:
@@ -1291,12 +1293,16 @@ def _render_translation_diagnostics_markdown(
                 continue
             lang_ok = "yes" if row.get("language_ok") else "NO"
             _page_idx = row.get("page_index", "?")
+            _legacy_citation_delta = int(row.get("citation_mismatches_count", 0) or 0)
+            _citation_marker_delta = int(row.get("citation_marker_delta_abs", _legacy_citation_delta) or 0)
+            _parenthesis_delta = int(row.get("parenthesis_delta_abs", 0) or 0)
             lines.append(
                 f"| {_page_idx}"
                 f" | {lang_ok}"
                 f" | {row.get('detected_lang', '?')}"
                 f" | {row.get('numeric_mismatches_count', 0)}"
-                f" | {row.get('citation_mismatches_count', 0)}"
+                f" | {_citation_marker_delta}"
+                f" | {_parenthesis_delta}"
                 f" | {row.get('structure_warnings_count', 0)}"
                 f" | {row.get('bidi_warnings_count', 0)}"
                 f" | {row.get('source_paragraphs', '-')}"
@@ -1446,9 +1452,17 @@ def build_run_report_markdown(
         f"- Run `{run_obj.get('run_id', '-')}` status `{run_obj.get('status', '-')}` "
         f"for `{input_obj.get('file_name', '-')}` -> `{output_obj.get('output_docx_name', '-')}`."
     )
+    run_tokens = int(totals_obj.get("total_tokens", 0) or 0)
+    billed_total_tokens = 0
+    budget_post_obj = budget_obj.get("budget_post_run")
+    if isinstance(budget_post_obj, dict):
+        billed_total_tokens = int(budget_post_obj.get("total_tokens", 0) or 0)
+    token_summary = f"run tokens `{run_tokens}`"
+    if billed_total_tokens > 0 and billed_total_tokens != run_tokens:
+        token_summary += f", billed total `{billed_total_tokens}` (includes reasoning)"
     lines.append(
         f"- Total wall time `{totals_obj.get('wall_seconds', 0.0)}`s, "
-        f"tokens `{totals_obj.get('total_tokens', 0)}`, estimated cost `{totals_obj.get('estimated_cost')}`."
+        f"{token_summary}, estimated cost `{totals_obj.get('estimated_cost')}`."
     )
     lines.append(
         f"- API calls `{totals_obj.get('api_calls_total', 0)}`, retries `{totals_obj.get('transport_retries_total', 0)}`, "
@@ -1606,21 +1620,54 @@ def build_run_report_markdown(
             "WARNING: Run status is 'completed' but timeline is empty. "
             "Events may not have been recorded."
         )
-    # Check processed_pages != total_pages
+    # Check processed_pages against the requested selection, not always the whole PDF.
     _total_pages = _detected_pages  # detected_page_count from input section
+    _page_range_obj = input_obj.get("page_range")
+    if not isinstance(_page_range_obj, dict):
+        _page_range_obj = {}
+    _selection_start_page = int(_page_range_obj.get("start_page", 0) or 0)
+    _selection_end_page = int(_page_range_obj.get("end_page", 0) or 0)
+    _selection_max_pages = int(_page_range_obj.get("max_pages_effective", 0) or 0)
+    _effective_start_page = _selection_start_page if _selection_start_page > 0 else 1
+    _effective_end_page = _selection_end_page if _selection_end_page > 0 else _total_pages
+    if _total_pages > 0:
+        _effective_start_page = max(1, min(_effective_start_page, _total_pages))
+        _effective_end_page = max(_effective_start_page, min(_effective_end_page, _total_pages))
+    _expected_selected_pages = 0
+    if _effective_end_page >= _effective_start_page:
+        _expected_selected_pages = _effective_end_page - _effective_start_page + 1
+    if _selection_max_pages > 0:
+        if _expected_selected_pages > 0:
+            _expected_selected_pages = min(_expected_selected_pages, _selection_max_pages)
+        else:
+            _expected_selected_pages = _selection_max_pages
+    if _expected_selected_pages <= 0:
+        _expected_selected_pages = _total_pages
     _done_pages = len([
         p for p in (_per_page_data or [])
         if isinstance(p, dict) and p.get("status") == "done"
     ])
-    if _total_pages > 0 and _per_page_count > 0 and _done_pages < _total_pages:
+    if _expected_selected_pages > 0 and _per_page_count > 0 and _done_pages < _expected_selected_pages:
+        if _expected_selected_pages == _total_pages:
+            _completion_warning = (
+                f"WARNING: Only {_done_pages}/{_total_pages} pages completed successfully."
+            )
+        else:
+            _completion_warning = (
+                f"WARNING: Only {_done_pages}/{_expected_selected_pages} selected pages "
+                f"completed successfully."
+            )
         _sanity_warnings.append(
-            f"WARNING: Only {_done_pages}/{_total_pages} pages completed successfully."
+            _completion_warning
         )
     # Store sanity summary in payload for programmatic consumers
     payload["report_sanity_summary"] = {
         "detected_page_count": _detected_pages,
         "processed_pages": _done_pages,
         "total_pages": _total_pages,
+        "expected_selected_pages": _expected_selected_pages,
+        "selected_start_page": _selection_start_page,
+        "selected_end_page": _selection_end_page,
         "timeline_event_count": len(timeline_obj),
         "sanity_warnings": list(_sanity_warnings),
     }

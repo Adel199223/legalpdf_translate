@@ -5,6 +5,8 @@
   window.__legalPdfGmailIntakeLoaded = true;
 
   const BANNER_ID = "legalpdf-gmail-intake-banner";
+  const DEBUG_TRIGGER_EVENT = "legalpdf-gmail-intake-debug-trigger";
+  const DEBUG_RESULT_EVENT = "legalpdf-gmail-intake-debug-result";
 
   function showBanner(message, kind) {
     const existing = document.getElementById(BANNER_ID);
@@ -25,8 +27,16 @@
     banner.style.boxShadow = "0 10px 32px rgba(0, 0, 0, 0.25)";
     banner.style.font = "500 13px/1.4 Arial, sans-serif";
     banner.style.color = "#101828";
-    banner.style.background = kind === "success" ? "#D1FADF" : "#FEE4E2";
-    banner.style.border = `1px solid ${kind === "success" ? "#6CE9A6" : "#FDA29B"}`;
+    if (kind === "success") {
+      banner.style.background = "#D1FADF";
+      banner.style.border = "1px solid #6CE9A6";
+    } else if (kind === "info") {
+      banner.style.background = "#D9F0FF";
+      banner.style.border = "1px solid #84CAFF";
+    } else {
+      banner.style.background = "#FEE4E2";
+      banner.style.border = "1px solid #FDA29B";
+    }
     document.documentElement.appendChild(banner);
     window.setTimeout(() => banner.remove(), 4500);
   }
@@ -95,9 +105,53 @@
       message_id: messageId,
       thread_id: threadId,
       subject,
-      account_email: extractAccountEmail()
+      account_email: extractAccountEmail(),
+      source_gmail_url: window.location.href
     };
   }
+
+  function dispatchDebugResult(detail) {
+    window.dispatchEvent(new CustomEvent(DEBUG_RESULT_EVENT, {
+      detail: detail && typeof detail === "object" ? detail : {}
+    }));
+  }
+
+  function triggerDebugClick(detail) {
+    chrome.runtime.sendMessage({
+      type: "gmail-intake-debug-click",
+      detail: detail && typeof detail === "object" ? detail : {}
+    }, (response) => {
+      const runtimeError = chrome.runtime?.lastError;
+      if (runtimeError) {
+        dispatchDebugResult({
+          ok: false,
+          message: String(runtimeError.message || "debug_click_failed")
+        });
+        return;
+      }
+      dispatchDebugResult(response && typeof response === "object"
+        ? response
+        : { ok: true });
+    });
+  }
+
+  window.addEventListener(DEBUG_TRIGGER_EVENT, (event) => {
+    triggerDebugClick(event instanceof CustomEvent ? event.detail : {});
+  });
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) {
+      return;
+    }
+    const payload = event.data;
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+    if (payload.type !== DEBUG_TRIGGER_EVENT) {
+      return;
+    }
+    triggerDebugClick(payload.detail);
+  });
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || typeof message !== "object") {
@@ -110,12 +164,19 @@
     }
 
     if (message.type === "gmail-intake-status") {
-      const kind = message.kind === "success" ? "success" : "error";
+      const kind =
+        message.kind === "success"
+          ? "success"
+          : message.kind === "info"
+            ? "info"
+            : "error";
       const text =
         typeof message.message === "string" && message.message.trim() !== ""
           ? message.message.trim()
           : kind === "success"
             ? "Gmail intake accepted."
+            : kind === "info"
+              ? "Gmail intake is still in progress."
             : "Gmail intake failed.";
       showBanner(text, kind);
       return false;

@@ -11,6 +11,7 @@ from .config import (
     DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
     DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
 )
+from .ocr_defaults import default_ocr_api_env_name
 from .glossary import (
     default_ar_entries,
     entries_from_legacy_rules,
@@ -21,10 +22,19 @@ from .glossary import (
     supported_target_langs,
 )
 from .study_glossary import normalize_study_entries, serialize_study_entries, supported_learning_langs
+from .user_profile import (
+    backfill_legacy_default_primary_profile_travel_fields,
+    default_primary_profile,
+    normalize_profiles,
+    primary_profile,
+    serialize_profiles,
+    UserProfile,
+)
+from .types import OcrApiProvider
 
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
-SETTINGS_SCHEMA_VERSION = 5
+SETTINGS_SCHEMA_VERSION = 9
 DEFAULT_VOCAB_CASE_ENTITIES = [
     "Ministério Público",
     "Tribunal Judicial",
@@ -35,16 +45,22 @@ DEFAULT_VOCAB_CASE_ENTITIES = [
 DEFAULT_VOCAB_SERVICE_ENTITIES = [
     "Ministério Público",
     "Tribunal Judicial",
+    "Serviço de Turno",
     "GNR",
     "PSP",
+    "Posto Territorial da GNR de {city}",
+    "Esquadra da PSP de {city}",
     "Advogado",
 ]
 DEFAULT_VOCAB_CITIES = [
     "Beja",
     "Moura",
+    "Vidigueira",
     "Cuba",
+    "Odemira",
     "Ferreira do Alentejo",
     "Serpa",
+    "Brinches",
 ]
 DEFAULT_VOCAB_JOB_TYPES = ["Translation", "Interpretation"]
 DEFAULT_VOCAB_COURT_EMAILS = [
@@ -86,10 +102,12 @@ DEFAULT_OCR_SETTINGS: dict[str, Any] = {
     "ocr_api_provider": "openai",
     "ocr_api_base_url": "",
     "ocr_api_model": "",
-    "ocr_api_key_env_name": "DEEPSEEK_API_KEY",
+    "ocr_api_key_env_name": default_ocr_api_env_name(OcrApiProvider.OPENAI),
 }
 DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "settings_schema_version": SETTINGS_SCHEMA_VERSION,
+    "profiles": serialize_profiles([default_primary_profile()]),
+    "primary_profile_id": default_primary_profile().id,
     "ui_theme": "dark_futuristic",
     "ui_scale": 1.0,
     "default_lang": "EN",
@@ -142,9 +160,15 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "gmail_intake_bridge_enabled": False,
     "gmail_intake_bridge_token": "",
     "gmail_intake_port": 8765,
+    "google_photos_client_id": "",
+    "google_photos_client_id_env_name": "LEGALPDF_GOOGLE_PHOTOS_CLIENT_ID",
+    "google_photos_client_secret_env_name": "LEGALPDF_GOOGLE_PHOTOS_CLIENT_SECRET",
+    "google_photos_token_path": "",
 }
 ALLOWED_GUI_KEYS = {
     "settings_schema_version",
+    "profiles",
+    "primary_profile_id",
     "ui_theme",
     "ui_scale",
     "default_lang",
@@ -214,6 +238,10 @@ ALLOWED_GUI_KEYS = {
     "gmail_intake_bridge_enabled",
     "gmail_intake_bridge_token",
     "gmail_intake_port",
+    "google_photos_client_id",
+    "google_photos_client_id_env_name",
+    "google_photos_client_secret_env_name",
+    "google_photos_token_path",
 }
 ALLOWED_JOBLOG_KEYS = {
     "vocab_case_entities",
@@ -221,8 +249,10 @@ ALLOWED_JOBLOG_KEYS = {
     "vocab_cities",
     "vocab_job_types",
     "vocab_court_emails",
+    "court_emails_by_city",
     "default_rate_per_word",
     "joblog_visible_columns",
+    "joblog_column_widths",
     "metadata_ai_enabled",
     "metadata_photo_enabled",
     "service_equals_case_by_default",
@@ -257,8 +287,10 @@ DEFAULT_JOBLOG_SETTINGS: dict[str, Any] = {
     "vocab_cities": list(DEFAULT_VOCAB_CITIES),
     "vocab_job_types": list(DEFAULT_VOCAB_JOB_TYPES),
     "vocab_court_emails": list(DEFAULT_VOCAB_COURT_EMAILS),
+    "court_emails_by_city": {},
     "default_rate_per_word": {"EN": 0.08, "FR": 0.08, "AR": 0.09},
     "joblog_visible_columns": list(DEFAULT_JOBLOG_VISIBLE_COLUMNS),
+    "joblog_column_widths": {},
     "metadata_ai_enabled": True,
     "metadata_photo_enabled": True,
     "service_equals_case_by_default": True,
@@ -277,12 +309,12 @@ def settings_path() -> Path:
     return root / APP_FOLDER_NAME / SETTINGS_FILENAME
 
 
-def load_settings() -> dict[str, Any]:
-    path = settings_path()
-    if not path.exists():
+def load_settings_from_path(path: Path) -> dict[str, Any]:
+    resolved_path = path.expanduser().resolve()
+    if not resolved_path.exists():
         return {}
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = resolved_path.read_text(encoding="utf-8")
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError):
         return {}
@@ -291,19 +323,31 @@ def load_settings() -> dict[str, Any]:
     return data
 
 
-def save_settings(data: dict[str, Any]) -> None:
-    path = settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_suffix(".tmp")
+def load_settings() -> dict[str, Any]:
+    return load_settings_from_path(settings_path())
+
+
+def save_settings_to_path(path: Path, data: dict[str, Any]) -> None:
+    resolved_path = path.expanduser().resolve()
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = resolved_path.with_suffix(".tmp")
     temp_path.write_text(
         json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    temp_path.replace(path)
+    temp_path.replace(resolved_path)
+
+
+def save_settings(data: dict[str, Any]) -> None:
+    save_settings_to_path(settings_path(), data)
 
 
 def app_data_dir() -> Path:
     return settings_path().parent
+
+
+def app_data_dir_from_settings_path(path: Path) -> Path:
+    return path.expanduser().resolve().parent
 
 
 def _coerce_bool(value: object, default: bool) -> bool:
@@ -381,6 +425,66 @@ def _coerce_str_list(value: object, *, fallback: list[str]) -> list[str]:
     return output
 
 
+def _coerce_court_emails_by_city(value: object) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    output: dict[str, list[str]] = {}
+    for raw_city, raw_emails in value.items():
+        if not isinstance(raw_city, str):
+            continue
+        city = " ".join(raw_city.split()).strip()
+        if not city:
+            continue
+        emails = _coerce_str_list(raw_emails, fallback=[])
+        if not emails:
+            continue
+        output[city] = emails
+    return output
+
+
+def _coerce_joblog_column_widths(value: object) -> dict[str, int]:
+    allowed = {
+        "translation_date",
+        "case_number",
+        "court_email",
+        "run_id",
+        "job_type",
+        "case_entity",
+        "case_city",
+        "service_entity",
+        "service_city",
+        "service_date",
+        "travel_km_outbound",
+        "travel_km_return",
+        "lang",
+        "target_lang",
+        "pages",
+        "word_count",
+        "total_tokens",
+        "rate_per_word",
+        "expected_total",
+        "amount_paid",
+        "api_cost",
+        "estimated_api_cost",
+        "quality_risk_score",
+        "profit",
+    }
+    if not isinstance(value, dict):
+        return {}
+    output: dict[str, int] = {}
+    for raw_key, raw_value in value.items():
+        if not isinstance(raw_key, str):
+            continue
+        key = raw_key.strip()
+        if key not in allowed:
+            continue
+        width = _coerce_int(raw_value, 0)
+        if width <= 0:
+            continue
+        output[key] = width
+    return output
+
+
 def _coerce_rate_map(value: object, *, fallback: dict[str, float]) -> dict[str, float]:
     if not isinstance(value, dict):
         return dict(fallback)
@@ -407,8 +511,7 @@ def _coerce_choice(value: object, *, default: str, allowed: set[str]) -> str:
     return default
 
 
-def load_gui_settings() -> dict[str, Any]:
-    data = load_settings()
+def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
     merged = dict(DEFAULT_GUI_SETTINGS)
     for key in ALLOWED_GUI_KEYS:
         if key in data:
@@ -500,13 +603,58 @@ def load_gui_settings() -> dict[str, Any]:
     merged["ocr_api_model"] = str(merged.get("ocr_api_model", "") or "")
     ocr_env_value = merged.get("ocr_api_key_env_name")
     if "ocr_api_key_env_name" not in data or not str(ocr_env_value or "").strip():
-        fallback_env = "GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY"
+        fallback_env = (
+            default_ocr_api_env_name(OcrApiProvider.GEMINI)
+            if merged["ocr_api_provider"] == "gemini"
+            else default_ocr_api_env_name(OcrApiProvider.OPENAI)
+        )
         ocr_env_value = data.get("ocr_api_key_env", fallback_env)
-    merged["ocr_api_key_env_name"] = str(
-        ocr_env_value or ("GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY")
-    )
+    resolved_ocr_env = str(
+        ocr_env_value
+        or (
+            default_ocr_api_env_name(OcrApiProvider.GEMINI)
+            if merged["ocr_api_provider"] == "gemini"
+            else default_ocr_api_env_name(OcrApiProvider.OPENAI)
+        )
+    ).strip()
+    if merged["ocr_api_provider"] == "openai" and resolved_ocr_env in {"", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"}:
+        resolved_ocr_env = default_ocr_api_env_name(OcrApiProvider.OPENAI)
+    if merged["ocr_api_provider"] == "gemini" and resolved_ocr_env == "":
+        resolved_ocr_env = default_ocr_api_env_name(OcrApiProvider.GEMINI)
+    merged["ocr_api_key_env_name"] = resolved_ocr_env
     merged["gmail_gog_path"] = str(merged.get("gmail_gog_path", "") or "")
     merged["gmail_account_email"] = str(merged.get("gmail_account_email", "") or "")
+    normalized_profiles, primary_profile_id = normalize_profiles(
+        merged.get("profiles"),
+        merged.get("primary_profile_id"),
+        fallback_email=merged["gmail_account_email"],
+    )
+    if "profiles" not in data and merged["gmail_account_email"] and normalized_profiles:
+        first_profile = normalized_profiles[0]
+        if not str(first_profile.email or "").strip():
+            normalized_profiles[0] = type(first_profile)(
+                id=first_profile.id,
+                first_name=first_profile.first_name,
+                last_name=first_profile.last_name,
+                document_name_override=first_profile.document_name_override,
+                email=merged["gmail_account_email"],
+                phone_number=first_profile.phone_number,
+                postal_address=first_profile.postal_address,
+                iban=first_profile.iban,
+                iva_text=first_profile.iva_text,
+                irs_text=first_profile.irs_text,
+            )
+    settings_schema_version_raw = _coerce_int(
+        data.get("settings_schema_version"),
+        0,
+    )
+    if settings_schema_version_raw < 9:
+        normalized_profiles = [
+            backfill_legacy_default_primary_profile_travel_fields(profile)
+            for profile in normalized_profiles
+        ]
+    merged["profiles"] = serialize_profiles(normalized_profiles)
+    merged["primary_profile_id"] = primary_profile_id
     merged["gmail_intake_bridge_enabled"] = _coerce_bool(
         merged.get("gmail_intake_bridge_enabled"),
         False,
@@ -516,6 +664,16 @@ def load_gui_settings() -> dict[str, Any]:
         1,
         min(65535, _coerce_int(merged.get("gmail_intake_port"), 8765)),
     )
+    merged["google_photos_client_id"] = str(merged.get("google_photos_client_id", "") or "").strip()
+    merged["google_photos_client_id_env_name"] = (
+        str(merged.get("google_photos_client_id_env_name", "") or "").strip()
+        or "LEGALPDF_GOOGLE_PHOTOS_CLIENT_ID"
+    )
+    merged["google_photos_client_secret_env_name"] = (
+        str(merged.get("google_photos_client_secret_env_name", "") or "").strip()
+        or "LEGALPDF_GOOGLE_PHOTOS_CLIENT_SECRET"
+    )
+    merged["google_photos_token_path"] = str(merged.get("google_photos_token_path", "") or "").strip()
     merged["settings_schema_version"] = _coerce_int(
         merged.get("settings_schema_version"),
         SETTINGS_SCHEMA_VERSION,
@@ -551,7 +709,8 @@ def load_gui_settings() -> dict[str, Any]:
     merged["default_resume"] = _coerce_bool(merged.get("default_resume"), True)
     merged["default_keep_intermediates"] = _coerce_bool(merged.get("default_keep_intermediates"), True)
     merged["default_page_breaks"] = _coerce_bool(merged.get("default_page_breaks"), True)
-    merged["default_start_page"] = max(1, _coerce_int(merged.get("default_start_page"), 1))
+    # Default translation start page is fixed to page 1; later pages are explicit per-run overrides only.
+    merged["default_start_page"] = 1
     merged["default_end_page"] = _coerce_optional_int(merged.get("default_end_page"))
     merged["default_outdir"] = str(merged.get("default_outdir", "") or "")
     merged["ocr_api_provider_default"] = _coerce_choice(
@@ -644,10 +803,6 @@ def load_gui_settings() -> dict[str, Any]:
     )
     merged["perf_max_transport_retries"] = max(0, _coerce_int(merged.get("perf_max_transport_retries"), 4))
     merged["perf_backoff_cap_seconds"] = max(1.0, _coerce_float(merged.get("perf_backoff_cap_seconds"), 12.0))
-    settings_schema_version_raw = _coerce_int(
-        data.get("settings_schema_version"),
-        0,
-    )
     legacy_text_timeout = _coerce_int(
         data.get("perf_timeout_text_seconds"),
         DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
@@ -751,17 +906,75 @@ def load_gui_settings() -> dict[str, Any]:
     return merged
 
 
-def save_gui_settings(values: dict[str, Any]) -> None:
-    data = load_settings()
+def load_gui_settings_from_path(path: Path) -> dict[str, Any]:
+    return _normalize_gui_settings(load_settings_from_path(path))
+
+
+def load_gui_settings() -> dict[str, Any]:
+    return load_gui_settings_from_path(settings_path())
+
+
+def save_gui_settings_to_path(path: Path, values: dict[str, Any]) -> None:
+    data = load_settings_from_path(path)
     data["settings_schema_version"] = SETTINGS_SCHEMA_VERSION
     for key in ALLOWED_GUI_KEYS:
         if key in values:
             data[key] = values[key]
-    save_settings(data)
+    data["default_start_page"] = 1
+    save_settings_to_path(path, data)
 
 
-def load_joblog_settings() -> dict[str, Any]:
-    data = load_settings()
+def save_gui_settings(values: dict[str, Any]) -> None:
+    save_gui_settings_to_path(settings_path(), values)
+
+
+def load_profile_settings_from_path(path: Path) -> tuple[list[UserProfile], str]:
+    data = load_gui_settings_from_path(path)
+    profiles, primary_profile_id = normalize_profiles(
+        data.get("profiles"),
+        data.get("primary_profile_id"),
+        fallback_email=str(data.get("gmail_account_email", "") or ""),
+    )
+    return profiles, primary_profile_id
+
+
+def load_profile_settings() -> tuple[list[UserProfile], str]:
+    return load_profile_settings_from_path(settings_path())
+
+
+def save_profile_settings_to_path(
+    path: Path,
+    *,
+    profiles: list[UserProfile],
+    primary_profile_id: str,
+) -> None:
+    normalized_profiles, normalized_primary_id = normalize_profiles(
+        serialize_profiles(profiles),
+        primary_profile_id,
+        fallback_email="",
+    )
+    save_gui_settings_to_path(
+        path,
+        {
+            "profiles": serialize_profiles(normalized_profiles),
+            "primary_profile_id": primary_profile(normalized_profiles, normalized_primary_id).id,
+        },
+    )
+
+
+def save_profile_settings(
+    *,
+    profiles: list[UserProfile],
+    primary_profile_id: str,
+) -> None:
+    save_profile_settings_to_path(
+        settings_path(),
+        profiles=profiles,
+        primary_profile_id=primary_profile_id,
+    )
+
+
+def _normalize_joblog_settings(data: dict[str, Any]) -> dict[str, Any]:
     merged = dict(DEFAULT_JOBLOG_SETTINGS)
     for key in ALLOWED_JOBLOG_KEYS:
         if key in data:
@@ -787,6 +1000,9 @@ def load_joblog_settings() -> dict[str, Any]:
         merged.get("vocab_court_emails"),
         fallback=DEFAULT_VOCAB_COURT_EMAILS,
     )
+    merged["court_emails_by_city"] = _coerce_court_emails_by_city(
+        merged.get("court_emails_by_city"),
+    )
     merged["vocab_entities"] = _coerce_str_list(
         merged.get("vocab_entities"),
         fallback=DEFAULT_VOCAB_CASE_ENTITIES,
@@ -794,6 +1010,9 @@ def load_joblog_settings() -> dict[str, Any]:
     merged["joblog_visible_columns"] = _coerce_str_list(
         merged.get("joblog_visible_columns"),
         fallback=DEFAULT_JOBLOG_VISIBLE_COLUMNS,
+    )
+    merged["joblog_column_widths"] = _coerce_joblog_column_widths(
+        merged.get("joblog_column_widths"),
     )
     merged["non_court_service_entities"] = _coerce_str_list(
         merged.get("non_court_service_entities"),
@@ -823,13 +1042,17 @@ def load_joblog_settings() -> dict[str, Any]:
     )
     merged["ocr_api_base_url"] = str(merged.get("ocr_api_base_url", "") or "")
     merged["ocr_api_model"] = str(merged.get("ocr_api_model", "") or "")
+    ocr_provider = OcrApiProvider.GEMINI if merged["ocr_api_provider"] == "gemini" else OcrApiProvider.OPENAI
+    default_ocr_env = default_ocr_api_env_name(ocr_provider)
     ocr_env_value = merged.get("ocr_api_key_env_name")
     if "ocr_api_key_env_name" not in data or not str(ocr_env_value or "").strip():
-        fallback_env = "GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY"
-        ocr_env_value = data.get("ocr_api_key_env", fallback_env)
-    merged["ocr_api_key_env_name"] = str(
-        ocr_env_value or ("GEMINI_API_KEY" if merged["ocr_api_provider"] == "gemini" else "DEEPSEEK_API_KEY")
-    )
+        ocr_env_value = data.get("ocr_api_key_env", default_ocr_env)
+    resolved_ocr_env = str(ocr_env_value or default_ocr_env).strip() or default_ocr_env
+    if merged["ocr_api_provider"] == "openai" and resolved_ocr_env in {"", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"}:
+        resolved_ocr_env = default_ocr_api_env_name(OcrApiProvider.OPENAI)
+    if merged["ocr_api_provider"] == "gemini" and resolved_ocr_env == "":
+        resolved_ocr_env = default_ocr_api_env_name(OcrApiProvider.GEMINI)
+    merged["ocr_api_key_env_name"] = resolved_ocr_env
     if not merged["vocab_case_entities"]:
         merged["vocab_case_entities"] = list(merged["vocab_entities"])
     if not merged["vocab_service_entities"]:
@@ -837,13 +1060,25 @@ def load_joblog_settings() -> dict[str, Any]:
     return merged
 
 
-def save_joblog_settings(values: dict[str, Any]) -> None:
-    data = load_settings()
+def load_joblog_settings_from_path(path: Path) -> dict[str, Any]:
+    return _normalize_joblog_settings(load_settings_from_path(path))
+
+
+def load_joblog_settings() -> dict[str, Any]:
+    return load_joblog_settings_from_path(settings_path())
+
+
+def save_joblog_settings_to_path(path: Path, values: dict[str, Any]) -> None:
+    data = load_settings_from_path(path)
     data["settings_schema_version"] = SETTINGS_SCHEMA_VERSION
     for key in ALLOWED_JOBLOG_KEYS:
         if key in values:
             data[key] = values[key]
-    save_settings(data)
+    save_settings_to_path(path, data)
+
+
+def save_joblog_settings(values: dict[str, Any]) -> None:
+    save_joblog_settings_to_path(settings_path(), values)
 
 
 def load_last_outdir() -> Path | None:

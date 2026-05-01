@@ -15,12 +15,14 @@ from legalpdf_translate.gmail_batch import (
     GmailAttachmentDownloadRequest,
     GmailAttachmentCandidate,
     GmailAttachmentSelection,
+    GmailInterpretationSession,
     GmailBatchSession,
     GmailMessageLoadResult,
     FetchedGmailMessage,
     download_gmail_attachment_via_gog,
     load_gmail_message_from_intake,
     prepare_gmail_batch_session,
+    prepare_gmail_interpretation_session,
 )
 from legalpdf_translate.gmail_intake import InboundMailContext
 from legalpdf_translate.openai_client import OpenAIResponsesClient
@@ -35,6 +37,11 @@ from legalpdf_translate.source_document import (
     render_source_page_image_data_url,
 )
 from legalpdf_translate.types import RunConfig
+from legalpdf_translate.word_automation import (
+    WordAutomationResult,
+    export_docx_to_pdf_in_word,
+    probe_word_pdf_export_support,
+)
 from legalpdf_translate.workflow import TranslationWorkflow
 
 _PAGE_LOG_RE = re.compile(
@@ -44,6 +51,48 @@ _PAGE_STATUS_RE = re.compile(r"Page\s+(?P<page>\d+)\s+(?P<status>finished|failed
 _PREVIEW_RENDER_START_DPI = 110
 _PREVIEW_RENDER_MAX_DPI = 144
 _PREVIEW_RENDER_MAX_BYTES = 900_000
+
+
+@dataclass(frozen=True, slots=True)
+class HonorariosPdfExportResult:
+    docx_path: Path
+    pdf_path: Path | None
+    automation: WordAutomationResult
+
+
+class HonorariosPdfExportWorker(QObject):
+    finished = Signal(object)
+
+    def __init__(self, *, docx_path: Path, pdf_path: Path, timeout_seconds: float = 45.0) -> None:
+        super().__init__()
+        self._docx_path = docx_path.expanduser().resolve()
+        self._pdf_path = pdf_path.expanduser().resolve()
+        self._timeout_seconds = float(timeout_seconds)
+
+    @Slot()
+    def run(self) -> None:
+        preflight = probe_word_pdf_export_support(timeout_seconds=max(8.0, self._timeout_seconds))
+        if not preflight.ok:
+            self.finished.emit(
+                HonorariosPdfExportResult(
+                    docx_path=self._docx_path,
+                    pdf_path=None,
+                    automation=preflight,
+                )
+            )
+            return
+        result = export_docx_to_pdf_in_word(
+            self._docx_path,
+            self._pdf_path,
+            timeout_seconds=self._timeout_seconds,
+        )
+        self.finished.emit(
+            HonorariosPdfExportResult(
+                docx_path=self._docx_path,
+                pdf_path=self._pdf_path if result.ok else None,
+                automation=result,
+            )
+        )
 
 
 class TranslationRunWorker(QObject):
@@ -324,6 +373,64 @@ class GmailBatchPrepareWorker(QObject):
                         f"{downloaded.candidate.filename} -> {downloaded.saved_path} "
                         f"(start_page={downloaded.start_page}, page_count={downloaded.page_count})"
                     )
+            self.finished.emit(session)
+        except Exception as exc:  # noqa: BLE001
+            self.error.emit(str(exc))
+
+
+class GmailInterpretationPrepareWorker(QObject):
+    """Download one Gmail notice attachment for interpretation finalization."""
+
+    log = Signal(str)
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        context: InboundMailContext,
+        message: FetchedGmailMessage,
+        gog_path: Path,
+        account_email: str,
+        selected_attachment: GmailAttachmentSelection,
+        effective_output_dir: Path,
+        cached_preview_paths: dict[str, Path] | None = None,
+        cached_preview_page_counts: dict[str, int] | None = None,
+    ) -> None:
+        super().__init__()
+        self._context = context
+        self._message = message
+        self._gog_path = gog_path
+        self._account_email = account_email
+        self._selected_attachment = selected_attachment
+        self._effective_output_dir = effective_output_dir
+        self._cached_preview_paths = cached_preview_paths or {}
+        self._cached_preview_page_counts = cached_preview_page_counts or {}
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.log.emit(
+                "Gmail intake: preparing one interpretation notice attachment into a temp folder."
+            )
+            session = prepare_gmail_interpretation_session(
+                intake_context=self._context,
+                message=self._message,
+                gog_path=self._gog_path,
+                account_email=self._account_email,
+                selected_attachment=self._selected_attachment,
+                effective_output_dir=self._effective_output_dir,
+                cached_preview_paths=self._cached_preview_paths,
+                cached_preview_page_counts=self._cached_preview_page_counts,
+                log_callback=self.log.emit,
+            )
+            if session.downloaded_attachment.saved_path.exists():
+                self.log.emit(
+                    "Gmail intake: prepared interpretation notice "
+                    f"{session.downloaded_attachment.candidate.filename} -> "
+                    f"{session.downloaded_attachment.saved_path} "
+                    f"(page_count={session.downloaded_attachment.page_count})"
+                )
             self.finished.emit(session)
         except Exception as exc:  # noqa: BLE001
             self.error.emit(str(exc))
