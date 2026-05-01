@@ -43,6 +43,7 @@ import {
   renderInterpretationCompletionCardInto,
   renderInterpretationExportResultInto,
   renderInterpretationGmailResultInto,
+  renderInterpretationLocationGuardInto,
   renderInterpretationReviewSummaryCardInto,
   renderInterpretationSeedCardInto,
   renderInterpretationSessionCardInto,
@@ -1029,25 +1030,13 @@ function setInterpretationFieldWarning(fieldName, message = "", tone = "warning"
   node.classList.toggle("is-danger", text && tone === "danger");
 }
 
-function setInterpretationLocationGuard(message = "", tone = "warning") {
+function setInterpretationLocationGuard(rawMessage = "", tone = "warning") {
   const card = qs("interpretation-location-guard-card");
   if (!card) {
     return;
   }
-  const text = String(message || "").trim();
-  if (!text) {
-    card.classList.add("hidden");
-    card.classList.add("empty-state");
-    card.textContent = "";
-    return;
-  }
-  card.classList.remove("hidden", "empty-state");
-  card.innerHTML = `
-    <div class="result-header">
-      <div><strong>${escapeHtml(text)}</strong></div>
-      <span class="status-chip ${tone === "danger" ? "bad" : "warn"}">${tone === "danger" ? "Action blocked" : "Needs review"}</span>
-    </div>
-  `;
+  const message = String(rawMessage || "").trim();
+  renderInterpretationLocationGuardInto(card, { message, tone });
 }
 
 function applyInterpretationCityValue(fieldName, rawValue) {
