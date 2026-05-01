@@ -83,6 +83,33 @@ def test_ar_token_retry_prompt_highlights_outside_token_violation() -> None:
     assert "Wrap every verbatim identifier span in [[...]]" in prompt
 
 
+def test_ar_token_retry_prompt_includes_source_and_mismatch_summary_when_available() -> None:
+    prompt = build_ar_token_retry_prompt(
+        "PRIOR",
+        ["342", "Beja"],
+        source_text="Fonte original da pagina",
+        violation_kind="expected_token_mismatch",
+        defect_reason="Expected locked token mismatch.",
+        token_details={
+            "violation_kind": "expected_token_mismatch",
+            "missing_count": 1,
+            "altered_count": 1,
+            "missing_token_samples": ["342"],
+            "unexpected_token_samples": ["Beja"],
+        },
+    )
+    assert "<<<BEGIN TOKEN MISMATCH SUMMARY>>>" in prompt
+    assert "Validator reason: Expected locked token mismatch." in prompt
+    assert "Violation kind: expected_token_mismatch" in prompt
+    assert "Missing token samples:" in prompt
+    assert "- [[342]]" in prompt
+    assert "Unexpected or altered token samples:" in prompt
+    assert "- [[Beja]]" in prompt
+    assert "<<<BEGIN SOURCE PAGE>>>" in prompt
+    assert "Fonte original da pagina" in prompt
+    assert "<<<END SOURCE PAGE>>>" in prompt
+
+
 def test_language_retry_prompt_fr_has_language_correction_header_and_markers() -> None:
     prompt = build_language_retry_prompt(TargetLang.FR, "PRIOR")
     assert "LANGUAGE CORRECTION ONLY: Re-emit the SAME content, fix language compliance only" in prompt

@@ -26,18 +26,18 @@ Managing heavy machine evaluation/scoring with cloud-first execution and local a
 ## Minimal Commands
 PowerShell:
 ```powershell
-dart run tooling/cloud_eval_preflight.dart
-dart run test/tooling/cloud_eval_preflight_test.dart
+dart tooling/cloud_eval_preflight.dart
+dart test/tooling/cloud_eval_preflight_test.dart
 ```
 POSIX:
 ```bash
-dart run tooling/cloud_eval_preflight.dart
-dart run test/tooling/cloud_eval_preflight_test.dart
+dart tooling/cloud_eval_preflight.dart
+dart test/tooling/cloud_eval_preflight_test.dart
 ```
 
 ## Targeted Tests
-- `dart run test/tooling/cloud_eval_preflight_test.dart`
-- `dart run tooling/validate_agent_docs.dart`
+- `dart test/tooling/cloud_eval_preflight_test.dart`
+- `dart tooling/validate_agent_docs.dart`
 
 ## Failure Modes and Fallback Steps
 - Cloud dispatch/secrets/tooling preflight failure: classify as `unavailable` and rerun preflight after fix.

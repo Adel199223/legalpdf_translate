@@ -28,12 +28,12 @@ Implementing screenshot-driven Qt desktop UI changes where the desktop app windo
 ## Minimal Commands
 PowerShell:
 ```powershell
-python .\tooling\qt_render_review.py --outdir .\tmp_ui_review --preview reference_sample
+python .\tooling\qt_render_review.py --outdir .\tmp\qt_ui_review --preview reference_sample
 python -m pytest -q tests/test_qt_render_review.py tests/test_qt_app_state.py
 ```
 POSIX:
 ```bash
-python ./tooling/qt_render_review.py --outdir ./tmp_ui_review --preview reference_sample
+python ./tooling/qt_render_review.py --outdir ./tmp/qt_ui_review --preview reference_sample
 python ./tooling/launch_qt_build.py --worktree /abs/path/to/worktree --labels "qt-ui" --dry-run
 python -m pytest -q tests/test_qt_render_review.py tests/test_qt_app_state.py
 ```

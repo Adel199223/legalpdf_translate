@@ -10,6 +10,7 @@ from typing import Any
 
 from .glossary import GlossaryEntry
 from .glossary_builder import create_builder_stats, update_builder_stats_from_page
+from .pt_legal_glossary_aliases import source_matches_glossary_entry
 from .study_glossary import tokenize_pt
 
 # ---------------------------------------------------------------------------
@@ -159,11 +160,9 @@ class GlossaryDiagnosticsAccumulator:
 
         Returns total match count for the page.
         """
-        lowered = source_text.casefold()
         matches: dict[str, int] = {}
         for entry in active_entries:
-            needle = entry.source_text.casefold()
-            if needle and needle in lowered:
+            if source_matches_glossary_entry(source_text, entry):
                 matches[entry.source_text] = matches.get(entry.source_text, 0) + 1
         total = sum(matches.values())
         with self._lock:

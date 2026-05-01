@@ -7,7 +7,6 @@ import io
 from dataclasses import dataclass
 from pathlib import Path
 
-import fitz
 from PIL import Image
 
 from .config import (
@@ -42,7 +41,10 @@ def should_include_image(
     fragmented: bool = False,
     *,
     lang: TargetLang | None = None,
+    force_include: bool = False,
 ) -> bool:
+    if force_include:
+        return True
     if mode == ImageMode.OFF:
         return False
     if mode == ImageMode.ALWAYS:
@@ -74,6 +76,8 @@ def should_include_image(
 
 
 def _pixmap_to_pil(page: fitz.Page, dpi: int) -> Image.Image:
+    import fitz
+
     zoom = dpi / 72.0
     pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
     return Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
@@ -99,6 +103,8 @@ def render_page_image_data_url(
     max_data_url_bytes: int = IMAGE_MAX_DATA_URL_BYTES,
 ) -> RenderedImage:
     dpi = min(start_dpi, max_dpi)
+    import fitz
+
     with fitz.open(pdf_path) as doc:
         page = doc.load_page(page_index)
         image = _pixmap_to_pil(page, dpi=dpi)

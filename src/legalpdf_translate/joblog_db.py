@@ -22,6 +22,10 @@ JOB_RUN_COLUMNS = [
     "service_entity",
     "service_city",
     "service_date",
+    "travel_km_outbound",
+    "travel_km_return",
+    "use_service_location_in_honorarios",
+    "include_transport_sentence_in_honorarios",
     "lang",
     "target_lang",
     "run_id",
@@ -68,6 +72,10 @@ def ensure_joblog_schema(conn: sqlite3.Connection) -> None:
             service_entity TEXT,
             service_city TEXT,
             service_date TEXT,
+            travel_km_outbound REAL,
+            travel_km_return REAL,
+            use_service_location_in_honorarios INTEGER DEFAULT 0,
+            include_transport_sentence_in_honorarios INTEGER DEFAULT 1,
             lang TEXT,
             target_lang TEXT,
             run_id TEXT,
@@ -168,6 +176,10 @@ def migrate_joblog_v2(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, columns, "service_entity", "TEXT")
     _add_column_if_missing(conn, columns, "service_city", "TEXT")
     _add_column_if_missing(conn, columns, "service_date", "TEXT")
+    _add_column_if_missing(conn, columns, "travel_km_outbound", "REAL")
+    _add_column_if_missing(conn, columns, "travel_km_return", "REAL")
+    _add_column_if_missing(conn, columns, "use_service_location_in_honorarios", "INTEGER DEFAULT 0")
+    _add_column_if_missing(conn, columns, "include_transport_sentence_in_honorarios", "INTEGER DEFAULT 1")
     _add_column_if_missing(conn, columns, "target_lang", "TEXT")
     _add_column_if_missing(conn, columns, "run_id", "TEXT")
     _add_column_if_missing(conn, columns, "total_tokens", "INTEGER")
@@ -231,6 +243,8 @@ def migrate_joblog_v2(conn: sqlite3.Connection) -> None:
 
 def insert_job_run(conn: sqlite3.Connection, values: Mapping[str, Any]) -> int:
     payload = {column: values.get(column) for column in JOB_RUN_COLUMNS}
+    if payload["include_transport_sentence_in_honorarios"] is None:
+        payload["include_transport_sentence_in_honorarios"] = 1
     placeholders = ", ".join("?" for _ in JOB_RUN_COLUMNS)
     columns_sql = ", ".join(JOB_RUN_COLUMNS)
     cursor = conn.execute(
@@ -256,6 +270,10 @@ def list_job_runs(conn: sqlite3.Connection, *, limit: int = 500) -> list[sqlite3
             service_entity,
             service_city,
             service_date,
+            travel_km_outbound,
+            travel_km_return,
+            COALESCE(use_service_location_in_honorarios, 0) AS use_service_location_in_honorarios,
+            COALESCE(include_transport_sentence_in_honorarios, 1) AS include_transport_sentence_in_honorarios,
             lang,
             COALESCE(NULLIF(trim(target_lang), ''), NULLIF(trim(lang), '')) AS target_lang,
             run_id,
@@ -305,6 +323,58 @@ def update_job_run_output_paths(
     conn.commit()
 
 
+def update_job_run(
+    conn: sqlite3.Connection,
+    *,
+    row_id: int,
+    values: Mapping[str, Any],
+) -> None:
+    assignments: list[str] = []
+    params: list[Any] = []
+    allowed = [column for column in JOB_RUN_COLUMNS if column != "completed_at"]
+    for column in allowed:
+        if column not in values:
+            continue
+        assignments.append(f"{column} = ?")
+        params.append(values[column])
+    if not assignments:
+        return
+    params.append(int(row_id))
+    conn.execute(
+        f"UPDATE job_runs SET {', '.join(assignments)} WHERE id = ?",
+        params,
+    )
+    conn.commit()
+
+
+def delete_job_run(conn: sqlite3.Connection, *, row_id: int) -> None:
+    conn.execute(
+        "DELETE FROM job_runs WHERE id = ?",
+        (int(row_id),),
+    )
+    conn.commit()
+
+
+def delete_job_runs(conn: sqlite3.Connection, *, row_ids: Iterable[int]) -> int:
+    unique_ids: list[int] = []
+    seen: set[int] = set()
+    for raw in row_ids:
+        resolved = int(raw)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique_ids.append(resolved)
+    if not unique_ids:
+        return 0
+    placeholders = ", ".join("?" for _ in unique_ids)
+    cursor = conn.execute(
+        f"DELETE FROM job_runs WHERE id IN ({placeholders})",
+        unique_ids,
+    )
+    conn.commit()
+    return int(cursor.rowcount or 0)
+
+
 def update_joblog_visible_columns(
     visible_columns: Iterable[str],
 ) -> list[str]:
@@ -321,6 +391,9 @@ def update_joblog_visible_columns(
         "service_entity",
         "service_city",
         "service_date",
+        "travel_km_outbound",
+        "travel_km_return",
+        "use_service_location_in_honorarios",
         "lang",
         "target_lang",
         "run_id",

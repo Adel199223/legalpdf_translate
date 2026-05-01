@@ -1,22 +1,216 @@
 {
   "version": 1,
-  "last_updated": "2026-03-09T01:00:00Z",
+  "last_updated": "2026-04-29T15:35:07Z",
   "issues": [
+    {
+      "id": "google-photos-oauth-picker-validation-hygiene",
+      "title": "Google Photos OAuth and Picker validation repeatedly stalled on env, popup, secret, and selection-completion evidence",
+      "first_seen_timestamp": "2026-04-28T00:00:00Z",
+      "last_seen_timestamp": "2026-04-28T15:57:40Z",
+      "repeat_count": 6,
+      "status": "mitigated",
+      "trigger_source": "operational",
+      "symptoms": [
+        "Google Photos credentials were visible in PowerShell but not inherited by the app process.",
+        "A too-short or masked client secret allowed the config gate to look configured before token exchange failed with token_exchange_invalid_client.",
+        "The Connect button was visible but did not dispatch /api/interpretation/google-photos/connect because a disabled secondary Choose button blocked the busy guard.",
+        "/connect succeeded but no OAuth tab opened until a visible Open Google sign-in fallback was added.",
+        "OAuth callback diagnostics were needed to distinguish state, code, token-exchange, token-save, and token-path failures without exposing sensitive values.",
+        "Picker session creation and polling worked, but validation remained partial until the user confirmed the Google Photos completion screen and LegalPDF observed mediaItemsSet=true, media-items listing, import, and Review Case Details."
+      ],
+      "likely_root_cause": "Live OAuth and Picker flows crossed process environment inheritance, Google Cloud credential setup, browser popup behavior, route dispatch guards, user-controlled Google account consent/selection screens, and privacy-limited diagnostics. Without a strict source-aware config gate, visible browser fallbacks, and method/path-only route logs, each layer looked like the same generic disconnected or waiting state.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-04-28T00:00:00Z",
+          "summary": "Added Windows User environment fallback and source labels for Google Photos OAuth config.",
+          "outcome": "stronger_mitigation"
+        },
+        {
+          "timestamp": "2026-04-28T00:30:00Z",
+          "summary": "Tightened secret validation/reset checklist to reject placeholders, masked or too-short values, and Client-ID-shaped secrets.",
+          "outcome": "stronger_mitigation"
+        },
+        {
+          "timestamp": "2026-04-28T01:00:00Z",
+          "summary": "Fixed Connect dispatch by guarding only the primary action while disabling secondary buttons for busy state.",
+          "outcome": "accepted_ui_fix"
+        },
+        {
+          "timestamp": "2026-04-28T01:30:00Z",
+          "summary": "Added safe callback diagnostics and failure categories.",
+          "outcome": "allowed_invalid_client_diagnosis_without_leakage"
+        },
+        {
+          "timestamp": "2026-04-28T02:30:00Z",
+          "summary": "Added visible Open Google sign-in fallback.",
+          "outcome": "popup_noopener_no_longer_stranded_oauth"
+        },
+        {
+          "timestamp": "2026-04-28T14:00:00Z",
+          "summary": "Added visible Open Google Photos Picker fallback and clearer Picker instructions.",
+          "outcome": "picker_session_flow_became_user_completable"
+        },
+        {
+          "timestamp": "2026-04-28T15:57:40Z",
+          "summary": "Manual completion run confirmed Google Photos Done screen, mediaItemsSet=true, media-items listing, import route, and Review Case Details.",
+          "outcome": "accepted_validation"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-04-28T15:57:40Z",
+        "summary": "Source-aware OAuth config, stricter secret validation, safe callback diagnostics, primary-action busy guards, visible OAuth/Picker fallbacks, and a manual validation run that waits for explicit user selection completion before judging Picker readiness.",
+        "expected_result": "Future Google Photos Interpretation validation uses a safe config gate, visible fallback controls, sanitized route logs, and explicit user selection-completion evidence before proceeding to media import."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
+        "docs/assistant/VALIDATION.md",
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
+        "docs/assistant/exec_plans/completed/2026-04-28_google_photos_interpretation_import.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
+        "docs/assistant/VALIDATION.md",
+        "docs/assistant/HANDOFF.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md",
+        "docs/assistant/ISSUE_MEMORY.md",
+        "docs/assistant/ISSUE_MEMORY.json"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "Google Photos Picker API setup and exact redirect URI checklist",
+          "source-aware env diagnostics and invalid-secret classification",
+          "visible browser fallbacks for OAuth and Picker URLs without logging raw URLs",
+          "method/path-only route logs with no query strings",
+          "manual completion semantics for Google Photos Done screens and mediaItemsSet"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "runbook",
+          "ref": "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-28_google_photos_interpretation_import.md"
+        },
+        {
+          "type": "manual_validation_report",
+          "ref": "C:\\Users\\FA507\\Downloads\\legalpdf_translate_google_photos_picker_manual_completion_report_20260428_155740.md"
+        },
+        {
+          "type": "branch",
+          "ref": "feat/google-photos-interpretation"
+        }
+      ]
+    },
+    {
+      "id": "google-photos-interpretation-ocr-service-city-ranking",
+      "title": "Google Photos Interpretation OCR confused address/title fragments with case or service metadata",
+      "first_seen_timestamp": "2026-04-29T08:25:00Z",
+      "last_seen_timestamp": "2026-04-29T15:35:07Z",
+      "repeat_count": 5,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Google Photos selected-image import reached Review Case Details, but OCR noise sometimes left service entity or city blank.",
+        "Address or title fragments such as Palácio da Justiça, Justiça, or subject text were sometimes treated as case city/entity candidates.",
+        "A proven service location could be missed even though nearby service-turn/header evidence supported Serviço de Turno | Moura.",
+        "KM refresh worked after manual city selection, proving the remaining bug was metadata extraction/ranking rather than distance mapping."
+      ],
+      "likely_root_cause": "Interpretation photo OCR used broad fallback text before ranking official case evidence and service-location evidence field by field. A first OCR pass could freeze weak case metadata and prevent stronger header/service-turn evidence from reaching the browser seed.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-04-29T09:07:00Z",
+          "summary": "Added service-turn city-before-label extraction and kept case city Beja distinct from service city Moura.",
+          "outcome": "partial"
+        },
+        {
+          "timestamp": "2026-04-29T12:38:00Z",
+          "summary": "Rejected placeholder values and strengthened official case evidence.",
+          "outcome": "partial"
+        },
+        {
+          "timestamp": "2026-04-29T13:33:00Z",
+          "summary": "Added photo-date fallback and service-city distance refresh.",
+          "outcome": "distance_and_date_accepted_service_ocr_still_variable"
+        },
+        {
+          "timestamp": "2026-04-29T16:17:44+01:00",
+          "summary": "Added strict address/title filtering plus field-by-field OCR variant ranking.",
+          "outcome": "accepted_live_review_details_behavior"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-04-29T16:17:44+01:00",
+        "summary": "Strictly reject placeholder/address/title fragments for case and service metadata, prefer official Comarca/court evidence for case city, prefer explicit service-turn/postcode/address evidence for service city, and leave fields blank/provisional rather than inventing a city when evidence is not trusted.",
+        "expected_result": "Future Google Photos Interpretation imports keep case and service metadata distinct, recover trusted service-turn evidence when present, and avoid invented address-fragment cities."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
+        "docs/assistant/VALIDATION.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/exec_plans/completed/2026-04-28_google_photos_service_city_distance_drawer.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/HANDOFF.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/ISSUE_MEMORY.md",
+        "docs/assistant/ISSUE_MEMORY.json",
+        "docs/assistant/VALIDATION.md",
+        "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "medium",
+        "targets": [
+          "Google Photos Interpretation metadata provenance",
+          "OCR field-ranking rules for case city versus service city",
+          "no Google Photos place/location claim",
+          "blank/provisional fallback instead of invented address-fragment cities"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-28_google_photos_service_city_distance_drawer.md"
+        },
+        {
+          "type": "branch",
+          "ref": "feat/google-photos-service-city-distance-drawer"
+        }
+      ]
+    },
     {
       "id": "workflow-wrong-build-under-test",
       "title": "Wrong app/build under test because of mixed branches/worktrees and noncanonical launch",
       "first_seen_timestamp": "2026-03-06T00:00:00Z",
-      "last_seen_timestamp": "2026-03-09T01:00:00Z",
-      "repeat_count": 5,
+      "last_seen_timestamp": "2026-04-08T11:03:12Z",
+      "repeat_count": 12,
       "status": "mitigated",
       "trigger_source": "both",
       "symptoms": [
         "The wrong LegalPDF Translate window was opened for testing.",
         "Accepted functionality appeared to be missing because it existed only on a side branch or the wrong worktree was launched.",
         "Repeated user-visible confusion occurred during Gemini, Gmail, and UI follow-up testing.",
-        "The user needed extra support guidance about which sibling folder or workspace file should be the normal daily entry point."
+        "The user needed extra support guidance about which sibling folder or workspace file should be the normal daily entry point.",
+        "The browser app could open on the right localhost URL while still running a stale module graph or stale extension/service-worker state.",
+        "Native-host repair could point the launcher to a broken local runtime even though a healthy runtime was already running the visible browser app.",
+        "The configured canonical worktree path itself could still be left on a feature branch, so a later restart drifted the launcher back to the wrong branch again.",
+        "Accepted overlapping browser/Gmail fixes could remain split across multiple dirty feature worktrees, making the final commit/push step itself risky.",
+        "Live Gmail could still drift back to the old repo path because machine routing, AppData native-host state, and the canonical worktree declaration were not yet converged onto one primary repo on main."
       ],
-      "likely_root_cause": "Feature work progressed on side branches after acceptance, the approved base was not promoted immediately, and multiple runnable worktrees existed without strong enough canonical-build enforcement.",
+      "likely_root_cause": "Feature work progressed on side branches after acceptance, the approved base was not promoted immediately, multiple runnable worktrees existed without strong enough canonical-build enforcement, native-host runtime repair originally guessed from worktree state instead of validating the active runtime, browser cache busting initially touched only the shell entrypoint so imported modules could stay stale, the configured canonical worktree path was not always restored to clean main after isolated feature validation, overlapping accepted work could remain fragmented across several dirty side worktrees instead of being harvested into one clean publish branch before push/merge, and the machine kept treating a side worktree as a temporary canonical target for too long instead of converging launchers, AppData native-host state, and live listeners back onto one primary repo path on main.",
       "attempted_fix_history": [
         {
           "timestamp": "2026-03-07T00:00:00Z",
@@ -32,25 +226,63 @@
           "timestamp": "2026-03-09T01:00:00Z",
           "summary": "Added a saved multi-root VS Code workspace guide and archived a stale broken sibling folder out of the daily view.",
           "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-03-19T06:51:00Z",
+          "summary": "Promoted the local browser app to the preferred daily-use surface, added explicit live versus isolated shadow mode routing, and documented the canonical live browser URL plus detached launcher.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-03-29T00:00:00Z",
+          "summary": "Added shell readiness, runtime metadata truthfulness, and single-flight Gmail handoff stabilization.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-03-30T00:00:00Z",
+          "summary": "Changed native-host repair to validate the current runtime, split shell-safe startup from blocked document runtime imports, versioned the whole browser asset graph, and required client/server asset_version agreement before a handoff is treated as ready.",
+          "outcome": "stronger_mitigation"
+        },
+        {
+          "timestamp": "2026-04-03T15:47:52Z",
+          "summary": "Repointed the native-host launcher to an isolated fix worktree during live validation.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-04-05T12:53:22Z",
+          "summary": "Required overlapping accepted work from multiple dirty feature worktrees to be harvested into one clean integration branch, published as a two-commit wave, and followed by canonical-path/launcher restoration plus side-worktree removal.",
+          "outcome": "stronger_mitigation"
+        },
+        {
+          "timestamp": "2026-04-08T13:34:10Z",
+          "summary": "Converged live Gmail back onto one primary repo on main, blocked noncanonical runtimes from rewriting AppData native-host state to themselves, removed the live Gmail continue override, and regenerated the real launcher/native-host/extension entrypoints from the primary repo.",
+          "outcome": "stronger_mitigation"
         }
       ],
       "accepted_fix": {
-        "timestamp": "2026-03-07T10:33:19Z",
-        "summary": "Canonical build enforcement plus approved-base promotion discipline, launcher identity packet gating, and noncanonical launch override rules.",
-        "expected_result": "Only the canonical approved-base build is the default test target, and wrong-build launches fail closed unless explicitly overridden."
+        "timestamp": "2026-04-08T13:34:10Z",
+        "summary": "Canonical build discipline now also requires single-path machine routing on the primary repo main: live Gmail may run only from the primary repo, noncanonical runtimes cannot self-register native-host state, restart-to-canonical is the only supported drift recovery path, and launcher/AppData state must be regenerated from the merged primary repo before closeout.",
+        "expected_result": "Only the primary repo on main is allowed to own live Gmail, the machine cannot drift back to a side worktree through launcher or native-host repair, and publish/closeout restores one clean canonical runtime path before new validation begins."
       },
-      "regressed_after_accepted_fix": false,
+      "regressed_after_accepted_fix": true,
       "affected_workflows": [
         "docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md",
         "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md",
-        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md",
+        "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md",
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md"
       ],
       "affected_docs": [
+        "APP_KNOWLEDGE.md",
         "docs/assistant/runtime/CANONICAL_BUILD.json",
         "docs/assistant/DOCS_REFRESH_NOTES.md",
         "docs/assistant/INDEX.md",
         "docs/assistant/APP_KNOWLEDGE.md",
-        "docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md"
+        "docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/LOCAL_ENV_PROFILE.local.md",
+        "docs/assistant/LOCAL_CAPABILITIES.md"
       ],
       "bootstrap_relevance": "required",
       "docs_sync_relevance": {
@@ -58,26 +290,66 @@
         "targets": [
           "worktree/build identity governance",
           "approved-base promotion rules",
-          "canonical launch/default test target guidance",
-          "plain-language local workspace entry guidance"
-        ]
+        "canonical launch/default test target guidance",
+        "canonical-path cleanup after side-branch validation",
+        "plain-language local workspace entry guidance",
+        "validated runtime repair and whole-graph browser asset provenance",
+        "clean integration-branch publish rules for overlapping accepted side work",
+        "single-path canonical launcher/native-host routing back to the primary repo on main"
+      ]
       },
       "evidence_refs": [
         {
           "type": "execplan",
-          "ref": "docs/assistant/exec_plans/active/2026-03-07_worktree_baseline_docs_sync.md"
+          "ref": "docs/assistant/exec_plans/completed/2026-03-07_worktree_baseline_docs_sync.md"
         },
         {
           "type": "execplan",
-          "ref": "docs/assistant/exec_plans/active/2026-03-07_qt_build_identity_hardening.md"
+          "ref": "docs/assistant/exec_plans/completed/2026-03-07_qt_build_identity_hardening.md"
         },
         {
           "type": "execplan",
-          "ref": "docs/assistant/exec_plans/active/2026-03-07_accepted_feature_promotion_canonical_enforcement.md"
+          "ref": "docs/assistant/exec_plans/completed/2026-03-07_accepted_feature_promotion_canonical_enforcement.md"
         },
         {
           "type": "execplan",
           "ref": "docs/assistant/exec_plans/completed/2026-03-09_worktree_workspace_organization.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-29_cold_start_reliability_rebuild.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-30_browser_asset_provenance_gmail_prepare.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-30_first_open_gmail_hydration_recovery.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-03_browser_gmail_arabic_publish_closeout.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-03_arabic_legal_risk_hardening.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-03_gmail_redo_current_attachment.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-06_gmail-fast-start-single-window-recovery.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-08_single-path-canonical-recovery.md"
         },
         {
           "type": "branch",
@@ -88,12 +360,132 @@
           "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
         },
         {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_canonical_stage1"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_gmail_redo"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_run_report_artifacts"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_closeout"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_gmail_pdf_worker_fix"
+        },
+        {
           "type": "workspace",
           "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate-worktrees.code-workspace"
         },
         {
           "type": "worktree",
           "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_integration"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_beginner_first_ux"
+        }
+      ]
+    },
+    {
+      "id": "workflow-gmail-fresh-start-state-drift",
+      "title": "Fresh Gmail prepare could inherit stale workspace state, GUI defaults, or legacy checkpoints",
+      "first_seen_timestamp": "2026-04-06T19:24:41Z",
+      "last_seen_timestamp": "2026-04-08T11:03:12Z",
+      "repeat_count": 4,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Prepare selected could open New Job while the workspace still showed the previous failed or completed Gmail run.",
+        "The prepared Gmail attachment could look ready, but Start Translate still inherited stale GUI defaults such as resume=true or keep_intermediates=false.",
+        "A fresh Gmail start could collide with a legacy generic run folder like Auto_FR_run and fail before page 1.",
+        "The user could see a recovery or failure surface for the old run instead of a true fresh prepared start for the current Gmail attachment."
+      ],
+      "likely_root_cause": "Prepared Gmail launch state was not authoritative end to end, stale currentJob and completion bindings could survive a fresh Gmail prepare, and fresh Gmail starts still shared filename-based run/checkpoint namespace with older manual runs unless Gmail attachment scope was carried through.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-04-06T20:00:00Z",
+          "summary": "Added prepared-state UX for New Job and stopped auto-starting on Prepare selected.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-04-07T22:52:44Z",
+          "summary": "Validated Gmail-side defaults and Gmail-scoped run dirs on a side worktree.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-04-08T13:34:10Z",
+          "summary": "Cleared stale workspace job bindings on fresh Gmail prepare, enforced fresh Gmail defaults server-side, and kept Gmail run/checkpoint identity attachment-scoped on the primary repo.",
+          "outcome": "stronger_mitigation"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-04-08T13:34:10Z",
+        "summary": "Fresh Gmail prepares now clear stale terminal workspace job state, seed authoritative OCR/image/resume/keep-intermediates defaults in both UI and server paths, and use Gmail attachment-scoped run/checkpoint identity so legacy folders like Auto_FR_run are never treated as fresh-start resume targets.",
+        "expected_result": "A new Gmail prepare opens a real ready-to-start New Job surface for the current attachment, Start Translate does not inherit stale GUI defaults, and fresh Gmail runs cannot collide with older generic checkpoints."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/TRANSLATION_WORKFLOW.md",
+        "docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/ISSUE_MEMORY.md"
+      ],
+      "bootstrap_relevance": "required",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "prepared Gmail start semantics",
+          "stale workspace binding reset on fresh Gmail prepare",
+          "authoritative Gmail-start defaults in UI and server paths",
+          "attachment-scoped Gmail run/checkpoint identity instead of generic filename-based reuse"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-06_gmail-fast-start-single-window-recovery.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-08_single-path-canonical-recovery.md"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_canonical_stage1"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/shadow_web/static/translation.js"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/translation_service.py"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/output_paths.py"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/checkpoint.py"
         }
       ]
     },
@@ -101,14 +493,15 @@
       "id": "harness-live-state-contamination",
       "title": "Tests or harness cleanup reused live user state or user-facing ports and contaminated real runtime checks",
       "first_seen_timestamp": "2026-03-08T00:00:00Z",
-      "last_seen_timestamp": "2026-03-08T09:27:00Z",
-      "repeat_count": 2,
+      "last_seen_timestamp": "2026-03-19T06:51:00Z",
+      "repeat_count": 3,
       "status": "mitigated",
       "trigger_source": "both",
       "symptoms": [
         "The expected localhost listener belonged to pytest or another non-user runtime instead of the visible app.",
         "Tests reused live roaming/profile settings or bridge configuration.",
-        "The browser showed a successful handoff while the visible app stayed idle."
+        "The browser showed a successful handoff while the visible app stayed idle.",
+        "Browser validation needed an explicit isolated shadow mode because real Gmail bridge ownership and real user data could not safely share the same default runtime state."
       ],
       "likely_root_cause": "Tests and ad hoc debugging reused live %APPDATA%, live settings, or default user-facing ports instead of isolated temp state.",
       "attempted_fix_history": [
@@ -116,12 +509,17 @@
           "timestamp": "2026-03-08T00:00:00Z",
           "summary": "Isolated pytest APPDATA and stopped bridge tests from using the live Gmail port.",
           "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-03-19T06:51:00Z",
+          "summary": "Added explicit browser-app live versus isolated shadow mode, separate runtime roots, browser-owned live Gmail bridge ownership, and clearer diagnostics for active mode, data root, and listener owner.",
+          "outcome": "stronger_mitigation"
         }
       ],
       "accepted_fix": {
-        "timestamp": "2026-03-08T09:27:00Z",
-        "summary": "Project guidance now requires temp env/filesystem isolation, non-live or ephemeral test ports, explicit teardown, and visible listener-conflict status.",
-        "expected_result": "Tests no longer hijack live machine state, and listener/runtime conflicts are triaged as harness issues before product debugging starts."
+        "timestamp": "2026-03-19T06:51:00Z",
+        "summary": "Project guidance now requires temp env/filesystem isolation, non-live or ephemeral test ports, explicit teardown, visible listener-conflict status, and a first-class browser-app split between real-work live mode and isolated shadow mode.",
+        "expected_result": "Tests no longer hijack live machine state, browser diagnostics show which mode and data root are active, and listener/runtime conflicts are triaged as harness issues before product debugging starts."
       },
       "regressed_after_accepted_fix": false,
       "affected_workflows": [
@@ -132,7 +530,10 @@
       "affected_docs": [
         "docs/assistant/LOCAL_ENV_PROFILE.local.md",
         "docs/assistant/LOCAL_CAPABILITIES.md",
-        "docs/assistant/ISSUE_MEMORY.md"
+        "docs/assistant/ISSUE_MEMORY.md",
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/SESSION_RESUME.md"
       ],
       "bootstrap_relevance": "required",
       "docs_sync_relevance": {
@@ -149,6 +550,10 @@
           "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_gmail_intake"
         },
         {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_beginner_first_ux"
+        },
+        {
           "type": "template",
           "ref": "docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md"
         },
@@ -162,27 +567,46 @@
       "id": "workflow-fragmented-multi-surface-diagnostics",
       "title": "Fragmented diagnostics across handoff, per-run execution, and finalization slowed root-cause analysis",
       "first_seen_timestamp": "2026-03-08T00:00:00Z",
-      "last_seen_timestamp": "2026-03-08T09:27:00Z",
-      "repeat_count": 2,
+      "last_seen_timestamp": "2026-04-05T15:26:00Z",
+      "repeat_count": 5,
       "status": "mitigated",
       "trigger_source": "both",
       "symptoms": [
         "Browser banners, app bridge state, run reports, and finalization/draft failures had to be correlated manually.",
         "Repeated debugging required back-and-forth between transient UI evidence and durable run artifacts.",
-        "Support packets were inconsistent across handoff, execution, and finalization failures."
+        "Support packets were inconsistent across handoff, execution, and finalization failures.",
+        "Gmail/browser preparation failures that happened before run_dir existed had no direct report artifact, so debugging stalled before the normal run-report path even began.",
+        "Blocked or recoverable Gmail finalization states needed a dedicated artifact instead of being inferred from raw JSON pasted out of the drawer.",
+        "Browser Generate Run Report could feel broken because the detailed report was not exposed like a normal translation artifact.",
+        "Gmail-started reruns could silently drop gmail_batch_context, which removed Gmail provenance from run_summary.json and run_report.md."
       ],
-      "likely_root_cause": "Project docs did not yet encode one support-packet order or one durable app-owned session-artifact pattern for multi-surface workflows.",
+      "likely_root_cause": "Project docs did not yet encode one support-packet order or one durable app-owned session-artifact pattern for multi-surface workflows, and browser-only pre-run failures plus last-mile finalization failures were not treated as first-class report surfaces. Translation-owned detailed run reports were not yet surfaced as first-class browser artifacts, and stale manual-upload state could override Gmail launch provenance during reruns unless the browser submit path cleared those conflicts explicitly.",
       "attempted_fix_history": [
         {
           "timestamp": "2026-03-08T00:00:00Z",
           "summary": "Feature-specific Gmail diagnostics were added.",
           "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-03-30T00:00:00Z",
+          "summary": "Added direct browser failure reports for pre-run Gmail/browser failures and direct Gmail finalization reports for blocked/local-only/draft-failed reply states.",
+          "outcome": "stronger_mitigation"
+        },
+        {
+          "timestamp": "2026-04-05T13:08:00Z",
+          "summary": "Promoted run_report.md to a first-class browser translation artifact with generate/download behavior in the completion drawer.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-04-05T15:26:00Z",
+          "summary": "Preserved gmail_batch_context through Gmail-originated reruns/manual restart prep and clarified report run tokens versus billed-total wording.",
+          "outcome": "stronger_mitigation"
         }
       ],
       "accepted_fix": {
-        "timestamp": "2026-03-08T09:27:00Z",
-        "summary": "Project guidance now routes multi-surface debugging through per-run artifacts first, additive workflow context when needed, one app-owned session artifact, and a fixed support-packet order.",
-        "expected_result": "Future host-bound workflows can be debugged from one predictable packet instead of reconstructing the incident from thread memory."
+        "timestamp": "2026-04-05T15:26:00Z",
+        "summary": "Project guidance now routes multi-surface debugging through browser/banner evidence first, direct browser/finalization report artifacts when no normal run report exists yet, first-class per-run run_report.md artifacts for execution issues, preserved Gmail provenance in Gmail-started run reports, and one app-owned session artifact for batch/finalization state.",
+        "expected_result": "Future host-bound workflows can be debugged from one predictable packet instead of reconstructing the incident from thread memory or pasted drawer JSON, and Gmail-started run reports remain shareable and trustworthy before finalization."
       },
       "regressed_after_accepted_fix": false,
       "affected_workflows": [
@@ -192,7 +616,9 @@
       "affected_docs": [
         "APP_KNOWLEDGE.md",
         "docs/assistant/APP_KNOWLEDGE.md",
-        "docs/assistant/ISSUE_MEMORY.md"
+        "docs/assistant/ISSUE_MEMORY.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md"
       ],
       "bootstrap_relevance": "required",
       "docs_sync_relevance": {
@@ -200,7 +626,10 @@
         "targets": [
           "session-artifact layering guidance",
           "support-packet order",
-          "multi-surface troubleshooting workflow routing"
+          "multi-surface troubleshooting workflow routing",
+          "direct browser/finalization report surfaces when no normal run report exists yet",
+          "run-owned detailed report discoverability from the browser completion drawer",
+          "Gmail provenance preservation across reruns before finalization"
         ]
       },
       "evidence_refs": [
@@ -215,6 +644,83 @@
         {
           "type": "file",
           "ref": "C:\\Users\\FA507\\Downloads\\run_report.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-30_gmail_prepare_pdf_worker_reportability.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-05-gmail-run-report-provenance.md"
+        }
+      ]
+    },
+    {
+      "id": "workflow-gmail-restored-finalization-shadowed-fresh-handoff",
+      "title": "Recovered completed Gmail batches could reopen as the main flow and block a fresh extension handoff",
+      "first_seen_timestamp": "2026-04-05T15:05:00Z",
+      "last_seen_timestamp": "2026-04-05T15:52:00Z",
+      "repeat_count": 1,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Clicking the Gmail extension again could reopen the previous finalized batch instead of the new handoff.",
+        "The browser workspace looked stuck on old work until the user reset the workspace or cold-started the app.",
+        "Recovered finalization history could crowd the main CTA instead of staying secondary."
+      ],
+      "likely_root_cause": "Gmail bootstrap treated report-restored terminal translation batches as active_session, and the Gmail frontend treated recovered-only completed state as a stable translation_finalize workspace instead of waiting for a fresh handoff.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-04-05T15:52:00Z",
+          "summary": "Demoted report-restored terminal batches to additive restored_completed_session, kept bounded refresh alive for recovered-only state, and moved recovered finalization behind Open Last Finalization Result.",
+          "outcome": "stronger_mitigation"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-04-05T15:52:00Z",
+        "summary": "Fresh Gmail handoffs now take priority over recovered finalized batches by default, while the previous finalized batch remains accessible only as secondary recovered history.",
+        "expected_result": "Clicking the extension for new work should open fresh Gmail intake by default instead of appearing stuck on the previous finalized batch."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/SESSION_RESUME.md"
+      ],
+      "bootstrap_relevance": "required",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "fresh handoff precedence over recovered finalization",
+          "secondary recovered-history access",
+          "do not treat recovered-only Gmail state as the default stable workspace"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-05_gmail_fresh_handoff_priority.md"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_gmail_fresh_handoff"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
         }
       ]
     },
@@ -222,16 +728,17 @@
       "id": "product-arabic-docx-word-right-alignment",
       "title": "Arabic DOCX right alignment in Word could not be solved durably with OOXML-only writer changes",
       "first_seen_timestamp": "2026-03-08T00:00:00Z",
-      "last_seen_timestamp": "2026-03-08T20:45:00Z",
-      "repeat_count": 4,
+      "last_seen_timestamp": "2026-04-03T15:47:52Z",
+      "repeat_count": 5,
       "status": "mitigated",
       "trigger_source": "both",
       "symptoms": [
         "Arabic DOCX output still opened left-aligned in Word even though the text itself remained RTL.",
         "Some attempted fixes worsened mixed Arabic/Portuguese line ordering or misplaced Latin fragments.",
-        "Source-side XML/test changes could appear correct while the real Word-rendered document still required manual right alignment."
+        "Source-side XML/test changes could appear correct while the real Word-rendered document still required manual right alignment.",
+        "Even after manual right alignment in Word, mixed-script lines could still show commas, bars, or numbering fragments on the wrong side when DOCX runs were assembled badly."
       ],
-      "likely_root_cause": "Mixed RTL/LTR Word layout is not reliably controlled by the current OOXML writer path alone, so writer-only fixes were not durable enough for shipped user-visible behavior.",
+      "likely_root_cause": "Mixed RTL/LTR Word layout is not reliably controlled by the current OOXML writer path alone, so writer-only fixes were not durable enough for shipped user-visible behavior, and placeholder/token run assembly could still attach punctuation and separator bars to the wrong LTR runs before the manual Word review step.",
       "attempted_fix_history": [
         {
           "timestamp": "2026-03-08T00:00:00Z",
@@ -247,14 +754,19 @@
           "timestamp": "2026-03-08T00:00:00Z",
           "summary": "Tried a bidi-only paragraph shape with build/delivery verification.",
           "outcome": "insufficient"
+        },
+        {
+          "timestamp": "2026-04-03T15:47:52Z",
+          "summary": "Hardened shared Arabic DOCX token/run segmentation for mixed-script punctuation, identifiers, and separator bars while keeping the browser review step manual-only.",
+          "outcome": "stronger_mitigation"
         }
       ],
       "accepted_fix": {
-        "timestamp": "2026-03-08T20:45:00Z",
-        "summary": "Added an Arabic-only Word review gate with Align Right + Save, automatic save detection, and manual fallback actions before Save to Job Log / Gmail continuation.",
-        "expected_result": "Arabic output can be reviewed and aligned on the real Windows Word surface before the app continues, without claiming a durable OOXML-only right-alignment fix."
+        "timestamp": "2026-04-03T15:47:52Z",
+        "summary": "The shipped mitigation is now a real Arabic Word review step that opens the durable DOCX for manual save plus corrected shared DOCX run assembly so mixed Arabic/LTR punctuation survives that manual right-alignment path.",
+        "expected_result": "Arabic output can be reviewed and aligned on the real Windows Word surface before the app continues, with mixed-script punctuation and identifiers remaining visually stable enough for normal manual Word review."
       },
-      "regressed_after_accepted_fix": false,
+      "regressed_after_accepted_fix": true,
       "affected_workflows": [
         "docs/assistant/workflows/TRANSLATION_WORKFLOW.md"
       ],
@@ -273,6 +785,8 @@
         "targets": [
           "Arabic Word review gate behavior",
           "Windows Word + PowerShell same-host requirement",
+          "browser manual-only save behavior",
+          "mixed Arabic/LTR DOCX run-ordering hardening",
           "durable memory of failed OOXML-only fixes without presenting them as current behavior"
         ]
       },
@@ -282,12 +796,28 @@
           "ref": "docs/assistant/exec_plans/completed/2026-03-08_arabic_docx_review_gate.md"
         },
         {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-03_arabic_docx_run_ordering_manual_review.md"
+        },
+        {
           "type": "file",
           "ref": "src/legalpdf_translate/word_automation.py"
         },
         {
           "type": "file",
+          "ref": "src/legalpdf_translate/docx_writer.py"
+        },
+        {
+          "type": "file",
           "ref": "src/legalpdf_translate/qt_gui/dialogs.py"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/browser_arabic_review.py"
+        },
+        {
+          "type": "file",
+          "ref": "tests/test_docx_writer_rtl.py"
         },
         {
           "type": "file",
@@ -299,7 +829,7 @@
         },
         {
           "type": "worktree",
-          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate_gmail_pdf_worker_fix"
         }
       ]
     },
@@ -353,6 +883,345 @@
         {
           "type": "file",
           "ref": "tests/test_qt_app_state.py"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        }
+      ]
+    },
+    {
+      "id": "workflow-post-merge-continuity-cleanup-drift",
+      "title": "Post-merge cleanup drift left stale roadmap continuity and scratch artifacts behind",
+      "first_seen_timestamp": "2026-03-09T23:30:00Z",
+      "last_seen_timestamp": "2026-03-09T23:30:00Z",
+      "repeat_count": 1,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "docs/assistant/SESSION_RESUME.md still pointed to a deleted feature branch after merge.",
+        "docs/assistant/exec_plans/active/ still held clearly completed or dead-branch plans.",
+        "A docs-only continuity repair was needed on main after the merge was already complete.",
+        "Deterministic Qt render-review outputs showed up as untracked Source Control noise."
+      ],
+      "likely_root_cause": "Branch cleanup did not require roadmap closeout, resume-anchor updates, and scratch-output cleanup to be decision-complete before merge.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-09T23:30:00Z",
+          "summary": "Merged the feature thread first and repaired continuity state afterward on main.",
+          "outcome": "partial_only"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-09T23:30:00Z",
+        "summary": "Added dormant-roadmap support for SESSION_RESUME.md, archived deterministically stale plans, hardened commit/publish and docs-maintenance workflows, moved Qt render-review scratch output under ignored tmp/, and added validator coverage for stale resume branches and legacy scratch-path guidance.",
+        "expected_result": "Post-merge cleanup should no longer rely on thread memory to restore roadmap continuity or remove deterministic assistant-tool scratch artifacts."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md",
+        "docs/assistant/workflows/ROADMAP_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "docs/assistant/UPDATE_POLICY.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/ISSUE_MEMORY.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "stale roadmap continuity repair",
+          "active/completed ExecPlan lifecycle hygiene",
+          "post-merge cleanup guardrails",
+          "ignored scratch-output defaults for assistant tooling"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "file",
+          "ref": "docs/assistant/SESSION_RESUME.md"
+        },
+        {
+          "type": "file",
+          "ref": "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md"
+        },
+        {
+          "type": "file",
+          "ref": "docs/assistant/workflows/ROADMAP_WORKFLOW.md"
+        },
+        {
+          "type": "file",
+          "ref": "tooling/qt_render_review.py"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-09_cleanup_continuity_hardening.md"
+        },
+        {
+          "type": "branch",
+          "ref": "main"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        }
+      ]
+    },
+    {
+      "id": "desktop-qt-honorarios-export-reliability",
+      "title": "Host-bound honorários PDF export and Gmail finalization readiness felt unstable because launch-only Word checks were too shallow",
+      "first_seen_timestamp": "2026-03-12T00:00:00Z",
+      "last_seen_timestamp": "2026-03-30T18:21:00Z",
+      "repeat_count": 3,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "The visible LegalPDF window could show No responde while Word PDF export tried to launch or timed out.",
+        "PDF failure warnings dumped raw PowerShell or COM text inline and could cascade into an extra Gmail missing-PDF warning.",
+        "Focus-sensitive Qt tests around Return or Delete shortcuts could fail intermittently because leaked dialogs or stale focus changed the active target.",
+        "The browser finalization drawer could show Word as apparently ready from a shallow probe even though the real DOCX-to-PDF export path still timed out and ended in local_only."
+      ],
+      "likely_root_cause": "Host-bound Word PDF export originally ran on the GUI thread and failure handling spanned too many modal layers, the Qt harness did not yet enforce deterministic popup cleanup, activation, and shortcut targeting for focus-sensitive dialog tests, and launch-only Word readiness was too weak for the Gmail finalization path.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-03-12T00:00:00Z",
+          "summary": "Added synchronous honorários DOCX-to-PDF export through Word automation.",
+          "outcome": "insufficient"
+        },
+        {
+          "timestamp": "2026-03-30T00:00:00Z",
+          "summary": "Browser/operator surfaces still treated launch-only Word readiness as sufficient proof for Gmail finalization.",
+          "outcome": "insufficient"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-03-30T00:00:00Z",
+        "summary": "Word export reliability now uses phase-aware diagnostics, bounded cleanup for app-owned stuck helpers, a real DOCX-to-PDF export canary, browser finalization_ready gating before Gmail reply finalization, and direct retry/report flows when export still fails after a passing canary.",
+        "expected_result": "Honorários export should stay responsive during host-bound PDF work, Gmail finalization should fail early when export is not truly ready, and last-mile export failures should stay recoverable and reportable."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md",
+        "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/ISSUE_MEMORY.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "non-blocking host automation for user-facing desktop flows",
+          "concise user-facing failure text with expandable diagnostics",
+          "single recovery flow for partial-success exports",
+          "explicit activation and leaked-popup cleanup for focus-sensitive Qt tests"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-12_desktop_stability_honorarios_qt.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/qt_gui/dialogs.py"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/qt_gui/worker.py"
+        },
+        {
+          "type": "file",
+          "ref": "src/legalpdf_translate/word_automation.py"
+        },
+        {
+          "type": "file",
+          "ref": "tests/conftest.py"
+        },
+        {
+          "type": "file",
+          "ref": "tests/test_qt_app_state.py"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        }
+      ]
+    },
+    {
+      "id": "workflow-gmail-same-tab-console-churn-regression",
+      "title": "Gmail extension handoff regressed through stale click state, separate-surface launch, and console-window churn",
+      "first_seen_timestamp": "2026-04-08T16:04:00Z",
+      "last_seen_timestamp": "2026-04-19T12:51:44Z",
+      "repeat_count": 7,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Gmail extension clicks could create transparent or CMD-like windows that opened and closed repeatedly.",
+        "The browser app could land on Pending load with unavailable message/thread IDs.",
+        "A second click could show stale already preparing or stale retry banners after the first click produced no usable workspace.",
+        "Separate browser-surface ownership and stale exact localhost tabs made the extension, native host, and browser app disagree about whether the handoff was ready.",
+        "Deterministic acceptance tooling itself could leave playwright-mcp helper CMD processes, creating false console-churn evidence unless cleaned up."
+      ],
+      "likely_root_cause": "Gmail cold-start responsibilities were split across native host, detached launcher, extension, stale browser tabs, and live runtime state roots; the .cmd native-host wrapper and generic launch/probe paths could surface console windows; the extension previously held locks before a current browser surface and current per-click handoff were proven; and acceptance relied too heavily on manual toolbar clicks and incomplete diagnostics.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-04-08T18:04:00Z",
+          "summary": "Added one-shot window tracing and single-owner launch diagnostics.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-04-08T21:30:00Z",
+          "summary": "Removed Edge process launch from Gmail cold start and made the extension own browser surfaces.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-04-09T11:32:00Z",
+          "summary": "Switched live registration to the no-console EXE and changed browser-app cold start to succeed on server-ready.",
+          "outcome": "partial_only"
+        },
+        {
+          "timestamp": "2026-04-09T21:01:00Z",
+          "summary": "Converted Gmail intake to same-tab redirect, added per-click handoff_session_id, source_gmail_url, bridge-post diagnostics, and deterministic debug acceptance.",
+          "outcome": "stronger_mitigation"
+        },
+        {
+          "timestamp": "2026-04-19T12:51:44Z",
+          "summary": "Normal Edge Profile 2 acceptance confirmed same-tab redirect, bridge_context_posted=true, ready Gmail bootstrap with one attachment, Return to Gmail, and no LegalPDF/native-host CMD churn.",
+          "outcome": "accepted_live_mitigation"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-04-19T12:51:44Z",
+        "summary": "Live Gmail intake now uses same-tab redirect for the current Gmail tab, native-host/server-only preparation through the EXE path, per-click handoff_session_id, immediate post-redirect /gmail-intake, AppData runtime-state diagnostics, and Return to Gmail from the captured source URL.",
+        "expected_result": "A first Gmail click either reaches a ready LegalPDF Gmail workspace in the same tab or fails clearly; stale already-preparing banners, Pending load, unavailable IDs, and repeated CMD/PseudoConsole churn do not return."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md",
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md",
+        "docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/features/APP_USER_GUIDE.md",
+        "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md",
+        "docs/assistant/ISSUE_MEMORY.md"
+      ],
+      "bootstrap_relevance": "required",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "same-tab Gmail intake as the canonical click model",
+          "no-console native-host EXE as the canonical live registration target",
+          "stale already-preparing and Pending load fail-closed diagnostics",
+          "deterministic acceptance before another manual live-click validation loop",
+          "separation between product console churn and automation-helper CMD processes"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-08_gmail-same-tab-intake-and-console-churn-closeout.md"
+        },
+        {
+          "type": "commit",
+          "ref": "8dfb027"
+        },
+        {
+          "type": "live_acceptance",
+          "ref": "20260419_125112_2d61fbb64f8e"
+        },
+        {
+          "type": "worktree",
+          "ref": "C:\\Users\\FA507\\.codex\\legalpdf_translate"
+        }
+      ]
+    },
+    {
+      "id": "workflow-gmail-honorarios-local-court-city",
+      "title": "Gmail honorários metadata used generic comarca city instead of the specific local court unit",
+      "first_seen_timestamp": "2026-04-19T19:55:00Z",
+      "last_seen_timestamp": "2026-04-19T21:08:44Z",
+      "repeat_count": 1,
+      "status": "mitigated",
+      "trigger_source": "both",
+      "symptoms": [
+        "Gmail translation save seed and honorários output resolved case_city/service_city to Beja.",
+        "The source document showed stronger local evidence for Cuba, including Juízo de Competência Genérica de Cuba, address city Cuba, and cuba.ministeriopublico@tribunais.org.pt.",
+        "The generated honorários addressee and closing city could point to the broader comarca instead of the local court unit."
+      ],
+      "likely_root_cause": "Metadata autofill accepted broad court/comarca evidence before ranking more specific local-unit, address, and email evidence; translation seed hydration then copied that weaker city into both case and service city for downstream Job Log and honorários generation.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-04-19T20:25:26Z",
+          "summary": "Ranked local court-unit metadata over generic comarca evidence and propagated the corrected city into translation save seeds.",
+          "outcome": "accepted_after_live_validation"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-04-19T21:08:44Z",
+        "summary": "Latest live run 20260419_215231 on canonical main build 0b2687f produced case_city=Cuba, service_city=Cuba, kept court_email=cuba.ministeriopublico@tribunais.org.pt, completed intentional page-2 translation as Processed pages: 2/2, finalized gmail_batch_92aecc9772da as draft_ready, and generated an honorários PDF addressed to Juízo de Competência Genérica de Cuba with closing city Cuba.",
+        "expected_result": "Future Gmail translation save seeds, Job Log rows, honorários DOCX/PDF files, and Gmail finalization reports use the most specific local court-unit city when it conflicts with a broader comarca city."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md",
+        "docs/assistant/workflows/TRANSLATION_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/DOCS_REFRESH_NOTES.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/exec_plans/completed/2026-04-19_gmail_honorarios_local_court_city_fix.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "medium",
+        "targets": [
+          "specific local court-unit city outranks generic comarca city for honorários metadata",
+          "Gmail finalization acceptance should verify honorários addressee and closing city, not only case_city",
+          "citation marker and parenthesis drift remain diagnostic-only unless stronger risk signals trigger review"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-04-19_gmail_honorarios_local_court_city_fix.md"
+        },
+        {
+          "type": "pr",
+          "ref": "https://github.com/Adel199223/legalpdf_translate/pull/44"
+        },
+        {
+          "type": "commit",
+          "ref": "0b2687f"
+        },
+        {
+          "type": "live_run",
+          "ref": "20260419_215231"
+        },
+        {
+          "type": "gmail_batch",
+          "ref": "gmail_batch_92aecc9772da"
         },
         {
           "type": "worktree",

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QObject, QThread, Qt, Signal
+from PySide6.QtCore import QObject, QSize, QThread, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -62,6 +62,8 @@ from legalpdf_translate.glossary_diagnostics import (
     emit_diagnostics_events,
 )
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
+from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
+from legalpdf_translate.qt_gui.window_adaptive import ResponsiveWindowController
 from legalpdf_translate.types import RunConfig, TargetLang
 from legalpdf_translate.user_settings import app_data_dir
 
@@ -449,7 +451,6 @@ class QtGlossaryBuilderDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Glossary Builder")
-        self.resize(980, 720)
         self.setMinimumSize(780, 560)
         self._settings = dict(settings)
         self._current_pdf_path = current_pdf_path
@@ -480,29 +481,33 @@ class QtGlossaryBuilderDialog(QDialog):
         source_grid.setColumnStretch(2, 0)
         source_grid.setColumnStretch(3, 0)
         source_grid.addWidget(QLabel("Source"), 0, 0)
-        self.source_combo = QComboBox()
+        self.source_combo = NoWheelComboBox()
         self.source_combo.addItem("Run folders", "run_folders")
         self.source_combo.addItem("Current PDF only", "current_pdf")
         self.source_combo.addItem("Select PDFs...", "select_pdfs")
+        self.source_combo.setEditable(False)
         source_grid.addWidget(self.source_combo, 0, 1)
         source_grid.addWidget(QLabel("Target language"), 0, 2)
-        self.target_lang_combo = QComboBox()
+        self.target_lang_combo = NoWheelComboBox()
         self.target_lang_combo.addItems(supported_target_langs())
         self.target_lang_combo.setCurrentText(str(default_target_lang or "EN").strip().upper())
+        self.target_lang_combo.setEditable(False)
         source_grid.addWidget(self.target_lang_combo, 0, 3)
         source_grid.addWidget(QLabel("Mode"), 1, 2)
-        self.mode_combo = QComboBox()
+        self.mode_combo = NoWheelComboBox()
         self.mode_combo.addItem("Full text", "full_text")
         self.mode_combo.addItem("Headers only", "headers_only")
+        self.mode_combo.setEditable(False)
         source_grid.addWidget(self.mode_combo, 1, 3)
         self.lemma_check = QCheckBox("Enable lemma grouping (affects suggestions; may call OpenAI)")
         self.lemma_check.setChecked(False)
         source_grid.addWidget(self.lemma_check, 2, 2)
-        self.lemma_effort_combo = QComboBox()
+        self.lemma_effort_combo = NoWheelComboBox()
         self.lemma_effort_combo.addItems(["high", "xhigh"])
         _default_lemma_effort = str(settings.get("openai_reasoning_effort_lemma", "high") or "high")
         if _default_lemma_effort in ("high", "xhigh"):
             self.lemma_effort_combo.setCurrentText(_default_lemma_effort)
+        self.lemma_effort_combo.setEditable(False)
         self.lemma_effort_combo.setEnabled(False)
         self.lemma_check.toggled.connect(self.lemma_effort_combo.setEnabled)
         source_grid.addWidget(self.lemma_effort_combo, 2, 3)
@@ -514,7 +519,9 @@ class QtGlossaryBuilderDialog(QDialog):
         run_btn_col = QVBoxLayout()
         self.add_run_dir_btn = QPushButton("Add run folder")
         self.remove_run_dir_btn = QPushButton("Remove selected")
+        self.remove_run_dir_btn.setObjectName("DangerButton")
         self.clear_run_dirs_btn = QPushButton("Clear")
+        self.clear_run_dirs_btn.setObjectName("DangerButton")
         run_btn_col.addWidget(self.add_run_dir_btn)
         run_btn_col.addWidget(self.remove_run_dir_btn)
         run_btn_col.addWidget(self.clear_run_dirs_btn)
@@ -530,7 +537,9 @@ class QtGlossaryBuilderDialog(QDialog):
         pdf_btn_col = QVBoxLayout()
         self.add_pdf_btn = QPushButton("Add PDF(s)")
         self.remove_pdf_btn = QPushButton("Remove selected")
+        self.remove_pdf_btn.setObjectName("DangerButton")
         self.clear_pdf_btn = QPushButton("Clear")
+        self.clear_pdf_btn.setObjectName("DangerButton")
         pdf_btn_col.addWidget(self.add_pdf_btn)
         pdf_btn_col.addWidget(self.remove_pdf_btn)
         pdf_btn_col.addWidget(self.clear_pdf_btn)
@@ -545,6 +554,7 @@ class QtGlossaryBuilderDialog(QDialog):
 
         run_row = QHBoxLayout()
         self.generate_btn = QPushButton("Generate")
+        self.generate_btn.setObjectName("PrimaryButton")
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setEnabled(False)
         self.progress = QProgressBar()
@@ -581,6 +591,7 @@ class QtGlossaryBuilderDialog(QDialog):
         table_layout.addWidget(self.table)
         action_row = QHBoxLayout()
         self.apply_btn = QPushButton("Apply selected")
+        self.apply_btn.setObjectName("PrimaryButton")
         self.close_btn = QPushButton("Close")
         action_row.addWidget(self.apply_btn)
         action_row.addStretch(1)
@@ -634,6 +645,11 @@ class QtGlossaryBuilderDialog(QDialog):
         if self._current_pdf_path is not None and self._current_pdf_path.exists():
             self.current_pdf_label.setText(f"Current PDF: {self._current_pdf_path}")
         self._refresh_source_controls()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(980, 720),
+        )
 
     def _refresh_source_controls(self) -> None:
         mode = str(self.source_combo.currentData() or "run_folders")
@@ -1240,7 +1256,7 @@ class QtCalibrationAuditDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Calibration Audit")
-        self.resize(980, 740)
+        self.setMinimumSize(780, 560)
         self._settings = dict(settings)
         self._build_config_callback = build_config_callback
         self._save_settings_callback = save_settings_callback
@@ -1253,7 +1269,7 @@ class QtCalibrationAuditDialog(QDialog):
         options_group = QGroupBox("Run options")
         options_grid = QGridLayout(options_group)
         options_grid.addWidget(QLabel("Sample pages"), 0, 0)
-        self.sample_pages_spin = QSpinBox()
+        self.sample_pages_spin = NoWheelSpinBox()
         self.sample_pages_spin.setRange(1, 20)
         self.sample_pages_spin.setValue(int(self._settings.get("calibration_sample_pages_default", 5) or 5))
         options_grid.addWidget(self.sample_pages_spin, 0, 1)
@@ -1264,12 +1280,13 @@ class QtCalibrationAuditDialog(QDialog):
         self.include_excerpts_check.setChecked(bool(self._settings.get("calibration_enable_excerpt_storage", False)))
         options_grid.addWidget(self.include_excerpts_check, 1, 0, 1, 2)
         options_grid.addWidget(QLabel("Excerpt max chars"), 1, 2)
-        self.excerpt_chars_spin = QSpinBox()
+        self.excerpt_chars_spin = NoWheelSpinBox()
         self.excerpt_chars_spin.setRange(40, 500)
         self.excerpt_chars_spin.setValue(int(self._settings.get("calibration_excerpt_max_chars", 200) or 200))
         options_grid.addWidget(self.excerpt_chars_spin, 1, 3)
         run_row = QHBoxLayout()
         self.run_btn = QPushButton("Run audit")
+        self.run_btn.setObjectName("PrimaryButton")
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setEnabled(False)
         self.progress = QProgressBar()
@@ -1312,6 +1329,7 @@ class QtCalibrationAuditDialog(QDialog):
         suggestions_layout.addWidget(self.addendum_edit)
         action_row = QHBoxLayout()
         self.apply_btn = QPushButton("Apply selected suggestions")
+        self.apply_btn.setObjectName("PrimaryButton")
         self.close_btn = QPushButton("Close")
         action_row.addWidget(self.apply_btn)
         action_row.addStretch(1)
@@ -1323,6 +1341,11 @@ class QtCalibrationAuditDialog(QDialog):
         self.cancel_btn.clicked.connect(self._cancel_audit)
         self.apply_btn.clicked.connect(self._apply_suggestions)
         self.close_btn.clicked.connect(self.close)
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(980, 740),
+        )
 
     def _set_busy(self, busy: bool) -> None:
         self.run_btn.setEnabled(not busy)

@@ -33,12 +33,14 @@ def build_run_paths(
     lang: TargetLang,
     *,
     run_started_at: str | None = None,
+    gmail_batch_context: dict[str, Any] | None = None,
 ) -> RunPaths:
     return build_output_paths(
         output_dir=output_dir,
         pdf_path=pdf_path,
         lang=lang,
         run_started_at=run_started_at,
+        gmail_batch_context=gmail_batch_context,
     )
 
 
@@ -222,6 +224,7 @@ def new_run_state(
         done_count=0,
         failed_count=0,
         pending_count=selection_count,
+        failure_context={},
     )
 
 
@@ -305,6 +308,8 @@ def load_run_state(path: Path) -> RunState | None:
         settings_obj = data["settings"]
         if not isinstance(settings_obj, dict):
             return None
+        failure_context_obj = data.get("failure_context", {})
+        failure_context = dict(failure_context_obj) if isinstance(failure_context_obj, dict) else {}
 
         return RunState(
             version=int(data["version"]),
@@ -332,6 +337,7 @@ def load_run_state(path: Path) -> RunState | None:
             done_count=int(data.get("done_count", done_count)),
             failed_count=int(data.get("failed_count", failed_count)),
             pending_count=int(data.get("pending_count", pending_count)),
+            failure_context=failure_context,
         )
     except (TypeError, ValueError, KeyError):
         return None

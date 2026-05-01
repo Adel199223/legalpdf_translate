@@ -7,6 +7,39 @@ def _read_script(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
+def test_repo_launcher_batch_supports_canonical_venv_fallback_for_worktree_testing() -> None:
+    text = _read_script("Launch LegalPDF Translate.bat")
+    assert ".venv311\\Scripts\\python.exe" in text
+    assert "tooling\\launch_qt_build.py" in text
+    assert "CANONICAL_BUILD.json" in text
+    assert "ConvertFrom-Json" in text
+    assert "--allow-noncanonical" in text
+    assert "legalpdf_translate.qt_app" not in text
+    assert "PYTHONPATH" not in text
+
+
+def test_browser_app_cmd_launchers_use_detached_launcher_and_expected_contracts() -> None:
+    live = _read_script("Launch LegalPDF Browser App (Live).cmd")
+    shadow = _read_script("Launch LegalPDF Browser App (Shadow).cmd")
+    preview = _read_script("Launch LegalPDF Browser App (Preview).cmd")
+
+    for text in (live, shadow, preview):
+        assert ".venv311\\Scripts\\python.exe" in text
+        assert "tooling\\launch_browser_app_live_detached.py" in text
+        assert "CANONICAL_BUILD.json" in text
+        assert "ConvertFrom-Json" in text
+
+    assert "--mode live" in live
+    assert "--workspace workspace-1" in live
+
+    assert "--mode shadow" in shadow
+    assert "--workspace workspace-1" in shadow
+
+    assert "--mode shadow" in preview
+    assert "--workspace workspace-preview" in preview
+    assert "--port 8888" in preview
+
+
 def test_create_shortcut_script_uses_ico_and_public_desktop_cleanup() -> None:
     text = _read_script("scripts/create_desktop_shortcut.ps1")
     assert "CommonDesktopDirectory" in text
@@ -18,11 +51,17 @@ def test_create_shortcut_script_uses_ico_and_public_desktop_cleanup() -> None:
 def test_build_script_runs_shortcut_then_optional_icon_refresh() -> None:
     text = _read_script("scripts/build_qt.ps1")
     assert "[switch]$SkipIconRefresh" in text
+    assert ".venv311\\Scripts\\python.exe" in text
+    assert ".venv\\Scripts\\python.exe" in text
+    assert "CANONICAL_BUILD.json" in text
+    assert "ConvertFrom-Json" in text
+    assert "PYTHONPATH" in text
+    assert "-m PyInstaller" in text
     assert "create_desktop_shortcut.ps1" in text
     assert "register_edge_native_host.ps1" in text
     assert "refresh_icon_cache.ps1" in text
     assert "LegalPDFGmailFocusHost.exe" in text
-    assert "& $registerHostScript -HostExePath $focusHostExePath" in text
+    assert "& $registerHostScript" in text
     assert "& $shortcutScript" in text
     assert "& $refreshScript -Mode Recommended" in text
 
@@ -38,21 +77,29 @@ def test_refresh_icon_cache_script_supports_modes_and_clear_command() -> None:
 def test_register_edge_native_host_script_uses_python_module_and_dist_host() -> None:
     text = _read_script("scripts/register_edge_native_host.ps1")
     assert ".venv311\\Scripts\\python.exe" in text
-    assert "LegalPDFGmailFocusHost.exe" in text
-    assert "legalpdf_translate.gmail_focus_host --register --host-executable" in text
+    assert ".venv\\Scripts\\python.exe" in text
+    assert "CANONICAL_BUILD.json" in text
+    assert "ConvertFrom-Json" in text
+    assert "PYTHONPATH" in text
+    assert "[string]$HostExePath = \"\"" in text
+    assert '"--register"' in text
+    assert '"--host-executable"' in text
+    assert "legalpdf_translate.gmail_focus_host" in text
 
 
 def test_install_local_script_registers_native_host_before_shortcut() -> None:
     text = _read_script("scripts/install_local.ps1")
     assert "register_edge_native_host.ps1" in text
-    assert "LegalPDFGmailFocusHost.exe" in text
-    assert "& $registerHostScript -HostExePath $focusHostPath" in text
+    assert "& $registerHostScript" in text
 
 
 def test_sync_loaded_gmail_extension_script_uses_edge_secure_preferences_and_robocopy() -> None:
     text = _read_script("scripts/sync_loaded_gmail_extension.ps1")
     assert "[string[]]$TargetPath = @()" in text
     assert "[switch]$ReportOnly" in text
+    assert "CANONICAL_BUILD.json" in text
+    assert "ConvertFrom-Json" in text
+    assert "PYTHONPATH" in text
     assert 'Join-Path $env:SystemRoot "System32\\robocopy.exe"' in text
     assert "Secure Preferences" in text
     assert "extensions/gmail_intake" in text

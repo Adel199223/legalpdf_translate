@@ -7,6 +7,7 @@ Use this workflow when a feature depends on a host-bound integration such as a l
 - A verified installation/auth/host preflight result before implementation proceeds
 - A clear `unavailable` vs `failed` classification when the integration is not ready
 - A verified localhost listener ownership result when the integration depends on a local bridge/listener
+- A verified real-path canary result when a launch-only probe is weaker than the user-visible operation
 - A minimal live smoke check result from the same host/runtime as the app
 
 ## When To Use
@@ -29,6 +30,7 @@ Instead use:
 - Do not assume WSL success proves the Windows app can use the same integration.
 - Do not treat installation-only as sufficient readiness.
 - Do not treat any process already listening on the expected port as proof the real integration is healthy.
+- Do not treat shell-only startup or launch-only Word readiness as sufficient when the user-visible path later loads browser module workers, opens documents, or exports PDFs.
 
 ## Primary Files
 - `docs/assistant/LOCAL_ENV_PROFILE.local.md`
@@ -39,14 +41,14 @@ Instead use:
 ## Minimal Commands
 PowerShell:
 ```powershell
-dart run tooling/validate_agent_docs.dart
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_agent_docs.dart
+dart tooling/validate_workspace_hygiene.dart
 ```
 
 POSIX:
 ```bash
-dart run tooling/validate_agent_docs.dart
-dart run tooling/validate_workspace_hygiene.dart
+dart tooling/validate_agent_docs.dart
+dart tooling/validate_workspace_hygiene.dart
 ```
 
 ## Targeted Tests
@@ -62,13 +64,29 @@ dart run tooling/validate_workspace_hygiene.dart
    - verify the app and the integration run in the same host/runtime environment when required
 4. Localhost listener ownership is correct
    - when a localhost listener is part of the integration, verify the port is free or owned by the expected process
-5. Live smoke check passes
+   - if the integration supports both live and isolated browser-app modes, verify which mode owns the listener and whether that owner is supposed to be live-capable
+5. live smoke check passes
    - run a minimal real operation before building the full feature
+   - if the integration has a lighter startup probe and a heavier real operation, prove the heavier path explicitly inside that live smoke
+   - examples in this repo:
+     - browser-app Gmail handoff should prove server readiness, same-tab redirect commit, `/gmail-intake` post, and current click diagnostics
+     - Gmail finalization should prove Word DOCX-to-PDF export through an export canary, not only Word launch/COM reachability
 
 ## Same-Host Validation Rule
 If the app runs on Windows and the integration depends on Windows-local auth or desktop state, validate it on Windows.
 
 For this repo, Gmail draft creation through `gog` is the clearest example: the desktop app and the authenticated `gog` runtime must be validated on the same Windows host.
+
+The browser app now makes this stricter for Gmail intake:
+- validate the browser app in `live` mode, not isolated `shadow` mode
+- confirm the live Gmail bridge owner and handoff URL, not just that some localhost listener is up
+- confirm the registered native-host target is the no-console EXE for live Gmail; a `.cmd` target is diagnostic fallback only and can create visible console-window churn
+- treat browser-owned bridge readiness as the normal green path and Qt ownership as fallback/coexistence, not the default assumption
+- for Gmail same-tab intake, prove the current Gmail tab redirected to `gmail-intake`, diagnostics show `bridge_context_posted=true`, `source_gmail_url` is present, and the workspace is not stuck in `Pending load`
+
+For this repo's Gmail finalization path:
+- a shallow Word launch probe is not sufficient
+- `finalization_ready` must come from a real DOCX-to-PDF export canary that uses the same export path as the final reply step
 
 ## Failure Modes and Fallback Steps
 - `unavailable`
@@ -76,6 +94,7 @@ For this repo, Gmail draft creation through `gog` is the clearest example: the d
   - auth/account missing
   - wrong host/runtime
   - localhost bind conflict or unexpected listener ownership
+  - shell/launch probe passes but the real browser-document or Word-export canary fails
 - `failed`
   - preflight passed, but the feature behavior itself failed
 

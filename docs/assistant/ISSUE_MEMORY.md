@@ -86,11 +86,97 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 
 ## Active Entries
 
+### google-photos-oauth-picker-validation-hygiene
+- Title: Google Photos OAuth and Picker validation repeatedly stalled on env, popup, secret, and selection-completion evidence
+- First seen timestamp: `2026-04-28T00:00:00Z`
+- Last seen timestamp: `2026-04-28T15:57:40Z`
+- Repeat count: `6`
+- Status: `mitigated`
+- Trigger source: `operational`
+- Symptoms:
+  - Google Photos credentials were visible in PowerShell but not inherited by the app process.
+  - A too-short or masked client secret allowed the config gate to look configured before token exchange failed with `token_exchange_invalid_client`.
+  - The Connect button was visible but did not dispatch `/api/interpretation/google-photos/connect` because a disabled secondary `Choose` button blocked the busy guard.
+  - `/connect` succeeded but no OAuth tab opened until a visible `Open Google sign-in` fallback was added.
+  - OAuth callback diagnostics were needed to distinguish state/code/token-exchange/token-save/token-path failures without exposing sensitive values.
+  - Picker session creation and polling worked, but validation remained partial until the user confirmed the Google Photos completion screen and LegalPDF observed `mediaItemsSet=true`, media-items listing, import, and `Review Case Details`.
+- Likely root cause:
+  - Live OAuth/Picker flows crossed process environment inheritance, Google Cloud credential setup, browser popup behavior, route dispatch guards, user-controlled Google account/consent/selection screens, and privacy-limited diagnostics. Without a strict source-aware config gate, visible browser fallbacks, and method/path-only route logs, each layer looked like the same generic disconnected or waiting state.
+- Attempted fix history:
+  - `2026-04-28T00:00:00Z` — added Windows User environment fallback and source labels for Google Photos OAuth config; outcome: stronger mitigation.
+  - `2026-04-28T00:30:00Z` — tightened secret validation/reset checklist to reject placeholders, masked/too-short values, and Client-ID-shaped secrets; outcome: stronger mitigation.
+  - `2026-04-28T01:00:00Z` — fixed Connect dispatch by guarding only the primary action while disabling secondary buttons for busy state; outcome: accepted UI fix.
+  - `2026-04-28T01:30:00Z` — added safe callback diagnostics and failure categories; outcome: allowed `token_exchange_invalid_client` to be identified without leaking OAuth data.
+  - `2026-04-28T02:30:00Z` — added visible `Open Google sign-in` fallback; outcome: popup/noopener behavior no longer stranded OAuth.
+  - `2026-04-28T14:00:00Z` — added visible `Open Google Photos Picker` fallback and clearer Picker instructions; outcome: Picker session flow became user-completable.
+  - `2026-04-28T15:57:40Z` — manual completion run confirmed Google Photos `Done` screen, `mediaItemsSet=true`, media-items listing, import route, and `Review Case Details`; outcome: accepted validation.
+- Accepted fix:
+  - Source-aware OAuth config, stricter secret validation, safe callback diagnostics, primary-action busy guards, visible OAuth/Picker fallbacks, and a manual validation run that waits for explicit user selection completion before judging Picker readiness.
+- Regressed after accepted fix: `false`
+- Affected workflows/docs:
+  - `docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md`
+  - `docs/assistant/VALIDATION.md`
+  - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+  - `docs/assistant/exec_plans/completed/2026-04-28_google_photos_interpretation_import.md`
+- Bootstrap relevance: `possible`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - Google Photos Picker API setup and exact redirect URI checklist
+    - source-aware env diagnostics and invalid-secret classification
+    - visible browser fallbacks for OAuth and Picker URLs without logging raw URLs
+    - method/path-only route logs with no query strings
+    - manual completion semantics for Google Photos `Done` screens and `mediaItemsSet`
+- Evidence refs:
+  - `docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md`
+  - `docs/assistant/exec_plans/completed/2026-04-28_google_photos_interpretation_import.md`
+  - `C:\Users\FA507\Downloads\legalpdf_translate_google_photos_picker_manual_completion_report_20260428_155740.md`
+  - `feat/google-photos-interpretation`
+
+### google-photos-interpretation-ocr-service-city-ranking
+- Title: Google Photos Interpretation OCR confused address/title fragments with case or service metadata
+- First seen timestamp: `2026-04-29T08:25:00Z`
+- Last seen timestamp: `2026-04-29T15:35:07Z`
+- Repeat count: `5`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - Google Photos selected-image import reached `Review Case Details`, but OCR noise sometimes left service entity/city blank.
+  - Address or title fragments such as `Palácio da Justiça`, `Justiça`, or subject text were sometimes treated as case city/entity candidates.
+  - A proven service location could be missed even though nearby service-turn/header evidence supported `Serviço de Turno | Moura`.
+  - KM refresh worked after manual city selection, proving the remaining bug was metadata extraction/ranking rather than distance mapping.
+- Likely root cause:
+  - Interpretation photo OCR used broad fallback text before ranking official case evidence and service-location evidence field by field. A first OCR pass could freeze weak case metadata and prevent stronger header/service-turn evidence from reaching the browser seed.
+- Attempted fix history:
+  - `2026-04-29T09:07:00Z` — added service-turn city-before-label extraction and kept case city Beja distinct from service city Moura; outcome: partial.
+  - `2026-04-29T12:38:00Z` — rejected placeholder values and strengthened official case evidence; outcome: partial.
+  - `2026-04-29T13:33:00Z` — added photo-date fallback and service-city distance refresh; outcome: distance/date accepted, service OCR still variable.
+  - `2026-04-29T16:17:44Z` — added strict address/title filtering plus field-by-field OCR variant ranking; outcome: accepted live Review Details behavior.
+- Accepted fix:
+  - Strictly reject placeholder/address/title fragments for case and service metadata, prefer official `Comarca`/court evidence for case city, prefer explicit service-turn/postcode/address evidence for service city, and leave fields blank/provisional rather than inventing a city when evidence is not trusted.
+- Regressed after accepted fix: `false`
+- Affected workflows/docs:
+  - `docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md`
+  - `docs/assistant/VALIDATION.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/exec_plans/completed/2026-04-28_google_photos_service_city_distance_drawer.md`
+- Bootstrap relevance: `possible`
+- Docs-sync relevance:
+  - Priority: `medium`
+  - Targets:
+    - Google Photos Interpretation metadata provenance
+    - OCR field-ranking rules for case city vs service city
+    - no Google Photos place/location claim
+    - blank/provisional fallback instead of invented address-fragment cities
+- Evidence refs:
+  - `docs/assistant/exec_plans/completed/2026-04-28_google_photos_service_city_distance_drawer.md`
+  - `feat/google-photos-service-city-distance-drawer`
+
 ### workflow-wrong-build-under-test
 - Title: Wrong app/build under test because of mixed branches/worktrees and noncanonical launch
 - First seen timestamp: `2026-03-06T00:00:00Z`
-- Last seen timestamp: `2026-03-09T01:00:00Z`
-- Repeat count: `5`
+- Last seen timestamp: `2026-04-08T11:03:12Z`
+- Repeat count: `12`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
@@ -98,24 +184,48 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - accepted functionality appeared to be missing because it lived only on a side branch or the wrong worktree was launched
   - repeated user-visible confusion during Gemini/Gmail/UI follow-up testing
   - the user also needed extra support guidance about which sibling folder or workspace file should be the normal daily entry point
+  - the browser app could open on the right localhost URL while still running a stale module graph or stale extension/service-worker state
+  - native-host repair could point the launcher to a broken local runtime even though a healthy runtime was already running the visible browser app
+  - the configured canonical worktree path itself could still be left on a feature branch, so a later restart drifted the launcher back to the wrong branch again
+  - accepted overlapping browser/Gmail fixes could remain split across multiple dirty feature worktrees, making the final commit/push step itself risky
+  - live Gmail could still drift back to the old repo path because machine routing, AppData native-host state, and the canonical worktree declaration were not yet converged onto one primary repo on `main`
 - Likely root cause:
   - feature work progressed on side branches after acceptance
   - the approved base was not promoted immediately
   - multiple runnable worktrees existed without strong enough canonical-build enforcement
+  - native-host runtime repair originally guessed from worktree state instead of validating the active runtime actually launching the browser app
+  - browser cache busting originally touched only the shell entrypoint, so imported modules could stay stale and recreate already-fixed Gmail/browser failures
+  - the configured canonical worktree path was not always restored to clean `main` after isolated feature validation, so later repair/auto-launch logic could drift back to the wrong checkout
+  - overlapping accepted work could remain fragmented across several dirty side worktrees instead of being harvested into one clean publish branch before push/merge
+  - the machine kept treating a side worktree as a temporary canonical target for too long instead of converging launchers, AppData native-host state, and live listeners back onto one primary repo path on `main`
 - Attempted fix history:
   - `2026-03-07T00:00:00Z` — added worktree baseline discipline docs; outcome: insufficient on its own
   - `2026-03-07T00:00:00Z` — added Qt build identity helper and noncanonical build markers; outcome: reduced ambiguity but did not solve accepted-feature promotion drift by itself
   - `2026-03-09T01:00:00Z` — added a saved multi-root VS Code workspace guide and archived a stale broken sibling folder out of the daily view; outcome: partial_only because it reduces navigation confusion but does not replace canonical build identity enforcement
+  - `2026-03-19T06:51:00Z` — promoted the local browser app to the preferred daily-use surface, added explicit `live` versus isolated `shadow` mode routing, and documented the canonical live browser URL plus detached launcher; outcome: partial_only because it gives one stable human entrypoint, but branch/publish discipline still matters
+  - `2026-03-29T00:00:00Z` — added shell readiness, runtime metadata truthfulness, and single-flight Gmail handoff stabilization; outcome: partial_only because stale runtime selection and stale browser assets could still recreate the same old failures
+  - `2026-03-30T00:00:00Z` — changed native-host repair to validate the current runtime, split shell-safe startup from blocked document runtime imports, versioned the whole browser asset graph, and required client/server `asset_version` agreement before a handoff is treated as ready; outcome: stronger_mitigation
+  - `2026-04-03T15:47:52Z` — repointed the native-host launcher to an isolated fix worktree during live validation; outcome: partial_only because the configured canonical path still pointed at a feature branch and the drift could return after restart
+  - `2026-04-05T12:53:22Z` — required overlapping accepted work from multiple dirty feature worktrees to be harvested into one clean integration branch, published as a two-commit wave, and followed by canonical-path/launcher restoration plus side-worktree removal; outcome: stronger_mitigation
+  - `2026-04-08T13:34:10Z` — converged live Gmail back onto one primary repo on `main`, blocked noncanonical runtimes from rewriting AppData native-host state to themselves, removed the live Gmail continue override, and regenerated the real launcher/native-host/extension entrypoints from the primary repo; outcome: stronger_mitigation
 - Accepted fix:
-  - `2026-03-07T10:33:19Z` — canonical build enforcement + approved-base promotion discipline + launcher identity packet gating + noncanonical launch override rules
-- Regressed after accepted fix: `no`
+  - `2026-04-08T13:34:10Z` — canonical build discipline now also requires single-path machine routing on the primary repo `main`: live Gmail may run only from the primary repo, noncanonical runtimes cannot self-register native-host state, restart-to-canonical is the only supported drift recovery path, and launcher/AppData state must be regenerated from the merged primary repo before closeout
+- Regressed after accepted fix: `yes`
 - Affected workflows/docs:
   - `docs/assistant/workflows/WORKTREE_BASELINE_DISCIPLINE_WORKFLOW.md`
   - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
   - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
+  - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+  - `APP_KNOWLEDGE.md`
   - `docs/assistant/runtime/CANONICAL_BUILD.json`
   - `docs/assistant/APP_KNOWLEDGE.md`
   - `docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/SESSION_RESUME.md`
+  - `docs/assistant/LOCAL_ENV_PROFILE.local.md`
+  - `docs/assistant/LOCAL_CAPABILITIES.md`
 - Bootstrap relevance: `required`
 - Docs-sync relevance:
   - Priority: `high`
@@ -123,34 +233,105 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - worktree/build identity governance
     - approved-base promotion rules
     - canonical launch/default test target guidance
+    - canonical-path cleanup after side-branch validation
     - plain-language local workspace entry guidance
-- Evidence refs:
-  - ExecPlan: `docs/assistant/exec_plans/active/2026-03-07_worktree_baseline_docs_sync.md`
-  - ExecPlan: `docs/assistant/exec_plans/active/2026-03-07_qt_build_identity_hardening.md`
-  - ExecPlan: `docs/assistant/exec_plans/active/2026-03-07_accepted_feature_promotion_canonical_enforcement.md`
+    - validated runtime repair and whole-graph browser asset provenance
+    - clean integration-branch publish rules for overlapping accepted side work
+    - single-path canonical launcher/native-host routing back to the primary repo on `main`
+  - Evidence refs:
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_worktree_baseline_docs_sync.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_qt_build_identity_hardening.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-07_accepted_feature_promotion_canonical_enforcement.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-09_worktree_workspace_organization.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-29_cold_start_reliability_rebuild.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_browser_asset_provenance_gmail_prepare.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_first_open_gmail_hydration_recovery.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-03_browser_gmail_arabic_publish_closeout.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-03_arabic_legal_risk_hardening.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-03_gmail_redo_current_attachment.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-06_gmail-fast-start-single-window-recovery.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-08_single-path-canonical-recovery.md`
   - Branch: `feat/ai-docs-bootstrap`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_canonical_stage1`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_redo`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_run_report_artifacts`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_closeout`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_pdf_worker_fix`
   - Workspace: `C:\Users\FA507\.codex\legalpdf_translate-worktrees.code-workspace`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_integration`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_beginner_first_ux`
+
+### workflow-gmail-fresh-start-state-drift
+- Title: Fresh Gmail prepare could inherit stale workspace state, GUI defaults, or legacy checkpoints
+- First seen timestamp: `2026-04-06T19:24:41Z`
+- Last seen timestamp: `2026-04-08T11:03:12Z`
+- Repeat count: `4`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - `Prepare selected` could open `New Job` while the workspace still showed the previous failed or completed Gmail run
+  - the prepared Gmail attachment could look ready, but `Start Translate` still inherited stale GUI defaults such as `resume=true` or `keep_intermediates=false`
+  - a fresh Gmail start could collide with a legacy generic run folder like `Auto_FR_run` and fail before page `1`
+  - the user could see a recovery/failure surface for the old run instead of a true fresh prepared start for the current Gmail attachment
+- Likely root cause:
+  - prepared Gmail launch state was not authoritative end to end
+  - stale `currentJob` and completion bindings could survive a fresh Gmail prepare
+  - fresh Gmail starts still shared filename-based run/checkpoint namespace with older manual runs unless Gmail attachment scope was carried through
+- Attempted fix history:
+  - `2026-04-06T20:00:00Z` — added prepared-state UX for `New Job` and stopped auto-starting on `Prepare selected`; outcome: partial_only because stale workspace bindings and old runtime routing could still resurrect the previous failed job
+  - `2026-04-07T22:52:44Z` — validated Gmail-side defaults and Gmail-scoped run dirs on a side worktree; outcome: partial_only because the real live runtime could still drift back to the old repo and stale client state
+  - `2026-04-08T13:34:10Z` — cleared stale workspace job bindings on fresh Gmail prepare, enforced fresh Gmail defaults server-side, and kept Gmail run/checkpoint identity attachment-scoped on the primary repo; outcome: stronger_mitigation
+- Accepted fix:
+  - `2026-04-08T13:34:10Z` — fresh Gmail prepares now clear stale terminal workspace job state, seed authoritative OCR/image/resume/keep-intermediates defaults in both UI and server paths, and use Gmail attachment-scoped run/checkpoint identity so legacy folders like `Auto_FR_run` are never treated as fresh-start resume targets
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
+  - `docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md`
+  - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/SESSION_RESUME.md`
+- Bootstrap relevance: `required`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - prepared Gmail start semantics
+    - stale workspace binding reset on fresh Gmail prepare
+    - authoritative Gmail-start defaults in UI and server paths
+    - attachment-scoped Gmail run/checkpoint identity instead of generic filename-based reuse
+  - Evidence refs:
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-06_gmail-fast-start-single-window-recovery.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-08_single-path-canonical-recovery.md`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_canonical_stage1`
+  - File: `src/legalpdf_translate/shadow_web/static/translation.js`
+  - File: `src/legalpdf_translate/translation_service.py`
+  - File: `src/legalpdf_translate/output_paths.py`
+  - File: `src/legalpdf_translate/checkpoint.py`
 
 ### harness-live-state-contamination
 - Title: Tests or harness cleanup reused live user state or user-facing ports and contaminated real runtime checks
 - First seen timestamp: `2026-03-08T00:00:00Z`
-- Last seen timestamp: `2026-03-08T09:27:00Z`
-- Repeat count: `2`
+- Last seen timestamp: `2026-03-19T06:51:00Z`
+- Repeat count: `3`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
   - the expected localhost listener belonged to `pytest` or another non-user runtime instead of the visible app
   - tests reused live roaming/profile settings or bridge configuration
   - the browser showed a successful handoff while the visible app stayed idle
+  - browser validation needed an explicit isolated browser `shadow` mode because real Gmail bridge ownership and real user data could not safely share the same default runtime state
 - Likely root cause:
   - tests and ad hoc debugging reused live `%APPDATA%`, live settings, or default user-facing ports instead of isolated temp state
 - Attempted fix history:
   - `2026-03-08T00:00:00Z` — isolated pytest APPDATA and stopped bridge tests from using the live Gmail port; outcome: partial_only
+  - `2026-03-19T06:51:00Z` — added explicit browser-app `live` versus isolated `shadow` mode, separate runtime roots, browser-owned live Gmail bridge ownership, and clearer diagnostics for active mode, data root, and listener owner; outcome: stronger_mitigation
 - Accepted fix:
-  - `2026-03-08T09:27:00Z` — project guidance now requires temp env/filesystem isolation, non-live or ephemeral test ports, explicit teardown, and visible listener-conflict status
+  - `2026-03-19T06:51:00Z` — project guidance now requires temp env/filesystem isolation, non-live or ephemeral test ports, explicit teardown, visible listener-conflict status, and a first-class browser-app split between real-work `live` mode and isolated `shadow` mode
 - Regressed after accepted fix: `no`
 - Affected workflows/docs:
   - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
@@ -158,6 +339,9 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
   - `docs/assistant/LOCAL_ENV_PROFILE.local.md`
   - `docs/assistant/LOCAL_CAPABILITIES.md`
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/SESSION_RESUME.md`
 - Bootstrap relevance: `required`
 - Docs-sync relevance:
   - Priority: `high`
@@ -167,32 +351,137 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - visible runtime conflict handling
 - Evidence refs:
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_intake`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_beginner_first_ux`
   - Template: `docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md`
   - Template: `docs/assistant/templates/BOOTSTRAP_HOST_INTEGRATION_PREFLIGHT.md`
+
+### workflow-gmail-same-tab-console-churn-regression
+- Title: Gmail extension handoff regressed through stale click state, separate-surface launch, and console-window churn
+- First seen timestamp: `2026-04-08T16:04:00Z`
+- Last seen timestamp: `2026-04-19T12:51:44Z`
+- Repeat count: `7`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - Gmail extension clicks could create transparent/CMD-like windows that opened and closed repeatedly
+  - the browser app could land on `Pending load` with unavailable message/thread IDs
+  - a second click could show stale `already preparing` or stale retry banners after the first click produced no usable workspace
+  - separate browser-surface ownership and stale exact localhost tabs made the extension, native host, and browser app disagree about whether the handoff was ready
+  - deterministic acceptance tooling itself could leave `playwright-mcp` helper CMD processes, creating false console-churn evidence unless cleaned up
+- Likely root cause:
+  - Gmail cold-start responsibilities were split across native host, detached launcher, extension, stale browser tabs, and live runtime state roots
+  - the `.cmd` native-host wrapper and generic launch/probe paths could surface console windows
+  - the extension previously treated server-side warming or old exact tabs as enough to keep locks alive before a current browser surface and current per-click handoff were proven
+  - acceptance relied too heavily on manual toolbar clicks and incomplete diagnostics instead of driving the same handler deterministically and checking the correlated session state
+- Attempted fix history:
+  - `2026-04-08T18:04:00Z` — added one-shot window tracing and single-owner launch diagnostics; outcome: partial_only because visible surface ownership still churned
+  - `2026-04-08T21:30:00Z` — removed Edge process launch from Gmail cold start and made the extension own browser surfaces; outcome: partial_only because console/native-host churn remained
+  - `2026-04-09T11:32:00Z` — switched live registration to the no-console EXE and changed browser-app cold start to succeed on server-ready; outcome: partial_only because stale extension click state still blocked useful app opening
+  - `2026-04-09T21:01:00Z` — converted Gmail intake to same-tab redirect, added per-click `handoff_session_id`, `source_gmail_url`, bridge-post diagnostics, and deterministic debug acceptance; outcome: stronger_mitigation
+  - `2026-04-19T12:51:44Z` — normal Edge Profile 2 acceptance confirmed same-tab redirect, `bridge_context_posted=true`, ready Gmail bootstrap with one attachment, `Return to Gmail`, and no LegalPDF/native-host CMD churn; outcome: accepted_live_mitigation
+- Accepted fix:
+  - `2026-04-19T12:51:44Z` — live Gmail intake now uses same-tab redirect for the current Gmail tab, native-host/server-only preparation through the EXE path, per-click `handoff_session_id`, immediate post-redirect `/gmail-intake`, AppData runtime-state diagnostics, and `Return to Gmail` from the captured source URL
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
+  - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+  - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/SESSION_RESUME.md`
+- Bootstrap relevance: `required`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - same-tab Gmail intake as the canonical click model
+    - no-console native-host EXE as the canonical live registration target
+    - stale `already preparing` / `Pending load` fail-closed diagnostics
+    - deterministic acceptance before another manual live-click validation loop
+    - separation between product console churn and automation-helper CMD processes
+- Evidence refs:
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-08_gmail-same-tab-intake-and-console-churn-closeout.md`
+  - Commit: `8dfb027`
+  - Live acceptance: `20260419_125112_2d61fbb64f8e`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+
+### workflow-gmail-honorarios-local-court-city
+- Title: Gmail honorários metadata used generic comarca city instead of the specific local court unit
+- First seen timestamp: `2026-04-19T19:55:00Z`
+- Last seen timestamp: `2026-04-19T21:08:44Z`
+- Repeat count: `1`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - Gmail translation save seed and honorários output resolved `case_city` / `service_city` to `Beja`
+  - the source document showed stronger local evidence for `Cuba`, including `Juízo de Competência Genérica de Cuba`, address city `Cuba`, and `cuba.ministeriopublico@tribunais.org.pt`
+  - the generated honorários addressee and closing city could point to the broader comarca instead of the local court unit
+- Likely root cause:
+  - metadata autofill effectively accepted the first broad court/comarca evidence before ranking more specific local-unit, address, and email evidence
+  - translation seed hydration copied that weaker city into both case and service city for downstream Job Log and honorários generation
+- Attempted fix history:
+  - `2026-04-19T20:25:26Z` — ranked local court-unit metadata over generic comarca evidence and propagated the corrected city into translation save seeds; outcome: accepted after live Gmail cold-start and finalization evidence
+- Accepted fix:
+  - `2026-04-19T21:08:44Z` — latest live run `20260419_215231` on canonical `main` build `0b2687f` produced `case_city=Cuba`, `service_city=Cuba`, kept `court_email=cuba.ministeriopublico@tribunais.org.pt`, completed intentional page-2 translation as `Processed pages: 2/2`, finalized `gmail_batch_92aecc9772da` as `draft_ready`, and generated an honorários PDF addressed to `Juízo de Competência Genérica de Cuba` with closing city `Cuba`
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/DOCS_REFRESH_NOTES.md`
+  - `docs/assistant/SESSION_RESUME.md`
+  - `docs/assistant/exec_plans/completed/2026-04-19_gmail_honorarios_local_court_city_fix.md`
+- Bootstrap relevance: `possible`
+- Docs-sync relevance:
+  - Priority: `medium`
+  - Targets:
+    - specific local court-unit city outranks generic comarca city for honorários metadata
+    - Gmail finalization acceptance should verify honorários addressee/closing city, not only `case_city`
+    - citation marker and parenthesis drift remain diagnostic-only unless stronger risk signals trigger review
+- Evidence refs:
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-19_gmail_honorarios_local_court_city_fix.md`
+  - PR: `https://github.com/Adel199223/legalpdf_translate/pull/44`
+  - Commit: `0b2687f`
+  - Live run: `20260419_215231`
+  - Gmail batch: `gmail_batch_92aecc9772da`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
 
 ### workflow-fragmented-multi-surface-diagnostics
 - Title: Fragmented diagnostics across handoff, per-run execution, and finalization slowed root-cause analysis
 - First seen timestamp: `2026-03-08T00:00:00Z`
-- Last seen timestamp: `2026-03-08T09:27:00Z`
-- Repeat count: `2`
+- Last seen timestamp: `2026-04-05T15:26:00Z`
+- Repeat count: `5`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
   - browser banners, app bridge state, run reports, and finalization/draft failures had to be correlated manually
   - repeated debugging required back-and-forth between transient UI evidence and durable run artifacts
   - support packets were inconsistent across handoff, execution, and finalization failures
+  - Gmail/browser preparation failures that happened before `run_dir` existed had no direct report artifact, so debugging stalled before the normal run-report path even began
+  - blocked or recoverable Gmail finalization states needed a dedicated artifact instead of being inferred from raw JSON pasted out of the drawer
+  - browser `Generate Run Report` could feel broken because the detailed report was not exposed like a normal translation artifact
+  - Gmail-started reruns could silently drop `gmail_batch_context`, which removed Gmail provenance from `run_summary.json` and `run_report.md`
 - Likely root cause:
   - project docs did not yet encode one support-packet order or one durable app-owned session-artifact pattern for multi-surface workflows
+  - browser-only pre-run failures and last-mile finalization failures were not treated as first-class report surfaces
+  - translation-owned detailed run reports were not yet surfaced as first-class browser artifacts
+  - stale manual-upload state could override Gmail launch provenance during reruns unless the browser submit path cleared those conflicts explicitly
 - Attempted fix history:
   - `2026-03-08T00:00:00Z` — feature-specific Gmail diagnostics were added; outcome: partial_only
+  - `2026-03-30T00:00:00Z` — added direct browser failure reports for pre-run Gmail/browser failures and direct Gmail finalization reports for blocked/local-only/draft-failed reply states; outcome: stronger_mitigation
+  - `2026-04-05T13:08:00Z` — promoted `run_report.md` to a first-class browser translation artifact with generate/download behavior in the completion drawer; outcome: partial_only because Gmail provenance could still drop on rerun
+  - `2026-04-05T15:26:00Z` — preserved `gmail_batch_context` through Gmail-originated reruns/manual restart prep and clarified report `run tokens` versus billed-total wording; outcome: stronger_mitigation
 - Accepted fix:
-  - `2026-03-08T09:27:00Z` — project guidance now routes multi-surface debugging through per-run artifacts first, additive workflow context when needed, one app-owned session artifact, and a fixed support-packet order
+  - `2026-04-05T15:26:00Z` — project guidance now routes multi-surface debugging through browser/banner evidence first, direct browser/finalization report artifacts when no normal run report exists yet, first-class per-run `run_report.md` artifacts for execution issues, preserved Gmail provenance in Gmail-started run reports, and one app-owned session artifact for batch/finalization state
 - Regressed after accepted fix: `no`
 - Affected workflows/docs:
   - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
   - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
   - `APP_KNOWLEDGE.md`
   - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
 - Bootstrap relevance: `required`
 - Docs-sync relevance:
   - Priority: `high`
@@ -200,31 +489,79 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - session-artifact layering guidance
     - support-packet order
     - multi-surface troubleshooting workflow routing
+    - direct browser/finalization report surfaces when no normal run report exists yet
+    - run-owned detailed report discoverability from the browser completion drawer
+    - Gmail provenance preservation across reruns before finalization
 - Evidence refs:
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_intake`
   - Template: `docs/assistant/templates/BOOTSTRAP_HARNESS_ISOLATION_AND_DIAGNOSTICS.md`
   - File: `C:\Users\FA507\Downloads\run_report.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_gmail_prepare_pdf_worker_reportability.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-05-gmail-run-report-provenance.md`
+
+### workflow-gmail-restored-finalization-shadowed-fresh-handoff
+- Title: Recovered completed Gmail batches could reopen as the main flow and block a fresh extension handoff
+- First seen timestamp: `2026-04-05T15:05:00Z`
+- Last seen timestamp: `2026-04-05T15:52:00Z`
+- Repeat count: `1`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - clicking the Gmail extension again could reopen the previous finalized batch instead of the new handoff
+  - the browser workspace looked stuck on old work until the user reset the workspace or cold-started the app
+  - recovered finalization history could crowd the main CTA instead of staying secondary
+- Likely root cause:
+  - Gmail bootstrap treated report-restored terminal translation batches as `active_session`
+  - the Gmail frontend treated recovered-only completed state as a stable `translation_finalize` workspace instead of waiting for a fresh handoff
+- Attempted fix history:
+  - `2026-04-05T15:52:00Z` — demoted report-restored terminal batches to additive `restored_completed_session`, kept bounded refresh alive for recovered-only state, and moved recovered finalization behind `Open Last Finalization Result`; outcome: stronger_mitigation
+- Accepted fix:
+  - `2026-04-05T15:52:00Z` — fresh Gmail handoffs now take priority over recovered finalized batches by default, while the previous finalized batch remains accessible only as secondary recovered history
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/SESSION_RESUME.md`
+- Bootstrap relevance: `required`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - fresh handoff precedence over recovered finalization
+    - secondary recovered-history access
+    - do not treat recovered-only Gmail state as the default stable workspace
+- Evidence refs:
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-05_gmail_fresh_handoff_priority.md`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_fresh_handoff`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
 
 ### product-arabic-docx-word-right-alignment
 - Title: Arabic DOCX right alignment in Word could not be solved durably with OOXML-only writer changes
 - First seen timestamp: `2026-03-08T00:00:00Z`
-- Last seen timestamp: `2026-03-08T20:45:00Z`
-- Repeat count: `4`
+- Last seen timestamp: `2026-04-03T15:47:52Z`
+- Repeat count: `5`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
   - Arabic DOCX output still opened left-aligned in Word even though the text itself remained RTL
   - some attempted fixes worsened mixed Arabic/Portuguese line ordering or misplaced Latin fragments
   - source-side XML/test changes could appear correct while the real Word-rendered document still required manual right alignment
+  - even after manual right alignment in Word, mixed-script lines could still show commas, bars, or numbering fragments on the wrong side when DOCX runs were assembled badly
 - Likely root cause:
   - mixed RTL/LTR Word layout is not reliably controlled by the current OOXML writer path alone, so writer-only fixes were not durable enough for shipped user-visible behavior
+  - placeholder/token run assembly could still attach punctuation and separator bars to the wrong LTR runs before the manual Word review step
 - Attempted fix history:
   - `2026-03-08T00:00:00Z` — switched RTL paragraph handling toward left-justified bidi semantics; outcome: insufficient because mixed Arabic/Portuguese ordering got worse
   - `2026-03-08T00:00:00Z` — kept `jc=right` while removing paragraph bidi/rtl; outcome: insufficient because mixed ordering improved but Word still did not visually align the page to the right
   - `2026-03-08T00:00:00Z` — tried a bidi-only paragraph shape with build/delivery verification; outcome: insufficient because it was not durable enough as a shipped fix in the real host/build path
+  - `2026-04-03T15:47:52Z` — hardened shared Arabic DOCX token/run segmentation for mixed-script punctuation, identifiers, and separator bars while keeping the browser review step manual-only; outcome: stronger_mitigation
 - Accepted fix:
-  - `2026-03-08T20:45:00Z` — added an Arabic-only Word review gate with `Align Right + Save`, automatic save detection, and manual fallback actions before Save to Job Log / Gmail continuation
-- Regressed after accepted fix: `no`
+  - `2026-04-03T15:47:52Z` — the shipped mitigation is now a real Arabic Word review step that opens the durable DOCX for manual save plus corrected shared DOCX run assembly so mixed Arabic/LTR punctuation survives that manual right-alignment path
+- Regressed after accepted fix: `yes`
 - Affected workflows/docs:
   - `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
   - `APP_KNOWLEDGE.md`
@@ -240,14 +577,20 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - Targets:
     - Arabic Word review gate behavior
     - Windows Word + PowerShell same-host requirement
+    - browser manual-only save behavior
+    - mixed Arabic/LTR DOCX run-ordering hardening
     - durable memory of failed OOXML-only fixes without presenting them as current behavior
 - Evidence refs:
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-08_arabic_docx_review_gate.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-04-03_arabic_docx_run_ordering_manual_review.md`
   - File: `src/legalpdf_translate/word_automation.py`
+  - File: `src/legalpdf_translate/docx_writer.py`
   - File: `src/legalpdf_translate/qt_gui/dialogs.py`
+  - File: `src/legalpdf_translate/browser_arabic_review.py`
+  - File: `tests/test_docx_writer_rtl.py`
   - File: `tests/test_word_automation.py`
   - File: `tests/test_qt_app_state.py`
-  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate_gmail_pdf_worker_fix`
 
 ### workflow-gmail-post-save-finalization-regression
 - Title: Gmail batch post-save continuation changes regressed behavior when special-casing the last saved item
@@ -279,5 +622,98 @@ Do not promote one-off local/project-specific issues into the global Codex boots
     - require stronger validation before changing final-item save behavior again
 - Evidence refs:
   - File: `src/legalpdf_translate/qt_gui/app_window.py`
+  - File: `tests/test_qt_app_state.py`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+
+### workflow-post-merge-continuity-cleanup-drift
+- Title: Post-merge cleanup drift left stale roadmap continuity and scratch artifacts behind
+- First seen timestamp: `2026-03-09T23:30:00Z`
+- Last seen timestamp: `2026-03-09T23:30:00Z`
+- Repeat count: `1`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - `docs/assistant/SESSION_RESUME.md` still pointed to a deleted feature branch after merge
+  - `docs/assistant/exec_plans/active/` still held clearly completed or dead-branch plans
+  - a docs-only continuity repair was needed on `main` after the merge was already complete
+  - deterministic Qt render-review outputs showed up as untracked Source Control noise
+- Likely root cause:
+  - branch cleanup did not require roadmap closeout, resume-anchor updates, and scratch-output cleanup to be decision-complete before merge
+- Attempted fix history:
+  - `2026-03-09T23:30:00Z` — merged the feature thread first and repaired continuity state afterward on `main`; outcome: partial_only because the cleanup succeeded but too much of the logic still lived in thread memory
+- Accepted fix:
+  - `2026-03-09T23:30:00Z` — added dormant-roadmap support for `SESSION_RESUME.md`, archived deterministically stale plans, hardened commit/publish and docs-maintenance workflows, moved Qt render-review scratch output under ignored `tmp/`, and added validator coverage for stale resume branches and legacy scratch-path guidance
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+  - `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
+  - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `docs/assistant/UPDATE_POLICY.md`
+  - `docs/assistant/SESSION_RESUME.md`
+  - `docs/assistant/ISSUE_MEMORY.md`
+  - `docs/assistant/DOCS_REFRESH_NOTES.md`
+- Bootstrap relevance: `possible`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - stale roadmap continuity repair
+    - active/completed ExecPlan lifecycle hygiene
+    - post-merge cleanup guardrails
+    - ignored scratch-output defaults for assistant tooling
+- Evidence refs:
+  - File: `docs/assistant/SESSION_RESUME.md`
+  - File: `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
+  - File: `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
+  - File: `tooling/qt_render_review.py`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-09_cleanup_continuity_hardening.md`
+  - Branch: `main`
+  - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+
+### desktop-qt-honorarios-export-reliability
+- Title: Host-bound honorários PDF export and Gmail finalization readiness felt unstable because launch-only Word checks were too shallow
+- First seen timestamp: `2026-03-12T00:00:00Z`
+- Last seen timestamp: `2026-03-30T18:21:00Z`
+- Repeat count: `3`
+- Status: `mitigated`
+- Trigger source: `both`
+- Symptoms:
+  - the visible LegalPDF window could show `No responde` while Word PDF export tried to launch or timed out
+  - PDF failure warnings dumped raw PowerShell/COM text inline and could cascade into an extra Gmail missing-PDF warning
+  - focus-sensitive Qt tests around Return/Delete shortcuts could fail intermittently because leaked dialogs or stale focus changed the active target
+  - the browser finalization drawer could show Word as apparently ready from a shallow probe even though the real DOCX-to-PDF export path still timed out and ended in `local_only`
+- Likely root cause:
+  - host-bound Word PDF export originally ran on the GUI thread and failure handling spanned too many modal layers
+  - the Qt harness did not yet enforce deterministic popup cleanup, activation, and shortcut targeting for focus-sensitive dialog tests
+  - launch-only Word readiness was too weak for the Gmail finalization path, which uses a heavier open/export/close cycle than a simple launch probe
+- Attempted fix history:
+  - `2026-03-12T00:00:00Z` — added synchronous honorários DOCX-to-PDF export through Word automation; outcome: insufficient because the UI could freeze and the failure diagnostics were too noisy
+  - `2026-03-30T00:00:00Z` — browser/operator surfaces still treated launch-only Word readiness as sufficient proof for Gmail finalization; outcome: insufficient because the final reply path could still time out during export
+- Accepted fix:
+  - `2026-03-30T00:00:00Z` — Word export reliability now uses phase-aware diagnostics, bounded cleanup for app-owned stuck helpers, a real DOCX-to-PDF export canary, browser `finalization_ready` gating before Gmail reply finalization, and direct retry/report flows when export still fails after a passing canary
+- Regressed after accepted fix: `no`
+- Affected workflows/docs:
+  - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+  - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
+  - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
+  - `APP_KNOWLEDGE.md`
+  - `docs/assistant/APP_KNOWLEDGE.md`
+  - `docs/assistant/features/APP_USER_GUIDE.md`
+  - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`
+  - `docs/assistant/DOCS_REFRESH_NOTES.md`
+- Bootstrap relevance: `possible`
+- Docs-sync relevance:
+  - Priority: `high`
+  - Targets:
+    - non-blocking host automation for user-facing desktop flows
+    - concise user-facing failure text with expandable diagnostics
+    - single recovery flow for partial-success exports
+    - explicit activation and leaked-popup cleanup for focus-sensitive Qt tests
+- Evidence refs:
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-12_desktop_stability_honorarios_qt.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md`
+  - File: `src/legalpdf_translate/qt_gui/dialogs.py`
+  - File: `src/legalpdf_translate/qt_gui/worker.py`
+  - File: `src/legalpdf_translate/word_automation.py`
+  - File: `tests/conftest.py`
   - File: `tests/test_qt_app_state.py`
   - Worktree: `C:\Users\FA507\.codex\legalpdf_translate`

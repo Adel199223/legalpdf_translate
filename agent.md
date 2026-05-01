@@ -62,6 +62,20 @@ Use the support response shape:
 Never handle commit requests blindly.
 Always follow `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`.
 
+## Project Harness Routing
+- If the user says `implement the template files` or `sync project harness`, follow `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`.
+- If the user says `audit project harness` or `check project harness`, use the same workflow in audit/validation-only mode.
+- Local harness application must read vendored templates as source input and must not edit `docs/assistant/templates/*`.
+- `update codex bootstrap` and `UCBS` are reserved for maintaining the reusable template system itself, not for project-local harness sync.
+
+## Roadmap Resume Routing
+- If the user says `resume master plan`, `where did we leave off`, or `what is the next roadmap step`, open `docs/assistant/SESSION_RESUME.md` first.
+- If `docs/assistant/SESSION_RESUME.md` is in active-roadmap state, open the linked active roadmap tracker and then the linked active wave ExecPlan.
+- If `docs/assistant/SESSION_RESUME.md` is in dormant roadmap state, do not invent a roadmap; default to normal ExecPlan flow unless the user explicitly asks for roadmap/master-plan work.
+- `docs/assistant/SESSION_RESUME.md` is the stable roadmap anchor file for fresh sessions.
+- During active work in a separate worktree, that worktree's `SESSION_RESUME.md`, active roadmap tracker, and active wave ExecPlan are authoritative for live roadmap state.
+- `main` may legitimately carry a dormant roadmap state when no tracker/wave is active on that worktree.
+
 ## Commit/Push Shorthand Defaults
 - When the user says `commit` without narrowing scope:
   - inspect the full pending Source Control tree first
@@ -104,6 +118,7 @@ For risk-triggered complex work:
 After significant implementation changes, ask exactly:
 "Would you like me to run Assistant Docs Sync for this change now?"
 
-Ask it only when relevant touched-scope docs still remain unsynced.
+Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary.
+If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass.
 If the relevant docs sync already ran during the same task/pass, do not ask again.
 If approved, update only the relevant docs for touched scope.

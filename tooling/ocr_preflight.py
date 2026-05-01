@@ -14,6 +14,8 @@ from typing import Any, Callable
 
 CommandRunner = Callable[[list[str]], tuple[int, str, str]]
 REQUIRED_LANGS = ("por", "eng", "fra", "ara")
+DEFAULT_OPENAI_OCR_ENV = "OPENAI_API_KEY"
+LEGACY_OPENAI_OCR_ENV = "DEEPSEEK_API_KEY"
 
 
 def _default_runner(command: list[str]) -> tuple[int, str, str]:
@@ -32,6 +34,35 @@ def _first_line(value: str) -> str:
         if cleaned != "":
             return cleaned
     return ""
+
+
+def _configured_ocr_env_name_from_settings() -> str | None:
+    try:
+        repo_root = Path(__file__).resolve().parents[1]
+        src_root = repo_root / "src"
+        if str(src_root) not in sys.path:
+            sys.path.insert(0, str(src_root))
+        from legalpdf_translate.ocr_engine import default_ocr_api_env_name, normalize_ocr_api_provider  # noqa: PLC0415
+        from legalpdf_translate.user_settings import load_gui_settings  # noqa: PLC0415
+
+        settings = load_gui_settings()
+        provider = normalize_ocr_api_provider(
+            settings.get("ocr_api_provider", settings.get("ocr_api_provider_default", "openai"))
+        )
+        configured = str(settings.get("ocr_api_key_env_name", "") or "").strip()
+        return configured or default_ocr_api_env_name(provider)
+    except Exception:
+        return None
+
+
+def _resolve_ocr_api_env_name(environment: dict[str, str]) -> str:
+    explicit = (environment.get("OCR_API_KEY_ENV_NAME", "") or "").strip()
+    if explicit:
+        return explicit
+    configured = _configured_ocr_env_name_from_settings()
+    if configured:
+        return configured
+    return DEFAULT_OPENAI_OCR_ENV
 
 
 def _detect_tesseract(*, runner: CommandRunner) -> dict[str, Any]:
@@ -75,8 +106,11 @@ def _detect_tesseract(*, runner: CommandRunner) -> dict[str, Any]:
 
 
 def _detect_api_fallback(environment: dict[str, str]) -> dict[str, Any]:
-    env_name = (environment.get("OCR_API_KEY_ENV_NAME", "") or "").strip() or "DEEPSEEK_API_KEY"
-    env_present = (environment.get(env_name, "") or "").strip() != ""
+    env_name = _resolve_ocr_api_env_name(environment)
+    candidate_env_names = [env_name]
+    if env_name == DEFAULT_OPENAI_OCR_ENV:
+        candidate_env_names.append(LEGACY_OPENAI_OCR_ENV)
+    env_present = any((environment.get(candidate, "") or "").strip() != "" for candidate in candidate_env_names)
     ignore_stored_key = (environment.get("OCR_PREFLIGHT_IGNORE_STORED_KEY", "") or "").strip().lower() in {
         "1",
         "true",
@@ -101,6 +135,7 @@ def _detect_api_fallback(environment: dict[str, str]) -> dict[str, Any]:
         "configured": bool(stored_present or env_present),
         "key_source": key_source,
         "key_env_name": env_name,
+        "key_env_candidates": candidate_env_names,
     }
 
 

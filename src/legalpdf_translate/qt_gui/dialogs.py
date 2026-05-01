@@ -14,15 +14,16 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from openai import OpenAI
-from PySide6.QtCore import QEvent, QObject, QStandardPaths, QThread, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut
+from PySide6.QtCore import QEvent, QObject, QSize, QStandardPaths, QThread, QTimer, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QDoubleValidator, QFontMetrics, QIcon, QIntValidator, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -38,6 +39,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -47,6 +50,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -75,6 +79,7 @@ from legalpdf_translate.gmail_draft import (
     GMAIL_DRAFTS_URL,
     assess_gmail_draft_prereqs,
     build_honorarios_gmail_request,
+    build_manual_interpretation_gmail_request,
     create_gmail_draft_via_gog,
     validate_translated_docx_artifacts_for_gmail_draft,
 )
@@ -85,23 +90,52 @@ from legalpdf_translate.gmail_batch import (
 )
 from legalpdf_translate.build_identity import RuntimeBuildIdentity
 from legalpdf_translate.honorarios_docx import (
+    HonorariosKind,
     HonorariosDraft,
     build_honorarios_draft,
+    build_interpretation_honorarios_draft,
+    default_interpretation_recipient_block,
     default_honorarios_filename,
     generate_honorarios_docx,
 )
+from legalpdf_translate.interpretation_service import (
+    autofill_interpretation_from_notification_pdf as shared_service_autofill_interpretation_from_notification_pdf,
+    autofill_interpretation_from_photo as shared_service_autofill_interpretation_from_photo,
+    build_interpretation_honorarios_draft_from_form,
+)
+from legalpdf_translate.joblog_flow import (
+    JobLogSavedResult as SharedJobLogSavedResult,
+    JobLogSeed as SharedJobLogSeed,
+    build_blank_interpretation_seed as shared_build_blank_interpretation_seed,
+    build_interpretation_notice_diagnostics_text as shared_build_interpretation_notice_diagnostics_text,
+    build_interpretation_seed_from_notification_pdf as shared_build_interpretation_seed_from_notification_pdf,
+    build_interpretation_seed_from_photo_screenshot as shared_build_interpretation_seed_from_photo_screenshot,
+    build_joblog_saved_result,
+    build_joblog_settings_save_bundle,
+    build_seed_from_joblog_row as shared_build_seed_from_joblog_row,
+    build_seed_from_run as shared_build_seed_from_run,
+    count_words_from_output_artifacts as shared_count_words_from_output_artifacts,
+    hydrate_joblog_seed as shared_hydrate_joblog_seed,
+    merge_payload_into_joblog_settings,
+    normalize_joblog_payload as shared_normalize_joblog_payload,
+)
 from legalpdf_translate.joblog_db import (
+    delete_job_runs,
     insert_job_run,
     list_job_runs,
     open_job_log,
+    update_job_run,
     update_job_run_output_paths,
     update_joblog_visible_columns,
 )
 from legalpdf_translate.metadata_autofill import (
     MetadataAutofillConfig,
+    MetadataExtractionDiagnostics,
     MetadataSuggestion,
     apply_service_case_default_rule,
     choose_court_email_suggestion,
+    extract_interpretation_notification_metadata_from_pdf_with_diagnostics,
+    extract_interpretation_photo_metadata_from_image,
     extract_pdf_header_metadata_priority_pages,
     extract_photo_metadata_from_image,
     metadata_config_from_settings,
@@ -110,21 +144,34 @@ from legalpdf_translate.metadata_autofill import (
 from legalpdf_translate.openai_client import OpenAIResponsesClient
 from legalpdf_translate.ocr_engine import (
     OcrEngineConfig,
+    candidate_ocr_api_env_names,
     default_ocr_api_base_url,
     default_ocr_api_env_name,
     default_ocr_api_model,
+    local_ocr_available,
     normalize_ocr_api_provider,
+    resolve_ocr_api_key,
+    resolve_ocr_api_key_source,
     test_ocr_provider_connection,
 )
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
-from legalpdf_translate.qt_gui.guarded_inputs import NoWheelComboBox, NoWheelSpinBox
+from legalpdf_translate.qt_gui.declutter import (
+    DeclutterSection,
+    build_compact_add_button,
+    build_inline_info_button,
+)
+from legalpdf_translate.qt_gui.guarded_inputs import GuardedDateEdit, NoWheelComboBox, NoWheelSpinBox
+from legalpdf_translate.qt_gui.window_adaptive import CollapsibleSection, ResponsiveWindowController
 from legalpdf_translate.qt_gui.worker import (
+    HonorariosPdfExportResult,
+    HonorariosPdfExportWorker,
     GmailAttachmentPreviewBootstrapResult,
     GmailAttachmentPreviewBootstrapWorker,
     GmailAttachmentPreviewPageResult,
     GmailAttachmentPreviewPageWorker,
 )
 from legalpdf_translate.review_export import export_review_queue
+from legalpdf_translate.resources_loader import resource_path
 from legalpdf_translate.secrets_store import (
     delete_openai_key,
     delete_ocr_key,
@@ -157,8 +204,21 @@ from legalpdf_translate.user_settings import (
     app_data_dir,
     load_gui_settings,
     load_joblog_settings,
+    load_profile_settings,
+    settings_path,
+    save_profile_settings,
     save_gui_settings,
     save_joblog_settings,
+)
+from legalpdf_translate.user_profile import (
+    PROFILE_FIELD_LABELS,
+    UserProfile,
+    blank_profile,
+    distance_for_city,
+    find_profile,
+    missing_required_profile_fields,
+    normalize_profiles,
+    primary_profile,
 )
 from legalpdf_translate.word_automation import (
     WordAutomationResult,
@@ -177,6 +237,8 @@ JOBLOG_COLUMNS = [
     "service_entity",
     "service_city",
     "service_date",
+    "travel_km_outbound",
+    "travel_km_return",
     "lang",
     "target_lang",
     "pages",
@@ -202,6 +264,8 @@ JOBLOG_COLUMN_LABELS = {
     "service_entity": "Service Entity",
     "service_city": "Service City",
     "service_date": "Service Date",
+    "travel_km_outbound": "KM Out",
+    "travel_km_return": "KM Back",
     "lang": "Lang",
     "target_lang": "Target",
     "pages": "Pages",
@@ -216,57 +280,242 @@ JOBLOG_COLUMN_LABELS = {
     "profit": "Profit",
 }
 
+INITIAL_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS = 45.0
+RETRY_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS = 90.0
 
-@dataclass(slots=True)
-class JobLogSeed:
-    completed_at: str
-    translation_date: str
-    job_type: str
-    case_number: str
-    court_email: str
-    case_entity: str
-    case_city: str
-    service_entity: str
-    service_city: str
-    service_date: str
-    lang: str
-    pages: int
-    word_count: int
-    rate_per_word: float
-    expected_total: float
-    amount_paid: float
-    api_cost: float
-    run_id: str
-    target_lang: str
-    total_tokens: int | None
-    estimated_api_cost: float | None
-    quality_risk_score: float | None
-    profit: float
-    pdf_path: Path
-    output_docx: Path | None = None
-    partial_docx: Path | None = None
+JOBLOG_ACTIONS_COLUMN_LABEL = "Actions"
+JOBLOG_ACTIONS_COLUMN_KEY = "__actions__"
+JOBLOG_COLUMN_WIDTH_PADDING = 24
+JOBLOG_INLINE_COMBO_COLUMNS = {
+    "job_type",
+    "case_entity",
+    "case_city",
+    "service_entity",
+    "service_city",
+    "court_email",
+    "lang",
+    "target_lang",
+}
+JOBLOG_INLINE_DATE_COLUMNS = {"translation_date", "service_date"}
+JOBLOG_INLINE_INTEGER_COLUMNS = {"pages", "word_count", "total_tokens"}
+JOBLOG_INLINE_FLOAT_COLUMNS = {
+    "travel_km_outbound",
+    "travel_km_return",
+    "rate_per_word",
+    "expected_total",
+    "amount_paid",
+    "api_cost",
+    "estimated_api_cost",
+    "quality_risk_score",
+    "profit",
+}
+JOBLOG_VOCAB_SETTINGS_MAP = {
+    "job_type": "vocab_job_types",
+    "case_entity": "vocab_case_entities",
+    "case_city": "vocab_cities",
+    "service_entity": "vocab_service_entities",
+    "service_city": "vocab_cities",
+    "court_email": "vocab_court_emails",
+}
+JOBLOG_LANG_OPTIONS = ["EN", "FR", "AR"]
 
 
-@dataclass(frozen=True, slots=True)
-class JobLogSavedResult:
-    row_id: int
-    translated_docx_path: Path
-    word_count: int
-    case_number: str
-    case_entity: str
-    case_city: str
-    court_email: str
-    run_id: str
+def _is_interpretation_job_type(value: str) -> bool:
+    return value.strip().casefold() == "interpretation"
+
+
+def _set_fixed_height_if_needed(widget: QWidget, height: int) -> None:
+    resolved = max(0, int(height))
+    if widget.minimumHeight() == resolved and widget.maximumHeight() == resolved:
+        return
+    widget.setFixedHeight(resolved)
+
+
+def _coerce_joblog_path(value: object) -> Path | None:
+    cleaned = str(value or "").strip()
+    if cleaned == "":
+        return None
+    return Path(cleaned).expanduser().resolve()
+
+
+def _coerce_joblog_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    cleaned = str(value or "").strip()
+    if cleaned == "":
+        return default
+    try:
+        return int(cleaned)
+    except ValueError:
+        return default
+
+
+def _coerce_joblog_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    cleaned = str(value or "").strip().replace(",", ".")
+    if cleaned == "":
+        return default
+    try:
+        return float(cleaned)
+    except ValueError:
+        return default
+
+
+def _coerce_joblog_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(int(value))
+    cleaned = str(value).strip()
+    if cleaned == "":
+        return default
+    try:
+        return bool(int(cleaned))
+    except ValueError:
+        lowered = cleaned.casefold()
+        if lowered in {"true", "yes", "on"}:
+            return True
+        if lowered in {"false", "no", "off"}:
+            return False
+    return default
+
+
+def build_seed_from_joblog_row(row: Mapping[str, object]) -> JobLogSeed:
+    return shared_build_seed_from_joblog_row(row)
+
+
+def _parse_joblog_float(value: str, label: str) -> float:
+    cleaned = value.strip().replace(",", ".")
+    if cleaned == "":
+        return 0.0
+    try:
+        return float(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be numeric.") from exc
+
+
+def _parse_joblog_required_int(value: str, label: str) -> int:
+    cleaned = value.strip()
+    if cleaned == "":
+        raise ValueError(f"{label} must be an integer.")
+    try:
+        return int(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an integer.") from exc
+
+
+def _parse_joblog_optional_int(value: str, label: str) -> int | None:
+    cleaned = value.strip()
+    if cleaned == "":
+        return None
+    try:
+        return int(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an integer.") from exc
+
+
+def _parse_joblog_optional_float(value: str, label: str) -> float | None:
+    cleaned = value.strip().replace(",", ".")
+    if cleaned == "":
+        return None
+    try:
+        return float(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be numeric.") from exc
+
+
+def _validate_joblog_date(value: str, label: str) -> str:
+    cleaned = value.strip()
+    if cleaned == "":
+        return ""
+    try:
+        datetime.strptime(cleaned, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError(f"{label} must be YYYY-MM-DD.") from exc
+    return cleaned
+
+
+def _widget_text_value(widget: Any) -> str:
+    if hasattr(widget, "currentText"):
+        return str(widget.currentText())
+    if hasattr(widget, "text"):
+        return str(widget.text())
+    return ""
+
+
+def _normalize_joblog_payload(
+    *,
+    seed: JobLogSeed,
+    raw_values: Mapping[str, str],
+    service_same_checked: bool,
+    use_service_location_in_honorarios_checked: bool = False,
+    include_transport_sentence_in_honorarios_checked: bool = True,
+) -> dict[str, Any]:
+    return shared_normalize_joblog_payload(
+        seed=seed,
+        raw_values=raw_values,
+        service_same_checked=service_same_checked,
+        use_service_location_in_honorarios_checked=use_service_location_in_honorarios_checked,
+        include_transport_sentence_in_honorarios_checked=include_transport_sentence_in_honorarios_checked,
+    )
+
+
+def _ensure_value_in_joblog_settings(settings: dict[str, Any], key: str, value: str) -> None:
+    cleaned = value.strip()
+    if cleaned == "":
+        return
+    bucket = list(settings[key])
+    lowered = {item.casefold() for item in bucket}
+    if cleaned.casefold() in lowered:
+        return
+    bucket.append(cleaned)
+    settings[key] = bucket
+
+
+def _persist_joblog_vocab_settings(settings: dict[str, Any], payload: Mapping[str, Any]) -> None:
+    updated = merge_payload_into_joblog_settings(
+        settings,
+        payload,
+        service_equals_case_by_default=bool(settings.get("service_equals_case_by_default", True)),
+    )
+    settings.clear()
+    settings.update(updated)
+
+
+def _save_joblog_settings_bundle(settings: dict[str, Any], *, service_equals_case_by_default: bool) -> None:
+    updated = dict(settings)
+    updated["service_equals_case_by_default"] = bool(service_equals_case_by_default)
+    settings.clear()
+    settings.update(updated)
+    save_joblog_settings(build_joblog_settings_save_bundle(settings))
+
+
+JobLogSeed = SharedJobLogSeed
+JobLogSavedResult = SharedJobLogSavedResult
 
 
 @dataclass(frozen=True, slots=True)
 class GmailBatchReviewResult:
     selections: tuple[GmailAttachmentSelection, ...]
-    target_lang: str
+    target_lang: str = ""
+    workflow_kind: str = "translation"
 
     @property
     def attachments(self) -> tuple[GmailAttachmentCandidate, ...]:
         return tuple(selection.candidate for selection in self.selections)
+
+
+GMAIL_INTAKE_WORKFLOW_TRANSLATION = "translation"
+GMAIL_INTAKE_WORKFLOW_INTERPRETATION = "interpretation"
 
 
 @dataclass(slots=True)
@@ -336,15 +585,11 @@ def count_words_from_output_artifacts(
     partial_docx: Path | None,
     pages_dir: Path | None,
 ) -> int:
-    final_count = count_words_from_docx(output_docx)
-    if final_count > 0:
-        return final_count
-    partial_count = count_words_from_docx(partial_docx)
-    if partial_count > 0:
-        return partial_count
-    if pages_dir is None:
-        return 0
-    return count_words_from_pages_dir(pages_dir)
+    return shared_count_words_from_output_artifacts(
+        output_docx=output_docx,
+        partial_docx=partial_docx,
+        pages_dir=pages_dir,
+    )
 
 
 def _date_from_completed_at(completed_at: str) -> str:
@@ -369,39 +614,44 @@ def build_seed_from_run(
     default_rate_per_word: float,
     api_cost: float = 0.0,
 ) -> JobLogSeed:
-    word_count = count_words_from_output_artifacts(
+    return shared_build_seed_from_run(
+        pdf_path=pdf_path,
+        lang=lang,
         output_docx=output_docx,
         partial_docx=partial_docx,
         pages_dir=pages_dir,
-    )
-    expected_total = round(float(default_rate_per_word) * float(word_count), 2)
-    return JobLogSeed(
+        completed_pages=completed_pages,
         completed_at=completed_at,
-        translation_date=_date_from_completed_at(completed_at),
-        job_type="Translation",
-        case_number="",
-        court_email="",
-        case_entity="",
-        case_city="",
-        service_entity="",
-        service_city="",
-        service_date=_date_from_completed_at(completed_at),
-        lang=lang,
-        pages=int(completed_pages),
-        word_count=int(word_count),
-        rate_per_word=float(default_rate_per_word),
-        expected_total=expected_total,
-        amount_paid=0.0,
-        api_cost=float(api_cost),
-        run_id="",
-        target_lang=lang,
-        total_tokens=None,
-        estimated_api_cost=None,
-        quality_risk_score=None,
-        profit=round(expected_total - float(api_cost), 2),
+        default_rate_per_word=default_rate_per_word,
+        api_cost=api_cost,
+    )
+
+
+def build_blank_interpretation_seed() -> JobLogSeed:
+    return shared_build_blank_interpretation_seed()
+
+
+def build_interpretation_seed_from_notification_pdf(
+    *,
+    pdf_path: Path,
+    suggestion: MetadataSuggestion,
+    vocab_court_emails: list[str],
+) -> JobLogSeed:
+    return shared_build_interpretation_seed_from_notification_pdf(
         pdf_path=pdf_path,
-        output_docx=output_docx,
-        partial_docx=partial_docx,
+        suggestion=suggestion,
+        vocab_court_emails=vocab_court_emails,
+    )
+
+
+def build_interpretation_seed_from_photo_screenshot(
+    *,
+    suggestion: MetadataSuggestion,
+    vocab_court_emails: list[str],
+) -> JobLogSeed:
+    return shared_build_interpretation_seed_from_photo_screenshot(
+        suggestion=suggestion,
+        vocab_court_emails=vocab_court_emails,
     )
 
 
@@ -448,8 +698,389 @@ def _open_path_in_system(parent: QWidget, target: Path) -> None:
         QMessageBox.critical(parent, "Open file failed", str(exc))
 
 
+def build_interpretation_notice_diagnostics_text(diagnostics: MetadataExtractionDiagnostics) -> str:
+    return shared_build_interpretation_notice_diagnostics_text(diagnostics)
+
+
+def show_local_only_honorarios_ready_box(
+    parent: QWidget,
+    *,
+    docx_path: Path,
+    pdf_error: str = "",
+    gmail_blocked: bool,
+) -> None:
+    resolved_docx = docx_path.expanduser().resolve()
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Information)
+    box.setWindowTitle("Requerimento de Honorários")
+    box.setText("Honorários DOCX ready locally.")
+    details = [f"DOCX: {resolved_docx}"]
+    if gmail_blocked:
+        details.append("Gmail draft was not created because the PDF is still unavailable.")
+    if pdf_error:
+        details.append(f"PDF export status: {pdf_error}")
+    box.setInformativeText("\n\n".join(details))
+    open_docx_btn = box.addButton("Open DOCX", QMessageBox.ButtonRole.ActionRole)
+    open_folder_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+    close_btn = box.addButton("Close", QMessageBox.ButtonRole.AcceptRole)
+    box.setDefaultButton(close_btn)
+    box.exec()
+    clicked = box.clickedButton()
+    if clicked is open_docx_btn:
+        _open_path_in_system(parent, resolved_docx)
+    elif clicked is open_folder_btn:
+        _open_folder_for_path(parent, resolved_docx)
+
+
+def _profile_missing_fields_message(profile: UserProfile) -> str:
+    missing = missing_required_profile_fields(profile)
+    return ", ".join(PROFILE_FIELD_LABELS.get(field_name, field_name) for field_name in missing)
+
+
+def _current_primary_profile() -> UserProfile:
+    profiles, primary_profile_id = load_profile_settings()
+    return primary_profile(profiles, primary_profile_id)
+
+
+class QtProfileManagerDialog(QDialog):
+    """Manage persisted honorarios identity profiles."""
+
+    def __init__(
+        self,
+        *,
+        parent: QWidget | None,
+        settings: Mapping[str, object],
+        save_callback: Callable[[list[UserProfile], str], None],
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Profiles")
+        self.setMinimumSize(860, 480)
+        self._save_callback = save_callback
+        self._profiles, self._primary_profile_id = normalize_profiles(
+            settings.get("profiles"),
+            settings.get("primary_profile_id"),
+            fallback_email=str(settings.get("gmail_account_email", "") or ""),
+        )
+        self._profiles_by_id = {profile.id: profile for profile in self._profiles}
+        self._current_profile_id = self._primary_profile_id
+        self._selection_changing = False
+        self._build_ui()
+        self._refresh_list()
+        self._select_profile(self._primary_profile_id)
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(980, 620),
+        )
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        split = QHBoxLayout()
+        split.setSpacing(12)
+
+        left = QVBoxLayout()
+        left.setSpacing(8)
+        left.addWidget(QLabel("Saved profiles"))
+        self.profile_list = QListWidget()
+        left.addWidget(self.profile_list, 1)
+
+        left_actions = QHBoxLayout()
+        self.new_profile_btn = QPushButton("New Profile")
+        self.set_primary_btn = QPushButton("Set as Primary")
+        self.delete_profile_btn = QPushButton("Delete Profile")
+        self.delete_profile_btn.setObjectName("DangerButton")
+        left_actions.addWidget(self.new_profile_btn)
+        left_actions.addWidget(self.set_primary_btn)
+        left_actions.addWidget(self.delete_profile_btn)
+        left.addLayout(left_actions)
+
+        split.addLayout(left, 1)
+
+        right = QVBoxLayout()
+        right.setSpacing(8)
+        form = QFormLayout()
+        self.first_name_edit = QLineEdit()
+        self.last_name_edit = QLineEdit()
+        self.document_name_override_edit = QLineEdit()
+        self.document_name_override_edit.setPlaceholderText("Optional override for Nome/signature")
+        self.email_edit = QLineEdit()
+        self.phone_edit = QLineEdit()
+        self.phone_edit.setPlaceholderText("Optional phone for Gmail signature")
+        self.postal_address_edit = QPlainTextEdit()
+        self.postal_address_edit.setFixedHeight(88)
+        self.iban_edit = QLineEdit()
+        self.iva_edit = QLineEdit()
+        self.irs_edit = QLineEdit()
+        self.travel_origin_edit = QLineEdit()
+        self.travel_origin_edit.setPlaceholderText("Origin label used in interpretation transport text")
+        form.addRow("First name", self.first_name_edit)
+        form.addRow("Last name", self.last_name_edit)
+        form.addRow("Document name override", self.document_name_override_edit)
+        form.addRow("Email", self.email_edit)
+        form.addRow("Phone", self.phone_edit)
+        form.addRow("Postal address", self.postal_address_edit)
+        form.addRow("IBAN", self.iban_edit)
+        form.addRow("IVA text", self.iva_edit)
+        form.addRow("IRS text", self.irs_edit)
+        form.addRow("Travel origin", self.travel_origin_edit)
+        right.addLayout(form)
+
+        distance_group = QGroupBox("Interpretation distances")
+        distance_layout = QVBoxLayout(distance_group)
+        distance_layout.setContentsMargins(10, 10, 10, 10)
+        distance_layout.setSpacing(8)
+        self.distance_list = QListWidget(distance_group)
+        distance_layout.addWidget(self.distance_list, 1)
+        distance_actions = QHBoxLayout()
+        self.add_distance_btn = QPushButton("Add/Update Distance")
+        self.delete_distance_btn = QPushButton("Delete Distance")
+        self.delete_distance_btn.setObjectName("DangerButton")
+        distance_actions.addWidget(self.add_distance_btn)
+        distance_actions.addWidget(self.delete_distance_btn)
+        distance_actions.addStretch(1)
+        distance_layout.addLayout(distance_actions)
+        right.addWidget(distance_group, 1)
+
+        self.profile_status_label = QLabel("")
+        self.profile_status_label.setWordWrap(True)
+        right.addWidget(self.profile_status_label)
+        right.addStretch(1)
+        split.addLayout(right, 2)
+
+        root.addLayout(split, 1)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self.save_btn = QPushButton("Save")
+        self.save_btn.setObjectName("PrimaryButton")
+        self.close_btn = QPushButton("Close")
+        actions.addWidget(self.save_btn)
+        actions.addWidget(self.close_btn)
+        root.addLayout(actions)
+
+        self.profile_list.currentItemChanged.connect(self._on_current_item_changed)
+        self.new_profile_btn.clicked.connect(self._new_profile)
+        self.set_primary_btn.clicked.connect(self._set_primary)
+        self.delete_profile_btn.clicked.connect(self._delete_profile)
+        self.add_distance_btn.clicked.connect(self._add_or_update_distance)
+        self.delete_distance_btn.clicked.connect(self._delete_distance)
+        self.save_btn.clicked.connect(self._save)
+        self.close_btn.clicked.connect(self.reject)
+
+    def _profile_label(self, profile: UserProfile) -> str:
+        base = profile.document_name or "(Unnamed profile)"
+        if profile.id == self._primary_profile_id:
+            return f"{base} [Primary]"
+        return base
+
+    def _refresh_list(self) -> None:
+        ordered_profiles = list(self._profiles_by_id.values())
+        self.profile_list.clear()
+        for profile in ordered_profiles:
+            item = QListWidgetItem(self._profile_label(profile))
+            item.setData(Qt.ItemDataRole.UserRole, profile.id)
+            self.profile_list.addItem(item)
+        self.set_primary_btn.setEnabled(len(ordered_profiles) > 1)
+        self.delete_profile_btn.setEnabled(len(ordered_profiles) > 1)
+
+    def _current_profile(self) -> UserProfile | None:
+        if not self._current_profile_id:
+            return None
+        return self._profiles_by_id.get(self._current_profile_id)
+
+    def _select_profile(self, profile_id: str) -> None:
+        self._selection_changing = True
+        try:
+            for index in range(self.profile_list.count()):
+                item = self.profile_list.item(index)
+                if str(item.data(Qt.ItemDataRole.UserRole) or "") == profile_id:
+                    self.profile_list.setCurrentRow(index)
+                    break
+        finally:
+            self._selection_changing = False
+        self._load_current_profile()
+
+    def _commit_current_profile(self) -> None:
+        profile = self._current_profile()
+        if profile is None:
+            return
+        updated = UserProfile(
+            id=profile.id,
+            first_name=self.first_name_edit.text().strip(),
+            last_name=self.last_name_edit.text().strip(),
+            document_name_override=self.document_name_override_edit.text().strip(),
+            email=self.email_edit.text().strip(),
+            phone_number=self.phone_edit.text().strip(),
+            postal_address=self.postal_address_edit.toPlainText().strip(),
+            iban=self.iban_edit.text().strip(),
+            iva_text=self.iva_edit.text().strip(),
+            irs_text=self.irs_edit.text().strip(),
+            travel_origin_label=self.travel_origin_edit.text().strip(),
+            travel_distances_by_city=dict(profile.travel_distances_by_city),
+        )
+        self._profiles_by_id[updated.id] = updated
+        self.profile_status_label.setText(
+            f"Resolved document name: {updated.document_name or '(missing first/last name)'}"
+        )
+
+    def _load_current_profile(self) -> None:
+        profile = self._current_profile()
+        if profile is None:
+            return
+        self.first_name_edit.setText(profile.first_name)
+        self.last_name_edit.setText(profile.last_name)
+        self.document_name_override_edit.setText(profile.document_name_override)
+        self.email_edit.setText(profile.email)
+        self.phone_edit.setText(profile.phone_number)
+        self.postal_address_edit.setPlainText(profile.postal_address)
+        self.iban_edit.setText(profile.iban)
+        self.iva_edit.setText(profile.iva_text)
+        self.irs_edit.setText(profile.irs_text)
+        self.travel_origin_edit.setText(profile.travel_origin_label)
+        self._refresh_distance_list(profile)
+        self.profile_status_label.setText(
+            f"Resolved document name: {profile.document_name or '(missing first/last name)'}"
+        )
+
+    def _refresh_distance_list(self, profile: UserProfile) -> None:
+        self.distance_list.clear()
+        for city in sorted(profile.travel_distances_by_city, key=lambda value: value.casefold()):
+            distance = float(profile.travel_distances_by_city[city])
+            distance_text = str(int(distance)) if float(distance).is_integer() else f"{distance:.2f}".rstrip("0").rstrip(".")
+            item = QListWidgetItem(f"{city} = {distance_text} km")
+            item.setData(Qt.ItemDataRole.UserRole, city)
+            self.distance_list.addItem(item)
+        self.delete_distance_btn.setEnabled(self.distance_list.count() > 0)
+
+    def _add_or_update_distance(self) -> None:
+        self._commit_current_profile()
+        profile = self._current_profile()
+        if profile is None:
+            return
+        selected = self.distance_list.currentItem()
+        initial_city = str(selected.data(Qt.ItemDataRole.UserRole) or "") if selected is not None else ""
+        city, ok = QInputDialog.getText(
+            self,
+            "Distance city",
+            "City:",
+            text=initial_city,
+        )
+        if not ok:
+            return
+        city_clean = " ".join(city.strip().split())
+        if city_clean == "":
+            return
+        current_distance = distance_for_city(profile, city_clean) or 0.0
+        distance_value, ok = QInputDialog.getDouble(
+            self,
+            "One-way distance",
+            f"One-way distance from {profile.travel_origin_label or 'origin'} to {city_clean} (km):",
+            current_distance,
+            0.0,
+            10000.0,
+            2,
+        )
+        if not ok:
+            return
+        profile.travel_distances_by_city[city_clean] = float(distance_value)
+        self._profiles_by_id[profile.id] = profile
+        self._refresh_distance_list(profile)
+
+    def _delete_distance(self) -> None:
+        self._commit_current_profile()
+        profile = self._current_profile()
+        if profile is None:
+            return
+        selected = self.distance_list.currentItem()
+        if selected is None:
+            return
+        city = str(selected.data(Qt.ItemDataRole.UserRole) or "").strip()
+        if city == "":
+            return
+        profile.travel_distances_by_city.pop(city, None)
+        self._profiles_by_id[profile.id] = profile
+        self._refresh_distance_list(profile)
+
+    def _on_current_item_changed(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
+        if self._selection_changing:
+            return
+        self._commit_current_profile()
+        if current is None:
+            return
+        profile_id = str(current.data(Qt.ItemDataRole.UserRole) or "")
+        if not profile_id:
+            return
+        self._current_profile_id = profile_id
+        self._load_current_profile()
+
+    def _new_profile(self) -> None:
+        self._commit_current_profile()
+        profile = blank_profile()
+        self._profiles_by_id[profile.id] = profile
+        self._refresh_list()
+        self._current_profile_id = profile.id
+        self._select_profile(profile.id)
+
+    def _set_primary(self) -> None:
+        profile = self._current_profile()
+        if profile is None:
+            return
+        self._primary_profile_id = profile.id
+        self._refresh_list()
+        self._select_profile(profile.id)
+
+    def _delete_profile(self) -> None:
+        ordered_profiles = list(self._profiles_by_id.values())
+        if len(ordered_profiles) <= 1:
+            QMessageBox.information(self, "Profiles", "At least one profile must remain.")
+            return
+        profile = self._current_profile()
+        if profile is None:
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Delete Profile",
+            f"Delete profile '{profile.document_name or '(Unnamed profile)'}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        del self._profiles_by_id[profile.id]
+        remaining_profiles = list(self._profiles_by_id.values())
+        if profile.id == self._primary_profile_id:
+            self._primary_profile_id = remaining_profiles[0].id
+        self._current_profile_id = remaining_profiles[0].id
+        self._refresh_list()
+        self._select_profile(self._current_profile_id)
+
+    def _save(self) -> None:
+        self._commit_current_profile()
+        ordered_profiles = list(self._profiles_by_id.values())
+        for profile in ordered_profiles:
+            missing_message = _profile_missing_fields_message(profile)
+            if missing_message:
+                self._current_profile_id = profile.id
+                self._refresh_list()
+                self._select_profile(profile.id)
+                QMessageBox.critical(
+                    self,
+                    "Profiles",
+                    (
+                        f"Profile '{profile.document_name or '(Unnamed profile)'}' is missing required fields:\n"
+                        f"{missing_message}"
+                    ),
+                )
+                return
+        self._save_callback([profile for profile in ordered_profiles], self._primary_profile_id)
+        self.accept()
+
+
 class QtHonorariosExportDialog(QDialog):
-    """Generate a deterministic Requerimento de Honorarios DOCX."""
+    """Generate deterministic Requerimento de Honorarios DOCX/PDF files."""
 
     def __init__(
         self,
@@ -457,45 +1088,841 @@ class QtHonorariosExportDialog(QDialog):
         parent: QWidget | None,
         draft: HonorariosDraft,
         default_directory: Path,
+        profile_save_callback: Callable[[list[UserProfile], str], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Gerar Requerimento de Honorários")
-        self.resize(760, 300)
+        self.setMinimumSize(520, 240)
         self._default_directory = default_directory.expanduser().resolve()
         self._initial_draft = draft
+        self._profiles, self._primary_profile_id = load_profile_settings()
+        self._profile_save_callback = profile_save_callback or (
+            lambda profiles, primary_profile_id: save_profile_settings(
+                profiles=profiles,
+                primary_profile_id=primary_profile_id,
+            )
+        )
         self.saved_path: Path | None = None
         self.requested_path: Path | None = None
+        self.saved_pdf_path: Path | None = None
+        self.pdf_export_error: str = ""
+        self.docx_saved_path: Path | None = None
+        self.pdf_saved_path: Path | None = None
+        self.pdf_failure_code: str = ""
+        self.pdf_failure_message: str = ""
+        self.pdf_failure_details: str = ""
+        self.pdf_export_elapsed_ms: int = 0
+        self.pdf_unavailable_explained: bool = False
         self.auto_renamed: bool = False
+        self.generated_draft: HonorariosDraft | None = None
+        self._recipient_block_user_edited = False
+        self._setting_recipient_block = False
+        self._distance_sync_in_progress = False
+        self._distance_value_city_key = ""
+        self._distance_value_profile_id = ""
+        self._distance_value_is_manual = False
+        self._pdf_export_thread: QThread | None = None
+        self._pdf_export_worker: HonorariosPdfExportWorker | None = None
+        self._pdf_export_in_flight = False
         self._build_ui()
+        self._refresh_profile_selector(self._primary_profile_id)
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(860, 540 if self._initial_draft.kind == HonorariosKind.INTERPRETATION else 300),
+        )
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        form = QFormLayout()
+        self.form_scroll_area = QScrollArea(self)
+        self.form_scroll_area.setObjectName("DialogScrollArea")
+        self.form_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.form_scroll_area.setWidgetResizable(True)
+        self.form_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_content = QWidget(self.form_scroll_area)
+        scroll_content.setObjectName("DialogScrollContent")
+        scroll_root = QVBoxLayout(scroll_content)
+        scroll_root.setContentsMargins(0, 0, 0, 0)
+        scroll_root.setSpacing(8)
+
+        general_panel = QFrame(scroll_content)
+        general_panel.setObjectName("ShellPanel")
+        form = QFormLayout(general_panel)
+        form.setContentsMargins(12, 12, 12, 12)
+        form.setSpacing(10)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        profile_row = QHBoxLayout()
+        self.profile_combo = NoWheelComboBox()
+        self.profile_combo.setEditable(False)
+        self.profile_edit_btn = QPushButton("Edit Profiles...")
+        profile_row.addWidget(self.profile_combo, 1)
+        profile_row.addWidget(self.profile_edit_btn)
+        profile_wrap = QWidget()
+        profile_wrap.setLayout(profile_row)
         self.case_number_edit = QLineEdit(self._initial_draft.case_number)
-        self.word_count_edit = QLineEdit(str(self._initial_draft.word_count))
         self.case_entity_edit = QLineEdit(self._initial_draft.case_entity)
         self.case_city_edit = QLineEdit(self._initial_draft.case_city)
-        self.date_preview_label = QLabel(f"Beja, {self._initial_draft.date_pt}")
+        self.date_preview_label = QLabel("")
+        form.addRow("Profile", profile_wrap)
         form.addRow("Número de processo", self.case_number_edit)
-        form.addRow("Número de palavras", self.word_count_edit)
         form.addRow("Case Entity", self.case_entity_edit)
         form.addRow("Case City", self.case_city_edit)
+        if self._initial_draft.kind == HonorariosKind.INTERPRETATION:
+            initial_service_entity = self._initial_draft.service_entity.strip()
+            initial_service_city = self._initial_draft.service_city.strip()
+            initial_case_entity = self._initial_draft.case_entity.strip()
+            initial_case_city = self._initial_draft.case_city.strip()
+            has_explicit_different_service = (
+                (initial_service_entity != "" and initial_service_entity != initial_case_entity)
+                or (initial_service_city != "" and initial_service_city != initial_case_city)
+            )
+            self.service_same_check = QCheckBox("Service same as Case")
+            self.service_same_check.setChecked(not has_explicit_different_service)
+            self.service_date_edit = GuardedDateEdit(self._initial_draft.service_date)
+            self.service_date_edit.setPlaceholderText("YYYY-MM-DD")
+            self.service_entity_edit = QLineEdit(self._initial_draft.service_entity)
+            self.service_city_edit = QLineEdit(self._initial_draft.service_city)
+            self.use_service_location_check = QCheckBox("Mention service location in text")
+            self.use_service_location_check.setChecked(self._initial_draft.use_service_location_in_honorarios)
+            self.include_transport_sentence_check = QCheckBox(
+                "Include transport sentence"
+            )
+            self.include_transport_sentence_check.setChecked(
+                self._initial_draft.include_transport_sentence_in_honorarios
+            )
+            distance_value = self._initial_draft.travel_km_outbound
+            if distance_value <= 0 and self._initial_draft.travel_km_return > 0:
+                distance_value = self._initial_draft.travel_km_return
+            self.distance_label = QLabel("KM (one way)")
+            self.travel_km_outbound_edit = QLineEdit("" if distance_value <= 0 else str(distance_value))
+            self.travel_km_return_edit = self.travel_km_outbound_edit
+            self.recipient_block_edit = QPlainTextEdit()
+            self.recipient_block_edit.setPlaceholderText("Recipient block")
+            self.recipient_block_edit.setMinimumHeight(72)
+            self.recipient_block_edit.setMaximumHeight(140)
+            self._set_recipient_block_text(
+                self._initial_draft.recipient_block
+                or default_interpretation_recipient_block(
+                    self._initial_draft.case_entity,
+                    self._initial_draft.case_city,
+                )
+            )
+        else:
+            self.word_count_edit = QLineEdit(str(self._initial_draft.word_count))
+            form.addRow("Número de palavras", self.word_count_edit)
         form.addRow("Data", self.date_preview_label)
-        root.addLayout(form)
+        scroll_root.addWidget(general_panel)
 
-        actions = QHBoxLayout()
+        if self._initial_draft.kind == HonorariosKind.INTERPRETATION:
+            self.service_group = DeclutterSection("SERVICE", expanded=True, parent=scroll_content)
+            self.service_group_help_btn = build_inline_info_button(
+                tooltip=(
+                    "Open when the service differs from the case or when the generated text "
+                    "must mention the service location."
+                ),
+                accessible_name="Service section help",
+                parent=self.service_group,
+            )
+            self.service_group.add_header_widget(self.service_group_help_btn)
+            service_content = QWidget(self.service_group)
+            service_form = QFormLayout(service_content)
+            service_form.setContentsMargins(0, 0, 0, 0)
+            service_form.setSpacing(10)
+            service_form.addRow("Service date", self.service_date_edit)
+            service_form.addRow("", self.service_same_check)
+            service_form.addRow("Service entity", self.service_entity_edit)
+            service_form.addRow("Service city", self.service_city_edit)
+            self.service_group.set_content_widget(service_content)
+            scroll_root.addWidget(self.service_group)
+
+            self.text_group = DeclutterSection("TEXT", expanded=True, parent=scroll_content)
+            self.text_group_help_btn = build_inline_info_button(
+                tooltip=(
+                    "These options only change the generated honorários wording. "
+                    "The defaults already match the saved row."
+                ),
+                accessible_name="Text options help",
+                parent=self.text_group,
+            )
+            self.text_group.add_header_widget(self.text_group_help_btn)
+            text_content = QWidget(self.text_group)
+            text_grid = QGridLayout(text_content)
+            text_grid.setContentsMargins(0, 0, 0, 0)
+            text_grid.setHorizontalSpacing(10)
+            text_grid.setVerticalSpacing(10)
+            text_grid.addWidget(self.use_service_location_check, 0, 0, 1, 3)
+            text_grid.addWidget(self.include_transport_sentence_check, 1, 0, 1, 3)
+            text_grid.addWidget(self.distance_label, 2, 0)
+            text_grid.addWidget(self.travel_km_outbound_edit, 2, 1)
+            self.distance_hint_label = QLabel("Saved by city.")
+            self.distance_hint_info_btn = build_inline_info_button(
+                tooltip="Saved per service city and reused automatically for future interpretation drafts.",
+                accessible_name="Distance reuse help",
+                parent=text_content,
+            )
+            distance_hint_row = QHBoxLayout()
+            distance_hint_row.setContentsMargins(0, 0, 0, 0)
+            distance_hint_row.setSpacing(6)
+            distance_hint_row.addWidget(self.distance_hint_label, 0, Qt.AlignmentFlag.AlignVCenter)
+            distance_hint_row.addWidget(self.distance_hint_info_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+            distance_hint_row.addStretch(1)
+            text_grid.addLayout(distance_hint_row, 2, 2)
+            text_grid.setColumnStretch(1, 1)
+            self.text_group.set_content_widget(text_content)
+            scroll_root.addWidget(self.text_group)
+
+            self.recipient_group = DeclutterSection("RECIPIENT", expanded=True, parent=scroll_content)
+            self.recipient_group_help_btn = build_inline_info_button(
+                tooltip="Uses the case entity and city by default. Open only when the recipient block needs editing.",
+                accessible_name="Recipient block help",
+                parent=self.recipient_group,
+            )
+            self.recipient_group.add_header_widget(self.recipient_group_help_btn)
+            recipient_content = QWidget(self.recipient_group)
+            recipient_layout = QVBoxLayout(recipient_content)
+            recipient_layout.setContentsMargins(0, 0, 0, 0)
+            recipient_layout.setSpacing(8)
+            recipient_layout.addWidget(self.recipient_block_edit)
+            self.recipient_group.set_content_widget(recipient_content)
+            scroll_root.addWidget(self.recipient_group)
+
+        scroll_root.addStretch(1)
+        self.form_scroll_area.setWidget(scroll_content)
+        root.addWidget(self.form_scroll_area, 1)
+        self.export_status_label = QLabel("")
+        self.export_status_label.setVisible(False)
+        root.addWidget(self.export_status_label)
+        self.export_progress = QProgressBar(self)
+        self.export_progress.setRange(0, 0)
+        self.export_progress.setTextVisible(False)
+        self.export_progress.setVisible(False)
+        root.addWidget(self.export_progress)
+
+        self.action_bar = QWidget(self)
+        self.action_bar.setObjectName("DialogActionBar")
+        actions = QHBoxLayout(self.action_bar)
+        actions.setContentsMargins(10, 8, 10, 8)
+        actions.setSpacing(10)
         actions.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
-        self.generate_btn = QPushButton("Gerar DOCX")
+        self.generate_btn = QPushButton("Gerar DOCX + PDF")
+        self.generate_btn.setObjectName("PrimaryButton")
         actions.addWidget(self.cancel_btn)
         actions.addWidget(self.generate_btn)
-        root.addLayout(actions)
+        root.addWidget(self.action_bar)
 
         self.cancel_btn.clicked.connect(self.reject)
         self.generate_btn.clicked.connect(self._generate)
+        self.profile_edit_btn.clicked.connect(self._edit_profiles)
+        self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
+        self.case_city_edit.textChanged.connect(self._refresh_date_preview)
+        if self._initial_draft.kind == HonorariosKind.INTERPRETATION:
+            self.case_entity_edit.textChanged.connect(self._sync_interpretation_recipient_block_if_auto)
+            self.case_entity_edit.textChanged.connect(self._on_interpretation_case_fields_changed)
+            self.case_city_edit.textChanged.connect(self._sync_interpretation_recipient_block_if_auto)
+            self.case_city_edit.textChanged.connect(self._on_interpretation_case_fields_changed)
+            self.service_date_edit.textChanged.connect(self._refresh_interpretation_service_section_state)
+            self.service_same_check.toggled.connect(self._on_interpretation_service_same_toggled)
+            self.service_entity_edit.textChanged.connect(self._on_interpretation_service_fields_changed)
+            self.service_city_edit.textChanged.connect(self._on_interpretation_service_fields_changed)
+            self.use_service_location_check.toggled.connect(self._on_interpretation_use_service_location_toggled)
+            self.include_transport_sentence_check.toggled.connect(self._on_interpretation_transport_sentence_toggled)
+            self.travel_km_outbound_edit.textEdited.connect(self._on_interpretation_distance_edited)
+            self.recipient_block_edit.textChanged.connect(self._on_recipient_block_text_changed)
+            self._refresh_interpretation_service_mirror_state()
+            self._refresh_interpretation_transport_sentence_state()
+            self._apply_interpretation_distance_defaults()
+            self._refresh_interpretation_service_section_state()
+            self._refresh_recipient_section_state()
+        self._refresh_date_preview()
+
+    def _refresh_profile_selector(self, selected_profile_id: str | None = None) -> None:
+        selected = selected_profile_id or self._primary_profile_id
+        self.profile_combo.clear()
+        for profile in self._profiles:
+            label = profile.document_name or "(Unnamed profile)"
+            if profile.id == self._primary_profile_id:
+                label = f"{label} [Primary]"
+            self.profile_combo.addItem(label, profile.id)
+        index = self.profile_combo.findData(selected)
+        if index < 0:
+            index = self.profile_combo.findData(self._primary_profile_id)
+        if index < 0 and self.profile_combo.count() > 0:
+            index = 0
+        if index >= 0:
+            self.profile_combo.setCurrentIndex(index)
+
+    def _selected_profile(self) -> UserProfile | None:
+        selected_profile_id = str(self.profile_combo.currentData() or "").strip()
+        profile = find_profile(self._profiles, selected_profile_id)
+        if profile is not None:
+            return profile
+        return primary_profile(self._profiles, self._primary_profile_id)
+
+    def _set_recipient_block_text(self, value: str) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        self._setting_recipient_block = True
+        self.recipient_block_edit.setPlainText(value)
+        self._setting_recipient_block = False
+
+    def _default_interpretation_recipient_block(self) -> str:
+        return default_interpretation_recipient_block(
+            self.case_entity_edit.text().strip(),
+            self.case_city_edit.text().strip(),
+        )
+
+    def _interpretation_service_matches_case(self) -> bool:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return False
+        return (
+            self.service_entity_edit.text().strip() == self.case_entity_edit.text().strip()
+            and self.service_city_edit.text().strip() == self.case_city_edit.text().strip()
+        )
+
+    def _service_section_summary_text(self) -> str:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return ""
+        service_date = self.service_date_edit.text().strip()
+        service_city = self.service_city_edit.text().strip()
+        service_entity = self.service_entity_edit.text().strip()
+        if self.service_same_check.isChecked() and not self.use_service_location_check.isChecked():
+            status = "Same as case"
+        elif self.use_service_location_check.isChecked() and service_city:
+            status = f"Location: {service_city}"
+        else:
+            status = ", ".join(part for part in (service_entity, service_city) if part) or "Review service"
+        return " · ".join(part for part in (service_date, status) if part)
+
+    def _should_expand_interpretation_service_section(self) -> bool:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return False
+        return (
+            self.use_service_location_check.isChecked()
+            or not self.service_same_check.isChecked()
+            or not self._interpretation_service_matches_case()
+        )
+
+    def _refresh_interpretation_service_section_state(self, *_args: object, force_expand: bool = False) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        self.service_group.set_summary_text(self._service_section_summary_text())
+        self.service_group.set_expanded(force_expand or self._should_expand_interpretation_service_section())
+
+    def _recipient_block_matches_default(self) -> bool:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return False
+        current = self.recipient_block_edit.toPlainText().strip()
+        default = self._default_interpretation_recipient_block().strip()
+        return current == "" or current == default
+
+    def _recipient_block_is_auto(self) -> bool:
+        return (
+            self._initial_draft.kind == HonorariosKind.INTERPRETATION
+            and not self._recipient_block_user_edited
+            and self._recipient_block_matches_default()
+        )
+
+    def _recipient_section_summary_text(self) -> str:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return ""
+        if self._recipient_block_is_auto():
+            return "Auto from case"
+        if self._recipient_block_matches_default():
+            return "Manual copy"
+        lines = [line.strip() for line in self.recipient_block_edit.toPlainText().splitlines() if line.strip()]
+        if not lines:
+            return "Recipient block"
+        first_line = lines[0]
+        if len(first_line) > 36:
+            first_line = f"{first_line[:33]}..."
+        if len(lines) > 1:
+            return f"{first_line} (+{len(lines) - 1})"
+        return first_line
+
+    def _refresh_recipient_section_state(self, *_args: object, force_expand: bool = False) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        self.recipient_group.set_summary_text(self._recipient_section_summary_text())
+        self.recipient_group.set_expanded(force_expand or not self._recipient_block_is_auto())
+
+    def _refresh_date_preview(self, *_args: object) -> None:
+        city = self.case_city_edit.text().strip() or self._initial_draft.case_city.strip()
+        self.date_preview_label.setText(f"{city}, {self._initial_draft.date_pt}" if city else self._initial_draft.date_pt)
+
+    def _reset_pdf_export_state(self) -> None:
+        self.saved_path = None
+        self.docx_saved_path = None
+        self.requested_path = None
+        self.saved_pdf_path = None
+        self.pdf_saved_path = None
+        self.pdf_export_error = ""
+        self.pdf_failure_code = ""
+        self.pdf_failure_message = ""
+        self.pdf_failure_details = ""
+        self.pdf_export_elapsed_ms = 0
+        self.pdf_unavailable_explained = False
+        self.auto_renamed = False
+        self._pdf_export_retry_count = 0
+
+    def _set_pdf_export_busy(self, busy: bool, *, status_text: str = "") -> None:
+        self._pdf_export_in_flight = busy
+        self.form_scroll_area.setEnabled(not busy)
+        self.generate_btn.setEnabled(not busy)
+        self.cancel_btn.setEnabled(not busy)
+        self.export_status_label.setVisible(busy or bool(status_text))
+        self.export_status_label.setText(status_text)
+        self.export_progress.setVisible(busy)
+
+    def _clear_pdf_export_worker_refs(self) -> None:
+        self._pdf_export_worker = None
+        self._pdf_export_thread = None
+
+    def _export_result_info_lines(self) -> list[str]:
+        lines: list[str] = []
+        if self.auto_renamed and self.saved_path is not None and self.saved_path != self.requested_path:
+            lines.extend(
+                [
+                    "DOCX path already existed; saved as:",
+                    str(self.saved_path),
+                ]
+            )
+        if self.saved_path is not None:
+            lines.append(f"DOCX: {self.saved_path}")
+        if self.saved_pdf_path is not None:
+            lines.append(f"PDF: {self.saved_pdf_path}")
+        return lines
+
+    def _show_pdf_export_success_box(self) -> str:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Requerimento de Honorários")
+        box.setText("Honorários DOCX and PDF ready.")
+        info_lines = self._export_result_info_lines()
+        if info_lines:
+            box.setInformativeText("\n".join(info_lines))
+        open_docx_btn = box.addButton("Open DOCX", QMessageBox.ButtonRole.ActionRole)
+        open_folder_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+        continue_btn = box.addButton("Continue", QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(continue_btn)
+        action = "continue"
+
+        def _capture_clicked(button) -> None:
+            nonlocal action
+            if button is open_docx_btn:
+                action = "open_docx"
+            elif button is open_folder_btn:
+                action = "open_folder"
+            else:
+                action = "continue"
+
+        box.buttonClicked.connect(_capture_clicked)
+        box.exec()
+        return action
+
+    def _show_pdf_export_failure_box(self) -> str:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Requerimento de Honorários")
+        box.setText("DOCX ready, PDF unavailable.")
+        info_lines = [
+            self.pdf_failure_message or "Word could not export the PDF.",
+            "Gmail draft stays blocked until a valid PDF is available.",
+            *self._export_result_info_lines(),
+        ]
+        box.setInformativeText("\n\n".join(line for line in info_lines if line))
+        if self.pdf_failure_details:
+            box.setDetailedText(self.pdf_failure_details)
+        open_docx_btn = box.addButton("Open DOCX", QMessageBox.ButtonRole.ActionRole)
+        open_folder_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+        retry_btn = box.addButton("Retry PDF", QMessageBox.ButtonRole.ActionRole)
+        select_pdf_btn = box.addButton("Select existing PDF...", QMessageBox.ButtonRole.ActionRole)
+        continue_btn = box.addButton("Continue local-only", QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(continue_btn)
+        action = "continue_local"
+
+        def _capture_clicked(button) -> None:
+            nonlocal action
+            if button is open_docx_btn:
+                action = "open_docx"
+            elif button is open_folder_btn:
+                action = "open_folder"
+            elif button is retry_btn:
+                action = "retry_pdf"
+            elif button is select_pdf_btn:
+                action = "select_existing_pdf"
+            else:
+                action = "continue_local"
+
+        box.buttonClicked.connect(_capture_clicked)
+        box.exec()
+        return action
+
+    def _validate_selected_honorarios_pdf(self, candidate: Path) -> str | None:
+        resolved = candidate.expanduser().resolve()
+        if resolved.suffix.casefold() != ".pdf":
+            return "Selected file must use the .pdf extension."
+        if not resolved.exists() or not resolved.is_file():
+            return f"Selected PDF was not found:\n{resolved}"
+        try:
+            header = resolved.read_bytes()[:5]
+        except Exception as exc:  # noqa: BLE001
+            return f"Could not read the selected PDF:\n{exc}"
+        if not header.startswith(b"%PDF"):
+            return "Selected file does not appear to be a valid PDF."
+        return None
+
+    def _select_existing_honorarios_pdf(self) -> bool:
+        base_dir = self._default_directory
+        if self.saved_path is not None:
+            base_dir = self.saved_path.expanduser().resolve().parent
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select existing honorários PDF",
+            str(base_dir),
+            "PDF Files (*.pdf);;All Files (*.*)",
+        )
+        if not selected:
+            return False
+        candidate = Path(selected).expanduser().resolve()
+        error = self._validate_selected_honorarios_pdf(candidate)
+        if error:
+            QMessageBox.critical(self, "Requerimento de Honorários", error)
+            return False
+        self.saved_pdf_path = candidate
+        self.pdf_saved_path = candidate
+        self.pdf_failure_code = ""
+        self.pdf_failure_message = ""
+        self.pdf_failure_details = ""
+        self.pdf_export_error = ""
+        return True
+
+    def _retry_pdf_export(self, *, automatic: bool = False) -> bool:
+        if self.docx_saved_path is None:
+            QMessageBox.critical(
+                self,
+                "Requerimento de Honorários",
+                "The DOCX path is unavailable, so the PDF export cannot be retried.",
+            )
+            return False
+        target_pdf = self.docx_saved_path.with_suffix(".pdf")
+        self.saved_pdf_path = None
+        self.pdf_saved_path = None
+        self.pdf_failure_code = ""
+        self.pdf_failure_message = ""
+        self.pdf_failure_details = ""
+        self.pdf_export_error = ""
+        self._set_pdf_export_busy(
+            True,
+            status_text=(
+                "Word PDF export timed out once. Retrying once with a longer timeout..."
+                if automatic
+                else "DOCX saved. Retrying the sibling PDF export in the background..."
+            ),
+        )
+        self._begin_pdf_export(
+            docx_path=self.docx_saved_path,
+            pdf_path=target_pdf,
+            timeout_seconds=RETRY_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS,
+        )
+        return True
+
+    def _run_export_result_flow(self) -> None:
+        while True:
+            if self.saved_pdf_path is not None:
+                action = self._show_pdf_export_success_box()
+            else:
+                self.pdf_unavailable_explained = True
+                action = self._show_pdf_export_failure_box()
+            target = self.saved_pdf_path or self.saved_path
+            if action == "open_docx":
+                if self.saved_path is not None:
+                    _open_path_in_system(self, self.saved_path)
+                continue
+            if action == "open_folder":
+                if target is not None:
+                    _open_folder_for_path(self, target)
+                continue
+            if action == "retry_pdf":
+                if self._retry_pdf_export():
+                    return
+                continue
+            if action == "select_existing_pdf":
+                if self._select_existing_honorarios_pdf():
+                    continue
+                continue
+            try:
+                self.accept()
+            except RuntimeError:
+                return
+            return
+
+    def _begin_pdf_export(self, *, docx_path: Path, pdf_path: Path, timeout_seconds: float) -> None:
+        try:
+            thread = QThread(self)
+            worker = HonorariosPdfExportWorker(
+                docx_path=docx_path,
+                pdf_path=pdf_path,
+                timeout_seconds=timeout_seconds,
+            )
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+            worker.finished.connect(self._on_pdf_export_finished)
+            worker.finished.connect(thread.quit)
+            worker.finished.connect(worker.deleteLater)
+            thread.finished.connect(self._clear_pdf_export_worker_refs)
+            thread.finished.connect(thread.deleteLater)
+            self._pdf_export_thread = thread
+            self._pdf_export_worker = worker
+            thread.start()
+        except Exception as exc:  # noqa: BLE001
+            self._on_pdf_export_finished(
+                HonorariosPdfExportResult(
+                    docx_path=docx_path,
+                    pdf_path=None,
+                    automation=WordAutomationResult(
+                        ok=False,
+                        action="export_pdf",
+                        message="Word PDF export could not be started.",
+                        failure_code="unknown",
+                        details=str(exc),
+                    ),
+                )
+            )
+
+    def _on_pdf_export_finished(self, result: HonorariosPdfExportResult) -> None:
+        self.docx_saved_path = result.docx_path
+        self.saved_path = result.docx_path
+        self.pdf_saved_path = result.pdf_path
+        self.saved_pdf_path = result.pdf_path
+        self.pdf_failure_code = ""
+        self.pdf_failure_message = ""
+        self.pdf_failure_details = ""
+        self.pdf_export_error = ""
+        self.pdf_export_elapsed_ms = int(result.automation.elapsed_ms)
+        if (
+            not result.automation.ok
+            and str(result.automation.failure_code or "").strip() == "timeout"
+            and int(getattr(self, "_pdf_export_retry_count", 0)) < 1
+        ):
+            self._pdf_export_retry_count = int(getattr(self, "_pdf_export_retry_count", 0)) + 1
+            self._set_pdf_export_busy(False)
+            QTimer.singleShot(0, lambda: self._retry_pdf_export(automatic=True))
+            return
+        if not result.automation.ok:
+            self.saved_pdf_path = None
+            self.pdf_saved_path = None
+            self.pdf_failure_code = str(result.automation.failure_code or "").strip()
+            self.pdf_failure_message = str(result.automation.message or "").strip() or "Word could not export the PDF."
+            self.pdf_failure_details = str(result.automation.details or "").strip()
+            self.pdf_export_error = self.pdf_failure_message
+        self._set_pdf_export_busy(False)
+        self._run_export_result_flow()
+
+    def _on_recipient_block_text_changed(self) -> None:
+        if self._setting_recipient_block or self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        self._recipient_block_user_edited = True
+        self._refresh_recipient_section_state(force_expand=True)
+
+    def _sync_interpretation_recipient_block_if_auto(self, *_args: object) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION or self._recipient_block_user_edited:
+            return
+        self._set_recipient_block_text(self._default_interpretation_recipient_block())
+        self._refresh_recipient_section_state()
+
+    def _interpretation_transport_sentence_enabled(self) -> bool:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return False
+        checkbox = getattr(self, "include_transport_sentence_check", None)
+        if checkbox is None:
+            return True
+        return checkbox.isChecked()
+
+    def _refresh_interpretation_transport_sentence_state(self) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        enabled = self._interpretation_transport_sentence_enabled()
+        distance_label = getattr(self, "distance_label", None)
+        distance_edit = getattr(self, "travel_km_outbound_edit", None)
+        if distance_label is not None:
+            distance_label.setEnabled(enabled)
+        if distance_edit is not None:
+            distance_edit.setEnabled(enabled)
+
+    def _sync_interpretation_service_with_case(self) -> None:
+        self.service_entity_edit.setText(self.case_entity_edit.text().strip())
+        self.service_city_edit.setText(self.case_city_edit.text().strip())
+
+    def _refresh_interpretation_service_mirror_state(self) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        same = self.service_same_check.isChecked()
+        if same:
+            self._sync_interpretation_service_with_case()
+        self.service_entity_edit.setEnabled(not same)
+        self.service_city_edit.setEnabled(not same)
+        self._refresh_interpretation_service_section_state()
+
+    def _on_interpretation_case_fields_changed(self, *_args: object) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        if self.service_same_check.isChecked():
+            self._sync_interpretation_service_with_case()
+        self._apply_interpretation_distance_defaults()
+        self._refresh_interpretation_service_section_state()
+
+    def _on_interpretation_service_fields_changed(self, *_args: object) -> None:
+        self._apply_interpretation_distance_defaults()
+        self._refresh_interpretation_service_section_state()
+
+    def _on_interpretation_service_same_toggled(self, *_args: object) -> None:
+        self._refresh_interpretation_service_mirror_state()
+        self._apply_interpretation_distance_defaults()
+
+    def _on_interpretation_use_service_location_toggled(self, *_args: object) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        self._refresh_interpretation_service_section_state()
+
+    def _on_interpretation_transport_sentence_toggled(self, checked: bool) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        self._refresh_interpretation_transport_sentence_state()
+        if checked:
+            self._apply_interpretation_distance_defaults()
+
+    def _effective_interpretation_travel_city(self) -> str:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return ""
+        service_city = self.service_city_edit.text().strip()
+        if service_city:
+            return service_city
+        if self.service_same_check.isChecked():
+            return self.case_city_edit.text().strip()
+        return ""
+
+    def _persist_profile_distance(self, profile: UserProfile, city: str, distance_value: float) -> None:
+        profile.travel_distances_by_city[city] = float(distance_value)
+        self._profile_save_callback(self._profiles, self._primary_profile_id)
+        self._profiles, self._primary_profile_id = load_profile_settings()
+        self._refresh_profile_selector(str(self.profile_combo.currentData() or "").strip())
+
+    def _set_interpretation_distance_text(
+        self,
+        value: float | None,
+        *,
+        city_key: str,
+        profile_id: str,
+        manual: bool,
+    ) -> None:
+        self._distance_sync_in_progress = True
+        try:
+            self.travel_km_outbound_edit.setText("" if value is None else f"{float(value):g}")
+        finally:
+            self._distance_sync_in_progress = False
+        self._distance_value_city_key = city_key
+        self._distance_value_profile_id = profile_id
+        self._distance_value_is_manual = manual
+
+    def _on_interpretation_distance_edited(self, _text: str) -> None:
+        if self._distance_sync_in_progress or self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        profile = self._selected_profile()
+        city = self._effective_interpretation_travel_city()
+        self._distance_value_city_key = city.casefold() if city else ""
+        self._distance_value_profile_id = profile.id if profile is not None else ""
+        self._distance_value_is_manual = True
+
+    def _apply_interpretation_distance_defaults(self, *_args: object) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        if not self._interpretation_transport_sentence_enabled():
+            return
+        profile = self._selected_profile()
+        city = self._effective_interpretation_travel_city()
+        if profile is None or city == "":
+            self._set_interpretation_distance_text(
+                None,
+                city_key=city.casefold() if city else "",
+                profile_id=profile.id if profile is not None else "",
+                manual=False,
+            )
+            return
+        city_key = city.casefold()
+        profile_id = profile.id
+        distance_value = distance_for_city(profile, city)
+        if distance_value is None:
+            if self._distance_value_city_key != city_key or self._distance_value_profile_id != profile_id:
+                self._set_interpretation_distance_text(None, city_key=city_key, profile_id=profile_id, manual=False)
+            return
+        should_replace = (
+            self._distance_value_city_key != city_key
+            or self._distance_value_profile_id != profile_id
+            or not self.travel_km_outbound_edit.text().strip()
+            or not self._distance_value_is_manual
+        )
+        if should_replace:
+            self._set_interpretation_distance_text(distance_value, city_key=city_key, profile_id=profile_id, manual=False)
+
+    def _parse_required_float(self, value: str, label: str) -> float:
+        cleaned = value.strip().replace(",", ".")
+        if cleaned == "":
+            raise ValueError(f"{label} is required.")
+        try:
+            numeric = float(cleaned)
+        except ValueError as exc:
+            raise ValueError(f"{label} must be a number.") from exc
+        if numeric <= 0:
+            raise ValueError(f"{label} must be greater than 0.")
+        return numeric
+
+    def _resolve_interpretation_distance(self, *, profile: UserProfile, city: str, current_value: str, label: str) -> float:
+        cleaned = current_value.strip()
+        if cleaned:
+            distance_value = self._parse_required_float(cleaned, label)
+            known_distance = distance_for_city(profile, city)
+            if known_distance is None or abs(float(known_distance) - float(distance_value)) >= 1e-9:
+                self._persist_profile_distance(profile, city, float(distance_value))
+            return float(distance_value)
+        known_distance = distance_for_city(profile, city)
+        if known_distance is not None:
+            return float(known_distance)
+        distance_value, ok = QInputDialog.getDouble(
+            self,
+            "Interpretation distance",
+            f"One-way distance from {profile.travel_origin_label} to {city} (km):",
+            0.0,
+            0.01,
+            1_000_000.0,
+            2,
+        )
+        if not ok:
+            raise ValueError(f"{label} is required.")
+        if distance_value <= 0:
+            raise ValueError(f"{label} must be greater than 0.")
+        self._persist_profile_distance(profile, city, float(distance_value))
+        return float(distance_value)
+
+    def _on_profile_changed(self, *_args: object) -> None:
+        if self._initial_draft.kind == HonorariosKind.INTERPRETATION:
+            self._apply_interpretation_distance_defaults()
+
+    def _edit_profiles(self) -> None:
+        dialog = QtProfileManagerDialog(
+            parent=self,
+            settings=load_gui_settings(),
+            save_callback=self._profile_save_callback,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._profiles, self._primary_profile_id = load_profile_settings()
+        self._refresh_profile_selector(self._primary_profile_id)
+        if self._initial_draft.kind == HonorariosKind.INTERPRETATION:
+            self._apply_interpretation_distance_defaults()
 
     def _build_draft(self) -> HonorariosDraft:
         case_number = self.case_number_edit.text().strip()
@@ -507,6 +1934,72 @@ class QtHonorariosExportDialog(QDialog):
             raise ValueError("Case Entity is required.")
         if not case_city:
             raise ValueError("Case City is required.")
+        selected_profile = self._selected_profile()
+        if selected_profile is None:
+            raise ValueError("At least one profile is required to generate honorários.")
+        missing_message = _profile_missing_fields_message(selected_profile)
+        if missing_message:
+            raise ValueError(
+                f"Selected profile is missing required fields: {missing_message}. Use 'Edit Profiles...' first."
+            )
+        if self._initial_draft.kind == HonorariosKind.INTERPRETATION:
+            include_transport_sentence = self.include_transport_sentence_check.isChecked()
+            if include_transport_sentence and not selected_profile.travel_origin_label.strip():
+                raise ValueError(
+                    "Selected profile is missing an interpretation travel origin label. Use 'Edit Profiles...' first."
+                )
+            service_date = self.service_date_edit.text().strip()
+            if not service_date:
+                raise ValueError("Service date is required.")
+            service_entity = self.service_entity_edit.text().strip()
+            service_city = self.service_city_edit.text().strip()
+            use_service_location = self.use_service_location_check.isChecked()
+            service_entity_is_law_enforcement = service_entity.casefold() in {"gnr", "psp"}
+            if not service_city:
+                raise ValueError("Service city is required.")
+            if service_entity_is_law_enforcement and (not use_service_location or not service_city):
+                raise ValueError("GNR/PSP interpretation rows require a confirmed service city in the honorários text.")
+            resolved_distance_text = self.travel_km_outbound_edit.text().strip()
+            if include_transport_sentence:
+                effective_travel_city = service_city
+                if not effective_travel_city:
+                    raise ValueError("Service city is required to resolve travel distance.")
+                one_way_distance = self._resolve_interpretation_distance(
+                    profile=selected_profile,
+                    city=effective_travel_city,
+                    current_value=resolved_distance_text,
+                    label="KM (one way)",
+                )
+                self._set_interpretation_distance_text(
+                    one_way_distance,
+                    city_key=effective_travel_city.casefold(),
+                    profile_id=selected_profile.id,
+                    manual=False,
+                )
+            recipient_block = self.recipient_block_edit.toPlainText().strip() or self._default_interpretation_recipient_block()
+            self._set_recipient_block_text(recipient_block)
+            return build_interpretation_honorarios_draft_from_form(
+                form_values={
+                    "case_number": case_number,
+                    "case_entity": case_entity,
+                    "case_city": case_city,
+                    "service_date": service_date,
+                    "service_entity": service_entity,
+                    "service_city": service_city,
+                    "use_service_location_in_honorarios": use_service_location,
+                    "include_transport_sentence_in_honorarios": include_transport_sentence,
+                    "travel_km_outbound": (
+                        f"{one_way_distance:g}" if include_transport_sentence else resolved_distance_text
+                    ),
+                    "travel_km_return": (
+                        f"{one_way_distance:g}" if include_transport_sentence else resolved_distance_text
+                    ),
+                    "recipient_block": recipient_block,
+                },
+                settings_path=settings_path(),
+                profile_id=selected_profile.id,
+                service_same_checked=self.service_same_check.isChecked(),
+            )
         try:
             word_count = int(self.word_count_edit.text().strip())
         except ValueError as exc:
@@ -518,16 +2011,31 @@ class QtHonorariosExportDialog(QDialog):
             word_count=word_count,
             case_entity=case_entity,
             case_city=case_city,
+            profile=selected_profile,
         )
 
+    def _reveal_interpretation_sections_for_error(self, message: str) -> None:
+        if self._initial_draft.kind != HonorariosKind.INTERPRETATION:
+            return
+        lowered = message.casefold()
+        if any(token in lowered for token in ("service", "location", "gnr", "psp")):
+            self._refresh_interpretation_service_section_state(force_expand=True)
+        if any(token in lowered for token in ("transport", "distance", "km")):
+            self.text_group.set_expanded(True)
+        if "recipient" in lowered:
+            self._refresh_recipient_section_state(force_expand=True)
+
     def _generate(self) -> None:
+        self._reset_pdf_export_state()
         try:
             draft = self._build_draft()
         except ValueError as exc:
+            self._reveal_interpretation_sections_for_error(str(exc))
             QMessageBox.critical(self, "Requerimento de Honorários", str(exc))
             return
+        self.generated_draft = draft
 
-        default_path = self._default_directory / default_honorarios_filename(draft.case_number)
+        default_path = self._default_directory / default_honorarios_filename(draft.case_number, kind=draft.kind)
         selected, _ = QFileDialog.getSaveFileName(
             self,
             "Guardar Requerimento de Honorários",
@@ -543,25 +2051,34 @@ class QtHonorariosExportDialog(QDialog):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Requerimento de Honorários", f"Failed to generate DOCX:\n{exc}")
             return
+        self.docx_saved_path = saved
         self.saved_path = saved
         self.auto_renamed = saved != requested_path
-        if saved != requested_path:
-            QMessageBox.information(
-                self,
-                "Requerimento de Honorários",
-                "The selected file already existed. The honorários DOCX was saved as:\n"
-                f"{saved}",
-            )
-        open_now = QMessageBox.question(
-            self,
-            "Requerimento de Honorários",
-            "Open containing folder now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+        pdf_path = saved.with_suffix(".pdf")
+        self._set_pdf_export_busy(
+            True,
+            status_text="DOCX saved. Generating the sibling PDF in the background...",
         )
-        if open_now == QMessageBox.StandardButton.Yes:
-            _open_folder_for_path(self, saved)
-        self.accept()
+        self._begin_pdf_export(
+            docx_path=saved,
+            pdf_path=pdf_path,
+            timeout_seconds=INITIAL_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS,
+        )
+
+    def reject(self) -> None:  # type: ignore[override]
+        if self._pdf_export_in_flight:
+            self.export_status_label.setVisible(True)
+            self.export_status_label.setText("PDF generation is still running. Please wait.")
+            return
+        super().reject()
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        if self._pdf_export_in_flight:
+            self.export_status_label.setVisible(True)
+            self.export_status_label.setText("PDF generation is still running. Please wait.")
+            event.ignore()
+            return
+        super().closeEvent(event)
 
 
 class QtArabicDocxReviewDialog(QDialog):
@@ -580,7 +2097,7 @@ class QtArabicDocxReviewDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Arabic DOCX review")
-        self.resize(760, 260)
+        self.setMinimumSize(620, 240)
         self._docx_path = docx_path.expanduser().resolve()
         self._is_gmail_batch = bool(is_gmail_batch)
         self._attachment_label = (attachment_label or "").strip()
@@ -596,6 +2113,11 @@ class QtArabicDocxReviewDialog(QDialog):
         self._poll_timer.setInterval(self._poll_interval_ms)
         self._poll_timer.timeout.connect(self._poll_for_save)
         self._build_ui()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(760, 260),
+        )
         QTimer.singleShot(0, self._start_review)
 
     def _build_ui(self) -> None:
@@ -715,7 +2237,10 @@ class QtArabicDocxReviewDialog(QDialog):
         result = align_right_and_save_docx_in_word(self._docx_path)
         if result.ok:
             self._set_status("DOCX aligned right and saved in Word. Continuing now.")
-            self.accept()
+            try:
+                self.accept()
+            except RuntimeError:
+                return
             return
         self._set_status(
             f"{result.message}\n\nYou can keep editing manually in Word and save, or use Continue now."
@@ -755,10 +2280,12 @@ class QtSaveToJobLogDialog(QDialog):
         seed: JobLogSeed,
         on_saved: Callable[[], None] | None = None,
         allow_honorarios_export: bool = True,
+        edit_row_id: int | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Save to Job Log")
-        self.resize(980, 660)
+        self._edit_row_id = int(edit_row_id) if edit_row_id is not None else None
+        self.setWindowTitle("Edit Job Log Entry" if self._edit_row_id is not None else "Save to Job Log")
+        self.setMinimumSize(620, 460)
 
         self._db_path = db_path
         self._seed = seed
@@ -771,8 +2298,19 @@ class QtSaveToJobLogDialog(QDialog):
         self._metadata_config: MetadataAutofillConfig = metadata_config_from_settings(self._settings)
         self._case_entity_user_set = False
         self._case_city_user_set = False
+        self._distance_prompted_cities: set[str] = set()
+        self._distance_sync_in_progress = False
+        self._distance_value_city_key = ""
+        self._distance_value_is_manual = False
+        self._service_section_sync_in_progress = False
+        self._service_section_user_overridden = False
 
         self._build_ui()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(980, 660),
+        )
         self._refresh_service_mirror_state()
         self._refresh_photo_controls()
 
@@ -784,103 +2322,331 @@ class QtSaveToJobLogDialog(QDialog):
     def saved_result(self) -> JobLogSavedResult | None:
         return self._saved_result
 
+    def _field_label(self, text: str) -> QLabel:
+        return QLabel(text, objectName="FieldLabel")
+
+    def _normalized_combo_values(self, values: list[str], current: str) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            cleaned = str(value).strip()
+            if cleaned and cleaned not in seen:
+                normalized.append(cleaned)
+                seen.add(cleaned)
+        current_cleaned = current.strip()
+        if current_cleaned and current_cleaned not in seen:
+            normalized.append(current_cleaned)
+        return normalized
+
     def _fill_combo(self, combo: QComboBox, values: list[str]) -> None:
         current = combo.currentText().strip()
         combo.blockSignals(True)
         combo.clear()
-        combo.addItems(values)
-        combo.setCurrentText(current)
+        combo.addItems(self._normalized_combo_values(values, current))
+        if current:
+            index = combo.findText(current)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+            elif combo.isEditable():
+                combo.setCurrentText(current)
+        else:
+            combo.setCurrentIndex(-1)
         combo.blockSignals(False)
+
+    def _selection_combo(self, values: list[str], current: str) -> NoWheelComboBox:
+        combo = NoWheelComboBox()
+        combo.setEditable(False)
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow)
+        combo.addItems(self._normalized_combo_values(values, current))
+        if current.strip():
+            combo.setCurrentText(current.strip())
+        else:
+            combo.setCurrentIndex(-1)
+        return combo
+
+    def _editable_vocab_combo(self, values: list[str], current: str) -> NoWheelComboBox:
+        combo = NoWheelComboBox()
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        combo.addItems(self._normalized_combo_values(values, current))
+        combo.setCurrentText(current.strip())
+        return combo
+
+    def _available_interpretation_cities(self) -> list[str]:
+        values = [str(item or "") for item in list(self._settings.get("vocab_cities", []))]
+        try:
+            profile = _current_primary_profile()
+        except Exception:
+            return self._normalized_combo_values(values, "")
+        values.extend(profile.travel_distances_by_city.keys())
+        return self._normalized_combo_values(values, "")
+
+    def _canonical_interpretation_city(self, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if cleaned == "":
+            return ""
+        for candidate in self._available_interpretation_cities():
+            if candidate.casefold() == cleaned.casefold():
+                return candidate
+        return ""
+
+    def _initial_interpretation_city_value(self, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if cleaned == "" or not _is_interpretation_job_type(self._seed.job_type.strip()):
+            return cleaned
+        return self._canonical_interpretation_city(cleaned)
+
+    def _apply_imported_interpretation_city(self, combo: QComboBox, value: str, *, label: str) -> None:
+        cleaned = str(value or "").strip()
+        if cleaned == "":
+            return
+        if not _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self._ensure_in_vocab("vocab_cities", cleaned)
+            combo.setCurrentText(cleaned)
+            return
+        resolved = self._canonical_interpretation_city(cleaned)
+        if resolved:
+            combo.setCurrentText(resolved)
+            return
+        combo.blockSignals(True)
+        combo.setCurrentIndex(-1)
+        combo.blockSignals(False)
+        QMessageBox.warning(
+            self,
+            "Autofill",
+            f"{label} '{cleaned}' is not in the saved city list. "
+            "Choose an existing city or use + to add it.",
+        )
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        top = QFrame()
+        self.form_scroll_area = QScrollArea(self)
+        self.form_scroll_area.setObjectName("DialogScrollArea")
+        self.form_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.form_scroll_area.setWidgetResizable(True)
+        self.form_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_content = QWidget(self.form_scroll_area)
+        scroll_content.setObjectName("DialogScrollContent")
+        scroll_root = QVBoxLayout(scroll_content)
+        scroll_root.setContentsMargins(0, 0, 0, 0)
+        scroll_root.setSpacing(10)
+
+        top = QFrame(scroll_content)
+        top.setObjectName("ShellPanel")
         top_grid = QGridLayout(top)
-        top_grid.addWidget(QLabel("Job type"), 0, 0)
-        self.job_type_combo = QComboBox()
-        self.job_type_combo.setEditable(True)
-        self.job_type_combo.addItems(list(self._settings["vocab_job_types"]))
-        self.job_type_combo.setCurrentText(self._seed.job_type or "Translation")
-        top_grid.addWidget(self.job_type_combo, 0, 1)
-        top_grid.addWidget(QLabel(f"Translation date: {self._seed.translation_date}"), 0, 2)
-        top_grid.addWidget(
-            QLabel(f"Lang: {self._seed.lang} | Pages: {self._seed.pages} | Words: {self._seed.word_count}"),
-            0,
-            3,
+        top_grid.setContentsMargins(16, 16, 16, 16)
+        top_grid.setHorizontalSpacing(10)
+        top_grid.setVerticalSpacing(10)
+        top_grid.addWidget(self._field_label("Job type"), 0, 0)
+        self.job_type_combo = self._selection_combo(
+            list(self._settings["vocab_job_types"]),
+            self._seed.job_type or "Translation",
         )
+        top_grid.addWidget(self.job_type_combo, 0, 1)
+        self.primary_date_label = self._field_label("Translation date")
+        top_grid.addWidget(self.primary_date_label, 0, 2)
+        self.translation_date_edit = GuardedDateEdit(
+            self._seed.service_date if _is_interpretation_job_type(self._seed.job_type) else self._seed.translation_date
+        )
+        self.translation_date_edit.setPlaceholderText("YYYY-MM-DD")
+        top_grid.addWidget(self.translation_date_edit, 0, 3)
+        self.lang_label = self._field_label("Lang")
+        top_grid.addWidget(self.lang_label, 1, 0)
+        supported_langs = [str(lang).strip().upper() for lang in supported_target_langs()]
+        self.lang_edit = self._selection_combo(supported_langs, self._seed.lang)
+        top_grid.addWidget(self.lang_edit, 1, 1)
+        self.pages_label = self._field_label("Pages")
+        top_grid.addWidget(self.pages_label, 1, 2)
+        self.pages_edit = QLineEdit(str(int(self._seed.pages)))
+        self.pages_edit.setReadOnly(True)
+        top_grid.addWidget(self.pages_edit, 1, 3)
+        self.words_label = self._field_label("Words")
+        top_grid.addWidget(self.words_label, 1, 4)
+        self.word_count_edit = QLineEdit(str(int(self._seed.word_count)))
+        top_grid.addWidget(self.word_count_edit, 1, 5)
         top_grid.setColumnStretch(1, 1)
         top_grid.setColumnStretch(3, 1)
-        root.addWidget(top)
+        top_grid.setColumnStretch(5, 1)
+        scroll_root.addWidget(top)
 
-        case_group = QGroupBox("CASE (belongs to)")
+        case_group = QGroupBox("CASE (belongs to)", scroll_content)
         case_form = QGridLayout(case_group)
-        case_form.addWidget(QLabel("Case entity"), 0, 0)
-        self.case_entity_combo = QComboBox()
-        self.case_entity_combo.setEditable(True)
-        self.case_entity_combo.addItems(list(self._settings["vocab_case_entities"]))
-        self.case_entity_combo.setCurrentText(self._seed.case_entity)
+        case_form.setContentsMargins(12, 12, 12, 12)
+        case_form.setHorizontalSpacing(10)
+        case_form.setVerticalSpacing(10)
+        case_form.addWidget(self._field_label("Case entity"), 0, 0)
+        self.case_entity_combo = self._selection_combo(
+            list(self._settings["vocab_case_entities"]),
+            self._seed.case_entity,
+        )
         case_form.addWidget(self.case_entity_combo, 0, 1)
-        self.add_case_entity_btn = QPushButton("Add...")
+        self.add_case_entity_btn = build_compact_add_button(
+            tooltip="Add case entity",
+            accessible_name="Add case entity",
+            parent=case_group,
+        )
         case_form.addWidget(self.add_case_entity_btn, 0, 2)
 
-        case_form.addWidget(QLabel("Case city"), 0, 3)
-        self.case_city_combo = QComboBox()
-        self.case_city_combo.setEditable(True)
-        self.case_city_combo.addItems(list(self._settings["vocab_cities"]))
-        self.case_city_combo.setCurrentText(self._seed.case_city)
+        case_form.addWidget(self._field_label("Case city"), 0, 3)
+        self.case_city_combo = self._selection_combo(
+            self._available_interpretation_cities()
+            if _is_interpretation_job_type(self._seed.job_type.strip())
+            else list(self._settings["vocab_cities"]),
+            self._initial_interpretation_city_value(self._seed.case_city),
+        )
         case_form.addWidget(self.case_city_combo, 0, 4)
-        self.add_case_city_btn = QPushButton("Add...")
+        self.add_case_city_btn = build_compact_add_button(
+            tooltip="Add case city",
+            accessible_name="Add case city",
+            parent=case_group,
+        )
         case_form.addWidget(self.add_case_city_btn, 0, 5)
 
-        case_form.addWidget(QLabel("Case number"), 1, 0)
+        case_form.addWidget(self._field_label("Case number"), 1, 0)
         self.case_number_edit = QLineEdit(self._seed.case_number)
         case_form.addWidget(self.case_number_edit, 1, 1, 1, 2)
-        case_form.addWidget(QLabel("Court Email"), 1, 3)
-        self.court_email_combo = QComboBox()
-        self.court_email_combo.setEditable(True)
-        self.court_email_combo.addItems(list(self._settings["vocab_court_emails"]))
-        self.court_email_combo.setCurrentText(self._seed.court_email)
+        case_form.addWidget(self._field_label("Court Email"), 1, 3)
+        self.court_email_combo = self._editable_vocab_combo(
+            list(self._settings["vocab_court_emails"]),
+            self._seed.court_email,
+        )
         case_form.addWidget(self.court_email_combo, 1, 4, 1, 2)
         case_form.setColumnStretch(1, 1)
         case_form.setColumnStretch(4, 1)
-        root.addWidget(case_group)
+        scroll_root.addWidget(case_group)
 
-        service_group = QGroupBox("SERVICE (provided to)")
-        service_grid = QGridLayout(service_group)
+        service_group = DeclutterSection(
+            "SERVICE",
+            expanded=True,
+            parent=scroll_content,
+        )
+        self.service_group = service_group
+        self.service_group_help_btn = build_inline_info_button(
+            tooltip=(
+                "Expand this section when the service location differs from the case "
+                "or when you want the service location mentioned in the honorários text."
+            ),
+            accessible_name="Service section help",
+            parent=service_group,
+        )
+        service_group.add_header_widget(self.service_group_help_btn)
+        service_content = QWidget(service_group)
+        service_grid = QGridLayout(service_content)
+        service_grid.setContentsMargins(0, 0, 0, 0)
+        service_grid.setHorizontalSpacing(10)
+        service_grid.setVerticalSpacing(10)
         self.service_same_check = QCheckBox("Service same as Case")
-        self.service_same_check.setChecked(bool(self._settings["service_equals_case_by_default"]))
+        has_seed_service_values = any(
+            (
+                self._seed.case_entity.strip(),
+                self._seed.case_city.strip(),
+                self._seed.service_entity.strip(),
+                self._seed.service_city.strip(),
+            )
+        )
+        if has_seed_service_values:
+            self.service_same_check.setChecked(
+                self._seed.case_entity.strip() == self._seed.service_entity.strip()
+                and self._seed.case_city.strip() == self._seed.service_city.strip()
+            )
+        else:
+            self.service_same_check.setChecked(
+                True if _is_interpretation_job_type(self._seed.job_type) else bool(self._settings["service_equals_case_by_default"])
+            )
         service_grid.addWidget(self.service_same_check, 0, 0, 1, 2)
 
-        service_grid.addWidget(QLabel("Service entity"), 1, 0)
-        self.service_entity_combo = QComboBox()
-        self.service_entity_combo.setEditable(True)
-        self.service_entity_combo.addItems(list(self._settings["vocab_service_entities"]))
-        self.service_entity_combo.setCurrentText(self._seed.service_entity)
+        service_grid.addWidget(self._field_label("Service entity"), 1, 0)
+        self.service_entity_combo = self._selection_combo(
+            list(self._settings["vocab_service_entities"]),
+            self._seed.service_entity,
+        )
         service_grid.addWidget(self.service_entity_combo, 1, 1)
-        self.add_service_entity_btn = QPushButton("Add...")
+        self.add_service_entity_btn = build_compact_add_button(
+            tooltip="Add service entity",
+            accessible_name="Add service entity",
+            parent=service_content,
+        )
         service_grid.addWidget(self.add_service_entity_btn, 1, 2)
 
-        service_grid.addWidget(QLabel("Service city"), 1, 3)
-        self.service_city_combo = QComboBox()
-        self.service_city_combo.setEditable(True)
-        self.service_city_combo.addItems(list(self._settings["vocab_cities"]))
-        self.service_city_combo.setCurrentText(self._seed.service_city)
+        service_grid.addWidget(self._field_label("Service city"), 1, 3)
+        self.service_city_combo = self._selection_combo(
+            self._available_interpretation_cities()
+            if _is_interpretation_job_type(self._seed.job_type.strip())
+            else list(self._settings["vocab_cities"]),
+            self._initial_interpretation_city_value(self._seed.service_city),
+        )
         service_grid.addWidget(self.service_city_combo, 1, 4)
-        self.add_service_city_btn = QPushButton("Add...")
+        self.add_service_city_btn = build_compact_add_button(
+            tooltip="Add service city",
+            accessible_name="Add service city",
+            parent=service_content,
+        )
         service_grid.addWidget(self.add_service_city_btn, 1, 5)
 
-        service_grid.addWidget(QLabel("Service date (YYYY-MM-DD)"), 2, 0)
-        self.service_date_edit = QLineEdit(self._seed.service_date)
+        self.service_date_label = self._field_label("Service date (YYYY-MM-DD)")
+        service_grid.addWidget(self.service_date_label, 2, 0)
+        self.service_date_edit = GuardedDateEdit(self._seed.service_date)
+        self.service_date_edit.setPlaceholderText("YYYY-MM-DD")
         service_grid.addWidget(self.service_date_edit, 2, 1)
         service_grid.setColumnStretch(1, 1)
         service_grid.setColumnStretch(4, 1)
-        root.addWidget(service_group)
+        service_group.set_content_widget(service_content)
+        scroll_root.addWidget(service_group)
+
+        interpretation_group = DeclutterSection("INTERPRETATION", expanded=True, parent=scroll_content)
+        interpretation_content = QWidget(interpretation_group)
+        interpretation_grid = QGridLayout(interpretation_content)
+        interpretation_grid.setContentsMargins(0, 0, 0, 0)
+        interpretation_grid.setHorizontalSpacing(10)
+        interpretation_grid.setVerticalSpacing(10)
+        self.use_service_location_check = QCheckBox("Mention service location in text")
+        self.use_service_location_check.setChecked(bool(self._seed.use_service_location_in_honorarios))
+        interpretation_grid.addWidget(self.use_service_location_check, 0, 0, 1, 2)
+        self.include_transport_sentence_check = QCheckBox(
+            "Include transport sentence"
+        )
+        self.include_transport_sentence_check.setChecked(bool(self._seed.include_transport_sentence_in_honorarios))
+        interpretation_grid.addWidget(self.include_transport_sentence_check, 1, 0, 1, 2)
+        self.distance_label = QLabel("KM (one way)")
+        interpretation_grid.addWidget(self.distance_label, 2, 0)
+        distance_value = self._seed.travel_km_outbound
+        if distance_value is None:
+            distance_value = self._seed.travel_km_return
+        self.travel_km_outbound_edit = QLineEdit(
+            "" if distance_value is None else f"{float(distance_value):g}"
+        )
+        interpretation_grid.addWidget(self.travel_km_outbound_edit, 2, 1)
+        self.travel_km_return_edit = self.travel_km_outbound_edit
+        self.interpretation_hint_label = QLabel("Distance saved by city.")
+        self.interpretation_hint_info_btn = build_inline_info_button(
+            tooltip="Saved per service city and reused automatically for future interpretation rows.",
+            accessible_name="Distance reuse help",
+            parent=interpretation_content,
+        )
+        interpretation_hint_row = QHBoxLayout()
+        interpretation_hint_row.setContentsMargins(0, 0, 0, 0)
+        interpretation_hint_row.setSpacing(6)
+        interpretation_hint_row.addWidget(self.interpretation_hint_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        interpretation_hint_row.addWidget(self.interpretation_hint_info_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        interpretation_hint_row.addStretch(1)
+        interpretation_grid.addLayout(interpretation_hint_row, 3, 0, 1, 2)
+        interpretation_grid.setColumnStretch(1, 1)
+        self.interpretation_group_help_btn = build_inline_info_button(
+            tooltip="Keep transport details compact; the saved distance is reused for future interpretation rows.",
+            accessible_name="Interpretation section help",
+            parent=interpretation_group,
+        )
+        interpretation_group.add_header_widget(self.interpretation_group_help_btn)
+        interpretation_group.set_content_widget(interpretation_content)
+        self.interpretation_group = interpretation_group
+        scroll_root.addWidget(interpretation_group)
 
         autofill_row = QHBoxLayout()
         self.autofill_header_btn = QPushButton("Autofill from PDF header")
+        self.autofill_header_btn.setEnabled(self._can_autofill_from_pdf_header())
         self.autofill_photo_btn = QPushButton("Autofill from photo...")
         self.photo_translation_check = QCheckBox("Usually for Interpretation; enable anyway")
         self.photo_hint = QLabel("")
@@ -889,87 +2655,120 @@ class QtSaveToJobLogDialog(QDialog):
         autofill_row.addWidget(self.photo_translation_check)
         autofill_row.addStretch(1)
         autofill_row.addWidget(self.photo_hint)
-        root.addLayout(autofill_row)
+        scroll_root.addLayout(autofill_row)
 
-        metrics_group = QGroupBox("Run Metrics (auto-filled)")
-        metrics_form = QGridLayout(metrics_group)
-        metrics_form.addWidget(QLabel("Run ID"), 0, 0)
+        metrics_panel = QFrame(scroll_content)
+        metrics_panel.setObjectName("ShellPanel")
+        metrics_form = QGridLayout(metrics_panel)
+        metrics_form.setContentsMargins(12, 12, 12, 12)
+        metrics_form.addWidget(self._field_label("Run ID"), 0, 0)
         self.run_id_edit = QLineEdit(self._seed.run_id)
         metrics_form.addWidget(self.run_id_edit, 0, 1)
-        metrics_form.addWidget(QLabel("Target lang"), 0, 2)
+        metrics_form.addWidget(self._field_label("Target lang"), 0, 2)
         self.target_lang_edit = QLineEdit(self._seed.target_lang)
         metrics_form.addWidget(self.target_lang_edit, 0, 3)
-        metrics_form.addWidget(QLabel("Total tokens"), 1, 0)
+        metrics_form.addWidget(self._field_label("Total tokens"), 1, 0)
         self.total_tokens_edit = QLineEdit(
             "" if self._seed.total_tokens is None else str(int(self._seed.total_tokens))
         )
         metrics_form.addWidget(self.total_tokens_edit, 1, 1)
-        metrics_form.addWidget(QLabel("Est. API cost"), 1, 2)
+        metrics_form.addWidget(self._field_label("Est. API cost"), 1, 2)
         self.estimated_api_cost_edit = QLineEdit(
             "" if self._seed.estimated_api_cost is None else f"{float(self._seed.estimated_api_cost):.2f}"
         )
         metrics_form.addWidget(self.estimated_api_cost_edit, 1, 3)
-        metrics_form.addWidget(QLabel("Quality risk score"), 2, 0)
+        metrics_form.addWidget(self._field_label("Quality risk score"), 2, 0)
         self.quality_risk_score_edit = QLineEdit(
             "" if self._seed.quality_risk_score is None else f"{float(self._seed.quality_risk_score):.4f}"
         )
         metrics_form.addWidget(self.quality_risk_score_edit, 2, 1)
         metrics_form.setColumnStretch(1, 1)
         metrics_form.setColumnStretch(3, 1)
-        root.addWidget(metrics_group)
+        self.metrics_section = CollapsibleSection("Run Metrics (auto-filled)", expanded=False, parent=scroll_content)
+        self.metrics_section.set_content_widget(metrics_panel)
+        scroll_root.addWidget(self.metrics_section)
 
-        finance_group = QGroupBox("Amounts (EUR)")
-        finance_form = QGridLayout(finance_group)
-        finance_form.addWidget(QLabel("Rate/word"), 0, 0)
+        finance_panel = QFrame(scroll_content)
+        finance_panel.setObjectName("ShellPanel")
+        finance_form = QGridLayout(finance_panel)
+        finance_form.setContentsMargins(12, 12, 12, 12)
+        finance_form.addWidget(self._field_label("Rate/word"), 0, 0)
         self.rate_edit = QLineEdit(f"{self._seed.rate_per_word:.4f}")
         finance_form.addWidget(self.rate_edit, 0, 1)
-        finance_form.addWidget(QLabel("Expected total"), 0, 2)
+        finance_form.addWidget(self._field_label("Expected total"), 0, 2)
         self.expected_total_edit = QLineEdit(f"{self._seed.expected_total:.2f}")
         finance_form.addWidget(self.expected_total_edit, 0, 3)
-        finance_form.addWidget(QLabel("Amount paid"), 1, 0)
+        finance_form.addWidget(self._field_label("Amount paid"), 1, 0)
         self.amount_paid_edit = QLineEdit(f"{self._seed.amount_paid:.2f}")
         finance_form.addWidget(self.amount_paid_edit, 1, 1)
-        finance_form.addWidget(QLabel("API cost"), 1, 2)
+        finance_form.addWidget(self._field_label("API cost"), 1, 2)
         self.api_cost_edit = QLineEdit(f"{self._seed.api_cost:.2f}")
         finance_form.addWidget(self.api_cost_edit, 1, 3)
-        finance_form.addWidget(QLabel("Profit"), 2, 0)
+        finance_form.addWidget(self._field_label("Profit"), 2, 0)
         self.profit_edit = QLineEdit(f"{self._seed.profit:.2f}")
         finance_form.addWidget(self.profit_edit, 2, 1)
         finance_form.setColumnStretch(1, 1)
         finance_form.setColumnStretch(3, 1)
-        root.addWidget(finance_group)
+        self.finance_section = CollapsibleSection("Amounts (EUR)", expanded=False, parent=scroll_content)
+        self.finance_section.set_content_widget(finance_panel)
+        scroll_root.addWidget(self.finance_section)
+        scroll_root.addStretch(1)
 
-        actions = QHBoxLayout()
+        self.form_scroll_area.setWidget(scroll_content)
+        root.addWidget(self.form_scroll_area, 1)
+
+        self.action_bar = QWidget(self)
+        self.action_bar.setObjectName("DialogActionBar")
+        actions = QHBoxLayout(self.action_bar)
+        actions.setContentsMargins(10, 8, 10, 8)
+        actions.setSpacing(10)
         self.open_translation_btn = QPushButton("Open translated DOCX")
-        self.open_translation_btn.setEnabled(self._resolved_seed_docx_path() is not None)
+        self.open_translation_btn.setEnabled(self._current_translation_docx_path() is not None)
         actions.addWidget(self.open_translation_btn)
         self.honorarios_btn = QPushButton("Gerar Requerimento de Honorários...")
         self.honorarios_btn.setEnabled(self._allow_honorarios_export)
         actions.addWidget(self.honorarios_btn)
         actions.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
-        self.save_btn = QPushButton("Save")
+        self.save_btn = QPushButton("Update" if self._edit_row_id is not None else "Save")
+        self.save_btn.setObjectName("PrimaryButton")
+        self.save_btn.setDefault(False)
+        self.save_btn.setAutoDefault(False)
         actions.addWidget(self.cancel_btn)
         actions.addWidget(self.save_btn)
-        root.addLayout(actions)
+        root.addWidget(self.action_bar)
 
         self.open_translation_btn.clicked.connect(self._open_translation_docx)
         self.cancel_btn.clicked.connect(self.reject)
         self.save_btn.clicked.connect(self._save)
+        self._save_return_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Return), self)
+        self._save_enter_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Enter), self)
+        for shortcut in (self._save_return_shortcut, self._save_enter_shortcut):
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(self._trigger_save_shortcut)
         self.honorarios_btn.clicked.connect(self._open_honorarios_dialog)
         self.job_type_combo.currentTextChanged.connect(self._refresh_photo_controls)
+        self.job_type_combo.currentTextChanged.connect(self._refresh_pdf_autofill_control)
+        self.job_type_combo.currentTextChanged.connect(self._refresh_interpretation_mode_state)
         self.photo_translation_check.toggled.connect(self._refresh_photo_controls)
         self.case_entity_combo.currentTextChanged.connect(self._on_case_fields_changed)
         self.case_city_combo.currentTextChanged.connect(self._on_case_fields_changed)
         self.service_entity_combo.currentTextChanged.connect(self._on_service_fields_changed)
         self.service_city_combo.currentTextChanged.connect(self._on_service_fields_changed)
+        self.translation_date_edit.textChanged.connect(self._on_primary_date_changed)
         self.service_same_check.toggled.connect(self._on_service_same_toggled)
+        self.service_group.toggle_button.toggled.connect(self._on_service_section_toggled)
+        self.use_service_location_check.toggled.connect(self._on_use_service_location_toggled)
+        self.include_transport_sentence_check.toggled.connect(self._on_interpretation_transport_sentence_toggled)
         self.autofill_header_btn.clicked.connect(self._autofill_from_pdf_header)
         self.autofill_photo_btn.clicked.connect(self._autofill_from_photo)
+        self.travel_km_outbound_edit.textChanged.connect(lambda _text: self._refresh_interpretation_transport_sentence_state())
+        self.travel_km_outbound_edit.textEdited.connect(self._on_interpretation_distance_edited)
         self.add_case_entity_btn.clicked.connect(lambda: self._add_value("Case entity", "vocab_case_entities", self.case_entity_combo))
         self.add_service_entity_btn.clicked.connect(lambda: self._add_value("Service entity", "vocab_service_entities", self.service_entity_combo))
         self.add_case_city_btn.clicked.connect(lambda: self._add_value("City", "vocab_cities", self.case_city_combo))
         self.add_service_city_btn.clicked.connect(lambda: self._add_value("City", "vocab_cities", self.service_city_combo))
+        self._refresh_interpretation_mode_state()
 
     def _add_value(self, title: str, key: str, combo: QComboBox) -> None:
         value, ok = QInputDialog.getText(self, f"Add {title}", f"{title}:")
@@ -982,22 +2781,19 @@ class QtSaveToJobLogDialog(QDialog):
         combo.setCurrentText(cleaned)
 
     def _ensure_in_vocab(self, key: str, value: str) -> None:
-        cleaned = value.strip()
-        if cleaned == "":
-            return
-        bucket = list(self._settings[key])
-        lowered = {item.casefold() for item in bucket}
-        if cleaned.casefold() in lowered:
-            return
-        bucket.append(cleaned)
-        self._settings[key] = bucket
+        _ensure_value_in_joblog_settings(self._settings, key, value)
         self._refresh_vocab_widgets()
 
     def _refresh_vocab_widgets(self) -> None:
+        city_values = (
+            self._available_interpretation_cities()
+            if _is_interpretation_job_type(self.job_type_combo.currentText().strip())
+            else list(self._settings["vocab_cities"])
+        )
         self._fill_combo(self.case_entity_combo, list(self._settings["vocab_case_entities"]))
         self._fill_combo(self.service_entity_combo, list(self._settings["vocab_service_entities"]))
-        self._fill_combo(self.case_city_combo, list(self._settings["vocab_cities"]))
-        self._fill_combo(self.service_city_combo, list(self._settings["vocab_cities"]))
+        self._fill_combo(self.case_city_combo, city_values)
+        self._fill_combo(self.service_city_combo, city_values)
         self._fill_combo(self.job_type_combo, list(self._settings["vocab_job_types"]))
         self._fill_combo(self.court_email_combo, list(self._settings["vocab_court_emails"]))
 
@@ -1013,19 +2809,135 @@ class QtSaveToJobLogDialog(QDialog):
         if suggestion:
             self.court_email_combo.setCurrentText(suggestion)
 
+    def _set_service_section_expanded(self, expanded: bool) -> None:
+        desired = bool(expanded)
+        if self.service_group.is_expanded() == desired:
+            return
+        self._service_section_sync_in_progress = True
+        try:
+            self.service_group.set_expanded(desired)
+        finally:
+            self._service_section_sync_in_progress = False
+
+    def _on_service_section_toggled(self, _checked: bool) -> None:
+        if self._service_section_sync_in_progress:
+            return
+        self._service_section_user_overridden = True
+        self.service_group.set_attention_state(False)
+
+    def _service_section_should_expand(self) -> bool:
+        return self.use_service_location_check.isChecked() or not self.service_same_check.isChecked()
+
+    def _service_section_summary_text(self) -> str:
+        if not _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            return ""
+        if self.use_service_location_check.isChecked():
+            service_city = self.service_city_combo.currentText().strip()
+            if service_city:
+                return f"Location: {service_city}"
+            return "Location in text"
+        if self.service_same_check.isChecked():
+            return "Same as case"
+        service_city = self.service_city_combo.currentText().strip()
+        if service_city:
+            return service_city
+        service_entity = self.service_entity_combo.currentText().strip()
+        if service_entity:
+            return service_entity
+        return "Custom service"
+
+    def _refresh_service_section_state(self) -> None:
+        self.service_group.set_summary_text(self._service_section_summary_text())
+        self.service_group.set_attention_state(False)
+        should_expand = self._service_section_should_expand()
+        if should_expand:
+            self._set_service_section_expanded(True)
+            return
+        if not self._service_section_user_overridden:
+            self._set_service_section_expanded(False)
+
+    def _on_use_service_location_toggled(self, _checked: bool) -> None:
+        self._refresh_service_section_state()
+
+    def _interpretation_section_summary_text(self) -> str:
+        if not _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            return ""
+        if not self._interpretation_transport_sentence_enabled():
+            return "Transport line off"
+        distance_text = self.travel_km_outbound_edit.text().strip()
+        if distance_text:
+            return f"{distance_text} km one way"
+        return "Transport line on"
+
+    def _imported_service_differs_from_case(self, *, service_entity: str, service_city: str) -> bool:
+        resolved_service_entity = str(service_entity or "").strip()
+        resolved_service_city = str(service_city or "").strip()
+        case_entity = self.case_entity_combo.currentText().strip()
+        case_city = self.case_city_combo.currentText().strip()
+        return (
+            (resolved_service_entity != "" and resolved_service_entity != case_entity)
+            or (resolved_service_city != "" and resolved_service_city != case_city)
+        )
+
+    def _apply_imported_service_fields(self, *, service_entity: str, service_city: str) -> None:
+        resolved_service_entity = str(service_entity or "").strip()
+        resolved_service_city = str(service_city or "").strip()
+        if not _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self._sync_service_with_case()
+            return
+        distinct_service = self._imported_service_differs_from_case(
+            service_entity=resolved_service_entity,
+            service_city=resolved_service_city,
+        )
+        if distinct_service and self.service_same_check.isChecked():
+            self.service_same_check.setChecked(False)
+        if self.service_same_check.isChecked():
+            self._sync_service_with_case()
+            return
+        if resolved_service_entity:
+            self._ensure_in_vocab("vocab_service_entities", resolved_service_entity)
+            self.service_entity_combo.setCurrentText(resolved_service_entity)
+        if resolved_service_city:
+            self._apply_imported_interpretation_city(
+                self.service_city_combo,
+                resolved_service_city,
+                label="Service city",
+            )
+        if distinct_service:
+            self._refresh_service_section_state()
+
+    def _reveal_validation_context(self, message: str) -> None:
+        normalized = message.casefold()
+        target_widget: QWidget | None = None
+        if "service" in normalized:
+            self._set_service_section_expanded(True)
+            self.service_group.set_attention_state(True)
+            target_widget = self.service_group
+        if "km" in normalized or "distance" in normalized or "transport" in normalized:
+            self.interpretation_group.set_expanded(True)
+            self.interpretation_group.set_attention_state(True)
+            target_widget = self.interpretation_group
+        if target_widget is not None:
+            self.form_scroll_area.ensureWidgetVisible(target_widget, 0, 24)
+
     def _on_case_fields_changed(self) -> None:
         self._case_entity_user_set = True
         self._case_city_user_set = True
         if self.service_same_check.isChecked():
             self._sync_service_with_case()
         self._set_court_email_from_context()
+        self._apply_interpretation_distance_defaults(prompt_if_missing=False)
+        self._refresh_service_section_state()
 
     def _on_service_fields_changed(self) -> None:
         self._apply_non_court_default_rule()
+        self._apply_interpretation_distance_defaults(prompt_if_missing=True)
+        self._refresh_service_section_state()
 
     def _on_service_same_toggled(self) -> None:
         self._refresh_service_mirror_state()
         self._settings["service_equals_case_by_default"] = bool(self.service_same_check.isChecked())
+        self._apply_interpretation_distance_defaults(prompt_if_missing=False)
 
     def _sync_service_with_case(self) -> None:
         self.service_entity_combo.setCurrentText(self.case_entity_combo.currentText().strip())
@@ -1037,6 +2949,9 @@ class QtSaveToJobLogDialog(QDialog):
             self._sync_service_with_case()
         self.service_entity_combo.setEnabled(not same)
         self.service_city_combo.setEnabled(not same)
+        self.add_service_entity_btn.setEnabled(not same)
+        self.add_service_city_btn.setEnabled(not same)
+        self._refresh_service_section_state()
 
     def _refresh_photo_controls(self) -> None:
         photo_enabled = bool(self._settings["metadata_photo_enabled"])
@@ -1044,27 +2959,135 @@ class QtSaveToJobLogDialog(QDialog):
         if not photo_enabled:
             self.autofill_photo_btn.setEnabled(False)
             self.photo_translation_check.setEnabled(False)
+            self.photo_translation_check.setVisible(True)
             self.photo_hint.setText("Photo metadata disabled in settings.")
             return
         if job_type == "Interpretation":
             self.autofill_photo_btn.setEnabled(True)
             self.photo_translation_check.setEnabled(False)
-            self.photo_hint.setText("Interpretation mode.")
+            self.photo_translation_check.setVisible(False)
+            self.photo_hint.setText("Photo autofill ready.")
             return
+        self.photo_translation_check.setText("Enable photo autofill")
+        self.photo_translation_check.setVisible(True)
         self.photo_translation_check.setEnabled(True)
         enabled = self.photo_translation_check.isChecked()
         self.autofill_photo_btn.setEnabled(enabled)
-        self.photo_hint.setText("Usually Interpretation.")
+        self.photo_hint.setText("Enable photo autofill for this row.")
+
+    def _refresh_pdf_autofill_control(self) -> None:
+        is_interpretation = _is_interpretation_job_type(self.job_type_combo.currentText().strip())
+        self.autofill_header_btn.setText(
+            "Autofill from notification PDF..." if is_interpretation else "Autofill from PDF header"
+        )
+        self.autofill_header_btn.setEnabled(self._can_autofill_from_pdf_header())
+
+    def _refresh_interpretation_mode_state(self) -> None:
+        is_interpretation = _is_interpretation_job_type(self.job_type_combo.currentText().strip())
+        self.interpretation_group.setVisible(is_interpretation)
+        self.service_group.setVisible(is_interpretation)
+        self.primary_date_label.setText("Service date" if is_interpretation else "Translation date")
+        self.lang_label.setVisible(not is_interpretation)
+        self.lang_edit.setVisible(not is_interpretation)
+        self.pages_label.setVisible(not is_interpretation)
+        self.pages_edit.setVisible(not is_interpretation)
+        self.words_label.setVisible(not is_interpretation)
+        self.word_count_edit.setVisible(not is_interpretation)
+        self.metrics_section.setVisible(not is_interpretation)
+        self.finance_section.setVisible(not is_interpretation)
+        self.service_date_label.setVisible(not is_interpretation)
+        self.service_date_edit.setVisible(not is_interpretation)
+        self.word_count_edit.setPlaceholderText("Not used" if is_interpretation else "")
+        self.rate_edit.setPlaceholderText("Not used" if is_interpretation else "")
+        self.expected_total_edit.setPlaceholderText("Not used" if is_interpretation else "")
+        if is_interpretation and not any(
+            (
+                self.service_entity_combo.currentText().strip(),
+                self.service_city_combo.currentText().strip(),
+            )
+        ):
+            self.service_same_check.setChecked(True)
+        self._refresh_service_mirror_state()
+        if is_interpretation:
+            self.service_date_edit.setText(self.translation_date_edit.text().strip())
+            self._refresh_interpretation_transport_sentence_state()
+        self._apply_interpretation_distance_defaults(prompt_if_missing=False)
+        self._refresh_pdf_autofill_control()
+
+    def _interpretation_transport_sentence_enabled(self) -> bool:
+        checkbox = getattr(self, "include_transport_sentence_check", None)
+        if checkbox is None:
+            return True
+        return checkbox.isChecked()
+
+    def _refresh_interpretation_transport_sentence_state(self) -> None:
+        enabled = self._interpretation_transport_sentence_enabled()
+        distance_label = getattr(self, "distance_label", None)
+        distance_edit = getattr(self, "travel_km_outbound_edit", None)
+        hint_label = getattr(self, "interpretation_hint_label", None)
+        if distance_label is not None:
+            distance_label.setEnabled(enabled)
+        if distance_edit is not None:
+            distance_edit.setEnabled(enabled)
+        if hint_label is not None:
+            hint_label.setEnabled(enabled)
+        self.interpretation_group.set_summary_text(self._interpretation_section_summary_text())
+        self.interpretation_group.set_attention_state(False)
+
+    def _on_interpretation_transport_sentence_toggled(self, checked: bool) -> None:
+        self._refresh_interpretation_transport_sentence_state()
+        if checked:
+            self._apply_interpretation_distance_defaults(prompt_if_missing=False)
+
+    def _trigger_save_shortcut(self) -> None:
+        popup = QApplication.activePopupWidget()
+        if popup is not None and popup is not self:
+            return
+        focus_widget = QApplication.focusWidget()
+        if isinstance(focus_widget, QPlainTextEdit):
+            return
+        if self.save_btn.isEnabled():
+            self._save()
+
+    def _can_autofill_from_pdf_header(self) -> bool:
+        if self._seed.pdf_path is None:
+            return _is_interpretation_job_type(self.job_type_combo.currentText().strip())
+        return self._seed.pdf_path.expanduser().resolve().exists()
+
+    def _current_word_count_value(self) -> int:
+        try:
+            return _parse_joblog_required_int(self.word_count_edit.text(), "Words")
+        except ValueError:
+            return int(self._seed.word_count)
 
     def _build_honorarios_draft(self) -> HonorariosDraft:
         case_number = self.case_number_edit.text().strip()
         case_entity = self.case_entity_combo.currentText().strip()
         case_city = self.case_city_combo.currentText().strip()
+        if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            return build_interpretation_honorarios_draft_from_form(
+                form_values={
+                    "case_number": case_number,
+                    "case_entity": case_entity,
+                    "case_city": case_city,
+                    "service_date": self.translation_date_edit.text().strip(),
+                    "service_entity": self.service_entity_combo.currentText().strip(),
+                    "service_city": self.service_city_combo.currentText().strip(),
+                    "use_service_location_in_honorarios": self.use_service_location_check.isChecked(),
+                    "include_transport_sentence_in_honorarios": self.include_transport_sentence_check.isChecked(),
+                    "travel_km_outbound": self.travel_km_outbound_edit.text().strip(),
+                    "travel_km_return": self.travel_km_outbound_edit.text().strip(),
+                },
+                settings_path=settings_path(),
+                service_same_checked=self.service_same_check.isChecked(),
+            )
+        profile = _current_primary_profile()
         return build_honorarios_draft(
             case_number=case_number,
-            word_count=int(self._seed.word_count),
+            word_count=self._current_word_count_value(),
             case_entity=case_entity,
             case_city=case_city,
+            profile=profile,
         )
 
     def _honorarios_default_directory(self) -> Path:
@@ -1083,9 +3106,21 @@ class QtSaveToJobLogDialog(QDialog):
                     return resolved
         return None
 
-    def _offer_gmail_draft_for_honorarios(self, honorarios_docx: Path) -> None:
+    def _offer_gmail_draft_for_honorarios(
+        self,
+        honorarios_docx: Path,
+        honorarios_pdf: Path | None,
+        profile: UserProfile,
+    ) -> None:
         court_email = self.court_email_combo.currentText().strip()
         if not court_email:
+            return
+        if honorarios_pdf is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                "The honorários PDF is unavailable for this export. Gmail draft creation requires the PDF.",
+            )
             return
         prereqs = assess_gmail_draft_prereqs(
             configured_gog_path=str(self._gui_settings.get("gmail_gog_path", "") or ""),
@@ -1113,7 +3148,7 @@ class QtSaveToJobLogDialog(QDialog):
         try:
             validate_translated_docx_artifacts_for_gmail_draft(
                 translated_docxs=(translation_docx,),
-                honorarios_docx=honorarios_docx,
+                honorarios_pdf=honorarios_pdf,
             )
             request = build_honorarios_gmail_request(
                 gog_path=prereqs.gog_path,
@@ -1121,7 +3156,84 @@ class QtSaveToJobLogDialog(QDialog):
                 to_email=court_email,
                 case_number=self.case_number_edit.text().strip(),
                 translation_docx=translation_docx,
-                honorarios_docx=honorarios_docx,
+                honorarios_pdf=honorarios_pdf,
+                profile=profile,
+            )
+        except ValueError as exc:
+            QMessageBox.critical(self, "Gmail draft", str(exc))
+            return
+        result = create_gmail_draft_via_gog(request)
+        if not result.ok:
+            details = result.stderr or result.stdout or result.message
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Failed to create Gmail draft.\n\n"
+                f"{details}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        open_gmail = QMessageBox.question(
+            self,
+            "Gmail draft",
+            "Gmail draft created successfully. Abrir Gmail?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if open_gmail == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
+
+    def _offer_gmail_draft_for_interpretation_honorarios(
+        self,
+        honorarios_pdf: Path | None,
+        profile: UserProfile,
+    ) -> None:
+        court_email = self.court_email_combo.currentText().strip()
+        if not court_email:
+            QMessageBox.information(
+                self,
+                "Gmail draft",
+                "Court Email is missing for this interpretation entry. The Gmail draft was not created.",
+            )
+            return
+        if honorarios_pdf is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                "The honorários PDF is unavailable for this export. Gmail draft creation requires the PDF.",
+            )
+            return
+        prereqs = assess_gmail_draft_prereqs(
+            configured_gog_path=str(self._gui_settings.get("gmail_gog_path", "") or ""),
+            configured_account_email=str(self._gui_settings.get("gmail_account_email", "") or ""),
+        )
+        if not prereqs.ready or prereqs.gog_path is None or prereqs.account_email is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                f"{prereqs.message}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Gmail draft",
+            f"Criar rascunho no Gmail para {court_email}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            request = build_manual_interpretation_gmail_request(
+                gog_path=prereqs.gog_path,
+                account_email=prereqs.account_email,
+                to_email=court_email,
+                case_number=self.case_number_edit.text().strip(),
+                honorarios_pdf=honorarios_pdf,
+                profile=profile,
             )
         except ValueError as exc:
             QMessageBox.critical(self, "Gmail draft", str(exc))
@@ -1151,32 +3263,60 @@ class QtSaveToJobLogDialog(QDialog):
     def _open_honorarios_dialog(self) -> None:
         if not self._allow_honorarios_export:
             return
+        try:
+            draft = self._build_honorarios_draft()
+        except ValueError as exc:
+            self._reveal_validation_context(str(exc))
+            QMessageBox.critical(self, "Invalid values", str(exc))
+            return
         dialog = QtHonorariosExportDialog(
             parent=self,
-            draft=self._build_honorarios_draft(),
+            draft=draft,
             default_directory=self._honorarios_default_directory(),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_path is not None:
-            self._offer_gmail_draft_for_honorarios(dialog.saved_path)
+            generated_draft = getattr(dialog, "generated_draft", None)
+            profile = generated_draft.profile if generated_draft is not None else _current_primary_profile()
+            final_draft = generated_draft or draft
+            if final_draft.kind == HonorariosKind.INTERPRETATION:
+                self.include_transport_sentence_check.setChecked(
+                    bool(final_draft.include_transport_sentence_in_honorarios)
+                )
+            saved_pdf_path = getattr(dialog, "saved_pdf_path", None)
+            pdf_unavailable_explained = bool(getattr(dialog, "pdf_unavailable_explained", False))
+            if saved_pdf_path is None and pdf_unavailable_explained:
+                show_local_only_honorarios_ready_box(
+                    self,
+                    docx_path=dialog.saved_path,
+                    pdf_error=str(getattr(dialog, "pdf_export_error", "") or "").strip(),
+                    gmail_blocked=True,
+                )
+            if final_draft.kind == HonorariosKind.TRANSLATION:
+                if saved_pdf_path is not None or not pdf_unavailable_explained:
+                    self._offer_gmail_draft_for_honorarios(dialog.saved_path, saved_pdf_path, profile)
+            elif final_draft.kind == HonorariosKind.INTERPRETATION and (
+                saved_pdf_path is not None or not pdf_unavailable_explained
+            ):
+                self._offer_gmail_draft_for_interpretation_honorarios(saved_pdf_path, profile)
 
     def _apply_header_suggestion(self, suggestion: MetadataSuggestion) -> None:
         if suggestion.case_entity:
             self._ensure_in_vocab("vocab_case_entities", suggestion.case_entity)
             self.case_entity_combo.setCurrentText(suggestion.case_entity)
         if suggestion.case_city:
-            self._ensure_in_vocab("vocab_cities", suggestion.case_city)
-            self.case_city_combo.setCurrentText(suggestion.case_city)
+            self._apply_imported_interpretation_city(
+                self.case_city_combo,
+                suggestion.case_city,
+                label="Case city",
+            )
         if suggestion.case_number:
             self.case_number_edit.setText(suggestion.case_number)
-        if self.service_same_check.isChecked():
-            self._sync_service_with_case()
-        else:
-            if suggestion.service_entity and not self.service_entity_combo.currentText().strip():
-                self._ensure_in_vocab("vocab_service_entities", suggestion.service_entity)
-                self.service_entity_combo.setCurrentText(suggestion.service_entity)
-            if suggestion.service_city and not self.service_city_combo.currentText().strip():
-                self._ensure_in_vocab("vocab_cities", suggestion.service_city)
-                self.service_city_combo.setCurrentText(suggestion.service_city)
+        if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self.translation_date_edit.setText(str(suggestion.service_date or "").strip())
+        self._apply_imported_service_fields(
+            service_entity=suggestion.service_entity,
+            service_city=suggestion.service_city,
+        )
         self._apply_non_court_default_rule()
         ranked = rank_court_email_suggestions(
             exact_email=suggestion.court_email,
@@ -1186,10 +3326,78 @@ class QtSaveToJobLogDialog(QDialog):
         )
         if ranked:
             self.court_email_combo.setCurrentText(ranked[0])
+        self._refresh_service_section_state()
+
+    def _resolve_autofill_pdf_path(self, *, title: str, allow_manual_picker: bool) -> Path | None:
+        pdf_path = self._seed.pdf_path.expanduser().resolve() if self._seed.pdf_path is not None else None
+        if pdf_path is not None and pdf_path.exists():
+            return pdf_path
+        if not allow_manual_picker:
+            return None
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            title,
+            str(_default_downloads_dir()),
+            "PDF Files (*.pdf);;All Files (*.*)",
+        )
+        if not selected:
+            return None
+        pdf_path = Path(selected).expanduser().resolve()
+        self._seed.pdf_path = pdf_path
+        return pdf_path
+
+    def _autofill_from_interpretation_notice_pdf(self, pdf_path: Path) -> None:
+        result = extract_interpretation_notification_metadata_from_pdf_with_diagnostics(
+            pdf_path,
+            vocab_cities=self._available_interpretation_cities(),
+            config=self._metadata_config,
+        )
+        suggestion = result.suggestion
+        diagnostics = result.diagnostics
+        if not any(
+            (
+                suggestion.case_entity,
+                suggestion.case_city,
+                suggestion.case_number,
+                suggestion.court_email,
+                suggestion.service_entity,
+                suggestion.service_city,
+                suggestion.service_date,
+            )
+        ):
+            self._set_service_section_expanded(True)
+            self.service_group.set_attention_state(True)
+            QMessageBox.warning(
+                self,
+                "Autofill",
+                "No notification metadata could be extracted automatically.\n\n"
+                f"{build_interpretation_notice_diagnostics_text(diagnostics)}",
+            )
+            return
+        self._apply_header_suggestion(suggestion)
+        if not str(suggestion.service_date or "").strip():
+            self._set_service_section_expanded(True)
+            self.service_group.set_attention_state(True)
+            QMessageBox.information(
+                self,
+                "Autofill",
+                "Notice data was recovered, but the service date still needs review.\n\n"
+                f"{build_interpretation_notice_diagnostics_text(diagnostics)}",
+            )
 
     def _autofill_from_pdf_header(self) -> None:
+        is_interpretation = _is_interpretation_job_type(self.job_type_combo.currentText().strip())
+        pdf_path = self._resolve_autofill_pdf_path(
+            title="Select interpretation notification PDF" if is_interpretation else "Select PDF for header autofill",
+            allow_manual_picker=is_interpretation,
+        )
+        if pdf_path is None:
+            return
+        if is_interpretation:
+            self._autofill_from_interpretation_notice_pdf(pdf_path)
+            return
         suggestion = extract_pdf_header_metadata_priority_pages(
-            self._seed.pdf_path,
+            pdf_path,
             vocab_cities=list(self._settings["vocab_cities"]),
             config=self._metadata_config,
         )
@@ -1219,19 +3427,179 @@ class QtSaveToJobLogDialog(QDialog):
         )
         if not selected:
             return
-        suggestion = extract_photo_metadata_from_image(
-            Path(selected),
-            vocab_cities=list(self._settings["vocab_cities"]),
-            config=self._metadata_config,
+        self._autofill_from_photo_path(Path(selected).expanduser().resolve(), prompt_for_distance=True)
+
+    def _effective_interpretation_distance_city(self) -> str:
+        if not _is_interpretation_job_type(self.job_type_combo.currentText()):
+            return ""
+        return self.service_city_combo.currentText().strip()
+
+    def _set_interpretation_distance_text(
+        self,
+        value: float | None,
+        *,
+        city_key: str,
+        manual: bool,
+    ) -> None:
+        self._distance_sync_in_progress = True
+        try:
+            self.travel_km_outbound_edit.setText("" if value is None else f"{float(value):g}")
+        finally:
+            self._distance_sync_in_progress = False
+        self._distance_value_city_key = city_key
+        self._distance_value_is_manual = manual
+
+    def _on_interpretation_distance_edited(self, _text: str) -> None:
+        if self._distance_sync_in_progress:
+            return
+        city = self._effective_interpretation_distance_city()
+        self._distance_value_city_key = city.casefold() if city else ""
+        self._distance_value_is_manual = True
+
+    def _apply_interpretation_distance_defaults(self, *, prompt_if_missing: bool) -> None:
+        if not self._interpretation_transport_sentence_enabled():
+            return
+        city = self._effective_interpretation_distance_city()
+        if city == "":
+            self._set_interpretation_distance_text(None, city_key="", manual=False)
+            return
+        city_key = city.casefold()
+        profile = _current_primary_profile()
+        known_distance = distance_for_city(profile, city)
+        if known_distance is not None:
+            should_replace = (
+                self._distance_value_city_key != city_key
+                or not self.travel_km_outbound_edit.text().strip()
+                or not self._distance_value_is_manual
+            )
+            if should_replace:
+                self._set_interpretation_distance_text(known_distance, city_key=city_key, manual=False)
+            return
+        if self._distance_value_city_key != city_key:
+            self._set_interpretation_distance_text(None, city_key=city_key, manual=False)
+        if prompt_if_missing:
+            self._prompt_interpretation_distance_for_imported_city()
+
+    def _on_primary_date_changed(self, text: str) -> None:
+        if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self.service_date_edit.setText(text)
+
+    def _prompt_interpretation_distance_for_imported_city(self) -> None:
+        if not _is_interpretation_job_type(self.job_type_combo.currentText()):
+            return
+        if not self._interpretation_transport_sentence_enabled():
+            return
+        profiles, primary_profile_id = load_profile_settings()
+        profile = primary_profile(profiles, primary_profile_id)
+        city = self._effective_interpretation_distance_city() or self.case_city_combo.currentText().strip()
+        if not city:
+            return
+        known_distance = distance_for_city(profile, city)
+        if known_distance is not None:
+            self._set_interpretation_distance_text(known_distance, city_key=city.casefold(), manual=False)
+            return
+        if self.travel_km_outbound_edit.text().strip():
+            return
+        city_key = city.casefold()
+        if city_key in self._distance_prompted_cities:
+            return
+        if not profile.travel_origin_label.strip():
+            return
+        distance_value, ok = QInputDialog.getDouble(
+            self,
+            "Interpretation distance",
+            f"One-way distance from {profile.travel_origin_label} to {city} (km):",
+            0.0,
+            0.01,
+            1_000_000.0,
+            2,
         )
-        if suggestion.service_city:
+        if not ok:
+            return
+        if distance_value <= 0:
+            QMessageBox.warning(
+                self,
+                "Interpretation distance",
+                "One-way distance must be greater than 0 km.",
+            )
+            return
+        self._distance_prompted_cities.add(city_key)
+        profile.travel_distances_by_city[city] = float(distance_value)
+        save_profile_settings(profiles=profiles, primary_profile_id=primary_profile_id)
+        self._set_interpretation_distance_text(distance_value, city_key=city_key, manual=False)
+
+    def _persist_interpretation_distance_for_current_city(self) -> None:
+        if not _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            return
+        if not self._interpretation_transport_sentence_enabled():
+            return
+        city = self._effective_interpretation_distance_city()
+        distance_text = self.travel_km_outbound_edit.text().strip()
+        if city == "" or distance_text == "":
+            return
+        distance_value = self._parse_optional_float(distance_text, "KM (one way)")
+        if distance_value is None:
+            return
+        if distance_value <= 0:
+            raise ValueError("KM (one way) must be greater than 0 when transport sentence is enabled.")
+        profiles, primary_profile_id = load_profile_settings()
+        profile = primary_profile(profiles, primary_profile_id)
+        existing = distance_for_city(profile, city)
+        if existing is not None and abs(existing - distance_value) < 1e-9:
+            self._distance_value_city_key = city.casefold()
+            self._distance_value_is_manual = False
+            return
+        profile.travel_distances_by_city[city] = float(distance_value)
+        save_profile_settings(profiles=profiles, primary_profile_id=primary_profile_id)
+        self._distance_value_city_key = city.casefold()
+        self._distance_value_is_manual = False
+
+    def _autofill_from_photo_path(self, image_path: Path, *, prompt_for_distance: bool) -> None:
+        if _is_interpretation_job_type(self.job_type_combo.currentText()):
+            suggestion = extract_interpretation_photo_metadata_from_image(
+                image_path,
+                vocab_cities=self._available_interpretation_cities(),
+                config=self._metadata_config,
+            )
+        else:
+            suggestion = extract_photo_metadata_from_image(
+                image_path,
+                vocab_cities=list(self._settings["vocab_cities"]),
+                config=self._metadata_config,
+            )
+        if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self._apply_imported_service_fields(
+                service_entity=suggestion.service_entity,
+                service_city=suggestion.service_city,
+            )
+        elif suggestion.service_city:
             self._ensure_in_vocab("vocab_cities", suggestion.service_city)
             self.service_city_combo.setCurrentText(suggestion.service_city)
         if suggestion.service_date:
-            self.service_date_edit.setText(suggestion.service_date)
+            if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+                self.translation_date_edit.setText(suggestion.service_date)
+            else:
+                self.service_date_edit.setText(suggestion.service_date)
+        elif _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+            self.translation_date_edit.setText("")
         if suggestion.case_number and not self.case_number_edit.text().strip():
             self.case_number_edit.setText(suggestion.case_number)
+        if suggestion.case_entity:
+            self._ensure_in_vocab("vocab_case_entities", suggestion.case_entity)
+            self.case_entity_combo.setCurrentText(suggestion.case_entity)
+        if suggestion.case_city:
+            self._apply_imported_interpretation_city(
+                self.case_city_combo,
+                suggestion.case_city,
+                label="Case city",
+            )
+        if suggestion.court_email:
+            self._ensure_in_vocab("vocab_court_emails", suggestion.court_email)
+            self.court_email_combo.setCurrentText(suggestion.court_email)
         self._apply_non_court_default_rule()
+        self._refresh_service_section_state()
+        if prompt_for_distance:
+            self._prompt_interpretation_distance_for_imported_city()
 
     def _apply_non_court_default_rule(self) -> None:
         case_entity, case_city = apply_service_case_default_rule(
@@ -1247,35 +3615,24 @@ class QtSaveToJobLogDialog(QDialog):
             self.case_entity_combo.setCurrentText(case_entity)
             self._ensure_in_vocab("vocab_case_entities", case_entity)
         if case_city is not None and case_city != self.case_city_combo.currentText().strip():
-            self.case_city_combo.setCurrentText(case_city)
-            self._ensure_in_vocab("vocab_cities", case_city)
+            if _is_interpretation_job_type(self.job_type_combo.currentText().strip()):
+                resolved_case_city = self._canonical_interpretation_city(case_city)
+                if resolved_case_city:
+                    self.case_city_combo.setCurrentText(resolved_case_city)
+                else:
+                    self.case_city_combo.setCurrentIndex(-1)
+            else:
+                self.case_city_combo.setCurrentText(case_city)
+                self._ensure_in_vocab("vocab_cities", case_city)
 
     def _parse_float(self, value: str, label: str) -> float:
-        cleaned = value.strip().replace(",", ".")
-        if cleaned == "":
-            return 0.0
-        try:
-            return float(cleaned)
-        except ValueError as exc:
-            raise ValueError(f"{label} must be numeric.") from exc
+        return _parse_joblog_float(value, label)
 
     def _parse_optional_int(self, value: str, label: str) -> int | None:
-        cleaned = value.strip()
-        if cleaned == "":
-            return None
-        try:
-            return int(cleaned)
-        except ValueError as exc:
-            raise ValueError(f"{label} must be an integer.") from exc
+        return _parse_joblog_optional_int(value, label)
 
     def _parse_optional_float(self, value: str, label: str) -> float | None:
-        cleaned = value.strip().replace(",", ".")
-        if cleaned == "":
-            return None
-        try:
-            return float(cleaned)
-        except ValueError as exc:
-            raise ValueError(f"{label} must be numeric.") from exc
+        return _parse_joblog_optional_float(value, label)
 
     def _resolved_seed_docx_path(self) -> Path | None:
         for candidate in (self._seed.output_docx, self._seed.partial_docx):
@@ -1283,8 +3640,53 @@ class QtSaveToJobLogDialog(QDialog):
                 return candidate.expanduser().resolve()
         return None
 
+    def _collect_raw_values(self) -> dict[str, str]:
+        is_interpretation = _is_interpretation_job_type(self.job_type_combo.currentText().strip())
+        primary_date = self.translation_date_edit.text()
+        return {
+            "translation_date": primary_date,
+            "job_type": self.job_type_combo.currentText(),
+            "case_number": self.case_number_edit.text(),
+            "court_email": self.court_email_combo.currentText(),
+            "case_entity": self.case_entity_combo.currentText(),
+            "case_city": self.case_city_combo.currentText(),
+            "service_entity": self.service_entity_combo.currentText(),
+            "service_city": self.service_city_combo.currentText(),
+            "service_date": primary_date if is_interpretation else self.service_date_edit.text(),
+            "travel_km_outbound": self.travel_km_outbound_edit.text(),
+            "travel_km_return": self.travel_km_outbound_edit.text(),
+            "lang": _widget_text_value(self.lang_edit),
+            "target_lang": _widget_text_value(self.target_lang_edit),
+            "run_id": self.run_id_edit.text(),
+            "pages": self.pages_edit.text(),
+            "word_count": self.word_count_edit.text(),
+            "total_tokens": self.total_tokens_edit.text(),
+            "rate_per_word": self.rate_edit.text(),
+            "expected_total": self.expected_total_edit.text(),
+            "amount_paid": self.amount_paid_edit.text(),
+            "api_cost": self.api_cost_edit.text(),
+            "estimated_api_cost": self.estimated_api_cost_edit.text(),
+            "quality_risk_score": self.quality_risk_score_edit.text(),
+            "profit": self.profit_edit.text(),
+        }
+
+    def _normalized_payload(self) -> dict[str, Any]:
+        include_transport_sentence_check = getattr(self, "include_transport_sentence_check", None)
+        include_transport_sentence = (
+            include_transport_sentence_check.isChecked()
+            if include_transport_sentence_check is not None
+            else bool(getattr(self._seed, "include_transport_sentence_in_honorarios", True))
+        )
+        return _normalize_joblog_payload(
+            seed=self._seed,
+            raw_values=self._collect_raw_values(),
+            service_same_checked=self.service_same_check.isChecked(),
+            use_service_location_in_honorarios_checked=self.use_service_location_check.isChecked(),
+            include_transport_sentence_in_honorarios_checked=include_transport_sentence,
+        )
+
     def _open_translation_docx(self) -> None:
-        resolved = self._resolved_seed_docx_path()
+        resolved = self._current_translation_docx_path()
         if resolved is None:
             QMessageBox.critical(
                 self,
@@ -1296,131 +3698,51 @@ class QtSaveToJobLogDialog(QDialog):
 
     def _save(self) -> None:
         try:
-            rate = self._parse_float(self.rate_edit.text(), "Rate/word")
-            expected_total = self._parse_float(self.expected_total_edit.text(), "Expected total")
-            amount_paid = self._parse_float(self.amount_paid_edit.text(), "Amount paid")
-            api_cost = self._parse_float(self.api_cost_edit.text(), "API cost")
-            profit = self._parse_float(self.profit_edit.text(), "Profit")
-            total_tokens = self._parse_optional_int(self.total_tokens_edit.text(), "Total tokens")
-            estimated_api_cost = self._parse_optional_float(
-                self.estimated_api_cost_edit.text(),
-                "Estimated API cost",
-            )
-            quality_risk_score = self._parse_optional_float(
-                self.quality_risk_score_edit.text(),
-                "Quality risk score",
-            )
+            payload = self._normalized_payload()
         except ValueError as exc:
+            self._reveal_validation_context(str(exc))
+            QMessageBox.critical(self, "Invalid values", str(exc))
+            return
+        try:
+            self._persist_interpretation_distance_for_current_city()
+        except ValueError as exc:
+            self._reveal_validation_context(str(exc))
             QMessageBox.critical(self, "Invalid values", str(exc))
             return
 
-        if expected_total == 0.0 and rate > 0:
-            expected_total = round(rate * float(self._seed.word_count), 2)
-        if profit == 0.0:
-            if amount_paid > 0:
-                profit = round(amount_paid - api_cost, 2)
-            else:
-                profit = round(expected_total - api_cost, 2)
-
-        service_date = self.service_date_edit.text().strip()
-        if service_date:
-            try:
-                datetime.strptime(service_date, "%Y-%m-%d")
-            except ValueError:
-                QMessageBox.critical(self, "Invalid date", "Service date must be YYYY-MM-DD.")
-                return
-
-        case_entity = self.case_entity_combo.currentText().strip()
-        case_city = self.case_city_combo.currentText().strip()
-        service_entity = self.service_entity_combo.currentText().strip()
-        service_city = self.service_city_combo.currentText().strip()
-        if self.service_same_check.isChecked():
-            service_entity = case_entity
-            service_city = case_city
-
-        payload = {
-            "completed_at": self._seed.completed_at,
-            "translation_date": self._seed.translation_date,
-            "job_type": self.job_type_combo.currentText().strip() or "Translation",
-            "case_number": self.case_number_edit.text().strip(),
-            "court_email": self.court_email_combo.currentText().strip(),
-            "case_entity": case_entity,
-            "case_city": case_city,
-            "service_entity": service_entity,
-            "service_city": service_city,
-            "service_date": service_date,
-            "lang": self._seed.lang,
-            "target_lang": self.target_lang_edit.text().strip() or self._seed.target_lang,
-            "run_id": self.run_id_edit.text().strip(),
-            "pages": int(self._seed.pages),
-            "word_count": int(self._seed.word_count),
-            "total_tokens": total_tokens,
-            "rate_per_word": rate,
-            "expected_total": expected_total,
-            "amount_paid": amount_paid,
-            "api_cost": api_cost,
-            "estimated_api_cost": estimated_api_cost,
-            "quality_risk_score": quality_risk_score,
-            "profit": profit,
-            "output_docx_path": (
-                str(self._seed.output_docx.expanduser().resolve())
-                if isinstance(self._seed.output_docx, Path)
-                else None
-            ),
-            "partial_docx_path": (
-                str(self._seed.partial_docx.expanduser().resolve())
-                if isinstance(self._seed.partial_docx, Path)
-                else None
-            ),
-        }
-
         with closing(open_job_log(self._db_path)) as conn:
-            row_id = insert_job_run(conn, payload)
+            if self._edit_row_id is not None:
+                update_job_run(conn, row_id=self._edit_row_id, values=payload)
+                row_id = self._edit_row_id
+            else:
+                insert_payload = {
+                    "completed_at": self._seed.completed_at,
+                    **payload,
+                    "output_docx_path": (
+                        str(self._seed.output_docx.expanduser().resolve())
+                        if isinstance(self._seed.output_docx, Path)
+                        else None
+                    ),
+                    "partial_docx_path": (
+                        str(self._seed.partial_docx.expanduser().resolve())
+                        if isinstance(self._seed.partial_docx, Path)
+                        else None
+                    ),
+                }
+                row_id = insert_job_run(conn, insert_payload)
 
-        self._ensure_in_vocab("vocab_job_types", payload["job_type"])
-        if case_entity:
-            self._ensure_in_vocab("vocab_case_entities", case_entity)
-        if service_entity:
-            self._ensure_in_vocab("vocab_service_entities", service_entity)
-        if case_city:
-            self._ensure_in_vocab("vocab_cities", case_city)
-        if service_city:
-            self._ensure_in_vocab("vocab_cities", service_city)
-        if payload["court_email"]:
-            self._ensure_in_vocab("vocab_court_emails", str(payload["court_email"]))
-
-        save_joblog_settings(
-            {
-                "vocab_case_entities": self._settings["vocab_case_entities"],
-                "vocab_service_entities": self._settings["vocab_service_entities"],
-                "vocab_cities": self._settings["vocab_cities"],
-                "vocab_job_types": self._settings["vocab_job_types"],
-                "vocab_court_emails": self._settings["vocab_court_emails"],
-                "default_rate_per_word": self._settings["default_rate_per_word"],
-                "joblog_visible_columns": self._settings["joblog_visible_columns"],
-                "metadata_ai_enabled": self._settings["metadata_ai_enabled"],
-                "metadata_photo_enabled": self._settings["metadata_photo_enabled"],
-                "service_equals_case_by_default": bool(self.service_same_check.isChecked()),
-                "non_court_service_entities": self._settings["non_court_service_entities"],
-                "ocr_mode": self._settings["ocr_mode"],
-                "ocr_engine": self._settings["ocr_engine"],
-                "ocr_api_base_url": self._settings["ocr_api_base_url"],
-                "ocr_api_model": self._settings["ocr_api_model"],
-                "ocr_api_key_env_name": self._settings["ocr_api_key_env_name"],
-            }
+        _persist_joblog_vocab_settings(self._settings, payload)
+        self._refresh_vocab_widgets()
+        _save_joblog_settings_bundle(
+            self._settings,
+            service_equals_case_by_default=bool(self.service_same_check.isChecked()),
         )
         translated_docx_path = self._resolved_seed_docx_path()
-        if translated_docx_path is not None:
-            self._saved_result = JobLogSavedResult(
-                row_id=int(row_id),
-                translated_docx_path=translated_docx_path,
-                word_count=int(self._seed.word_count),
-                case_number=str(payload["case_number"] or ""),
-                case_entity=case_entity,
-                case_city=case_city,
-                court_email=str(payload["court_email"] or ""),
-                run_id=str(payload["run_id"] or ""),
-            )
+        self._saved_result = build_joblog_saved_result(
+            row_id=int(row_id),
+            payload=payload,
+            translated_docx_path=translated_docx_path,
+        )
         self._saved = True
         if self._on_saved is not None:
             self._on_saved()
@@ -1433,7 +3755,7 @@ class QtJobLogWindow(QDialog):
     def __init__(self, *, parent: QWidget | None, db_path: Path) -> None:
         super().__init__(parent)
         self.setWindowTitle("Job Log")
-        self.resize(1280, 520)
+        self.setMinimumSize(760, 420)
 
         self._db_path = db_path
         self._settings = load_joblog_settings()
@@ -1442,41 +3764,547 @@ class QtJobLogWindow(QDialog):
         if not self._visible_columns:
             self._visible_columns = ["translation_date", "case_number", "job_type"]
         self._rows_data: list[dict[str, object]] = []
+        self._inline_edit_row_id: int | None = None
+        self._inline_edit_row_index: int | None = None
+        self._inline_original_row: dict[str, object] | None = None
+        self._inline_edit_widgets: dict[str, QWidget] = {}
+        self._selection_guard_active = False
+        self._suspend_width_persistence = False
+        self._action_icons = {
+            "edit": self._joblog_icon("resources/icons/dashboard/edit.svg"),
+            "delete": self._joblog_icon("resources/icons/dashboard/delete.svg"),
+        }
 
         root = QVBoxLayout(self)
         controls = QHBoxLayout()
+        self.add_btn = QPushButton("Add...")
         self.refresh_btn = QPushButton("Refresh")
         self.columns_btn = QPushButton("Columns...")
+        self.delete_selected_btn = QPushButton("Delete selected...", objectName="DangerButton")
+        self.delete_selected_btn.setEnabled(False)
         self.honorarios_btn = QPushButton("Gerar Requerimento de Honorários...")
         self.honorarios_btn.setEnabled(False)
+        self.add_menu = QMenu(self.add_btn)
+        self.add_blank_interpretation_action = self.add_menu.addAction("Blank/manual interpretation entry")
+        self.add_notification_interpretation_action = self.add_menu.addAction("From notification PDF...")
+        self.add_photo_interpretation_action = self.add_menu.addAction("From photo/screenshot...")
+        self.add_btn.setMenu(self.add_menu)
+        controls.addWidget(self.add_btn)
         controls.addWidget(self.refresh_btn)
         controls.addWidget(self.columns_btn)
+        controls.addWidget(self.delete_selected_btn)
         controls.addWidget(self.honorarios_btn)
         controls.addStretch(1)
         root.addLayout(controls)
 
-        self.table = QTableWidget(0, len(JOBLOG_COLUMNS), self)
-        self.table.setHorizontalHeaderLabels([JOBLOG_COLUMN_LABELS[col] for col in JOBLOG_COLUMNS])
+        self.table = QTableWidget(0, len(JOBLOG_COLUMNS) + 1, self)
+        self.table.setHorizontalHeaderLabels([JOBLOG_ACTIONS_COLUMN_LABEL] + [JOBLOG_COLUMN_LABELS[col] for col in JOBLOG_COLUMNS])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setWordWrap(False)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.table.installEventFilter(self)
+        self.table.viewport().installEventFilter(self)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.sectionResized.connect(self._on_header_section_resized)
+        if hasattr(header, "sectionHandleDoubleClicked"):
+            header.sectionHandleDoubleClicked.connect(self._on_header_handle_double_clicked)
         root.addWidget(self.table, 1)
 
+        self.add_blank_interpretation_action.triggered.connect(self._open_blank_interpretation_dialog)
+        self.add_notification_interpretation_action.triggered.connect(self._open_notification_interpretation_dialog)
+        self.add_photo_interpretation_action.triggered.connect(self._open_photo_interpretation_dialog)
         self.refresh_btn.clicked.connect(self.refresh_rows)
         self.columns_btn.clicked.connect(self._open_columns_dialog)
+        self.delete_selected_btn.clicked.connect(self._confirm_delete_selected_rows)
         self.honorarios_btn.clicked.connect(self._open_honorarios_dialog)
         self.table.itemSelectionChanged.connect(self._refresh_action_state)
+        self.table.cellDoubleClicked.connect(self._on_table_cell_double_clicked)
         self._apply_visible_columns()
         self.refresh_rows()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="table",
+            preferred_size=QSize(1280, 520),
+        )
+
+    def _joblog_icon(self, rel_path: str) -> QIcon:
+        return QIcon(str(resource_path(rel_path)))
+
+    def _header_text_width(self, table_column: int) -> int:
+        item = self.table.horizontalHeaderItem(table_column)
+        label = item.text() if item is not None else ""
+        metrics = QFontMetrics(self.table.horizontalHeader().font())
+        return metrics.horizontalAdvance(label) + JOBLOG_COLUMN_WIDTH_PADDING
+
+    def _autofit_column(self, table_column: int) -> None:
+        if self.table.isColumnHidden(table_column):
+            return
+        if table_column == 0:
+            self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            self.table.resizeColumnToContents(0)
+            return
+        self.table.resizeColumnToContents(table_column)
+        self.table.setColumnWidth(
+            table_column,
+            max(self.table.columnWidth(table_column), self._header_text_width(table_column)),
+        )
+
+    def _apply_column_widths(self) -> None:
+        saved_widths = dict(self._settings.get("joblog_column_widths", {}))
+        self._suspend_width_persistence = True
+        try:
+            self._autofit_column(0)
+            for table_column, column_name in enumerate(JOBLOG_COLUMNS, start=1):
+                if self.table.isColumnHidden(table_column):
+                    continue
+                self._autofit_column(table_column)
+                saved_width = int(saved_widths.get(column_name, 0) or 0)
+                if saved_width > 0:
+                    self.table.setColumnWidth(table_column, saved_width)
+        finally:
+            self._suspend_width_persistence = False
+
+    def _persist_joblog_column_width(self, column_name: str, width: int) -> None:
+        if width <= 0:
+            return
+        widths = dict(self._settings.get("joblog_column_widths", {}))
+        widths[column_name] = int(width)
+        self._settings["joblog_column_widths"] = widths
+        save_joblog_settings({"joblog_column_widths": widths})
+
+    def _column_name_for_table_column(self, table_column: int) -> str | None:
+        if table_column <= 0 or table_column > len(JOBLOG_COLUMNS):
+            return None
+        return JOBLOG_COLUMNS[table_column - 1]
+
+    def _on_header_section_resized(self, logical_index: int, _old_size: int, new_size: int) -> None:
+        if self._suspend_width_persistence or new_size <= 0 or self.table.isColumnHidden(logical_index):
+            return
+        column_name = self._column_name_for_table_column(logical_index)
+        if column_name is None:
+            return
+        self._persist_joblog_column_width(column_name, new_size)
+
+    def _on_header_handle_double_clicked(self, logical_index: int) -> None:
+        if self.table.isColumnHidden(logical_index):
+            return
+        self._autofit_column(logical_index)
 
     def _apply_visible_columns(self) -> None:
         visible = set(self._visible_columns)
-        for idx, col in enumerate(JOBLOG_COLUMNS):
+        header = self.table.horizontalHeader()
+        self.table.setColumnHidden(0, False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        for idx, col in enumerate(JOBLOG_COLUMNS, start=1):
             self.table.setColumnHidden(idx, col not in visible)
+            header.setSectionResizeMode(idx, QHeaderView.ResizeMode.Interactive)
 
-    def refresh_rows(self) -> None:
+    def _table_column_index(self, column_name: str) -> int:
+        return JOBLOG_COLUMNS.index(column_name) + 1
+
+    def _row_index_for_row_id(self, row_id: int) -> int | None:
+        for index, row in enumerate(self._rows_data):
+            if int(row.get("id", 0) or 0) == int(row_id):
+                return index
+        return None
+
+    def _selected_row_indices(self) -> list[int]:
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            row = self.table.currentRow()
+            return [row] if 0 <= row < len(self._rows_data) else []
+        selected = sorted({int(index.row()) for index in selection_model.selectedRows()})
+        if selected:
+            return [row for row in selected if 0 <= row < len(self._rows_data)]
+        row = self.table.currentRow()
+        return [row] if 0 <= row < len(self._rows_data) else []
+
+    def _selected_row_ids(self) -> list[int]:
+        selected_ids: list[int] = []
+        for row_index in self._selected_row_indices():
+            row_data = self._rows_data[row_index]
+            selected_ids.append(int(row_data.get("id", 0) or 0))
+        return selected_ids
+
+    def _delete_confirmation_message(self, rows: list[dict[str, object]]) -> str:
+        case_numbers = [str(row.get("case_number", "") or "").strip() for row in rows]
+        case_numbers = [value for value in case_numbers if value]
+        if len(rows) == 1:
+            suffix = f" ({case_numbers[0]})" if case_numbers else ""
+            return f"Delete this Job Log row{suffix}?"
+        preview = ", ".join(case_numbers[:3])
+        extra_count = max(0, len(case_numbers) - 3)
+        if preview and extra_count > 0:
+            preview = f"{preview}, +{extra_count} more"
+        suffix = f" ({preview})" if preview else ""
+        return f"Delete {len(rows)} Job Log rows{suffix}?"
+
+    def _render_display_row(self, row_index: int, row_data: Mapping[str, object]) -> None:
+        for col in JOBLOG_COLUMNS:
+            table_col = self._table_column_index(col)
+            self.table.removeCellWidget(row_index, table_col)
+            raw = row_data.get(col, "")
+            text = "" if raw is None else str(raw)
+            self.table.setItem(row_index, table_col, QTableWidgetItem(text))
+        self._set_row_action_widget(row_index, row_data, editing=False)
+
+    def _set_row_action_widget(self, row_index: int, row_data: Mapping[str, object], *, editing: bool) -> None:
+        row_id = int(row_data.get("id", 0) or 0)
+        container = QWidget(self.table)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(4)
+        if editing:
+            save_btn = QPushButton("Save", container)
+            cancel_btn = QPushButton("Cancel", container)
+            save_btn.clicked.connect(lambda _checked=False, rid=row_id: self._save_inline_edit(rid))
+            cancel_btn.clicked.connect(lambda _checked=False, rid=row_id: self._cancel_inline_edit(rid))
+            layout.addWidget(save_btn)
+            layout.addWidget(cancel_btn)
+        else:
+            actions_enabled = self._inline_edit_row_id in {None, row_id}
+            edit_btn = QToolButton(container)
+            edit_btn.setAutoRaise(True)
+            edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            edit_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            edit_btn.setIcon(self._action_icons["edit"])
+            edit_btn.setIconSize(QSize(14, 14))
+            edit_btn.setFixedSize(QSize(22, 22))
+            edit_btn.setToolTip("Edit row")
+            edit_btn.setEnabled(actions_enabled)
+            edit_btn.clicked.connect(lambda _checked=False, rid=row_id: self._open_edit_dialog(rid))
+            delete_btn = QToolButton(container)
+            delete_btn.setAutoRaise(True)
+            delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            delete_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            delete_btn.setIcon(self._action_icons["delete"])
+            delete_btn.setIconSize(QSize(14, 14))
+            delete_btn.setFixedSize(QSize(22, 22))
+            delete_btn.setToolTip("Delete row")
+            delete_btn.setEnabled(actions_enabled)
+            delete_btn.clicked.connect(lambda _checked=False, rid=row_id: self._confirm_delete_row(rid))
+            layout.addWidget(edit_btn)
+            layout.addWidget(delete_btn)
+        layout.addStretch(1)
+        self.table.setCellWidget(row_index, 0, container)
+
+    def _combo_values_for_column(self, column_name: str) -> list[str]:
+        if column_name in {"lang", "target_lang"}:
+            return list(JOBLOG_LANG_OPTIONS)
+        setting_key = JOBLOG_VOCAB_SETTINGS_MAP.get(column_name)
+        if setting_key is None:
+            return []
+        return list(self._settings[setting_key])
+
+    def _build_inline_editor(self, column_name: str, row_data: Mapping[str, object]) -> QWidget:
+        value = "" if row_data.get(column_name) is None else str(row_data.get(column_name))
+        if column_name in JOBLOG_INLINE_DATE_COLUMNS:
+            edit = GuardedDateEdit(value, self.table)
+            edit.setPlaceholderText("YYYY-MM-DD")
+            return edit
+        if column_name in JOBLOG_INLINE_COMBO_COLUMNS:
+            combo = NoWheelComboBox(self.table)
+            combo.addItems(self._combo_values_for_column(column_name))
+            is_editable = column_name == "court_email"
+            combo.setEditable(is_editable)
+            if is_editable:
+                combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+            elif value and combo.findText(value) == -1:
+                combo.addItem(value)
+            combo.setCurrentText(value)
+            return combo
+        edit = QLineEdit(value, self.table)
+        if column_name in JOBLOG_INLINE_INTEGER_COLUMNS:
+            validator = QIntValidator(0, 1_000_000_000, edit)
+            edit.setValidator(validator)
+        elif column_name in JOBLOG_INLINE_FLOAT_COLUMNS:
+            validator = QDoubleValidator(-1_000_000_000.0, 1_000_000_000.0, 6, edit)
+            validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+            edit.setValidator(validator)
+        return edit
+
+    def _begin_inline_edit(self, row_index: int, row_data: Mapping[str, object]) -> None:
+        row_id = int(row_data.get("id", 0) or 0)
+        self._inline_edit_row_id = row_id
+        self._inline_edit_row_index = row_index
+        self._inline_original_row = dict(row_data)
+        self._inline_edit_widgets = {}
+        self.refresh_btn.setEnabled(False)
+        self.columns_btn.setEnabled(False)
+        self.honorarios_btn.setEnabled(False)
+        for column_name in JOBLOG_COLUMNS:
+            table_col = self._table_column_index(column_name)
+            if self.table.isColumnHidden(table_col):
+                continue
+            editor = self._build_inline_editor(column_name, row_data)
+            self._inline_edit_widgets[column_name] = editor
+            self.table.setCellWidget(row_index, table_col, editor)
+        self._refresh_action_widgets()
+        self.table.selectRow(row_index)
+        self._refresh_action_state()
+
+    def _clear_inline_edit_state(self) -> None:
+        self._inline_edit_row_id = None
+        self._inline_edit_row_index = None
+        self._inline_original_row = None
+        self._inline_edit_widgets = {}
+
+    def _collect_inline_raw_values(self) -> dict[str, str]:
+        if self._inline_original_row is None:
+            return {}
+        raw_values = {
+            column_name: "" if self._inline_original_row.get(column_name) is None else str(self._inline_original_row.get(column_name))
+            for column_name in JOBLOG_COLUMNS
+        }
+        for column_name, widget in self._inline_edit_widgets.items():
+            raw_values[column_name] = _widget_text_value(widget)
+        return raw_values
+
+    def _save_inline_edit(self, row_id: int) -> None:
+        if self._inline_edit_row_id != int(row_id) or self._inline_original_row is None:
+            return
+        try:
+            payload = _normalize_joblog_payload(
+                seed=build_seed_from_joblog_row(self._inline_original_row),
+                raw_values=self._collect_inline_raw_values(),
+                service_same_checked=False,
+                use_service_location_in_honorarios_checked=_coerce_joblog_bool(
+                    self._inline_original_row.get("use_service_location_in_honorarios"),
+                    default=False,
+                ),
+                include_transport_sentence_in_honorarios_checked=_coerce_joblog_bool(
+                    self._inline_original_row.get("include_transport_sentence_in_honorarios"),
+                    default=True,
+                ),
+            )
+        except ValueError as exc:
+            QMessageBox.critical(self, "Invalid values", str(exc))
+            return
+        with closing(open_job_log(self._db_path)) as conn:
+            update_job_run(conn, row_id=int(row_id), values=payload)
+        _persist_joblog_vocab_settings(self._settings, payload)
+        _save_joblog_settings_bundle(
+            self._settings,
+            service_equals_case_by_default=bool(self._settings["service_equals_case_by_default"]),
+        )
+        self._clear_inline_edit_state()
+        self.refresh_rows(selected_row_id=int(row_id), force=True)
+
+    def _cancel_inline_edit(self, row_id: int) -> None:
+        if self._inline_edit_row_id != int(row_id) or self._inline_original_row is None:
+            return
+        row_index = self._inline_edit_row_index
+        original_row = dict(self._inline_original_row)
+        self._clear_inline_edit_state()
+        if row_index is not None and 0 <= row_index < self.table.rowCount():
+            self._render_display_row(row_index, original_row)
+            self.table.selectRow(row_index)
+        self._refresh_action_widgets()
+        self._refresh_action_state()
+
+    def _on_table_cell_double_clicked(self, row_index: int, table_column: int) -> None:
+        if table_column == 0:
+            return
+        row_data = self._rows_data[row_index]
+        row_id = int(row_data.get("id", 0) or 0)
+        if self._inline_edit_row_id is not None:
+            if self._inline_edit_row_id == row_id:
+                return
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return
+        selected_rows = self._selected_row_indices()
+        if len(selected_rows) > 1:
+            QMessageBox.information(self, "Job Log", "Select one Job Log row first.")
+            return
+        if selected_rows != [row_index]:
+            self.table.selectRow(row_index)
+        self._begin_inline_edit(row_index, row_data)
+
+    def _open_edit_dialog(self, row_id: int) -> None:
+        if self._inline_edit_row_id is not None:
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return
+        row_index = self._row_index_for_row_id(int(row_id))
+        if row_index is None:
+            return
+        row_data = self._rows_data[row_index]
+        dialog = QtSaveToJobLogDialog(
+            parent=self,
+            db_path=self._db_path,
+            seed=build_seed_from_joblog_row(row_data),
+            on_saved=lambda rid=int(row_id): self.refresh_rows(selected_row_id=rid, force=True),
+            allow_honorarios_export=True,
+            edit_row_id=int(row_id),
+        )
+        dialog.exec()
+
+    def _open_blank_interpretation_dialog(self) -> None:
+        if self._inline_edit_row_id is not None:
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return
+        dialog = QtSaveToJobLogDialog(
+            parent=self,
+            db_path=self._db_path,
+            seed=build_blank_interpretation_seed(),
+            on_saved=lambda: self.refresh_rows(selected_row_index=0, force=True),
+            allow_honorarios_export=True,
+        )
+        dialog.exec()
+
+    def _open_notification_interpretation_dialog(self) -> None:
+        if self._inline_edit_row_id is not None:
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select interpretation notification PDF",
+            str(_default_downloads_dir()),
+            "PDF Files (*.pdf);;All Files (*.*)",
+        )
+        if not selected:
+            return
+        pdf_path = Path(selected).expanduser().resolve()
+        response = shared_service_autofill_interpretation_from_notification_pdf(
+            pdf_path=pdf_path,
+            settings_path=settings_path(),
+        )
+        diagnostics = dict(response.get("diagnostics", {}) if isinstance(response.get("diagnostics"), dict) else {})
+        metadata_extraction = diagnostics.get("metadata_extraction", {})
+        extracted_fields = []
+        if isinstance(metadata_extraction, dict):
+            extracted_fields = list(metadata_extraction.get("extracted_fields", []) or [])
+        if not extracted_fields:
+            QMessageBox.information(
+                self,
+                "Interpretation notification",
+                "No notification metadata could be extracted automatically. Review the entry manually.\n\n"
+                f"{diagnostics.get('metadata_extraction_text', '')}",
+            )
+        dialog = QtSaveToJobLogDialog(
+            parent=self,
+            db_path=self._db_path,
+            seed=shared_hydrate_joblog_seed(
+                response.get("normalized_payload", {})
+                if isinstance(response.get("normalized_payload"), dict)
+                else {}
+            ),
+            on_saved=lambda: self.refresh_rows(selected_row_index=0, force=True),
+            allow_honorarios_export=True,
+        )
+        dialog.exec()
+
+    def _open_photo_interpretation_dialog(self) -> None:
+        if self._inline_edit_row_id is not None:
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return
+        if not bool(self._settings["metadata_photo_enabled"]):
+            QMessageBox.warning(self, "Photo autofill", "Photo autofill is disabled in settings.")
+            return
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select interpretation photo or screenshot",
+            str(_default_downloads_dir()),
+            "Image Files (*.png *.jpg *.jpeg *.bmp *.webp);;All Files (*.*)",
+        )
+        if not selected:
+            return
+        image_path = Path(selected).expanduser().resolve()
+        response = shared_service_autofill_interpretation_from_photo(
+            image_path=image_path,
+            settings_path=settings_path(),
+        )
+        diagnostics = dict(response.get("diagnostics", {}) if isinstance(response.get("diagnostics"), dict) else {})
+        metadata_extraction = diagnostics.get("metadata_extraction", {})
+        extracted_fields = []
+        if isinstance(metadata_extraction, dict):
+            extracted_fields = list(metadata_extraction.get("extracted_fields", []) or [])
+        if not extracted_fields:
+            QMessageBox.information(
+                self,
+                "Interpretation photo",
+                "No photo metadata could be extracted automatically. Review the entry manually.",
+            )
+        dialog = QtSaveToJobLogDialog(
+            parent=self,
+            db_path=self._db_path,
+            seed=shared_hydrate_joblog_seed(
+                response.get("normalized_payload", {})
+                if isinstance(response.get("normalized_payload"), dict)
+                else {}
+            ),
+            on_saved=lambda: self.refresh_rows(selected_row_index=0, force=True),
+            allow_honorarios_export=True,
+        )
+        dialog._prompt_interpretation_distance_for_imported_city()
+        dialog.exec()
+
+    def _refresh_action_widgets(self) -> None:
+        for row_index, row_data in enumerate(self._rows_data):
+            row_id = int(row_data.get("id", 0) or 0)
+            self._set_row_action_widget(
+                row_index,
+                row_data,
+                editing=self._inline_edit_row_id == row_id,
+            )
+        self._autofit_column(0)
+
+    def _confirm_delete_row(self, row_id: int) -> None:
+        if self._inline_edit_row_id is not None:
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return
+        row_index = self._row_index_for_row_id(int(row_id))
+        if row_index is None:
+            return
+        self._confirm_delete_rows([row_index])
+
+    def _confirm_delete_selected_rows(self) -> bool:
+        if self._inline_edit_row_id is not None:
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return False
+        row_indices = self._selected_row_indices()
+        if not row_indices:
+            return False
+        self._confirm_delete_rows(row_indices)
+        return True
+
+    def _confirm_delete_rows(self, row_indices: list[int]) -> None:
+        normalized_indices = sorted({int(row_index) for row_index in row_indices if 0 <= int(row_index) < len(self._rows_data)})
+        if not normalized_indices:
+            return
+        rows = [self._rows_data[row_index] for row_index in normalized_indices]
+        confirmed = QMessageBox.question(
+            self,
+            "Delete Job Log Row" if len(rows) == 1 else "Delete Job Log Rows",
+            self._delete_confirmation_message(rows),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+        with closing(open_job_log(self._db_path)) as conn:
+            delete_job_runs(conn, row_ids=[int(row.get("id", 0) or 0) for row in rows])
+        self.refresh_rows(selected_row_index=normalized_indices[0], force=True)
+
+    def refresh_rows(
+        self,
+        selected_row_id: int | None = None,
+        *,
+        selected_row_index: int | None = None,
+        force: bool = False,
+    ) -> None:
+        if self._inline_edit_row_id is not None and not force:
+            QMessageBox.information(self, "Job Log", "Finish editing the current row first.")
+            return
+        if force:
+            self._clear_inline_edit_state()
         self.table.setRowCount(0)
         self._rows_data = []
         with closing(open_job_log(self._db_path)) as conn:
@@ -1486,34 +4314,86 @@ class QtJobLogWindow(QDialog):
             self._rows_data.append(row_data)
             row_idx = self.table.rowCount()
             self.table.insertRow(row_idx)
-            for col_idx, col in enumerate(JOBLOG_COLUMNS):
-                raw = row[col] if col in row.keys() else ""
-                text = "" if raw is None else str(raw)
-                self.table.setItem(row_idx, col_idx, QTableWidgetItem(text))
+            self._render_display_row(row_idx, row_data)
+        self._refresh_action_widgets()
+        self._apply_column_widths()
+        selected_index: int | None = None
+        if selected_row_id is not None:
+            selected_index = self._row_index_for_row_id(int(selected_row_id))
+        elif selected_row_index is not None and self.table.rowCount() > 0:
+            selected_index = min(max(int(selected_row_index), 0), self.table.rowCount() - 1)
+        if selected_index is not None:
+            self.table.selectRow(selected_index)
         self._refresh_action_state()
 
     def _refresh_action_state(self) -> None:
-        self.honorarios_btn.setEnabled(self._selected_row_data() is not None)
+        if self._inline_edit_row_id is not None and not self._selection_guard_active:
+            edit_row_index = self._row_index_for_row_id(self._inline_edit_row_id)
+            if edit_row_index is not None and self._selected_row_indices() != [edit_row_index]:
+                self._selection_guard_active = True
+                self.table.clearSelection()
+                self.table.selectRow(edit_row_index)
+                self._selection_guard_active = False
+        is_editing = self._inline_edit_row_id is not None
+        selection_count = len(self._selected_row_indices())
+        self.add_btn.setEnabled(not is_editing)
+        self.refresh_btn.setEnabled(not is_editing)
+        self.columns_btn.setEnabled(not is_editing)
+        self.delete_selected_btn.setEnabled(not is_editing and selection_count > 0)
+        self.honorarios_btn.setEnabled(not is_editing and selection_count == 1 and self._selected_row_data() is not None)
 
     def _selected_row_data(self) -> dict[str, object] | None:
-        row = self.table.currentRow()
-        if row < 0:
-            selection_model = self.table.selectionModel()
-            if selection_model is not None:
-                selected_rows = selection_model.selectedRows()
-                if selected_rows:
-                    row = int(selected_rows[0].row())
-        if row < 0 or row >= len(self._rows_data):
+        selected_rows = self._selected_row_indices()
+        if len(selected_rows) != 1:
             return None
+        row = selected_rows[0]
         return self._rows_data[row]
 
-    def _offer_gmail_draft_for_honorarios(self, row: dict[str, object], honorarios_docx: Path) -> None:
+    def _handle_delete_key_from_joblog_table(self, event: object) -> bool:
+        if self._confirm_delete_selected_rows():
+            event.accept()
+            return True
+        return False
+
+    def eventFilter(self, watched: QObject, event: object) -> bool:
+        if (
+            watched in {self.table, self.table.viewport()}
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Delete
+        ):
+            return self._handle_delete_key_from_joblog_table(event)
+        return super().eventFilter(watched, event)
+
+    def keyPressEvent(self, event) -> None:  # type: ignore[override]
+        if (
+            event.key() == Qt.Key.Key_Delete
+            and self._inline_edit_row_id is None
+            and QApplication.focusWidget() in {self.table, self.table.viewport()}
+            and self._handle_delete_key_from_joblog_table(event)
+        ):
+            return
+        super().keyPressEvent(event)
+
+    def _offer_gmail_draft_for_honorarios(
+        self,
+        row: dict[str, object],
+        honorarios_docx: Path,
+        honorarios_pdf: Path | None,
+        profile: UserProfile,
+    ) -> None:
         court_email = str(row.get("court_email", "") or "").strip()
         if not court_email:
             QMessageBox.information(
                 self,
                 "Gmail draft",
                 "Court Email is missing for this Job Log entry. The Gmail draft was not created.",
+            )
+            return
+        if honorarios_pdf is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                "The honorários PDF is unavailable for this export. Gmail draft creation requires the PDF.",
             )
             return
         prereqs = assess_gmail_draft_prereqs(
@@ -1553,7 +4433,7 @@ class QtJobLogWindow(QDialog):
         try:
             validate_translated_docx_artifacts_for_gmail_draft(
                 translated_docxs=(translation_docx,),
-                honorarios_docx=honorarios_docx,
+                honorarios_pdf=honorarios_pdf,
             )
             request = build_honorarios_gmail_request(
                 gog_path=prereqs.gog_path,
@@ -1561,7 +4441,85 @@ class QtJobLogWindow(QDialog):
                 to_email=court_email,
                 case_number=str(row.get("case_number", "") or "").strip(),
                 translation_docx=translation_docx,
-                honorarios_docx=honorarios_docx,
+                honorarios_pdf=honorarios_pdf,
+                profile=profile,
+            )
+        except ValueError as exc:
+            QMessageBox.critical(self, "Gmail draft", str(exc))
+            return
+        result = create_gmail_draft_via_gog(request)
+        if not result.ok:
+            details = result.stderr or result.stdout or result.message
+            QMessageBox.critical(
+                self,
+                "Gmail draft",
+                "Failed to create Gmail draft.\n\n"
+                f"{details}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        open_gmail = QMessageBox.question(
+            self,
+            "Gmail draft",
+            "Gmail draft created successfully. Abrir Gmail?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if open_gmail == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(GMAIL_DRAFTS_URL))
+
+    def _offer_gmail_draft_for_interpretation_honorarios(
+        self,
+        row: dict[str, object],
+        honorarios_pdf: Path | None,
+        profile: UserProfile,
+    ) -> None:
+        court_email = str(row.get("court_email", "") or "").strip()
+        if not court_email:
+            QMessageBox.information(
+                self,
+                "Gmail draft",
+                "Court Email is missing for this Job Log entry. The Gmail draft was not created.",
+            )
+            return
+        if honorarios_pdf is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                "The honorários PDF is unavailable for this export. Gmail draft creation requires the PDF.",
+            )
+            return
+        prereqs = assess_gmail_draft_prereqs(
+            configured_gog_path=str(self._gui_settings.get("gmail_gog_path", "") or ""),
+            configured_account_email=str(self._gui_settings.get("gmail_account_email", "") or ""),
+        )
+        if not prereqs.ready or prereqs.gog_path is None or prereqs.account_email is None:
+            QMessageBox.warning(
+                self,
+                "Gmail draft",
+                f"{prereqs.message}\n\n"
+                "Check Settings > Keys & Providers > Gmail Drafts and run "
+                "'Test Gmail draft prerequisites'.",
+            )
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Gmail draft",
+            f"Criar rascunho no Gmail para {court_email}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            request = build_manual_interpretation_gmail_request(
+                gog_path=prereqs.gog_path,
+                account_email=prereqs.account_email,
+                to_email=court_email,
+                case_number=str(row.get("case_number", "") or "").strip(),
+                honorarios_pdf=honorarios_pdf,
+                profile=profile,
             )
         except ValueError as exc:
             QMessageBox.critical(self, "Gmail draft", str(exc))
@@ -1678,23 +4636,95 @@ class QtJobLogWindow(QDialog):
         if row is None:
             QMessageBox.information(self, "Requerimento de Honorários", "Select one Job Log row first.")
             return
-        try:
-            word_count = int(str(row.get("word_count", "") or "0").strip())
-        except ValueError:
-            word_count = 0
-        draft = build_honorarios_draft(
-            case_number=str(row.get("case_number", "") or "").strip(),
-            word_count=word_count,
-            case_entity=str(row.get("case_entity", "") or "").strip(),
-            case_city=str(row.get("case_city", "") or "").strip(),
-        )
+        profile = _current_primary_profile()
+        if _is_interpretation_job_type(str(row.get("job_type", "") or "").strip()):
+            draft = build_interpretation_honorarios_draft(
+                case_number=str(row.get("case_number", "") or "").strip(),
+                case_entity=str(row.get("case_entity", "") or "").strip(),
+                case_city=str(row.get("case_city", "") or "").strip(),
+                service_date=str(row.get("service_date", "") or "").strip(),
+                service_entity=str(row.get("service_entity", "") or "").strip(),
+                service_city=str(row.get("service_city", "") or "").strip(),
+                use_service_location_in_honorarios=_coerce_joblog_bool(
+                    row.get("use_service_location_in_honorarios"),
+                    default=False,
+                ),
+                include_transport_sentence_in_honorarios=_coerce_joblog_bool(
+                    row.get("include_transport_sentence_in_honorarios"),
+                    default=True,
+                ),
+                travel_km_outbound=_coerce_joblog_float(row.get("travel_km_outbound")),
+                travel_km_return=_coerce_joblog_float(row.get("travel_km_return")),
+                recipient_block=default_interpretation_recipient_block(
+                    str(row.get("case_entity", "") or "").strip(),
+                    str(row.get("case_city", "") or "").strip(),
+                ),
+                profile=profile,
+            )
+        else:
+            try:
+                word_count = int(str(row.get("word_count", "") or "0").strip())
+            except ValueError:
+                word_count = 0
+            draft = build_honorarios_draft(
+                case_number=str(row.get("case_number", "") or "").strip(),
+                word_count=word_count,
+                case_entity=str(row.get("case_entity", "") or "").strip(),
+                case_city=str(row.get("case_city", "") or "").strip(),
+                profile=profile,
+            )
         dialog = QtHonorariosExportDialog(
             parent=self,
             draft=draft,
             default_directory=_default_documents_dir(),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_path is not None:
-            self._offer_gmail_draft_for_honorarios(row, dialog.saved_path)
+            generated_draft = getattr(dialog, "generated_draft", None)
+            selected_profile = generated_draft.profile if generated_draft is not None else profile
+            final_draft = generated_draft or draft
+            saved_pdf_path = getattr(dialog, "saved_pdf_path", None)
+            pdf_unavailable_explained = bool(getattr(dialog, "pdf_unavailable_explained", False))
+            if saved_pdf_path is None and pdf_unavailable_explained:
+                show_local_only_honorarios_ready_box(
+                    self,
+                    docx_path=dialog.saved_path,
+                    pdf_error=str(getattr(dialog, "pdf_export_error", "") or "").strip(),
+                    gmail_blocked=True,
+                )
+            if final_draft.kind == HonorariosKind.TRANSLATION:
+                if saved_pdf_path is not None or not pdf_unavailable_explained:
+                    self._offer_gmail_draft_for_honorarios(
+                        row,
+                        dialog.saved_path,
+                        saved_pdf_path,
+                        selected_profile,
+                    )
+            elif final_draft.kind == HonorariosKind.INTERPRETATION:
+                include_transport_sentence = bool(final_draft.include_transport_sentence_in_honorarios)
+                current_include_transport_sentence = _coerce_joblog_bool(
+                    row.get("include_transport_sentence_in_honorarios"),
+                    default=True,
+                )
+                if include_transport_sentence != current_include_transport_sentence:
+                    row_id = row.get("id")
+                    if row_id is not None:
+                        with closing(open_job_log(self._db_path)) as conn:
+                            update_job_run(
+                                conn,
+                                row_id=int(row_id),
+                                values={
+                                    "include_transport_sentence_in_honorarios": 1
+                                    if include_transport_sentence
+                                    else 0,
+                                },
+                            )
+                    row["include_transport_sentence_in_honorarios"] = 1 if include_transport_sentence else 0
+                if saved_pdf_path is not None or not pdf_unavailable_explained:
+                    self._offer_gmail_draft_for_interpretation_honorarios(
+                        row,
+                        saved_pdf_path,
+                        selected_profile,
+                    )
 
     def _open_columns_dialog(self) -> None:
         dialog = QDialog(self)
@@ -1726,6 +4756,7 @@ class QtJobLogWindow(QDialog):
             self._settings["joblog_visible_columns"] = list(selected)
             save_joblog_settings({"joblog_visible_columns": list(selected)})
             self._apply_visible_columns()
+            self._apply_column_widths()
             dialog.accept()
 
         apply_btn.clicked.connect(apply_columns)
@@ -1862,7 +4893,7 @@ class QtReviewQueueDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Review Queue")
-        self.resize(980, 560)
+        self.setMinimumSize(720, 420)
         self._entries = normalize_review_queue_entries(review_queue)
         self._run_dir = run_dir.expanduser().resolve() if isinstance(run_dir, Path) else None
         self._run_summary_path = (
@@ -1871,6 +4902,11 @@ class QtReviewQueueDialog(QDialog):
         self._open_path_callback = open_path_callback
         self._build_ui()
         self._populate_table()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="table",
+            preferred_size=QSize(980, 560),
+        )
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -1895,6 +4931,7 @@ class QtReviewQueueDialog(QDialog):
         self.export_btn = QPushButton("Export...")
         self.copy_btn = QPushButton("Copy list")
         self.open_page_btn = QPushButton("Open page file")
+        self.open_page_btn.setObjectName("PrimaryButton")
         self.close_btn = QPushButton("Close")
         actions.addWidget(self.export_btn)
         actions.addWidget(self.copy_btn)
@@ -2039,7 +5076,8 @@ class _GmailPreviewPageCard(QFrame):
         header = QHBoxLayout()
         header.setSpacing(8)
         self.title_label = QLabel(f"Page {page_number}")
-        self.use_page_btn = QPushButton("Use this page as start")
+        self.use_page_btn = QPushButton("Start from this page")
+        self.use_page_btn.setObjectName("PrimaryButton")
         header.addWidget(self.title_label)
         header.addStretch(1)
         header.addWidget(self.use_page_btn)
@@ -2082,7 +5120,7 @@ class _GmailPreviewPageCard(QFrame):
 
     def _apply_reserved_height(self, target_width: int) -> None:
         self._target_width = max(320, int(target_width))
-        self.preview_label.setFixedHeight(self._reserved_height_for_width(self._target_width))
+        _set_fixed_height_if_needed(self.preview_label, self._reserved_height_for_width(self._target_width))
 
     def _set_state_text(self, message: str) -> None:
         self.state_label.setText(message if message else " ")
@@ -2132,7 +5170,7 @@ class _GmailPreviewPageCard(QFrame):
         else:
             display = pixmap
         self.preview_label.setPixmap(display)
-        self.preview_label.setFixedHeight(display.height())
+        _set_fixed_height_if_needed(self.preview_label, display.height())
 
 
 class QtGmailAttachmentPreviewDialog(QDialog):
@@ -2157,7 +5195,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Attachment Preview")
-        self.resize(980, 760)
+        self.setMinimumSize(720, 520)
         self._attachment = attachment
         self._gog_path = gog_path.expanduser().resolve()
         self._account_email = account_email.strip()
@@ -2184,11 +5222,21 @@ class QtGmailAttachmentPreviewDialog(QDialog):
         self._visible_refresh_timer.setSingleShot(True)
         self._visible_refresh_timer.setInterval(self._PAGE_REFRESH_DEBOUNCE_MS)
         self._visible_refresh_timer.timeout.connect(self._refresh_visible_pages)
+        self._scaled_preview_timer = QTimer(self)
+        self._scaled_preview_timer.setSingleShot(True)
+        self._scaled_preview_timer.setInterval(60)
+        self._scaled_preview_timer.timeout.connect(self._refresh_scaled_preview)
         self._image_pixmap: QPixmap | None = None
+        self._image_display_width: int | None = None
         self.selected_start_page: int | None = None
         self.resolved_local_path: Path | None = self._local_path
         self.resolved_page_count: int | None = self._page_count
         self._build_ui()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="preview",
+            preferred_size=QSize(980, 760),
+        )
         QTimer.singleShot(0, self._start_bootstrap)
 
     def _build_ui(self) -> None:
@@ -2221,9 +5269,11 @@ class QtGmailAttachmentPreviewDialog(QDialog):
         root.addWidget(self.jump_widget)
 
         self.scroll_area = QScrollArea(self)
+        self.scroll_area.setObjectName("DialogScrollArea")
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.preview_content = QWidget(self.scroll_area)
+        self.preview_content.setObjectName("DialogScrollContent")
         self.preview_layout = QVBoxLayout(self.preview_content)
         self.preview_layout.setContentsMargins(0, 0, 0, 0)
         self.preview_layout.setSpacing(12)
@@ -2236,7 +5286,8 @@ class QtGmailAttachmentPreviewDialog(QDialog):
         root.addWidget(self.scroll_area, 1)
 
         actions = QHBoxLayout()
-        self.use_page_btn = QPushButton("Use current page as start")
+        self.use_page_btn = QPushButton("Start from this page")
+        self.use_page_btn.setObjectName("PrimaryButton")
         self.close_btn = QPushButton("Close")
         actions.addStretch(1)
         actions.addWidget(self.use_page_btn)
@@ -2253,6 +5304,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
     def done(self, result: int) -> None:
         self._closing = True
         self._visible_refresh_timer.stop()
+        self._scaled_preview_timer.stop()
         bootstrap_thread = self._bootstrap_thread
         if bootstrap_thread is not None and bootstrap_thread.isRunning():
             bootstrap_thread.quit()
@@ -2270,7 +5322,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
     def eventFilter(self, watched: QObject, event: object) -> bool:
         if watched is self.scroll_area.viewport() and isinstance(event, QEvent):
             if event.type() in {QEvent.Type.Resize, QEvent.Type.Show}:
-                self._refresh_scaled_preview()
+                self._schedule_scaled_preview_refresh()
                 self._schedule_visible_page_refresh()
         return super().eventFilter(watched, event)
 
@@ -2293,6 +5345,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self.preview_label.setWordWrap(True)
         self.preview_layout.addWidget(self.preview_label)
+        self._image_display_width = None
 
     def _clear_preview_layout(self) -> None:
         while self.preview_layout.count() > 0:
@@ -2365,7 +5418,8 @@ class QtGmailAttachmentPreviewDialog(QDialog):
             self._start_next_page_workers()
         else:
             self.status_label.setText(
-                f"Scroll to inspect {self._page_count} page(s). Click 'Use this page as start' on the page you need."
+                f"Page 1 is the default. Scroll to inspect {self._page_count} page(s) and click "
+                f"'Start from this page' only when you want to skip earlier pages."
             )
             self._build_pdf_page_cards()
             QTimer.singleShot(0, self._scroll_to_initial_page)
@@ -2411,12 +5465,20 @@ class QtGmailAttachmentPreviewDialog(QDialog):
             card.update_scaled_pixmap(target_width)
         if self._is_image and self._image_pixmap is not None:
             pixmap = self._image_pixmap
+            if self._image_display_width == target_width:
+                return
             if pixmap.width() != target_width:
                 display = pixmap.scaledToWidth(target_width, Qt.TransformationMode.SmoothTransformation)
             else:
                 display = pixmap
             self.preview_label.setPixmap(display)
-            self.preview_label.setFixedHeight(display.height())
+            _set_fixed_height_if_needed(self.preview_label, display.height())
+            self._image_display_width = target_width
+
+    def _schedule_scaled_preview_refresh(self) -> None:
+        if self._closing or not self._bootstrap_complete:
+            return
+        self._scaled_preview_timer.start()
 
     def _scroll_to_page(self, page_number: int) -> None:
         if self._is_image:
@@ -2551,6 +5613,7 @@ class QtGmailAttachmentPreviewDialog(QDialog):
             self.preview_label.setText("")
             self.preview_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
             self.preview_label.setWordWrap(True)
+            self._image_display_width = None
             self._refresh_scaled_preview()
             self.status_label.setText("Single-image attachment preview.")
         else:
@@ -2623,12 +5686,13 @@ class QtGmailBatchReviewDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Gmail Attachment Review")
-        self.resize(980, 620)
+        self.setMinimumSize(760, 480)
         self._message = message
         self._gog_path = gog_path.expanduser().resolve()
         self._account_email = account_email.strip()
         self._target_lang = target_lang.strip().upper() or "-"
-        self._default_start_page = max(1, int(default_start_page))
+        self._workflow_kind = GMAIL_INTAKE_WORKFLOW_TRANSLATION
+        self._default_start_page = 1
         self._output_dir_text = output_dir_text.strip()
         self._page_counts: list[int | None] = [
             1 if _is_image_attachment(attachment) else None
@@ -2644,8 +5708,14 @@ class QtGmailBatchReviewDialog(QDialog):
         self.review_result: GmailBatchReviewResult | None = None
         self._build_ui()
         self._populate_table()
+        self._on_workflow_changed()
         self._refresh_actions()
         self._refresh_detail_panel()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="table",
+            preferred_size=QSize(980, 620),
+        )
 
     def done(self, result: int) -> None:
         if result != QDialog.DialogCode.Accepted:
@@ -2669,28 +5739,50 @@ class QtGmailBatchReviewDialog(QDialog):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
+        self.summary_card = QFrame(self)
+        self.summary_card.setObjectName("ShellPanel")
+        summary_layout = QHBoxLayout(self.summary_card)
+        summary_layout.setContentsMargins(12, 10, 12, 10)
+        summary_layout.setSpacing(10)
         self.summary_label = QLabel("")
         self.summary_label.setWordWrap(True)
-        root.addWidget(self.summary_label)
+        self.output_dir_label = QLabel("")
+        self.output_dir_label.setObjectName("MutedLabel")
+        self.output_dir_label.setWordWrap(True)
+        self.summary_info_btn = build_inline_info_button(
+            tooltip="Message details",
+            accessible_name="Message details help",
+            parent=self.summary_card,
+        )
+        summary_layout.addWidget(self.summary_label, 1)
+        summary_layout.addWidget(self.output_dir_label, 0)
+        summary_layout.addWidget(self.summary_info_btn, 0, Qt.AlignmentFlag.AlignTop)
+        root.addWidget(self.summary_card)
 
         context_row = QHBoxLayout()
         context_row.setSpacing(8)
-        self.target_lang_label = QLabel("Target language")
+        self.workflow_label = QLabel("Workflow")
+        self.workflow_combo = NoWheelComboBox()
+        self.workflow_combo.setEditable(False)
+        self.workflow_combo.addItem("Translation", GMAIL_INTAKE_WORKFLOW_TRANSLATION)
+        self.workflow_combo.addItem("Interpretation notice", GMAIL_INTAKE_WORKFLOW_INTERPRETATION)
+        self.target_lang_label = QLabel("Language")
         self.target_lang_combo = NoWheelComboBox()
+        self.target_lang_combo.setEditable(False)
         supported_langs = [str(lang).strip().upper() for lang in supported_target_langs()]
         self.target_lang_combo.addItems(supported_langs)
         if self._target_lang in supported_langs:
             self.target_lang_combo.setCurrentText(self._target_lang)
-        self.output_dir_label = QLabel("")
-        self.output_dir_label.setWordWrap(True)
+        context_row.addWidget(self.workflow_label)
+        context_row.addWidget(self.workflow_combo, 0)
+        context_row.addSpacing(12)
         context_row.addWidget(self.target_lang_label)
         context_row.addWidget(self.target_lang_combo, 0)
-        context_row.addSpacing(12)
-        context_row.addWidget(self.output_dir_label, 1)
+        context_row.addStretch(1)
         root.addLayout(context_row)
 
         self.table = QTableWidget(0, 4, self)
-        self.table.setHorizontalHeaderLabels(["Filename", "Type", "Size", "Start page"])
+        self.table.setHorizontalHeaderLabels(["File", "Type", "Size", "Start"])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.MultiSelection)
@@ -2703,14 +5795,14 @@ class QtGmailBatchReviewDialog(QDialog):
 
         detail_row = QHBoxLayout()
         detail_row.setSpacing(8)
-        self.detail_attachment_label = QLabel("Selected attachment: -")
+        self.detail_attachment_label = QLabel("-")
         self.detail_attachment_label.setWordWrap(True)
-        self.pages_value_label = QLabel("Pages: -")
-        self.start_page_label = QLabel("Start translating from page")
+        self.pages_value_label = QLabel("-")
+        self.start_page_label = QLabel("Start page")
         self.start_page_spin = NoWheelSpinBox()
         self.start_page_spin.setMinimum(1)
         self.start_page_spin.setMaximum(9999)
-        self.preview_btn = QPushButton("Preview selected attachment")
+        self.preview_btn = QPushButton("Preview")
         detail_row.addWidget(self.detail_attachment_label, 1)
         detail_row.addWidget(self.pages_value_label)
         detail_row.addWidget(self.start_page_label)
@@ -2721,6 +5813,7 @@ class QtGmailBatchReviewDialog(QDialog):
         actions = QHBoxLayout()
         self.cancel_btn = QPushButton("Cancel")
         self.prepare_btn = QPushButton("Prepare selected attachments")
+        self.prepare_btn.setObjectName("PrimaryButton")
         actions.addStretch(1)
         actions.addWidget(self.cancel_btn)
         actions.addWidget(self.prepare_btn)
@@ -2731,22 +5824,58 @@ class QtGmailBatchReviewDialog(QDialog):
         self.table.itemDoubleClicked.connect(lambda _item: self._open_preview_for_current_row())
         self.start_page_spin.valueChanged.connect(self._update_current_row_start_page)
         self.preview_btn.clicked.connect(self._open_preview_for_current_row)
+        self.workflow_combo.currentIndexChanged.connect(self._on_workflow_changed)
         self.cancel_btn.clicked.connect(self.reject)
         self.prepare_btn.clicked.connect(self._accept_selection)
 
-    def _populate_table(self) -> None:
-        sender_summary = self._message.from_header or "(unknown sender)"
-        subject = self._message.subject or "(no subject)"
+    def _current_workflow_kind(self) -> str:
+        return str(self.workflow_combo.currentData() or GMAIL_INTAKE_WORKFLOW_TRANSLATION).strip()
+
+    def _is_interpretation_workflow(self) -> bool:
+        return self._current_workflow_kind() == GMAIL_INTAKE_WORKFLOW_INTERPRETATION
+
+    def _summary_subject_text(self) -> str:
+        subject = (self._message.subject or "").strip()
         attachment_count = len(self._message.attachments)
-        self.summary_label.setText(
-            "Subject: "
-            f"{subject}\n"
-            f"Sender: {sender_summary}\n"
-            f"Gmail account: {self._message.account_email}\n"
-            f"Supported attachments in this exact message: {attachment_count}"
+        noun = "file" if attachment_count == 1 else "files"
+        if subject:
+            return f"{subject} | {attachment_count} {noun}"
+        return f"{attachment_count} {noun} ready"
+
+    def _output_dir_summary_text(self) -> str:
+        if self._output_dir_text == "":
+            return "Folder: not set"
+        try:
+            display = Path(self._output_dir_text).name or self._output_dir_text
+        except Exception:  # noqa: BLE001
+            display = self._output_dir_text
+        return f"Folder: {display}"
+
+    def _refresh_summary_banner(self) -> None:
+        attachment_count = len(self._message.attachments)
+        workflow_hint = (
+            "Choose 1 file for interpretation notice."
+            if self._is_interpretation_workflow()
+            else "Choose one or more files to prepare."
         )
-        output_summary = self._output_dir_text or "(not set yet)"
-        self.output_dir_label.setText(f"Output folder: {output_summary}")
+        self.summary_label.setText(self._summary_subject_text())
+        self.summary_label.setToolTip(self._message.subject or "(no subject)")
+        self.output_dir_label.setText(self._output_dir_summary_text())
+        self.output_dir_label.setToolTip(self._output_dir_text or "(not set yet)")
+        self.summary_info_btn.setToolTip(
+            "\n".join(
+                (
+                    f"Sender: {self._message.from_header or '(unknown sender)'}",
+                    f"Gmail account: {self._message.account_email}",
+                    f"Supported attachments: {attachment_count}",
+                    workflow_hint,
+                    f"Output folder: {self._output_dir_text or '(not set yet)'}",
+                )
+            )
+        )
+
+    def _populate_table(self) -> None:
+        self._refresh_summary_banner()
         self.table.setRowCount(0)
         for attachment in self._message.attachments:
             row_idx = self.table.rowCount()
@@ -2774,8 +5903,8 @@ class QtGmailBatchReviewDialog(QDialog):
     def _page_count_text_for_row(self, row: int) -> str:
         page_count = self._page_counts[row]
         if isinstance(page_count, int) and page_count > 0:
-            return f"Pages: {page_count}"
-        return "Pages: preview to inspect"
+            return f"{page_count} page" if page_count == 1 else f"{page_count} pages"
+        return "Preview for pages"
 
     def _set_row_start_page(self, row: int, value: int) -> None:
         attachment = self._message.attachments[row]
@@ -2806,10 +5935,11 @@ class QtGmailBatchReviewDialog(QDialog):
         for row in rows:
             if row < 0 or row >= len(self._message.attachments):
                 continue
+            start_page = 1 if self._is_interpretation_workflow() else int(self._start_pages[row])
             selected.append(
                 GmailAttachmentSelection(
                     candidate=self._message.attachments[row],
-                    start_page=int(self._start_pages[row]),
+                    start_page=start_page,
                 )
             )
         return tuple(selected)
@@ -2819,16 +5949,19 @@ class QtGmailBatchReviewDialog(QDialog):
         selected_rows = self._selected_rows()
         self.prepare_btn.setEnabled(has_rows and len(selected_rows) > 0)
         if not has_rows:
-            self.prepare_btn.setText("No supported attachments found")
+            self.prepare_btn.setText("No attachments")
+        elif self._is_interpretation_workflow():
+            self.prepare_btn.setText("Prepare notice")
         else:
-            self.prepare_btn.setText("Prepare selected attachments")
+            self.prepare_btn.setText("Prepare selected")
+        self._refresh_summary_banner()
         self._refresh_detail_panel()
 
     def _refresh_detail_panel(self) -> None:
         row = self._current_row()
         if row is None:
-            self.detail_attachment_label.setText("Selected attachment: -")
-            self.pages_value_label.setText("Pages: -")
+            self.detail_attachment_label.setText("-")
+            self.pages_value_label.setText("-")
             self.start_page_spin.blockSignals(True)
             self.start_page_spin.setValue(1)
             self.start_page_spin.blockSignals(False)
@@ -2837,7 +5970,10 @@ class QtGmailBatchReviewDialog(QDialog):
             return
 
         attachment = self._message.attachments[row]
-        self.detail_attachment_label.setText(f"Selected attachment: {attachment.filename}")
+        self.detail_attachment_label.setText(attachment.filename)
+        self.detail_attachment_label.setToolTip(
+            f"{attachment.filename}\n{attachment.mime_type} | {_format_bytes(attachment.size_bytes)}"
+        )
         self.pages_value_label.setText(self._page_count_text_for_row(row))
         self.start_page_spin.blockSignals(True)
         self.start_page_spin.setMaximum(
@@ -2845,16 +5981,39 @@ class QtGmailBatchReviewDialog(QDialog):
         )
         self.start_page_spin.setValue(int(self._start_pages[row]))
         self.start_page_spin.blockSignals(False)
-        editable = not _is_image_attachment(attachment)
+        editable = (not self._is_interpretation_workflow()) and (not _is_image_attachment(attachment))
         self.start_page_spin.setEnabled(editable)
         self.preview_btn.setEnabled(True)
 
     def _update_current_row_start_page(self, value: int) -> None:
+        if self._is_interpretation_workflow():
+            return
         row = self._current_row()
         if row is None:
             return
         self._set_row_start_page(row, int(value))
         self._refresh_detail_panel()
+
+    def _on_workflow_changed(self, *_args: object) -> None:
+        self._workflow_kind = self._current_workflow_kind()
+        is_interpretation = self._is_interpretation_workflow()
+        self.target_lang_label.setVisible(not is_interpretation)
+        self.target_lang_combo.setVisible(not is_interpretation)
+        self.start_page_label.setVisible(not is_interpretation)
+        self.start_page_spin.setVisible(not is_interpretation)
+        self.table.setColumnHidden(3, is_interpretation)
+        self.table.setSelectionMode(
+            QTableWidget.SelectionMode.SingleSelection
+            if is_interpretation
+            else QTableWidget.SelectionMode.MultiSelection
+        )
+        if is_interpretation:
+            selected_rows = self._selected_rows()
+            keep_row = selected_rows[0] if selected_rows else self._current_row()
+            self.table.clearSelection()
+            if keep_row is not None and keep_row >= 0:
+                self.table.selectRow(keep_row)
+        self._refresh_actions()
 
     def _open_preview_for_current_row(self) -> None:
         row = self._current_row()
@@ -2918,10 +6077,22 @@ class QtGmailBatchReviewDialog(QDialog):
                 "Select at least one supported attachment first.",
             )
             return
+        if self._is_interpretation_workflow() and len(selected) != 1:
+            QMessageBox.information(
+                self,
+                "Gmail Attachment Review",
+                "Interpretation notices require exactly one selected attachment.",
+            )
+            return
         self.selected_attachments = tuple(selection.candidate for selection in selected)
         self.review_result = GmailBatchReviewResult(
             selections=selected,
-            target_lang=self.target_lang_combo.currentText().strip().upper() or self._target_lang,
+            target_lang=(
+                self.target_lang_combo.currentText().strip().upper() or self._target_lang
+                if not self._is_interpretation_workflow()
+                else ""
+            ),
+            workflow_kind=self._current_workflow_kind(),
         )
         self.accept()
 
@@ -2978,7 +6149,7 @@ class QtGlossaryEditorDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Glossary Editor")
-        self.resize(860, 560)
+        self.setMinimumSize(680, 440)
 
         self._current_path = initial_path
         self._default_save_path = default_save_path.expanduser().resolve()
@@ -2999,6 +6170,7 @@ class QtGlossaryEditorDialog(QDialog):
         buttons.addStretch(1)
         self.validate_btn = QPushButton("Validate")
         self.save_btn = QPushButton("Save")
+        self.save_btn.setObjectName("PrimaryButton")
         self.save_as_btn = QPushButton("Save As...")
         self.cancel_btn = QPushButton("Cancel")
         buttons.addWidget(self.validate_btn)
@@ -3011,6 +6183,11 @@ class QtGlossaryEditorDialog(QDialog):
         self.save_btn.clicked.connect(self._save)
         self.save_as_btn.clicked.connect(self._save_as)
         self.cancel_btn.clicked.connect(self.reject)
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="table",
+            preferred_size=QSize(860, 560),
+        )
 
     @staticmethod
     def _validated_text(text: str, *, source: str) -> str:
@@ -3375,7 +6552,6 @@ class QtSettingsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.resize(980, 700)
         self.setMinimumSize(780, 560)
 
         self._settings = dict(settings)
@@ -3413,15 +6589,22 @@ class QtSettingsDialog(QDialog):
         self._build_ui()
         self._set_values_from_settings(self._settings)
         self._refresh_key_status()
+        self._responsive_window = ResponsiveWindowController(
+            self,
+            role="form",
+            preferred_size=QSize(980, 700),
+        )
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
 
         _scroll_area = QScrollArea()
+        _scroll_area.setObjectName("DialogScrollArea")
         _scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         _scroll_area.setWidgetResizable(True)
         _scroll_content = QWidget()
+        _scroll_content.setObjectName("DialogScrollContent")
         scroll_layout = QVBoxLayout(_scroll_content)
         scroll_layout.setContentsMargins(12, 12, 12, 12)
 
@@ -3455,6 +6638,7 @@ class QtSettingsDialog(QDialog):
         buttons.addStretch(1)
         self.apply_btn = QPushButton("Apply")
         self.save_btn = QPushButton("Save")
+        self.save_btn.setObjectName("PrimaryButton")
         self.cancel_btn = QPushButton("Cancel")
         buttons.addWidget(self.apply_btn)
         buttons.addWidget(self.save_btn)
@@ -3479,6 +6663,7 @@ class QtSettingsDialog(QDialog):
         self.openai_toggle_btn = QPushButton("Show")
         self.openai_save_btn = QPushButton("Save")
         self.openai_clear_btn = QPushButton("Clear")
+        self.openai_clear_btn.setObjectName("DangerButton")
         self.openai_test_btn = QPushButton("Test")
         openai_layout.addWidget(self.openai_toggle_btn, 0, 2)
         openai_layout.addWidget(self.openai_save_btn, 0, 3)
@@ -3498,6 +6683,7 @@ class QtSettingsDialog(QDialog):
         self.ocr_toggle_btn = QPushButton("Show")
         self.ocr_save_btn = QPushButton("Save")
         self.ocr_clear_btn = QPushButton("Clear")
+        self.ocr_clear_btn.setObjectName("DangerButton")
         self.ocr_test_btn = QPushButton("Test")
         ocr_layout.addWidget(self.ocr_toggle_btn, 0, 2)
         ocr_layout.addWidget(self.ocr_save_btn, 0, 3)
@@ -3512,6 +6698,7 @@ class QtSettingsDialog(QDialog):
         provider_form = QFormLayout(provider_group)
         self.ocr_provider_combo = NoWheelComboBox()
         self.ocr_provider_combo.addItems(["openai", "gemini"])
+        self.ocr_provider_combo.setEditable(False)
         self.ocr_base_url_edit = QLineEdit()
         self.ocr_model_edit = QLineEdit()
         self.ocr_env_edit = QLineEdit()
@@ -3576,10 +6763,13 @@ class QtSettingsDialog(QDialog):
         form = QFormLayout(self.tab_ocr)
         self.ocr_provider_default_combo = NoWheelComboBox()
         self.ocr_provider_default_combo.addItems(["openai", "gemini"])
+        self.ocr_provider_default_combo.setEditable(False)
         self.ocr_mode_default_combo = NoWheelComboBox()
         self.ocr_mode_default_combo.addItems(["off", "auto", "always"])
+        self.ocr_mode_default_combo.setEditable(False)
         self.ocr_engine_default_combo = NoWheelComboBox()
         self.ocr_engine_default_combo.addItems(["local", "local_then_api", "api"])
+        self.ocr_engine_default_combo.setEditable(False)
         self.min_chars_edit = QLineEdit()
         form.addRow("Default OCR provider", self.ocr_provider_default_combo)
         form.addRow("Default OCR mode", self.ocr_mode_default_combo)
@@ -3588,10 +6778,12 @@ class QtSettingsDialog(QDialog):
 
     def _build_tab_appearance(self) -> None:
         form = QFormLayout(self.tab_appearance)
-        self.ui_theme_combo = QComboBox()
+        self.ui_theme_combo = NoWheelComboBox()
         self.ui_theme_combo.addItems(["dark_futuristic", "dark_simple"])
-        self.ui_scale_combo = QComboBox()
+        self.ui_theme_combo.setEditable(False)
+        self.ui_scale_combo = NoWheelComboBox()
         self.ui_scale_combo.addItems(["1.00", "1.10", "1.25"])
+        self.ui_scale_combo.setEditable(False)
         form.addRow("Theme", self.ui_theme_combo)
         form.addRow("UI scale", self.ui_scale_combo)
 
@@ -3606,7 +6798,6 @@ class QtSettingsDialog(QDialog):
         self.lemma_effort_combo = NoWheelComboBox(); self.lemma_effort_combo.addItems(["medium", "high", "xhigh"])
         self.default_images_combo = NoWheelComboBox(); self.default_images_combo.addItems(["off", "auto", "always"])
         self.default_workers_combo = NoWheelComboBox(); self.default_workers_combo.addItems(["1", "2", "3", "4", "5", "6"])
-        self.default_start_edit = QLineEdit()
         self.default_end_edit = QLineEdit()
         self.default_outdir_edit = QLineEdit()
         self.default_outdir_btn = QPushButton("Browse")
@@ -3614,6 +6805,7 @@ class QtSettingsDialog(QDialog):
         self.glossary_file_btn = QPushButton("Browse")
         self.glossary_edit_btn = QPushButton("View/Edit...")
         self.glossary_builtin_btn = QPushButton("Use built-in")
+        self.glossary_builtin_btn.setObjectName("DangerButton")
         self.default_resume_check = QCheckBox("Default resume ON")
         self.default_keep_check = QCheckBox("Default keep intermediates ON")
         self.default_breaks_check = QCheckBox("Default page breaks ON")
@@ -3623,6 +6815,7 @@ class QtSettingsDialog(QDialog):
         self.timeout_image_edit = QLineEdit()
         self.allow_xhigh_check = QCheckBox("Allow xhigh escalation (adaptive, image + short text only)")
         self.restore_defaults_btn = QPushButton("Restore defaults")
+        self.restore_defaults_btn.setObjectName("DangerButton")
 
         grid.addWidget(QLabel("Default language"), row, 0); grid.addWidget(self.default_lang_combo, row, 1); row += 1
         grid.addWidget(QLabel("Translation effort"), row, 0); grid.addWidget(self.default_effort_combo, row, 1); row += 1
@@ -3630,7 +6823,6 @@ class QtSettingsDialog(QDialog):
         grid.addWidget(QLabel("Lemma / utility effort"), row, 0); grid.addWidget(self.lemma_effort_combo, row, 1); row += 1
         grid.addWidget(QLabel("Default images mode"), row, 0); grid.addWidget(self.default_images_combo, row, 1); row += 1
         grid.addWidget(QLabel("Default workers"), row, 0); grid.addWidget(self.default_workers_combo, row, 1); row += 1
-        grid.addWidget(QLabel("Default start page"), row, 0); grid.addWidget(self.default_start_edit, row, 1); row += 1
         grid.addWidget(QLabel("Default end page"), row, 0); grid.addWidget(self.default_end_edit, row, 1); row += 1
 
         outdir_row = QHBoxLayout()
@@ -3684,14 +6876,16 @@ class QtSettingsDialog(QDialog):
         layout = QVBoxLayout(self.tab_glossary)
         top = QHBoxLayout()
         top.addWidget(QLabel("Target language"))
-        self.glossary_lang_combo = QComboBox()
+        self.glossary_lang_combo = NoWheelComboBox()
         self.glossary_lang_combo.addItems(supported_target_langs())
+        self.glossary_lang_combo.setEditable(False)
         top.addWidget(self.glossary_lang_combo)
         top.addWidget(QLabel("View tier"))
-        self.glossary_tier_combo = QComboBox()
+        self.glossary_tier_combo = NoWheelComboBox()
         for tier in valid_glossary_tiers():
             self.glossary_tier_combo.addItem(f"Tier {tier}", tier)
         self.glossary_tier_combo.setCurrentIndex(0)
+        self.glossary_tier_combo.setEditable(False)
         top.addWidget(self.glossary_tier_combo)
         self.glossary_tier_counts_label = QLabel("")
         top.addWidget(self.glossary_tier_counts_label, 1)
@@ -3749,6 +6943,7 @@ class QtSettingsDialog(QDialog):
 
         actions = QHBoxLayout()
         self.glossary_remove_rows_btn = QPushButton("Remove selected")
+        self.glossary_remove_rows_btn.setObjectName("DangerButton")
         self.glossary_export_btn = QPushButton("Export...")
         actions.addWidget(self.glossary_remove_rows_btn)
         actions.addWidget(self.glossary_export_btn)
@@ -4220,18 +7415,21 @@ class QtSettingsDialog(QDialog):
 
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel("Category"))
-        self.study_category_filter_combo = QComboBox()
+        self.study_category_filter_combo = NoWheelComboBox()
         self.study_category_filter_combo.addItems(
             ["all", "headers", "roles", "procedure", "evidence", "reasoning", "decision_costs", "other"]
         )
+        self.study_category_filter_combo.setEditable(False)
         filter_row.addWidget(self.study_category_filter_combo)
         filter_row.addWidget(QLabel("Status"))
-        self.study_status_filter_combo = QComboBox()
+        self.study_status_filter_combo = NoWheelComboBox()
         self.study_status_filter_combo.addItems(["all", "new", "learning", "known", "hard"])
+        self.study_status_filter_combo.setEditable(False)
         filter_row.addWidget(self.study_status_filter_combo)
         filter_row.addWidget(QLabel("Coverage tier"))
-        self.study_coverage_filter_combo = QComboBox()
+        self.study_coverage_filter_combo = NoWheelComboBox()
         self.study_coverage_filter_combo.addItems(["all", "core80", "next15", "long_tail"])
+        self.study_coverage_filter_combo.setEditable(False)
         filter_row.addWidget(self.study_coverage_filter_combo)
         filter_row.addStretch(1)
         layout.addLayout(filter_row)
@@ -4239,11 +7437,12 @@ class QtSettingsDialog(QDialog):
         builder = QGroupBox("Builder")
         builder_layout = QGridLayout(builder)
         builder_layout.addWidget(QLabel("Corpus source"), 0, 0)
-        self.study_corpus_source_combo = QComboBox()
+        self.study_corpus_source_combo = NoWheelComboBox()
         self.study_corpus_source_combo.addItem("Run folders (recommended for large corpora)", "run_folders")
         self.study_corpus_source_combo.addItem("Current PDF only", "current_pdf")
         self.study_corpus_source_combo.addItem("Select PDFs...", "select_pdfs")
         self.study_corpus_source_combo.addItem("From Job Log runs (unavailable in this version)", "joblog_runs")
+        self.study_corpus_source_combo.setEditable(False)
         self.study_corpus_source_combo.setToolTip(
             "Job Log source is intentionally unavailable in this version (no run/pdf path tracking migration)."
         )
@@ -4259,7 +7458,9 @@ class QtSettingsDialog(QDialog):
         run_btns = QVBoxLayout()
         self.study_add_run_dir_btn = QPushButton("Add run folder")
         self.study_remove_run_dir_btn = QPushButton("Remove selected")
+        self.study_remove_run_dir_btn.setObjectName("DangerButton")
         self.study_clear_run_dirs_btn = QPushButton("Clear")
+        self.study_clear_run_dirs_btn.setObjectName("DangerButton")
         run_btns.addWidget(self.study_add_run_dir_btn)
         run_btns.addWidget(self.study_remove_run_dir_btn)
         run_btns.addWidget(self.study_clear_run_dirs_btn)
@@ -4275,7 +7476,9 @@ class QtSettingsDialog(QDialog):
         pdf_btns = QVBoxLayout()
         self.study_add_pdf_btn = QPushButton("Add PDF(s)")
         self.study_remove_pdf_btn = QPushButton("Remove selected")
+        self.study_remove_pdf_btn.setObjectName("DangerButton")
         self.study_clear_pdf_btn = QPushButton("Clear")
+        self.study_clear_pdf_btn.setObjectName("DangerButton")
         pdf_btns.addWidget(self.study_add_pdf_btn)
         pdf_btns.addWidget(self.study_remove_pdf_btn)
         pdf_btns.addWidget(self.study_clear_pdf_btn)
@@ -4285,13 +7488,14 @@ class QtSettingsDialog(QDialog):
         builder_layout.addWidget(pdf_btn_wrap, 7, 1, 3, 1)
 
         builder_layout.addWidget(QLabel("Mode"), 1, 2)
-        self.study_mode_combo = QComboBox()
+        self.study_mode_combo = NoWheelComboBox()
         self.study_mode_combo.addItem("Full text", "full_text")
         self.study_mode_combo.addItem("Headers only", "headers_only")
+        self.study_mode_combo.setEditable(False)
         builder_layout.addWidget(self.study_mode_combo, 1, 3)
 
         builder_layout.addWidget(QLabel("Coverage target (%)"), 2, 2)
-        self.study_coverage_spin = QSpinBox()
+        self.study_coverage_spin = NoWheelSpinBox()
         self.study_coverage_spin.setRange(50, 95)
         self.study_coverage_spin.setValue(80)
         builder_layout.addWidget(self.study_coverage_spin, 2, 3)
@@ -4300,12 +7504,13 @@ class QtSettingsDialog(QDialog):
         builder_layout.addWidget(self.study_include_snippets_check, 3, 2, 1, 2)
 
         builder_layout.addWidget(QLabel("Snippet max chars"), 4, 2)
-        self.study_snippet_chars_spin = QSpinBox()
+        self.study_snippet_chars_spin = NoWheelSpinBox()
         self.study_snippet_chars_spin.setRange(40, 300)
         self.study_snippet_chars_spin.setValue(120)
         builder_layout.addWidget(self.study_snippet_chars_spin, 4, 3)
 
         self.study_generate_btn = QPushButton("Generate")
+        self.study_generate_btn.setObjectName("PrimaryButton")
         self.study_cancel_generate_btn = QPushButton("Cancel")
         self.study_cancel_generate_btn.setEnabled(False)
         self.study_progress = QProgressBar()
@@ -4336,6 +7541,7 @@ class QtSettingsDialog(QDialog):
         self.study_candidates_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         suggestions_layout.addWidget(self.study_candidates_table, 1)
         self.study_add_selected_btn = QPushButton("Add selected to Study Glossary")
+        self.study_add_selected_btn.setObjectName("PrimaryButton")
         suggestions_layout.addWidget(self.study_add_selected_btn)
         layout.addWidget(suggestions_group)
 
@@ -4351,6 +7557,7 @@ class QtSettingsDialog(QDialog):
         self.study_refresh_translations_btn = QPushButton("Refresh translations")
         self.study_export_btn = QPushButton("Export...")
         self.study_copy_to_ai_btn = QPushButton("Copy selected to AI Glossary...")
+        self.study_copy_to_ai_btn.setObjectName("PrimaryButton")
         self.study_quiz_btn = QPushButton("Quiz me")
         self.study_stats_label = QLabel("")
         entries_actions.addWidget(self.study_refresh_translations_btn)
@@ -5275,6 +8482,7 @@ class QtSettingsDialog(QDialog):
         self.diag_admin_mode_check = QCheckBox("Admin diagnostics mode")
         self.diag_snippets_check = QCheckBox("Include small sanitized snippets (first 200 chars per page)")
         self.create_bundle_btn = QPushButton("Create debug bundle")
+        self.create_bundle_btn.setObjectName("PrimaryButton")
         hint = QLabel("Bundle excludes page text files and all credentials.")
         layout.addWidget(self.diag_cost_summary_check)
         layout.addWidget(self.diag_verbose_meta_check)
@@ -5298,7 +8506,6 @@ class QtSettingsDialog(QDialog):
         self.default_resume_check.setChecked(bool(settings.get("default_resume", True)))
         self.default_keep_check.setChecked(bool(settings.get("default_keep_intermediates", True)))
         self.default_breaks_check.setChecked(bool(settings.get("default_page_breaks", True)))
-        self.default_start_edit.setText(str(settings.get("default_start_page", 1)))
         default_end = settings.get("default_end_page")
         self.default_end_edit.setText("" if default_end in (None, "") else str(default_end))
         self.default_outdir_edit.setText(str(settings.get("default_outdir", "")))
@@ -5365,20 +8572,34 @@ class QtSettingsDialog(QDialog):
             return
         try:
             openai_stored = bool(get_openai_key())
-            ocr_stored = bool(get_ocr_key())
         except RuntimeError:
             openai_stored = False
-            ocr_stored = False
         resolved_model = model_edit.text().strip() if model_edit is not None else ""
         resolved_env = env_edit.text().strip() if env_edit is not None else ""
         resolved_base = base_edit.text().strip() if base_edit is not None else ""
         resolved_model = resolved_model or model_default
         resolved_env = resolved_env or env_default
         resolved_base = resolved_base or (base_default or "provider default")
+        ocr_config = OcrEngineConfig(
+            api_provider=provider,
+            api_base_url=resolved_base if resolved_base != "provider default" else None,
+            api_model=resolved_model,
+            api_key_env_name=resolved_env,
+        )
+        env_candidates = candidate_ocr_api_env_names(ocr_config)
+        resolved_source = resolve_ocr_api_key_source(ocr_config)
+        if resolved_source is None:
+            effective_credentials = "missing"
+        elif resolved_source[0] == "stored":
+            effective_credentials = "stored OCR key"
+        else:
+            effective_credentials = f"env {resolved_source[1]}"
+        local_status = "available" if local_ocr_available() else "missing"
         summary.setText(
             f"OCR provider: {provider.value}; model: {resolved_model}; env: {resolved_env}; "
-            f"base URL: {resolved_base}; OpenAI credentials {'present' if openai_stored else 'missing'}, "
-            f"OCR credentials {'present' if ocr_stored else 'missing'}."
+            f"base URL: {resolved_base}; env candidates: {', '.join(env_candidates)}; "
+            f"effective OCR credentials: {effective_credentials}; local Tesseract {local_status}; "
+            f"OpenAI credentials {'present' if openai_stored else 'missing'}."
         )
         QtSettingsDialog._refresh_gmail_bridge_summary(self)
 
@@ -5680,34 +8901,43 @@ class QtSettingsDialog(QDialog):
         QMessageBox.information(self, "Key Test", f"OpenAI test passed ({latency_ms} ms).")
 
     def _test_ocr_key(self) -> None:
-        try:
-            key = get_ocr_key()
-        except RuntimeError as exc:
-            QMessageBox.critical(self, "Settings", str(exc))
-            return
-        if not key:
-            QMessageBox.warning(self, "Key Test", "OCR key is not stored.")
-            return
         provider = self._current_ocr_provider()
         base_url = self.ocr_base_url_edit.text().strip() or default_ocr_api_base_url(provider)
         model = self.ocr_model_edit.text().strip() or default_ocr_api_model(provider)
         env_name = self.ocr_env_edit.text().strip() or default_ocr_api_env_name(provider)
+        config = OcrEngineConfig(
+            api_provider=provider,
+            api_base_url=base_url or None,
+            api_model=model,
+            api_key_env_name=env_name,
+        )
+        source = resolve_ocr_api_key_source(config)
+        key = resolve_ocr_api_key(config)
+        if source is None or not key:
+            checked_envs = ", ".join(candidate_ocr_api_env_names(config))
+            QMessageBox.warning(
+                self,
+                "Key Test",
+                "OCR credentials are unavailable. "
+                f"Checked the stored OCR key and env var(s): {checked_envs}.",
+            )
+            return
         started = time.perf_counter()
         try:
             test_ocr_provider_connection(
-                OcrEngineConfig(
-                    api_provider=provider,
-                    api_base_url=base_url or None,
-                    api_model=model,
-                    api_key_env_name=env_name,
-                ),
+                config,
                 api_key=key,
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Key Test", f"OCR key test failed: {type(exc).__name__}")
             return
         latency_ms = int((time.perf_counter() - started) * 1000)
-        QMessageBox.information(self, "Key Test", f"OCR test passed for {provider.value} ({latency_ms} ms).")
+        source_text = "stored OCR key" if source[0] == "stored" else f"env {source[1]}"
+        QMessageBox.information(
+            self,
+            "Key Test",
+            f"OCR test passed for {provider.value} via {source_text} ({latency_ms} ms).",
+        )
 
     def _restore_defaults(self) -> None:
         self.default_lang_combo.setCurrentText("EN")
@@ -5774,9 +9004,7 @@ class QtSettingsDialog(QDialog):
             default_end = None
         else:
             default_end = _to_int(default_end_text, field="Default end page", min_value=1, max_value=100000)
-        default_start = _to_int(self.default_start_edit.text(), field="Default start page", min_value=1, max_value=100000)
-        if default_end is not None and default_start > default_end:
-            raise ValueError("Default start page must be <= default end page.")
+        default_start = 1
 
         ui_scale = _to_float(self.ui_scale_combo.currentText(), field="UI scale", min_value=1.0, max_value=1.25)
         if ui_scale not in (1.0, 1.1, 1.25):

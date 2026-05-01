@@ -24,5 +24,5 @@ This file is the single source-of-truth for localized terminology policy.
 4. Do not duplicate full term tables in workflow docs.
 
 ## Validation Hooks
-- `dart run tooling/validate_agent_docs.dart --scope localization`
-- `dart run tooling/validate_agent_docs.dart`
+- `dart tooling/validate_agent_docs.dart --scope localization`
+- `dart tooling/validate_agent_docs.dart`

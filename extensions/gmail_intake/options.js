@@ -23,6 +23,14 @@ function setStatus(message, kind) {
   node.dataset.kind = kind;
 }
 
+function formatNativeHostError(error) {
+  const message =
+    error && typeof error.message === "string" && error.message.trim() !== ""
+      ? error.message.trim()
+      : normalizeToken(error);
+  return message === "" ? "Unavailable" : message;
+}
+
 function describeRuntimeReason(reason) {
   switch (normalizeToken(reason)) {
     case "bridge_owner_ready":
@@ -54,9 +62,39 @@ function describeRuntimeReason(reason) {
   }
 }
 
+function describeUiOwner(response) {
+  const owner = normalizeToken(response && response.ui_owner);
+  if (owner === "browser_app") {
+    return "Browser app live bridge";
+  }
+  if (owner === "qt_app") {
+    return "Desktop app live bridge";
+  }
+  if (owner === "external") {
+    return "External process";
+  }
+  return "Auto-configured from LegalPDF Translate";
+}
+
+function describeLaunchReason(reason) {
+  switch (normalizeToken(reason)) {
+    case "launch_target_ready":
+      return "Ready from current checkout";
+    case "launch_target_missing":
+      return "Current checkout not found";
+    case "launch_helper_missing":
+      return "Launch helper missing";
+    case "launch_python_missing":
+      return "Checkout Python missing";
+    default:
+      return "Unavailable";
+  }
+}
+
 async function loadDiagnostics() {
   setStatus("Refreshing diagnostics...", "info");
   setText("extensionId", chrome.runtime.id);
+  setText("nativeHostError", "None");
 
   const stored = await chrome.storage.local.get(["bridgePort", "bridgeToken"]);
   const fallbackPort = normalizePort(stored.bridgePort);
@@ -77,23 +115,49 @@ async function loadDiagnostics() {
     const resolvedPort = normalizePort(response && response.bridgePort);
     const tokenPresent = response && response.bridgeTokenPresent === true;
 
-    setText("mode", "Auto-configured from LegalPDF Translate");
+    setText("mode", describeUiOwner(response));
     setText("nativeHostAvailability", "Available");
     setText("resolvedPort", resolvedPort === null ? "Unavailable" : String(resolvedPort));
     setText("tokenPresence", tokenPresent ? "Yes" : "No");
-    setText("runtimeStatus", describeRuntimeReason(response && response.reason));
+    setText(
+      "runtimeStatus",
+      response && response.ok === true && normalizeToken(response.ui_owner) === "browser_app"
+        ? "Ready (browser app)"
+        : describeRuntimeReason(response && response.reason)
+    );
+    setText(
+      "autoLaunchReady",
+      response && response.autoLaunchReady === true
+        ? "Ready from current checkout"
+        : describeLaunchReason(response && response.launchTargetReason)
+    );
+    setText(
+      "launchTarget",
+      response && typeof response.browser_url === "string" && response.browser_url.trim() !== ""
+        ? response.browser_url.trim()
+        : response && typeof response.launchTarget === "string" && response.launchTarget.trim() !== ""
+          ? response.launchTarget.trim()
+        : "Unavailable"
+    );
     setStatus(
       response && response.ok === true
-        ? "Live Gmail bridge diagnostics loaded from LegalPDF Translate."
-        : "LegalPDF Translate responded, but the Gmail bridge is not ready yet.",
+        ? normalizeToken(response.ui_owner) === "browser_app"
+          ? "Browser-owned live Gmail bridge diagnostics loaded from LegalPDF Translate."
+          : "Live Gmail bridge diagnostics loaded from LegalPDF Translate."
+        : response && response.autoLaunchReady === true
+          ? "LegalPDF Translate responded. The Gmail bridge is not running right now, but toolbar clicks can auto-start the app."
+          : "LegalPDF Translate responded, but the Gmail bridge is not ready yet.",
       response && response.ok === true ? "success" : "warning"
     );
   } catch (_error) {
+    setText("nativeHostError", formatNativeHostError(_error));
     setText("mode", fallbackTokenPresent ? "Legacy fallback only" : "Auto-config unavailable");
     setText("nativeHostAvailability", "Unavailable");
     setText("resolvedPort", fallbackPort === null ? "Unknown" : String(fallbackPort));
     setText("tokenPresence", fallbackTokenPresent ? "Yes (legacy fallback)" : "No");
     setText("runtimeStatus", "Native host unavailable");
+    setText("autoLaunchReady", "Unavailable");
+    setText("launchTarget", "Unavailable");
     setStatus(
       fallbackTokenPresent
         ? "Native messaging is unavailable, so only the stored legacy fallback can be used."

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-24T21:17:35.381753Z",
+  "bootstrap_version": "2026.03-profile-driven-phase1",
+  "profile_fingerprint": "f81e8d214d33",
+  "resolved": {
+    "project": "legalpdf_translate",
+    "archetype": "desktop_python_qt",
+    "mode": "standard",
+    "modules": [
+      "base_docs",
+      "beginner_support",
+      "browser_bridge",
+      "build_identity",
+      "capability_discovery",
+      "desktop_launcher",
+      "diagnostics",
+      "host_integration",
+      "issue_memory",
+      "local_env_overlay",
+      "openai_docs_mcp",
+      "qa_checks",
+      "session_resume"
+    ],
+    "starter_files": [
+      "scripts/run_app.ps1",
+      "scripts/repair_env.ps1",
+      "scripts/validate.ps1"
+    ],
+    "notes": [
+      "prefer plain-language setup docs",
+      "favor stable local commands over cloud-only assumptions",
+      "Phase 1 profile reflects the repo's hybrid browser-primary + desktop-secondary + CLI architecture.",
+      "The live Gmail browser extension/native-host bridge is part of the supported app surface."
+    ]
+  }
+}

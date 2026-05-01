@@ -1,0 +1,2052 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LegalPDF Translate</title>
+    <link rel="stylesheet" href="{{ style_css_url }}">
+  </head>
+  <body data-ui-variant="{{ ui_variant }}">
+    <script>
+      (function () {
+        const bootstrap = {
+          buildBranch: {{ build_branch | tojson }},
+          buildSha: {{ build_sha | tojson }},
+          buildIdentity: {{ build_identity | tojson }},
+          assetVersion: {{ asset_version | tojson }},
+          staticBasePath: {{ static_base_url | tojson }},
+          shadowHost: {{ shadow_host | tojson }},
+          shadowPort: {{ shadow_port | tojson }},
+          defaultRuntimeMode: {{ default_runtime_mode | tojson }},
+          defaultWorkspaceId: {{ default_workspace_id | tojson }},
+          defaultUiVariant: {{ ui_variant | tojson }}
+        };
+        const params = new URLSearchParams(window.location.search);
+        const workspaceId = String(params.get("workspace") || bootstrap.defaultWorkspaceId || "workspace-1").trim() || "workspace-1";
+        const runtimeMode = String(params.get("mode") || bootstrap.defaultRuntimeMode || "shadow").trim().toLowerCase() === "live" ? "live" : "shadow";
+        const uiVariant = String(params.get("ui") || bootstrap.defaultUiVariant || "qt").trim().toLowerCase() === "legacy" ? "legacy" : "qt";
+        const operatorMode = ["1", "true", "on"].includes(String(params.get("operator") || "").trim().toLowerCase());
+        const fallbackView = uiVariant === "legacy" ? "dashboard" : (workspaceId === "gmail-intake" ? "gmail-intake" : "new-job");
+        const activeView = String(window.location.hash || "").replace(/^#/, "").trim() || fallbackView;
+        window.LEGALPDF_BROWSER_BOOTSTRAP = bootstrap;
+        window.LEGALPDF_BROWSER_CLIENT_READY = {
+          status: "warming",
+          workspaceId,
+          runtimeMode,
+          activeView,
+          gmailHandoffState: workspaceId === "gmail-intake" ? "warming" : "idle",
+          buildSha: bootstrap.buildSha || "",
+          assetVersion: bootstrap.assetVersion || "",
+          launchSessionId: "",
+          handoffSessionId: "",
+          launchSessionSchemaVersion: 0,
+          bootstrappedAt: null
+        };
+        if (document.body && document.body.dataset) {
+          document.body.dataset.clientReady = "warming";
+          document.body.dataset.clientWorkspace = workspaceId;
+          document.body.dataset.clientRuntimeMode = runtimeMode;
+          document.body.dataset.clientActiveView = activeView;
+          document.body.dataset.operatorChrome = operatorMode ? "on" : "off";
+          document.body.dataset.beginnerSurface = uiVariant === "qt" && ["dashboard", "new-job", "recent-jobs", "profile", "settings"].includes(activeView) && !operatorMode ? "true" : "false";
+          document.body.dataset.clientBuildSha = bootstrap.buildSha || "";
+          document.body.dataset.clientAssetVersion = bootstrap.assetVersion || "";
+          document.body.dataset.clientLaunchSession = "";
+          document.body.dataset.clientHandoffSession = "";
+          document.body.dataset.clientLaunchSessionSchemaVersion = "0";
+        }
+      }());
+    </script>
+
+    <div class="live-banner hidden" id="live-banner" aria-live="polite"></div>
+
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <p class="eyebrow" id="sidebar-brand-eyebrow">Guided Translation</p>
+          <h1>LegalPDF Translate</h1>
+          <p class="sidebar-copy">
+            Choose a document, confirm the language, and keep the translation steps together in one calm screen.
+          </p>
+        </div>
+
+        <nav class="sidebar-nav primary-nav" id="section-nav" aria-label="Primary"></nav>
+
+        <details class="sidebar-more" id="more-nav-shell">
+          <summary class="sidebar-more-summary">More</summary>
+          <nav class="sidebar-nav more-nav" id="more-nav" aria-label="Secondary"></nav>
+          <div class="sidebar-utility">
+            <p class="sidebar-card-label">Operator Details</p>
+            <button type="button" class="ghost-button sidebar-utility-button" id="operator-mode-toggle" aria-pressed="false">Show Technical Details</button>
+            <p class="sidebar-card-meta" id="operator-mode-hint">Build, listener, and diagnostics panels stay hidden until you ask for them or a failure occurs.</p>
+          </div>
+        </details>
+
+        <section class="sidebar-card operator-only">
+          <p class="sidebar-card-label">Build</p>
+          <strong id="build-label">{{ build_branch }}@{{ build_sha }}</strong>
+          <p class="sidebar-card-meta">Listener <span id="listener-label">{{ shadow_host }}:{{ shadow_port }}</span></p>
+        </section>
+
+        <section class="sidebar-card operator-only">
+          <p class="sidebar-card-label">Workspace</p>
+          <strong id="workspace-id-label">{{ default_workspace_id }}</strong>
+          <p class="sidebar-card-meta" id="runtime-mode-label">Live App Data</p>
+        </section>
+      </aside>
+
+      <div class="main-shell">
+        <header class="topbar">
+          <div class="topbar-copy">
+            <p class="eyebrow" id="topbar-eyebrow">New Job</p>
+            <h2 id="topbar-title">LegalPDF Translate</h2>
+            <p id="topbar-status">
+              Choose a document, confirm the language, then start translation.
+            </p>
+          </div>
+          <div class="topbar-controls beginner-technical-control">
+            <label class="control-block" for="runtime-mode-select">
+              <span>App Mode</span>
+              <select id="runtime-mode-select"></select>
+            </label>
+            <button type="button" class="ghost-button" id="refresh-bootstrap">Refresh</button>
+          </div>
+        </header>
+        <div id="runtime-mode-banner" class="runtime-mode-banner hidden" role="status" aria-live="polite"></div>
+
+        <section class="page-view" data-view="dashboard">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>{% if ui_variant == "legacy" %}Dashboard{% else %}Overview{% endif %}</h2>
+              <p class="panel-copy" id="dashboard-summary">
+                {% if ui_variant == "legacy" %}
+                  Loading browser app summary...
+                {% else %}
+                  See what is ready, review recent saved work, and open the tools you need.
+                {% endif %}
+              </p>
+            </div>
+            <div class="dashboard-card-grid" id="dashboard-cards"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>{% if ui_variant == "legacy" %}Environment{% else %}App Status{% endif %}</h2>
+            </div>
+            <p class="panel-copy" id="runtime-status">
+              {% if ui_variant == "legacy" %}
+                Checking browser runtime capabilities...
+              {% else %}
+                Checking app status...
+              {% endif %}
+            </p>
+            <div class="status-grid" id="status-grid"></div>
+            <details class="details-panel operator-only" id="runtime-details">
+              <summary>
+                <span>Runtime diagnostics</span>
+                <span class="details-hint" id="runtime-hint">Build identity, listener ownership, and runtime-mode provenance.</span>
+              </summary>
+              <pre class="diagnostics-box" id="runtime-diagnostics"></pre>
+            </details>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>{% if ui_variant == "legacy" %}App Readiness{% else %}What You Can Do{% endif %}</h2>
+            </div>
+            <p class="panel-copy" id="parity-audit-status">
+              {% if ui_variant == "legacy" %}
+                Reviewing browser-app readiness...
+              {% else %}
+                Checking available app features...
+              {% endif %}
+            </p>
+            <div class="status-grid" id="parity-audit-grid"></div>
+            <div id="parity-audit-result" class="result-card empty-state">
+              {% if ui_variant == "legacy" %}
+                Browser-app readiness details will appear here.
+              {% else %}
+                What you can do next will appear here.
+              {% endif %}
+            </div>
+          </div>
+        </section>
+
+        <section class="page-view hidden qt-workspace-view" data-view="gmail-intake">
+          <div class="panel workspace-panel workspace-hero">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Gmail</p>
+                <h2>Review Gmail Attachments</h2>
+                <p class="panel-copy">Choose the attachment you want to process, preview it if needed, then continue.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel workspace-panel workspace-panel-gmail">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Gmail</p>
+                <h2>Review Gmail Attachments</h2>
+              </div>
+              <div class="panel-actions">
+                <button type="button" class="primary-button" id="gmail-open-review">Review Attachments</button>
+                <button type="button" class="ghost-button hidden" id="gmail-load-demo-review">Load demo attachments</button>
+                <button type="button" class="ghost-button hidden" id="gmail-resume-step">Resume Current Step</button>
+                <button type="button" class="ghost-button hidden" id="gmail-redo-current">Redo Current Attachment</button>
+                <button type="button" class="ghost-button hidden" id="gmail-return-to-source">Back to Gmail</button>
+              </div>
+            </div>
+            <p class="panel-copy" id="gmail-status">Choose the attachment you want to process, preview it if needed, then continue.</p>
+            <div id="gmail-message-result" class="result-card empty-state">Open this from Gmail or load a message manually from details.</div>
+            <div id="gmail-resume-result" class="result-card empty-state hidden">No Gmail step is waiting yet.</div>
+            <div id="gmail-restore-bar" class="gmail-restore-bar hidden" aria-live="polite">
+              <button type="button" class="gmail-restore-chip hidden" id="gmail-restore-review" aria-label="Restore Review Attachments panel">Review Attachments — Restore</button>
+              <button type="button" class="gmail-restore-chip hidden" id="gmail-restore-preview" aria-label="Restore PDF Preview">PDF Preview — Restore</button>
+            </div>
+            <details class="shell-collapsible compact-affordance" id="gmail-more-actions">
+              <summary>
+                <span>More options</span>
+                <span class="details-hint">Refresh, open the full app view, or reset this Gmail review if you need extra help.</span>
+              </summary>
+              <div class="shell-collapsible-body">
+                <div class="panel-actions">
+                  <button type="button" class="ghost-button" id="gmail-refresh">Refresh Gmail review</button>
+                  <button type="button" class="ghost-button" id="gmail-open-full-workspace">Open full app view</button>
+                  <button type="button" class="ghost-button" id="gmail-reset">Reset Gmail review</button>
+                </div>
+              </div>
+            </details>
+            <details class="shell-collapsible field-wide" id="gmail-intake-details">
+              <summary>
+                <span>Advanced message details</span>
+                <span class="details-hint" id="gmail-intake-details-summary">Manual message load and output overrides stay here unless Gmail needs help finding the message.</span>
+              </summary>
+              <div class="shell-collapsible-body">
+                <form id="gmail-context-form" class="form-grid compact-grid">
+                  <div class="field">
+                    <label for="gmail-message-id">Exact message ID</label>
+                    <input id="gmail-message-id" type="text">
+                  </div>
+                  <div class="field">
+                    <label for="gmail-thread-id">Exact thread ID</label>
+                    <input id="gmail-thread-id" type="text">
+                  </div>
+                  <div class="field">
+                    <label for="gmail-subject">Subject</label>
+                    <input id="gmail-subject" type="text">
+                  </div>
+                  <div class="field">
+                    <label for="gmail-account-email">Gmail account</label>
+                    <input id="gmail-account-email" type="email">
+                  </div>
+                  <div class="field field-wide">
+                    <label for="gmail-output-dir">Save output in</label>
+                    <input id="gmail-output-dir" type="text" placeholder="Optional folder for Gmail attachment work">
+                  </div>
+                  <div class="form-actions">
+                    <button type="button" id="gmail-use-simulator-defaults">Use detected Gmail defaults</button>
+                    <button type="submit" class="primary-button" id="gmail-load-message">Load this Gmail message</button>
+                  </div>
+                </form>
+              </div>
+            </details>
+            <details class="details-panel operator-only" id="gmail-details">
+              <summary>
+                <span>Gmail diagnostics</span>
+                <span class="details-hint" id="gmail-hint">Exact-message load, attachment preview, and session preparation details appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="gmail-diagnostics"></pre>
+            </details>
+          </div>
+        </section>
+
+        <section class="page-view hidden qt-workspace-view beginner-shell-view" data-view="new-job">
+          <div id="gmail-workspace-strip" class="compact-gmail-strip hidden">
+            <div>
+              <p class="eyebrow">Gmail</p>
+              <strong id="gmail-workspace-strip-title">Gmail attachment ready</strong>
+              <p id="gmail-workspace-strip-copy">Review the Gmail message and attachments before you continue.</p>
+            </div>
+            <div class="panel-actions">
+              <button type="button" class="ghost-button" id="gmail-workspace-strip-action">Review Gmail message</button>
+            </div>
+          </div>
+
+          <div class="task-switcher" id="new-job-task-switcher" role="tablist" aria-label="Primary task">
+            <button type="button" class="task-switch active" id="new-job-task-translation" data-task="translation" aria-selected="true">Translation</button>
+            <button type="button" class="task-switch" id="new-job-task-interpretation" data-task="interpretation" aria-selected="false">Interpretation</button>
+          </div>
+
+          <div class="simple-task-shell" data-task-panel="translation">
+
+          <div class="panel workspace-panel workspace-panel-setup">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Translation</p>
+                <h2>Job Setup</h2>
+              </div>
+            </div>
+            <p class="panel-copy">Choose a document, confirm the language, and select where the translated files should be saved.</p>
+            <form id="translation-setup-form" class="form-grid">
+              <input id="translation-job-id" type="hidden">
+              <input id="translation-source-path" type="hidden">
+              <div class="field field-wide">
+                <label for="translation-source-file">Document</label>
+                <div class="source-card" id="translation-source-card" data-state="empty">
+                  <input id="translation-source-file" class="source-card-native-input" type="file" accept=".pdf,image/*" tabindex="-1">
+                  <div class="source-card-header">
+                    <div>
+                      <p class="source-card-label">Source file</p>
+                      <h3 id="translation-source-card-title">Choose a PDF or image</h3>
+                      <p class="source-card-copy" id="translation-source-card-copy">Drag and drop it here, or choose it from your computer.</p>
+                    </div>
+                    <span class="status-chip info hidden" id="translation-source-card-chip">Waiting</span>
+                  </div>
+                  <div class="source-card-actions">
+                    <button type="button" class="primary-button" id="translation-source-browse">Choose document</button>
+                    <button type="button" class="ghost-button hidden" id="translation-source-clear">Clear</button>
+                  </div>
+                  <div class="summary-grid source-card-summary-grid">
+                    <article class="summary-card">
+                      <h3>File</h3>
+                      <p id="translation-source-filename">No file selected yet.</p>
+                    </article>
+                    <article class="summary-card">
+                      <h3>Type</h3>
+                      <p id="translation-source-type">PDF or image</p>
+                    </article>
+                    <article class="summary-card">
+                      <h3>Pages</h3>
+                      <p id="translation-source-pages">--</p>
+                    </article>
+                    <article class="summary-card">
+                      <h3>Target</h3>
+                      <p id="translation-source-target">Target language: EN</p>
+                    </article>
+                    <article class="summary-card">
+                      <h3>Default</h3>
+                      <p id="translation-source-default-target">Using the current target language for this run.</p>
+                    </article>
+                    <article class="summary-card">
+                      <h3>Status</h3>
+                      <p id="translation-source-stage-status">Choose a file to begin.</p>
+                    </article>
+                  </div>
+                  <p class="source-card-hint" id="translation-source-card-hint">PDF and common image files are supported.</p>
+                </div>
+                <details class="details-panel operator-only" id="translation-source-operator-details">
+                  <summary>
+                    <span>Source path details</span>
+                    <span class="details-hint">Prepared Gmail launches and staged local uploads keep the durable source path here.</span>
+                  </summary>
+                  <div class="summary-grid">
+                    <article class="summary-card">
+                      <h3>Saved path</h3>
+                      <p class="word-break" id="translation-source-path-summary">No source staged yet.</p>
+                    </article>
+                  </div>
+                </details>
+              </div>
+              <div class="field field-wide">
+                <label for="translation-output-dir">Save output in</label>
+                <div class="friendly-field-card" id="translation-output-summary-card">
+                  <div>
+                    <p class="friendly-field-title" id="translation-output-summary-label">Using default output folder</p>
+                    <p class="friendly-field-copy" id="translation-output-summary-copy">Translated files will be saved in the active folder for this workspace.</p>
+                    <p class="friendly-field-path word-break" id="translation-output-summary-path">Loading folder...</p>
+                  </div>
+                </div>
+                <details class="shell-collapsible compact-affordance" id="translation-output-change-section">
+                  <summary>
+                    <span>Change folder/path</span>
+                    <span class="details-hint">Enter a different folder path only if you do not want to use the active default.</span>
+                  </summary>
+                  <div class="shell-collapsible-body">
+                    <input id="translation-output-dir" type="text" placeholder="C:\\Users\\...\\Downloads">
+                  </div>
+                </details>
+              </div>
+              <div class="field">
+                <label for="translation-target-lang">Target Language</label>
+                <select id="translation-target-lang">
+                  <option value="EN">English (EN)</option>
+                  <option value="FR">French (FR)</option>
+                  <option value="AR">Arabic (AR)</option>
+                </select>
+              </div>
+              <details class="shell-collapsible field-wide" id="translation-advanced-section">
+                <summary>
+                  <span>Advanced Settings</span>
+                  <span class="details-hint" id="translation-advanced-section-summary">OCR policy, page limits, recovery, and context controls.</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field">
+                    <label for="translation-effort">Effort</label>
+                    <select id="translation-effort">
+                      <option value="high">high</option>
+                      <option value="xhigh">xhigh</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="translation-effort-policy">Effort Policy</label>
+                    <select id="translation-effort-policy">
+                      <option value="adaptive">adaptive</option>
+                      <option value="fixed_high">fixed_high</option>
+                      <option value="fixed_xhigh">fixed_xhigh</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="translation-image-mode">Image Mode</label>
+                    <select id="translation-image-mode">
+                      <option value="off">off</option>
+                      <option value="auto">auto</option>
+                      <option value="always">always</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="translation-ocr-mode">OCR Mode</label>
+                    <select id="translation-ocr-mode">
+                      <option value="off">off</option>
+                      <option value="auto">auto</option>
+                      <option value="always">always</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="translation-ocr-engine">OCR Engine</label>
+                    <select id="translation-ocr-engine">
+                      <option value="local">local</option>
+                      <option value="local_then_api">local_then_api</option>
+                      <option value="api">api</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="translation-start-page">Start Page</label>
+                    <input id="translation-start-page" type="number" min="1" step="1">
+                  </div>
+                  <div class="field">
+                    <label for="translation-end-page">End Page</label>
+                    <input id="translation-end-page" type="number" min="1" step="1">
+                  </div>
+                  <div class="field">
+                    <label for="translation-max-pages">Max Pages</label>
+                    <input id="translation-max-pages" type="number" min="1" step="1">
+                  </div>
+                  <div class="field">
+                    <label for="translation-workers">Parallel Workers</label>
+                    <input id="translation-workers" type="number" min="1" max="6" step="1">
+                  </div>
+                  <div class="field">
+                    <label for="translation-context-file">Context File Path</label>
+                    <input id="translation-context-file" type="text" placeholder="Optional context file path">
+                  </div>
+                  <div class="field">
+                    <label for="translation-glossary-file">Glossary File Path</label>
+                    <input id="translation-glossary-file" type="text" placeholder="Optional glossary file path">
+                  </div>
+                  <div class="field checkbox-field">
+                    <label><input id="translation-resume" type="checkbox" checked> Resume</label>
+                  </div>
+                  <div class="field checkbox-field">
+                    <label><input id="translation-page-breaks" type="checkbox" checked> Insert page breaks</label>
+                  </div>
+                  <div class="field checkbox-field">
+                    <label><input id="translation-keep-intermediates" type="checkbox" checked> Keep intermediates</label>
+                  </div>
+                  <div class="field field-wide">
+                    <label for="translation-context-text">Context Text</label>
+                    <textarea id="translation-context-text" rows="4" placeholder="Optional context text for the translation run."></textarea>
+                  </div>
+                </div>
+              </details>
+            </form>
+            <details class="details-panel operator-only" id="translation-details">
+              <summary>
+                <span>Translation diagnostics</span>
+                <span class="details-hint" id="translation-hint">Run requests, source-upload details, and backend validation appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="translation-diagnostics"></pre>
+            </details>
+          </div>
+
+          <div class="panel workspace-panel workspace-panel-status">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Translation</p>
+                <h2>Run Status</h2>
+                <p class="panel-copy" id="translation-status">Choose a source file to begin.</p>
+              </div>
+              <div class="panel-actions">
+                <button type="button" class="ghost-button hidden" id="translation-open-completion">Finish Translation</button>
+                <button type="button" class="ghost-button beginner-technical-control" id="translation-refresh">Refresh Translation State</button>
+              </div>
+            </div>
+            <div class="run-status-shell" id="translation-run-status-shell">
+              <div class="run-status-summary">
+                <div>
+                  <p class="run-status-label">Progress</p>
+                  <strong id="translation-progress-percent">0%</strong>
+                </div>
+                <span class="status-chip info" id="translation-run-status-chip">Ready</span>
+              </div>
+              <div class="run-status-bar" id="translation-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div class="run-status-bar-fill" id="translation-progress-bar"></div>
+              </div>
+              <p class="run-status-task" id="translation-current-task">Choose a source file to begin.</p>
+              <div class="summary-grid run-status-grid">
+                <article class="summary-card">
+                  <h3>Pages</h3>
+                  <p id="translation-run-pages">0 / --</p>
+                </article>
+                <article class="summary-card">
+                  <h3>Current page</h3>
+                  <p id="translation-run-current-page">Not started</p>
+                </article>
+                <article class="summary-card">
+                  <h3>Image / retry</h3>
+                  <p id="translation-run-image-retry">No image or retry markers yet.</p>
+                </article>
+                <article class="summary-card">
+                  <h3>Review / errors</h3>
+                  <p id="translation-run-alerts">No flagged pages or errors.</p>
+                </article>
+              </div>
+            </div>
+            <div id="translation-numeric-warning" class="result-card quality-warning hidden" aria-live="polite"></div>
+            <div id="translation-result" class="result-card subtle-result-card empty-state">No translation job has run in this workspace yet.</div>
+            <details class="details-panel operator-only" id="translation-job-details">
+              <summary>
+                <span>Translation job state</span>
+                <span class="details-hint" id="translation-job-hint">Latest progress, log tail, review queue, and failure context appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="translation-job-diagnostics"></pre>
+            </details>
+          </div>
+
+          <div class="panel workspace-panel workspace-action-rail">
+            <p class="workspace-action-helper" id="translation-action-helper">Choose a PDF or image to enable Start Translate.</p>
+            <div class="workspace-action-buttons simple-action-buttons">
+              <button type="button" class="primary-button" id="translation-start">Start Translate</button>
+              <button type="button" id="translation-cancel">Cancel</button>
+              <details class="action-overflow-menu">
+                <summary id="translation-overflow-toggle">...</summary>
+                <div class="action-overflow-content">
+                  <button type="button" id="translation-analyze">Analyze Only</button>
+                  <button type="button" id="translation-resume-btn">Resume Translation</button>
+                  <button type="button" id="translation-rebuild">Rebuild DOCX</button>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          </div>
+
+          <div class="simple-task-shell hidden" data-task-panel="interpretation">
+
+          <div class="panel workspace-panel workspace-panel-interpretation-session hidden" id="interpretation-session-shell">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Interpretation</p>
+                <h2>Gmail interpretation ready</h2>
+              </div>
+            </div>
+            <p class="panel-copy" id="interpretation-session-status">Review the notice details, then create the Gmail reply.</p>
+            <div id="interpretation-session-result" class="result-card empty-state">A Gmail interpretation summary appears here when the notice is ready.</div>
+            <div class="panel-actions">
+              <button type="button" class="primary-button" id="interpretation-session-primary">Review details</button>
+              <button type="button" id="interpretation-session-open-full-workspace" data-target-view="gmail-intake">Review Gmail message</button>
+            </div>
+          </div>
+
+          <div class="panel upload-panel workspace-panel workspace-panel-autofill" id="interpretation-intake-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Interpretation</p>
+                <h2>Start Interpretation Request</h2>
+              </div>
+            </div>
+            <p class="panel-copy" id="autofill-status">Upload a notification PDF or screenshot to recover the case details, or start a blank request.</p>
+            <div class="upload-grid">
+              <form id="notification-upload-form" class="upload-form">
+                <label for="notification-file">Notification PDF</label>
+                <input id="notification-file" name="file" type="file" accept=".pdf,application/pdf" required>
+                <button id="notification-submit" type="submit">Recover from notification PDF</button>
+              </form>
+              <form id="photo-upload-form" class="upload-form">
+                <label for="photo-file">Photo / Screenshot</label>
+                <input id="photo-file" name="file" type="file" accept="image/*" required>
+                <button id="photo-submit" type="submit">Recover from photo or screenshot</button>
+              </form>
+              <div id="google-photos-import-panel" class="upload-form">
+                <label>Google Photos</label>
+                <div class="panel-actions">
+                  <button id="google-photos-connect" type="button">Connect Google Photos</button>
+                  <button id="google-photos-choose" type="button">Choose from Google Photos</button>
+                  <a id="google-photos-open-signin" class="ghost-button hidden" href="#" target="_blank" rel="noopener noreferrer" aria-hidden="true" tabindex="-1">Open Google sign-in</a>
+                  <a id="google-photos-open-picker" class="ghost-button hidden" href="#" target="_blank" rel="noopener noreferrer" aria-hidden="true" tabindex="-1">Open Google Photos Picker</a>
+                </div>
+                <p class="panel-copy" id="google-photos-status">Google Photos connection status appears here.</p>
+                <p class="field-hint" id="google-photos-guidance">Use the same Google account in the Google Photos Picker tab that you used to connect LegalPDF. If Google Photos says it cannot add photos, click Reconnect Google Photos and connect again. After selecting one image, click Done.</p>
+              </div>
+            </div>
+            <div id="google-photos-summary" class="result-card empty-state">No Google Photos selection yet.</div>
+            <details class="details-panel operator-only" id="autofill-details">
+              <summary>
+                <span>Autofill diagnostics</span>
+                <span class="details-hint" id="autofill-hint">Metadata extraction details appear here after an upload.</span>
+              </summary>
+              <pre class="diagnostics-box" id="autofill-diagnostics"></pre>
+            </details>
+          </div>
+
+          <div class="panel workspace-panel workspace-panel-interpretation" id="interpretation-seed-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Interpretation</p>
+                <h2>Review Case Details</h2>
+              </div>
+            </div>
+            <p class="panel-copy" id="form-status">Check the recovered details, then save the case record or create the fee-request document.</p>
+            <div id="interpretation-review-home-result" class="result-card empty-state">Upload a notification PDF or screenshot to recover the case details, or start a blank request.</div>
+          </div>
+
+          <div class="panel workspace-panel workspace-action-rail interpretation-action-rail" id="interpretation-action-rail">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Interpretation</p>
+                <h2>Next step</h2>
+              </div>
+            </div>
+            <div class="workspace-action-buttons simple-action-buttons">
+              <button type="button" class="primary-button" id="interpretation-open-review">Review details</button>
+              <button type="button" id="clear-form">Start blank request</button>
+              <details class="action-overflow-menu">
+                <summary id="interpretation-overflow-toggle">...</summary>
+                <div class="action-overflow-content">
+                  <button type="button" id="reload-history">Refresh history</button>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          </div>
+        </section>
+
+        <section class="page-view hidden secondary-route-view production-secondary-view" data-view="recent-jobs">
+          <div class="panel secondary-route-hero">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Recent Work</p>
+                <h2>Recent Work</h2>
+                <p class="panel-copy">Open a saved case record or check a recent translation run. Older lists stay tucked away until you need them.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="secondary-route-sheet recent-jobs-sheet">
+            <div class="panel secondary-route-main">
+              <div class="panel-header">
+                <div>
+                  <h2>Saved Cases</h2>
+                  <p class="panel-copy" id="recent-jobs-status">Loading saved cases...</p>
+                </div>
+              </div>
+              <div id="recent-jobs-list" class="history-list"></div>
+            </div>
+
+            <div class="panel secondary-route-side">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">How it works</p>
+                  <h2>Open saved work</h2>
+                </div>
+              </div>
+              <div class="result-card">
+                <div class="result-header">
+                  <div>
+                    <strong>Translation cases and interpretation requests reopen in their guided drawers.</strong>
+                    <p>Translation cases open the Finish Translation drawer. Interpretation cases open the Review Interpretation Request drawer. Older lists are available below.</p>
+                  </div>
+                  <span class="status-chip info">Guided</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <details class="shell-collapsible history-route-collapsible">
+            <summary>
+              <span>Translation Runs</span>
+              <span class="details-hint" id="translation-jobs-status">Loading recent translation runs...</span>
+            </summary>
+            <div class="shell-collapsible-body">
+              <div id="translation-jobs-list" class="history-list"></div>
+            </div>
+          </details>
+
+          <details class="shell-collapsible history-route-collapsible">
+            <summary>
+              <span id="translation-history-heading">Saved Translation Cases</span>
+              <span class="details-hint">Older saved translation cases stay here when you need them.</span>
+            </summary>
+            <div class="shell-collapsible-body">
+              <div id="translation-history-list" class="history-list"></div>
+            </div>
+          </details>
+
+          <details class="shell-collapsible history-route-collapsible">
+            <summary>
+              <span id="history-heading">Saved Interpretation Requests</span>
+              <span class="details-hint">Older saved interpretation requests stay here when you need them.</span>
+            </summary>
+            <div class="shell-collapsible-body">
+              <div id="history-list" class="history-list"></div>
+            </div>
+          </details>
+        </section>
+
+        <section class="page-view hidden secondary-route-view operator-route-view" data-view="settings">
+          <div class="panel secondary-route-hero">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Settings</p>
+                <h2>App Settings</h2>
+                <p class="panel-copy">Set daily defaults, provider keys, Gmail reply setup, and Word/PDF checks. Advanced diagnostics stay tucked away until needed.</p>
+              </div>
+              <div class="panel-actions">
+                <button type="button" class="ghost-button" id="settings-refresh-admin">Refresh settings</button>
+                <button type="button" class="ghost-button" id="settings-run-preflight">Check tools</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="secondary-route-sheet operator-route-sheet settings-route-sheet">
+            <div class="panel secondary-route-main">
+              <p class="panel-copy" id="settings-status">Loading app settings and tool checks...</p>
+              <div class="summary-grid" id="settings-summary-grid"></div>
+              <form id="settings-form" class="form-grid compact-grid">
+                <details class="shell-collapsible field-wide" id="settings-defaults-section" open>
+                  <summary>
+                    <span>Daily defaults</span>
+                    <span class="details-hint">Choose the defaults used when you start a new translation.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <div class="field">
+                      <label for="settings-default-lang">Default language</label>
+                      <select id="settings-default-lang">
+                        <option value="EN">English (EN)</option>
+                        <option value="FR">French (FR)</option>
+                        <option value="AR">Arabic (AR)</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-default-effort">Default thinking effort</label>
+                      <select id="settings-default-effort">
+                        <option value="high">High</option>
+                        <option value="xhigh">Extra high</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-default-effort-policy">Thinking effort policy</label>
+                      <select id="settings-default-effort-policy">
+                        <option value="adaptive">Adaptive</option>
+                        <option value="fixed_high">Always high</option>
+                        <option value="fixed_xhigh">Always extra high</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-default-images-mode">Image handling</label>
+                      <select id="settings-default-images-mode">
+                        <option value="off">Off</option>
+                        <option value="auto">Automatic</option>
+                        <option value="always">Always</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-default-outdir">Default output folder</label>
+                      <input id="settings-default-outdir" type="text">
+                      <p class="field-hint">Leave blank to keep using the app's normal output location, or set a folder you use every day.</p>
+                    </div>
+                    <div class="field">
+                      <label for="settings-default-workers">Parallel workers</label>
+                      <input id="settings-default-workers" type="number" min="1" max="6" step="1">
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-default-resume" type="checkbox"> Resume unfinished runs by default</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-default-keep" type="checkbox"> Keep intermediate files</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-default-breaks" type="checkbox"> Insert page breaks</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-allow-xhigh" type="checkbox"> Allow extra-high effort when needed</label>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="shell-collapsible field-wide" id="settings-integrations-section">
+                  <summary>
+                    <span>Text, image, and Gmail tools</span>
+                    <span class="details-hint">Provider, OCR, and Gmail reply settings stay here when you need them.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <div class="field">
+                      <label for="settings-ocr-provider">Current OCR provider</label>
+                      <select id="settings-ocr-provider">
+                        <option value="openai">OpenAI</option>
+                        <option value="gemini">Gemini</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-ocr-provider-default">Default OCR provider</label>
+                      <select id="settings-ocr-provider-default">
+                        <option value="openai">OpenAI</option>
+                        <option value="gemini">Gemini</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-ocr-mode-default">OCR mode</label>
+                      <select id="settings-ocr-mode-default">
+                        <option value="off">Off</option>
+                        <option value="auto">Automatic</option>
+                        <option value="always">Always</option>
+                      </select>
+                      <p class="field-hint">Choose when image or scanned-page OCR should run automatically.</p>
+                    </div>
+                    <div class="field">
+                      <label for="settings-ocr-engine-default">OCR engine</label>
+                      <select id="settings-ocr-engine-default">
+                        <option value="local">Local</option>
+                        <option value="local_then_api">Local, then API</option>
+                        <option value="api">API</option>
+                      </select>
+                      <p class="field-hint">Use local OCR first when possible, then fall back to API only when needed.</p>
+                    </div>
+                    <div class="field">
+                      <label for="settings-ocr-api-base-url">OCR base URL</label>
+                      <input id="settings-ocr-api-base-url" type="text">
+                    </div>
+                    <div class="field">
+                      <label for="settings-ocr-api-model">OCR model</label>
+                      <input id="settings-ocr-api-model" type="text">
+                    </div>
+                    <div class="field">
+                      <label for="settings-ocr-api-env">OCR API environment variable</label>
+                      <input id="settings-ocr-api-env" type="text">
+                      <p class="field-hint">Use this when OCR should read its API key from an environment variable.</p>
+                    </div>
+                    <div class="field">
+                      <label for="settings-gmail-gog-path">Gmail helper path</label>
+                      <input id="settings-gmail-gog-path" type="text">
+                      <p class="field-hint">Point this to the local Gmail helper only if Gmail reply automation needs help.</p>
+                    </div>
+                    <div class="field">
+                      <label for="settings-gmail-account-email">Gmail account</label>
+                      <input id="settings-gmail-account-email" type="email">
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-gmail-bridge-enabled" type="checkbox"> Enable Gmail attachment intake</label>
+                    </div>
+                    <div class="field">
+                      <label for="settings-gmail-bridge-port">Gmail intake port</label>
+                      <input id="settings-gmail-bridge-port" type="number" min="1" max="65535" step="1">
+                      <p class="field-hint">Use the default port unless the Gmail intake helper tells you to change it.</p>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="shell-collapsible field-wide" id="settings-credentials-section">
+                  <summary>
+                    <span>Provider keys and local tools</span>
+                    <span class="details-hint">Save or test provider keys and local helper tools without showing stored values.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <div class="field field-wide">
+                      <label for="settings-translation-key-input">Translation provider key (write-only)</label>
+                      <input id="settings-translation-key-input" type="password" autocomplete="off" placeholder="Paste a new OpenAI API key to save securely">
+                      <p class="field-hint">Save a translation key here without showing the stored value later.</p>
+                      <p class="field-hint" id="settings-translation-key-state">Browser credential status appears here after refresh.</p>
+                    </div>
+                    <div class="form-actions field-wide">
+                      <button type="button" id="settings-save-translation-key">Save translation key</button>
+                      <button type="button" id="settings-clear-translation-key">Clear stored translation key</button>
+                      <button type="button" id="settings-test-translation">Test translation provider</button>
+                    </div>
+                    <div class="field field-wide">
+                      <label for="settings-ocr-key-input">OCR key (write-only)</label>
+                      <input id="settings-ocr-key-input" type="password" autocomplete="off" placeholder="Paste a provider key to save securely for OCR">
+                      <p class="field-hint">Save an OCR key here if image-reading should use an API provider.</p>
+                      <p class="field-hint" id="settings-ocr-key-state">OCR credential status appears here after refresh.</p>
+                    </div>
+                    <div class="form-actions field-wide">
+                      <button type="button" id="settings-save-ocr-key">Save OCR key</button>
+                      <button type="button" id="settings-clear-ocr-key">Clear stored OCR key</button>
+                      <button type="button" id="settings-test-ocr">Test OCR provider</button>
+                    </div>
+                    <div class="field field-wide">
+                      <label>Browser native host</label>
+                      <p class="field-hint" id="settings-native-host-state">Browser helper status appears here after refresh.</p>
+                    </div>
+                    <div class="form-actions field-wide">
+                      <button type="button" id="settings-test-native-host">Test browser helper</button>
+                      <button type="button" id="settings-repair-native-host">Repair browser helper</button>
+                    </div>
+                    <div class="field field-wide">
+                      <label>Word/PDF finalization</label>
+                      <p class="field-hint" id="settings-word-pdf-export-state">Word/PDF readiness appears here after refresh.</p>
+                    </div>
+                    <div class="form-actions field-wide">
+                      <button type="button" id="settings-test-word-pdf">Test Word/PDF export</button>
+                    </div>
+                    <p class="field-hint field-wide">
+                      Stored translation keys override <code>OPENAI_API_KEY</code>. When no translation key is stored, the browser can also reuse a stored OpenAI OCR key for translation. When OCR uses OpenAI and no dedicated OCR key is stored, the browser can fall back to the stored OpenAI translation key.
+                    </p>
+                  </div>
+                </details>
+
+                <details class="shell-collapsible field-wide" id="settings-ops-section">
+                  <summary>
+                    <span>Advanced diagnostics and saved-work options</span>
+                    <span class="details-hint">Open this only when you are tuning logging, recovery, or saved-work settings.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <p class="field-hint field-wide">Advanced logging, recovery, and Saved work database options stay here when you need them.</p>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-diagnostics-admin-mode" type="checkbox"> Advanced diagnostics mode</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-diagnostics-snippets" type="checkbox"> Include sanitized snippets</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-diagnostics-verbose" type="checkbox"> Verbose metadata logs</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-diagnostics-cost" type="checkbox"> Show cost summary</label>
+                    </div>
+                    <div class="field">
+                      <label for="settings-transport-retries">Transport Retries</label>
+                      <input id="settings-transport-retries" type="number" min="0" max="12" step="1">
+                    </div>
+                    <div class="field">
+                      <label for="settings-backoff-cap">Backoff Cap Seconds</label>
+                      <input id="settings-backoff-cap" type="number" min="1" max="120" step="0.1">
+                    </div>
+                    <div class="field">
+                      <label for="settings-timeout-text">Text Timeout Seconds</label>
+                      <input id="settings-timeout-text" type="number" min="5" max="600" step="1">
+                    </div>
+                    <div class="field">
+                      <label for="settings-timeout-image">Image Timeout Seconds</label>
+                      <input id="settings-timeout-image" type="number" min="5" max="1200" step="1">
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-metadata-ai-enabled" type="checkbox"> Metadata AI enabled</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-metadata-photo-enabled" type="checkbox"> Metadata photo enabled</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-service-equals-case" type="checkbox"> Service equals case by default</label>
+                    </div>
+                    <div class="field field-wide">
+                      <label for="settings-default-rate-json">Default rates by language</label>
+                      <textarea id="settings-default-rate-json" rows="4" placeholder='{"EN":0.08,"FR":0.08,"AR":0.09}'></textarea>
+                      <p class="field-hint">Use this advanced field to set default per-language rates when fee details should start filled in automatically.</p>
+                    </div>
+                  </div>
+                </details>
+
+                <div class="form-actions">
+                  <button type="button" class="primary-button" id="settings-save">Save settings</button>
+                  <button type="button" id="settings-test-gmail">Check Gmail reply setup</button>
+                </div>
+              </form>
+              <details class="details-panel operator-only" id="settings-admin-details">
+                <summary>
+                  <span>Settings diagnostics</span>
+                  <span class="details-hint" id="settings-admin-hint">Save responses and provider-state refresh details appear here.</span>
+                </summary>
+                <pre class="diagnostics-box" id="settings-admin-diagnostics"></pre>
+              </details>
+              <details class="details-panel operator-only" id="settings-test-details">
+                <summary>
+                  <span>Provider test output</span>
+                  <span class="details-hint" id="settings-test-hint">Native-host, translation auth, OCR, Word PDF, and Gmail preflight checks appear here.</span>
+                </summary>
+                <pre class="diagnostics-box" id="settings-test-diagnostics"></pre>
+              </details>
+            </div>
+
+            <div class="panel secondary-route-side">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Tools</p>
+                  <h2>Check app tools</h2>
+                </div>
+              </div>
+              <p class="panel-copy">Check whether translation, OCR, Gmail replies, and Word/PDF output are ready.</p>
+              <div class="status-grid" id="settings-capability-grid"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page-view hidden secondary-route-view production-secondary-view" data-view="profile">
+          <div class="panel secondary-route-hero">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Profiles</p>
+                <h2>Profiles</h2>
+                <p class="panel-copy">Set the contact, payment, and travel details used in fee-request documents and Gmail replies.</p>
+              </div>
+              <div class="panel-actions">
+                <button type="button" class="ghost-button" id="new-profile">Add profile</button>
+                <button type="button" class="ghost-button" id="import-live-profiles">Copy profiles from live app</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="secondary-route-sheet profile-route-sheet">
+            <div class="panel secondary-route-main">
+              <p class="panel-copy" id="profile-status">Loading profile summaries...</p>
+              <p class="eyebrow profile-section-label">Main profile summary</p>
+              <div id="profile-primary-card" class="result-card empty-state">No main profile is set yet. Add a profile or choose one from the list.</div>
+              <div class="profile-records-heading">
+                <p class="eyebrow profile-section-label">Profile records</p>
+                <p class="panel-copy">Edit saved contact, payment, and travel details here.</p>
+              </div>
+              <div id="profile-list" class="profile-grid"></div>
+              <details class="details-panel operator-only" id="profile-details">
+                <summary>
+                  <span>Profile diagnostics</span>
+                  <span class="details-hint" id="profile-hint">Profile saves, deletes, and import details appear here.</span>
+                </summary>
+                <pre class="diagnostics-box" id="profile-diagnostics"></pre>
+              </details>
+            </div>
+
+            <div class="panel secondary-route-side">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">How it works</p>
+                  <h2>Choose the details used in documents</h2>
+                </div>
+              </div>
+              <div class="result-card">
+                <div class="result-header">
+                  <div>
+                    <strong>The main profile is used in fee-request documents and Gmail replies.</strong>
+                    <p>Edit one profile at a time, then save your changes. Travel distances help fill interpretation travel details automatically.</p>
+                  </div>
+                  <span class="status-chip info">Setup</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page-view hidden secondary-route-view operator-route-view" data-view="power-tools">
+          <div class="panel secondary-route-hero">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Advanced Tools</p>
+                <h2>Advanced Tools</h2>
+                <p class="panel-copy">Use glossary, quality-check, and troubleshooting tools when you need more control. Technical details stay in the sections below.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="secondary-route-stack operator-route-stack">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Glossary Setup</h2>
+              <div class="panel-actions">
+                <button type="button" class="ghost-button" id="power-tools-refresh">Refresh tools</button>
+              </div>
+            </div>
+            <p class="panel-copy" id="power-tools-status">Loading advanced glossary, quality-check, and troubleshooting tools...</p>
+            <form id="glossary-workspace-form" class="form-grid">
+              <div class="form-section-title">Glossary files and advanced data</div>
+              <div class="field">
+                <label for="glossary-project-path">Project glossary file</label>
+                <input id="glossary-project-path" type="text">
+              </div>
+              <div class="field">
+                <label for="glossary-markdown-title">Export title</label>
+                <input id="glossary-markdown-title" type="text" value="AI Glossary">
+              </div>
+              <div class="field field-wide">
+                <label for="glossary-personal-json">Personal glossary data JSON (advanced)</label>
+                <textarea id="glossary-personal-json" rows="10"></textarea>
+              </div>
+              <div class="field field-wide">
+                <label for="glossary-project-json">Project glossary data JSON (advanced)</label>
+                <textarea id="glossary-project-json" rows="10"></textarea>
+              </div>
+              <div class="field field-wide">
+                <label for="glossary-enabled-tiers-json">Enabled glossary tiers JSON (advanced)</label>
+                <textarea id="glossary-enabled-tiers-json" rows="5"></textarea>
+              </div>
+              <div class="field field-wide">
+                <label for="glossary-prompt-addendum-json">Prompt addendum JSON (advanced)</label>
+                <textarea id="glossary-prompt-addendum-json" rows="5"></textarea>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="primary-button" id="glossary-save">Save glossary data</button>
+                <button type="button" id="glossary-export-markdown">Export glossary markdown</button>
+              </div>
+            </form>
+            <details class="details-panel" id="power-tools-glossary-details">
+              <summary>
+                <span>Technical glossary details</span>
+                <span class="details-hint" id="power-tools-glossary-hint">Glossary save and markdown export details appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="power-tools-glossary-diagnostics"></pre>
+            </details>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Build Glossary Suggestions</h2>
+            </div>
+            <form id="glossary-builder-form" class="form-grid compact-grid">
+              <div class="field">
+                <label for="builder-source-mode">Source selection</label>
+                <select id="builder-source-mode">
+                  <option value="run_folders">Recent run folders</option>
+                  <option value="select_pdfs">Specific PDFs</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="builder-target-lang">Target language</label>
+                <select id="builder-target-lang">
+                  <option value="EN">EN</option>
+                  <option value="FR">FR</option>
+                  <option value="AR">AR</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="builder-mode">Suggestion mode</label>
+                <select id="builder-mode">
+                  <option value="full_text">Full text</option>
+                  <option value="headers_only">Headers only</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="builder-lemma-effort">Suggestion review depth</label>
+                <select id="builder-lemma-effort">
+                  <option value="high">Thorough</option>
+                  <option value="xhigh">Extra thorough</option>
+                </select>
+              </div>
+              <div class="field checkbox-field">
+                <label><input id="builder-lemma-enabled" type="checkbox"> Group similar terms</label>
+              </div>
+              <div class="field field-wide">
+                <label for="builder-run-dirs">Recent run folders</label>
+                <textarea id="builder-run-dirs" rows="4" placeholder="One run folder per line"></textarea>
+              </div>
+              <div class="field field-wide">
+                <label for="builder-pdf-paths">Specific PDF paths</label>
+                <textarea id="builder-pdf-paths" rows="4" placeholder="One PDF path per line"></textarea>
+              </div>
+              <div class="field field-wide">
+                <label for="builder-approved-json">Suggestion list JSON (advanced)</label>
+                <textarea id="builder-approved-json" rows="10" placeholder="Builder output will appear here. Edit translations or remove rows before applying."></textarea>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="primary-button" id="builder-run">Build suggestions</button>
+                <button type="button" id="builder-apply">Apply selected suggestions</button>
+              </div>
+            </form>
+            <details class="details-panel" id="power-tools-builder-details">
+              <summary>
+                <span>Technical builder details</span>
+                <span class="details-hint" id="power-tools-builder-hint">Glossary suggestion results and apply responses appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="power-tools-builder-diagnostics"></pre>
+            </details>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Quality Check</h2>
+            </div>
+            <form id="calibration-form" class="form-grid compact-grid">
+              <div class="field">
+                <label for="calibration-pdf-path">PDF path</label>
+                <input id="calibration-pdf-path" type="text">
+              </div>
+              <div class="field">
+                <label for="calibration-output-dir">Output folder</label>
+                <input id="calibration-output-dir" type="text">
+              </div>
+              <div class="field">
+                <label for="calibration-target-lang">Target language</label>
+                <select id="calibration-target-lang">
+                  <option value="EN">EN</option>
+                  <option value="FR">FR</option>
+                  <option value="AR">AR</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="calibration-sample-pages">Sample pages</label>
+                <input id="calibration-sample-pages" type="number" min="1" max="20" step="1">
+              </div>
+              <div class="field">
+                <label for="calibration-user-seed">Custom seed (advanced)</label>
+                <input id="calibration-user-seed" type="text">
+              </div>
+              <div class="field">
+                <label for="calibration-excerpt-max-chars">Excerpt max characters</label>
+                <input id="calibration-excerpt-max-chars" type="number" min="40" max="500" step="1">
+              </div>
+              <div class="field checkbox-field field-wide">
+                <label><input id="calibration-include-excerpts" type="checkbox"> Include excerpts in saved quality-check output</label>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="primary-button" id="calibration-run">Run quality check</button>
+              </div>
+            </form>
+            <details class="details-panel" id="power-tools-calibration-details">
+              <summary>
+                <span>Technical quality-check details</span>
+                <span class="details-hint" id="power-tools-calibration-hint">Quality-check report paths and suggestion details appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="power-tools-calibration-diagnostics"></pre>
+            </details>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Troubleshooting Files and Run Report</h2>
+            </div>
+            <form id="diagnostics-tools-form" class="form-grid compact-grid">
+              <div class="field field-wide">
+                <label for="diagnostics-run-dir">Run directory (optional)</label>
+                <input id="diagnostics-run-dir" type="text" placeholder="Optional run directory; leave blank to use the most recent run">
+              </div>
+              <div class="form-actions">
+                <button type="button" class="ghost-button" id="diagnostics-arm-window-trace">Capture next startup window trace</button>
+                <button type="button" class="primary-button" id="diagnostics-create-bundle">Create troubleshooting bundle</button>
+                <button type="button" id="diagnostics-generate-report">Generate run report</button>
+              </div>
+            </form>
+            <div id="power-tools-latest-run-dirs" class="history-list compact-list"></div>
+            <details class="details-panel" id="power-tools-diagnostics-details">
+              <summary>
+                <span>Technical troubleshooting details</span>
+                <span class="details-hint" id="power-tools-diagnostics-hint">Troubleshooting bundle and run report outputs appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="power-tools-diagnostics-diagnostics"></pre>
+            </details>
+          </div>
+          </div>
+        </section>
+
+        <section class="page-view hidden secondary-route-view operator-route-view" data-view="extension-lab">
+          <div class="panel secondary-route-hero">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Browser Helper</p>
+                <h2>Browser Helper Checks</h2>
+                <p class="panel-copy">Check whether the browser helper used by Gmail intake is ready. Use the technical details below only when troubleshooting.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="secondary-route-stack operator-route-stack">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Browser Helper Checks</h2>
+              <div class="panel-actions">
+                <button type="button" class="ghost-button" id="refresh-extension">Refresh checks</button>
+              </div>
+            </div>
+            <p class="panel-copy" id="extension-status">
+              Loading browser helper checks...
+            </p>
+            <div class="status-grid" id="extension-status-grid"></div>
+            <details class="details-panel" id="extension-details">
+              <summary>
+                <span>Technical details</span>
+                <span class="details-hint" id="extension-hint">Browser helper, extension, and readiness details.</span>
+              </summary>
+              <pre class="diagnostics-box" id="extension-diagnostics"></pre>
+            </details>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Technical Gmail Handoff Test</h2>
+            </div>
+            <p class="panel-copy" id="simulator-status">Preview the technical request used for Gmail intake. This does not replace the real Gmail flow.</p>
+            <form id="extension-simulator-form" class="form-grid compact-grid">
+              <div class="field">
+                <label for="sim-message-id">Message ID</label>
+                <input id="sim-message-id" type="text">
+              </div>
+              <div class="field">
+                <label for="sim-thread-id">Thread ID</label>
+                <input id="sim-thread-id" type="text">
+              </div>
+              <div class="field">
+                <label for="sim-subject">Subject</label>
+                <input id="sim-subject" type="text">
+              </div>
+              <div class="field">
+                <label for="sim-account-email">Account email</label>
+                <input id="sim-account-email" type="email">
+              </div>
+              <div class="form-actions">
+                <button type="submit" id="simulate-handoff">Preview handoff request</button>
+              </div>
+            </form>
+            <details class="details-panel" id="simulator-details">
+              <summary>
+                <span>Technical request preview</span>
+                <span class="details-hint" id="simulator-hint">Preview request payload, endpoint, and readiness.</span>
+              </summary>
+              <pre class="diagnostics-box" id="simulator-diagnostics"></pre>
+            </details>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Readiness Reason Guide</h2>
+            </div>
+            <p class="panel-copy">These messages explain why Gmail intake is ready or needs attention. Technical codes stay visible for troubleshooting.</p>
+            <div id="extension-reason-catalog" class="history-list compact-list"></div>
+          </div>
+          </div>
+        </section>
+
+        <div class="workspace-drawer-backdrop hidden" id="profile-editor-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer workspace-drawer-wide" id="profile-editor-drawer" aria-labelledby="profile-editor-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Profiles</p>
+                <h2 id="profile-editor-drawer-title">Edit Profile</h2>
+              </div>
+              <button type="button" class="ghost-button" id="profile-close-editor">Close</button>
+            </div>
+            <p class="panel-copy" id="profile-editor-status">New profile draft. Fill the required details, then save.</p>
+            <form id="profile-editor-form" class="form-grid compact-grid">
+              <input id="profile-editor-id" type="hidden">
+              <div class="field">
+                <label for="profile-editor-first-name">First name</label>
+                <input id="profile-editor-first-name" type="text">
+              </div>
+              <div class="field">
+                <label for="profile-editor-last-name">Last name</label>
+                <input id="profile-editor-last-name" type="text">
+              </div>
+              <div class="field">
+                <label for="profile-editor-document-name-override">Document name override</label>
+                <input id="profile-editor-document-name-override" type="text">
+                <p class="field-hint">Optional name used in the document signature.</p>
+              </div>
+              <div class="field">
+                <label for="profile-editor-email">Email</label>
+                <input id="profile-editor-email" type="email">
+              </div>
+              <div class="field">
+                <label for="profile-editor-phone-number">Phone</label>
+                <input id="profile-editor-phone-number" type="text">
+                <p class="field-hint">Optional phone number for Gmail reply signatures.</p>
+              </div>
+              <div class="field">
+                <label for="profile-editor-travel-origin-label">Travel origin</label>
+                <input id="profile-editor-travel-origin-label" type="text">
+                <p class="field-hint">Starting point used for interpretation travel-distance text.</p>
+              </div>
+              <div class="field field-wide">
+                <label for="profile-editor-postal-address">Postal address</label>
+                <textarea id="profile-editor-postal-address" rows="3"></textarea>
+              </div>
+              <div class="field">
+                <label for="profile-editor-iban">IBAN</label>
+                <input id="profile-editor-iban" type="text">
+                <p class="field-hint">Used in fee-request payment instructions.</p>
+              </div>
+              <div class="field">
+                <label for="profile-editor-iva-text">IVA text</label>
+                <input id="profile-editor-iva-text" type="text">
+              </div>
+              <div class="field">
+                <label for="profile-editor-irs-text">IRS text</label>
+                <input id="profile-editor-irs-text" type="text">
+              </div>
+              <div class="field checkbox-field field-wide">
+                <label><input id="profile-editor-make-primary" type="checkbox"> Use as the main profile when saving</label>
+              </div>
+              <div class="field field-wide">
+                <div class="distance-editor-shell">
+                  <div>
+                    <label>Interpretation distances</label>
+                    <p class="field-hint">Add one-way distances from your travel origin. These help fill interpretation travel details automatically.</p>
+                  </div>
+                  <div class="distance-editor-grid">
+                    <div class="field">
+                      <label for="profile-distance-city">City</label>
+                      <input id="profile-distance-city" type="text" placeholder="For example, Beja">
+                    </div>
+                    <div class="field">
+                      <label for="profile-distance-km">One-way distance (km)</label>
+                      <input id="profile-distance-km" type="number" min="0.1" step="0.1" placeholder="39">
+                    </div>
+                    <div class="field distance-editor-action">
+                      <button type="button" id="profile-distance-add">Add or update distance</button>
+                    </div>
+                  </div>
+                  <p class="panel-copy" id="profile-distance-status">No city distances saved yet. Add the cities you use most often.</p>
+                  <div id="profile-distance-list" class="distance-list"></div>
+                  <details class="details-panel" id="profile-distance-advanced-details">
+                    <summary>
+                      <span>Advanced distance data</span>
+                      <span class="details-hint">Use this only if you need to paste or recover saved distance data.</span>
+                    </summary>
+                    <div class="shell-collapsible-body">
+                      <div class="field field-wide">
+                        <label for="profile-editor-travel-distances-json">Distance data (JSON)</label>
+                        <textarea id="profile-editor-travel-distances-json" rows="8" placeholder='{"Beja":39,"Cuba":26}'></textarea>
+                      </div>
+                      <div class="form-actions details-inline-actions">
+                        <button type="button" class="ghost-button" id="profile-distance-sync-advanced">Refresh distance list</button>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </div>
+            </form>
+            <div class="form-actions drawer-action-row">
+              <button type="button" id="profile-set-primary">Use as main profile</button>
+              <button type="button" id="profile-delete">Delete profile</button>
+              <button type="button" id="profile-close-editor-footer">Close</button>
+              <button type="button" id="profile-save" class="primary-button">Save profile</button>
+            </div>
+          </section>
+        </div>
+
+        <div class="workspace-drawer-backdrop hidden" id="gmail-review-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer workspace-drawer-wide" id="gmail-review-drawer" aria-labelledby="gmail-review-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Gmail</p>
+                <h2 id="gmail-review-drawer-title">Choose Attachments</h2>
+              </div>
+              <div class="panel-actions">
+                <button type="button" class="ghost-button" id="gmail-minimize-review-drawer" aria-label="Minimize Review Attachments panel">Minimize</button>
+                <button type="button" class="ghost-button" id="gmail-close-review-drawer" aria-label="Close Review Attachments panel">Close</button>
+              </div>
+            </div>
+            <p class="panel-copy" id="gmail-review-status">Step 1: Choose workflow. Step 2: Pick attachment(s). Step 3: Preview or set start page if needed. Step 4: Continue.</p>
+            <div id="gmail-review-summary" class="result-card empty-state">Load this Gmail message to choose attachments.</div>
+            <details class="shell-collapsible field-wide" id="gmail-review-summary-details">
+              <summary>
+                <span>Show Message Details</span>
+                <span class="details-hint">Sender, Gmail account, exact IDs, and the full output folder stay tucked away unless you need them.</span>
+              </summary>
+              <div class="shell-collapsible-body">
+                <div id="gmail-review-summary-grid" class="summary-grid"></div>
+              </div>
+            </details>
+            <div id="gmail-noncanonical-runtime-guard" class="result-card hidden" aria-live="polite">
+              <div class="result-header">
+                <div>
+                  <strong id="gmail-noncanonical-runtime-title">Live Gmail needs the main app runtime</strong>
+                  <p id="gmail-noncanonical-runtime-message">Review actions are paused here so your Gmail attachments stay safe.</p>
+                </div>
+                <span class="status-chip warn">Review Paused</span>
+              </div>
+              <ul id="gmail-noncanonical-runtime-details"></ul>
+              <div class="form-actions drawer-action-row gmail-runtime-guard-actions">
+                <button type="button" class="ghost-button" id="gmail-restart-canonical-runtime">Restart live Gmail runtime</button>
+              </div>
+            </div>
+            <form id="gmail-prepare-form" class="form-grid compact-grid">
+              <div class="field">
+                <label for="gmail-workflow-kind">Workflow</label>
+                <select id="gmail-workflow-kind">
+                  <option value="translation">Translation</option>
+                  <option value="interpretation">Interpretation</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="gmail-target-lang">Target Language</label>
+                <select id="gmail-target-lang">
+                  <option value="EN">English (EN)</option>
+                  <option value="FR">French (FR)</option>
+                  <option value="AR">Arabic (AR)</option>
+                </select>
+              </div>
+              <div class="field field-wide">
+                <label>Attachments</label>
+                <div class="gmail-review-table-shell">
+                  <table class="gmail-review-table" aria-describedby="gmail-review-status">
+                    <thead>
+                      <tr>
+                        <th scope="col">Use</th>
+                        <th scope="col">Document</th>
+                        <th scope="col">Kind</th>
+                        <th scope="col">Size</th>
+                        <th scope="col" id="gmail-review-start-heading">Start page</th>
+                      </tr>
+                    </thead>
+                    <tbody id="gmail-attachment-list">
+                      <tr>
+                        <td colspan="5" class="empty-state">Load this Gmail message to review supported attachments.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="field field-wide">
+                <label>Current document</label>
+                <div id="gmail-review-detail" class="result-card empty-state">Select an attachment row to inspect it, preview it, and set the starting page.</div>
+              </div>
+              <div class="form-actions drawer-action-row">
+                <button type="button" class="ghost-button hidden" id="gmail-generate-failure-report">Generate Failure Report</button>
+                <button type="submit" class="primary-button" id="gmail-prepare-session">Continue with selected attachments</button>
+              </div>
+            </form>
+          </section>
+        </div>
+
+        <div class="workspace-drawer-backdrop workspace-dialog-backdrop hidden" id="gmail-preview-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer workspace-drawer-wide" id="gmail-preview-drawer" aria-labelledby="gmail-preview-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Preview</p>
+                <h2 id="gmail-preview-drawer-title">Attachment Preview</h2>
+              </div>
+              <div class="panel-actions">
+                <button type="button" class="ghost-button" id="gmail-back-to-review-drawer" aria-label="Back to Review Attachments">Back to Review</button>
+                <button type="button" class="ghost-button" id="gmail-minimize-preview-drawer" aria-label="Minimize PDF Preview">Minimize</button>
+                <button type="button" class="ghost-button" id="gmail-close-preview-drawer" aria-label="Close PDF Preview">Close</button>
+              </div>
+            </div>
+            <p class="panel-copy" id="gmail-preview-status">Open preview when you need to inspect the current attachment more closely.</p>
+            <div id="gmail-preview-summary" class="result-card empty-state">Choose Preview from the review drawer to inspect an attachment here.</div>
+            <div class="gmail-preview-toolbar">
+              <div class="gmail-review-preview-pager">
+                <button type="button" id="gmail-preview-prev">Previous</button>
+                <label class="gmail-review-inline-label" for="gmail-preview-page">Page</label>
+                <input id="gmail-preview-page" type="number" min="1" step="1" value="1">
+                <button type="button" id="gmail-preview-next">Next</button>
+              </div>
+              <a id="gmail-preview-open-tab" class="ghost-button hidden" href="#" target="_blank" rel="noopener noreferrer">Open in new tab</a>
+            </div>
+            <div id="gmail-preview-frame" class="gmail-inline-preview empty-state">Preview opens here when requested.</div>
+            <div class="form-actions drawer-action-row gmail-preview-action-row">
+              <button type="button" class="primary-button" id="gmail-preview-apply">Use current page</button>
+            </div>
+          </section>
+        </div>
+
+        <div class="workspace-drawer-backdrop hidden" id="gmail-session-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer" id="gmail-session-drawer" aria-labelledby="gmail-session-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Gmail</p>
+                <h2 id="gmail-session-drawer-title">Continue Gmail Step</h2>
+              </div>
+              <button type="button" class="ghost-button" id="gmail-close-session-drawer">Close</button>
+            </div>
+            <p class="panel-copy" id="gmail-session-status">No Gmail translation or interpretation step is active yet.</p>
+            <div id="gmail-session-result" class="result-card empty-state">Continue Gmail from here when a translation or interpretation step is ready.</div>
+            <div class="form-grid compact-grid">
+              <div class="field">
+                <label for="gmail-final-output-filename">Final DOCX filename</label>
+                <input id="gmail-final-output-filename" type="text" placeholder="Optional filename for the final Gmail DOCX">
+              </div>
+            </div>
+            <div class="panel-actions gmail-session-actions">
+              <button type="button" id="gmail-load-translation-launch">Continue translation</button>
+              <button type="button" id="gmail-confirm-translation">Review and save this attachment</button>
+              <button type="button" id="gmail-load-interpretation-seed">Continue interpretation</button>
+              <button type="button" id="gmail-finalize-batch">Create Gmail reply</button>
+              <button type="button" id="gmail-finalize-interpretation">Finalize interpretation reply</button>
+            </div>
+            <details class="details-panel operator-only" id="gmail-session-details">
+              <summary>
+                <span>Gmail session result</span>
+                <span class="details-hint" id="gmail-session-hint">Batch progression, staged attachments, export status, and Gmail draft details appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="gmail-session-diagnostics"></pre>
+            </details>
+          </section>
+        </div>
+
+        <div class="workspace-drawer-backdrop hidden" id="translation-completion-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer workspace-drawer-wide" id="translation-completion-drawer" aria-labelledby="translation-completion-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Translation</p>
+                <h2 id="translation-completion-drawer-title">Finish Translation</h2>
+              </div>
+              <button type="button" class="ghost-button" id="translation-close-completion">Close</button>
+            </div>
+            <p class="panel-copy" id="translation-completion-status">When a translation finishes, you can review the result, download files, and save the case record here.</p>
+            <div id="translation-completion-result" class="result-card empty-state">When a translation finishes, you can review the result, download files, and save the case record here.</div>
+            <div id="translation-completion-numeric-warning" class="result-card quality-warning hidden" aria-live="polite"></div>
+            <div id="translation-arabic-review-card" class="result-card hidden">
+              <div class="result-header">
+                <div>
+                  <strong id="translation-arabic-review-title">Review Arabic document in Word</strong>
+                  <p id="translation-arabic-review-copy">Open the translated DOCX in Word, make any alignment or formatting fixes, save it, then return here.</p>
+                </div>
+                <span class="status-chip info" id="translation-arabic-review-chip">Required</span>
+              </div>
+              <div class="result-grid">
+                <div>
+                  <h3 id="translation-arabic-review-docx-label">Translated DOCX</h3>
+                  <p class="word-break" id="translation-arabic-review-docx-path">Translated DOCX unavailable.</p>
+                </div>
+              </div>
+              <div class="panel-actions translation-completion-actions translation-arabic-review-actions">
+                <button type="button" id="translation-arabic-review-open">Open in Word</button>
+                <button type="button" id="translation-arabic-review-continue-now">I saved the Word file</button>
+                <button type="button" id="translation-arabic-review-continue-without-changes">Continue without changes</button>
+              </div>
+            </div>
+            <div id="translation-gmail-step-card" class="result-card hidden">
+              <div class="result-header">
+                <div>
+                  <strong id="translation-gmail-step-title">This Gmail attachment is ready to save.</strong>
+                  <p id="translation-gmail-step-copy">Save this translated attachment, then continue with the next Gmail step.</p>
+                </div>
+                <span class="status-chip info" id="translation-gmail-step-chip">Gmail</span>
+              </div>
+              <div id="translation-gmail-step-numeric-warning" class="quality-warning-inline hidden" aria-live="polite"></div>
+              <div class="panel-actions translation-completion-actions">
+                <button type="button" class="primary-button" id="translation-gmail-confirm-current">Save this Gmail attachment</button>
+              </div>
+            </div>
+            <div class="panel-actions translation-completion-actions" id="translation-completion-actions">
+              <a id="translation-download-docx" class="ghost-button primary-button hidden" href="#" download>Download translated DOCX</a>
+            </div>
+            <details class="shell-collapsible compact-affordance translation-completion-secondary" id="translation-completion-more-downloads">
+              <summary>
+                <span>More downloads</span>
+                <span class="details-hint">Reports, review exports, and additional files</span>
+              </summary>
+              <div class="shell-collapsible-body">
+                <div class="panel-actions translation-completion-actions translation-completion-secondary-actions">
+                  <button type="button" id="translation-review-export">Download review queue</button>
+                  <button type="button" class="ghost-button" id="translation-generate-report">Generate report</button>
+                  <a id="translation-download-report" class="ghost-button hidden" href="#" download>Download report</a>
+                  <a id="translation-download-partial" class="ghost-button hidden" href="#" download>Download partial DOCX</a>
+                  <a id="translation-download-summary" class="ghost-button hidden" href="#" download>Download summary</a>
+                  <a id="translation-download-analyze" class="ghost-button hidden" href="#" download>Download analysis report</a>
+                </div>
+              </div>
+            </details>
+
+            <div class="panel workspace-panel workspace-panel-save hidden" id="translation-completion-empty">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Translation</p>
+                  <h2 id="translation-completion-empty-title">Review Results</h2>
+                </div>
+              </div>
+              <p class="panel-copy" id="translation-completion-empty-copy">Analysis complete. Review the report, then start a full translation when you are ready.</p>
+            </div>
+
+            <div class="panel workspace-panel workspace-panel-save hidden" id="translation-completion-form-shell">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Translation</p>
+                  <h2 id="translation-save-form-title">Save Case Record</h2>
+                </div>
+              </div>
+              <p class="panel-copy" id="translation-save-status">Translation complete. Review the translated document, then save the case record if everything looks right.</p>
+              <div id="translation-save-numeric-warning" class="result-card quality-warning hidden" aria-live="polite"></div>
+              <form id="translation-joblog-form" class="form-grid">
+                <input id="translation-row-id" type="hidden">
+                <div class="form-section-title">Case</div>
+                <div class="field">
+                  <label for="translation-date">Translation date</label>
+                  <input id="translation-date" type="date">
+                </div>
+                <div class="field">
+                  <label for="translation-case-number">Case number</label>
+                  <input id="translation-case-number" type="text">
+                </div>
+                <div class="field">
+                  <label for="translation-court-email">Court email</label>
+                  <input id="translation-court-email" type="email">
+                </div>
+                <div class="field">
+                  <label for="translation-case-entity">Case entity</label>
+                  <input id="translation-case-entity" type="text">
+                </div>
+                <div class="field">
+                  <label for="translation-case-city">Case city</label>
+                  <input id="translation-case-city" type="text">
+                </div>
+                <div class="field">
+                  <label for="translation-target-lang-readonly">Target language</label>
+                  <input id="translation-target-lang-readonly" type="text" readonly>
+                </div>
+
+                <details class="shell-collapsible field-wide" id="translation-save-run-details">
+                  <summary>
+                    <span>Run details</span>
+                    <span class="details-hint">Keep the run reference here if you need it later.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <div class="field">
+                      <label for="translation-run-id">Run ID</label>
+                      <input id="translation-run-id" type="text" readonly>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="shell-collapsible field-wide" id="translation-save-metrics-section">
+                  <summary>
+                    <span>Run Metrics (auto-filled)</span>
+                    <span class="details-hint">Pages, words, tokens, and quality-risk details.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <div class="field">
+                      <label for="translation-pages">Pages</label>
+                      <input id="translation-pages" type="number" min="0">
+                    </div>
+                    <div class="field">
+                      <label for="translation-word-count">Words</label>
+                      <input id="translation-word-count" type="number" min="0">
+                    </div>
+                    <div class="field">
+                      <label for="translation-total-tokens">Total Tokens</label>
+                      <input id="translation-total-tokens" type="number" min="0">
+                    </div>
+                    <div class="field">
+                      <label for="translation-quality-risk-score">Quality Risk Score</label>
+                      <input id="translation-quality-risk-score" type="number" min="0" max="1" step="0.0001">
+                    </div>
+                  </div>
+                </details>
+
+                <details class="shell-collapsible field-wide" id="translation-save-amounts-section">
+                  <summary>
+                    <span>Amounts (EUR)</span>
+                    <span class="details-hint">Rate, totals, API-cost, and profit fields.</span>
+                  </summary>
+                  <div class="shell-collapsible-body form-grid compact-grid">
+                    <div class="field">
+                      <label for="translation-rate-per-word">Rate / Word</label>
+                      <input id="translation-rate-per-word" type="number" min="0" step="0.01">
+                    </div>
+                    <div class="field">
+                      <label for="translation-expected-total">Expected Total</label>
+                      <input id="translation-expected-total" type="number" min="0" step="0.01">
+                    </div>
+                    <div class="field">
+                      <label for="translation-amount-paid">Amount Paid</label>
+                      <input id="translation-amount-paid" type="number" min="0" step="0.01">
+                    </div>
+                    <div class="field">
+                      <label for="translation-api-cost">API Cost</label>
+                      <input id="translation-api-cost" type="number" min="0" step="0.01">
+                    </div>
+                    <div class="field">
+                      <label for="translation-estimated-api-cost">Estimated API Cost</label>
+                      <input id="translation-estimated-api-cost" type="number" min="0" step="0.01">
+                    </div>
+                    <div class="field">
+                      <label for="translation-profit">Profit</label>
+                      <input id="translation-profit" type="number" step="0.01">
+                    </div>
+                  </div>
+                </details>
+                <div class="form-actions drawer-action-row">
+                  <button type="button" id="translation-new-save">New case record form</button>
+                  <button type="button" id="translation-close-completion-form">Close</button>
+                  <button type="button" class="primary-button" id="translation-save-row">Save case record</button>
+                </div>
+              </form>
+              <details class="details-panel operator-only" id="translation-save-details">
+                <summary>
+                  <span>Translation save diagnostics</span>
+                  <span class="details-hint" id="translation-save-hint">Row-save validation and payload details appear here.</span>
+                </summary>
+                <pre class="diagnostics-box" id="translation-save-diagnostics"></pre>
+              </details>
+            </div>
+          </section>
+        </div>
+
+        <div class="workspace-drawer-backdrop hidden" id="gmail-batch-finalize-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer" id="gmail-batch-finalize-drawer" aria-labelledby="gmail-batch-finalize-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Gmail</p>
+                <h2 id="gmail-batch-finalize-drawer-title">Create Gmail Reply</h2>
+              </div>
+              <button type="button" class="ghost-button" id="gmail-close-batch-finalize-drawer">Close</button>
+            </div>
+            <p class="panel-copy" id="gmail-batch-finalize-status">After every selected attachment is saved, create the Gmail reply with the final files.</p>
+            <div id="gmail-batch-finalize-summary" class="result-card empty-state">Finish saving every Gmail attachment to unlock the final reply step.</div>
+            <div id="gmail-batch-finalize-numeric-warning" class="result-card quality-warning hidden" aria-live="polite"></div>
+            <form id="gmail-batch-finalize-form" class="form-grid compact-grid">
+              <div class="field">
+                <label for="gmail-batch-final-output-filename">Final DOCX filename</label>
+                <input id="gmail-batch-final-output-filename" type="text" placeholder="Optional filename for the final Gmail DOCX">
+              </div>
+              <div class="form-actions drawer-action-row">
+                <button type="button" class="ghost-button hidden" id="gmail-batch-finalize-report">Generate finalization report</button>
+                <button type="submit" class="primary-button" id="gmail-batch-finalize-run">Create Gmail reply</button>
+              </div>
+            </form>
+            <div id="gmail-batch-finalize-result" class="result-card empty-state">Gmail reply details will appear here after the final step.</div>
+            <details class="details-panel operator-only" id="gmail-batch-finalize-details">
+              <summary>
+                <span>Gmail batch finalization diagnostics</span>
+                <span class="details-hint" id="gmail-batch-finalize-hint">Final draft request details and honorários export diagnostics appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="gmail-batch-finalize-diagnostics"></pre>
+            </details>
+          </section>
+        </div>
+
+        <div class="workspace-drawer-backdrop hidden" id="interpretation-review-drawer-backdrop" aria-hidden="true">
+          <section class="workspace-drawer workspace-drawer-interpretation" id="interpretation-review-drawer" aria-labelledby="interpretation-review-drawer-title">
+            <div class="workspace-drawer-header">
+              <div>
+                <p class="eyebrow">Interpretation</p>
+                <h2 id="interpretation-review-drawer-title">Review Interpretation Request</h2>
+              </div>
+              <button type="button" class="ghost-button" id="interpretation-close-review">Close</button>
+            </div>
+            <p class="panel-copy" id="interpretation-review-status">Upload a notification or start a blank request to begin.</p>
+            <div id="interpretation-review-summary-card" class="result-card empty-state">Upload a notification or start a blank request to begin.</div>
+            <div class="result-card hidden" id="interpretation-review-context-card">
+              <div class="result-header">
+                <div>
+                  <strong id="interpretation-review-context-title">Create the Gmail reply after review.</strong>
+                  <p id="interpretation-review-context-copy">Check the notice details, then create the Gmail reply.</p>
+                </div>
+                <span class="status-chip info" id="interpretation-review-context-chip">Prepared</span>
+              </div>
+              <div class="panel-actions translation-completion-actions">
+                <button type="button" class="primary-button" id="interpretation-finalize-gmail">Create Gmail reply</button>
+              </div>
+              <div id="interpretation-gmail-result" class="result-card empty-state">Gmail reply details will appear here after the final step.</div>
+            </div>
+            <div id="interpretation-completion-card" class="result-card hidden">The Gmail reply and exported files will appear here after completion.</div>
+            <details class="shell-collapsible field-wide interpretation-review-details-shell" id="interpretation-review-details" open>
+              <summary>
+                <span>Review details</span>
+                <span class="details-hint" id="interpretation-review-details-summary">Case details and document options are open</span>
+              </summary>
+              <div class="shell-collapsible-body">
+              <form id="interpretation-form" class="form-grid">
+              <input id="row-id" type="hidden">
+              <div class="form-section-title">Case details</div>
+              <div class="field">
+                <label for="profile-id">Profile</label>
+                <select id="profile-id"></select>
+              </div>
+              <div class="field">
+                <label for="case-number">Case Number</label>
+                <input id="case-number" name="case_number" type="text">
+              </div>
+              <div class="field interpretation-court-email-field">
+                <label for="court-email">Court Email</label>
+                <div class="field-inline">
+                  <select id="court-email" name="court_email"></select>
+                  <button type="button" class="ghost-button compact-inline-button" id="court-email-add">Add email...</button>
+                </div>
+                <div class="inline-add-editor hidden" id="court-email-editor" role="group" aria-labelledby="court-email-editor-label">
+                  <label id="court-email-editor-label" for="court-email-new">Add email for selected case city</label>
+                  <div class="field-inline">
+                    <input id="court-email-new" type="email" autocomplete="off" placeholder="name@tribunais.org.pt">
+                    <button type="button" class="ghost-button compact-inline-button" id="court-email-cancel">Cancel</button>
+                    <button type="button" class="primary-button compact-inline-button" id="court-email-save">Save</button>
+                  </div>
+                  <p class="field-hint" id="court-email-status">Email options follow the selected case city.</p>
+                </div>
+              </div>
+              <div class="field">
+                <label for="case-entity">Case Entity</label>
+                <input id="case-entity" name="case_entity" type="text">
+              </div>
+              <div class="field">
+                <label for="case-city">Case City</label>
+                <div class="field-inline">
+                  <select id="case-city" name="case_city"></select>
+                  <button type="button" class="ghost-button compact-inline-button" id="case-city-add">Add city...</button>
+                </div>
+                <p class="field-hint hidden" id="case-city-warning"></p>
+              </div>
+              <details class="shell-collapsible field-wide" id="interpretation-service-section">
+                <summary>
+                  <span>Service details</span>
+                  <span class="details-hint" id="interpretation-service-section-summary">Using the case details</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field checkbox-field field-wide">
+                    <label><input id="service-same" type="checkbox" checked> Service same as case</label>
+                    <p class="field-hint" id="service-same-hint">
+                      Service entity and city will mirror the case fields for save and export.
+                    </p>
+                  </div>
+                  <div class="field">
+                    <label for="service-entity">Service Entity</label>
+                    <select id="service-entity" name="service_entity"></select>
+                  </div>
+                  <div class="field">
+                    <label for="service-city">Service City</label>
+                    <div class="field-inline">
+                      <select id="service-city" name="service_city"></select>
+                      <button type="button" class="ghost-button compact-inline-button" id="service-city-add">Add city...</button>
+                    </div>
+                    <p class="field-hint hidden" id="service-city-warning"></p>
+                  </div>
+                  <div class="field">
+                    <label for="service-date">Service Date</label>
+                    <input id="service-date" name="service_date" type="date">
+                  </div>
+                </div>
+              </details>
+
+              <details class="shell-collapsible field-wide" id="interpretation-text-section">
+                <summary>
+                  <span>Document text</span>
+                  <span class="details-hint" id="interpretation-text-section-summary">Optional wording and filename</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field checkbox-field">
+                    <label><input id="use-service-location" type="checkbox"> Mention service location in text</label>
+                  </div>
+                  <div class="field checkbox-field">
+                    <label><input id="include-transport" type="checkbox" checked> Include transport sentence</label>
+                  </div>
+                  <div class="field">
+                    <label for="travel-km-outbound">KM (One Way)</label>
+                    <input id="travel-km-outbound" name="travel_km_outbound" type="number" step="0.01" min="0">
+                    <p class="field-hint" id="travel-km-hint">Distance saved by city will appear here when available.</p>
+                  </div>
+                  <div class="field">
+                    <label for="output-filename">Document filename</label>
+                    <input id="output-filename" name="output_filename" type="text" placeholder="Optional filename for the fee-request DOCX">
+                  </div>
+                </div>
+              </details>
+
+              <details class="shell-collapsible field-wide" id="interpretation-recipient-section">
+                <summary>
+                  <span>Recipient</span>
+                  <span class="details-hint" id="interpretation-recipient-section-summary">Recipient is filled automatically</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field field-wide">
+                    <label for="recipient-block">Recipient text (optional override)</label>
+                    <p class="field-hint">Used only for the current document. It is not saved to the case record.</p>
+                    <textarea id="recipient-block" name="recipient_block" rows="4"></textarea>
+                  </div>
+                </div>
+              </details>
+
+              <details class="shell-collapsible field-wide" id="interpretation-amounts-section">
+                <summary>
+                  <span>Amounts (EUR)</span>
+                  <span class="details-hint" id="interpretation-amounts-section-summary">Optional amounts and internal totals</span>
+                </summary>
+                <div class="shell-collapsible-body form-grid compact-grid">
+                  <div class="field">
+                    <label for="pages">Pages</label>
+                    <input id="pages" name="pages" type="number" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="word-count">Words</label>
+                    <input id="word-count" name="word_count" type="number" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="rate-per-word">Rate / Word</label>
+                    <input id="rate-per-word" name="rate_per_word" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="expected-total">Expected Total</label>
+                    <input id="expected-total" name="expected_total" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="amount-paid">Amount Paid</label>
+                    <input id="amount-paid" name="amount_paid" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="api-cost">API Cost</label>
+                    <input id="api-cost" name="api_cost" type="number" step="0.01" min="0">
+                  </div>
+                  <div class="field">
+                    <label for="profit">Profit</label>
+                    <input id="profit" name="profit" type="number" step="0.01">
+                  </div>
+                </div>
+              </details>
+            </form>
+            <div class="result-card hidden" id="interpretation-location-guard-card"></div>
+            <div class="panel workspace-panel workspace-panel-export hidden" id="interpretation-review-export-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Interpretation</p>
+                  <h2>Fee-request document</h2>
+                </div>
+              </div>
+              <div id="export-result" class="result-card empty-state">The generated DOCX/PDF will appear here after you create the document.</div>
+            </div>
+            <div class="form-actions drawer-action-row">
+              <button type="button" id="interpretation-clear-review">Start blank request</button>
+              <button type="button" id="interpretation-close-review-footer">Close</button>
+              <button type="button" id="save-row">Save case record</button>
+              <button type="button" class="primary-button" id="export-honorarios">Create fee-request document</button>
+            </div>
+            <details class="details-panel operator-only" id="form-details">
+              <summary>
+                <span>Form diagnostics</span>
+                <span class="details-hint" id="form-hint">Save/export responses and validation details appear here.</span>
+              </summary>
+              <pre class="diagnostics-box" id="form-diagnostics"></pre>
+            </details>
+              </div>
+            </details>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <!-- Legacy UI label preserved for legacy-template compatibility: Action Rail -->
+    <div class="workspace-drawer-backdrop workspace-dialog-backdrop hidden" id="interpretation-city-dialog-backdrop" aria-hidden="true">
+      <section class="workspace-drawer interpretation-city-dialog" id="interpretation-city-dialog" role="dialog" aria-modal="true" aria-labelledby="interpretation-city-dialog-title" aria-describedby="interpretation-city-dialog-status">
+        <div class="workspace-drawer-header">
+          <div>
+            <p class="eyebrow">Interpretation</p>
+            <h2 id="interpretation-city-dialog-title">Add City</h2>
+          </div>
+          <button type="button" class="ghost-button" id="interpretation-city-dialog-close">Close</button>
+        </div>
+        <p class="panel-copy" id="interpretation-city-dialog-status">Confirm the city details before continuing.</p>
+        <form id="interpretation-city-dialog-form" class="form-grid compact-grid">
+          <input id="interpretation-city-dialog-field-name" type="hidden">
+          <input id="interpretation-city-dialog-mode" type="hidden">
+          <div class="field field-wide">
+            <label for="interpretation-city-dialog-name">City</label>
+            <input id="interpretation-city-dialog-name" type="text" autocomplete="off">
+          </div>
+          <div class="field hidden" id="interpretation-city-dialog-distance-shell">
+            <label for="interpretation-city-dialog-distance">KM (One Way)</label>
+            <input id="interpretation-city-dialog-distance" type="number" step="0.01" min="0.01">
+            <p class="field-hint" id="interpretation-city-dialog-distance-hint">Optional one-way distance from your profile travel origin.</p>
+          </div>
+        </form>
+        <div class="form-actions drawer-action-row">
+          <button type="button" id="interpretation-city-dialog-cancel">Cancel</button>
+          <button type="submit" form="interpretation-city-dialog-form" class="primary-button" id="interpretation-city-dialog-confirm">Save City</button>
+        </div>
+      </section>
+    </div>
+
+    <script type="module" src="{{ app_js_url }}"></script>
+  </body>
+</html>

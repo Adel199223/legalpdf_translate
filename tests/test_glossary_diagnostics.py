@@ -168,6 +168,25 @@ def test_cg_never_matched_entries() -> None:
     assert "xyzzy_not_found" in summary["never_matched_entries"]
 
 
+def test_cg_alias_matching_counts_canonical_citation_entries() -> None:
+    entries = [
+        GlossaryEntry("p. e p. pelos artigos", "x", "contains", "PT", 4),
+        GlossaryEntry("alínea", "x", "exact", "PT", 4),
+        GlossaryEntry("n.º", "x", "exact", "PT", 4),
+    ]
+    acc = GlossaryDiagnosticsAccumulator(total_pages=1)
+    acc.set_cg_entries(entries)
+    acc.record_page_cg_matches(
+        page_index=1,
+        active_entries=entries,
+        source_text="crime p. e p. pelos arts. 153.º, n° 1, al. a) do Código Penal.",
+    )
+
+    summary = acc.finalize_cg_summary()
+    assert summary["per_page_matches"][0]["matched_entries"] == ["alínea", "n.º", "p. e p. pelos artigos"]
+    assert summary["never_matched_entries"] == []
+
+
 # ---------------------------------------------------------------------------
 # Ambiguous Pareto
 # ---------------------------------------------------------------------------

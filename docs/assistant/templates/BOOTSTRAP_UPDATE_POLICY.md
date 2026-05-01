@@ -10,6 +10,7 @@ It is a protected maintenance policy for the harness itself, not a general proje
 - The bootstrap system must not edit `docs/assistant/templates/*` during ordinary project feature work.
 - Only explicit bootstrap-maintenance requests may change the template system.
 - If the task is normal app/product work, template files are read-only reference material unless the user explicitly invokes a bootstrap maintenance trigger.
+- Project-local `implement the template files` / `sync project harness` requests do not authorize editing `docs/assistant/templates/*`.
 
 ## Canonical Bootstrap Maintenance Triggers
 
@@ -47,6 +48,7 @@ Interpret this as a docs-only maintenance request:
 - If the user says `update bootstrap`, the target must be clarified rather than assumed to mean the global Codex bootstrap harness.
 - This avoids confusion with project-local bootstrap files or project-specific setup systems.
 - `UCBS` is an accepted shorthand alias for `update codex bootstrap`, not a separate maintenance command.
+- If the user says `implement the template files` or `sync project harness`, treat that as project-local harness application, not global bootstrap maintenance.
 
 ## Allowed Change Surface For `update codex bootstrap`
 Allowed by default:
@@ -80,12 +82,34 @@ Do not promote one-off local/project issues into the global Codex bootstrap unle
 - Personal machine facts belong in `BOOTSTRAP_LOCAL_ENV_OVERLAY.md`.
 - Dynamic skills/MCP/tool assumptions belong in `BOOTSTRAP_CAPABILITY_DISCOVERY.md`.
 - Project-specific bootstrap behavior must not be pushed back into the global Codex bootstrap unless it generalizes cleanly.
+- Vendored template files may be committed in project repos, but global bootstrap maintenance still refers only to editing the reusable template contents themselves.
+
+## Roadmap Governance Promotion Rule
+- Promote roadmap-related process lessons only when they are reusable across future apps.
+- Keep roadmap governance adaptive; do not make roadmap mode the default for every task.
+- Prefer adding or updating `BOOTSTRAP_ROADMAP_GOVERNANCE.md` for reusable roadmap process rules instead of hardcoding them into project-local docs.
+- Do not leak app-specific dates, branch names, tracker filenames, or domain language into the bootstrap templates.
+- Valid reusable governance examples include:
+  - adaptive thresholds for no-roadmap vs ExecPlan-only vs roadmap
+  - active-worktree authority during in-flight wave work
+  - `SESSION_RESUME.md` as the roadmap anchor file and stable fresh-session entrypoint
+  - detour/closeout update order
+  - dormant roadmap state on `main`
+
+## Cleanup and Continuity Promotion Rule
+- Promote cleanup/publish lessons when they generalize across future repos.
+- Valid reusable examples include:
+  - stale post-merge continuity
+  - stale active-plan inventory
+  - scratch artifact Source Control noise
+  - follow-up branch/PR as the default for missed post-merge repair
+- Prefer updating the existing core-contract, roadmap-governance, issue-memory, and prompt/trigger templates instead of inventing a new bootstrap module for this lesson.
 
 ## Required Validation
 Any bootstrap update should finish with:
-- `dart run tooling/validate_agent_docs.dart`
-- `dart run tooling/validate_workspace_hygiene.dart`
-- `dart run test/tooling/validate_agent_docs_test.dart`
+- `dart tooling/validate_agent_docs.dart`
+- `dart tooling/validate_workspace_hygiene.dart`
+- `dart test/tooling/validate_agent_docs_test.dart`
 
 ## Expected Output For `update codex bootstrap`
 - changed files
@@ -98,5 +122,6 @@ Bootstrap-generated repos must preserve the exact docs-sync prompt:
 - `Would you like me to run Assistant Docs Sync for this change now?`
 
 But the prompt is conditional:
-- ask it only when relevant touched-scope docs still remain unsynced
+- ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary
+- if immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass
 - do not ask it again if the relevant docs sync already ran during the same task/pass

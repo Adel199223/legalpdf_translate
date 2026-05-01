@@ -20,8 +20,18 @@ if str(THIS_DIR) not in sys.path:
 
 from ocr_preflight import run_ocr_preflight
 
+from legalpdf_translate.ocr_engine import default_ocr_api_env_name
 from legalpdf_translate.pdf_text_order import extract_ordered_page_text, get_page_count
-from legalpdf_translate.types import EffortPolicy, ImageMode, OcrEnginePolicy, OcrMode, ReasoningEffort, RunConfig, TargetLang
+from legalpdf_translate.types import (
+    EffortPolicy,
+    ImageMode,
+    OcrApiProvider,
+    OcrEnginePolicy,
+    OcrMode,
+    ReasoningEffort,
+    RunConfig,
+    TargetLang,
+)
 from legalpdf_translate.user_settings import load_gui_settings
 from legalpdf_translate.workflow import TranslationWorkflow
 
@@ -67,6 +77,12 @@ def build_safe_probe_config(
     pages: list[int],
     settings: dict[str, object],
 ) -> RunConfig:
+    provider_text = str(settings.get("ocr_api_provider", "") or "").strip().lower()
+    ocr_provider = OcrApiProvider.GEMINI if provider_text == "gemini" else OcrApiProvider.OPENAI
+    default_ocr_env = default_ocr_api_env_name(ocr_provider)
+    ocr_env_value = settings.get("ocr_api_key_env_name")
+    if not str(ocr_env_value or "").strip():
+        ocr_env_value = settings.get("ocr_api_key_env", default_ocr_env)
     return RunConfig(
         pdf_path=pdf_path,
         output_dir=outdir,
@@ -82,10 +98,7 @@ def build_safe_probe_config(
         ocr_engine=OcrEnginePolicy.API,
         ocr_api_base_url=str(settings.get("ocr_api_base_url", "") or "").strip() or None,
         ocr_api_model=str(settings.get("ocr_api_model", "") or "").strip() or None,
-        ocr_api_key_env_name=str(
-            settings.get("ocr_api_key_env_name", settings.get("ocr_api_key_env", "DEEPSEEK_API_KEY")) or "DEEPSEEK_API_KEY"
-        ).strip()
-        or "DEEPSEEK_API_KEY",
+        ocr_api_key_env_name=str(ocr_env_value or default_ocr_env).strip() or default_ocr_env,
         effort_policy=EffortPolicy.FIXED_HIGH,
     )
 
@@ -145,7 +158,6 @@ def collect_probe_packet(
 ) -> dict[str, Any]:
     env = environment if environment is not None else dict(os.environ)
     settings = load_gui_settings()
-    preflight = run_ocr_preflight(environment=env)
     config = build_safe_probe_config(
         pdf_path=pdf_path,
         outdir=outdir,
@@ -153,6 +165,9 @@ def collect_probe_packet(
         pages=pages,
         settings=settings,
     )
+    preflight_env = dict(env)
+    preflight_env["OCR_API_KEY_ENV_NAME"] = config.ocr_api_key_env_name
+    preflight = run_ocr_preflight(environment=preflight_env)
     inspection = inspect_pdf_for_probe(pdf_path, pages)
     packet: dict[str, Any] = {
         "tool": "ocr_translation_probe",

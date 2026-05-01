@@ -18,7 +18,13 @@ from urllib.request import Request, urlopen
 from openai import OpenAI
 
 from .config import DEFAULT_OCR_API_TIMEOUT_SECONDS
-from .secrets_store import get_ocr_key
+from .ocr_defaults import (
+    GEMINI_OCR_DEFAULT_ENV,
+    OPENAI_OCR_DEFAULT_ENV,
+    OPENAI_OCR_LEGACY_ENV,
+    default_ocr_api_env_name,
+)
+from .secrets_store import get_ocr_key, get_openai_key
 from .types import OcrApiProvider, OcrEnginePolicy, RunConfig, TargetLang
 
 _PROFILE_PT_LATIN_DEFAULT = "pt_latin_default"
@@ -28,10 +34,8 @@ _AR_TRACK_LANG_PACK = "ara+eng"
 _EARLY_ACCEPT_SCORE = 0.82
 _MIN_ACCEPTABLE_LOCAL_SCORE = 0.18
 OPENAI_OCR_DEFAULT_MODEL = "gpt-4o-mini"
-OPENAI_OCR_DEFAULT_ENV = "DEEPSEEK_API_KEY"
 GEMINI_OCR_DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
 GEMINI_OCR_BENCHMARK_MODEL = "gemini-3-flash-preview"
-GEMINI_OCR_DEFAULT_ENV = "GEMINI_API_KEY"
 GEMINI_OCR_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 _GEMINI_TIMEOUT_SECONDS = 120
 GEMINI_MEDIA_RESOLUTION_PDF = "MEDIUM"
@@ -132,10 +136,60 @@ def default_ocr_api_model(provider: OcrApiProvider) -> str:
     return OPENAI_OCR_DEFAULT_MODEL
 
 
-def default_ocr_api_env_name(provider: OcrApiProvider) -> str:
+def local_ocr_available() -> bool:
+    return bool(which("tesseract"))
+
+
+def candidate_ocr_api_env_names(config: OcrEngineConfig) -> tuple[str, ...]:
+    provider = normalize_ocr_api_provider(config.api_provider)
+    configured = (config.api_key_env_name or "").strip()
     if provider == OcrApiProvider.GEMINI:
-        return GEMINI_OCR_DEFAULT_ENV
-    return OPENAI_OCR_DEFAULT_ENV
+        return (configured or default_ocr_api_env_name(provider),)
+    if configured and configured not in {OPENAI_OCR_DEFAULT_ENV, OPENAI_OCR_LEGACY_ENV}:
+        return (configured,)
+    return (OPENAI_OCR_DEFAULT_ENV, OPENAI_OCR_LEGACY_ENV)
+
+
+def resolve_ocr_api_key_source(
+    config: OcrEngineConfig,
+) -> tuple[Literal["stored", "env"], str] | None:
+    try:
+        stored = get_ocr_key()
+    except RuntimeError:
+        stored = None
+    if stored:
+        return ("stored", "ocr_api_key")
+    provider = normalize_ocr_api_provider(config.api_provider)
+    if provider == OcrApiProvider.OPENAI:
+        try:
+            shared_openai_key = get_openai_key()
+        except RuntimeError:
+            shared_openai_key = None
+        if shared_openai_key:
+            return ("stored", "openai_api_key_fallback")
+    for env_name in candidate_ocr_api_env_names(config):
+        from_env = os.getenv(env_name, "").strip()
+        if from_env:
+            return ("env", env_name)
+    return None
+
+
+def resolve_ocr_api_key(config: OcrEngineConfig) -> str | None:
+    source = resolve_ocr_api_key_source(config)
+    if source is None:
+        return None
+    source_kind, source_name = source
+    if source_kind == "stored":
+        if source_name == "openai_api_key_fallback":
+            try:
+                return get_openai_key()
+            except RuntimeError:
+                return None
+        try:
+            return get_ocr_key()
+        except RuntimeError:
+            return None
+    return os.getenv(source_name, "").strip() or None
 
 
 def default_ocr_api_base_url(provider: OcrApiProvider) -> str:
@@ -693,28 +747,23 @@ class LocalThenApiEngine:
 
 
 def _resolve_api_key(config: OcrEngineConfig) -> str | None:
-    try:
-        stored = get_ocr_key()
-    except RuntimeError:
-        stored = None
-    if stored:
-        return stored
-    env_name = (config.api_key_env_name or "").strip() or default_ocr_api_env_name(config.api_provider)
-    from_env = os.getenv(env_name, "").strip()
-    return from_env or None
+    return resolve_ocr_api_key(config)
 
 
-def test_ocr_provider_connection(config: OcrEngineConfig, *, api_key: str) -> None:
+def test_ocr_provider_connection(config: OcrEngineConfig, *, api_key: str | None = None) -> None:
     provider = normalize_ocr_api_provider(config.api_provider)
     model = (config.api_model or "").strip() or default_ocr_api_model(provider)
     base_url = (config.api_base_url or "").strip() or default_ocr_api_base_url(provider)
+    resolved_api_key = (api_key or "").strip() or _resolve_api_key(config)
+    if not resolved_api_key:
+        raise ValueError("OCR API key is not configured.")
     if provider == OcrApiProvider.GEMINI:
         payload = {
             "contents": [{"parts": [{"text": "Reply exactly with OK."}]}],
             "generationConfig": {"temperature": 0},
         }
         parsed = _gemini_post_json(
-            api_key=api_key,
+            api_key=resolved_api_key,
             model=model,
             base_url=base_url,
             payload=payload,
@@ -723,11 +772,11 @@ def test_ocr_provider_connection(config: OcrEngineConfig, *, api_key: str) -> No
             raise RuntimeError("gemini OCR provider test did not return OK")
         return
 
-    client = OpenAI(api_key=api_key, base_url=(base_url or None))
+    client = OpenAI(api_key=resolved_api_key, base_url=(base_url or None))
     response = client.responses.create(
         model=model,
         input=[{"role": "user", "content": [{"type": "input_text", "text": "Reply exactly with OK."}]}],
-        max_output_tokens=8,
+        max_output_tokens=16,
         store=False,
     )
     output_text = _extract_output_text(response)
