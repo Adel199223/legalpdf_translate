@@ -117,6 +117,7 @@ import {
   renderRuntimeModeSelectorInto,
   renderShellVisibilityInto,
 } from "./shell_ui.js";
+import { syncNewJobTaskControlsInto } from "./new_job_ui.js";
 import {
   GOOGLE_PHOTOS_RECONNECT_GUIDANCE,
   buildGooglePhotosPickerDiagnostics,
@@ -1518,13 +1519,10 @@ function shouldShowGmailNav(payload = appState.bootstrap) {
 
 function setNewJobTask(task) {
   appState.newJobTask = task === "interpretation" ? "interpretation" : "translation";
-  qsa("[data-task-panel]").forEach((panel) => {
-    panel.classList.toggle("hidden", panel.dataset.taskPanel !== appState.newJobTask);
-  });
-  qsa(".task-switch").forEach((button) => {
-    const selected = button.dataset.task === appState.newJobTask;
-    button.classList.toggle("active", selected);
-    button.setAttribute("aria-selected", selected ? "true" : "false");
+  syncNewJobTaskControlsInto({
+    panels: qsa("[data-task-panel]"),
+    switches: qsa(".task-switch"),
+    activeTask: appState.newJobTask,
   });
   renderInterpretationSessionShell();
 }
