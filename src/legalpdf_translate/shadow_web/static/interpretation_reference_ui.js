@@ -56,6 +56,39 @@ export function renderCourtEmailOptionsInto(select, { options = [], selectedEmai
   select.value = selectedValue;
 }
 
+export function renderCourtEmailStatusInto(status, { message = "", tone = "" } = {}) {
+  if (!status) {
+    return;
+  }
+  status.textContent = String(message ?? "");
+  if (tone) {
+    status.dataset.tone = String(tone);
+  }
+}
+
+export function renderCourtEmailEditorInto(nodes = {}, editorState = {}) {
+  const {
+    editor = null,
+    newEmailField = null,
+    status = null,
+  } = nodes || {};
+  if (!editor) {
+    return;
+  }
+  const open = Boolean(editorState.open);
+  editor.classList.toggle("hidden", !open);
+  if (!open) {
+    return;
+  }
+  if (newEmailField) {
+    newEmailField.value = "";
+  }
+  const cityLabel = String(editorState.cityLabel || "selected city");
+  renderCourtEmailStatusInto(status, {
+    message: `Add an email for ${cityLabel}.`,
+  });
+}
+
 export function renderServiceEntityOptionsInto(select, options = [], selectedValue = "") {
   if (!select) {
     return;

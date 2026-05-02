@@ -6124,6 +6124,278 @@ console.log(JSON.stringify({
     assert "nullResult" not in results
 
 
+def test_interpretation_reference_ui_module_centralizes_court_email_editor() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_reference_ui_js = static_dir / "interpretation_reference_ui.js"
+
+    assert interpretation_reference_ui_js.exists()
+    interpretation_reference_ui_text = interpretation_reference_ui_js.read_text(encoding="utf-8")
+    assert "export function renderCourtEmailEditorInto" in interpretation_reference_ui_text
+    assert "export function renderCourtEmailStatusInto" in interpretation_reference_ui_text
+    assert "renderCourtEmailEditorInto({" in app_js
+    assert "renderCourtEmailStatusInto(qs(\"court-email-status\")," in app_js
+
+    editor_start = app_js.index("function setCourtEmailEditorOpen")
+    persist_start = app_js.index("async function persistInterpretationCourtEmail", editor_start)
+    editor_block = app_js[editor_start:persist_start]
+    assert "renderCourtEmailEditorInto({" in editor_block
+    assert "editor.classList.toggle(\"hidden\"" not in editor_block
+    assert "qs(\"court-email-status\").textContent" not in editor_block
+    assert "setFieldValue(\"court-email-new\", \"\")" not in editor_block
+
+    save_start = app_js.index("qs(\"court-email-save\")?.addEventListener")
+    case_add_start = app_js.index("qs(\"case-city-add\").addEventListener", save_start)
+    save_block = app_js[save_start:case_add_start]
+    assert "renderCourtEmailStatusInto(qs(\"court-email-status\")," in save_block
+    assert "qs(\"court-email-status\").textContent" not in save_block
+    assert "qs(\"court-email-status\").dataset.tone" not in save_block
+
+    assert "innerHTML" not in interpretation_reference_ui_text
+
+    script = r"""
+const interpretationReferenceUi = await import(__INTERPRETATION_REFERENCE_UI_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const classes = new Set();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    children: [],
+    dataset: {},
+    value: "",
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    classList: {
+      add(...names) {
+        for (const name of names) {
+          classes.add(String(name));
+        }
+        element.className = Array.from(classes).join(" ");
+      },
+      remove(...names) {
+        for (const name of names) {
+          classes.delete(String(name));
+        }
+        element.className = Array.from(classes).join(" ");
+      },
+      contains(name) {
+        return classes.has(String(name));
+      },
+      toggle(name, force) {
+        const key = String(name);
+        const shouldAdd = force === undefined ? !classes.has(key) : Boolean(force);
+        if (shouldAdd) {
+          classes.add(key);
+        } else {
+          classes.delete(key);
+        }
+        element.className = Array.from(classes).join(" ");
+        return shouldAdd;
+      },
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this.children.length
+        ? `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`
+        : this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        this.children.push(makeElement(match[1]));
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  return nodes.reduce((total, node) => {
+    if (!node) {
+      return total;
+    }
+    let current = 0;
+    walk(node, (item) => {
+      current += (item.innerHTMLAssignments || []).length;
+    });
+    return total + current;
+  }, 0);
+}
+
+function makeNodes() {
+  return {
+    editor: makeElement("div"),
+    newEmailField: makeElement("input"),
+    status: makeElement("p"),
+  };
+}
+
+function summarize(nodes) {
+  return {
+    hidden: nodes.editor.classList.contains("hidden"),
+    fieldValue: nodes.newEmailField.value,
+    statusText: nodes.status.textContent,
+    statusTone: nodes.status.dataset.tone || "",
+    imgCount: countTag(nodes.status, "img"),
+    scriptCount: countTag(nodes.status, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(nodes.editor, nodes.newEmailField, nodes.status),
+  };
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const openNodes = makeNodes();
+openNodes.editor.classList.add("hidden");
+openNodes.newEmailField.value = "stale@example.test";
+openNodes.status.dataset.tone = "bad";
+interpretationReferenceUi.renderCourtEmailEditorInto(openNodes, {
+  open: true,
+  cityLabel: `Lisbon ${malicious}`,
+});
+
+const closedNodes = makeNodes();
+closedNodes.newEmailField.value = "draft@example.test";
+closedNodes.status.textContent = `Existing ${malicious}`;
+closedNodes.status.dataset.tone = "warn";
+interpretationReferenceUi.renderCourtEmailEditorInto(closedNodes, {
+  open: false,
+  cityLabel: `Ignored ${malicious}`,
+});
+
+const statusNode = makeElement("p");
+interpretationReferenceUi.renderCourtEmailStatusInto(statusNode, {
+  message: `Unable to save ${malicious}`,
+  tone: "bad",
+});
+
+const statusNoTone = makeElement("p");
+statusNoTone.dataset.tone = "existing";
+interpretationReferenceUi.renderCourtEmailStatusInto(statusNoTone, {
+  message: `Plain ${malicious}`,
+});
+
+const nullEditorResult = interpretationReferenceUi.renderCourtEmailEditorInto(null, {
+  open: true,
+  cityLabel: `Ignored ${malicious}`,
+});
+const nullStatusResult = interpretationReferenceUi.renderCourtEmailStatusInto(null, {
+  message: `Ignored ${malicious}`,
+  tone: "bad",
+});
+
+console.log(JSON.stringify({
+  exportedTypes: {
+    editor: typeof interpretationReferenceUi.renderCourtEmailEditorInto,
+    status: typeof interpretationReferenceUi.renderCourtEmailStatusInto,
+  },
+  open: summarize(openNodes),
+  closed: summarize(closedNodes),
+  status: {
+    text: statusNode.textContent,
+    tone: statusNode.dataset.tone || "",
+    imgCount: countTag(statusNode, "img"),
+    scriptCount: countTag(statusNode, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(statusNode),
+  },
+  statusNoTone: {
+    text: statusNoTone.textContent,
+    tone: statusNoTone.dataset.tone || "",
+    imgCount: countTag(statusNoTone, "img"),
+    scriptCount: countTag(statusNoTone, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(statusNoTone),
+  },
+  nullEditorResult,
+  nullStatusResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REFERENCE_UI_MODULE_URL__": "interpretation_reference_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedTypes"] == {
+        "editor": "function",
+        "status": "function",
+    }
+    assert results["open"] == {
+        "hidden": False,
+        "fieldValue": "",
+        "statusText": "Add an email for Lisbon <img src=x onerror=alert(1)><script>bad()</script>.",
+        "statusTone": "bad",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["closed"] == {
+        "hidden": True,
+        "fieldValue": "draft@example.test",
+        "statusText": "Existing <img src=x onerror=alert(1)><script>bad()</script>",
+        "statusTone": "warn",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["status"] == {
+        "text": "Unable to save <img src=x onerror=alert(1)><script>bad()</script>",
+        "tone": "bad",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["statusNoTone"] == {
+        "text": "Plain <img src=x onerror=alert(1)><script>bad()</script>",
+        "tone": "existing",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert "nullEditorResult" not in results
+    assert "nullStatusResult" not in results
+
+
 def test_interpretation_review_ui_module_centralizes_safe_context_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -11438,6 +11710,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "syncInterpretationCityDialogStateInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationCityDialogContentInto" in interpretation_reference_ui_asset.text
         assert "renderServiceSameControlsInto" in interpretation_reference_ui_asset.text
+        assert "renderCourtEmailEditorInto" in interpretation_reference_ui_asset.text
+        assert "renderCourtEmailStatusInto" in interpretation_reference_ui_asset.text
         interpretation_review_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_review_ui.js")
         assert interpretation_review_ui_asset.status_code == 200
         assert interpretation_review_ui_asset.headers["content-type"].startswith("application/javascript")

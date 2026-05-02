@@ -58,7 +58,9 @@ import {
   syncInterpretationReviewDetailsShellInto,
 } from "./interpretation_review_ui.js";
 import {
+  renderCourtEmailEditorInto,
   renderCourtEmailOptionsInto,
+  renderCourtEmailStatusInto,
   renderInterpretationActionButtonsInto,
   renderInterpretationCityDialogContentInto,
   renderInterpretationFieldWarningInto,
@@ -1339,11 +1341,16 @@ function setCourtEmailEditorOpen(open) {
   if (!editor) {
     return;
   }
-  editor.classList.toggle("hidden", !open);
+  const editorState = { open };
   if (open) {
-    setFieldValue("court-email-new", "");
-    const city = displayedInterpretationCity("case_city") || "selected city";
-    qs("court-email-status").textContent = `Add an email for ${city}.`;
+    editorState.cityLabel = displayedInterpretationCity("case_city") || "selected city";
+  }
+  renderCourtEmailEditorInto({
+    editor,
+    newEmailField: qs("court-email-new"),
+    status: qs("court-email-status"),
+  }, editorState);
+  if (open) {
     window.setTimeout(() => qs("court-email-new")?.focus(), 0);
   }
 }
@@ -3317,8 +3324,10 @@ function wireEvents() {
     } catch (error) {
       setPanelStatus("form", "bad", error.message || "Unable to save the court email yet.");
       setDiagnostics("form", error, { hint: error.message || "Unable to save the court email yet.", open: true });
-      qs("court-email-status").textContent = error.message || "Unable to save the court email yet.";
-      qs("court-email-status").dataset.tone = "bad";
+      renderCourtEmailStatusInto(qs("court-email-status"), {
+        message: error.message || "Unable to save the court email yet.",
+        tone: "bad",
+      });
     }
   });
   qs("case-city-add").addEventListener("click", async () => {
