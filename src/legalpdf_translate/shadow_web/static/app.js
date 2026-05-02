@@ -114,6 +114,7 @@ import {
 import {
   renderLiveBannerInto,
   renderNavigationInto,
+  renderRuntimeModeBannerInto,
   renderRuntimeModeSelectorInto,
   renderShellVisibilityInto,
 } from "./shell_ui.js";
@@ -1552,24 +1553,16 @@ function runtimeModeBannerText(runtime = {}) {
 }
 
 function syncRuntimeModeBanner(runtime = {}) {
-  const banner = qs("runtime-mode-banner");
-  if (!banner) {
-    return;
-  }
   const shouldShow = shouldShowDailyRuntimeModeBanner({
     uiVariant: appState.uiVariant,
     activeView: appState.activeView,
     operatorChromeActive: operatorChromeActive(),
   });
-  if (!shouldShow) {
-    banner.classList.add("hidden");
-    banner.textContent = "";
-    delete banner.dataset.mode;
-    return;
-  }
-  banner.textContent = runtimeModeBannerText(runtime);
-  banner.dataset.mode = isLiveRuntimeMode(runtime) ? "live" : "shadow";
-  banner.classList.remove("hidden");
+  renderRuntimeModeBannerInto(qs("runtime-mode-banner"), {
+    show: shouldShow,
+    message: runtimeModeBannerText(runtime),
+    mode: isLiveRuntimeMode(runtime) ? "live" : "shadow",
+  });
 }
 
 function syncShellChrome() {

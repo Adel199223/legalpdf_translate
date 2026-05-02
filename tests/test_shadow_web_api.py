@@ -827,10 +827,12 @@ def test_shadow_web_shell_ui_module_centralizes_safe_navigation_rendering() -> N
     assert "export function renderLiveBannerInto" in shell_ui_source
     assert "export function renderRuntimeModeSelectorInto" in shell_ui_source
     assert "export function renderShellVisibilityInto" in shell_ui_source
+    assert "export function renderRuntimeModeBannerInto" in shell_ui_source
     assert "renderNavigationInto({" in app_js
     assert 'renderLiveBannerInto(qs("live-banner"), runtime);' in app_js
     assert 'renderRuntimeModeSelectorInto(qs("runtime-mode-select"), runtimeMode);' in app_js
     assert "renderShellVisibilityInto({" in app_js
+    assert "renderRuntimeModeBannerInto(" in app_js
     assert "MORE_NAV_ORDER.includes(appState.activeView)" not in app_js
     assert "button.innerHTML" not in app_js
     assert "innerHTML" not in shell_ui_source
@@ -1073,6 +1075,45 @@ const shadowBannerSnapshot = {
   className: liveBanner.className,
 };
 
+const runtimeModeBanner = document.createElement("div");
+runtimeModeBanner.className = "runtime-mode-banner hidden";
+runtimeModeBanner.dataset.mode = "stale";
+shellUi.renderRuntimeModeBannerInto(runtimeModeBanner, {
+  show: true,
+  message: `Shadow ${malicious}`,
+  mode: "shadow",
+});
+const visibleRuntimeModeBanner = {
+  text: runtimeModeBanner.textContent,
+  className: runtimeModeBanner.className,
+  mode: runtimeModeBanner.dataset.mode || "",
+  imgCount: countTag(runtimeModeBanner, "img"),
+  scriptCount: countTag(runtimeModeBanner, "script"),
+  innerHTMLWrites: countInnerHtmlWrites(runtimeModeBanner),
+};
+shellUi.renderRuntimeModeBannerInto(runtimeModeBanner, {
+  show: false,
+  message: `Live ${malicious}`,
+  mode: "live",
+});
+const hiddenRuntimeModeBanner = {
+  text: runtimeModeBanner.textContent,
+  className: runtimeModeBanner.className,
+  hasMode: Object.prototype.hasOwnProperty.call(runtimeModeBanner.dataset, "mode"),
+  innerHTMLWrites: countInnerHtmlWrites(runtimeModeBanner),
+};
+shellUi.renderRuntimeModeBannerInto(runtimeModeBanner, {
+  show: true,
+  message: "",
+  mode: "live",
+});
+const emptyVisibleRuntimeModeBanner = {
+  text: runtimeModeBanner.textContent,
+  className: runtimeModeBanner.className,
+  mode: runtimeModeBanner.dataset.mode || "",
+  innerHTMLWrites: countInnerHtmlWrites(runtimeModeBanner),
+};
+
 const newJobView = document.createElement("section");
 newJobView.className = "page-view";
 newJobView.dataset.view = "new-job";
@@ -1130,6 +1171,7 @@ console.log(JSON.stringify({
     liveBanner: typeof shellUi.renderLiveBannerInto,
     runtimeSelector: typeof shellUi.renderRuntimeModeSelectorInto,
     shellVisibility: typeof shellUi.renderShellVisibilityInto,
+    runtimeModeBanner: typeof shellUi.renderRuntimeModeBannerInto,
   },
   hidden: hiddenSnapshot,
   visible: {
@@ -1156,6 +1198,16 @@ console.log(JSON.stringify({
       supported_modes: [{ id: "ignored", label: "Ignored" }],
     }),
     missingBannerResultType: typeof shellUi.renderLiveBannerInto(null, { live_data: true }),
+    runtimeModeBanner: {
+      visible: visibleRuntimeModeBanner,
+      hidden: hiddenRuntimeModeBanner,
+      emptyVisible: emptyVisibleRuntimeModeBanner,
+      missingResultType: typeof shellUi.renderRuntimeModeBannerInto(null, {
+        show: true,
+        message: "Ignored",
+        mode: "live",
+      }),
+    },
   },
   shellVisibility: {
     settings: settingsVisibility,
@@ -1180,6 +1232,7 @@ console.log(JSON.stringify({
         "liveBanner": "function",
         "runtimeSelector": "function",
         "shellVisibility": "function",
+        "runtimeModeBanner": "function",
     }
     assert [button["view"] for button in results["hidden"]["primary"]] == ["new-job", "recent-jobs"]
     assert [button["view"] for button in results["hidden"]["more"]] == [
@@ -1248,6 +1301,27 @@ console.log(JSON.stringify({
     assert results["runtimeControls"]["shadowBanner"] == {"text": "", "className": "live-banner hidden"}
     assert results["runtimeControls"]["missingRuntimeResultType"] == "undefined"
     assert results["runtimeControls"]["missingBannerResultType"] == "undefined"
+    assert results["runtimeControls"]["runtimeModeBanner"]["visible"] == {
+        "text": "Shadow <img src=x onerror=alert(1)><script>bad()</script>",
+        "className": "runtime-mode-banner",
+        "mode": "shadow",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["runtimeControls"]["runtimeModeBanner"]["hidden"] == {
+        "text": "",
+        "className": "runtime-mode-banner hidden",
+        "hasMode": False,
+        "innerHTMLWrites": 0,
+    }
+    assert results["runtimeControls"]["runtimeModeBanner"]["emptyVisible"] == {
+        "text": "",
+        "className": "runtime-mode-banner",
+        "mode": "live",
+        "innerHTMLWrites": 0,
+    }
+    assert results["runtimeControls"]["runtimeModeBanner"]["missingResultType"] == "undefined"
     assert results["shellVisibility"]["settings"] == {
         "newJobClass": "page-view hidden",
         "settingsClass": "page-view",
@@ -9823,6 +9897,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderLiveBannerInto" in shell_ui_asset.text
         assert "renderRuntimeModeSelectorInto" in shell_ui_asset.text
         assert "renderShellVisibilityInto" in shell_ui_asset.text
+        assert "renderRuntimeModeBannerInto" in shell_ui_asset.text
         new_job_ui_asset = client.get(f"/static-build/{asset_version}/new_job_ui.js")
         assert new_job_ui_asset.status_code == 200
         assert new_job_ui_asset.headers["content-type"].startswith("application/javascript")
