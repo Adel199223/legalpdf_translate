@@ -47,6 +47,7 @@ import {
   renderInterpretationReviewSummaryCardInto,
   renderInterpretationSeedCardInto,
   renderInterpretationSessionCardInto,
+  resetInterpretationExportResultInto,
 } from "./interpretation_result_ui.js";
 import {
   renderInterpretationReviewContextInto,
@@ -1084,13 +1085,7 @@ function resetInterpretationExportResult() {
   const result = qs("export-result");
   interpretationUiState.completionPayload = null;
   const presentation = currentInterpretationPresentation();
-  if (panel) {
-    panel.classList.add("hidden");
-  }
-  if (result) {
-    result.classList.add("empty-state");
-    result.textContent = presentation.export.emptyState;
-  }
+  resetInterpretationExportResultInto(panel, result, presentation.export.emptyState);
   notifyInterpretationUiStateChanged();
 }
 

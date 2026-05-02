@@ -4822,6 +4822,7 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "export function renderInterpretationSeedCardInto" in interpretation_result_ui_text
     assert "export function renderInterpretationReviewSummaryCardInto" in interpretation_result_ui_text
     assert "export function renderInterpretationLocationGuardInto" in interpretation_result_ui_text
+    assert "export function resetInterpretationExportResultInto" in interpretation_result_ui_text
     assert "renderInterpretationExportResultInto(container, payload, currentInterpretationPresentation());" in app_js
     assert "renderInterpretationGmailResultInto(container, payload, currentInterpretationPresentation());" in app_js
     assert "renderInterpretationCompletionCardInto(container, {" in app_js
@@ -4829,6 +4830,7 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "renderInterpretationSeedCardInto(container, {" in app_js
     assert "renderInterpretationReviewSummaryCardInto(container, {" in app_js
     assert "renderInterpretationLocationGuardInto(card, { message, tone });" in app_js
+    assert "resetInterpretationExportResultInto(panel, result, presentation.export.emptyState);" in app_js
     assert 'qs("interpretation-review-export-panel")?.classList.remove("hidden");' in app_js
     session_start = app_js.index("function renderInterpretationSessionShell")
     seed_start = app_js.index("function renderInterpretationSeedCard", session_start)
@@ -4880,6 +4882,15 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "renderInterpretationLocationGuardInto(card, { message, tone });" in guard_block
     assert "innerHTML" not in guard_block
     assert "escapeHtml" not in guard_block
+    export_reset_start = app_js.index("function resetInterpretationExportResult")
+    drawer_open_start = app_js.index("function setInterpretationReviewDrawerOpen", export_reset_start)
+    export_reset_block = app_js[export_reset_start:drawer_open_start]
+    assert "interpretationUiState.completionPayload = null;" in export_reset_block
+    assert "notifyInterpretationUiStateChanged();" in export_reset_block
+    assert "resetInterpretationExportResultInto(panel, result, presentation.export.emptyState);" in export_reset_block
+    assert "classList.add" not in export_reset_block
+    assert "textContent" not in export_reset_block
+    assert "innerHTML" not in export_reset_block
     assert 'appendResultGridItem(grid, "DOCX"' not in app_js
     assert 'appendResultGridItem(grid, "PDF Export"' not in app_js
 
@@ -5041,6 +5052,20 @@ function summarizeGuard(container) {
     imgCount: countTag(container, "img"),
     scriptCount: countTag(container, "script"),
     innerHTMLWrites: countInnerHtmlWrites(container),
+  };
+}
+
+function summarizeReset(panel, result) {
+  return {
+    panelClassName: panel.className,
+    panelHidden: panel.classList.contains("hidden"),
+    resultClassName: result.className,
+    resultText: result.textContent,
+    resultChildCount: result.children.length,
+    imgCount: countTag(result, "img"),
+    scriptCount: countTag(result, "script"),
+    panelInnerHTMLWrites: countInnerHtmlWrites(panel),
+    resultInnerHTMLWrites: countInnerHtmlWrites(result),
   };
 }
 
@@ -5314,6 +5339,24 @@ const nullGuardResult = interpretationResultUi.renderInterpretationLocationGuard
   message: `Ignored ${malicious}`,
   tone: "danger",
 });
+const exportResetPanel = document.createElement("section");
+const exportResetResult = document.createElement("article");
+exportResetPanel.classList.add("visible-before-reset");
+exportResetResult.classList.add("result-card");
+exportResetResult.appendChild(document.createElement("strong"));
+interpretationResultUi.resetInterpretationExportResultInto(
+  exportResetPanel,
+  exportResetResult,
+  `Export result empty ${malicious}`,
+);
+const partialResetResult = document.createElement("article");
+partialResetResult.classList.add("result-card");
+interpretationResultUi.resetInterpretationExportResultInto(
+  null,
+  partialResetResult,
+  `Partial empty ${malicious}`,
+);
+const nullResetResult = interpretationResultUi.resetInterpretationExportResultInto(null, null, `Ignored ${malicious}`);
 
 console.log(JSON.stringify({
   exportedTypes: {
@@ -5324,6 +5367,7 @@ console.log(JSON.stringify({
     seed: typeof interpretationResultUi.renderInterpretationSeedCardInto,
     reviewSummary: typeof interpretationResultUi.renderInterpretationReviewSummaryCardInto,
     locationGuard: typeof interpretationResultUi.renderInterpretationLocationGuardInto,
+    exportReset: typeof interpretationResultUi.resetInterpretationExportResultInto,
   },
   ok: summarize(okContainer),
   localOnly: summarize(localOnlyContainer),
@@ -5344,12 +5388,21 @@ console.log(JSON.stringify({
   guardDanger: summarizeGuard(guardDangerContainer),
   guardOtherTone: summarizeGuard(guardOtherToneContainer),
   guardEmpty: summarizeGuard(guardEmptyContainer),
+  exportReset: summarizeReset(exportResetPanel, exportResetResult),
+  partialExportReset: {
+    resultClassName: partialResetResult.className,
+    resultText: partialResetResult.textContent,
+    resultInnerHTMLWrites: countInnerHtmlWrites(partialResetResult),
+    imgCount: countTag(partialResetResult, "img"),
+    scriptCount: countTag(partialResetResult, "script"),
+  },
   nullContainerResult,
   nullCompletionResult,
   nullSessionResult,
   nullSeedResult,
   nullReviewSummaryResult,
   nullGuardResult,
+  nullResetResult,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -5366,6 +5419,7 @@ console.log(JSON.stringify({
         "seed": "function",
         "reviewSummary": "function",
         "locationGuard": "function",
+        "exportReset": "function",
     }
     assert results["ok"]["className"] == "result-card"
     assert results["ok"]["childClasses"] == ["result-header", "result-grid"]
@@ -5600,7 +5654,22 @@ console.log(JSON.stringify({
     assert results["guardEmpty"]["text"] == ""
     assert results["guardEmpty"]["childClasses"] == []
     assert results["guardEmpty"]["innerHTMLWrites"] == 0
+    assert results["exportReset"]["panelClassName"] == "visible-before-reset hidden"
+    assert results["exportReset"]["panelHidden"] is True
+    assert results["exportReset"]["resultClassName"] == "result-card empty-state"
+    assert results["exportReset"]["resultText"] == "Export result empty <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["exportReset"]["resultChildCount"] == 0
+    assert results["exportReset"]["imgCount"] == 0
+    assert results["exportReset"]["scriptCount"] == 0
+    assert results["exportReset"]["panelInnerHTMLWrites"] == 0
+    assert results["exportReset"]["resultInnerHTMLWrites"] == 0
+    assert results["partialExportReset"]["resultClassName"] == "result-card empty-state"
+    assert results["partialExportReset"]["resultText"] == "Partial empty <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["partialExportReset"]["imgCount"] == 0
+    assert results["partialExportReset"]["scriptCount"] == 0
+    assert results["partialExportReset"]["resultInnerHTMLWrites"] == 0
     assert "nullGuardResult" not in results
+    assert "nullResetResult" not in results
 
 
 def test_recent_work_ui_module_centralizes_safe_history_rendering() -> None:
@@ -8543,6 +8612,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationSeedCardInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationReviewSummaryCardInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationLocationGuardInto" in interpretation_result_ui_asset.text
+        assert "resetInterpretationExportResultInto" in interpretation_result_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
         assert module_asset.status_code == 200
         assert module_asset.headers["content-type"].startswith("application/javascript")

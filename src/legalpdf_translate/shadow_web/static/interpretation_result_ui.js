@@ -127,6 +127,16 @@ export function renderInterpretationExportResultInto(container, payload, present
   container.appendChild(grid);
 }
 
+export function resetInterpretationExportResultInto(panel, result, emptyText = "") {
+  if (panel) {
+    panel.classList.add("hidden");
+  }
+  if (result) {
+    result.classList.add("empty-state");
+    result.textContent = String(emptyText ?? "");
+  }
+}
+
 export function renderInterpretationGmailResultInto(container, payload, presentation) {
   if (!container) {
     return;
