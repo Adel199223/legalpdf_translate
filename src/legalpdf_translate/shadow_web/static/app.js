@@ -54,6 +54,7 @@ import {
   resetInterpretationExportResultInto,
 } from "./interpretation_result_ui.js";
 import {
+  focusInterpretationFieldInto,
   renderInterpretationDisclosureSectionsInto,
   renderInterpretationReviewContextInto,
   renderInterpretationReviewSurfaceInto,
@@ -1179,12 +1180,6 @@ function syncInterpretationReviewSurface() {
 
 function focusInterpretationField(fieldName) {
   interpretationUiState.validationField = String(fieldName || "").trim();
-  if (fieldName === "service_city" || fieldName === "service_entity" || fieldName === "service_date") {
-    qs("interpretation-service-section")?.setAttribute("open", "open");
-  }
-  if (fieldName === "travel_km_outbound") {
-    qs("interpretation-text-section")?.setAttribute("open", "open");
-  }
   const targetId = fieldName === "case_city"
     ? "case-city"
     : fieldName === "service_city"
@@ -1192,7 +1187,11 @@ function focusInterpretationField(fieldName) {
       : fieldName === "travel_km_outbound"
         ? "travel-km-outbound"
         : fieldName;
-  qs(targetId)?.focus();
+  focusInterpretationFieldInto({
+    serviceSection: qs("interpretation-service-section"),
+    textSection: qs("interpretation-text-section"),
+    target: qs(targetId),
+  }, fieldName);
 }
 
 function setInterpretationCityDialogOpen(open) {
@@ -1461,7 +1460,6 @@ export async function prepareInterpretationAction(actionName = "save") {
       },
     };
     if (guard.blockedField === "travel_km_outbound") {
-      qs("interpretation-text-section")?.setAttribute("open", "open");
       setPanelStatus("form", "bad", fallbackError.message || `Interpretation ${actionName} is blocked.`);
       setDiagnostics("form", fallbackError, {
         hint: fallbackError.message || `Interpretation ${actionName} is blocked.`,
@@ -1486,7 +1484,6 @@ export async function prepareInterpretationAction(actionName = "save") {
       const message = guard.distanceHint || "A positive one-way distance is required before continuing.";
       setPanelStatus("form", "bad", message);
       setDiagnostics("form", { status: "failed", diagnostics: { error: message } }, { hint: message, open: true });
-      qs("interpretation-text-section")?.setAttribute("open", "open");
       focusInterpretationField("travel_km_outbound");
       throw new Error(message);
     }

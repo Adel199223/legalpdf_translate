@@ -76,6 +76,29 @@ export function renderInterpretationDisclosureSectionsInto(nodes = {}, disclosur
   }
 }
 
+export function focusInterpretationFieldInto(nodes = {}, fieldName = "") {
+  if (!nodes) {
+    return;
+  }
+  const {
+    serviceSection = null,
+    textSection = null,
+    target = null,
+  } = nodes;
+  const normalizedField = String(fieldName || "").trim();
+  if (
+    normalizedField === "service_city"
+    || normalizedField === "service_entity"
+    || normalizedField === "service_date"
+  ) {
+    serviceSection?.setAttribute?.("open", "open");
+  }
+  if (normalizedField === "travel_km_outbound") {
+    textSection?.setAttribute?.("open", "open");
+  }
+  target?.focus?.();
+}
+
 export function renderInterpretationReviewContextInto(nodes = {}, card = {}) {
   const {
     container,

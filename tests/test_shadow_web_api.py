@@ -8237,6 +8237,160 @@ console.log(JSON.stringify({
     assert "nullNodesResult" not in results
 
 
+def test_interpretation_review_ui_module_centralizes_safe_field_focus() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_review_ui_js = static_dir / "interpretation_review_ui.js"
+
+    assert interpretation_review_ui_js.exists()
+    interpretation_review_ui_text = interpretation_review_ui_js.read_text(encoding="utf-8")
+    assert 'from "./interpretation_review_ui.js"' in app_js
+    assert "export function focusInterpretationFieldInto" in interpretation_review_ui_text
+    assert "focusInterpretationFieldInto({" in app_js
+
+    focus_start = app_js.index("function focusInterpretationField")
+    dialog_start = app_js.index("function setInterpretationCityDialogOpen", focus_start)
+    focus_block = app_js[focus_start:dialog_start]
+    assert "interpretationUiState.validationField" in focus_block
+    assert "focusInterpretationFieldInto({" in focus_block
+    assert ".focus()" not in focus_block
+    assert 'setAttribute("open", "open")' not in focus_block
+
+    prepare_start = app_js.index("export async function prepareInterpretationAction")
+    snapshot_start = app_js.index("export function getInterpretationUiSnapshot", prepare_start)
+    prepare_block = app_js[prepare_start:snapshot_start]
+    assert 'qs("interpretation-text-section")?.setAttribute("open", "open");' not in prepare_block
+
+    script = r"""
+const interpretationReviewUi = await import(__INTERPRETATION_REVIEW_UI_MODULE_URL__);
+
+function makeDetails() {
+  return {
+    open: false,
+    attributes: {},
+    innerHTMLAssignments: [],
+    setAttribute(name, value) {
+      this.attributes[String(name)] = String(value);
+      if (String(name) === "open") {
+        this.open = true;
+      }
+    },
+  };
+}
+
+function makeTarget() {
+  return {
+    focused: false,
+    innerHTMLAssignments: [],
+    focus() {
+      this.focused = true;
+    },
+  };
+}
+
+function summarize(nodes) {
+  return {
+    serviceOpen: Boolean(nodes.serviceSection.open),
+    serviceOpenAttribute: nodes.serviceSection.attributes.open || "",
+    textOpen: Boolean(nodes.textSection.open),
+    textOpenAttribute: nodes.textSection.attributes.open || "",
+    targetFocused: Boolean(nodes.target.focused),
+    innerHTMLWrites: (
+      nodes.serviceSection.innerHTMLAssignments.length
+      + nodes.textSection.innerHTMLAssignments.length
+      + nodes.target.innerHTMLAssignments.length
+    ),
+  };
+}
+
+function runCase(fieldName) {
+  const nodes = {
+    serviceSection: makeDetails(),
+    textSection: makeDetails(),
+    target: makeTarget(),
+  };
+  interpretationReviewUi.focusInterpretationFieldInto(nodes, fieldName);
+  return summarize(nodes);
+}
+
+const missingTargetNodes = {
+  serviceSection: makeDetails(),
+  textSection: makeDetails(),
+  target: null,
+};
+interpretationReviewUi.focusInterpretationFieldInto(missingTargetNodes, "service_city");
+
+const nullNodesResult = interpretationReviewUi.focusInterpretationFieldInto(null, "service_city");
+const missingSectionsResult = interpretationReviewUi.focusInterpretationFieldInto({ target: makeTarget() }, "travel_km_outbound");
+const malicious = runCase(`<img src=x onerror=alert(1)><script>bad()</script>`);
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationReviewUi.focusInterpretationFieldInto,
+  serviceCity: runCase("service_city"),
+  serviceEntity: runCase("service_entity"),
+  serviceDate: runCase("service_date"),
+  travelKm: runCase("travel_km_outbound"),
+  caseCity: runCase("case_city"),
+  malicious,
+  missingTarget: summarize({
+    ...missingTargetNodes,
+    target: { focused: false, innerHTMLAssignments: [] },
+  }),
+  missingSectionsResult,
+  nullNodesResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REVIEW_UI_MODULE_URL__": "interpretation_review_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["serviceCity"] == {
+        "serviceOpen": True,
+        "serviceOpenAttribute": "open",
+        "textOpen": False,
+        "textOpenAttribute": "",
+        "targetFocused": True,
+        "innerHTMLWrites": 0,
+    }
+    assert results["serviceEntity"]["serviceOpen"] is True
+    assert results["serviceEntity"]["targetFocused"] is True
+    assert results["serviceDate"]["serviceOpen"] is True
+    assert results["serviceDate"]["targetFocused"] is True
+    assert results["travelKm"] == {
+        "serviceOpen": False,
+        "serviceOpenAttribute": "",
+        "textOpen": True,
+        "textOpenAttribute": "open",
+        "targetFocused": True,
+        "innerHTMLWrites": 0,
+    }
+    assert results["caseCity"] == {
+        "serviceOpen": False,
+        "serviceOpenAttribute": "",
+        "textOpen": False,
+        "textOpenAttribute": "",
+        "targetFocused": True,
+        "innerHTMLWrites": 0,
+    }
+    assert results["malicious"]["serviceOpen"] is False
+    assert results["malicious"]["textOpen"] is False
+    assert results["malicious"]["targetFocused"] is True
+    assert results["malicious"]["innerHTMLWrites"] == 0
+    assert results["missingTarget"]["serviceOpen"] is True
+    assert results["missingTarget"]["targetFocused"] is False
+    assert "missingSectionsResult" not in results
+    assert "nullNodesResult" not in results
+
+
 def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -12394,6 +12548,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "syncInterpretationReviewDrawerStateInto" in interpretation_review_ui_asset.text
         assert "renderInterpretationReviewSurfaceInto" in interpretation_review_ui_asset.text
         assert "renderInterpretationDisclosureSectionsInto" in interpretation_review_ui_asset.text
+        assert "focusInterpretationFieldInto" in interpretation_review_ui_asset.text
         interpretation_result_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_result_ui.js")
         assert interpretation_result_ui_asset.status_code == 200
         assert interpretation_result_ui_asset.headers["content-type"].startswith("application/javascript")
