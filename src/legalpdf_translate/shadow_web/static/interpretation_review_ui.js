@@ -1,3 +1,43 @@
+export function renderInterpretationDisclosureSectionsInto(nodes = {}, disclosure = {}) {
+  if (!nodes) {
+    return;
+  }
+  const pairs = [
+    {
+      details: nodes.serviceDetails,
+      summary: nodes.serviceSummary,
+      open: disclosure.serviceOpen,
+      summaryText: disclosure.serviceSummary,
+    },
+    {
+      details: nodes.textDetails,
+      summary: nodes.textSummary,
+      open: disclosure.textOpen,
+      summaryText: disclosure.textSummary,
+    },
+    {
+      details: nodes.recipientDetails,
+      summary: nodes.recipientSummary,
+      open: disclosure.recipientOpen,
+      summaryText: disclosure.recipientSummary,
+    },
+    {
+      details: nodes.amountsDetails,
+      summary: nodes.amountsSummary,
+      open: disclosure.amountsOpen,
+      summaryText: disclosure.amountsSummary,
+    },
+  ];
+  for (const pair of pairs) {
+    if (pair.details) {
+      pair.details.open = Boolean(pair.open);
+    }
+    if (pair.summary) {
+      pair.summary.textContent = String(pair.summaryText ?? "");
+    }
+  }
+}
+
 export function renderInterpretationReviewContextInto(nodes = {}, card = {}) {
   const {
     container,

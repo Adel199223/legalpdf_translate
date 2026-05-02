@@ -5760,6 +5760,254 @@ console.log(JSON.stringify({
     assert "nullDetailsResult" not in results
 
 
+def test_interpretation_review_ui_module_centralizes_safe_disclosure_section_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_review_ui_js = static_dir / "interpretation_review_ui.js"
+
+    assert interpretation_review_ui_js.exists()
+    interpretation_review_ui_text = interpretation_review_ui_js.read_text(encoding="utf-8")
+    assert 'from "./interpretation_review_ui.js"' in app_js
+    assert "export function renderInterpretationDisclosureSectionsInto" in interpretation_review_ui_text
+    assert "renderInterpretationDisclosureSectionsInto({" in app_js
+    assert "function setDisclosureState" not in app_js
+
+    disclosure_start = app_js.index("function syncInterpretationDisclosureState")
+    next_function_start = app_js.index("function interpretationActiveSession", disclosure_start)
+    disclosure_block = app_js[disclosure_start:next_function_start]
+    assert "deriveInterpretationDrawerLayout" in disclosure_block
+    assert "deriveInterpretationDisclosurePresentation" in disclosure_block
+    assert "innerHTML" not in disclosure_block
+    assert "escapeHtml" not in disclosure_block
+    assert "setDisclosureState(" not in disclosure_block
+    assert ".open =" not in disclosure_block
+    assert ".textContent =" not in disclosure_block
+
+    script = r"""
+const interpretationReviewUi = await import(__INTERPRETATION_REVIEW_UI_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    children: [],
+    parentNode: null,
+    open: false,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  let total = 0;
+  nodes.forEach((node) => {
+    if (!node) {
+      return;
+    }
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
+  });
+  return total;
+}
+
+function makeSection() {
+  return {
+    details: makeElement("details"),
+    summary: makeElement("summary"),
+  };
+}
+
+function summarize(section) {
+  return {
+    open: section.details.open,
+    summary: section.summary.textContent,
+    imgCount: countTag(section.details, "img") + countTag(section.summary, "img"),
+    scriptCount: countTag(section.details, "script") + countTag(section.summary, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(section.details, section.summary),
+  };
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const service = makeSection();
+const text = makeSection();
+const recipient = makeSection();
+const amounts = makeSection();
+const nodes = {
+  serviceDetails: service.details,
+  serviceSummary: service.summary,
+  textDetails: text.details,
+  textSummary: text.summary,
+  recipientDetails: recipient.details,
+  recipientSummary: recipient.summary,
+  amountsDetails: amounts.details,
+  amountsSummary: amounts.summary,
+};
+
+interpretationReviewUi.renderInterpretationDisclosureSectionsInto(nodes, {
+  serviceOpen: true,
+  serviceSummary: `Service ${malicious}`,
+  textOpen: false,
+  textSummary: `Text ${malicious}`,
+  recipientOpen: true,
+  recipientSummary: `Recipient ${malicious}`,
+  amountsOpen: false,
+  amountsSummary: `Amounts ${malicious}`,
+});
+
+const missingSummary = makeElement("summary");
+const missingDetails = makeElement("details");
+missingDetails.open = true;
+const missingResult = interpretationReviewUi.renderInterpretationDisclosureSectionsInto({
+  serviceDetails: null,
+  serviceSummary: missingSummary,
+  textDetails: missingDetails,
+  textSummary: null,
+  recipientDetails: null,
+  recipientSummary: null,
+  amountsDetails: null,
+  amountsSummary: null,
+}, {
+  serviceOpen: true,
+  serviceSummary: `Missing service ${malicious}`,
+  textOpen: false,
+  textSummary: `Missing text ${malicious}`,
+});
+
+const nullNodesResult = interpretationReviewUi.renderInterpretationDisclosureSectionsInto(null, {
+  serviceOpen: true,
+  serviceSummary: `Null service ${malicious}`,
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationReviewUi.renderInterpretationDisclosureSectionsInto,
+  service: summarize(service),
+  text: summarize(text),
+  recipient: summarize(recipient),
+  amounts: summarize(amounts),
+  missingSummaryText: missingSummary.textContent,
+  missingDetailsOpen: missingDetails.open,
+  missingInnerHTMLWrites: countInnerHtmlWrites(missingSummary, missingDetails),
+  missingResult,
+  nullNodesResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REVIEW_UI_MODULE_URL__": "interpretation_review_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["service"] == {
+        "open": True,
+        "summary": "Service <img src=x onerror=alert(1)><script>bad()</script>",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["text"] == {
+        "open": False,
+        "summary": "Text <img src=x onerror=alert(1)><script>bad()</script>",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["recipient"] == {
+        "open": True,
+        "summary": "Recipient <img src=x onerror=alert(1)><script>bad()</script>",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["amounts"] == {
+        "open": False,
+        "summary": "Amounts <img src=x onerror=alert(1)><script>bad()</script>",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["missingSummaryText"] == "Missing service <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["missingDetailsOpen"] is False
+    assert results["missingInnerHTMLWrites"] == 0
+    assert "missingResult" not in results
+    assert "nullNodesResult" not in results
+
+
 def test_interpretation_review_ui_module_centralizes_safe_drawer_state_sync() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -10145,6 +10393,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "syncInterpretationReviewDetailsShellInto" in interpretation_review_ui_asset.text
         assert "syncInterpretationReviewDrawerStateInto" in interpretation_review_ui_asset.text
         assert "renderInterpretationReviewSurfaceInto" in interpretation_review_ui_asset.text
+        assert "renderInterpretationDisclosureSectionsInto" in interpretation_review_ui_asset.text
         interpretation_result_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_result_ui.js")
         assert interpretation_result_ui_asset.status_code == 200
         assert interpretation_result_ui_asset.headers["content-type"].startswith("application/javascript")
