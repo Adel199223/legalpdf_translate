@@ -3697,10 +3697,16 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "export function renderCourtEmailOptionsInto" in interpretation_reference_ui_text
     assert "export function renderServiceEntityOptionsInto" in interpretation_reference_ui_text
     assert "export function renderInterpretationFieldWarningInto" in interpretation_reference_ui_text
+    assert "export function renderInterpretationDistanceHintInto" in interpretation_reference_ui_text
+    assert "export function renderInterpretationActionButtonsInto" in interpretation_reference_ui_text
+    assert "export function renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_text
     assert "renderInterpretationCityOptionsInto(select, reference.availableCities, currentValue);" in app_js
     assert "renderCourtEmailOptionsInto(select, {" in app_js
     assert "renderServiceEntityOptionsInto(select, options, selectedValue);" in app_js
     assert "renderInterpretationFieldWarningInto(node, { message, tone });" in app_js
+    assert "renderInterpretationDistanceHintInto(" in app_js
+    assert "renderInterpretationActionButtonsInto(actionButtons, { blocked });" in app_js
+    assert "renderInterpretationCityAddButtonsInto({" in app_js
 
     city_start = app_js.index("function populateInterpretationCitySelect")
     court_email_start = app_js.index("function populateCourtEmailSelect", city_start)
@@ -3727,11 +3733,27 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "classList.toggle(\"is-warning\"" not in field_warning_block
     assert "classList.toggle(\"is-danger\"" not in field_warning_block
 
+    distance_sync_start = app_js.index("function syncInterpretationDistanceFromReference")
+    action_availability_start = app_js.index("function updateInterpretationActionAvailability", distance_sync_start)
+    distance_sync_block = app_js[distance_sync_start:action_availability_start]
+    assert "innerHTML" not in distance_sync_block
+    assert "hint.textContent" not in distance_sync_block
+
+    city_controls_end = app_js.index("function syncInterpretationCityControls", action_availability_start)
+    action_availability_block = app_js[action_availability_start:city_controls_end]
+    assert "innerHTML" not in action_availability_block
+    assert "button.disabled" not in action_availability_block
+    assert "button.classList.add(\"hidden\")" not in action_availability_block
+    assert "caseAddButton.textContent" not in action_availability_block
+    assert "serviceAddButton.textContent" not in action_availability_block
+    assert "serviceAddButton.disabled" not in action_availability_block
+
     script = r"""
 const interpretationReferenceUi = await import(__INTERPRETATION_REFERENCE_UI_MODULE_URL__);
 
 function makeElement(tagName = "div") {
   const classes = new Set();
+  const attributes = new Map();
   const syncClassName = () => {
     element.className = Array.from(classes).join(" ");
   };
@@ -3742,6 +3764,7 @@ function makeElement(tagName = "div") {
     parentNode: null,
     value: "",
     selected: false,
+    disabled: false,
     innerHTMLAssignments: [],
     _textContent: "",
     _innerHTML: "",
@@ -3762,6 +3785,12 @@ function makeElement(tagName = "div") {
       });
       this._textContent = "";
       this._innerHTML = "";
+    },
+    getAttribute(name) {
+      return attributes.has(String(name)) ? attributes.get(String(name)) : null;
+    },
+    setAttribute(name, value) {
+      attributes.set(String(name), String(value));
     },
     classList: {
       add(...names) {
@@ -3878,6 +3907,26 @@ function summarizeWarning(node) {
   };
 }
 
+function summarizeTextNode(node) {
+  return {
+    text: node.textContent,
+    imgCount: countTag(node, "img"),
+    scriptCount: countTag(node, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(node),
+  };
+}
+
+function summarizeButton(node) {
+  return {
+    text: node.textContent,
+    disabled: Boolean(node.disabled),
+    hidden: node.classList.contains("hidden"),
+    imgCount: countTag(node, "img"),
+    scriptCount: countTag(node, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(node),
+  };
+}
+
 globalThis.document = {
   createElement(tagName) {
     return makeElement(tagName);
@@ -3959,12 +4008,65 @@ interpretationReferenceUi.renderInterpretationFieldWarningInto(emptyNode, {
   tone: "danger",
 });
 
+const distanceHint = document.createElement("p");
+interpretationReferenceUi.renderInterpretationDistanceHintInto(
+  distanceHint,
+  `Saved distance ${malicious}`,
+);
+
+const visibleActionButton = document.createElement("button");
+visibleActionButton.setAttribute("aria-busy", "false");
+const hiddenBusyActionButton = document.createElement("button");
+hiddenBusyActionButton.classList.add("hidden");
+hiddenBusyActionButton.setAttribute("aria-busy", "true");
+interpretationReferenceUi.renderInterpretationActionButtonsInto(
+  [visibleActionButton, hiddenBusyActionButton, null],
+  { blocked: false },
+);
+
+const blockedActionButton = document.createElement("button");
+blockedActionButton.setAttribute("aria-busy", "false");
+interpretationReferenceUi.renderInterpretationActionButtonsInto(
+  [blockedActionButton],
+  { blocked: true },
+);
+
+const caseAddButton = document.createElement("button");
+const serviceAddButton = document.createElement("button");
+interpretationReferenceUi.renderInterpretationCityAddButtonsInto(
+  { caseButton: caseAddButton, serviceButton: serviceAddButton },
+  {
+    provisionalCaseCity: `Beja ${malicious}`,
+    provisionalServiceCity: `Cuba ${malicious}`,
+    serviceSame: true,
+  },
+);
+
+const emptyCaseAddButton = document.createElement("button");
+const emptyServiceAddButton = document.createElement("button");
+emptyServiceAddButton.disabled = true;
+interpretationReferenceUi.renderInterpretationCityAddButtonsInto(
+  { caseButton: emptyCaseAddButton, serviceButton: emptyServiceAddButton },
+  { provisionalCaseCity: "", provisionalServiceCity: "", serviceSame: false },
+);
+
+const nullDistanceResult = interpretationReferenceUi.renderInterpretationDistanceHintInto(null, "ignored");
+const nullActionResult = interpretationReferenceUi.renderInterpretationActionButtonsInto(null, { blocked: true });
+const nullAddButtonResult = interpretationReferenceUi.renderInterpretationCityAddButtonsInto(null, {
+  provisionalCaseCity: "Ignored",
+  provisionalServiceCity: "Ignored",
+  serviceSame: true,
+});
+
 console.log(JSON.stringify({
   exportedTypes: {
     city: typeof interpretationReferenceUi.renderInterpretationCityOptionsInto,
     email: typeof interpretationReferenceUi.renderCourtEmailOptionsInto,
     service: typeof interpretationReferenceUi.renderServiceEntityOptionsInto,
     fieldWarning: typeof interpretationReferenceUi.renderInterpretationFieldWarningInto,
+    distanceHint: typeof interpretationReferenceUi.renderInterpretationDistanceHintInto,
+    actionButtons: typeof interpretationReferenceUi.renderInterpretationActionButtonsInto,
+    cityAddButtons: typeof interpretationReferenceUi.renderInterpretationCityAddButtonsInto,
   },
   city: summarizeSelect(citySelect),
   email: summarizeSelect(emailSelect),
@@ -3974,10 +4076,21 @@ console.log(JSON.stringify({
   danger: summarizeWarning(dangerNode),
   otherTone: summarizeWarning(otherToneNode),
   emptyWarning: summarizeWarning(emptyNode),
+  distanceHint: summarizeTextNode(distanceHint),
+  visibleActionButton: summarizeButton(visibleActionButton),
+  hiddenBusyActionButton: summarizeButton(hiddenBusyActionButton),
+  blockedActionButton: summarizeButton(blockedActionButton),
+  caseAddButton: summarizeButton(caseAddButton),
+  serviceAddButton: summarizeButton(serviceAddButton),
+  emptyCaseAddButton: summarizeButton(emptyCaseAddButton),
+  emptyServiceAddButton: summarizeButton(emptyServiceAddButton),
   nullCityResult,
   nullEmailResult,
   nullServiceResult,
   nullWarningResult,
+  nullDistanceResult,
+  nullActionResult,
+  nullAddButtonResult,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -3991,6 +4104,9 @@ console.log(JSON.stringify({
         "email": "function",
         "service": "function",
         "fieldWarning": "function",
+        "distanceHint": "function",
+        "actionButtons": "function",
+        "cityAddButtons": "function",
     }
     assert results["city"]["optionTexts"][0] == "Select a city"
     assert results["city"]["optionValues"][0] == ""
@@ -4044,10 +4160,42 @@ console.log(JSON.stringify({
     assert results["emptyWarning"]["isDanger"] is False
     assert results["emptyWarning"]["innerHTMLWrites"] == 0
 
+    assert results["distanceHint"]["text"] == "Saved distance <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["distanceHint"]["imgCount"] == 0
+    assert results["distanceHint"]["scriptCount"] == 0
+    assert results["distanceHint"]["innerHTMLWrites"] == 0
+
+    assert results["visibleActionButton"]["disabled"] is False
+    assert results["visibleActionButton"]["hidden"] is False
+    assert results["visibleActionButton"]["innerHTMLWrites"] == 0
+    assert results["hiddenBusyActionButton"]["disabled"] is True
+    assert results["hiddenBusyActionButton"]["hidden"] is True
+    assert results["hiddenBusyActionButton"]["innerHTMLWrites"] == 0
+    assert results["blockedActionButton"]["disabled"] is True
+    assert results["blockedActionButton"]["innerHTMLWrites"] == 0
+
+    assert results["caseAddButton"]["text"] == "Add “Beja <img src=x onerror=alert(1)><script>bad()</script>”"
+    assert results["caseAddButton"]["disabled"] is False
+    assert results["caseAddButton"]["imgCount"] == 0
+    assert results["caseAddButton"]["scriptCount"] == 0
+    assert results["caseAddButton"]["innerHTMLWrites"] == 0
+    assert results["serviceAddButton"]["text"] == "Add “Cuba <img src=x onerror=alert(1)><script>bad()</script>”"
+    assert results["serviceAddButton"]["disabled"] is True
+    assert results["serviceAddButton"]["imgCount"] == 0
+    assert results["serviceAddButton"]["scriptCount"] == 0
+    assert results["serviceAddButton"]["innerHTMLWrites"] == 0
+    assert results["emptyCaseAddButton"]["text"] == "Add city..."
+    assert results["emptyCaseAddButton"]["disabled"] is False
+    assert results["emptyServiceAddButton"]["text"] == "Add city..."
+    assert results["emptyServiceAddButton"]["disabled"] is False
+
     assert "nullCityResult" not in results
     assert "nullEmailResult" not in results
     assert "nullServiceResult" not in results
     assert "nullWarningResult" not in results
+    assert "nullDistanceResult" not in results
+    assert "nullActionResult" not in results
+    assert "nullAddButtonResult" not in results
 
 
 def test_interpretation_review_ui_module_centralizes_safe_context_rendering() -> None:
@@ -8377,6 +8525,9 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderCourtEmailOptionsInto" in interpretation_reference_ui_asset.text
         assert "renderServiceEntityOptionsInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationFieldWarningInto" in interpretation_reference_ui_asset.text
+        assert "renderInterpretationDistanceHintInto" in interpretation_reference_ui_asset.text
+        assert "renderInterpretationActionButtonsInto" in interpretation_reference_ui_asset.text
+        assert "renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_asset.text
         interpretation_review_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_review_ui.js")
         assert interpretation_review_ui_asset.status_code == 200
         assert interpretation_review_ui_asset.headers["content-type"].startswith("application/javascript")

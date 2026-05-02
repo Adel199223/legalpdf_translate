@@ -88,3 +88,39 @@ export function renderInterpretationFieldWarningInto(node, { message = "", tone 
   node.classList.toggle("is-warning", Boolean(text) && tone === "warning");
   node.classList.toggle("is-danger", Boolean(text) && tone === "danger");
 }
+
+export function renderInterpretationDistanceHintInto(hint, text = "") {
+  if (!hint) {
+    return;
+  }
+  hint.textContent = String(text ?? "");
+}
+
+export function renderInterpretationActionButtonsInto(buttons = [], { blocked = false } = {}) {
+  for (const button of buttons || []) {
+    if (!button) {
+      continue;
+    }
+    const keepHidden = button.classList.contains("hidden");
+    button.disabled = Boolean(blocked) || button.getAttribute("aria-busy") === "true";
+    if (keepHidden) {
+      button.classList.add("hidden");
+    }
+  }
+}
+
+export function renderInterpretationCityAddButtonsInto(nodes = {}, state = {}) {
+  const { caseButton = null, serviceButton = null } = nodes || {};
+  const {
+    provisionalCaseCity = "",
+    provisionalServiceCity = "",
+    serviceSame = false,
+  } = state || {};
+  if (caseButton) {
+    caseButton.textContent = provisionalCaseCity ? `Add “${provisionalCaseCity}”` : "Add city...";
+  }
+  if (serviceButton) {
+    serviceButton.textContent = provisionalServiceCity ? `Add “${provisionalServiceCity}”` : "Add city...";
+    serviceButton.disabled = Boolean(serviceSame);
+  }
+}

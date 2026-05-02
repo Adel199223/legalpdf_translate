@@ -54,8 +54,11 @@ import {
 } from "./interpretation_review_ui.js";
 import {
   renderCourtEmailOptionsInto,
+  renderInterpretationActionButtonsInto,
   renderInterpretationFieldWarningInto,
+  renderInterpretationCityAddButtonsInto,
   renderInterpretationCityOptionsInto,
+  renderInterpretationDistanceHintInto,
   renderServiceEntityOptionsInto,
 } from "./interpretation_reference_ui.js";
 import {
@@ -1026,7 +1029,10 @@ function syncInterpretationDistanceFromReference() {
   }
   interpretationCityState.autoDistanceCity = syncState.autoDistanceCity;
   interpretationCityState.manualDistance = syncState.manualDistance;
-  hint.textContent = syncState.hintText || guard.distanceHint || "Distance saved by city will appear here when available.";
+  renderInterpretationDistanceHintInto(
+    hint,
+    syncState.hintText || guard.distanceHint || "Distance saved by city will appear here when available.",
+  );
 }
 
 function updateInterpretationActionAvailability() {
@@ -1037,17 +1043,10 @@ function updateInterpretationActionAvailability() {
     || guard.blockedCode === "distance_required"
     || guard.blockedCode === "distance_must_be_positive"
   );
-  for (const id of ["save-row", "export-honorarios", "interpretation-finalize-gmail"]) {
-    const button = qs(id);
-    if (!button) {
-      continue;
-    }
-    const keepHidden = button.classList.contains("hidden");
-    button.disabled = blocked || button.getAttribute("aria-busy") === "true";
-    if (keepHidden) {
-      button.classList.add("hidden");
-    }
-  }
+  const actionButtons = ["save-row", "export-honorarios", "interpretation-finalize-gmail"]
+    .map((id) => qs(id))
+    .filter(Boolean);
+  renderInterpretationActionButtonsInto(actionButtons, { blocked });
   const caseWarning = guard.provisionalCaseCity
     ? `Imported city "${guard.provisionalCaseCity}" is not confirmed yet. Select a known city or add it first.`
     : "";
@@ -1064,14 +1063,15 @@ function updateInterpretationActionAvailability() {
     setInterpretationLocationGuard("");
   }
   const caseAddButton = qs(interpretationCityAddButtonId("case_city"));
-  if (caseAddButton) {
-    caseAddButton.textContent = guard.provisionalCaseCity ? `Add “${guard.provisionalCaseCity}”` : "Add city...";
-  }
   const serviceAddButton = qs(interpretationCityAddButtonId("service_city"));
-  if (serviceAddButton) {
-    serviceAddButton.textContent = guard.provisionalServiceCity ? `Add “${guard.provisionalServiceCity}”` : "Add city...";
-    serviceAddButton.disabled = qs("service-same")?.checked ?? false;
-  }
+  renderInterpretationCityAddButtonsInto({
+    caseButton: caseAddButton,
+    serviceButton: serviceAddButton,
+  }, {
+    provisionalCaseCity: guard.provisionalCaseCity,
+    provisionalServiceCity: guard.provisionalServiceCity,
+    serviceSame: qs("service-same")?.checked ?? false,
+  });
 }
 
 function syncInterpretationCityControls() {
