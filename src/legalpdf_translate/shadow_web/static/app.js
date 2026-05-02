@@ -50,6 +50,7 @@ import {
   resetInterpretationExportResultInto,
 } from "./interpretation_result_ui.js";
 import {
+  renderInterpretationDisclosureSectionsInto,
   renderInterpretationReviewContextInto,
   renderInterpretationReviewSurfaceInto,
   syncInterpretationReviewDrawerStateInto,
@@ -594,17 +595,6 @@ function syncServiceFieldsFromCase() {
   setProvisionalCityValue("service_city", provisionalCityValue("case_city"));
 }
 
-function setDisclosureState(id, expanded, summaryText = "") {
-  const details = qs(id);
-  if (details) {
-    details.open = Boolean(expanded);
-  }
-  const summaryNode = qs(`${id}-summary`);
-  if (summaryNode) {
-    summaryNode.textContent = summaryText;
-  }
-}
-
 function syncInterpretationDisclosureState() {
   const serviceSame = qs("service-same")?.checked ?? true;
   const drawerLayout = deriveInterpretationDrawerLayout({
@@ -635,29 +625,25 @@ function syncInterpretationDisclosureState() {
     amountsTouched,
     includeTransport,
   });
-  setDisclosureState(
-    "interpretation-service-section",
-    drawerLayout.sections.serviceOpen,
-    disclosurePresentation.serviceSummary,
-  );
-  setDisclosureState(
-    "interpretation-text-section",
-    drawerLayout.sections.textOpen,
-    disclosurePresentation.textSummary,
-  );
-  setDisclosureState(
-    "interpretation-recipient-section",
-    drawerLayout.sections.recipientOpen,
-    disclosurePresentation.recipientSummary,
-  );
-  const amountsSummaryNode = qs("interpretation-amounts-section-summary");
-  if (amountsSummaryNode) {
-    amountsSummaryNode.textContent = disclosurePresentation.amountsSummary;
-  }
-  const amountsSection = qs("interpretation-amounts-section");
-  if (amountsSection) {
-    amountsSection.open = drawerLayout.sections.amountsOpen;
-  }
+  renderInterpretationDisclosureSectionsInto({
+    serviceDetails: qs("interpretation-service-section"),
+    serviceSummary: qs("interpretation-service-section-summary"),
+    textDetails: qs("interpretation-text-section"),
+    textSummary: qs("interpretation-text-section-summary"),
+    recipientDetails: qs("interpretation-recipient-section"),
+    recipientSummary: qs("interpretation-recipient-section-summary"),
+    amountsDetails: qs("interpretation-amounts-section"),
+    amountsSummary: qs("interpretation-amounts-section-summary"),
+  }, {
+    serviceOpen: drawerLayout.sections.serviceOpen,
+    serviceSummary: disclosurePresentation.serviceSummary,
+    textOpen: drawerLayout.sections.textOpen,
+    textSummary: disclosurePresentation.textSummary,
+    recipientOpen: drawerLayout.sections.recipientOpen,
+    recipientSummary: disclosurePresentation.recipientSummary,
+    amountsOpen: drawerLayout.sections.amountsOpen,
+    amountsSummary: disclosurePresentation.amountsSummary,
+  });
 }
 
 function interpretationActiveSession() {
