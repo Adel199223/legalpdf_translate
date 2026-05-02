@@ -76,6 +76,21 @@ export function renderRuntimeModeSelectorInto(select, runtimeMode = {}) {
   }
 }
 
+export function renderRuntimeModeBannerInto(banner, { show = false, message = "", mode = "" } = {}) {
+  if (!banner) {
+    return;
+  }
+  if (!show) {
+    banner.classList.add("hidden");
+    setText(banner, "");
+    delete banner.dataset.mode;
+    return;
+  }
+  setText(banner, message);
+  banner.dataset.mode = mode;
+  banner.classList.remove("hidden");
+}
+
 export function renderShellVisibilityInto({
   views = [],
   navButtons = [],
