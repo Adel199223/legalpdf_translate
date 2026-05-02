@@ -42,6 +42,56 @@ export function syncProfileEditorDrawerStateInto(backdrop, body, open) {
   }
 }
 
+export function renderProfileDistanceStatusInto(node, { tone = "", message = "" } = {}) {
+  if (!node) {
+    return;
+  }
+  setText(node, message);
+  if (tone) {
+    node.dataset.tone = tone;
+  } else {
+    delete node.dataset.tone;
+  }
+}
+
+export function renderProfileDistanceJsonInto(field, value = "") {
+  if (!field) {
+    return;
+  }
+  field.value = String(value ?? "");
+}
+
+export function renderProfileEditorChromeInto(
+  {
+    status = null,
+    setPrimaryButton = null,
+    deleteButton = null,
+    distanceAdvancedDetails = null,
+  } = {},
+  {
+    statusMessage = "",
+    hasProfile = false,
+    useAsMainLabel = "",
+    deleteLabel = "Delete profile",
+    collapseDistanceAdvanced = false,
+  } = {},
+) {
+  if (status) {
+    setText(status, statusMessage);
+  }
+  if (setPrimaryButton) {
+    setPrimaryButton.disabled = !hasProfile;
+    setText(setPrimaryButton, useAsMainLabel);
+  }
+  if (deleteButton) {
+    deleteButton.disabled = !hasProfile;
+    setText(deleteButton, deleteLabel);
+  }
+  if (distanceAdvancedDetails && collapseDistanceAdvanced) {
+    distanceAdvancedDetails.open = false;
+  }
+}
+
 export function renderProfileDistanceRowsInto(container, rows, { onRemove } = {}) {
   if (!container) {
     return;

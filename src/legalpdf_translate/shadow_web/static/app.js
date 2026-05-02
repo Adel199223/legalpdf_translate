@@ -82,8 +82,11 @@ import {
   upsertDistanceRow,
 } from "./profile_presentation.js";
 import {
+  renderProfileDistanceJsonInto,
   renderPrimaryProfileCardInto,
+  renderProfileDistanceStatusInto,
   renderProfileDistanceRowsInto,
+  renderProfileEditorChromeInto,
   renderProfileListInto,
   renderProfileOptionsInto,
   syncProfileEditorDrawerStateInto,
@@ -1682,16 +1685,7 @@ function formatDistanceJson(value) {
 }
 
 function setProfileDistanceStatus(tone, message) {
-  const node = qs("profile-distance-status");
-  if (!node) {
-    return;
-  }
-  node.textContent = message;
-  if (tone) {
-    node.dataset.tone = tone;
-  } else {
-    delete node.dataset.tone;
-  }
+  renderProfileDistanceStatusInto(qs("profile-distance-status"), { tone, message });
 }
 
 function syncProfileDistanceJsonField({ markClean = true } = {}) {
@@ -1699,7 +1693,7 @@ function syncProfileDistanceJsonField({ markClean = true } = {}) {
   if (!jsonField) {
     return;
   }
-  jsonField.value = formatDistanceJson(profileUiState.distanceRows);
+  renderProfileDistanceJsonInto(jsonField, formatDistanceJson(profileUiState.distanceRows));
   if (markClean) {
     profileUiState.distanceJsonDirty = false;
   }
@@ -1774,16 +1768,20 @@ function applyProfileEditor(profile, { openDrawer = false } = {}) {
   }
   setCheckbox("profile-editor-make-primary", Boolean(resolved.is_primary));
   profileState.currentProfileId = resolved.id || "";
-  qs("profile-editor-status").textContent = presentation.editorStatus;
-  qs("profile-set-primary").disabled = !resolved.id;
-  qs("profile-delete").disabled = !resolved.id;
-  qs("profile-set-primary").textContent = presentation.useAsMainLabel;
-  qs("profile-delete").textContent = "Delete profile";
+  renderProfileEditorChromeInto({
+    status: qs("profile-editor-status"),
+    setPrimaryButton: qs("profile-set-primary"),
+    deleteButton: qs("profile-delete"),
+    distanceAdvancedDetails: qs("profile-distance-advanced-details"),
+  }, {
+    statusMessage: presentation.editorStatus,
+    hasProfile: Boolean(resolved.id),
+    useAsMainLabel: presentation.useAsMainLabel,
+    deleteLabel: "Delete profile",
+    collapseDistanceAdvanced: true,
+  });
   setFieldValue("profile-distance-city", "");
   setFieldValue("profile-distance-km", "");
-  if (qs("profile-distance-advanced-details")) {
-    qs("profile-distance-advanced-details").open = false;
-  }
   setProfileDistanceRows(resolved.travel_distances_by_city || {}, { markClean: true });
   if (openDrawer) {
     openProfileEditorDrawer();

@@ -3786,6 +3786,294 @@ console.log(JSON.stringify({
     assert results["nullBackdropResultType"] == "undefined"
 
 
+def test_profile_ui_module_centralizes_safe_profile_editor_chrome_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    profile_ui_module = static_dir / "profile_ui.js"
+
+    assert profile_ui_module.exists()
+    profile_ui_js = profile_ui_module.read_text(encoding="utf-8")
+    assert "export function renderProfileDistanceStatusInto" in profile_ui_js
+    assert "export function renderProfileDistanceJsonInto" in profile_ui_js
+    assert "export function renderProfileEditorChromeInto" in profile_ui_js
+    assert "renderProfileDistanceStatusInto" in app_js
+    assert "renderProfileDistanceJsonInto" in app_js
+    assert "renderProfileEditorChromeInto" in app_js
+
+    distance_status_start = app_js.index("function setProfileDistanceStatus")
+    distance_json_start = app_js.index("function syncProfileDistanceJsonField", distance_status_start)
+    distance_status_block = app_js[distance_status_start:distance_json_start]
+    assert 'renderProfileDistanceStatusInto(qs("profile-distance-status"), { tone, message });' in distance_status_block
+    assert "node.textContent" not in distance_status_block
+    assert "node.dataset.tone" not in distance_status_block
+    assert "innerHTML" not in distance_status_block
+
+    distance_rows_start = app_js.index("function renderProfileDistanceRows", distance_json_start)
+    distance_json_block = app_js[distance_json_start:distance_rows_start]
+    assert "renderProfileDistanceJsonInto(jsonField, formatDistanceJson(profileUiState.distanceRows));" in distance_json_block
+    assert "jsonField.value =" not in distance_json_block
+    assert "profileUiState.distanceJsonDirty = false" in distance_json_block
+    assert "innerHTML" not in distance_json_block
+
+    apply_start = app_js.index("function applyProfileEditor")
+    collect_start = app_js.index("function collectProfileFormValues", apply_start)
+    apply_block = app_js[apply_start:collect_start]
+    assert "renderProfileEditorChromeInto({" in apply_block
+    assert 'status: qs("profile-editor-status")' in apply_block
+    assert 'setPrimaryButton: qs("profile-set-primary")' in apply_block
+    assert 'deleteButton: qs("profile-delete")' in apply_block
+    assert 'distanceAdvancedDetails: qs("profile-distance-advanced-details")' in apply_block
+    assert "statusMessage: presentation.editorStatus" in apply_block
+    assert "hasProfile: Boolean(resolved.id)" in apply_block
+    assert "useAsMainLabel: presentation.useAsMainLabel" in apply_block
+    assert 'deleteLabel: "Delete profile"' in apply_block
+    assert "collapseDistanceAdvanced: true" in apply_block
+    assert 'qs("profile-editor-status").textContent' not in apply_block
+    assert 'qs("profile-set-primary").disabled' not in apply_block
+    assert 'qs("profile-delete").disabled' not in apply_block
+    assert 'qs("profile-set-primary").textContent' not in apply_block
+    assert 'qs("profile-delete").textContent' not in apply_block
+    assert 'qs("profile-distance-advanced-details").open' not in apply_block
+    assert "innerHTML" not in apply_block
+
+    script = r"""
+const profileUi = await import(__PROFILE_UI_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    dataset: {},
+    children: [],
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    disabled: false,
+    open: false,
+    value: "",
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+    },
+  });
+  return element;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  return nodes.reduce((total, node) => total + (node?.innerHTMLAssignments || []).length, 0);
+}
+
+function summarizeChrome(nodes) {
+  return {
+    statusText: nodes.status.textContent,
+    setPrimaryText: nodes.setPrimaryButton.textContent,
+    setPrimaryDisabled: Boolean(nodes.setPrimaryButton.disabled),
+    deleteText: nodes.deleteButton.textContent,
+    deleteDisabled: Boolean(nodes.deleteButton.disabled),
+    detailsOpen: Boolean(nodes.distanceAdvancedDetails.open),
+    imgCount:
+      (nodes.status.textContent.match(/<img/g) || []).length
+      + (nodes.setPrimaryButton.textContent.match(/<img/g) || []).length
+      + (nodes.deleteButton.textContent.match(/<img/g) || []).length,
+    scriptCount:
+      (nodes.status.textContent.match(/<script/g) || []).length
+      + (nodes.setPrimaryButton.textContent.match(/<script/g) || []).length
+      + (nodes.deleteButton.textContent.match(/<script/g) || []).length,
+    innerHTMLWrites: countInnerHtmlWrites(
+      nodes.status,
+      nodes.setPrimaryButton,
+      nodes.deleteButton,
+      nodes.distanceAdvancedDetails,
+    ),
+  };
+}
+
+function makeChromeNodes() {
+  const nodes = {
+    status: makeElement("p"),
+    setPrimaryButton: makeElement("button"),
+    deleteButton: makeElement("button"),
+    distanceAdvancedDetails: makeElement("details"),
+  };
+  nodes.distanceAdvancedDetails.open = true;
+  return nodes;
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const distanceStatus = makeElement("p");
+profileUi.renderProfileDistanceStatusInto(distanceStatus, {
+  tone: "ok",
+  message: `Saved ${malicious}`,
+});
+const distanceStatusWithEmptyTone = makeElement("p");
+distanceStatusWithEmptyTone.dataset.tone = "stale";
+profileUi.renderProfileDistanceStatusInto(distanceStatusWithEmptyTone, {
+  tone: "",
+  message: `Cleared ${malicious}`,
+});
+const nullDistanceStatusResult = profileUi.renderProfileDistanceStatusInto(null, {
+  tone: "bad",
+  message: "ignored",
+});
+
+const jsonField = makeElement("textarea");
+profileUi.renderProfileDistanceJsonInto(jsonField, `{"City":"${malicious}"}`);
+const nullJsonResult = profileUi.renderProfileDistanceJsonInto(null, "ignored");
+
+const existingNodes = makeChromeNodes();
+profileUi.renderProfileEditorChromeInto(existingNodes, {
+  statusMessage: `Existing ${malicious}`,
+  hasProfile: true,
+  useAsMainLabel: `Use ${malicious}`,
+  deleteLabel: `Delete ${malicious}`,
+  collapseDistanceAdvanced: true,
+});
+
+const draftNodes = makeChromeNodes();
+profileUi.renderProfileEditorChromeInto(draftNodes, {
+  statusMessage: `Draft ${malicious}`,
+  hasProfile: false,
+  useAsMainLabel: "Use as main profile",
+  deleteLabel: "Delete profile",
+  collapseDistanceAdvanced: true,
+});
+
+const preservedDetailsNodes = makeChromeNodes();
+profileUi.renderProfileEditorChromeInto(preservedDetailsNodes, {
+  statusMessage: "Preserve details",
+  hasProfile: true,
+  useAsMainLabel: "Main profile",
+  deleteLabel: "Delete profile",
+  collapseDistanceAdvanced: false,
+});
+
+const missingNodeResult = profileUi.renderProfileEditorChromeInto({
+  status: null,
+  setPrimaryButton: null,
+  deleteButton: null,
+  distanceAdvancedDetails: null,
+}, {
+  statusMessage: `Missing ${malicious}`,
+  hasProfile: false,
+  useAsMainLabel: `Missing ${malicious}`,
+  deleteLabel: `Delete ${malicious}`,
+  collapseDistanceAdvanced: true,
+});
+
+console.log(JSON.stringify({
+  distanceStatusExportedType: typeof profileUi.renderProfileDistanceStatusInto,
+  distanceJsonExportedType: typeof profileUi.renderProfileDistanceJsonInto,
+  editorChromeExportedType: typeof profileUi.renderProfileEditorChromeInto,
+  distanceStatus: {
+    text: distanceStatus.textContent,
+    tone: distanceStatus.dataset.tone || "",
+    innerHTMLWrites: countInnerHtmlWrites(distanceStatus),
+  },
+  emptyToneStatus: {
+    text: distanceStatusWithEmptyTone.textContent,
+    tonePresent: Object.prototype.hasOwnProperty.call(distanceStatusWithEmptyTone.dataset, "tone"),
+    innerHTMLWrites: countInnerHtmlWrites(distanceStatusWithEmptyTone),
+  },
+  jsonField: {
+    value: jsonField.value,
+    text: jsonField.textContent,
+    innerHTMLWrites: countInnerHtmlWrites(jsonField),
+  },
+  existing: summarizeChrome(existingNodes),
+  draft: summarizeChrome(draftNodes),
+  preservedDetails: summarizeChrome(preservedDetailsNodes),
+  nullDistanceStatusResultType: nullDistanceStatusResult === undefined ? "undefined" : typeof nullDistanceStatusResult,
+  nullJsonResultType: nullJsonResult === undefined ? "undefined" : typeof nullJsonResult,
+  missingNodeResultType: missingNodeResult === undefined ? "undefined" : typeof missingNodeResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__PROFILE_UI_MODULE_URL__": "profile_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["distanceStatusExportedType"] == "function"
+    assert results["distanceJsonExportedType"] == "function"
+    assert results["editorChromeExportedType"] == "function"
+    assert results["distanceStatus"] == {
+        "text": "Saved <img src=x onerror=alert(1)><script>bad()</script>",
+        "tone": "ok",
+        "innerHTMLWrites": 0,
+    }
+    assert results["emptyToneStatus"] == {
+        "text": "Cleared <img src=x onerror=alert(1)><script>bad()</script>",
+        "tonePresent": False,
+        "innerHTMLWrites": 0,
+    }
+    assert results["jsonField"] == {
+        "value": '{"City":"<img src=x onerror=alert(1)><script>bad()</script>"}',
+        "text": "",
+        "innerHTMLWrites": 0,
+    }
+    assert results["existing"] == {
+        "statusText": "Existing <img src=x onerror=alert(1)><script>bad()</script>",
+        "setPrimaryText": "Use <img src=x onerror=alert(1)><script>bad()</script>",
+        "setPrimaryDisabled": False,
+        "deleteText": "Delete <img src=x onerror=alert(1)><script>bad()</script>",
+        "deleteDisabled": False,
+        "detailsOpen": False,
+        "imgCount": 3,
+        "scriptCount": 3,
+        "innerHTMLWrites": 0,
+    }
+    assert results["draft"] == {
+        "statusText": "Draft <img src=x onerror=alert(1)><script>bad()</script>",
+        "setPrimaryText": "Use as main profile",
+        "setPrimaryDisabled": True,
+        "deleteText": "Delete profile",
+        "deleteDisabled": True,
+        "detailsOpen": False,
+        "imgCount": 1,
+        "scriptCount": 1,
+        "innerHTMLWrites": 0,
+    }
+    assert results["preservedDetails"] == {
+        "statusText": "Preserve details",
+        "setPrimaryText": "Main profile",
+        "setPrimaryDisabled": False,
+        "deleteText": "Delete profile",
+        "deleteDisabled": False,
+        "detailsOpen": True,
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["nullDistanceStatusResultType"] == "undefined"
+    assert results["nullJsonResultType"] == "undefined"
+    assert results["missingNodeResultType"] == "undefined"
+
+
 def test_dashboard_ui_module_centralizes_safe_card_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -10329,6 +10617,9 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderPrimaryProfileCardInto" in profile_ui_asset.text
         assert "renderProfileListInto" in profile_ui_asset.text
         assert "syncProfileEditorDrawerStateInto" in profile_ui_asset.text
+        assert "renderProfileDistanceStatusInto" in profile_ui_asset.text
+        assert "renderProfileDistanceJsonInto" in profile_ui_asset.text
+        assert "renderProfileEditorChromeInto" in profile_ui_asset.text
         dashboard_ui_asset = client.get(f"/static-build/{asset_version}/dashboard_ui.js")
         assert dashboard_ui_asset.status_code == 200
         assert dashboard_ui_asset.headers["content-type"].startswith("application/javascript")
