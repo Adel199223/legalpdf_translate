@@ -124,3 +124,15 @@ export function renderInterpretationCityAddButtonsInto(nodes = {}, state = {}) {
     serviceButton.disabled = Boolean(serviceSame);
   }
 }
+
+export function syncInterpretationCityDialogStateInto(backdrop, body, open) {
+  if (!backdrop) {
+    return;
+  }
+  const isOpen = Boolean(open);
+  backdrop.classList.toggle("hidden", !isOpen);
+  backdrop.setAttribute("aria-hidden", isOpen ? "false" : "true");
+  if (body) {
+    body.dataset.interpretationCityDialog = isOpen ? "open" : "closed";
+  }
+}

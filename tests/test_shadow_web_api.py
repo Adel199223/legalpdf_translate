@@ -2599,10 +2599,15 @@ function countTag(node, tagName) {
   return total;
 }
 
-function countInnerHtmlWrites(node) {
+function countInnerHtmlWrites(...nodes) {
   let total = 0;
-  walk(node, (current) => {
-    total += (current.innerHTMLAssignments || []).length;
+  nodes.forEach((node) => {
+    if (!node) {
+      return;
+    }
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
   });
   return total;
 }
@@ -3700,6 +3705,7 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "export function renderInterpretationDistanceHintInto" in interpretation_reference_ui_text
     assert "export function renderInterpretationActionButtonsInto" in interpretation_reference_ui_text
     assert "export function renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_text
+    assert "export function syncInterpretationCityDialogStateInto" in interpretation_reference_ui_text
     assert "renderInterpretationCityOptionsInto(select, reference.availableCities, currentValue);" in app_js
     assert "renderCourtEmailOptionsInto(select, {" in app_js
     assert "renderServiceEntityOptionsInto(select, options, selectedValue);" in app_js
@@ -3707,6 +3713,7 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "renderInterpretationDistanceHintInto(" in app_js
     assert "renderInterpretationActionButtonsInto(actionButtons, { blocked });" in app_js
     assert "renderInterpretationCityAddButtonsInto({" in app_js
+    assert "syncInterpretationCityDialogStateInto(backdrop, document.body, interpretationCityState.dialogOpen);" in app_js
 
     city_start = app_js.index("function populateInterpretationCitySelect")
     court_email_start = app_js.index("function populateCourtEmailSelect", city_start)
@@ -3748,6 +3755,16 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "serviceAddButton.textContent" not in action_availability_block
     assert "serviceAddButton.disabled" not in action_availability_block
 
+    city_dialog_start = app_js.index("function setInterpretationCityDialogOpen")
+    close_dialog_start = app_js.index("function closeInterpretationCityDialog", city_dialog_start)
+    city_dialog_block = app_js[city_dialog_start:close_dialog_start]
+    assert "interpretationCityState.dialogOpen = Boolean(open)" in city_dialog_block
+    assert "innerHTML" not in city_dialog_block
+    assert "escapeHtml" not in city_dialog_block
+    assert "backdrop.classList.toggle" not in city_dialog_block
+    assert "backdrop.setAttribute(\"aria-hidden\"" not in city_dialog_block
+    assert "document.body.dataset.interpretationCityDialog" not in city_dialog_block
+
     script = r"""
 const interpretationReferenceUi = await import(__INTERPRETATION_REFERENCE_UI_MODULE_URL__);
 
@@ -3762,6 +3779,7 @@ function makeElement(tagName = "div") {
     className: "",
     children: [],
     parentNode: null,
+    dataset: {},
     value: "",
     selected: false,
     disabled: false,
@@ -4058,6 +4076,27 @@ const nullAddButtonResult = interpretationReferenceUi.renderInterpretationCityAd
   serviceSame: true,
 });
 
+const openBackdrop = document.createElement("div");
+openBackdrop.classList.add("hidden");
+const openBody = document.createElement("body");
+interpretationReferenceUi.syncInterpretationCityDialogStateInto(openBackdrop, openBody, true);
+
+const closedBackdrop = document.createElement("div");
+const closedBody = document.createElement("body");
+closedBody.dataset.interpretationCityDialog = "open";
+interpretationReferenceUi.syncInterpretationCityDialogStateInto(closedBackdrop, closedBody, false);
+
+const truthyBackdrop = document.createElement("div");
+const truthyBody = document.createElement("body");
+interpretationReferenceUi.syncInterpretationCityDialogStateInto(truthyBackdrop, truthyBody, "yes");
+
+const missingBodyBackdrop = document.createElement("div");
+interpretationReferenceUi.syncInterpretationCityDialogStateInto(missingBodyBackdrop, null, false);
+
+const nullBackdropBody = document.createElement("body");
+nullBackdropBody.dataset.interpretationCityDialog = "unchanged";
+const nullBackdropResult = interpretationReferenceUi.syncInterpretationCityDialogStateInto(null, nullBackdropBody, true);
+
 console.log(JSON.stringify({
   exportedTypes: {
     city: typeof interpretationReferenceUi.renderInterpretationCityOptionsInto,
@@ -4067,6 +4106,7 @@ console.log(JSON.stringify({
     distanceHint: typeof interpretationReferenceUi.renderInterpretationDistanceHintInto,
     actionButtons: typeof interpretationReferenceUi.renderInterpretationActionButtonsInto,
     cityAddButtons: typeof interpretationReferenceUi.renderInterpretationCityAddButtonsInto,
+    cityDialogState: typeof interpretationReferenceUi.syncInterpretationCityDialogStateInto,
   },
   city: summarizeSelect(citySelect),
   email: summarizeSelect(emailSelect),
@@ -4084,6 +4124,32 @@ console.log(JSON.stringify({
   serviceAddButton: summarizeButton(serviceAddButton),
   emptyCaseAddButton: summarizeButton(emptyCaseAddButton),
   emptyServiceAddButton: summarizeButton(emptyServiceAddButton),
+  cityDialogOpen: {
+    className: openBackdrop.className,
+    ariaHidden: openBackdrop.getAttribute("aria-hidden"),
+    bodyState: openBody.dataset.interpretationCityDialog || "",
+    innerHTMLWrites: countInnerHtmlWrites(openBackdrop, openBody),
+  },
+  cityDialogClosed: {
+    className: closedBackdrop.className,
+    ariaHidden: closedBackdrop.getAttribute("aria-hidden"),
+    bodyState: closedBody.dataset.interpretationCityDialog || "",
+    innerHTMLWrites: countInnerHtmlWrites(closedBackdrop, closedBody),
+  },
+  cityDialogTruthy: {
+    className: truthyBackdrop.className,
+    ariaHidden: truthyBackdrop.getAttribute("aria-hidden"),
+    bodyState: truthyBody.dataset.interpretationCityDialog || "",
+    innerHTMLWrites: countInnerHtmlWrites(truthyBackdrop, truthyBody),
+  },
+  cityDialogMissingBody: {
+    className: missingBodyBackdrop.className,
+    ariaHidden: missingBodyBackdrop.getAttribute("aria-hidden"),
+    bodyState: "",
+    innerHTMLWrites: countInnerHtmlWrites(missingBodyBackdrop),
+  },
+  nullBackdropBodyState: nullBackdropBody.dataset.interpretationCityDialog,
+  nullBackdropInnerHTMLWrites: countInnerHtmlWrites(nullBackdropBody),
   nullCityResult,
   nullEmailResult,
   nullServiceResult,
@@ -4091,6 +4157,7 @@ console.log(JSON.stringify({
   nullDistanceResult,
   nullActionResult,
   nullAddButtonResult,
+  nullBackdropResult,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -4107,6 +4174,7 @@ console.log(JSON.stringify({
         "distanceHint": "function",
         "actionButtons": "function",
         "cityAddButtons": "function",
+        "cityDialogState": "function",
     }
     assert results["city"]["optionTexts"][0] == "Select a city"
     assert results["city"]["optionValues"][0] == ""
@@ -4189,6 +4257,29 @@ console.log(JSON.stringify({
     assert results["emptyServiceAddButton"]["text"] == "Add city..."
     assert results["emptyServiceAddButton"]["disabled"] is False
 
+    assert results["cityDialogOpen"]["className"] == ""
+    assert results["cityDialogOpen"]["ariaHidden"] == "false"
+    assert results["cityDialogOpen"]["bodyState"] == "open"
+    assert results["cityDialogOpen"]["innerHTMLWrites"] == 0
+
+    assert results["cityDialogClosed"]["className"] == "hidden"
+    assert results["cityDialogClosed"]["ariaHidden"] == "true"
+    assert results["cityDialogClosed"]["bodyState"] == "closed"
+    assert results["cityDialogClosed"]["innerHTMLWrites"] == 0
+
+    assert results["cityDialogTruthy"]["className"] == ""
+    assert results["cityDialogTruthy"]["ariaHidden"] == "false"
+    assert results["cityDialogTruthy"]["bodyState"] == "open"
+    assert results["cityDialogTruthy"]["innerHTMLWrites"] == 0
+
+    assert results["cityDialogMissingBody"]["className"] == "hidden"
+    assert results["cityDialogMissingBody"]["ariaHidden"] == "true"
+    assert results["cityDialogMissingBody"]["bodyState"] == ""
+    assert results["cityDialogMissingBody"]["innerHTMLWrites"] == 0
+
+    assert results["nullBackdropBodyState"] == "unchanged"
+    assert results["nullBackdropInnerHTMLWrites"] == 0
+
     assert "nullCityResult" not in results
     assert "nullEmailResult" not in results
     assert "nullServiceResult" not in results
@@ -4196,6 +4287,7 @@ console.log(JSON.stringify({
     assert "nullDistanceResult" not in results
     assert "nullActionResult" not in results
     assert "nullAddButtonResult" not in results
+    assert "nullBackdropResult" not in results
 
 
 def test_interpretation_review_ui_module_centralizes_safe_context_rendering() -> None:
@@ -9168,6 +9260,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationDistanceHintInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationActionButtonsInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_asset.text
+        assert "syncInterpretationCityDialogStateInto" in interpretation_reference_ui_asset.text
         interpretation_review_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_review_ui.js")
         assert interpretation_review_ui_asset.status_code == 200
         assert interpretation_review_ui_asset.headers["content-type"].startswith("application/javascript")
