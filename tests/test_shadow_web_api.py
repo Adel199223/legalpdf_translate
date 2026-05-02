@@ -829,12 +829,14 @@ def test_shadow_web_shell_ui_module_centralizes_safe_navigation_rendering() -> N
     assert "export function renderShellVisibilityInto" in shell_ui_source
     assert "export function renderRuntimeModeBannerInto" in shell_ui_source
     assert "export function renderOperatorChromeInto" in shell_ui_source
+    assert "export function renderShellChromeInto" in shell_ui_source
     assert "renderNavigationInto({" in app_js
     assert 'renderLiveBannerInto(qs("live-banner"), runtime);' in app_js
     assert 'renderRuntimeModeSelectorInto(qs("runtime-mode-select"), runtimeMode);' in app_js
     assert "renderShellVisibilityInto({" in app_js
     assert "renderRuntimeModeBannerInto(" in app_js
     assert "renderOperatorChromeInto(" in app_js
+    assert "renderShellChromeInto(" in app_js
     assert "MORE_NAV_ORDER.includes(appState.activeView)" not in app_js
     assert "button.innerHTML" not in app_js
     assert "innerHTML" not in shell_ui_source
@@ -1167,6 +1169,84 @@ const operatorMissingToggleResultType = typeof shellUi.renderOperatorChromeInto(
   { active: true, operatorMode: true },
 );
 
+const shellChromeBody = document.createElement("body");
+const shellChromeEyebrow = document.createElement("p");
+const shellChromeTitle = document.createElement("h2");
+const shellChromeWorkspace = document.createElement("strong");
+const shellChromeRuntime = document.createElement("p");
+shellChromeWorkspace.textContent = "Keep workspace";
+shellChromeRuntime.textContent = "Keep runtime";
+shellUi.renderShellChromeInto(
+  {
+    body: shellChromeBody,
+    eyebrow: shellChromeEyebrow,
+    title: shellChromeTitle,
+    workspaceLabel: shellChromeWorkspace,
+    runtimeModeLabel: shellChromeRuntime,
+  },
+  {
+    activeView: `profile ${malicious}`,
+    beginnerSurface: true,
+    eyebrow: `Profile ${malicious}`,
+    title: `Profiles ${malicious}`,
+    workspaceLabel: `workspace-1 ${malicious}`,
+    runtimeModeLabel: `Test mode ${malicious}`,
+  },
+);
+const shellChromeVisible = {
+  activeView: shellChromeBody.dataset.activeView,
+  beginnerSurface: shellChromeBody.dataset.beginnerSurface,
+  eyebrow: shellChromeEyebrow.textContent,
+  title: shellChromeTitle.textContent,
+  workspace: shellChromeWorkspace.textContent,
+  runtime: shellChromeRuntime.textContent,
+  imgCount: countTag(shellChromeEyebrow, "img")
+    + countTag(shellChromeTitle, "img")
+    + countTag(shellChromeWorkspace, "img")
+    + countTag(shellChromeRuntime, "img"),
+  scriptCount: countTag(shellChromeEyebrow, "script")
+    + countTag(shellChromeTitle, "script")
+    + countTag(shellChromeWorkspace, "script")
+    + countTag(shellChromeRuntime, "script"),
+  innerHTMLWrites: countInnerHtmlWrites(
+    shellChromeEyebrow,
+    shellChromeTitle,
+    shellChromeWorkspace,
+    shellChromeRuntime,
+  ),
+};
+shellUi.renderShellChromeInto(
+  {
+    body: shellChromeBody,
+    eyebrow: shellChromeEyebrow,
+    title: shellChromeTitle,
+    workspaceLabel: shellChromeWorkspace,
+    runtimeModeLabel: shellChromeRuntime,
+  },
+  {
+    activeView: "extension-lab",
+    beginnerSurface: false,
+    eyebrow: "Extension Lab",
+    title: "Extension Lab",
+    workspaceLabel: "",
+    runtimeModeLabel: "",
+  },
+);
+const shellChromeSkippedLabels = {
+  activeView: shellChromeBody.dataset.activeView,
+  beginnerSurface: shellChromeBody.dataset.beginnerSurface,
+  eyebrow: shellChromeEyebrow.textContent,
+  title: shellChromeTitle.textContent,
+  workspace: shellChromeWorkspace.textContent,
+  runtime: shellChromeRuntime.textContent,
+  innerHTMLWrites: countInnerHtmlWrites(
+    shellChromeEyebrow,
+    shellChromeTitle,
+    shellChromeWorkspace,
+    shellChromeRuntime,
+  ),
+};
+
 const newJobView = document.createElement("section");
 newJobView.className = "page-view";
 newJobView.dataset.view = "new-job";
@@ -1226,6 +1306,7 @@ console.log(JSON.stringify({
     shellVisibility: typeof shellUi.renderShellVisibilityInto,
     runtimeModeBanner: typeof shellUi.renderRuntimeModeBannerInto,
     operatorChrome: typeof shellUi.renderOperatorChromeInto,
+    shellChrome: typeof shellUi.renderShellChromeInto,
   },
   hidden: hiddenSnapshot,
   visible: {
@@ -1273,6 +1354,27 @@ console.log(JSON.stringify({
         { active: true, operatorMode: true },
       ),
     },
+    shellChrome: {
+      visible: shellChromeVisible,
+      skippedLabels: shellChromeSkippedLabels,
+      missingResultType: typeof shellUi.renderShellChromeInto(
+        {
+          body: null,
+          eyebrow: null,
+          title: null,
+          workspaceLabel: null,
+          runtimeModeLabel: null,
+        },
+        {
+          activeView: "ignored",
+          beginnerSurface: true,
+          eyebrow: "Ignored",
+          title: "Ignored",
+          workspaceLabel: "Ignored",
+          runtimeModeLabel: "Ignored",
+        },
+      ),
+    },
   },
   shellVisibility: {
     settings: settingsVisibility,
@@ -1299,6 +1401,7 @@ console.log(JSON.stringify({
         "shellVisibility": "function",
         "runtimeModeBanner": "function",
         "operatorChrome": "function",
+        "shellChrome": "function",
     }
     assert [button["view"] for button in results["hidden"]["primary"]] == ["new-job", "recent-jobs"]
     assert [button["view"] for button in results["hidden"]["more"]] == [
@@ -1414,6 +1517,27 @@ console.log(JSON.stringify({
     assert results["runtimeControls"]["operatorChrome"]["missingToggleResultType"] == "undefined"
     assert results["runtimeControls"]["operatorChrome"]["bodyOnlyMode"] == "on"
     assert results["runtimeControls"]["operatorChrome"]["missingResultType"] == "undefined"
+    assert results["runtimeControls"]["shellChrome"]["visible"] == {
+        "activeView": "profile <img src=x onerror=alert(1)><script>bad()</script>",
+        "beginnerSurface": "true",
+        "eyebrow": "Profile <img src=x onerror=alert(1)><script>bad()</script>",
+        "title": "Profiles <img src=x onerror=alert(1)><script>bad()</script>",
+        "workspace": "workspace-1 <img src=x onerror=alert(1)><script>bad()</script>",
+        "runtime": "Test mode <img src=x onerror=alert(1)><script>bad()</script>",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["runtimeControls"]["shellChrome"]["skippedLabels"] == {
+        "activeView": "extension-lab",
+        "beginnerSurface": "false",
+        "eyebrow": "Extension Lab",
+        "title": "Extension Lab",
+        "workspace": "workspace-1 <img src=x onerror=alert(1)><script>bad()</script>",
+        "runtime": "Test mode <img src=x onerror=alert(1)><script>bad()</script>",
+        "innerHTMLWrites": 0,
+    }
+    assert results["runtimeControls"]["shellChrome"]["missingResultType"] == "undefined"
     assert results["shellVisibility"]["settings"] == {
         "newJobClass": "page-view hidden",
         "settingsClass": "page-view",
@@ -9991,6 +10115,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderShellVisibilityInto" in shell_ui_asset.text
         assert "renderRuntimeModeBannerInto" in shell_ui_asset.text
         assert "renderOperatorChromeInto" in shell_ui_asset.text
+        assert "renderShellChromeInto" in shell_ui_asset.text
         new_job_ui_asset = client.get(f"/static-build/{asset_version}/new_job_ui.js")
         assert new_job_ui_asset.status_code == 200
         assert new_job_ui_asset.headers["content-type"].startswith("application/javascript")

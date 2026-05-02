@@ -115,6 +115,7 @@ import {
   renderLiveBannerInto,
   renderNavigationInto,
   renderOperatorChromeInto,
+  renderShellChromeInto,
   renderRuntimeModeBannerInto,
   renderRuntimeModeSelectorInto,
   renderShellVisibilityInto,
@@ -1567,23 +1568,26 @@ function syncRuntimeModeBanner(runtime = {}) {
 }
 
 function syncShellChrome() {
-  document.body.dataset.activeView = appState.activeView;
-  document.body.dataset.beginnerSurface = isBeginnerPrimarySurface() ? "true" : "false";
   const runtime = appState.bootstrap?.normalized_payload?.runtime || {};
   const chrome = routeAwareTopbarStatus(runtime);
   syncRuntimeModeBanner(runtime);
-  if (qs("topbar-eyebrow")) {
-    qs("topbar-eyebrow").textContent = chrome.eyebrow;
-  }
-  if (qs("topbar-title")) {
-    qs("topbar-title").textContent = chrome.title;
-  }
-  if (runtime.workspace_id && qs("workspace-id-label")) {
-    qs("workspace-id-label").textContent = runtime.workspace_id;
-  }
-  if (runtime.runtime_mode_label && qs("runtime-mode-label")) {
-    qs("runtime-mode-label").textContent = runtimeModeDisplayLabel(runtime);
-  }
+  renderShellChromeInto(
+    {
+      body: document.body,
+      eyebrow: qs("topbar-eyebrow"),
+      title: qs("topbar-title"),
+      workspaceLabel: qs("workspace-id-label"),
+      runtimeModeLabel: qs("runtime-mode-label"),
+    },
+    {
+      activeView: appState.activeView,
+      beginnerSurface: isBeginnerPrimarySurface(),
+      eyebrow: chrome.eyebrow,
+      title: chrome.title,
+      workspaceLabel: runtime.workspace_id || "",
+      runtimeModeLabel: runtime.runtime_mode_label ? runtimeModeDisplayLabel(runtime) : "",
+    },
+  );
   setTopbarStatus(chrome.status, chrome.tone);
 }
 

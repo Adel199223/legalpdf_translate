@@ -110,6 +110,41 @@ export function renderOperatorChromeInto(
   }
 }
 
+export function renderShellChromeInto(
+  {
+    body = null,
+    eyebrow = null,
+    title = null,
+    workspaceLabel = null,
+    runtimeModeLabel = null,
+  } = {},
+  {
+    activeView = "",
+    beginnerSurface = false,
+    eyebrow: eyebrowText = "",
+    title: titleText = "",
+    workspaceLabel: workspaceText = "",
+    runtimeModeLabel: runtimeModeText = "",
+  } = {},
+) {
+  if (body?.dataset) {
+    body.dataset.activeView = activeView;
+    body.dataset.beginnerSurface = beginnerSurface ? "true" : "false";
+  }
+  if (eyebrow) {
+    setText(eyebrow, eyebrowText);
+  }
+  if (title) {
+    setText(title, titleText);
+  }
+  if (workspaceLabel && workspaceText) {
+    setText(workspaceLabel, workspaceText);
+  }
+  if (runtimeModeLabel && runtimeModeText) {
+    setText(runtimeModeLabel, runtimeModeText);
+  }
+}
+
 export function renderShellVisibilityInto({
   views = [],
   navButtons = [],
