@@ -114,6 +114,7 @@ import {
 import {
   renderLiveBannerInto,
   renderNavigationInto,
+  renderOperatorChromeInto,
   renderRuntimeModeBannerInto,
   renderRuntimeModeSelectorInto,
   renderShellVisibilityInto,
@@ -1595,19 +1596,17 @@ function operatorChromeActive() {
 }
 
 function syncOperatorChrome() {
-  document.body.dataset.operatorChrome = operatorChromeActive() ? "on" : "off";
-  const toggle = qs("operator-mode-toggle");
-  if (!toggle) {
-    return;
-  }
-  toggle.setAttribute("aria-pressed", appState.operatorMode ? "true" : "false");
-  toggle.textContent = appState.operatorMode ? "Hide Technical Details" : "Show Technical Details";
-  const hint = qs("operator-mode-hint");
-  if (hint) {
-    hint.textContent = appState.operatorMode
-      ? "Technical build, listener, and diagnostics panels stay visible across the shell until you turn them off."
-      : "Build, listener, and diagnostics panels stay hidden until you ask for them or a failure occurs.";
-  }
+  renderOperatorChromeInto(
+    {
+      body: document.body,
+      toggle: qs("operator-mode-toggle"),
+      hint: qs("operator-mode-hint"),
+    },
+    {
+      active: operatorChromeActive(),
+      operatorMode: appState.operatorMode,
+    },
+  );
 }
 
 function updateServiceFieldState() {

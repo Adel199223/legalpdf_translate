@@ -828,11 +828,13 @@ def test_shadow_web_shell_ui_module_centralizes_safe_navigation_rendering() -> N
     assert "export function renderRuntimeModeSelectorInto" in shell_ui_source
     assert "export function renderShellVisibilityInto" in shell_ui_source
     assert "export function renderRuntimeModeBannerInto" in shell_ui_source
+    assert "export function renderOperatorChromeInto" in shell_ui_source
     assert "renderNavigationInto({" in app_js
     assert 'renderLiveBannerInto(qs("live-banner"), runtime);' in app_js
     assert 'renderRuntimeModeSelectorInto(qs("runtime-mode-select"), runtimeMode);' in app_js
     assert "renderShellVisibilityInto({" in app_js
     assert "renderRuntimeModeBannerInto(" in app_js
+    assert "renderOperatorChromeInto(" in app_js
     assert "MORE_NAV_ORDER.includes(appState.activeView)" not in app_js
     assert "button.innerHTML" not in app_js
     assert "innerHTML" not in shell_ui_source
@@ -887,6 +889,11 @@ function makeElement(tagName = "div") {
     },
     setAttribute(name, value) {
       this.attributes[name] = String(value ?? "");
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name)
+        ? this.attributes[name]
+        : null;
     },
     appendChild(node) {
       if (node) {
@@ -1114,6 +1121,52 @@ const emptyVisibleRuntimeModeBanner = {
   innerHTMLWrites: countInnerHtmlWrites(runtimeModeBanner),
 };
 
+const operatorBody = document.createElement("body");
+const operatorToggle = document.createElement("button");
+const operatorHint = document.createElement("p");
+operatorToggle.textContent = `Seed ${malicious}`;
+operatorHint.textContent = `Seed ${malicious}`;
+shellUi.renderOperatorChromeInto(
+  { body: operatorBody, toggle: operatorToggle, hint: operatorHint },
+  { active: true, operatorMode: false },
+);
+const operatorActiveAuto = {
+  bodyMode: operatorBody.dataset.operatorChrome,
+  ariaPressed: operatorToggle.getAttribute("aria-pressed"),
+  toggleText: operatorToggle.textContent,
+  hintText: operatorHint.textContent,
+  imgCount: countTag(operatorToggle, "img") + countTag(operatorHint, "img"),
+  scriptCount: countTag(operatorToggle, "script") + countTag(operatorHint, "script"),
+  innerHTMLWrites: countInnerHtmlWrites(operatorToggle, operatorHint),
+};
+shellUi.renderOperatorChromeInto(
+  { body: operatorBody, toggle: operatorToggle, hint: operatorHint },
+  { active: true, operatorMode: true },
+);
+const operatorExplicit = {
+  bodyMode: operatorBody.dataset.operatorChrome,
+  ariaPressed: operatorToggle.getAttribute("aria-pressed"),
+  toggleText: operatorToggle.textContent,
+  hintText: operatorHint.textContent,
+  innerHTMLWrites: countInnerHtmlWrites(operatorToggle, operatorHint),
+};
+shellUi.renderOperatorChromeInto(
+  { body: operatorBody, toggle: operatorToggle, hint: operatorHint },
+  { active: false, operatorMode: false },
+);
+const operatorInactive = {
+  bodyMode: operatorBody.dataset.operatorChrome,
+  ariaPressed: operatorToggle.getAttribute("aria-pressed"),
+  toggleText: operatorToggle.textContent,
+  hintText: operatorHint.textContent,
+  innerHTMLWrites: countInnerHtmlWrites(operatorToggle, operatorHint),
+};
+const operatorBodyOnly = document.createElement("body");
+const operatorMissingToggleResultType = typeof shellUi.renderOperatorChromeInto(
+  { body: operatorBodyOnly, toggle: null, hint: null },
+  { active: true, operatorMode: true },
+);
+
 const newJobView = document.createElement("section");
 newJobView.className = "page-view";
 newJobView.dataset.view = "new-job";
@@ -1172,6 +1225,7 @@ console.log(JSON.stringify({
     runtimeSelector: typeof shellUi.renderRuntimeModeSelectorInto,
     shellVisibility: typeof shellUi.renderShellVisibilityInto,
     runtimeModeBanner: typeof shellUi.renderRuntimeModeBannerInto,
+    operatorChrome: typeof shellUi.renderOperatorChromeInto,
   },
   hidden: hiddenSnapshot,
   visible: {
@@ -1208,6 +1262,17 @@ console.log(JSON.stringify({
         mode: "live",
       }),
     },
+    operatorChrome: {
+      activeAuto: operatorActiveAuto,
+      explicit: operatorExplicit,
+      inactive: operatorInactive,
+      missingToggleResultType: operatorMissingToggleResultType,
+      bodyOnlyMode: operatorBodyOnly.dataset.operatorChrome,
+      missingResultType: typeof shellUi.renderOperatorChromeInto(
+        { body: null, toggle: null, hint: null },
+        { active: true, operatorMode: true },
+      ),
+    },
   },
   shellVisibility: {
     settings: settingsVisibility,
@@ -1233,6 +1298,7 @@ console.log(JSON.stringify({
         "runtimeSelector": "function",
         "shellVisibility": "function",
         "runtimeModeBanner": "function",
+        "operatorChrome": "function",
     }
     assert [button["view"] for button in results["hidden"]["primary"]] == ["new-job", "recent-jobs"]
     assert [button["view"] for button in results["hidden"]["more"]] == [
@@ -1322,6 +1388,32 @@ console.log(JSON.stringify({
         "innerHTMLWrites": 0,
     }
     assert results["runtimeControls"]["runtimeModeBanner"]["missingResultType"] == "undefined"
+    assert results["runtimeControls"]["operatorChrome"]["activeAuto"] == {
+        "bodyMode": "on",
+        "ariaPressed": "false",
+        "toggleText": "Show Technical Details",
+        "hintText": "Build, listener, and diagnostics panels stay hidden until you ask for them or a failure occurs.",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["runtimeControls"]["operatorChrome"]["explicit"] == {
+        "bodyMode": "on",
+        "ariaPressed": "true",
+        "toggleText": "Hide Technical Details",
+        "hintText": "Technical build, listener, and diagnostics panels stay visible across the shell until you turn them off.",
+        "innerHTMLWrites": 0,
+    }
+    assert results["runtimeControls"]["operatorChrome"]["inactive"] == {
+        "bodyMode": "off",
+        "ariaPressed": "false",
+        "toggleText": "Show Technical Details",
+        "hintText": "Build, listener, and diagnostics panels stay hidden until you ask for them or a failure occurs.",
+        "innerHTMLWrites": 0,
+    }
+    assert results["runtimeControls"]["operatorChrome"]["missingToggleResultType"] == "undefined"
+    assert results["runtimeControls"]["operatorChrome"]["bodyOnlyMode"] == "on"
+    assert results["runtimeControls"]["operatorChrome"]["missingResultType"] == "undefined"
     assert results["shellVisibility"]["settings"] == {
         "newJobClass": "page-view hidden",
         "settingsClass": "page-view",
@@ -9898,6 +9990,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderRuntimeModeSelectorInto" in shell_ui_asset.text
         assert "renderShellVisibilityInto" in shell_ui_asset.text
         assert "renderRuntimeModeBannerInto" in shell_ui_asset.text
+        assert "renderOperatorChromeInto" in shell_ui_asset.text
         new_job_ui_asset = client.get(f"/static-build/{asset_version}/new_job_ui.js")
         assert new_job_ui_asset.status_code == 200
         assert new_job_ui_asset.headers["content-type"].startswith("application/javascript")
