@@ -1,3 +1,41 @@
+export function renderInterpretationSessionShellInto(nodes = {}, shell = {}) {
+  if (!nodes) {
+    return;
+  }
+  const {
+    body = null,
+    shell: sessionShell = null,
+    panels = [],
+    result = null,
+    primaryButton = null,
+    sessionOpenButton = null,
+    statusNode = null,
+  } = nodes;
+  const gmailModeActive = Boolean(shell.gmailModeActive);
+  if (body?.dataset) {
+    body.dataset.interpretationWorkspaceMode = String(shell.mode ?? "");
+  }
+  if (sessionShell) {
+    sessionShell.classList.toggle("hidden", !gmailModeActive);
+  }
+  for (const panel of panels || []) {
+    panel?.classList?.toggle("hidden", gmailModeActive);
+  }
+  if (!gmailModeActive) {
+    return;
+  }
+  if (primaryButton) {
+    primaryButton.textContent = String(shell.primaryLabel ?? "");
+  }
+  if (sessionOpenButton) {
+    sessionOpenButton.textContent = String(shell.secondaryLabel ?? "");
+  }
+  if (statusNode) {
+    statusNode.textContent = String(shell.status ?? "");
+  }
+  result?.classList?.remove("empty-state");
+}
+
 export function renderInterpretationDisclosureSectionsInto(nodes = {}, disclosure = {}) {
   if (!nodes) {
     return;
