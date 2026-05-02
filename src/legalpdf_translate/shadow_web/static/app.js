@@ -63,6 +63,7 @@ import {
   renderInterpretationCityOptionsInto,
   renderInterpretationDistanceHintInto,
   renderServiceEntityOptionsInto,
+  syncInterpretationCityDialogStateInto,
 } from "./interpretation_reference_ui.js";
 import {
   buildSettingsCapabilityCards,
@@ -1191,9 +1192,7 @@ function setInterpretationCityDialogOpen(open) {
     return;
   }
   interpretationCityState.dialogOpen = Boolean(open);
-  backdrop.classList.toggle("hidden", !interpretationCityState.dialogOpen);
-  backdrop.setAttribute("aria-hidden", interpretationCityState.dialogOpen ? "false" : "true");
-  document.body.dataset.interpretationCityDialog = interpretationCityState.dialogOpen ? "open" : "closed";
+  syncInterpretationCityDialogStateInto(backdrop, document.body, interpretationCityState.dialogOpen);
 }
 
 function closeInterpretationCityDialog(result = null) {
