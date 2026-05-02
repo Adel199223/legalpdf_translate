@@ -4566,11 +4566,18 @@ def test_dashboard_ui_module_centralizes_safe_card_rendering() -> None:
     dashboard_ui_module = static_dir / "dashboard_ui.js"
 
     assert dashboard_ui_module.exists()
+    dashboard_ui_text = dashboard_ui_module.read_text(encoding="utf-8")
     assert 'from "./dashboard_ui.js"' in app_js
+    assert "export function renderDashboardSummaryInto" in dashboard_ui_text
     assert "export function renderDashboardCardsInto" not in app_js
     assert "export function renderSummaryGridInto" not in app_js
     assert "export function renderCapabilityCardsInto" not in app_js
     assert "export function renderParityAuditInto" not in app_js
+    assert 'renderDashboardSummaryInto(qs("dashboard-summary"), presentation.savedWorkSummary)' in app_js
+    dashboard_start = app_js.index("function renderDashboard")
+    parity_start = app_js.index("function renderParityAudit", dashboard_start)
+    dashboard_block = app_js[dashboard_start:parity_start]
+    assert 'qs("dashboard-summary").textContent = presentation.savedWorkSummary' not in dashboard_block
     assert 'renderDashboardCardsInto(qs("dashboard-cards"), cards)' in app_js
     assert "renderSummaryGridInto(qs(containerId), items)" in app_js
     assert "renderCapabilityCardsInto(qs(containerId), cards)" in app_js
@@ -4701,6 +4708,9 @@ globalThis.document = {
 };
 
 const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const dashboardSummaryNode = document.createElement("p");
+dashboardUi.renderDashboardSummaryInto(dashboardSummaryNode, `Saved ${malicious}`);
+
 const dashboardContainer = document.createElement("div");
 dashboardUi.renderDashboardCardsInto(dashboardContainer, [
   { title: malicious, description: `Description ${malicious}`, status: "ready" },
@@ -4771,6 +4781,7 @@ dashboardUi.renderParityAuditInto({
 });
 
 const nullDashboard = dashboardUi.renderDashboardCardsInto(null, []);
+const nullDashboardSummary = dashboardUi.renderDashboardSummaryInto(null, malicious);
 const nullSummary = dashboardUi.renderSummaryGridInto(null, []);
 const nullCapability = dashboardUi.renderCapabilityCardsInto(null, []);
 const nullParity = dashboardUi.renderParityAuditInto({
@@ -4789,10 +4800,17 @@ const nullParity = dashboardUi.renderParityAuditInto({
 
 console.log(JSON.stringify({
   exportedTypes: {
+    dashboardSummary: typeof dashboardUi.renderDashboardSummaryInto,
     dashboard: typeof dashboardUi.renderDashboardCardsInto,
     summary: typeof dashboardUi.renderSummaryGridInto,
     capability: typeof dashboardUi.renderCapabilityCardsInto,
     parity: typeof dashboardUi.renderParityAuditInto,
+  },
+  dashboardSummary: {
+    text: dashboardSummaryNode.textContent,
+    imgCount: countTag(dashboardSummaryNode, "img"),
+    scriptCount: countTag(dashboardSummaryNode, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(dashboardSummaryNode),
   },
   dashboard: {
     text: dashboardContainer.textContent,
@@ -4843,6 +4861,7 @@ console.log(JSON.stringify({
   },
   nullResultTypes: [
     nullDashboard === undefined ? "undefined" : typeof nullDashboard,
+    nullDashboardSummary === undefined ? "undefined" : typeof nullDashboardSummary,
     nullSummary === undefined ? "undefined" : typeof nullSummary,
     nullCapability === undefined ? "undefined" : typeof nullCapability,
     nullParity === undefined ? "undefined" : typeof nullParity,
@@ -4856,10 +4875,17 @@ console.log(JSON.stringify({
     )
 
     assert results["exportedTypes"] == {
+        "dashboardSummary": "function",
         "dashboard": "function",
         "summary": "function",
         "capability": "function",
         "parity": "function",
+    }
+    assert results["dashboardSummary"] == {
+        "text": "Saved <img src=x onerror=alert(1)><script>bad()</script>",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
     }
     assert "<img src=x onerror=alert(1)><script>bad()</script>" in results["dashboard"]["text"]
     assert "Ready" in results["dashboard"]["text"]
@@ -4925,7 +4951,7 @@ console.log(JSON.stringify({
     assert "No limitations recorded." in results["fallbackParity"]["resultText"]
     assert "status-chip warn" in results["fallbackParity"]["resultClasses"]
     assert results["fallbackParity"]["resultContainerClass"] == "result-card"
-    assert results["nullResultTypes"] == ["undefined", "undefined", "undefined", "undefined"]
+    assert results["nullResultTypes"] == ["undefined", "undefined", "undefined", "undefined", "undefined"]
 
 
 def test_result_card_ui_module_centralizes_safe_result_helpers() -> None:
@@ -11650,6 +11676,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         dashboard_ui_asset = client.get(f"/static-build/{asset_version}/dashboard_ui.js")
         assert dashboard_ui_asset.status_code == 200
         assert dashboard_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderDashboardSummaryInto" in dashboard_ui_asset.text
         assert "renderDashboardCardsInto" in dashboard_ui_asset.text
         assert "renderSummaryGridInto" in dashboard_ui_asset.text
         assert "renderCapabilityCardsInto" in dashboard_ui_asset.text
