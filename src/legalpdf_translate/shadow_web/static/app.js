@@ -3211,7 +3211,7 @@ function wireEvents() {
         setPanelStatus("profile", "bad", error.message || "New profile failed.");
         setDiagnostics("profile", error, { hint: error.message || "New profile failed.", open: true });
       }
-    });
+    }, { guardIds: ["import-live-profiles", "new-profile", "profile-save"] });
   });
 
   qs("profile-save").addEventListener("click", async () => {
