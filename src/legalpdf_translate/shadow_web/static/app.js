@@ -33,6 +33,7 @@ import { deriveDashboardPresentation } from "./dashboard_presentation.js";
 import {
   renderCapabilityCardsInto,
   renderDashboardCardsInto,
+  renderDashboardSummaryInto,
   renderParityAuditInto,
   renderSummaryGridInto,
 } from "./dashboard_ui.js";
@@ -168,6 +169,7 @@ export { renderProfileDistanceRowsInto } from "./profile_ui.js";
 export {
   renderCapabilityCardsInto,
   renderDashboardCardsInto,
+  renderDashboardSummaryInto,
   renderParityAuditInto,
   renderSummaryGridInto,
 } from "./dashboard_ui.js";
@@ -2168,7 +2170,7 @@ export function renderInterpretationGmailResult(payload) {
 
 function renderDashboard(payload) {
   const presentation = deriveDashboardPresentation(payload);
-  qs("dashboard-summary").textContent = presentation.savedWorkSummary;
+  renderDashboardSummaryInto(qs("dashboard-summary"), presentation.savedWorkSummary);
   renderDashboardCards(payload.normalized_payload.dashboard_cards || []);
   renderParityAudit(payload, presentation);
 }

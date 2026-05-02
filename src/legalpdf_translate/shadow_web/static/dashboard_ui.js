@@ -22,6 +22,13 @@ function createStatusChip(label, toneClass) {
   return createTextElement("span", label, `status-chip ${toneClass}`);
 }
 
+export function renderDashboardSummaryInto(node, summary = "") {
+  if (!node) {
+    return;
+  }
+  node.textContent = String(summary ?? "");
+}
+
 export function renderDashboardCardsInto(container, cards = []) {
   if (!container) {
     return;
