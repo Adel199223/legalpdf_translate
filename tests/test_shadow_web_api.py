@@ -3696,9 +3696,11 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "export function renderInterpretationCityOptionsInto" in interpretation_reference_ui_text
     assert "export function renderCourtEmailOptionsInto" in interpretation_reference_ui_text
     assert "export function renderServiceEntityOptionsInto" in interpretation_reference_ui_text
+    assert "export function renderInterpretationFieldWarningInto" in interpretation_reference_ui_text
     assert "renderInterpretationCityOptionsInto(select, reference.availableCities, currentValue);" in app_js
     assert "renderCourtEmailOptionsInto(select, {" in app_js
     assert "renderServiceEntityOptionsInto(select, options, selectedValue);" in app_js
+    assert "renderInterpretationFieldWarningInto(node, { message, tone });" in app_js
 
     city_start = app_js.index("function populateInterpretationCitySelect")
     court_email_start = app_js.index("function populateCourtEmailSelect", city_start)
@@ -3716,12 +3718,26 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "innerHTML" not in service_entity_block
     assert "document.createElement(\"option\")" not in service_entity_block
 
+    field_warning_start = app_js.index("function setInterpretationFieldWarning")
+    location_guard_start = app_js.index("function setInterpretationLocationGuard", field_warning_start)
+    field_warning_block = app_js[field_warning_start:location_guard_start]
+    assert "innerHTML" not in field_warning_block
+    assert "node.textContent" not in field_warning_block
+    assert "classList.toggle(\"hidden\"" not in field_warning_block
+    assert "classList.toggle(\"is-warning\"" not in field_warning_block
+    assert "classList.toggle(\"is-danger\"" not in field_warning_block
+
     script = r"""
 const interpretationReferenceUi = await import(__INTERPRETATION_REFERENCE_UI_MODULE_URL__);
 
 function makeElement(tagName = "div") {
+  const classes = new Set();
+  const syncClassName = () => {
+    element.className = Array.from(classes).join(" ");
+  };
   const element = {
     tagName: String(tagName || "div").toUpperCase(),
+    className: "",
     children: [],
     parentNode: null,
     value: "",
@@ -3746,6 +3762,34 @@ function makeElement(tagName = "div") {
       });
       this._textContent = "";
       this._innerHTML = "";
+    },
+    classList: {
+      add(...names) {
+        for (const name of names) {
+          classes.add(String(name));
+        }
+        syncClassName();
+      },
+      remove(...names) {
+        for (const name of names) {
+          classes.delete(String(name));
+        }
+        syncClassName();
+      },
+      contains(name) {
+        return classes.has(String(name));
+      },
+      toggle(name, force) {
+        const key = String(name);
+        const shouldAdd = force === undefined ? !classes.has(key) : Boolean(force);
+        if (shouldAdd) {
+          classes.add(key);
+        } else {
+          classes.delete(key);
+        }
+        syncClassName();
+        return shouldAdd;
+      },
     },
   };
   Object.defineProperty(element, "textContent", {
@@ -3821,6 +3865,19 @@ function summarizeSelect(select) {
   };
 }
 
+function summarizeWarning(node) {
+  return {
+    className: node.className,
+    text: node.textContent,
+    hidden: node.classList.contains("hidden"),
+    isWarning: node.classList.contains("is-warning"),
+    isDanger: node.classList.contains("is-danger"),
+    imgCount: countTag(node, "img"),
+    scriptCount: countTag(node, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(node),
+  };
+}
+
 globalThis.document = {
   createElement(tagName) {
     return makeElement(tagName);
@@ -3873,20 +3930,54 @@ const nullEmailResult = interpretationReferenceUi.renderCourtEmailOptionsInto(nu
   selectedEmail: "ignored@example.test",
 });
 const nullServiceResult = interpretationReferenceUi.renderServiceEntityOptionsInto(null, ["Ignored"], "Ignored");
+const nullWarningResult = interpretationReferenceUi.renderInterpretationFieldWarningInto(null, {
+  message: `Ignored ${malicious}`,
+  tone: "danger",
+});
+
+const warningNode = document.createElement("p");
+interpretationReferenceUi.renderInterpretationFieldWarningInto(warningNode, {
+  message: `  Imported city ${malicious}  `,
+  tone: "warning",
+});
+
+const dangerNode = document.createElement("p");
+interpretationReferenceUi.renderInterpretationFieldWarningInto(dangerNode, {
+  message: `Blocked city ${malicious}`,
+  tone: "danger",
+});
+
+const otherToneNode = document.createElement("p");
+interpretationReferenceUi.renderInterpretationFieldWarningInto(otherToneNode, {
+  message: `Review city ${malicious}`,
+  tone: "info",
+});
+
+const emptyNode = document.createElement("p");
+interpretationReferenceUi.renderInterpretationFieldWarningInto(emptyNode, {
+  message: "   ",
+  tone: "danger",
+});
 
 console.log(JSON.stringify({
   exportedTypes: {
     city: typeof interpretationReferenceUi.renderInterpretationCityOptionsInto,
     email: typeof interpretationReferenceUi.renderCourtEmailOptionsInto,
     service: typeof interpretationReferenceUi.renderServiceEntityOptionsInto,
+    fieldWarning: typeof interpretationReferenceUi.renderInterpretationFieldWarningInto,
   },
   city: summarizeSelect(citySelect),
   email: summarizeSelect(emailSelect),
   emptyEmail: summarizeSelect(emptyEmailSelect),
   service: summarizeSelect(serviceSelect),
+  warning: summarizeWarning(warningNode),
+  danger: summarizeWarning(dangerNode),
+  otherTone: summarizeWarning(otherToneNode),
+  emptyWarning: summarizeWarning(emptyNode),
   nullCityResult,
   nullEmailResult,
   nullServiceResult,
+  nullWarningResult,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -3899,6 +3990,7 @@ console.log(JSON.stringify({
         "city": "function",
         "email": "function",
         "service": "function",
+        "fieldWarning": "function",
     }
     assert results["city"]["optionTexts"][0] == "Select a city"
     assert results["city"]["optionValues"][0] == ""
@@ -3924,9 +4016,38 @@ console.log(JSON.stringify({
     assert results["service"]["scriptCount"] == 0
     assert results["service"]["innerHTMLWrites"] == 0
 
+    assert results["warning"]["text"] == "Imported city <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["warning"]["hidden"] is False
+    assert results["warning"]["isWarning"] is True
+    assert results["warning"]["isDanger"] is False
+    assert results["warning"]["imgCount"] == 0
+    assert results["warning"]["scriptCount"] == 0
+    assert results["warning"]["innerHTMLWrites"] == 0
+
+    assert results["danger"]["text"] == "Blocked city <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["danger"]["hidden"] is False
+    assert results["danger"]["isWarning"] is False
+    assert results["danger"]["isDanger"] is True
+    assert results["danger"]["imgCount"] == 0
+    assert results["danger"]["scriptCount"] == 0
+    assert results["danger"]["innerHTMLWrites"] == 0
+
+    assert results["otherTone"]["text"] == "Review city <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["otherTone"]["hidden"] is False
+    assert results["otherTone"]["isWarning"] is False
+    assert results["otherTone"]["isDanger"] is False
+    assert results["otherTone"]["innerHTMLWrites"] == 0
+
+    assert results["emptyWarning"]["text"] == ""
+    assert results["emptyWarning"]["hidden"] is True
+    assert results["emptyWarning"]["isWarning"] is False
+    assert results["emptyWarning"]["isDanger"] is False
+    assert results["emptyWarning"]["innerHTMLWrites"] == 0
+
     assert "nullCityResult" not in results
     assert "nullEmailResult" not in results
     assert "nullServiceResult" not in results
+    assert "nullWarningResult" not in results
 
 
 def test_interpretation_review_ui_module_centralizes_safe_context_rendering() -> None:
@@ -8255,6 +8376,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationCityOptionsInto" in interpretation_reference_ui_asset.text
         assert "renderCourtEmailOptionsInto" in interpretation_reference_ui_asset.text
         assert "renderServiceEntityOptionsInto" in interpretation_reference_ui_asset.text
+        assert "renderInterpretationFieldWarningInto" in interpretation_reference_ui_asset.text
         interpretation_review_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_review_ui.js")
         assert interpretation_review_ui_asset.status_code == 200
         assert interpretation_review_ui_asset.headers["content-type"].startswith("application/javascript")

@@ -54,6 +54,7 @@ import {
 } from "./interpretation_review_ui.js";
 import {
   renderCourtEmailOptionsInto,
+  renderInterpretationFieldWarningInto,
   renderInterpretationCityOptionsInto,
   renderServiceEntityOptionsInto,
 } from "./interpretation_reference_ui.js";
@@ -987,11 +988,7 @@ function setInterpretationFieldWarning(fieldName, message = "", tone = "warning"
   if (!node) {
     return;
   }
-  const text = String(message || "").trim();
-  node.textContent = text;
-  node.classList.toggle("hidden", !text);
-  node.classList.toggle("is-warning", text && tone === "warning");
-  node.classList.toggle("is-danger", text && tone === "danger");
+  renderInterpretationFieldWarningInto(node, { message, tone });
 }
 
 function setInterpretationLocationGuard(rawMessage = "", tone = "warning") {
