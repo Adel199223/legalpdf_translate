@@ -8252,6 +8252,7 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     interpretation_result_ui_text = interpretation_result_ui_js.read_text(encoding="utf-8")
     assert 'from "./interpretation_result_ui.js"' in app_js
     assert "export function renderInterpretationExportResultInto" in interpretation_result_ui_text
+    assert "export function renderInterpretationExportPanelResultInto" in interpretation_result_ui_text
     assert "export function renderInterpretationGmailResultInto" in interpretation_result_ui_text
     assert "export function renderInterpretationCompletionCardInto" in interpretation_result_ui_text
     assert "export function renderInterpretationSessionCardInto" in interpretation_result_ui_text
@@ -8261,7 +8262,7 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "export function renderInterpretationReviewSummaryStateInto" in interpretation_result_ui_text
     assert "export function renderInterpretationLocationGuardInto" in interpretation_result_ui_text
     assert "export function resetInterpretationExportResultInto" in interpretation_result_ui_text
-    assert "renderInterpretationExportResultInto(container, payload, currentInterpretationPresentation());" in app_js
+    assert "renderInterpretationExportPanelResultInto(" in app_js
     assert "renderInterpretationGmailResultInto(container, payload, currentInterpretationPresentation());" in app_js
     assert "renderInterpretationCompletionCardInto(container, {" in app_js
     assert "renderInterpretationSessionCardInto(result, {" in app_js
@@ -8269,7 +8270,7 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "renderInterpretationReviewSummaryStateInto(container, {" in app_js
     assert "renderInterpretationLocationGuardInto(card, { message, tone });" in app_js
     assert "resetInterpretationExportResultInto(panel, result, presentation.export.emptyState);" in app_js
-    assert 'qs("interpretation-review-export-panel")?.classList.remove("hidden");' in app_js
+    assert 'qs("interpretation-review-export-panel")?.classList.remove("hidden");' not in app_js
     session_start = app_js.index("function renderInterpretationSessionShell")
     seed_start = app_js.index("function renderInterpretationSeedCard", session_start)
     session_block = app_js[session_start:seed_start]
@@ -8301,7 +8302,16 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "interpretationLocationSummary(snapshot)" in review_summary_block
     assert "innerHTML" not in review_summary_block
     assert "escapeHtml" not in review_summary_block
-    gmail_start = app_js.index("export function renderInterpretationGmailResult")
+    export_result_start = app_js.index("export function renderInterpretationExportResult")
+    gmail_start = app_js.index("export function renderInterpretationGmailResult", export_result_start)
+    export_result_block = app_js[export_result_start:gmail_start]
+    assert "renderInterpretationExportPanelResultInto(" in export_result_block
+    assert "classList.remove" not in export_result_block
+    assert "openInterpretationReviewDrawer();" in export_result_block
+    assert "syncInterpretationReviewSurface();" in export_result_block
+    assert "notifyInterpretationUiStateChanged();" in export_result_block
+    assert "innerHTML" not in export_result_block
+    assert "escapeHtml" not in export_result_block
     dashboard_start = app_js.index("function renderDashboard", gmail_start)
     gmail_block = app_js[gmail_start:dashboard_start]
     assert "interpretationUiState.completionPayload = payload;" in gmail_block
@@ -8582,6 +8592,46 @@ interpretationResultUi.renderInterpretationExportResultInto(failedContainer, {
     },
   },
 }, presentation);
+
+const exportPanel = document.createElement("section");
+exportPanel.className = "export-panel hidden";
+const exportPanelResult = document.createElement("div");
+exportPanelResult.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationExportPanelResultInto(exportPanel, exportPanelResult, {
+  status: "ok",
+  normalized_payload: {
+    docx_path: `C:/cases/panel ${malicious}.docx`,
+    pdf_path: `C:/cases/panel ${malicious}.pdf`,
+  },
+  diagnostics: {
+    pdf_export: {
+      ok: true,
+      failure_message: `Ignored panel ${malicious}`,
+    },
+  },
+}, presentation);
+
+const exportPanelMissingPanelResult = document.createElement("div");
+exportPanelMissingPanelResult.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationExportPanelResultInto(null, exportPanelMissingPanelResult, {
+  status: "local_only",
+  normalized_payload: {},
+  diagnostics: {
+    pdf_export: {
+      ok: false,
+      failure_message: `Panel PDF failure ${malicious}`,
+    },
+  },
+}, presentation);
+const nullExportPanelResult = interpretationResultUi.renderInterpretationExportPanelResultInto(
+  document.createElement("section"),
+  null,
+  {
+    status: "ok",
+    normalized_payload: {},
+  },
+  presentation,
+);
 
 const gmailOkContainer = document.createElement("div");
 gmailOkContainer.className = "result-card empty-state";
@@ -8870,6 +8920,7 @@ const nullResetResult = interpretationResultUi.resetInterpretationExportResultIn
 console.log(JSON.stringify({
   exportedTypes: {
     export: typeof interpretationResultUi.renderInterpretationExportResultInto,
+    exportPanel: typeof interpretationResultUi.renderInterpretationExportPanelResultInto,
     gmail: typeof interpretationResultUi.renderInterpretationGmailResultInto,
     completion: typeof interpretationResultUi.renderInterpretationCompletionCardInto,
     session: typeof interpretationResultUi.renderInterpretationSessionCardInto,
@@ -8883,6 +8934,12 @@ console.log(JSON.stringify({
   ok: summarize(okContainer),
   localOnly: summarize(localOnlyContainer),
   failed: summarize(failedContainer),
+  exportPanel: {
+    panelClassName: exportPanel.className,
+    result: summarize(exportPanelResult),
+    panelInnerHTMLWrites: countInnerHtmlWrites(exportPanel),
+  },
+  exportPanelMissingPanel: summarize(exportPanelMissingPanelResult),
   gmailOk: summarize(gmailOkContainer),
   gmailLocalOnly: summarize(gmailLocalOnlyContainer),
   gmailWarning: summarize(gmailWarningContainer),
@@ -8912,6 +8969,7 @@ console.log(JSON.stringify({
     scriptCount: countTag(partialResetResult, "script"),
   },
   nullContainerResult,
+  nullExportPanelResult,
   nullCompletionResult,
   nullSessionResult,
   nullSeedResult,
@@ -8930,6 +8988,7 @@ console.log(JSON.stringify({
 
     assert results["exportedTypes"] == {
         "export": "function",
+        "exportPanel": "function",
         "gmail": "function",
         "completion": "function",
         "session": "function",
@@ -8975,6 +9034,33 @@ console.log(JSON.stringify({
     assert results["failed"]["imgCount"] == 0
     assert results["failed"]["scriptCount"] == 0
     assert results["failed"]["innerHTMLWrites"] == 0
+
+    assert results["exportPanel"]["panelClassName"] == "export-panel"
+    assert results["exportPanel"]["panelInnerHTMLWrites"] == 0
+    assert results["exportPanel"]["result"]["className"] == "result-card"
+    assert results["exportPanel"]["result"]["childClasses"] == ["result-header", "result-grid"]
+    assert results["exportPanel"]["result"]["gridLabels"] == ["DOCX", "PDF", "PDF Export"]
+    assert "Ready title <img src=x onerror=alert(1)><script>bad()</script>" in results["exportPanel"]["result"]["text"]
+    assert "Ready <img src=x onerror=alert(1)><script>bad()</script>" in results["exportPanel"]["result"]["text"]
+    assert results["exportPanel"]["result"]["gridValues"] == [
+        "C:/cases/panel <img src=x onerror=alert(1)><script>bad()</script>.docx",
+        "C:/cases/panel <img src=x onerror=alert(1)><script>bad()</script>.pdf",
+        "PDF ready <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert "status-chip ok" in results["exportPanel"]["result"]["classes"]
+    assert results["exportPanel"]["result"]["imgCount"] == 0
+    assert results["exportPanel"]["result"]["scriptCount"] == 0
+    assert results["exportPanel"]["result"]["innerHTMLWrites"] == 0
+
+    assert results["exportPanelMissingPanel"]["className"] == "result-card"
+    assert results["exportPanelMissingPanel"]["gridValues"] == [
+        "Unavailable",
+        "Unavailable",
+        "Panel PDF failure <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert "status-chip warn" in results["exportPanelMissingPanel"]["classes"]
+    assert results["exportPanelMissingPanel"]["innerHTMLWrites"] == 0
+    assert "nullExportPanelResult" not in results
 
     assert results["gmailOk"]["className"] == "result-card"
     assert results["gmailOk"]["childClasses"] == ["result-header", "result-grid"]
@@ -12312,6 +12398,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert interpretation_result_ui_asset.status_code == 200
         assert interpretation_result_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderInterpretationExportResultInto" in interpretation_result_ui_asset.text
+        assert "renderInterpretationExportPanelResultInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationGmailResultInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationCompletionCardInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationSessionCardInto" in interpretation_result_ui_asset.text

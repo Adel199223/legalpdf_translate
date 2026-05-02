@@ -153,6 +153,16 @@ export function renderInterpretationExportResultInto(container, payload, present
   container.appendChild(grid);
 }
 
+export function renderInterpretationExportPanelResultInto(panel, container, payload, presentation) {
+  if (!container) {
+    return;
+  }
+  if (panel) {
+    panel.classList.remove("hidden");
+  }
+  renderInterpretationExportResultInto(container, payload, presentation);
+}
+
 export function resetInterpretationExportResultInto(panel, result, emptyText = "") {
   if (panel) {
     panel.classList.add("hidden");
