@@ -2768,11 +2768,21 @@ def test_profile_ui_module_centralizes_safe_profile_card_rendering() -> None:
     profile_ui_js = profile_ui_module.read_text(encoding="utf-8")
     assert "export function renderPrimaryProfileCardInto" in profile_ui_js
     assert "export function renderProfileListInto" in profile_ui_js
+    assert "export function syncProfileEditorDrawerStateInto" in profile_ui_js
+    assert "syncProfileEditorDrawerStateInto(backdrop, document.body, profileUiState.editorDrawerOpen);" in app_js
     assert "renderPrimaryProfileCardInto(primaryCard, primary);" in app_js
     assert "renderProfileListInto(container, summary.profiles || [], {" in app_js
     assert "primaryCard.innerHTML" not in app_js
     assert "article.innerHTML" not in app_js
     assert "profile-card-helper" not in app_js
+    profile_drawer_start = app_js.index("function setProfileEditorDrawerOpen")
+    open_profile_drawer_start = app_js.index("function openProfileEditorDrawer", profile_drawer_start)
+    profile_drawer_block = app_js[profile_drawer_start:open_profile_drawer_start]
+    assert "profileUiState.editorDrawerOpen = Boolean(open)" in profile_drawer_block
+    assert "innerHTML" not in profile_drawer_block
+    assert "backdrop.classList.toggle" not in profile_drawer_block
+    assert "backdrop.setAttribute(\"aria-hidden\"" not in profile_drawer_block
+    assert "document.body.dataset.profileEditorDrawer" not in profile_drawer_block
 
     script = r"""
 const profileUi = await import(__PROFILE_UI_MODULE_URL__);
@@ -2789,6 +2799,17 @@ function createClassList(element) {
       names.forEach((name) => classes.delete(name));
       element.className = Array.from(classes).join(" ");
     },
+    toggle(name, force) {
+      const classes = new Set(String(element.className || "").split(/\s+/).filter(Boolean));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
     contains(name) {
       return String(element.className || "").split(/\s+/).filter(Boolean).includes(name);
     },
@@ -2800,6 +2821,7 @@ function makeElement(tagName = "div") {
   const element = {
     tagName: String(tagName || "div").toUpperCase(),
     className: "",
+    dataset: {},
     attributes: {},
     children: [],
     parentNode: null,
@@ -2809,6 +2831,9 @@ function makeElement(tagName = "div") {
     disabled: false,
     setAttribute(name, value) {
       this.attributes[name] = String(value ?? "");
+    },
+    getAttribute(name) {
+      return this.attributes[name] ?? null;
     },
     appendChild(node) {
       if (node) {
@@ -2984,12 +3009,34 @@ profileUi.renderProfileListInto(singleList, [primaryProfile], { count: 1 });
 const emptyList = document.createElement("div");
 profileUi.renderProfileListInto(emptyList, [], { count: 0 });
 
+const openBackdrop = document.createElement("div");
+openBackdrop.classList.add("hidden");
+const openBody = document.createElement("body");
+profileUi.syncProfileEditorDrawerStateInto(openBackdrop, openBody, true);
+
+const closedBackdrop = document.createElement("div");
+const closedBody = document.createElement("body");
+closedBody.dataset.profileEditorDrawer = "open";
+profileUi.syncProfileEditorDrawerStateInto(closedBackdrop, closedBody, false);
+
+const truthyBackdrop = document.createElement("div");
+const truthyBody = document.createElement("body");
+profileUi.syncProfileEditorDrawerStateInto(truthyBackdrop, truthyBody, "yes");
+
+const missingBodyBackdrop = document.createElement("div");
+profileUi.syncProfileEditorDrawerStateInto(missingBodyBackdrop, null, false);
+
+const nullBackdropBody = document.createElement("body");
+nullBackdropBody.dataset.profileEditorDrawer = "unchanged";
+const nullBackdropResult = profileUi.syncProfileEditorDrawerStateInto(null, nullBackdropBody, true);
+
 const nullPrimaryResult = profileUi.renderPrimaryProfileCardInto(null, primaryProfile);
 const nullListResult = profileUi.renderProfileListInto(null, [primaryProfile], { count: 1 });
 
 console.log(JSON.stringify({
   primaryExportedType: typeof profileUi.renderPrimaryProfileCardInto,
   listExportedType: typeof profileUi.renderProfileListInto,
+  drawerStateExportedType: typeof profileUi.syncProfileEditorDrawerStateInto,
   primaryText: primaryCard.textContent,
   primaryClass: primaryCard.className,
   emptyPrimaryText: emptyPrimaryCard.textContent,
@@ -3005,8 +3052,34 @@ console.log(JSON.stringify({
   imgCount: countTag(primaryCard, "img") + countTag(list, "img"),
   scriptCount: countTag(primaryCard, "script") + countTag(list, "script"),
   innerHTMLWrites: countInnerHtmlWrites(primaryCard) + countInnerHtmlWrites(list),
+  drawerOpen: {
+    className: openBackdrop.className,
+    ariaHidden: openBackdrop.getAttribute("aria-hidden"),
+    bodyState: openBody.dataset.profileEditorDrawer || "",
+    innerHTMLWrites: countInnerHtmlWrites(openBackdrop) + countInnerHtmlWrites(openBody),
+  },
+  drawerClosed: {
+    className: closedBackdrop.className,
+    ariaHidden: closedBackdrop.getAttribute("aria-hidden"),
+    bodyState: closedBody.dataset.profileEditorDrawer || "",
+    innerHTMLWrites: countInnerHtmlWrites(closedBackdrop) + countInnerHtmlWrites(closedBody),
+  },
+  drawerTruthy: {
+    className: truthyBackdrop.className,
+    ariaHidden: truthyBackdrop.getAttribute("aria-hidden"),
+    bodyState: truthyBody.dataset.profileEditorDrawer || "",
+    innerHTMLWrites: countInnerHtmlWrites(truthyBackdrop) + countInnerHtmlWrites(truthyBody),
+  },
+  drawerMissingBody: {
+    className: missingBodyBackdrop.className,
+    ariaHidden: missingBodyBackdrop.getAttribute("aria-hidden"),
+    innerHTMLWrites: countInnerHtmlWrites(missingBodyBackdrop),
+  },
+  nullBackdropBodyState: nullBackdropBody.dataset.profileEditorDrawer,
+  nullBackdropInnerHTMLWrites: countInnerHtmlWrites(nullBackdropBody),
   nullPrimaryResultType: nullPrimaryResult === undefined ? "undefined" : typeof nullPrimaryResult,
   nullListResultType: nullListResult === undefined ? "undefined" : typeof nullListResult,
+  nullBackdropResultType: nullBackdropResult === undefined ? "undefined" : typeof nullBackdropResult,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -3017,6 +3090,7 @@ console.log(JSON.stringify({
 
     assert results["primaryExportedType"] == "function"
     assert results["listExportedType"] == "function"
+    assert results["drawerStateExportedType"] == "function"
     assert "Main <img src=x onerror=alert(1)><script>bad()</script>" in results["primaryText"]
     assert "main@example.com<img src=x onerror=alert(1)><script>bad()</script> | 555-0101" in results["primaryText"]
     assert "Travel origin: Lisbon <img src=x onerror=alert(1)><script>bad()</script>" in results["primaryText"]
@@ -3058,8 +3132,34 @@ console.log(JSON.stringify({
     assert results["imgCount"] == 0
     assert results["scriptCount"] == 0
     assert results["innerHTMLWrites"] == 0
+    assert results["drawerOpen"] == {
+        "className": "",
+        "ariaHidden": "false",
+        "bodyState": "open",
+        "innerHTMLWrites": 0,
+    }
+    assert results["drawerClosed"] == {
+        "className": "hidden",
+        "ariaHidden": "true",
+        "bodyState": "closed",
+        "innerHTMLWrites": 0,
+    }
+    assert results["drawerTruthy"] == {
+        "className": "",
+        "ariaHidden": "false",
+        "bodyState": "open",
+        "innerHTMLWrites": 0,
+    }
+    assert results["drawerMissingBody"] == {
+        "className": "hidden",
+        "ariaHidden": "true",
+        "innerHTMLWrites": 0,
+    }
+    assert results["nullBackdropBodyState"] == "unchanged"
+    assert results["nullBackdropInnerHTMLWrites"] == 0
     assert results["nullPrimaryResultType"] == "undefined"
     assert results["nullListResultType"] == "undefined"
+    assert results["nullBackdropResultType"] == "undefined"
 
 
 def test_dashboard_ui_module_centralizes_safe_card_rendering() -> None:
@@ -9213,6 +9313,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderProfileOptionsInto" in profile_ui_asset.text
         assert "renderPrimaryProfileCardInto" in profile_ui_asset.text
         assert "renderProfileListInto" in profile_ui_asset.text
+        assert "syncProfileEditorDrawerStateInto" in profile_ui_asset.text
         dashboard_ui_asset = client.get(f"/static-build/{asset_version}/dashboard_ui.js")
         assert dashboard_ui_asset.status_code == 200
         assert dashboard_ui_asset.headers["content-type"].startswith("application/javascript")
