@@ -55,6 +55,19 @@ export function renderInterpretationSeedCardInto(container, card = {}) {
   });
 }
 
+export function renderInterpretationSeedCardStateInto(container, { empty = false, emptyText = "", card = {} } = {}) {
+  if (!container) {
+    return;
+  }
+  if (empty) {
+    container.classList.add("empty-state");
+    container.textContent = String(emptyText ?? "");
+    return;
+  }
+  container.classList.remove("empty-state");
+  renderInterpretationSeedCardInto(container, card || {});
+}
+
 export function renderInterpretationReviewSummaryCardInto(container, card = {}) {
   renderCardGridInto(container, {
     title: card.title || "",
