@@ -830,13 +830,18 @@ def test_shadow_web_shell_ui_module_centralizes_safe_navigation_rendering() -> N
     assert "export function renderRuntimeModeBannerInto" in shell_ui_source
     assert "export function renderOperatorChromeInto" in shell_ui_source
     assert "export function renderShellChromeInto" in shell_ui_source
+    assert "export function renderTopbarInto" in shell_ui_source
     assert "renderNavigationInto({" in app_js
-    assert 'renderLiveBannerInto(qs("live-banner"), runtime);' in app_js
+    assert "renderTopbarInto({" in app_js
     assert 'renderRuntimeModeSelectorInto(qs("runtime-mode-select"), runtimeMode);' in app_js
     assert "renderShellVisibilityInto({" in app_js
     assert "renderRuntimeModeBannerInto(" in app_js
     assert "renderOperatorChromeInto(" in app_js
     assert "renderShellChromeInto(" in app_js
+    assert 'renderLiveBannerInto(qs("live-banner"), runtime);' not in app_js
+    assert 'qs("workspace-id-label").textContent = runtime.workspace_id;' not in app_js
+    assert 'qs("runtime-mode-label").textContent = runtimeModeDisplayLabel(runtime);' not in app_js
+    assert "function showLiveBanner(runtime)" not in app_js
     assert "MORE_NAV_ORDER.includes(appState.activeView)" not in app_js
     assert "button.innerHTML" not in app_js
     assert "innerHTML" not in shell_ui_source
@@ -1084,6 +1089,64 @@ const shadowBannerSnapshot = {
   className: liveBanner.className,
 };
 
+const topbarWorkspaceLabel = document.createElement("strong");
+const topbarRuntimeModeLabel = document.createElement("p");
+const topbarLiveBanner = document.createElement("div");
+topbarLiveBanner.className = "live-banner hidden";
+shellUi.renderTopbarInto(
+  {
+    workspaceLabel: topbarWorkspaceLabel,
+    runtimeModeLabel: topbarRuntimeModeLabel,
+    liveBanner: topbarLiveBanner,
+  },
+  {
+    workspace_id: `workspace ${malicious}`,
+    live_data: true,
+  },
+);
+const topbarLiveSnapshot = {
+  workspace: topbarWorkspaceLabel.textContent,
+  runtime: topbarRuntimeModeLabel.textContent,
+  bannerText: topbarLiveBanner.textContent,
+  bannerClass: topbarLiveBanner.className,
+  imgCount: countTag(topbarWorkspaceLabel, "img")
+    + countTag(topbarRuntimeModeLabel, "img")
+    + countTag(topbarLiveBanner, "img"),
+  scriptCount: countTag(topbarWorkspaceLabel, "script")
+    + countTag(topbarRuntimeModeLabel, "script")
+    + countTag(topbarLiveBanner, "script"),
+  innerHTMLWrites: countInnerHtmlWrites(topbarWorkspaceLabel, topbarRuntimeModeLabel, topbarLiveBanner),
+};
+shellUi.renderTopbarInto(
+  {
+    workspaceLabel: topbarWorkspaceLabel,
+    runtimeModeLabel: topbarRuntimeModeLabel,
+    liveBanner: topbarLiveBanner,
+  },
+  {
+    workspace_id: "",
+    live_data: false,
+  },
+);
+const topbarShadowSnapshot = {
+  workspace: topbarWorkspaceLabel.textContent,
+  runtime: topbarRuntimeModeLabel.textContent,
+  bannerText: topbarLiveBanner.textContent,
+  bannerClass: topbarLiveBanner.className,
+  innerHTMLWrites: countInnerHtmlWrites(topbarWorkspaceLabel, topbarRuntimeModeLabel, topbarLiveBanner),
+};
+const topbarMissingResultType = typeof shellUi.renderTopbarInto(
+  {
+    workspaceLabel: null,
+    runtimeModeLabel: null,
+    liveBanner: null,
+  },
+  {
+    workspace_id: `ignored ${malicious}`,
+    live_data: true,
+  },
+);
+
 const runtimeModeBanner = document.createElement("div");
 runtimeModeBanner.className = "runtime-mode-banner hidden";
 runtimeModeBanner.dataset.mode = "stale";
@@ -1307,6 +1370,7 @@ console.log(JSON.stringify({
     runtimeModeBanner: typeof shellUi.renderRuntimeModeBannerInto,
     operatorChrome: typeof shellUi.renderOperatorChromeInto,
     shellChrome: typeof shellUi.renderShellChromeInto,
+    topbar: typeof shellUi.renderTopbarInto,
   },
   hidden: hiddenSnapshot,
   visible: {
@@ -1329,6 +1393,11 @@ console.log(JSON.stringify({
     emptyInnerHTMLWrites: countInnerHtmlWrites(emptyRuntimeSelect),
     liveBanner: liveBannerSnapshot,
     shadowBanner: shadowBannerSnapshot,
+    topbar: {
+      live: topbarLiveSnapshot,
+      shadow: topbarShadowSnapshot,
+      missingResultType: topbarMissingResultType,
+    },
     missingRuntimeResultType: typeof shellUi.renderRuntimeModeSelectorInto(null, {
       supported_modes: [{ id: "ignored", label: "Ignored" }],
     }),
@@ -1402,6 +1471,7 @@ console.log(JSON.stringify({
         "runtimeModeBanner": "function",
         "operatorChrome": "function",
         "shellChrome": "function",
+        "topbar": "function",
     }
     assert [button["view"] for button in results["hidden"]["primary"]] == ["new-job", "recent-jobs"]
     assert [button["view"] for button in results["hidden"]["more"]] == [
@@ -1468,6 +1538,23 @@ console.log(JSON.stringify({
         "className": "live-banner",
     }
     assert results["runtimeControls"]["shadowBanner"] == {"text": "", "className": "live-banner hidden"}
+    assert results["runtimeControls"]["topbar"]["live"] == {
+        "workspace": "workspace <img src=x onerror=alert(1)><script>bad()</script>",
+        "runtime": "Live mode",
+        "bannerText": "Live mode: using your real settings, Gmail drafts, and saved work.",
+        "bannerClass": "live-banner",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["runtimeControls"]["topbar"]["shadow"] == {
+        "workspace": "",
+        "runtime": "Test mode",
+        "bannerText": "",
+        "bannerClass": "live-banner hidden",
+        "innerHTMLWrites": 0,
+    }
+    assert results["runtimeControls"]["topbar"]["missingResultType"] == "undefined"
     assert results["runtimeControls"]["missingRuntimeResultType"] == "undefined"
     assert results["runtimeControls"]["missingBannerResultType"] == "undefined"
     assert results["runtimeControls"]["runtimeModeBanner"]["visible"] == {
@@ -9476,13 +9563,13 @@ def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     mode_start = extension_lab_js.index("export function extensionModeCardText")
     build_cards_start = extension_lab_js.index("export function buildExtensionLabCards")
     render_start = app_js.index("function renderExtensionLab")
-    show_live_start = app_js.index("function showLiveBanner")
+    render_topbar_start = app_js.index("function renderTopbar", render_start)
 
     readiness_block = extension_lab_js[readiness_start:install_start]
     install_block = extension_lab_js[install_start:mode_start]
     mode_block = extension_lab_js[mode_start:build_cards_start]
     card_builder_block = extension_lab_js[build_cards_start:]
-    render_block = app_js[render_start:show_live_start]
+    render_block = app_js[render_start:render_topbar_start]
 
     assert "bridgeSummary.message" not in readiness_block
     assert '"Ready for Gmail intake in this mode."' in readiness_block
@@ -12114,6 +12201,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderRuntimeModeBannerInto" in shell_ui_asset.text
         assert "renderOperatorChromeInto" in shell_ui_asset.text
         assert "renderShellChromeInto" in shell_ui_asset.text
+        assert "renderTopbarInto" in shell_ui_asset.text
         new_job_ui_asset = client.get(f"/static-build/{asset_version}/new_job_ui.js")
         assert new_job_ui_asset.status_code == 200
         assert new_job_ui_asset.headers["content-type"].startswith("application/javascript")

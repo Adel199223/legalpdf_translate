@@ -1,4 +1,4 @@
-import { MORE_NAV_ORDER, buildNavigationGroups } from "./shell_presentation.js";
+import { MORE_NAV_ORDER, buildNavigationGroups, runtimeModeDisplayLabel } from "./shell_presentation.js";
 import { clearNode, createTextElement, setText } from "./safe_rendering.js";
 
 const LIVE_BANNER_TEXT = "Live mode: using your real settings, Gmail drafts, and saved work.";
@@ -60,6 +60,19 @@ export function renderLiveBannerInto(banner, runtime = {}) {
     banner.classList.add("hidden");
     setText(banner, "");
   }
+}
+
+export function renderTopbarInto(
+  { workspaceLabel = null, runtimeModeLabel = null, liveBanner = null } = {},
+  runtime = {},
+) {
+  if (workspaceLabel) {
+    setText(workspaceLabel, runtime?.workspace_id || "");
+  }
+  if (runtimeModeLabel) {
+    setText(runtimeModeLabel, runtimeModeDisplayLabel(runtime));
+  }
+  renderLiveBannerInto(liveBanner, runtime);
 }
 
 export function renderRuntimeModeSelectorInto(select, runtimeMode = {}) {

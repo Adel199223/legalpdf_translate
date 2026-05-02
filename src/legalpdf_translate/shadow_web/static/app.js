@@ -124,13 +124,13 @@ import {
   shouldShowDailyRuntimeModeBanner,
 } from "./shell_presentation.js";
 import {
-  renderLiveBannerInto,
   renderNavigationInto,
   renderOperatorChromeInto,
   renderShellChromeInto,
   renderRuntimeModeBannerInto,
   renderRuntimeModeSelectorInto,
   renderShellVisibilityInto,
+  renderTopbarInto,
 } from "./shell_ui.js";
 import { syncNewJobTaskControlsInto } from "./new_job_ui.js";
 import {
@@ -2287,16 +2287,14 @@ function renderExtensionLab(payload) {
   }
 }
 
-function showLiveBanner(runtime) {
-  renderLiveBannerInto(qs("live-banner"), runtime);
-}
-
 function renderTopbar(payload) {
   const runtime = payload.normalized_payload.runtime;
-  qs("workspace-id-label").textContent = runtime.workspace_id;
-  qs("runtime-mode-label").textContent = runtimeModeDisplayLabel(runtime);
+  renderTopbarInto({
+    workspaceLabel: qs("workspace-id-label"),
+    runtimeModeLabel: qs("runtime-mode-label"),
+    liveBanner: qs("live-banner"),
+  }, runtime);
   syncShellChrome();
-  showLiveBanner(runtime);
 }
 
 function renderRuntimeModeSelector(payload) {
