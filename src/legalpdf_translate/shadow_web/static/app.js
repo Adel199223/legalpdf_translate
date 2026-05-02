@@ -44,6 +44,7 @@ import {
 } from "./recent_work_ui.js";
 import {
   renderInterpretationCompletionCardInto,
+  renderInterpretationExportPanelResultInto,
   renderInterpretationExportResultInto,
   renderInterpretationGmailResultInto,
   renderInterpretationLocationGuardInto,
@@ -2153,8 +2154,12 @@ function renderStatus(payload) {
 
 export function renderInterpretationExportResult(payload) {
   const container = qs("export-result");
-  qs("interpretation-review-export-panel")?.classList.remove("hidden");
-  renderInterpretationExportResultInto(container, payload, currentInterpretationPresentation());
+  renderInterpretationExportPanelResultInto(
+    qs("interpretation-review-export-panel"),
+    container,
+    payload,
+    currentInterpretationPresentation(),
+  );
   openInterpretationReviewDrawer();
   syncInterpretationReviewSurface();
   notifyInterpretationUiStateChanged();
