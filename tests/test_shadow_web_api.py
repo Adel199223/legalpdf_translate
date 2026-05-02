@@ -4801,6 +4801,243 @@ console.log(JSON.stringify({
     assert "nullDetailsResult" not in results
 
 
+def test_interpretation_review_ui_module_centralizes_safe_drawer_state_sync() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_review_ui_js = static_dir / "interpretation_review_ui.js"
+
+    assert interpretation_review_ui_js.exists()
+    interpretation_review_ui_text = interpretation_review_ui_js.read_text(encoding="utf-8")
+    assert 'from "./interpretation_review_ui.js"' in app_js
+    assert "export function syncInterpretationReviewDrawerStateInto" in interpretation_review_ui_text
+    assert "syncInterpretationReviewDrawerStateInto(backdrop, document.body, interpretationUiState.reviewDrawerOpen);" in app_js
+
+    drawer_state_start = app_js.index("function setInterpretationReviewDrawerOpen")
+    drawer_open_export_start = app_js.index("export function openInterpretationReviewDrawer", drawer_state_start)
+    drawer_state_block = app_js[drawer_state_start:drawer_open_export_start]
+    assert "interpretationUiState.reviewDrawerOpen = Boolean(open)" in drawer_state_block
+    assert "notifyInterpretationUiStateChanged()" in drawer_state_block
+    assert "innerHTML" not in drawer_state_block
+    assert "escapeHtml" not in drawer_state_block
+    assert "backdrop.classList.toggle" not in drawer_state_block
+    assert "backdrop.setAttribute(\"aria-hidden\"" not in drawer_state_block
+    assert "document.body.dataset.interpretationReviewDrawer" not in drawer_state_block
+
+    script = r"""
+const interpretationReviewUi = await import(__INTERPRETATION_REVIEW_UI_MODULE_URL__);
+
+function syncClassList(element, classes) {
+  element.className = Array.from(classes).join(" ");
+}
+
+function makeElement(tagName = "div") {
+  const classNames = new Set();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    _className: "",
+    attributes: {},
+    dataset: {},
+    children: [],
+    parentNode: null,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    classList: {
+      add(...names) {
+        names.forEach((name) => {
+          if (name) {
+            classNames.add(String(name));
+          }
+        });
+        syncClassList(element, classNames);
+      },
+      remove(...names) {
+        names.forEach((name) => classNames.delete(String(name)));
+        syncClassList(element, classNames);
+      },
+      toggle(name, force) {
+        const key = String(name);
+        const shouldAdd = force === undefined ? !classNames.has(key) : Boolean(force);
+        if (shouldAdd) {
+          classNames.add(key);
+        } else {
+          classNames.delete(key);
+        }
+        syncClassList(element, classNames);
+        return shouldAdd;
+      },
+      contains(name) {
+        return classNames.has(String(name));
+      },
+    },
+    setAttribute(name, value) {
+      this.attributes[String(name)] = String(value ?? "");
+    },
+    getAttribute(name) {
+      return this.attributes[String(name)] ?? null;
+    },
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "className", {
+    get() {
+      return this._className;
+    },
+    set(value) {
+      this._className = String(value ?? "");
+      classNames.clear();
+      this._className.split(/\s+/).filter(Boolean).forEach((name) => classNames.add(name));
+    },
+  });
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countInnerHtmlWrites(...nodes) {
+  let total = 0;
+  nodes.forEach((node) => {
+    if (!node) {
+      return;
+    }
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
+  });
+  return total;
+}
+
+function summarize(backdrop, body = null) {
+  return {
+    className: backdrop.className,
+    ariaHidden: backdrop.getAttribute("aria-hidden"),
+    bodyState: body?.dataset?.interpretationReviewDrawer || "",
+    innerHTMLWrites: countInnerHtmlWrites(backdrop, body),
+  };
+}
+
+const openBackdrop = makeElement("div");
+openBackdrop.classList.add("hidden");
+const openBody = makeElement("body");
+interpretationReviewUi.syncInterpretationReviewDrawerStateInto(openBackdrop, openBody, true);
+
+const closedBackdrop = makeElement("div");
+const closedBody = makeElement("body");
+closedBody.dataset.interpretationReviewDrawer = "open";
+interpretationReviewUi.syncInterpretationReviewDrawerStateInto(closedBackdrop, closedBody, false);
+
+const truthyBackdrop = makeElement("div");
+const truthyBody = makeElement("body");
+interpretationReviewUi.syncInterpretationReviewDrawerStateInto(truthyBackdrop, truthyBody, "yes");
+
+const missingBodyBackdrop = makeElement("div");
+interpretationReviewUi.syncInterpretationReviewDrawerStateInto(missingBodyBackdrop, null, false);
+
+const nullBackdropBody = makeElement("body");
+nullBackdropBody.dataset.interpretationReviewDrawer = "unchanged";
+const nullBackdropResult = interpretationReviewUi.syncInterpretationReviewDrawerStateInto(null, nullBackdropBody, true);
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationReviewUi.syncInterpretationReviewDrawerStateInto,
+  open: summarize(openBackdrop, openBody),
+  closed: summarize(closedBackdrop, closedBody),
+  truthy: summarize(truthyBackdrop, truthyBody),
+  missingBody: summarize(missingBodyBackdrop),
+  nullBackdropBodyState: nullBackdropBody.dataset.interpretationReviewDrawer,
+  nullBackdropInnerHTMLWrites: countInnerHtmlWrites(nullBackdropBody),
+  nullBackdropResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REVIEW_UI_MODULE_URL__": "interpretation_review_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["open"]["className"] == ""
+    assert results["open"]["ariaHidden"] == "false"
+    assert results["open"]["bodyState"] == "open"
+    assert results["open"]["innerHTMLWrites"] == 0
+
+    assert results["closed"]["className"] == "hidden"
+    assert results["closed"]["ariaHidden"] == "true"
+    assert results["closed"]["bodyState"] == "closed"
+    assert results["closed"]["innerHTMLWrites"] == 0
+
+    assert results["truthy"]["className"] == ""
+    assert results["truthy"]["ariaHidden"] == "false"
+    assert results["truthy"]["bodyState"] == "open"
+    assert results["truthy"]["innerHTMLWrites"] == 0
+
+    assert results["missingBody"]["className"] == "hidden"
+    assert results["missingBody"]["ariaHidden"] == "true"
+    assert results["missingBody"]["bodyState"] == ""
+    assert results["missingBody"]["innerHTMLWrites"] == 0
+
+    assert results["nullBackdropBodyState"] == "unchanged"
+    assert results["nullBackdropInnerHTMLWrites"] == 0
+    assert "nullBackdropResult" not in results
+
+
 def test_interpretation_review_ui_module_centralizes_safe_surface_chrome_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -8936,6 +9173,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert interpretation_review_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderInterpretationReviewContextInto" in interpretation_review_ui_asset.text
         assert "syncInterpretationReviewDetailsShellInto" in interpretation_review_ui_asset.text
+        assert "syncInterpretationReviewDrawerStateInto" in interpretation_review_ui_asset.text
         assert "renderInterpretationReviewSurfaceInto" in interpretation_review_ui_asset.text
         interpretation_result_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_result_ui.js")
         assert interpretation_result_ui_asset.status_code == 200

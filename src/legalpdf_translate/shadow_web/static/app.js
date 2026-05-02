@@ -52,6 +52,7 @@ import {
 import {
   renderInterpretationReviewContextInto,
   renderInterpretationReviewSurfaceInto,
+  syncInterpretationReviewDrawerStateInto,
   syncInterpretationReviewDetailsShellInto,
 } from "./interpretation_review_ui.js";
 import {
@@ -1096,9 +1097,7 @@ function setInterpretationReviewDrawerOpen(open) {
     return;
   }
   interpretationUiState.reviewDrawerOpen = Boolean(open);
-  backdrop.classList.toggle("hidden", !interpretationUiState.reviewDrawerOpen);
-  backdrop.setAttribute("aria-hidden", interpretationUiState.reviewDrawerOpen ? "false" : "true");
-  document.body.dataset.interpretationReviewDrawer = interpretationUiState.reviewDrawerOpen ? "open" : "closed";
+  syncInterpretationReviewDrawerStateInto(backdrop, document.body, interpretationUiState.reviewDrawerOpen);
   notifyInterpretationUiStateChanged();
 }
 
