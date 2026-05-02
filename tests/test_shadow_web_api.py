@@ -6776,6 +6776,312 @@ console.log(JSON.stringify({
     assert "nullContainerResult" not in results
 
 
+def test_interpretation_review_ui_module_centralizes_safe_session_shell_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_review_ui_js = static_dir / "interpretation_review_ui.js"
+
+    assert interpretation_review_ui_js.exists()
+    interpretation_review_ui_text = interpretation_review_ui_js.read_text(encoding="utf-8")
+    assert 'from "./interpretation_review_ui.js"' in app_js
+    assert "export function renderInterpretationSessionShellInto" in interpretation_review_ui_text
+    assert "renderInterpretationSessionShellInto(chromeNodes" in app_js
+
+    session_shell_start = app_js.index("function renderInterpretationSessionShell")
+    seed_card_start = app_js.index("function renderInterpretationSeedCard", session_shell_start)
+    session_shell_block = app_js[session_shell_start:seed_card_start]
+    assert "interpretationWorkspaceMode(snapshot, activeSession)" in session_shell_block
+    assert "currentInterpretationPresentation(snapshot)" in session_shell_block
+    assert "interpretationSessionChip(activeSession, mode)" in session_shell_block
+    assert "renderInterpretationSessionCardInto(result, {" in session_shell_block
+    assert "document.body.dataset.interpretationWorkspaceMode" not in session_shell_block
+    assert ".classList.toggle(\"hidden\"" not in session_shell_block
+    assert "primaryButton.textContent" not in session_shell_block
+    assert "sessionOpenButton.textContent" not in session_shell_block
+    assert "statusNode.textContent" not in session_shell_block
+    assert "result.classList.remove(\"empty-state\")" not in session_shell_block
+
+    script = r"""
+const interpretationReviewUi = await import(__INTERPRETATION_REVIEW_UI_MODULE_URL__);
+
+function syncClassList(element, classes) {
+  element.className = Array.from(classes).join(" ");
+}
+
+function makeElement(tagName = "div") {
+  const classNames = new Set();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    _className: "",
+    children: [],
+    parentNode: null,
+    dataset: {},
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    classList: {
+      add(...names) {
+        names.forEach((name) => {
+          if (name) {
+            classNames.add(String(name));
+          }
+        });
+        syncClassList(element, classNames);
+      },
+      remove(...names) {
+        names.forEach((name) => classNames.delete(String(name)));
+        syncClassList(element, classNames);
+      },
+      toggle(name, force) {
+        const key = String(name);
+        const shouldAdd = force === undefined ? !classNames.has(key) : Boolean(force);
+        if (shouldAdd) {
+          classNames.add(key);
+        } else {
+          classNames.delete(key);
+        }
+        syncClassList(element, classNames);
+        return shouldAdd;
+      },
+      contains(name) {
+        return classNames.has(String(name));
+      },
+    },
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "className", {
+    get() {
+      return this._className;
+    },
+    set(value) {
+      this._className = String(value ?? "");
+      classNames.clear();
+      this._className.split(/\s+/).filter(Boolean).forEach((name) => classNames.add(name));
+    },
+  });
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  let total = 0;
+  nodes.forEach((node) => {
+    if (!node) {
+      return;
+    }
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
+  });
+  return total;
+}
+
+function makeNodes() {
+  const shell = makeElement("section");
+  shell.className = "session-shell hidden";
+  const result = makeElement("article");
+  result.className = "result-card empty-state";
+  const panels = [makeElement("section"), makeElement("section"), makeElement("section")];
+  return {
+    body: makeElement("body"),
+    shell,
+    panels,
+    result,
+    primaryButton: makeElement("button"),
+    sessionOpenButton: makeElement("button"),
+    statusNode: makeElement("p"),
+  };
+}
+
+function summarize(nodes) {
+  return {
+    bodyMode: nodes.body.dataset.interpretationWorkspaceMode || "",
+    shellClass: nodes.shell.className,
+    panelClasses: nodes.panels.map((panel) => panel.className),
+    resultClass: nodes.result.className,
+    primaryText: nodes.primaryButton.textContent,
+    secondaryText: nodes.sessionOpenButton.textContent,
+    statusText: nodes.statusNode.textContent,
+    imgCount: countTag(nodes.primaryButton, "img")
+      + countTag(nodes.sessionOpenButton, "img")
+      + countTag(nodes.statusNode, "img"),
+    scriptCount: countTag(nodes.primaryButton, "script")
+      + countTag(nodes.sessionOpenButton, "script")
+      + countTag(nodes.statusNode, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(
+      nodes.body,
+      nodes.shell,
+      nodes.result,
+      nodes.primaryButton,
+      nodes.sessionOpenButton,
+      nodes.statusNode,
+      ...nodes.panels,
+    ),
+  };
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const activeNodes = makeNodes();
+interpretationReviewUi.renderInterpretationSessionShellInto(activeNodes, {
+  mode: "gmail_review",
+  gmailModeActive: true,
+  primaryLabel: `Primary ${malicious}`,
+  secondaryLabel: `Secondary ${malicious}`,
+  status: `Status ${malicious}`,
+});
+
+const inactiveNodes = makeNodes();
+inactiveNodes.primaryButton.textContent = "Old primary";
+inactiveNodes.sessionOpenButton.textContent = "Old secondary";
+inactiveNodes.statusNode.textContent = "Old status";
+inactiveNodes.result.className = "result-card empty-state";
+interpretationReviewUi.renderInterpretationSessionShellInto(inactiveNodes, {
+  mode: "standard",
+  gmailModeActive: false,
+  primaryLabel: `Ignored ${malicious}`,
+  secondaryLabel: `Ignored ${malicious}`,
+  status: `Ignored ${malicious}`,
+});
+
+const missingNodes = {
+  body: makeElement("body"),
+  shell: null,
+  panels: [null, makeElement("section")],
+  result: null,
+  primaryButton: null,
+  sessionOpenButton: null,
+  statusNode: null,
+};
+interpretationReviewUi.renderInterpretationSessionShellInto(missingNodes, {
+  mode: "gmail_completed",
+  gmailModeActive: true,
+  primaryLabel: `Missing ${malicious}`,
+  secondaryLabel: `Missing ${malicious}`,
+  status: `Missing ${malicious}`,
+});
+
+const nullNodesResult = interpretationReviewUi.renderInterpretationSessionShellInto(null, {
+  mode: "gmail_review",
+  gmailModeActive: true,
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationReviewUi.renderInterpretationSessionShellInto,
+  active: summarize(activeNodes),
+  inactive: summarize(inactiveNodes),
+  missing: {
+    bodyMode: missingNodes.body.dataset.interpretationWorkspaceMode || "",
+    panelClass: missingNodes.panels[1].className,
+    innerHTMLWrites: countInnerHtmlWrites(missingNodes.body, missingNodes.panels[1]),
+  },
+  nullNodesResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REVIEW_UI_MODULE_URL__": "interpretation_review_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["active"]["bodyMode"] == "gmail_review"
+    assert results["active"]["shellClass"] == "session-shell"
+    assert results["active"]["panelClasses"] == ["hidden", "hidden", "hidden"]
+    assert results["active"]["resultClass"] == "result-card"
+    assert results["active"]["primaryText"] == "Primary <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["active"]["secondaryText"] == "Secondary <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["active"]["statusText"] == "Status <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["active"]["imgCount"] == 0
+    assert results["active"]["scriptCount"] == 0
+    assert results["active"]["innerHTMLWrites"] == 0
+
+    assert results["inactive"]["bodyMode"] == "standard"
+    assert results["inactive"]["shellClass"] == "session-shell hidden"
+    assert results["inactive"]["panelClasses"] == ["", "", ""]
+    assert results["inactive"]["resultClass"] == "result-card empty-state"
+    assert results["inactive"]["primaryText"] == "Old primary"
+    assert results["inactive"]["secondaryText"] == "Old secondary"
+    assert results["inactive"]["statusText"] == "Old status"
+    assert results["inactive"]["innerHTMLWrites"] == 0
+
+    assert results["missing"]["bodyMode"] == "gmail_completed"
+    assert results["missing"]["panelClass"] == "hidden"
+    assert results["missing"]["innerHTMLWrites"] == 0
+    assert "nullNodesResult" not in results
+
+
 def test_interpretation_review_ui_module_centralizes_safe_details_shell_sync() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -7878,7 +8184,8 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     session_start = app_js.index("function renderInterpretationSessionShell")
     seed_start = app_js.index("function renderInterpretationSeedCard", session_start)
     session_block = app_js[session_start:seed_start]
-    assert 'result.classList.remove("empty-state");' in session_block
+    assert 'result.classList.remove("empty-state");' not in session_block
+    assert "renderInterpretationSessionShellInto(chromeNodes" in session_block
     assert "presentation.home.resultTitle" in session_block
     assert "interpretationLocationSummary(snapshot)" in session_block
     assert "innerHTML" not in session_block
@@ -11774,6 +12081,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         interpretation_review_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_review_ui.js")
         assert interpretation_review_ui_asset.status_code == 200
         assert interpretation_review_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderInterpretationSessionShellInto" in interpretation_review_ui_asset.text
         assert "renderInterpretationReviewContextInto" in interpretation_review_ui_asset.text
         assert "syncInterpretationReviewDetailsShellInto" in interpretation_review_ui_asset.text
         assert "syncInterpretationReviewDrawerStateInto" in interpretation_review_ui_asset.text

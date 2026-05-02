@@ -56,6 +56,7 @@ import {
   renderInterpretationDisclosureSectionsInto,
   renderInterpretationReviewContextInto,
   renderInterpretationReviewSurfaceInto,
+  renderInterpretationSessionShellInto,
   syncInterpretationReviewDrawerStateInto,
   syncInterpretationReviewDetailsShellInto,
 } from "./interpretation_review_ui.js";
@@ -810,31 +811,35 @@ function renderInterpretationSessionShell(snapshot = interpretationSnapshot()) {
   const activeSession = interpretationActiveSession();
   const mode = interpretationWorkspaceMode(snapshot, activeSession);
   const gmailModeActive = mode === "gmail_review" || mode === "gmail_completed";
-  document.body.dataset.interpretationWorkspaceMode = mode;
-  if (shell) {
-    shell.classList.toggle("hidden", !gmailModeActive);
-  }
-  for (const id of ["interpretation-intake-panel", "interpretation-seed-panel", "interpretation-action-rail"]) {
-    qs(id)?.classList.toggle("hidden", gmailModeActive);
-  }
+  const sessionOpenButton = qs("interpretation-session-open-full-workspace");
+  const chromeNodes = {
+    body: document.body,
+    shell,
+    panels: [
+      qs("interpretation-intake-panel"),
+      qs("interpretation-seed-panel"),
+      qs("interpretation-action-rail"),
+    ],
+    result,
+    primaryButton,
+    sessionOpenButton,
+    statusNode,
+  };
   if (!gmailModeActive || !result) {
+    renderInterpretationSessionShellInto(chromeNodes, { mode, gmailModeActive });
     return;
   }
   const presentation = currentInterpretationPresentation(snapshot);
   const chip = interpretationSessionChip(activeSession, mode);
   const noticeFilename = interpretationNoticeFilename(activeSession) || "Notice PDF";
   const locationSummary = interpretationLocationSummary(snapshot);
-  if (primaryButton) {
-    primaryButton.textContent = presentation.actions.sessionPrimary;
-  }
-  const sessionOpenButton = qs("interpretation-session-open-full-workspace");
-  if (sessionOpenButton) {
-    sessionOpenButton.textContent = presentation.actions.sessionSecondary;
-  }
-  if (statusNode) {
-    statusNode.textContent = presentation.home.status;
-  }
-  result.classList.remove("empty-state");
+  renderInterpretationSessionShellInto(chromeNodes, {
+    mode,
+    gmailModeActive,
+    primaryLabel: presentation.actions.sessionPrimary,
+    secondaryLabel: presentation.actions.sessionSecondary,
+    status: presentation.home.status,
+  });
   renderInterpretationSessionCardInto(result, {
     title: presentation.home.resultTitle,
     message: noticeFilename,
