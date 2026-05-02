@@ -8732,6 +8732,8 @@ def test_recent_work_ui_module_centralizes_safe_history_rendering() -> None:
     assert "export function renderRecentJobsInto" not in app_js
     assert "export function renderInterpretationHistoryInto" not in app_js
     assert "renderRecentJobsInto(container, items, historyById, translationHistoryById, {" in app_js
+    assert "renderInterpretationHistoryHeadingInto(qs(\"history-heading\"));" in app_js
+    assert 'qs("history-heading").textContent = "Saved Interpretation Requests";' not in app_js
     assert "renderInterpretationHistoryInto(container, items, {" in app_js
 
     script = r"""
@@ -8956,12 +8958,19 @@ historyButtons[1].click();
 const historyEmptyContainer = document.createElement("div");
 recentWorkUi.renderInterpretationHistoryInto(historyEmptyContainer, []);
 
+const heading = document.createElement("h2");
+recentWorkUi.renderInterpretationHistoryHeadingInto(heading);
+const maliciousHeading = document.createElement("h2");
+recentWorkUi.renderInterpretationHistoryHeadingInto(maliciousHeading, `Saved <img src=x onerror=alert(1)><script>bad()</script>`);
+
 const nullRecent = recentWorkUi.renderRecentJobsInto(null, [], new Map(), new Map());
 const nullHistory = recentWorkUi.renderInterpretationHistoryInto(null, []);
+const nullHeading = recentWorkUi.renderInterpretationHistoryHeadingInto(null);
 
 console.log(JSON.stringify({
   exportedTypes: {
     recent: typeof recentWorkUi.renderRecentJobsInto,
+    interpretationHistoryHeading: typeof recentWorkUi.renderInterpretationHistoryHeadingInto,
     interpretationHistory: typeof recentWorkUi.renderInterpretationHistoryInto,
   },
   recent: {
@@ -8996,9 +9005,22 @@ console.log(JSON.stringify({
     text: historyEmptyContainer.textContent,
     className: historyEmptyContainer.children[0]?.className || "",
   },
+  heading: {
+    text: heading.textContent,
+    imgCount: countTag(heading, "img"),
+    scriptCount: countTag(heading, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(heading),
+  },
+  maliciousHeading: {
+    text: maliciousHeading.textContent,
+    imgCount: countTag(maliciousHeading, "img"),
+    scriptCount: countTag(maliciousHeading, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(maliciousHeading),
+  },
   nullResultTypes: [
     nullRecent === undefined ? "undefined" : typeof nullRecent,
     nullHistory === undefined ? "undefined" : typeof nullHistory,
+    nullHeading === undefined ? "undefined" : typeof nullHeading,
   ],
 }));
 """
@@ -9010,6 +9032,7 @@ console.log(JSON.stringify({
 
     assert results["exportedTypes"] == {
         "recent": "function",
+        "interpretationHistoryHeading": "function",
         "interpretationHistory": "function",
     }
     assert "<img src=x onerror=alert(1)><script>bad()</script>" in results["recent"]["text"]
@@ -9053,7 +9076,15 @@ console.log(JSON.stringify({
     assert results["history"]["deletedHistoryId"] == 11
     assert results["historyEmpty"]["text"] == "No saved interpretation requests yet."
     assert results["historyEmpty"]["className"] == "empty-state"
-    assert results["nullResultTypes"] == ["undefined", "undefined"]
+    assert results["heading"]["text"] == "Saved Interpretation Requests"
+    assert results["heading"]["imgCount"] == 0
+    assert results["heading"]["scriptCount"] == 0
+    assert results["heading"]["innerHTMLWrites"] == 0
+    assert "Saved <img src=x onerror=alert(1)><script>bad()</script>" == results["maliciousHeading"]["text"]
+    assert results["maliciousHeading"]["imgCount"] == 0
+    assert results["maliciousHeading"]["scriptCount"] == 0
+    assert results["maliciousHeading"]["innerHTMLWrites"] == 0
+    assert results["nullResultTypes"] == ["undefined", "undefined", "undefined"]
 
 
 def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
@@ -11685,6 +11716,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert recent_work_ui_asset.status_code == 200
         assert recent_work_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderRecentJobsInto" in recent_work_ui_asset.text
+        assert "renderInterpretationHistoryHeadingInto" in recent_work_ui_asset.text
         assert "renderInterpretationHistoryInto" in recent_work_ui_asset.text
         result_card_ui_asset = client.get(f"/static-build/{asset_version}/result_card_ui.js")
         assert result_card_ui_asset.status_code == 200
