@@ -3834,6 +3834,7 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "export function renderInterpretationActionButtonsInto" in interpretation_reference_ui_text
     assert "export function renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_text
     assert "export function syncInterpretationCityDialogStateInto" in interpretation_reference_ui_text
+    assert "export function renderInterpretationCityDialogContentInto" in interpretation_reference_ui_text
     assert "renderInterpretationCityOptionsInto(select, reference.availableCities, currentValue);" in app_js
     assert "renderCourtEmailOptionsInto(select, {" in app_js
     assert "renderServiceEntityOptionsInto(select, options, selectedValue);" in app_js
@@ -3842,6 +3843,7 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "renderInterpretationActionButtonsInto(actionButtons, { blocked });" in app_js
     assert "renderInterpretationCityAddButtonsInto({" in app_js
     assert "syncInterpretationCityDialogStateInto(backdrop, document.body, interpretationCityState.dialogOpen);" in app_js
+    assert "renderInterpretationCityDialogContentInto({" in app_js
 
     city_start = app_js.index("function populateInterpretationCitySelect")
     court_email_start = app_js.index("function populateCourtEmailSelect", city_start)
@@ -3892,6 +3894,17 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "backdrop.classList.toggle" not in city_dialog_block
     assert "backdrop.setAttribute(\"aria-hidden\"" not in city_dialog_block
     assert "document.body.dataset.interpretationCityDialog" not in city_dialog_block
+
+    open_dialog_start = app_js.index("function openInterpretationCityDialog")
+    reference_update_start = app_js.index("function applyInterpretationReferenceUpdate", open_dialog_start)
+    open_dialog_block = app_js[open_dialog_start:reference_update_start]
+    assert "renderInterpretationCityDialogContentInto({" in open_dialog_block
+    assert "title.textContent" not in open_dialog_block
+    assert "status.textContent" not in open_dialog_block
+    assert "cityInput.readOnly" not in open_dialog_block
+    assert "distanceShell.classList.toggle(\"hidden\"" not in open_dialog_block
+    assert "distanceHint.textContent" not in open_dialog_block
+    assert "confirmButton.textContent" not in open_dialog_block
 
     script = r"""
 const interpretationReferenceUi = await import(__INTERPRETATION_REFERENCE_UI_MODULE_URL__);
@@ -4073,6 +4086,46 @@ function summarizeButton(node) {
   };
 }
 
+function summarizeCityDialogContent(nodes) {
+  return {
+    title: nodes.title.textContent,
+    status: nodes.status.textContent,
+    readOnly: Boolean(nodes.cityInput.readOnly),
+    distanceHidden: nodes.distanceShell.classList.contains("hidden"),
+    distanceHint: nodes.distanceHint.textContent,
+    confirmLabel: nodes.confirmButton.textContent,
+    imgCount:
+      countTag(nodes.title, "img")
+      + countTag(nodes.status, "img")
+      + countTag(nodes.distanceHint, "img")
+      + countTag(nodes.confirmButton, "img"),
+    scriptCount:
+      countTag(nodes.title, "script")
+      + countTag(nodes.status, "script")
+      + countTag(nodes.distanceHint, "script")
+      + countTag(nodes.confirmButton, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(
+      nodes.title,
+      nodes.status,
+      nodes.cityInput,
+      nodes.distanceShell,
+      nodes.distanceHint,
+      nodes.confirmButton,
+    ),
+  };
+}
+
+function cityDialogNodes() {
+  return {
+    title: document.createElement("h2"),
+    status: document.createElement("p"),
+    cityInput: document.createElement("input"),
+    distanceShell: document.createElement("div"),
+    distanceHint: document.createElement("p"),
+    confirmButton: document.createElement("button"),
+  };
+}
+
 globalThis.document = {
   createElement(tagName) {
     return makeElement(tagName);
@@ -4225,6 +4278,53 @@ const nullBackdropBody = document.createElement("body");
 nullBackdropBody.dataset.interpretationCityDialog = "unchanged";
 const nullBackdropResult = interpretationReferenceUi.syncInterpretationCityDialogStateInto(null, nullBackdropBody, true);
 
+const addCaseDialog = cityDialogNodes();
+interpretationReferenceUi.renderInterpretationCityDialogContentInto(addCaseDialog, {
+  title: `Add Case City ${malicious}`,
+  status: `Confirm the city details before continuing. ${malicious}`,
+  lockedCity: false,
+  showDistance: false,
+  distanceHint: `Optional one-way distance from Lisbon ${malicious}.`,
+  confirmLabel: `Save City ${malicious}`,
+});
+
+const distanceDialog = cityDialogNodes();
+distanceDialog.distanceShell.classList.add("hidden");
+interpretationReferenceUi.renderInterpretationCityDialogContentInto(distanceDialog, {
+  title: `Confirm One-Way Distance ${malicious}`,
+  status: `Enter the one-way distance from Porto ${malicious} to Beja ${malicious}.`,
+  lockedCity: true,
+  showDistance: true,
+  distanceHint: `Optional one-way distance from Porto ${malicious}.`,
+  confirmLabel: `Use distance ${malicious}`,
+});
+
+const missingNodesDialog = {
+  title: document.createElement("h2"),
+  status: null,
+  cityInput: null,
+  distanceShell: document.createElement("div"),
+  distanceHint: null,
+  confirmButton: document.createElement("button"),
+};
+interpretationReferenceUi.renderInterpretationCityDialogContentInto(missingNodesDialog, {
+  title: "Partial dialog",
+  status: "Ignored status",
+  lockedCity: true,
+  showDistance: false,
+  distanceHint: "Ignored hint",
+  confirmLabel: "Confirm partial",
+});
+
+const nullDialogContentResult = interpretationReferenceUi.renderInterpretationCityDialogContentInto(null, {
+  title: `Ignored ${malicious}`,
+  status: `Ignored ${malicious}`,
+  lockedCity: true,
+  showDistance: true,
+  distanceHint: `Ignored ${malicious}`,
+  confirmLabel: `Ignored ${malicious}`,
+});
+
 console.log(JSON.stringify({
   exportedTypes: {
     city: typeof interpretationReferenceUi.renderInterpretationCityOptionsInto,
@@ -4235,6 +4335,7 @@ console.log(JSON.stringify({
     actionButtons: typeof interpretationReferenceUi.renderInterpretationActionButtonsInto,
     cityAddButtons: typeof interpretationReferenceUi.renderInterpretationCityAddButtonsInto,
     cityDialogState: typeof interpretationReferenceUi.syncInterpretationCityDialogStateInto,
+    cityDialogContent: typeof interpretationReferenceUi.renderInterpretationCityDialogContentInto,
   },
   city: summarizeSelect(citySelect),
   email: summarizeSelect(emailSelect),
@@ -4276,6 +4377,18 @@ console.log(JSON.stringify({
     bodyState: "",
     innerHTMLWrites: countInnerHtmlWrites(missingBodyBackdrop),
   },
+  cityDialogAddCase: summarizeCityDialogContent(addCaseDialog),
+  cityDialogDistance: summarizeCityDialogContent(distanceDialog),
+  cityDialogMissingNodes: {
+    title: missingNodesDialog.title.textContent,
+    distanceHidden: missingNodesDialog.distanceShell.classList.contains("hidden"),
+    confirmLabel: missingNodesDialog.confirmButton.textContent,
+    innerHTMLWrites: countInnerHtmlWrites(
+      missingNodesDialog.title,
+      missingNodesDialog.distanceShell,
+      missingNodesDialog.confirmButton,
+    ),
+  },
   nullBackdropBodyState: nullBackdropBody.dataset.interpretationCityDialog,
   nullBackdropInnerHTMLWrites: countInnerHtmlWrites(nullBackdropBody),
   nullCityResult,
@@ -4286,6 +4399,7 @@ console.log(JSON.stringify({
   nullActionResult,
   nullAddButtonResult,
   nullBackdropResult,
+  nullDialogContentResult,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -4303,6 +4417,7 @@ console.log(JSON.stringify({
         "actionButtons": "function",
         "cityAddButtons": "function",
         "cityDialogState": "function",
+        "cityDialogContent": "function",
     }
     assert results["city"]["optionTexts"][0] == "Select a city"
     assert results["city"]["optionValues"][0] == ""
@@ -4405,6 +4520,33 @@ console.log(JSON.stringify({
     assert results["cityDialogMissingBody"]["bodyState"] == ""
     assert results["cityDialogMissingBody"]["innerHTMLWrites"] == 0
 
+    assert results["cityDialogAddCase"]["title"] == "Add Case City <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["cityDialogAddCase"]["status"] == "Confirm the city details before continuing. <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["cityDialogAddCase"]["readOnly"] is False
+    assert results["cityDialogAddCase"]["distanceHidden"] is True
+    assert results["cityDialogAddCase"]["distanceHint"] == "Optional one-way distance from Lisbon <img src=x onerror=alert(1)><script>bad()</script>."
+    assert results["cityDialogAddCase"]["confirmLabel"] == "Save City <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["cityDialogAddCase"]["imgCount"] == 0
+    assert results["cityDialogAddCase"]["scriptCount"] == 0
+    assert results["cityDialogAddCase"]["innerHTMLWrites"] == 0
+
+    assert results["cityDialogDistance"]["title"] == "Confirm One-Way Distance <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["cityDialogDistance"]["status"] == "Enter the one-way distance from Porto <img src=x onerror=alert(1)><script>bad()</script> to Beja <img src=x onerror=alert(1)><script>bad()</script>."
+    assert results["cityDialogDistance"]["readOnly"] is True
+    assert results["cityDialogDistance"]["distanceHidden"] is False
+    assert results["cityDialogDistance"]["distanceHint"] == "Optional one-way distance from Porto <img src=x onerror=alert(1)><script>bad()</script>."
+    assert results["cityDialogDistance"]["confirmLabel"] == "Use distance <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["cityDialogDistance"]["imgCount"] == 0
+    assert results["cityDialogDistance"]["scriptCount"] == 0
+    assert results["cityDialogDistance"]["innerHTMLWrites"] == 0
+
+    assert results["cityDialogMissingNodes"] == {
+        "title": "Partial dialog",
+        "distanceHidden": True,
+        "confirmLabel": "Confirm partial",
+        "innerHTMLWrites": 0,
+    }
+
     assert results["nullBackdropBodyState"] == "unchanged"
     assert results["nullBackdropInnerHTMLWrites"] == 0
 
@@ -4416,6 +4558,7 @@ console.log(JSON.stringify({
     assert "nullActionResult" not in results
     assert "nullAddButtonResult" not in results
     assert "nullBackdropResult" not in results
+    assert "nullDialogContentResult" not in results
 
 
 def test_interpretation_review_ui_module_centralizes_safe_context_rendering() -> None:
@@ -9390,6 +9533,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationActionButtonsInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_asset.text
         assert "syncInterpretationCityDialogStateInto" in interpretation_reference_ui_asset.text
+        assert "renderInterpretationCityDialogContentInto" in interpretation_reference_ui_asset.text
         interpretation_review_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_review_ui.js")
         assert interpretation_review_ui_asset.status_code == 200
         assert interpretation_review_ui_asset.headers["content-type"].startswith("application/javascript")

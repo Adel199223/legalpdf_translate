@@ -58,6 +58,7 @@ import {
 import {
   renderCourtEmailOptionsInto,
   renderInterpretationActionButtonsInto,
+  renderInterpretationCityDialogContentInto,
   renderInterpretationFieldWarningInto,
   renderInterpretationCityAddButtonsInto,
   renderInterpretationCityOptionsInto,
@@ -1235,34 +1236,34 @@ function openInterpretationCityDialog({
   const confirmButton = qs("interpretation-city-dialog-confirm");
   const reference = currentInterpretationReference();
   interpretationCityState.returnFocusId = document.activeElement?.id || interpretationCityAddButtonId(fieldName);
-  if (title) {
-    title.textContent = interpretationCityState.activeDialog.mode === "distance"
-      ? "Confirm One-Way Distance"
-      : (fieldName === "case_city" ? "Add Case City" : "Add Service City");
-  }
-  if (status) {
-    status.textContent = interpretationCityState.activeDialog.mode === "distance"
-      ? `Enter the one-way distance from ${reference.travelOriginLabel || "your travel origin"} to ${cityName}.`
-      : (
-        interpretationCityState.activeDialog.requireDistance
-          ? "Confirm the city details. Enter KM now to save a profile distance, or leave it blank."
-          : "Confirm the city details before continuing."
-      );
-  }
-  if (cityInput) {
-    cityInput.readOnly = Boolean(lockedCity);
-  }
-  if (distanceShell) {
-    distanceShell.classList.toggle("hidden", !interpretationCityState.activeDialog.requireDistance);
-  }
-  if (distanceHint) {
-    distanceHint.textContent = reference.travelOriginLabel
-      ? `Optional one-way distance from ${reference.travelOriginLabel}.`
-      : "Optional one-way distance from your profile travel origin.";
-  }
-  if (confirmButton) {
-    confirmButton.textContent = confirmLabel;
-  }
+  const dialogTitle = interpretationCityState.activeDialog.mode === "distance"
+    ? "Confirm One-Way Distance"
+    : (fieldName === "case_city" ? "Add Case City" : "Add Service City");
+  const dialogStatus = interpretationCityState.activeDialog.mode === "distance"
+    ? `Enter the one-way distance from ${reference.travelOriginLabel || "your travel origin"} to ${cityName}.`
+    : (
+      interpretationCityState.activeDialog.requireDistance
+        ? "Confirm the city details. Enter KM now to save a profile distance, or leave it blank."
+        : "Confirm the city details before continuing."
+    );
+  const dialogDistanceHint = reference.travelOriginLabel
+    ? `Optional one-way distance from ${reference.travelOriginLabel}.`
+    : "Optional one-way distance from your profile travel origin.";
+  renderInterpretationCityDialogContentInto({
+    title,
+    status,
+    cityInput,
+    distanceShell,
+    distanceHint,
+    confirmButton,
+  }, {
+    title: dialogTitle,
+    status: dialogStatus,
+    lockedCity,
+    showDistance: interpretationCityState.activeDialog.requireDistance,
+    distanceHint: dialogDistanceHint,
+    confirmLabel,
+  });
   setInterpretationCityDialogOpen(true);
   return new Promise((resolve) => {
     interpretationCityState.dialogResolver = resolve;
