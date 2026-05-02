@@ -1268,6 +1268,228 @@ console.log(JSON.stringify({
     assert results["shellVisibility"]["missingResultType"] == "undefined"
 
 
+def test_shadow_web_new_job_ui_module_centralizes_task_switch_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    new_job_ui_js = static_dir / "new_job_ui.js"
+    assert new_job_ui_js.exists()
+    new_job_ui_source = new_job_ui_js.read_text(encoding="utf-8")
+
+    assert 'from "./new_job_ui.js"' in app_js
+    assert "export function syncNewJobTaskControlsInto" in new_job_ui_source
+    assert "syncNewJobTaskControlsInto({" in app_js
+    assert 'qsa("[data-task-panel]").forEach' not in app_js
+    assert 'qsa(".task-switch").forEach' not in app_js
+    assert "innerHTML" not in new_job_ui_source
+
+    script = r"""
+const newJobUi = await import(__NEW_JOB_UI_MODULE_URL__);
+
+function syncClassList(element, classes) {
+  element.className = Array.from(classes).join(" ");
+}
+
+function makeElement(tagName = "div") {
+  const classNames = new Set();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    _className: "",
+    dataset: {},
+    attributes: {},
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+    _textContent: "",
+    classList: {
+      add(...names) {
+        names.forEach((name) => {
+          if (name) {
+            classNames.add(String(name));
+          }
+        });
+        syncClassList(element, classNames);
+      },
+      remove(...names) {
+        names.forEach((name) => classNames.delete(String(name)));
+        syncClassList(element, classNames);
+      },
+      contains(name) {
+        return classNames.has(String(name));
+      },
+      toggle(name, force) {
+        const key = String(name);
+        const enabled = force === undefined ? !classNames.has(key) : Boolean(force);
+        if (enabled) {
+          classNames.add(key);
+        } else {
+          classNames.delete(key);
+        }
+        syncClassList(element, classNames);
+        return enabled;
+      },
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value ?? "");
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name)
+        ? this.attributes[name]
+        : null;
+    },
+  };
+  Object.defineProperty(element, "className", {
+    get() {
+      return this._className;
+    },
+    set(value) {
+      this._className = String(value ?? "");
+      classNames.clear();
+      this._className.split(/\s+/).filter(Boolean).forEach((name) => classNames.add(name));
+    },
+  });
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+      this._textContent = "";
+    },
+  });
+  return element;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  return nodes.reduce((total, node) => total + (node?.innerHTMLAssignments || []).length, 0);
+}
+
+function makePanel(task, className = "simple-task-shell") {
+  const panel = makeElement("div");
+  panel.className = className;
+  panel.dataset.taskPanel = task;
+  return panel;
+}
+
+function makeSwitch(task, className = "task-switch") {
+  const button = makeElement("button");
+  button.className = className;
+  button.dataset.task = task;
+  button.setAttribute("aria-selected", "false");
+  return button;
+}
+
+const translationPanel = makePanel("translation");
+const interpretationPanel = makePanel("interpretation", "simple-task-shell hidden");
+const translationSwitch = makeSwitch("translation", "task-switch active");
+const interpretationSwitch = makeSwitch("interpretation");
+const maliciousSwitch = makeSwitch(`<img src=x onerror=alert(1)>`);
+
+newJobUi.syncNewJobTaskControlsInto({
+  panels: [translationPanel, interpretationPanel],
+  switches: [translationSwitch, interpretationSwitch, maliciousSwitch],
+  activeTask: "interpretation",
+});
+const interpretationState = {
+  translationPanelClass: translationPanel.className,
+  interpretationPanelClass: interpretationPanel.className,
+  translationSwitchClass: translationSwitch.className,
+  translationAria: translationSwitch.getAttribute("aria-selected"),
+  interpretationSwitchClass: interpretationSwitch.className,
+  interpretationAria: interpretationSwitch.getAttribute("aria-selected"),
+  maliciousSwitchClass: maliciousSwitch.className,
+  maliciousAria: maliciousSwitch.getAttribute("aria-selected"),
+  innerHTMLWrites: countInnerHtmlWrites(
+    translationPanel,
+    interpretationPanel,
+    translationSwitch,
+    interpretationSwitch,
+    maliciousSwitch,
+  ),
+};
+
+newJobUi.syncNewJobTaskControlsInto({
+  panels: [translationPanel, interpretationPanel],
+  switches: [translationSwitch, interpretationSwitch, maliciousSwitch],
+  activeTask: `<img src=x onerror=alert(1)>`,
+});
+const maliciousTaskState = {
+  translationPanelClass: translationPanel.className,
+  interpretationPanelClass: interpretationPanel.className,
+  translationSwitchClass: translationSwitch.className,
+  translationAria: translationSwitch.getAttribute("aria-selected"),
+  interpretationSwitchClass: interpretationSwitch.className,
+  interpretationAria: interpretationSwitch.getAttribute("aria-selected"),
+  maliciousSwitchClass: maliciousSwitch.className,
+  maliciousAria: maliciousSwitch.getAttribute("aria-selected"),
+  innerHTMLWrites: countInnerHtmlWrites(
+    translationPanel,
+    interpretationPanel,
+    translationSwitch,
+    interpretationSwitch,
+    maliciousSwitch,
+  ),
+};
+
+const missingResult = newJobUi.syncNewJobTaskControlsInto({
+  panels: null,
+  switches: null,
+  activeTask: "interpretation",
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof newJobUi.syncNewJobTaskControlsInto,
+  interpretationState,
+  maliciousTaskState,
+  missingResultType: typeof missingResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__NEW_JOB_UI_MODULE_URL__": "new_job_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["interpretationState"] == {
+        "translationPanelClass": "simple-task-shell hidden",
+        "interpretationPanelClass": "simple-task-shell",
+        "translationSwitchClass": "task-switch",
+        "translationAria": "false",
+        "interpretationSwitchClass": "task-switch active",
+        "interpretationAria": "true",
+        "maliciousSwitchClass": "task-switch",
+        "maliciousAria": "false",
+        "innerHTMLWrites": 0,
+    }
+    assert results["maliciousTaskState"] == {
+        "translationPanelClass": "simple-task-shell",
+        "interpretationPanelClass": "simple-task-shell hidden",
+        "translationSwitchClass": "task-switch active",
+        "translationAria": "true",
+        "interpretationSwitchClass": "task-switch",
+        "interpretationAria": "false",
+        "maliciousSwitchClass": "task-switch",
+        "maliciousAria": "false",
+        "innerHTMLWrites": 0,
+    }
+    assert results["missingResultType"] == "undefined"
+
+
 def test_google_photos_busy_guard_allows_connect_when_choose_is_disabled() -> None:
     script = """
 function makeButton(id, { disabled = false, textContent = id } = {}) {
@@ -9601,6 +9823,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderLiveBannerInto" in shell_ui_asset.text
         assert "renderRuntimeModeSelectorInto" in shell_ui_asset.text
         assert "renderShellVisibilityInto" in shell_ui_asset.text
+        new_job_ui_asset = client.get(f"/static-build/{asset_version}/new_job_ui.js")
+        assert new_job_ui_asset.status_code == 200
+        assert new_job_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "syncNewJobTaskControlsInto" in new_job_ui_asset.text
         diagnostics_ui_asset = client.get(f"/static-build/{asset_version}/diagnostics_ui.js")
         assert diagnostics_ui_asset.status_code == 200
         assert diagnostics_ui_asset.headers["content-type"].startswith("application/javascript")
