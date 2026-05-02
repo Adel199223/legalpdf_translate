@@ -2,6 +2,8 @@ import { MORE_NAV_ORDER, buildNavigationGroups } from "./shell_presentation.js";
 import { clearNode, createTextElement, setText } from "./safe_rendering.js";
 
 const LIVE_BANNER_TEXT = "Live mode: using your real settings, Gmail drafts, and saved work.";
+const OPERATOR_VISIBLE_HINT = "Technical build, listener, and diagnostics panels stay visible across the shell until you turn them off.";
+const OPERATOR_HIDDEN_HINT = "Build, listener, and diagnostics panels stay hidden until you ask for them or a failure occurs.";
 
 function createNavigationButton(item, activeView = "") {
   const button = document.createElement("button");
@@ -89,6 +91,23 @@ export function renderRuntimeModeBannerInto(banner, { show = false, message = ""
   setText(banner, message);
   banner.dataset.mode = mode;
   banner.classList.remove("hidden");
+}
+
+export function renderOperatorChromeInto(
+  { body = null, toggle = null, hint = null } = {},
+  { active = false, operatorMode = false } = {},
+) {
+  if (body?.dataset) {
+    body.dataset.operatorChrome = active ? "on" : "off";
+  }
+  if (!toggle) {
+    return;
+  }
+  toggle.setAttribute("aria-pressed", operatorMode ? "true" : "false");
+  setText(toggle, operatorMode ? "Hide Technical Details" : "Show Technical Details");
+  if (hint) {
+    setText(hint, operatorMode ? OPERATOR_VISIBLE_HINT : OPERATOR_HIDDEN_HINT);
+  }
 }
 
 export function renderShellVisibilityInto({
