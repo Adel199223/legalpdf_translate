@@ -4074,6 +4074,215 @@ console.log(JSON.stringify({
     assert results["missingNodeResultType"] == "undefined"
 
 
+def test_profile_ui_module_centralizes_safe_profile_toolbar_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    profile_ui_module = static_dir / "profile_ui.js"
+
+    assert profile_ui_module.exists()
+    profile_ui_js = profile_ui_module.read_text(encoding="utf-8")
+    assert "export function renderProfileToolbarInto" in profile_ui_js
+    assert "renderProfileToolbarInto({" in app_js
+    assert 'importButton: qs("import-live-profiles")' in app_js
+    assert 'newButton: qs("new-profile")' in app_js
+    assert "liveData: runtime.live_data === true" in app_js
+
+    render_profile_start = app_js.index("function renderProfile(payload)")
+    render_extension_start = app_js.index("function renderExtensionLab", render_profile_start)
+    render_profile_block = app_js[render_profile_start:render_extension_start]
+    assert "renderProfileToolbarInto({" in render_profile_block
+    assert "importButton.disabled" not in render_profile_block
+    assert "importButton.textContent" not in render_profile_block
+    assert "newButton.disabled" not in render_profile_block
+    assert "innerHTML" not in render_profile_block
+
+    toolbar_start = profile_ui_js.index("export function renderProfileToolbarInto")
+    toolbar_end = profile_ui_js.index("export function renderProfileOptionsInto", toolbar_start)
+    toolbar_block = profile_ui_js[toolbar_start:toolbar_end]
+    assert "innerHTML" not in toolbar_block
+
+    script = r"""
+const profileUi = await import(__PROFILE_UI_MODULE_URL__);
+
+function makeElement(tagName = "button") {
+  const element = {
+    tagName: String(tagName || "button").toUpperCase(),
+    children: [],
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    disabled: false,
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        this.children.push(makeElement(match[1]));
+      }
+    },
+  });
+  return element;
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = node?.tagName === target ? 1 : 0;
+  for (const child of node?.children || []) {
+    total += countTag(child, target);
+  }
+  return total;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  return nodes.reduce((total, node) => {
+    let current = node?.innerHTMLAssignments?.length || 0;
+    for (const child of node?.children || []) {
+      current += countInnerHtmlWrites(child);
+    }
+    return total + current;
+  }, 0);
+}
+
+function summarize(nodes) {
+  return {
+    importText: nodes.importButton.textContent,
+    importDisabled: Boolean(nodes.importButton.disabled),
+    newText: nodes.newButton.textContent,
+    newDisabled: Boolean(nodes.newButton.disabled),
+    imgCount: countTag(nodes.importButton, "img") + countTag(nodes.newButton, "img"),
+    scriptCount: countTag(nodes.importButton, "script") + countTag(nodes.newButton, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(nodes.importButton, nodes.newButton),
+  };
+}
+
+function makeToolbarNodes() {
+  return {
+    importButton: makeElement("button"),
+    newButton: makeElement("button"),
+  };
+}
+
+const shadowNodes = makeToolbarNodes();
+shadowNodes.importButton.disabled = true;
+shadowNodes.newButton.disabled = true;
+shadowNodes.newButton.textContent = "Add profile";
+profileUi.renderProfileToolbarInto(shadowNodes, { liveData: false });
+
+const liveNodes = makeToolbarNodes();
+liveNodes.newButton.disabled = true;
+liveNodes.newButton.textContent = "Add profile";
+profileUi.renderProfileToolbarInto(liveNodes, { liveData: true });
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const maliciousNodes = makeToolbarNodes();
+maliciousNodes.importButton.textContent = malicious;
+maliciousNodes.newButton.textContent = malicious;
+maliciousNodes.importButton.disabled = true;
+maliciousNodes.newButton.disabled = true;
+profileUi.renderProfileToolbarInto(maliciousNodes, { liveData: malicious });
+
+const missingImport = { importButton: null, newButton: makeElement("button") };
+missingImport.newButton.disabled = true;
+const missingImportResult = profileUi.renderProfileToolbarInto(missingImport, { liveData: true });
+
+const missingNew = { importButton: makeElement("button"), newButton: null };
+const missingNewResult = profileUi.renderProfileToolbarInto(missingNew, { liveData: false });
+
+const nullNodesResult = profileUi.renderProfileToolbarInto(null, { liveData: true });
+
+console.log(JSON.stringify({
+  exportedType: typeof profileUi.renderProfileToolbarInto,
+  shadow: summarize(shadowNodes),
+  live: summarize(liveNodes),
+  malicious: summarize(maliciousNodes),
+  missingImport: {
+    newDisabled: Boolean(missingImport.newButton.disabled),
+    newText: missingImport.newButton.textContent,
+    innerHTMLWrites: countInnerHtmlWrites(missingImport.newButton),
+  },
+  missingNew: {
+    importDisabled: Boolean(missingNew.importButton.disabled),
+    importText: missingNew.importButton.textContent,
+    innerHTMLWrites: countInnerHtmlWrites(missingNew.importButton),
+  },
+  missingImportResultType: missingImportResult === undefined ? "undefined" : typeof missingImportResult,
+  missingNewResultType: missingNewResult === undefined ? "undefined" : typeof missingNewResult,
+  nullNodesResultType: nullNodesResult === undefined ? "undefined" : typeof nullNodesResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__PROFILE_UI_MODULE_URL__": "profile_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["shadow"] == {
+        "importText": "Copy profiles from live app",
+        "importDisabled": False,
+        "newText": "Add profile",
+        "newDisabled": False,
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["live"] == {
+        "importText": "Using live app profiles",
+        "importDisabled": True,
+        "newText": "Add profile",
+        "newDisabled": False,
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["malicious"] == {
+        "importText": "Copy profiles from live app",
+        "importDisabled": False,
+        "newText": "<img src=x onerror=alert(1)><script>bad()</script>",
+        "newDisabled": False,
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["missingImport"] == {
+        "newDisabled": False,
+        "newText": "",
+        "innerHTMLWrites": 0,
+    }
+    assert results["missingNew"] == {
+        "importDisabled": False,
+        "importText": "Copy profiles from live app",
+        "innerHTMLWrites": 0,
+    }
+    assert results["missingImportResultType"] == "undefined"
+    assert results["missingNewResultType"] == "undefined"
+    assert results["nullNodesResultType"] == "undefined"
+
+
 def test_dashboard_ui_module_centralizes_safe_card_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -10620,6 +10829,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderProfileDistanceStatusInto" in profile_ui_asset.text
         assert "renderProfileDistanceJsonInto" in profile_ui_asset.text
         assert "renderProfileEditorChromeInto" in profile_ui_asset.text
+        assert "renderProfileToolbarInto" in profile_ui_asset.text
         dashboard_ui_asset = client.get(f"/static-build/{asset_version}/dashboard_ui.js")
         assert dashboard_ui_asset.status_code == 200
         assert dashboard_ui_asset.headers["content-type"].startswith("application/javascript")

@@ -4,6 +4,18 @@ import {
 } from "./profile_presentation.js";
 import { clearNode, createEmptyState, createTextElement, setText } from "./safe_rendering.js";
 
+export function renderProfileToolbarInto(nodes = {}, { liveData = false } = {}) {
+  const { importButton = null, newButton = null } = nodes || {};
+  if (importButton) {
+    const usingLiveApp = liveData === true;
+    importButton.disabled = usingLiveApp;
+    setText(importButton, usingLiveApp ? "Using live app profiles" : "Copy profiles from live app");
+  }
+  if (newButton) {
+    newButton.disabled = false;
+  }
+}
+
 export function renderProfileOptionsInto(select, profiles = [], primaryProfileId = "") {
   if (!select) {
     return;
