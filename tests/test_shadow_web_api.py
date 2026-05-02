@@ -5654,6 +5654,205 @@ console.log(JSON.stringify({
     assert "nullDialogContentResult" not in results
 
 
+def test_interpretation_reference_ui_module_centralizes_service_same_controls() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_reference_ui_js = static_dir / "interpretation_reference_ui.js"
+
+    assert interpretation_reference_ui_js.exists()
+    interpretation_reference_ui_text = interpretation_reference_ui_js.read_text(encoding="utf-8")
+    assert "export function renderServiceSameControlsInto" in interpretation_reference_ui_text
+    assert "renderServiceSameControlsInto({" in app_js
+
+    update_service_start = app_js.index("function updateServiceFieldState")
+    clone_json_start = app_js.index("function cloneJson", update_service_start)
+    update_service_block = app_js[update_service_start:clone_json_start]
+    assert "renderServiceSameControlsInto({" in update_service_block
+    assert 'qs("service-entity").disabled' not in update_service_block
+    assert 'qs("service-city").disabled' not in update_service_block
+    assert 'qs("service-same-hint").textContent' not in update_service_block
+    assert "innerHTML" not in update_service_block
+    assert "syncServiceFieldsFromCase();" in update_service_block
+    assert "syncInterpretationDisclosureState();" in update_service_block
+
+    script = r"""
+const interpretationReferenceUi = await import(__INTERPRETATION_REFERENCE_UI_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    children: [],
+    disabled: false,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    appendChild(node) {
+      if (node) {
+        this.children.push(node);
+      }
+      return node;
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        this.children.push(makeElement(match[1]));
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  return nodes.reduce((total, node) => {
+    if (!node) {
+      return total;
+    }
+    let current = 0;
+    walk(node, (item) => {
+      current += (item.innerHTMLAssignments || []).length;
+    });
+    return total + current;
+  }, 0);
+}
+
+function makeNodes() {
+  return {
+    serviceEntity: makeElement("select"),
+    serviceCity: makeElement("select"),
+    hint: makeElement("p"),
+  };
+}
+
+function summarize(nodes) {
+  return {
+    entityDisabled: nodes.serviceEntity.disabled,
+    cityDisabled: nodes.serviceCity.disabled,
+    hint: nodes.hint.textContent,
+    imgCount: countTag(nodes.hint, "img"),
+    scriptCount: countTag(nodes.hint, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(nodes.serviceEntity, nodes.serviceCity, nodes.hint),
+  };
+}
+
+const mirrored = makeNodes();
+interpretationReferenceUi.renderServiceSameControlsInto(mirrored, { serviceSame: true });
+
+const custom = makeNodes();
+custom.serviceEntity.disabled = true;
+custom.serviceCity.disabled = true;
+interpretationReferenceUi.renderServiceSameControlsInto(custom, { serviceSame: false });
+
+const malicious = makeNodes();
+interpretationReferenceUi.renderServiceSameControlsInto(malicious, {
+  serviceSame: `<img src=x onerror=alert(1)><script>bad()</script>`,
+});
+
+const missingCity = {
+  serviceEntity: makeElement("select"),
+  serviceCity: null,
+  hint: makeElement("p"),
+};
+interpretationReferenceUi.renderServiceSameControlsInto(missingCity, { serviceSame: false });
+
+const nullResult = interpretationReferenceUi.renderServiceSameControlsInto(null, { serviceSame: true });
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationReferenceUi.renderServiceSameControlsInto,
+  mirrored: summarize(mirrored),
+  custom: summarize(custom),
+  malicious: summarize(malicious),
+  missingCity: {
+    entityDisabled: missingCity.serviceEntity.disabled,
+    hint: missingCity.hint.textContent,
+    innerHTMLWrites: countInnerHtmlWrites(missingCity.serviceEntity, missingCity.hint),
+  },
+  nullResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REFERENCE_UI_MODULE_URL__": "interpretation_reference_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["mirrored"] == {
+        "entityDisabled": True,
+        "cityDisabled": True,
+        "hint": "Service entity and city will mirror the case fields for save and export.",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["custom"] == {
+        "entityDisabled": False,
+        "cityDisabled": False,
+        "hint": "Use different service fields when the service location differs from the case.",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["malicious"]["entityDisabled"] is True
+    assert results["malicious"]["cityDisabled"] is True
+    assert results["malicious"]["hint"] == "Service entity and city will mirror the case fields for save and export."
+    assert results["malicious"]["imgCount"] == 0
+    assert results["malicious"]["scriptCount"] == 0
+    assert results["malicious"]["innerHTMLWrites"] == 0
+    assert results["missingCity"] == {
+        "entityDisabled": False,
+        "hint": "Use different service fields when the service location differs from the case.",
+        "innerHTMLWrites": 0,
+    }
+    assert "nullResult" not in results
+
+
 def test_interpretation_review_ui_module_centralizes_safe_context_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -10887,6 +11086,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_asset.text
         assert "syncInterpretationCityDialogStateInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationCityDialogContentInto" in interpretation_reference_ui_asset.text
+        assert "renderServiceSameControlsInto" in interpretation_reference_ui_asset.text
         interpretation_review_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_review_ui.js")
         assert interpretation_review_ui_asset.status_code == 200
         assert interpretation_review_ui_asset.headers["content-type"].startswith("application/javascript")

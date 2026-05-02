@@ -125,6 +125,26 @@ export function renderInterpretationCityAddButtonsInto(nodes = {}, state = {}) {
   }
 }
 
+export function renderServiceSameControlsInto(nodes = {}, { serviceSame = false } = {}) {
+  const {
+    serviceEntity = null,
+    serviceCity = null,
+    hint = null,
+  } = nodes || {};
+  const sameLocation = Boolean(serviceSame);
+  if (serviceEntity) {
+    serviceEntity.disabled = sameLocation;
+  }
+  if (serviceCity) {
+    serviceCity.disabled = sameLocation;
+  }
+  if (hint) {
+    hint.textContent = sameLocation
+      ? "Service entity and city will mirror the case fields for save and export."
+      : "Use different service fields when the service location differs from the case.";
+  }
+}
+
 export function syncInterpretationCityDialogStateInto(backdrop, body, open) {
   if (!backdrop) {
     return;

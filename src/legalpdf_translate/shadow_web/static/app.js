@@ -65,6 +65,7 @@ import {
   renderInterpretationCityOptionsInto,
   renderInterpretationDistanceHintInto,
   renderServiceEntityOptionsInto,
+  renderServiceSameControlsInto,
   syncInterpretationCityDialogStateInto,
 } from "./interpretation_reference_ui.js";
 import {
@@ -1611,11 +1612,13 @@ function updateServiceFieldState() {
   } else if (!fieldValue("service-city") && provisionalCityValue("service_city") === provisionalCityValue("case_city")) {
     setProvisionalCityValue("service_city", "");
   }
-  qs("service-entity").disabled = serviceSame;
-  qs("service-city").disabled = serviceSame;
-  qs("service-same-hint").textContent = serviceSame
-    ? "Service entity and city will mirror the case fields for save and export."
-    : "Use different service fields when the service location differs from the case.";
+  renderServiceSameControlsInto({
+    serviceEntity: qs("service-entity"),
+    serviceCity: qs("service-city"),
+    hint: qs("service-same-hint"),
+  }, {
+    serviceSame,
+  });
   syncInterpretationDisclosureState();
   syncInterpretationCityControls();
   renderInterpretationSeedCard("interpretation-review-home-result");
