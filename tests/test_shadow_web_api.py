@@ -2030,6 +2030,34 @@ def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
     assert '}, { guardIds: ["google-photos-choose"] });' in app_js
 
 
+def test_new_profile_click_handler_does_not_guard_on_disabled_profile_action_buttons() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+
+    start = app_js.index('qs("new-profile").addEventListener("click"')
+    end = app_js.index('qs("profile-save").addEventListener("click"', start)
+    click_handler = app_js[start:end]
+
+    assert "handleNewProfile()" in click_handler
+    assert "guardIds:" in click_handler
+
+    guard_start = click_handler.index("guardIds:")
+    guard_end = click_handler.index("});", guard_start)
+    guard_block = click_handler[guard_start:guard_end]
+
+    assert '"import-live-profiles"' in guard_block
+    assert '"new-profile"' in guard_block
+    assert '"profile-save"' in guard_block
+    assert '"profile-set-primary"' not in guard_block
+    assert '"profile-delete"' not in guard_block
+
+
 def test_extension_lab_presentation_module_centralizes_card_copy() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
