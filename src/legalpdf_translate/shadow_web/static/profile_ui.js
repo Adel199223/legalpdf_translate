@@ -30,6 +30,18 @@ export function renderProfileOptionsInto(select, profiles = [], primaryProfileId
   }
 }
 
+export function syncProfileEditorDrawerStateInto(backdrop, body, open) {
+  if (!backdrop) {
+    return;
+  }
+  const isOpen = Boolean(open);
+  backdrop.classList.toggle("hidden", !isOpen);
+  backdrop.setAttribute("aria-hidden", isOpen ? "false" : "true");
+  if (body) {
+    body.dataset.profileEditorDrawer = isOpen ? "open" : "closed";
+  }
+}
+
 export function renderProfileDistanceRowsInto(container, rows, { onRemove } = {}) {
   if (!container) {
     return;

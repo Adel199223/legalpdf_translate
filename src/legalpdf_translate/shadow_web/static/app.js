@@ -84,6 +84,7 @@ import {
   renderProfileDistanceRowsInto,
   renderProfileListInto,
   renderProfileOptionsInto,
+  syncProfileEditorDrawerStateInto,
 } from "./profile_ui.js";
 import {
   buildInterpretationReference,
@@ -1668,9 +1669,7 @@ function setProfileEditorDrawerOpen(open) {
     return;
   }
   profileUiState.editorDrawerOpen = Boolean(open);
-  backdrop.classList.toggle("hidden", !profileUiState.editorDrawerOpen);
-  backdrop.setAttribute("aria-hidden", profileUiState.editorDrawerOpen ? "false" : "true");
-  document.body.dataset.profileEditorDrawer = profileUiState.editorDrawerOpen ? "open" : "closed";
+  syncProfileEditorDrawerStateInto(backdrop, document.body, profileUiState.editorDrawerOpen);
 }
 
 function openProfileEditorDrawer() {
