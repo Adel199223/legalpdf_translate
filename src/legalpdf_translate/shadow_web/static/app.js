@@ -102,7 +102,6 @@ import {
   serviceEntityOptionsForSelection,
 } from "./interpretation_review_state.js";
 import {
-  MORE_NAV_ORDER,
   beginnerSurfaceTargetLabel as deriveBeginnerSurfaceTargetLabel,
   deriveBeginnerPrimarySurface,
   deriveRouteAwareTopbarStatus,
@@ -116,6 +115,7 @@ import {
   renderLiveBannerInto,
   renderNavigationInto,
   renderRuntimeModeSelectorInto,
+  renderShellVisibilityInto,
 } from "./shell_ui.js";
 import {
   GOOGLE_PHOTOS_RECONNECT_GUIDANCE,
@@ -1948,18 +1948,12 @@ function renderNavigation(items) {
 }
 
 function renderShellVisibility() {
-  qsa(".page-view").forEach((node) => {
-    node.classList.toggle("hidden", node.dataset.view !== appState.activeView);
+  renderShellVisibilityInto({
+    views: qsa(".page-view"),
+    navButtons: qsa(".nav-button"),
+    moreShell: qs("more-nav-shell"),
+    activeView: appState.activeView,
   });
-  qsa(".nav-button").forEach((button) => {
-    button.classList.toggle("active", button.dataset.view === appState.activeView);
-  });
-  const moreShell = qs("more-nav-shell");
-  if (moreShell) {
-    const moreActive = MORE_NAV_ORDER.includes(appState.activeView);
-    moreShell.open = moreActive || moreShell.open;
-    moreShell.classList.toggle("has-active-view", moreActive);
-  }
   const gmailFocusActive = routeShellMode() === "gmail-focus";
   if (gmailFocusActive && !shellUiState.gmailFocusActive) {
     closeSessionDrawer();

@@ -826,9 +826,12 @@ def test_shadow_web_shell_ui_module_centralizes_safe_navigation_rendering() -> N
     assert "export function renderNavigationInto" in shell_ui_source
     assert "export function renderLiveBannerInto" in shell_ui_source
     assert "export function renderRuntimeModeSelectorInto" in shell_ui_source
+    assert "export function renderShellVisibilityInto" in shell_ui_source
     assert "renderNavigationInto({" in app_js
     assert 'renderLiveBannerInto(qs("live-banner"), runtime);' in app_js
     assert 'renderRuntimeModeSelectorInto(qs("runtime-mode-select"), runtimeMode);' in app_js
+    assert "renderShellVisibilityInto({" in app_js
+    assert "MORE_NAV_ORDER.includes(appState.activeView)" not in app_js
     assert "button.innerHTML" not in app_js
     assert "innerHTML" not in shell_ui_source
 
@@ -1070,11 +1073,63 @@ const shadowBannerSnapshot = {
   className: liveBanner.className,
 };
 
+const newJobView = document.createElement("section");
+newJobView.className = "page-view";
+newJobView.dataset.view = "new-job";
+const settingsView = document.createElement("section");
+settingsView.className = "page-view hidden";
+settingsView.dataset.view = "settings";
+const newJobButton = document.createElement("button");
+newJobButton.className = "nav-button active";
+newJobButton.dataset.view = "new-job";
+const settingsButton = document.createElement("button");
+settingsButton.className = "nav-button";
+settingsButton.dataset.view = "settings";
+const visibilityMoreShell = document.createElement("details");
+
+shellUi.renderShellVisibilityInto({
+  views: [newJobView, settingsView],
+  navButtons: [newJobButton, settingsButton],
+  moreShell: visibilityMoreShell,
+  activeView: "settings",
+});
+const settingsVisibility = {
+  newJobClass: newJobView.className,
+  settingsClass: settingsView.className,
+  newJobButtonClass: newJobButton.className,
+  settingsButtonClass: settingsButton.className,
+  moreOpen: visibilityMoreShell.open,
+  moreClass: visibilityMoreShell.className,
+  innerHTMLWrites: countInnerHtmlWrites(
+    newJobView,
+    settingsView,
+    newJobButton,
+    settingsButton,
+    visibilityMoreShell,
+  ),
+};
+
+shellUi.renderShellVisibilityInto({
+  views: [newJobView, settingsView],
+  navButtons: [newJobButton, settingsButton],
+  moreShell: visibilityMoreShell,
+  activeView: "new-job",
+});
+const newJobVisibility = {
+  newJobClass: newJobView.className,
+  settingsClass: settingsView.className,
+  newJobButtonClass: newJobButton.className,
+  settingsButtonClass: settingsButton.className,
+  moreOpen: visibilityMoreShell.open,
+  moreClass: visibilityMoreShell.className,
+};
+
 console.log(JSON.stringify({
   exportedType: typeof shellUi.renderNavigationInto,
   runtimeControlExportTypes: {
     liveBanner: typeof shellUi.renderLiveBannerInto,
     runtimeSelector: typeof shellUi.renderRuntimeModeSelectorInto,
+    shellVisibility: typeof shellUi.renderShellVisibilityInto,
   },
   hidden: hiddenSnapshot,
   visible: {
@@ -1102,6 +1157,16 @@ console.log(JSON.stringify({
     }),
     missingBannerResultType: typeof shellUi.renderLiveBannerInto(null, { live_data: true }),
   },
+  shellVisibility: {
+    settings: settingsVisibility,
+    newJob: newJobVisibility,
+    missingResultType: typeof shellUi.renderShellVisibilityInto({
+      views: null,
+      navButtons: null,
+      moreShell: null,
+      activeView: "settings",
+    }),
+  },
 }));
 """
     results = run_browser_esm_json_probe(
@@ -1114,6 +1179,7 @@ console.log(JSON.stringify({
     assert results["runtimeControlExportTypes"] == {
         "liveBanner": "function",
         "runtimeSelector": "function",
+        "shellVisibility": "function",
     }
     assert [button["view"] for button in results["hidden"]["primary"]] == ["new-job", "recent-jobs"]
     assert [button["view"] for button in results["hidden"]["more"]] == [
@@ -1182,6 +1248,24 @@ console.log(JSON.stringify({
     assert results["runtimeControls"]["shadowBanner"] == {"text": "", "className": "live-banner hidden"}
     assert results["runtimeControls"]["missingRuntimeResultType"] == "undefined"
     assert results["runtimeControls"]["missingBannerResultType"] == "undefined"
+    assert results["shellVisibility"]["settings"] == {
+        "newJobClass": "page-view hidden",
+        "settingsClass": "page-view",
+        "newJobButtonClass": "nav-button",
+        "settingsButtonClass": "nav-button active",
+        "moreOpen": True,
+        "moreClass": "has-active-view",
+        "innerHTMLWrites": 0,
+    }
+    assert results["shellVisibility"]["newJob"] == {
+        "newJobClass": "page-view",
+        "settingsClass": "page-view hidden",
+        "newJobButtonClass": "nav-button active",
+        "settingsButtonClass": "nav-button",
+        "moreOpen": True,
+        "moreClass": "",
+    }
+    assert results["shellVisibility"]["missingResultType"] == "undefined"
 
 
 def test_google_photos_busy_guard_allows_connect_when_choose_is_disabled() -> None:
@@ -9516,6 +9600,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderNavigationInto" in shell_ui_asset.text
         assert "renderLiveBannerInto" in shell_ui_asset.text
         assert "renderRuntimeModeSelectorInto" in shell_ui_asset.text
+        assert "renderShellVisibilityInto" in shell_ui_asset.text
         diagnostics_ui_asset = client.get(f"/static-build/{asset_version}/diagnostics_ui.js")
         assert diagnostics_ui_asset.status_code == 200
         assert diagnostics_ui_asset.headers["content-type"].startswith("application/javascript")
