@@ -8895,6 +8895,9 @@ def test_diagnostics_ui_module_centralizes_safe_status_rendering(tmp_path: Path,
     assert "export function setDiagnostics" in diagnostics_ui_js
     assert "export function setPanelStatus" in diagnostics_ui_js
     assert "export function setTopbarStatus" in diagnostics_ui_js
+    assert "export function populateIdleDiagnostics" in diagnostics_ui_js
+    assert "populateIdleDiagnostics();" in app_js
+    assert "function populateIdleDiagnostics()" not in app_js
 
     script = """
 const diagnosticsUi = await import(__DIAGNOSTICS_UI_MODULE_URL__);
@@ -8932,6 +8935,18 @@ const hint = createNode("review-hint");
 const details = createNode("review-details");
 const panelStatus = createNode("review-status");
 const topbarStatus = createNode("topbar-status");
+const autofillDiagnostics = createNode("autofill-diagnostics");
+const autofillHint = createNode("autofill-hint");
+const autofillDetails = createNode("autofill-details");
+const formDiagnostics = createNode("form-diagnostics");
+const formHint = createNode("form-hint");
+const formDetails = createNode("form-details");
+const profileDiagnostics = createNode("profile-diagnostics");
+const profileHint = createNode("profile-hint");
+const profileDetails = createNode("profile-details");
+const simulatorDiagnostics = createNode("simulator-diagnostics");
+const simulatorHint = createNode("simulator-hint");
+const simulatorDetails = createNode("simulator-details");
 
 globalThis.document = {
   getElementById(id) {
@@ -8988,6 +9003,38 @@ diagnosticsUi.setPanelStatus("missing", "warning", "Ignored");
 nodes.delete("topbar-status");
 diagnosticsUi.setTopbarStatus("Ignored", "warning");
 
+profileDiagnostics.textContent = "Already populated";
+profileHint.textContent = "Existing profile hint";
+profileDetails.open = true;
+profileDetails.dataset.reveal = "true";
+diagnosticsUi.populateIdleDiagnostics();
+const idleDiagnostics = {
+  autofill: {
+    text: autofillDiagnostics.textContent,
+    hint: autofillHint.textContent,
+    detailsOpen: autofillDetails.open,
+    reveal: autofillDetails.dataset.reveal || null,
+  },
+  form: {
+    text: formDiagnostics.textContent,
+    hint: formHint.textContent,
+    detailsOpen: formDetails.open,
+    reveal: formDetails.dataset.reveal || null,
+  },
+  profile: {
+    text: profileDiagnostics.textContent,
+    hint: profileHint.textContent,
+    detailsOpen: profileDetails.open,
+    reveal: profileDetails.dataset.reveal || null,
+  },
+  simulator: {
+    text: simulatorDiagnostics.textContent,
+    hint: simulatorHint.textContent,
+    detailsOpen: simulatorDetails.open,
+    reveal: simulatorDetails.dataset.reveal || null,
+  },
+};
+
 const innerHTMLWrites = [
   diagnostics,
   hint,
@@ -9003,6 +9050,7 @@ console.log(JSON.stringify({
   secondPanelStatus,
   firstTopbarStatus,
   secondTopbarStatus,
+  idleDiagnostics,
   innerHTMLWrites,
 }));
 """
@@ -9040,6 +9088,32 @@ console.log(JSON.stringify({
         "text": "Topbar neutral",
         "tone": None,
     }
+    assert results["idleDiagnostics"] == {
+        "autofill": {
+            "text": '{\n  "status": "idle",\n  "message": "No upload has been run yet."\n}',
+            "hint": "Metadata extraction details appear here after an upload.",
+            "detailsOpen": False,
+            "reveal": None,
+        },
+        "form": {
+            "text": '{\n  "status": "idle",\n  "message": "No save or export has been run yet."\n}',
+            "hint": "Save/export responses and validation details appear here.",
+            "detailsOpen": False,
+            "reveal": None,
+        },
+        "profile": {
+            "text": "Already populated",
+            "hint": "Existing profile hint",
+            "detailsOpen": True,
+            "reveal": "true",
+        },
+        "simulator": {
+            "text": '{\n  "status": "idle",\n  "message": "No simulator run has been executed yet."\n}',
+            "hint": "Preview request payload, bridge endpoint, and readiness.",
+            "detailsOpen": False,
+            "reveal": None,
+        },
+    }
     assert results["innerHTMLWrites"] == 0
 
     with _build_app(tmp_path, monkeypatch) as client:
@@ -9052,6 +9126,7 @@ console.log(JSON.stringify({
         assert "setDiagnostics" in diagnostics_asset.text
         assert "setPanelStatus" in diagnostics_asset.text
         assert "setTopbarStatus" in diagnostics_asset.text
+        assert "populateIdleDiagnostics" in diagnostics_asset.text
 
 
 def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> None:
