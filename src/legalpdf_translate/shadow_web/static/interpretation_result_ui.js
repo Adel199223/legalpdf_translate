@@ -82,6 +82,19 @@ export function renderInterpretationReviewSummaryCardInto(container, card = {}) 
   });
 }
 
+export function renderInterpretationReviewSummaryStateInto(container, { empty = false, emptyText = "", card = {} } = {}) {
+  if (!container) {
+    return;
+  }
+  if (empty) {
+    container.classList.add("empty-state");
+    container.textContent = String(emptyText ?? "");
+    return;
+  }
+  container.classList.remove("empty-state");
+  renderInterpretationReviewSummaryCardInto(container, card || {});
+}
+
 export function renderInterpretationLocationGuardInto(card, { message = "", tone = "warning" } = {}) {
   if (!card) {
     return;

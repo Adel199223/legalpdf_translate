@@ -47,7 +47,7 @@ import {
   renderInterpretationExportResultInto,
   renderInterpretationGmailResultInto,
   renderInterpretationLocationGuardInto,
-  renderInterpretationReviewSummaryCardInto,
+  renderInterpretationReviewSummaryStateInto,
   renderInterpretationSeedCardStateInto,
   renderInterpretationSessionCardInto,
   resetInterpretationExportResultInto,
@@ -885,24 +885,23 @@ function renderInterpretationReviewSummary(snapshot = interpretationSnapshot()) 
   const workspaceMode = interpretationWorkspaceMode(snapshot, activeSession);
   const presentation = currentInterpretationPresentation(snapshot);
   const noticeFilename = interpretationNoticeFilename(activeSession);
-  if (!hasInterpretationReviewData(snapshot) && !noticeFilename) {
-    container.classList.add("empty-state");
-    container.textContent = presentation.drawer.summaryEmpty;
-    return;
-  }
+  const empty = !hasInterpretationReviewData(snapshot) && !noticeFilename;
   const chip = interpretationSessionChip(activeSession, workspaceMode);
   const subtitle = noticeFilename && workspaceMode !== "gmail_completed"
     ? noticeFilename
     : presentation.drawer.summarySubtitle;
-  container.classList.remove("empty-state");
-  renderInterpretationReviewSummaryCardInto(container, {
-    title: presentation.drawer.summaryTitle,
-    message: subtitle,
-    chip,
-    caseNumber: snapshot.caseNumber,
-    courtEmail: snapshot.courtEmail,
-    serviceDate: snapshot.serviceDate,
-    location: interpretationLocationSummary(snapshot),
+  renderInterpretationReviewSummaryStateInto(container, {
+    empty,
+    emptyText: presentation.drawer.summaryEmpty,
+    card: {
+      title: presentation.drawer.summaryTitle,
+      message: subtitle,
+      chip,
+      caseNumber: snapshot.caseNumber,
+      courtEmail: snapshot.courtEmail,
+      serviceDate: snapshot.serviceDate,
+      location: interpretationLocationSummary(snapshot),
+    },
   });
 }
 

@@ -8258,6 +8258,7 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "export function renderInterpretationSeedCardInto" in interpretation_result_ui_text
     assert "export function renderInterpretationSeedCardStateInto" in interpretation_result_ui_text
     assert "export function renderInterpretationReviewSummaryCardInto" in interpretation_result_ui_text
+    assert "export function renderInterpretationReviewSummaryStateInto" in interpretation_result_ui_text
     assert "export function renderInterpretationLocationGuardInto" in interpretation_result_ui_text
     assert "export function resetInterpretationExportResultInto" in interpretation_result_ui_text
     assert "renderInterpretationExportResultInto(container, payload, currentInterpretationPresentation());" in app_js
@@ -8265,7 +8266,7 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "renderInterpretationCompletionCardInto(container, {" in app_js
     assert "renderInterpretationSessionCardInto(result, {" in app_js
     assert "renderInterpretationSeedCardStateInto(container, {" in app_js
-    assert "renderInterpretationReviewSummaryCardInto(container, {" in app_js
+    assert "renderInterpretationReviewSummaryStateInto(container, {" in app_js
     assert "renderInterpretationLocationGuardInto(card, { message, tone });" in app_js
     assert "resetInterpretationExportResultInto(panel, result, presentation.export.emptyState);" in app_js
     assert 'qs("interpretation-review-export-panel")?.classList.remove("hidden");' in app_js
@@ -8291,8 +8292,11 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "escapeHtml" not in seed_block
     review_context_start = app_js.index("function renderInterpretationReviewContext", review_summary_start)
     review_summary_block = app_js[review_summary_start:review_context_start]
-    assert 'container.classList.add("empty-state");' in review_summary_block
-    assert 'container.classList.remove("empty-state");' in review_summary_block
+    assert 'container.classList.add("empty-state");' not in review_summary_block
+    assert 'container.classList.remove("empty-state");' not in review_summary_block
+    assert "container.textContent" not in review_summary_block
+    assert "renderInterpretationReviewSummaryCardInto(container, {" not in review_summary_block
+    assert "renderInterpretationReviewSummaryStateInto(container, {" in review_summary_block
     assert "presentation.drawer.summaryEmpty" in review_summary_block
     assert "interpretationLocationSummary(snapshot)" in review_summary_block
     assert "innerHTML" not in review_summary_block
@@ -8773,6 +8777,34 @@ interpretationResultUi.renderInterpretationReviewSummaryCardInto(reviewSummaryFa
   serviceDate: "",
   location: "",
 });
+
+const reviewSummaryStateEmptyContainer = document.createElement("article");
+reviewSummaryStateEmptyContainer.className = "result-card";
+interpretationResultUi.renderInterpretationReviewSummaryStateInto(reviewSummaryStateEmptyContainer, {
+  empty: true,
+  emptyText: `Review empty ${malicious}`,
+  card: {
+    title: `Should not render ${malicious}`,
+  },
+});
+
+const reviewSummaryStateCardContainer = document.createElement("article");
+reviewSummaryStateCardContainer.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationReviewSummaryStateInto(reviewSummaryStateCardContainer, {
+  empty: false,
+  card: {
+    title: `Review state title ${malicious}`,
+    message: `Review state message ${malicious}`,
+    chip: {
+      tone: "warn",
+      label: `Review state label ${malicious}`,
+    },
+    caseNumber: `Review state case ${malicious}`,
+    courtEmail: `review-state-${malicious}@example.test`,
+    serviceDate: `2026-05-05 ${malicious}`,
+    location: `Review state location ${malicious}`,
+  },
+});
 const nullSessionResult = interpretationResultUi.renderInterpretationSessionCardInto(null, {});
 const nullSeedResult = interpretationResultUi.renderInterpretationSeedCardInto(null, {});
 const nullSeedStateResult = interpretationResultUi.renderInterpretationSeedCardStateInto(null, {
@@ -8780,6 +8812,10 @@ const nullSeedStateResult = interpretationResultUi.renderInterpretationSeedCardS
   emptyText: `Ignored ${malicious}`,
 });
 const nullReviewSummaryResult = interpretationResultUi.renderInterpretationReviewSummaryCardInto(null, {});
+const nullReviewSummaryStateResult = interpretationResultUi.renderInterpretationReviewSummaryStateInto(null, {
+  empty: true,
+  emptyText: `Ignored ${malicious}`,
+});
 
 const guardWarningContainer = document.createElement("div");
 guardWarningContainer.className = "result-card hidden empty-state";
@@ -8840,6 +8876,7 @@ console.log(JSON.stringify({
     seed: typeof interpretationResultUi.renderInterpretationSeedCardInto,
     seedState: typeof interpretationResultUi.renderInterpretationSeedCardStateInto,
     reviewSummary: typeof interpretationResultUi.renderInterpretationReviewSummaryCardInto,
+    reviewSummaryState: typeof interpretationResultUi.renderInterpretationReviewSummaryStateInto,
     locationGuard: typeof interpretationResultUi.renderInterpretationLocationGuardInto,
     exportReset: typeof interpretationResultUi.resetInterpretationExportResultInto,
   },
@@ -8860,6 +8897,8 @@ console.log(JSON.stringify({
   seedStateCard: summarize(seedStateCardContainer),
   reviewSummary: summarize(reviewSummaryContainer),
   reviewSummaryFallback: summarize(reviewSummaryFallbackContainer),
+  reviewSummaryStateEmpty: summarizeGuard(reviewSummaryStateEmptyContainer),
+  reviewSummaryStateCard: summarize(reviewSummaryStateCardContainer),
   guardWarning: summarizeGuard(guardWarningContainer),
   guardDanger: summarizeGuard(guardDangerContainer),
   guardOtherTone: summarizeGuard(guardOtherToneContainer),
@@ -8878,6 +8917,7 @@ console.log(JSON.stringify({
   nullSeedResult,
   nullSeedStateResult,
   nullReviewSummaryResult,
+  nullReviewSummaryStateResult,
   nullGuardResult,
   nullResetResult,
 }));
@@ -8896,6 +8936,7 @@ console.log(JSON.stringify({
         "seed": "function",
         "seedState": "function",
         "reviewSummary": "function",
+        "reviewSummaryState": "function",
         "locationGuard": "function",
         "exportReset": "function",
     }
@@ -9127,9 +9168,35 @@ console.log(JSON.stringify({
     ]
     assert "status-chip bad" in results["reviewSummaryFallback"]["classes"]
     assert results["reviewSummaryFallback"]["innerHTMLWrites"] == 0
+
+    assert results["reviewSummaryStateEmpty"]["className"] == "result-card empty-state"
+    assert results["reviewSummaryStateEmpty"]["text"] == "Review empty <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["reviewSummaryStateEmpty"]["childClasses"] == []
+    assert results["reviewSummaryStateEmpty"]["imgCount"] == 0
+    assert results["reviewSummaryStateEmpty"]["scriptCount"] == 0
+    assert results["reviewSummaryStateEmpty"]["innerHTMLWrites"] == 0
+
+    assert results["reviewSummaryStateCard"]["className"] == "result-card"
+    assert results["reviewSummaryStateCard"]["childClasses"] == ["result-header", "result-grid"]
+    assert results["reviewSummaryStateCard"]["gridLabels"] == ["Case Number", "Court Email", "Service Date", "Location"]
+    assert "Review state title <img src=x onerror=alert(1)><script>bad()</script>" in results["reviewSummaryStateCard"]["text"]
+    assert "Review state message <img src=x onerror=alert(1)><script>bad()</script>" in results["reviewSummaryStateCard"]["text"]
+    assert "Review state label <img src=x onerror=alert(1)><script>bad()</script>" in results["reviewSummaryStateCard"]["text"]
+    assert results["reviewSummaryStateCard"]["gridValues"] == [
+        "Review state case <img src=x onerror=alert(1)><script>bad()</script>",
+        "review-state-<img src=x onerror=alert(1)><script>bad()</script>@example.test",
+        "2026-05-05 <img src=x onerror=alert(1)><script>bad()</script>",
+        "Review state location <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert "status-chip warn" in results["reviewSummaryStateCard"]["classes"]
+    assert results["reviewSummaryStateCard"]["classes"].count("word-break") == 4
+    assert results["reviewSummaryStateCard"]["imgCount"] == 0
+    assert results["reviewSummaryStateCard"]["scriptCount"] == 0
+    assert results["reviewSummaryStateCard"]["innerHTMLWrites"] == 0
     assert "nullSessionResult" not in results
     assert "nullSeedResult" not in results
     assert "nullReviewSummaryResult" not in results
+    assert "nullReviewSummaryStateResult" not in results
     assert results["guardWarning"]["className"] == "result-card"
     assert results["guardWarning"]["childClasses"] == ["result-header"]
     assert "Choose city <img src=x onerror=alert(1)><script>bad()</script>" in results["guardWarning"]["text"]
@@ -12251,6 +12318,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationSeedCardInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationSeedCardStateInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationReviewSummaryCardInto" in interpretation_result_ui_asset.text
+        assert "renderInterpretationReviewSummaryStateInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationLocationGuardInto" in interpretation_result_ui_asset.text
         assert "resetInterpretationExportResultInto" in interpretation_result_ui_asset.text
         module_asset = client.get(f"/static-build/{asset_version}/vendor/pdfjs/pdf.mjs")
