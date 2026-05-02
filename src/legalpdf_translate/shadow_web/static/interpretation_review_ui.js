@@ -55,6 +55,18 @@ export function syncInterpretationReviewDetailsShellInto(details, summaryNode, s
   }
 }
 
+export function syncInterpretationReviewDrawerStateInto(backdrop, body, open) {
+  if (!backdrop) {
+    return;
+  }
+  const isOpen = Boolean(open);
+  backdrop.classList.toggle("hidden", !isOpen);
+  backdrop.setAttribute("aria-hidden", isOpen ? "false" : "true");
+  if (body) {
+    body.dataset.interpretationReviewDrawer = isOpen ? "open" : "closed";
+  }
+}
+
 export function renderInterpretationReviewSurfaceInto(nodes = {}, surface = {}) {
   if (!nodes) {
     return;
