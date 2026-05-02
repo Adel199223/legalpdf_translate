@@ -4801,6 +4801,340 @@ console.log(JSON.stringify({
     assert "nullDetailsResult" not in results
 
 
+def test_interpretation_review_ui_module_centralizes_safe_surface_chrome_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_review_ui_js = static_dir / "interpretation_review_ui.js"
+
+    assert interpretation_review_ui_js.exists()
+    interpretation_review_ui_text = interpretation_review_ui_js.read_text(encoding="utf-8")
+    assert 'from "./interpretation_review_ui.js"' in app_js
+    assert "export function renderInterpretationReviewSurfaceInto" in interpretation_review_ui_text
+    assert "renderInterpretationReviewSurfaceInto({" in app_js
+    assert "actions: drawerLayout.actions," in app_js
+    assert "resetGmailResult: !hasGmailInterpretationSession," in app_js
+
+    review_surface_start = app_js.index("function syncInterpretationReviewSurface")
+    focus_field_start = app_js.index("function focusInterpretationField", review_surface_start)
+    review_surface_block = app_js[review_surface_start:focus_field_start]
+    assert "deriveInterpretationDrawerLayout" in review_surface_block
+    assert "renderInterpretationSessionShell(snapshot)" in review_surface_block
+    assert "renderInterpretationReviewContext(snapshot)" in review_surface_block
+    assert "renderInterpretationReviewSurfaceInto({" in review_surface_block
+    assert "innerHTML" not in review_surface_block
+    assert "escapeHtml" not in review_surface_block
+    assert "button.textContent = presentation.actions.openReview" not in review_surface_block
+    assert "drawerTitle.textContent = presentation.drawer.title" not in review_surface_block
+    assert "gmailButton.classList.toggle" not in review_surface_block
+    assert "gmailResult.textContent = presentation.drawer.gmailResultEmpty" not in review_surface_block
+    assert "statusNode.textContent = presentation.drawer.status" not in review_surface_block
+
+    script = r"""
+const interpretationReviewUi = await import(__INTERPRETATION_REVIEW_UI_MODULE_URL__);
+
+function syncClassList(element, classes) {
+  element.className = Array.from(classes).join(" ");
+}
+
+function makeElement(tagName = "div") {
+  const classNames = new Set();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    _className: "",
+    children: [],
+    parentNode: null,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    classList: {
+      add(...names) {
+        names.forEach((name) => {
+          if (name) {
+            classNames.add(String(name));
+          }
+        });
+        syncClassList(element, classNames);
+      },
+      remove(...names) {
+        names.forEach((name) => classNames.delete(String(name)));
+        syncClassList(element, classNames);
+      },
+      toggle(name, force) {
+        const key = String(name);
+        const shouldAdd = force === undefined ? !classNames.has(key) : Boolean(force);
+        if (shouldAdd) {
+          classNames.add(key);
+        } else {
+          classNames.delete(key);
+        }
+        syncClassList(element, classNames);
+        return shouldAdd;
+      },
+      contains(name) {
+        return classNames.has(String(name));
+      },
+    },
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "className", {
+    get() {
+      return this._className;
+    },
+    set(value) {
+      this._className = String(value ?? "");
+      classNames.clear();
+      this._className.split(/\s+/).filter(Boolean).forEach((name) => classNames.add(name));
+    },
+  });
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function makeSurfaceNodes() {
+  return {
+    openButton: makeElement("button"),
+    drawerTitle: makeElement("h2"),
+    clearButton: makeElement("button"),
+    clearTopButton: makeElement("button"),
+    reloadHistoryButton: makeElement("button"),
+    saveButton: makeElement("button"),
+    exportButton: makeElement("button"),
+    gmailButton: makeElement("button"),
+    closeFooterButton: makeElement("button"),
+    gmailResult: makeElement("div"),
+    statusNode: makeElement("p"),
+  };
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  let total = 0;
+  nodes.forEach((node) => {
+    if (!node) {
+      return;
+    }
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
+  });
+  return total;
+}
+
+function summarize(nodes) {
+  const allNodes = Object.values(nodes).filter(Boolean);
+  return {
+    openText: nodes.openButton?.textContent || "",
+    drawerTitle: nodes.drawerTitle?.textContent || "",
+    clearText: nodes.clearButton?.textContent || "",
+    clearTopText: nodes.clearTopButton?.textContent || "",
+    reloadText: nodes.reloadHistoryButton?.textContent || "",
+    saveText: nodes.saveButton?.textContent || "",
+    exportText: nodes.exportButton?.textContent || "",
+    gmailText: nodes.gmailButton?.textContent || "",
+    statusText: nodes.statusNode?.textContent || "",
+    gmailButtonClass: nodes.gmailButton?.className || "",
+    saveButtonClass: nodes.saveButton?.className || "",
+    exportButtonClass: nodes.exportButton?.className || "",
+    clearButtonClass: nodes.clearButton?.className || "",
+    closeFooterClass: nodes.closeFooterButton?.className || "",
+    gmailResultClass: nodes.gmailResult?.className || "",
+    gmailResultText: nodes.gmailResult?.textContent || "",
+    imgCount: allNodes.reduce((total, node) => total + countTag(node, "img"), 0),
+    scriptCount: allNodes.reduce((total, node) => total + countTag(node, "script"), 0),
+    innerHTMLWrites: countInnerHtmlWrites(...allNodes),
+  };
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const visibleNodes = makeSurfaceNodes();
+interpretationReviewUi.renderInterpretationReviewSurfaceInto(visibleNodes, {
+  labels: {
+    openReview: `Open ${malicious}`,
+    drawerTitle: `Drawer ${malicious}`,
+    startBlank: `Blank ${malicious}`,
+    refreshHistory: `Reload ${malicious}`,
+    saveRow: `Save ${malicious}`,
+    export: `Export ${malicious}`,
+    finalizeGmail: `Finalize ${malicious}`,
+    status: `Status ${malicious}`,
+  },
+  actions: {
+    showFinalizeGmail: false,
+    showSaveRow: true,
+    showGenerateDocxPdf: false,
+    showNewBlank: true,
+    showFooterClose: false,
+  },
+  resetGmailResult: true,
+  gmailResultEmpty: `Empty ${malicious}`,
+});
+
+const preservedNodes = makeSurfaceNodes();
+preservedNodes.gmailResult.classList.add("existing");
+preservedNodes.gmailResult.textContent = "Existing Gmail result";
+interpretationReviewUi.renderInterpretationReviewSurfaceInto(preservedNodes, {
+  labels: {
+    openReview: "Open",
+    drawerTitle: "Drawer",
+    startBlank: "Blank",
+    refreshHistory: "Reload",
+    saveRow: "Save",
+    export: "Export",
+    finalizeGmail: "Finalize",
+    status: "Status",
+  },
+  actions: {
+    showFinalizeGmail: true,
+    showSaveRow: false,
+    showGenerateDocxPdf: true,
+    showNewBlank: false,
+    showFooterClose: true,
+  },
+  resetGmailResult: false,
+  gmailResultEmpty: `Should not replace ${malicious}`,
+});
+
+const missingNodesGmailResult = makeElement("div");
+interpretationReviewUi.renderInterpretationReviewSurfaceInto({
+  gmailResult: missingNodesGmailResult,
+}, {
+  resetGmailResult: true,
+  gmailResultEmpty: `Missing ${malicious}`,
+});
+
+const nullNodesResult = interpretationReviewUi.renderInterpretationReviewSurfaceInto(null, {
+  labels: { openReview: `Null ${malicious}` },
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationReviewUi.renderInterpretationReviewSurfaceInto,
+  visible: summarize(visibleNodes),
+  preserved: summarize(preservedNodes),
+  missingNodes: {
+    gmailResultClass: missingNodesGmailResult.className,
+    gmailResultText: missingNodesGmailResult.textContent,
+    imgCount: countTag(missingNodesGmailResult, "img"),
+    scriptCount: countTag(missingNodesGmailResult, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(missingNodesGmailResult),
+  },
+  nullNodesResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REVIEW_UI_MODULE_URL__": "interpretation_review_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["visible"]["openText"] == "Open <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["drawerTitle"] == "Drawer <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["clearText"] == "Blank <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["clearTopText"] == "Blank <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["reloadText"] == "Reload <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["saveText"] == "Save <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["exportText"] == "Export <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["gmailText"] == "Finalize <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["statusText"] == "Status <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["gmailButtonClass"] == "hidden"
+    assert results["visible"]["saveButtonClass"] == ""
+    assert results["visible"]["exportButtonClass"] == "hidden"
+    assert results["visible"]["clearButtonClass"] == ""
+    assert results["visible"]["closeFooterClass"] == "hidden"
+    assert results["visible"]["gmailResultClass"] == "empty-state"
+    assert results["visible"]["gmailResultText"] == "Empty <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["imgCount"] == 0
+    assert results["visible"]["scriptCount"] == 0
+    assert results["visible"]["innerHTMLWrites"] == 0
+
+    assert results["preserved"]["gmailButtonClass"] == ""
+    assert results["preserved"]["saveButtonClass"] == "hidden"
+    assert results["preserved"]["exportButtonClass"] == ""
+    assert results["preserved"]["clearButtonClass"] == "hidden"
+    assert results["preserved"]["closeFooterClass"] == ""
+    assert results["preserved"]["gmailResultClass"] == "existing"
+    assert results["preserved"]["gmailResultText"] == "Existing Gmail result"
+    assert results["preserved"]["innerHTMLWrites"] == 0
+
+    assert results["missingNodes"]["gmailResultClass"] == "empty-state"
+    assert results["missingNodes"]["gmailResultText"] == "Missing <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["missingNodes"]["imgCount"] == 0
+    assert results["missingNodes"]["scriptCount"] == 0
+    assert results["missingNodes"]["innerHTMLWrites"] == 0
+    assert "nullNodesResult" not in results
+
+
 def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -8602,6 +8936,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert interpretation_review_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderInterpretationReviewContextInto" in interpretation_review_ui_asset.text
         assert "syncInterpretationReviewDetailsShellInto" in interpretation_review_ui_asset.text
+        assert "renderInterpretationReviewSurfaceInto" in interpretation_review_ui_asset.text
         interpretation_result_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_result_ui.js")
         assert interpretation_result_ui_asset.status_code == 200
         assert interpretation_result_ui_asset.headers["content-type"].startswith("application/javascript")

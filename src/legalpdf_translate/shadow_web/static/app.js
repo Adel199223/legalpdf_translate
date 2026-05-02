@@ -51,6 +51,7 @@ import {
 } from "./interpretation_result_ui.js";
 import {
   renderInterpretationReviewContextInto,
+  renderInterpretationReviewSurfaceInto,
   syncInterpretationReviewDetailsShellInto,
 } from "./interpretation_review_ui.js";
 import {
@@ -1112,7 +1113,7 @@ function closeInterpretationReviewDrawer() {
 function syncInterpretationReviewSurface() {
   const snapshot = interpretationSnapshot();
   const presentation = currentInterpretationPresentation(snapshot);
-  const button = qs("interpretation-open-review");
+  const openButton = qs("interpretation-open-review");
   const gmailButton = qs("interpretation-finalize-gmail");
   const gmailResult = qs("interpretation-gmail-result");
   const saveButton = qs("save-row");
@@ -1120,32 +1121,9 @@ function syncInterpretationReviewSurface() {
   const clearButton = qs("interpretation-clear-review");
   const closeFooterButton = qs("interpretation-close-review-footer");
   const drawerTitle = qs("interpretation-review-drawer-title");
-  if (button) {
-    button.textContent = presentation.actions.openReview;
-  }
-  if (drawerTitle) {
-    drawerTitle.textContent = presentation.drawer.title;
-  }
-  if (clearButton) {
-    clearButton.textContent = presentation.actions.startBlank;
-  }
   const clearTopButton = qs("clear-form");
-  if (clearTopButton) {
-    clearTopButton.textContent = presentation.actions.startBlank;
-  }
   const reloadHistoryButton = qs("reload-history");
-  if (reloadHistoryButton) {
-    reloadHistoryButton.textContent = presentation.actions.refreshHistory;
-  }
-  if (saveButton) {
-    saveButton.textContent = presentation.actions.saveRow;
-  }
-  if (exportButton) {
-    exportButton.textContent = presentation.actions.export;
-  }
-  if (gmailButton) {
-    gmailButton.textContent = presentation.actions.finalizeGmail;
-  }
+  const statusNode = qs("interpretation-review-status");
   renderInterpretationSessionShell(snapshot);
   renderInterpretationSeedCard("interpretation-review-home-result");
   renderInterpretationReviewSummary(snapshot);
@@ -1158,29 +1136,33 @@ function syncInterpretationReviewSurface() {
     serviceSame: qs("service-same")?.checked ?? true,
     validationField: interpretationUiState.validationField,
   });
-  if (gmailButton) {
-    gmailButton.classList.toggle("hidden", !drawerLayout.actions.showFinalizeGmail);
-  }
-  if (saveButton) {
-    saveButton.classList.toggle("hidden", !drawerLayout.actions.showSaveRow);
-  }
-  if (exportButton) {
-    exportButton.classList.toggle("hidden", !drawerLayout.actions.showGenerateDocxPdf);
-  }
-  if (clearButton) {
-    clearButton.classList.toggle("hidden", !drawerLayout.actions.showNewBlank);
-  }
-  if (closeFooterButton) {
-    closeFooterButton.classList.toggle("hidden", !drawerLayout.actions.showFooterClose);
-  }
-  if (gmailResult && !hasGmailInterpretationSession) {
-    gmailResult.classList.add("empty-state");
-    gmailResult.textContent = presentation.drawer.gmailResultEmpty;
-  }
-  const statusNode = qs("interpretation-review-status");
-  if (statusNode) {
-    statusNode.textContent = presentation.drawer.status;
-  }
+  renderInterpretationReviewSurfaceInto({
+    openButton,
+    drawerTitle,
+    clearButton,
+    clearTopButton,
+    reloadHistoryButton,
+    saveButton,
+    exportButton,
+    gmailButton,
+    closeFooterButton,
+    gmailResult,
+    statusNode,
+  }, {
+    labels: {
+      openReview: presentation.actions.openReview,
+      drawerTitle: presentation.drawer.title,
+      startBlank: presentation.actions.startBlank,
+      refreshHistory: presentation.actions.refreshHistory,
+      saveRow: presentation.actions.saveRow,
+      export: presentation.actions.export,
+      finalizeGmail: presentation.actions.finalizeGmail,
+      status: presentation.drawer.status,
+    },
+    actions: drawerLayout.actions,
+    resetGmailResult: !hasGmailInterpretationSession,
+    gmailResultEmpty: presentation.drawer.gmailResultEmpty,
+  });
   syncInterpretationCityControls();
   syncInterpretationDisclosureState();
   notifyInterpretationUiStateChanged();
