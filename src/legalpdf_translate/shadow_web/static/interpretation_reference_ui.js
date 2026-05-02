@@ -77,3 +77,14 @@ export function renderServiceEntityOptionsInto(select, options = [], selectedVal
   }
   select.value = currentValue;
 }
+
+export function renderInterpretationFieldWarningInto(node, { message = "", tone = "warning" } = {}) {
+  if (!node) {
+    return;
+  }
+  const text = String(message || "").trim();
+  node.textContent = text;
+  node.classList.toggle("hidden", !text);
+  node.classList.toggle("is-warning", Boolean(text) && tone === "warning");
+  node.classList.toggle("is-danger", Boolean(text) && tone === "danger");
+}
