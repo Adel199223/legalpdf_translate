@@ -809,6 +809,189 @@ console.log(JSON.stringify(payload));
     assert results["beginnerLabel"] == "profile setup screen"
 
 
+def test_shadow_web_shell_ui_module_centralizes_safe_bootstrap_label_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    shell_ui_js = static_dir / "shell_ui.js"
+
+    assert shell_ui_js.exists()
+    shell_ui_source = shell_ui_js.read_text(encoding="utf-8")
+    assert 'from "./shell_ui.js"' in app_js
+    assert "export function renderShellRuntimeLabelsInto" in shell_ui_source
+    assert "renderShellRuntimeLabelsInto({" in app_js
+    assert 'qs("workspace-id-label").textContent = details.workspaceId;' not in app_js
+    assert 'qs("runtime-mode-label").textContent = details.port === 8888' not in app_js
+    assert 'qs("workspace-id-label").textContent = workspaceId || "workspace-1";' not in app_js
+    assert 'qs("runtime-mode-label").textContent = runtimeMode === "live" ? "Live mode" : "Test mode";' not in app_js
+    assert 'const banner = qs("live-banner");' not in app_js
+    assert 'banner.textContent = "";' not in app_js
+    assert "innerHTML" not in shell_ui_source
+
+    script = r"""
+const shellUi = await import(__SHELL_UI_MODULE_URL__);
+
+function syncClassList(element, classes) {
+  element.className = Array.from(classes).join(" ");
+}
+
+function makeElement(tagName = "div") {
+  const classNames = new Set();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    _className: "",
+    children: [],
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    classList: {
+      add(...names) {
+        names.forEach((name) => {
+          if (name) {
+            classNames.add(String(name));
+          }
+        });
+        syncClassList(element, classNames);
+      },
+      remove(...names) {
+        names.forEach((name) => classNames.delete(String(name)));
+        syncClassList(element, classNames);
+      },
+      contains(name) {
+        return classNames.has(String(name));
+      },
+    },
+  };
+  Object.defineProperty(element, "className", {
+    get() {
+      return this._className;
+    },
+    set(value) {
+      this._className = String(value ?? "");
+      classNames.clear();
+      this._className.split(/\s+/).filter(Boolean).forEach((name) => classNames.add(name));
+    },
+  });
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this._textContent = "";
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return element;
+}
+
+function summarize(nodes) {
+  return {
+    workspaceText: nodes.workspaceLabel?.textContent || "",
+    runtimeText: nodes.runtimeModeLabel?.textContent || "",
+    bannerText: nodes.liveBanner?.textContent || "",
+    bannerClass: nodes.liveBanner?.className || "",
+    imgTextCount: (
+      (nodes.workspaceLabel?.textContent.match(/<img/g) || []).length
+      + (nodes.runtimeModeLabel?.textContent.match(/<img/g) || []).length
+      + (nodes.liveBanner?.textContent.match(/<img/g) || []).length
+    ),
+    scriptTextCount: (
+      (nodes.workspaceLabel?.textContent.match(/<script/g) || []).length
+      + (nodes.runtimeModeLabel?.textContent.match(/<script/g) || []).length
+      + (nodes.liveBanner?.textContent.match(/<script/g) || []).length
+    ),
+    innerHTMLWrites: (
+      (nodes.workspaceLabel?.innerHTMLAssignments.length || 0)
+      + (nodes.runtimeModeLabel?.innerHTMLAssignments.length || 0)
+      + (nodes.liveBanner?.innerHTMLAssignments.length || 0)
+    ),
+  };
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const hiddenNodes = {
+  workspaceLabel: makeElement("span"),
+  runtimeModeLabel: makeElement("span"),
+  liveBanner: makeElement("div"),
+};
+hiddenNodes.liveBanner.className = "live-banner";
+hiddenNodes.liveBanner.textContent = "Live banner seed";
+shellUi.renderShellRuntimeLabelsInto(hiddenNodes, {
+  workspaceLabel: `workspace ${malicious}`,
+  runtimeModeLabel: `Runtime ${malicious}`,
+  hideLiveBanner: true,
+});
+
+const labelOnlyNodes = {
+  workspaceLabel: makeElement("span"),
+  runtimeModeLabel: makeElement("span"),
+  liveBanner: makeElement("div"),
+};
+labelOnlyNodes.liveBanner.className = "live-banner";
+labelOnlyNodes.liveBanner.textContent = "Keep this banner";
+shellUi.renderShellRuntimeLabelsInto(labelOnlyNodes, {
+  workspaceLabel: "workspace-1",
+  runtimeModeLabel: "Test mode",
+  hideLiveBanner: false,
+});
+
+const missingResult = shellUi.renderShellRuntimeLabelsInto({
+  workspaceLabel: null,
+  runtimeModeLabel: null,
+  liveBanner: null,
+}, {
+  workspaceLabel: `ignored ${malicious}`,
+  runtimeModeLabel: `ignored ${malicious}`,
+  hideLiveBanner: true,
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof shellUi.renderShellRuntimeLabelsInto,
+  hidden: summarize(hiddenNodes),
+  labelOnly: summarize(labelOnlyNodes),
+  missingResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__SHELL_UI_MODULE_URL__": "shell_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["hidden"]["workspaceText"] == "workspace <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["hidden"]["runtimeText"] == "Runtime <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["hidden"]["bannerText"] == ""
+    assert results["hidden"]["bannerClass"] == "live-banner hidden"
+    assert results["hidden"]["imgTextCount"] == 2
+    assert results["hidden"]["scriptTextCount"] == 2
+    assert results["hidden"]["innerHTMLWrites"] == 0
+
+    assert results["labelOnly"]["workspaceText"] == "workspace-1"
+    assert results["labelOnly"]["runtimeText"] == "Test mode"
+    assert results["labelOnly"]["bannerText"] == "Keep this banner"
+    assert results["labelOnly"]["bannerClass"] == "live-banner"
+    assert results["labelOnly"]["innerHTMLWrites"] == 0
+    assert "missingResult" not in results
+
+
 def test_shadow_web_shell_ui_module_centralizes_safe_navigation_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -12509,6 +12692,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderOperatorChromeInto" in shell_ui_asset.text
         assert "renderShellChromeInto" in shell_ui_asset.text
         assert "renderTopbarInto" in shell_ui_asset.text
+        assert "renderShellRuntimeLabelsInto" in shell_ui_asset.text
         new_job_ui_asset = client.get(f"/static-build/{asset_version}/new_job_ui.js")
         assert new_job_ui_asset.status_code == 200
         assert new_job_ui_asset.headers["content-type"].startswith("application/javascript")

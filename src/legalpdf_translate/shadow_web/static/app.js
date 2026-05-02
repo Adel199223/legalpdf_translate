@@ -131,6 +131,7 @@ import {
   renderShellChromeInto,
   renderRuntimeModeBannerInto,
   renderRuntimeModeSelectorInto,
+  renderShellRuntimeLabelsInto,
   renderShellVisibilityInto,
   renderTopbarInto,
 } from "./shell_ui.js";
@@ -465,14 +466,18 @@ function applyBootstrapFailureState(error) {
   }
   if (isLocalServerUnavailableError(error)) {
     const details = describeLocalServerUnavailable(error);
-    qs("workspace-id-label").textContent = details.workspaceId;
-    qs("runtime-mode-label").textContent = details.port === 8888
-      ? "Fixed Review Preview"
-      : (details.runtimeMode === "live" ? "Live mode" : "Test mode");
+    renderShellRuntimeLabelsInto({
+      workspaceLabel: qs("workspace-id-label"),
+      runtimeModeLabel: qs("runtime-mode-label"),
+      liveBanner: qs("live-banner"),
+    }, {
+      workspaceLabel: details.workspaceId,
+      runtimeModeLabel: details.port === 8888
+        ? "Fixed Review Preview"
+        : (details.runtimeMode === "live" ? "Live mode" : "Test mode"),
+      hideLiveBanner: true,
+    });
     setTopbarStatus(details.statusMessage, "bad");
-    const banner = qs("live-banner");
-    banner.classList.add("hidden");
-    banner.textContent = "";
     setPanelStatus("runtime", "bad", details.message);
     setPanelStatus("parity-audit", "bad", details.statusMessage);
     setPanelStatus("translation", "bad", details.message);
@@ -2349,8 +2354,13 @@ function applyShellBootstrapSnapshot(payload) {
   const runtimeMode = String(shellPayload.runtime_mode || appState.runtimeMode || "shadow").trim();
   const workspaceId = String(shellPayload.workspace_id || appState.workspaceId || "workspace-1").trim();
   const shellReady = shellPayload.ready === true;
-  qs("workspace-id-label").textContent = workspaceId || "workspace-1";
-  qs("runtime-mode-label").textContent = runtimeMode === "live" ? "Live mode" : "Test mode";
+  renderShellRuntimeLabelsInto({
+    workspaceLabel: qs("workspace-id-label"),
+    runtimeModeLabel: qs("runtime-mode-label"),
+  }, {
+    workspaceLabel: workspaceId || "workspace-1",
+    runtimeModeLabel: runtimeMode === "live" ? "Live mode" : "Test mode",
+  });
   if (workspaceId === "gmail-intake") {
     setTopbarStatus(
       shellReady
