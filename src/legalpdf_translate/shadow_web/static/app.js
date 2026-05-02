@@ -89,6 +89,7 @@ import {
   renderProfileEditorChromeInto,
   renderProfileListInto,
   renderProfileOptionsInto,
+  renderProfileToolbarInto,
   syncProfileEditorDrawerStateInto,
 } from "./profile_ui.js";
 import {
@@ -2182,14 +2183,13 @@ function renderProfile(payload) {
   const summary = payload.normalized_payload.profile_summary || {};
   const primary = summary.primary_profile;
   const runtime = payload.normalized_payload.runtime || {};
-  const importButton = qs("import-live-profiles");
-  const newButton = qs("new-profile");
   const primaryCard = qs("profile-primary-card");
-  importButton.disabled = runtime.live_data === true;
-  importButton.textContent = runtime.live_data === true ? "Using live app profiles" : "Copy profiles from live app";
-  if (newButton) {
-    newButton.disabled = false;
-  }
+  renderProfileToolbarInto({
+    importButton: qs("import-live-profiles"),
+    newButton: qs("new-profile"),
+  }, {
+    liveData: runtime.live_data === true,
+  });
   renderPrimaryProfileCardInto(primaryCard, primary);
   const container = qs("profile-list");
   renderProfileListInto(container, summary.profiles || [], {
