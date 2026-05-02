@@ -1887,6 +1887,276 @@ console.log(JSON.stringify({
     assert results["chooseAriaBusy"] == "false"
 
 
+def test_busy_ui_module_centralizes_safe_busy_button_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    busy_ui_js = static_dir / "busy_ui.js"
+
+    assert busy_ui_js.exists()
+    busy_ui_text = busy_ui_js.read_text(encoding="utf-8")
+    assert 'from "./busy_ui.js"' in app_js
+    assert 'export { runWithBusy } from "./busy_ui.js";' in app_js
+    assert "export function setBusy" in busy_ui_text
+    assert "export async function runWithBusy" in busy_ui_text
+    assert "const guardIds = options.guardIds || buttonIds;" in busy_ui_text
+    assert "function setBusy(buttonIds, busy, busyLabels = {})" not in app_js
+    assert "export async function runWithBusy(buttonIds, busyLabels, action, options = {})" not in app_js
+    assert "innerHTML" not in busy_ui_text
+
+    script = r"""
+const busyUi = await import(__BUSY_UI_MODULE_URL__);
+
+function makeButton(id, textContent = id) {
+  return {
+    id,
+    tagName: "BUTTON",
+    disabled: false,
+    dataset: {},
+    attributes: {},
+    innerHTMLAssignments: [],
+    _textContent: String(textContent ?? ""),
+    children: [],
+    setAttribute(name, value) {
+      this.attributes[String(name)] = String(value ?? "");
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, String(name))
+        ? this.attributes[String(name)]
+        : null;
+    },
+  };
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  const visit = (current) => {
+    if (!current) {
+      return;
+    }
+    if (current.tagName === target) {
+      total += 1;
+    }
+    for (const child of current.children || []) {
+      visit(child);
+    }
+  };
+  visit(node);
+  return total;
+}
+
+function summarize(button) {
+  return {
+    disabled: Boolean(button.disabled),
+    text: button.textContent,
+    defaultLabel: button.dataset.defaultLabel || "",
+    ariaBusy: button.attributes["aria-busy"] || "",
+    imgCount: countTag(button, "img"),
+    scriptCount: countTag(button, "script"),
+    innerHTMLWrites: button.innerHTMLAssignments.length,
+  };
+}
+
+const action = makeButton("action", "Start <img src=x onerror=alert(1)><script>bad()</script>");
+const secondary = makeButton("secondary", "Secondary");
+const blocked = makeButton("blocked", "Blocked");
+blocked.disabled = true;
+const elements = new Map([
+  ["action", action],
+  ["secondary", secondary],
+  ["blocked", blocked],
+]);
+
+Object.defineProperty(action, "textContent", {
+  get() {
+    return this._textContent;
+  },
+  set(value) {
+    this._textContent = String(value ?? "");
+    this.children = [];
+  },
+});
+Object.defineProperty(secondary, "textContent", {
+  get() {
+    return this._textContent;
+  },
+  set(value) {
+    this._textContent = String(value ?? "");
+    this.children = [];
+  },
+});
+Object.defineProperty(blocked, "textContent", {
+  get() {
+    return this._textContent;
+  },
+  set(value) {
+    this._textContent = String(value ?? "");
+    this.children = [];
+  },
+});
+for (const button of elements.values()) {
+  Object.defineProperty(button, "innerHTML", {
+    get() {
+      return "";
+    },
+    set(value) {
+      this.innerHTMLAssignments.push(String(value ?? ""));
+    },
+  });
+}
+
+globalThis.document = {
+  getElementById(id) {
+    return elements.get(id) || null;
+  },
+  addEventListener() {},
+  body: { dataset: {} },
+  querySelector() {
+    return null;
+  },
+  querySelectorAll() {
+    return [];
+  },
+  createElement(tagName) {
+    return { tagName: String(tagName).toUpperCase(), dataset: {}, children: [], appendChild() {} };
+  },
+};
+globalThis.window = {
+  LEGALPDF_BROWSER_BOOTSTRAP: {
+    defaultRuntimeMode: "shadow",
+    defaultWorkspaceId: "workspace-1",
+    defaultUiVariant: "qt",
+    shadowHost: "127.0.0.1",
+    shadowPort: 8877,
+    buildSha: "test",
+    assetVersion: "test-assets",
+    staticBasePath: "http://127.0.0.1:8877/static-build/test-assets/",
+  },
+  location: new URL("http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#new-job"),
+  history: { replaceState() {} },
+  addEventListener() {},
+  removeEventListener() {},
+  dispatchEvent() {},
+  setTimeout() { return 1; },
+  clearTimeout() {},
+  confirm() { return true; },
+};
+globalThis.CustomEvent = class CustomEvent {
+  constructor(type, init = {}) {
+    this.type = type;
+    this.detail = init.detail;
+  }
+};
+
+const appModule = await import(__APP_MODULE_URL__);
+
+busyUi.setBusy(
+  ["action", "secondary", "missing"],
+  true,
+  { action: "Working <img src=x onerror=alert(1)><script>bad()</script>" },
+);
+const busyState = {
+  action: summarize(action),
+  secondary: summarize(secondary),
+};
+
+busyUi.setBusy(["action", "secondary"], false);
+const restoredState = {
+  action: summarize(action),
+  secondary: summarize(secondary),
+};
+
+let actionCalls = 0;
+await busyUi.runWithBusy(
+  ["action", "secondary"],
+  { action: "Running..." },
+  async () => {
+    actionCalls += 1;
+    return "done";
+  },
+);
+const runState = {
+  actionCalls,
+  action: summarize(action),
+  secondary: summarize(secondary),
+};
+
+let blockedCalls = 0;
+await busyUi.runWithBusy(
+  ["action"],
+  { action: "Should not run" },
+  async () => {
+    blockedCalls += 1;
+  },
+  { guardIds: ["blocked"] },
+);
+
+console.log(JSON.stringify({
+  exportedTypes: {
+    setBusy: typeof busyUi.setBusy,
+    runWithBusy: typeof busyUi.runWithBusy,
+    appRunWithBusy: typeof appModule.runWithBusy,
+  },
+  sameRunWithBusy: appModule.runWithBusy === busyUi.runWithBusy,
+  busyState,
+  restoredState,
+  runState,
+  blockedCalls,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {
+            "__BUSY_UI_MODULE_URL__": "busy_ui.js",
+            "__APP_MODULE_URL__": "app.js",
+        },
+        timeout_seconds=30,
+    )
+
+    assert results["exportedTypes"] == {
+        "setBusy": "function",
+        "runWithBusy": "function",
+        "appRunWithBusy": "function",
+    }
+    assert results["sameRunWithBusy"] is True
+    assert results["busyState"]["action"] == {
+        "disabled": True,
+        "text": "Working <img src=x onerror=alert(1)><script>bad()</script>",
+        "defaultLabel": "Start <img src=x onerror=alert(1)><script>bad()</script>",
+        "ariaBusy": "true",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["busyState"]["secondary"] == {
+        "disabled": True,
+        "text": "Secondary",
+        "defaultLabel": "Secondary",
+        "ariaBusy": "true",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["restoredState"]["action"]["disabled"] is False
+    assert results["restoredState"]["action"]["text"] == "Start <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["restoredState"]["action"]["ariaBusy"] == "false"
+    assert results["restoredState"]["action"]["imgCount"] == 0
+    assert results["restoredState"]["action"]["scriptCount"] == 0
+    assert results["restoredState"]["action"]["innerHTMLWrites"] == 0
+    assert results["runState"]["actionCalls"] == 1
+    assert results["runState"]["action"]["disabled"] is False
+    assert results["runState"]["action"]["ariaBusy"] == "false"
+    assert results["runState"]["secondary"]["disabled"] is False
+    assert results["runState"]["secondary"]["ariaBusy"] == "false"
+    assert results["blockedCalls"] == 0
+
+
 def test_google_photos_oauth_fallback_is_visible_without_rendering_url_text() -> None:
     script = """
 function makeClassList(initial = []) {
@@ -2603,9 +2873,10 @@ def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
     )
     app_js = (static_dir / "app.js").read_text(encoding="utf-8")
     google_photos_ui_js = (static_dir / "google_photos_ui.js").read_text(encoding="utf-8")
+    busy_ui_js = (static_dir / "busy_ui.js").read_text(encoding="utf-8")
 
-    assert "export async function runWithBusy(buttonIds, busyLabels, action, options = {})" in app_js
-    assert "const guardIds = options.guardIds || buttonIds;" in app_js
+    assert 'export { runWithBusy } from "./busy_ui.js";' in app_js
+    assert "const guardIds = options.guardIds || buttonIds;" in busy_ui_js
     assert 'from "./google_photos_ui.js"' in app_js
     assert "export function setGooglePhotosAuthFallback" in google_photos_ui_js
     assert "export function setGooglePhotosPickerFallback" in google_photos_ui_js
@@ -11074,6 +11345,11 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "setDiagnostics" in diagnostics_ui_asset.text
         assert "setPanelStatus" in diagnostics_ui_asset.text
         assert "setTopbarStatus" in diagnostics_ui_asset.text
+        busy_ui_asset = client.get(f"/static-build/{asset_version}/busy_ui.js")
+        assert busy_ui_asset.status_code == 200
+        assert busy_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "setBusy" in busy_ui_asset.text
+        assert "runWithBusy" in busy_ui_asset.text
         interpretation_reference_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_reference_ui.js")
         assert interpretation_reference_ui_asset.status_code == 200
         assert interpretation_reference_ui_asset.headers["content-type"].startswith("application/javascript")

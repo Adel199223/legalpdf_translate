@@ -1,5 +1,6 @@
 import { describeLocalServerUnavailable, fetchJson, isLocalServerUnavailableError } from "./api.js";
 import { runStagedBootstrap } from "./bootstrap_hydration.js";
+import { runWithBusy } from "./busy_ui.js";
 import {
   appState,
   initializeRouteState,
@@ -173,6 +174,7 @@ export {
 } from "./recent_work_ui.js";
 export { renderNavigationInto } from "./shell_ui.js";
 export { renderInterpretationExportResultInto } from "./interpretation_result_ui.js";
+export { runWithBusy } from "./busy_ui.js";
 
 function qs(id) {
   return document.getElementById(id);
@@ -2939,34 +2941,6 @@ async function handleExtensionSimulation() {
   const message = payload.status === "ok" ? "Handoff simulation is ready to POST to the localhost bridge." : "Handoff simulation completed, but the bridge is not currently ready.";
   setPanelStatus("simulator", payload.status === "ok" ? "ok" : "warn", message);
   setDiagnostics("simulator", payload, { hint: message, open: true });
-}
-
-function setBusy(buttonIds, busy, busyLabels = {}) {
-  for (const id of buttonIds) {
-    const button = qs(id);
-    if (!button) {
-      continue;
-    }
-    if (!button.dataset.defaultLabel) {
-      button.dataset.defaultLabel = button.textContent;
-    }
-    button.disabled = busy;
-    button.setAttribute("aria-busy", busy ? "true" : "false");
-    button.textContent = busy ? busyLabels[id] || button.dataset.defaultLabel : button.dataset.defaultLabel;
-  }
-}
-
-export async function runWithBusy(buttonIds, busyLabels, action, options = {}) {
-  const guardIds = options.guardIds || buttonIds;
-  if (guardIds.some((id) => qs(id)?.disabled)) {
-    return;
-  }
-  setBusy(buttonIds, true, busyLabels);
-  try {
-    return await action();
-  } finally {
-    setBusy(buttonIds, false);
-  }
 }
 
 function wireEvents() {
