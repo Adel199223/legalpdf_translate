@@ -143,6 +143,7 @@ import {
 import { buildExtensionLabCards } from "./extension_lab_presentation.js";
 import { renderExtensionPrepareReasonCatalogInto } from "./extension_lab_ui.js";
 import {
+  populateIdleDiagnostics,
   setDiagnostics,
   setPanelStatus,
   setTopbarStatus,
@@ -2401,21 +2402,6 @@ function applyStagedBootstrapRetryStatus({ attempt, maxAttempts, error }) {
     "warn",
     `The ${target} is still warming after the shell became ready.${detail}`,
   );
-}
-
-function populateIdleDiagnostics() {
-  if (!qs("autofill-diagnostics").textContent.trim()) {
-    setDiagnostics("autofill", { status: "idle", message: "No upload has been run yet." }, { hint: "Metadata extraction details appear here after an upload.", open: false });
-  }
-  if (!qs("form-diagnostics").textContent.trim()) {
-    setDiagnostics("form", { status: "idle", message: "No save or export has been run yet." }, { hint: "Save/export responses and validation details appear here.", open: false });
-  }
-  if (!qs("profile-diagnostics").textContent.trim()) {
-    setDiagnostics("profile", { status: "idle", message: "No profile save, delete, or import has been run yet." }, { hint: "Profile saves, deletes, and import details appear here.", open: false });
-  }
-  if (!qs("simulator-diagnostics").textContent.trim()) {
-    setDiagnostics("simulator", { status: "idle", message: "No simulator run has been executed yet." }, { hint: "Preview request payload, bridge endpoint, and readiness.", open: false });
-  }
 }
 
 async function loadBootstrap({ staged = false } = {}) {
