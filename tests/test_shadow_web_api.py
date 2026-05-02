@@ -8169,6 +8169,7 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "export function renderInterpretationCompletionCardInto" in interpretation_result_ui_text
     assert "export function renderInterpretationSessionCardInto" in interpretation_result_ui_text
     assert "export function renderInterpretationSeedCardInto" in interpretation_result_ui_text
+    assert "export function renderInterpretationSeedCardStateInto" in interpretation_result_ui_text
     assert "export function renderInterpretationReviewSummaryCardInto" in interpretation_result_ui_text
     assert "export function renderInterpretationLocationGuardInto" in interpretation_result_ui_text
     assert "export function resetInterpretationExportResultInto" in interpretation_result_ui_text
@@ -8176,7 +8177,7 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "renderInterpretationGmailResultInto(container, payload, currentInterpretationPresentation());" in app_js
     assert "renderInterpretationCompletionCardInto(container, {" in app_js
     assert "renderInterpretationSessionCardInto(result, {" in app_js
-    assert "renderInterpretationSeedCardInto(container, {" in app_js
+    assert "renderInterpretationSeedCardStateInto(container, {" in app_js
     assert "renderInterpretationReviewSummaryCardInto(container, {" in app_js
     assert "renderInterpretationLocationGuardInto(card, { message, tone });" in app_js
     assert "resetInterpretationExportResultInto(panel, result, presentation.export.emptyState);" in app_js
@@ -8192,8 +8193,11 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "escapeHtml" not in session_block
     review_summary_start = app_js.index("function renderInterpretationReviewSummary", seed_start)
     seed_block = app_js[seed_start:review_summary_start]
-    assert 'container.classList.add("empty-state");' in seed_block
-    assert 'container.classList.remove("empty-state");' in seed_block
+    assert 'container.classList.add("empty-state");' not in seed_block
+    assert 'container.classList.remove("empty-state");' not in seed_block
+    assert "container.textContent" not in seed_block
+    assert "renderInterpretationSeedCardInto(container, {" not in seed_block
+    assert "renderInterpretationSeedCardStateInto(container, {" in seed_block
     assert "presentation.reviewHome.emptyState" in seed_block
     assert "hasInterpretationReviewData(snapshot)" in seed_block
     assert "innerHTML" not in seed_block
@@ -8625,6 +8629,34 @@ interpretationResultUi.renderInterpretationSeedCardInto(seedFallbackContainer, {
   location: "",
 });
 
+const seedStateEmptyContainer = document.createElement("article");
+seedStateEmptyContainer.className = "result-card";
+interpretationResultUi.renderInterpretationSeedCardStateInto(seedStateEmptyContainer, {
+  empty: true,
+  emptyText: `Seed empty ${malicious}`,
+  card: {
+    title: `Should not render ${malicious}`,
+  },
+});
+
+const seedStateCardContainer = document.createElement("article");
+seedStateCardContainer.className = "result-card empty-state";
+interpretationResultUi.renderInterpretationSeedCardStateInto(seedStateCardContainer, {
+  empty: false,
+  card: {
+    title: `Seed state title ${malicious}`,
+    message: `Seed state message ${malicious}`,
+    chip: {
+      tone: "ok",
+      label: `Seed state label ${malicious}`,
+    },
+    caseValue: `Seed state case ${malicious}`,
+    courtEmail: `seed-state-${malicious}@example.test`,
+    serviceDate: `2026-05-04 ${malicious}`,
+    location: `Seed state location ${malicious}`,
+  },
+});
+
 const reviewSummaryContainer = document.createElement("div");
 reviewSummaryContainer.className = "result-card";
 interpretationResultUi.renderInterpretationReviewSummaryCardInto(reviewSummaryContainer, {
@@ -8656,6 +8688,10 @@ interpretationResultUi.renderInterpretationReviewSummaryCardInto(reviewSummaryFa
 });
 const nullSessionResult = interpretationResultUi.renderInterpretationSessionCardInto(null, {});
 const nullSeedResult = interpretationResultUi.renderInterpretationSeedCardInto(null, {});
+const nullSeedStateResult = interpretationResultUi.renderInterpretationSeedCardStateInto(null, {
+  empty: true,
+  emptyText: `Ignored ${malicious}`,
+});
 const nullReviewSummaryResult = interpretationResultUi.renderInterpretationReviewSummaryCardInto(null, {});
 
 const guardWarningContainer = document.createElement("div");
@@ -8715,6 +8751,7 @@ console.log(JSON.stringify({
     completion: typeof interpretationResultUi.renderInterpretationCompletionCardInto,
     session: typeof interpretationResultUi.renderInterpretationSessionCardInto,
     seed: typeof interpretationResultUi.renderInterpretationSeedCardInto,
+    seedState: typeof interpretationResultUi.renderInterpretationSeedCardStateInto,
     reviewSummary: typeof interpretationResultUi.renderInterpretationReviewSummaryCardInto,
     locationGuard: typeof interpretationResultUi.renderInterpretationLocationGuardInto,
     exportReset: typeof interpretationResultUi.resetInterpretationExportResultInto,
@@ -8732,6 +8769,8 @@ console.log(JSON.stringify({
   sessionFallback: summarize(sessionFallbackContainer),
   seed: summarize(seedContainer),
   seedFallback: summarize(seedFallbackContainer),
+  seedStateEmpty: summarizeGuard(seedStateEmptyContainer),
+  seedStateCard: summarize(seedStateCardContainer),
   reviewSummary: summarize(reviewSummaryContainer),
   reviewSummaryFallback: summarize(reviewSummaryFallbackContainer),
   guardWarning: summarizeGuard(guardWarningContainer),
@@ -8750,6 +8789,7 @@ console.log(JSON.stringify({
   nullCompletionResult,
   nullSessionResult,
   nullSeedResult,
+  nullSeedStateResult,
   nullReviewSummaryResult,
   nullGuardResult,
   nullResetResult,
@@ -8767,6 +8807,7 @@ console.log(JSON.stringify({
         "completion": "function",
         "session": "function",
         "seed": "function",
+        "seedState": "function",
         "reviewSummary": "function",
         "locationGuard": "function",
         "exportReset": "function",
@@ -8947,6 +8988,31 @@ console.log(JSON.stringify({
     ]
     assert "status-chip ok" in results["seedFallback"]["classes"]
     assert results["seedFallback"]["innerHTMLWrites"] == 0
+
+    assert results["seedStateEmpty"]["className"] == "result-card empty-state"
+    assert results["seedStateEmpty"]["text"] == "Seed empty <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["seedStateEmpty"]["childClasses"] == []
+    assert results["seedStateEmpty"]["imgCount"] == 0
+    assert results["seedStateEmpty"]["scriptCount"] == 0
+    assert results["seedStateEmpty"]["innerHTMLWrites"] == 0
+
+    assert results["seedStateCard"]["className"] == "result-card"
+    assert results["seedStateCard"]["childClasses"] == ["result-header", "result-grid"]
+    assert results["seedStateCard"]["gridLabels"] == ["Case", "Court Email", "Service Date", "Location"]
+    assert "Seed state title <img src=x onerror=alert(1)><script>bad()</script>" in results["seedStateCard"]["text"]
+    assert "Seed state message <img src=x onerror=alert(1)><script>bad()</script>" in results["seedStateCard"]["text"]
+    assert "Seed state label <img src=x onerror=alert(1)><script>bad()</script>" in results["seedStateCard"]["text"]
+    assert results["seedStateCard"]["gridValues"] == [
+        "Seed state case <img src=x onerror=alert(1)><script>bad()</script>",
+        "seed-state-<img src=x onerror=alert(1)><script>bad()</script>@example.test",
+        "2026-05-04 <img src=x onerror=alert(1)><script>bad()</script>",
+        "Seed state location <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert "status-chip ok" in results["seedStateCard"]["classes"]
+    assert results["seedStateCard"]["classes"].count("word-break") == 4
+    assert results["seedStateCard"]["imgCount"] == 0
+    assert results["seedStateCard"]["scriptCount"] == 0
+    assert results["seedStateCard"]["innerHTMLWrites"] == 0
 
     assert results["reviewSummary"]["className"] == "result-card"
     assert results["reviewSummary"]["childClasses"] == ["result-header", "result-grid"]
@@ -12095,6 +12161,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationCompletionCardInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationSessionCardInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationSeedCardInto" in interpretation_result_ui_asset.text
+        assert "renderInterpretationSeedCardStateInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationReviewSummaryCardInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationLocationGuardInto" in interpretation_result_ui_asset.text
         assert "resetInterpretationExportResultInto" in interpretation_result_ui_asset.text

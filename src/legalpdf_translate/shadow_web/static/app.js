@@ -48,7 +48,7 @@ import {
   renderInterpretationGmailResultInto,
   renderInterpretationLocationGuardInto,
   renderInterpretationReviewSummaryCardInto,
-  renderInterpretationSeedCardInto,
+  renderInterpretationSeedCardStateInto,
   renderInterpretationSessionCardInto,
   resetInterpretationExportResultInto,
 } from "./interpretation_result_ui.js";
@@ -858,23 +858,21 @@ function renderInterpretationSeedCard(containerId) {
   }
   const snapshot = interpretationSnapshot();
   const presentation = currentInterpretationPresentation(snapshot);
-  if (!hasInterpretationReviewData(snapshot)) {
-    container.classList.add("empty-state");
-    container.textContent = presentation.reviewHome.emptyState;
-    return;
-  }
-  container.classList.remove("empty-state");
-  renderInterpretationSeedCardInto(container, {
-    title: presentation.reviewHome.title,
-    message: presentation.reviewHome.subtitle,
-    chip: {
-      tone: snapshot.rowId ? "ok" : "info",
-      label: snapshot.rowId ? "Saved" : "Ready",
+  renderInterpretationSeedCardStateInto(container, {
+    empty: !hasInterpretationReviewData(snapshot),
+    emptyText: presentation.reviewHome.emptyState,
+    card: {
+      title: presentation.reviewHome.title,
+      message: presentation.reviewHome.subtitle,
+      chip: {
+        tone: snapshot.rowId ? "ok" : "info",
+        label: snapshot.rowId ? "Saved" : "Ready",
+      },
+      caseValue: snapshot.caseNumber,
+      courtEmail: snapshot.courtEmail,
+      serviceDate: snapshot.serviceDate,
+      location: [snapshot.caseEntity, snapshot.caseCity].filter(Boolean).join(" | "),
     },
-    caseValue: snapshot.caseNumber,
-    courtEmail: snapshot.courtEmail,
-    serviceDate: snapshot.serviceDate,
-    location: [snapshot.caseEntity, snapshot.caseCity].filter(Boolean).join(" | "),
   });
 }
 
