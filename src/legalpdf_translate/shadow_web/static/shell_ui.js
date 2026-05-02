@@ -75,3 +75,23 @@ export function renderRuntimeModeSelectorInto(select, runtimeMode = {}) {
     select.appendChild(option);
   }
 }
+
+export function renderShellVisibilityInto({
+  views = [],
+  navButtons = [],
+  moreShell = null,
+  activeView = "",
+} = {}) {
+  for (const node of views || []) {
+    node.classList.toggle("hidden", node.dataset.view !== activeView);
+  }
+  for (const button of navButtons || []) {
+    button.classList.toggle("active", button.dataset.view === activeView);
+  }
+  if (!moreShell) {
+    return;
+  }
+  const moreActive = MORE_NAV_ORDER.includes(activeView);
+  moreShell.open = moreActive || moreShell.open;
+  moreShell.classList.toggle("has-active-view", moreActive);
+}
