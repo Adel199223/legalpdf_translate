@@ -38,6 +38,7 @@ import {
   renderSummaryGridInto,
 } from "./dashboard_ui.js";
 import {
+  renderInterpretationHistoryHeadingInto,
   renderInterpretationHistoryInto,
   renderRecentJobsInto,
 } from "./recent_work_ui.js";
@@ -174,6 +175,7 @@ export {
   renderSummaryGridInto,
 } from "./dashboard_ui.js";
 export {
+  renderInterpretationHistoryHeadingInto,
   renderInterpretationHistoryInto,
   renderRecentJobsInto,
 } from "./recent_work_ui.js";
@@ -2120,7 +2122,7 @@ function renderRecentJobs(items, history, translationHistory = []) {
 
 function renderHistory(items, modeLabel) {
   const container = qs("history-list");
-  qs("history-heading").textContent = "Saved Interpretation Requests";
+  renderInterpretationHistoryHeadingInto(qs("history-heading"));
   renderInterpretationHistoryInto(container, items, {
     onOpen: (item) => applyHistoryItem(item),
     onDelete: async (item) => {

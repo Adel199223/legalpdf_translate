@@ -1,5 +1,5 @@
 import { deriveRecentWorkPresentation } from "./translation.js";
-import { clearNode, createEmptyState, createTextElement } from "./safe_rendering.js";
+import { clearNode, createEmptyState, createTextElement, setText } from "./safe_rendering.js";
 
 function appendHistoryMetaBits(container, bits) {
   const meta = document.createElement("div");
@@ -69,6 +69,10 @@ export function renderRecentJobsInto(
     card.appendChild(actions);
     container.appendChild(card);
   }
+}
+
+export function renderInterpretationHistoryHeadingInto(node, text = "Saved Interpretation Requests") {
+  setText(node, text);
 }
 
 export function renderInterpretationHistoryInto(container, items, { onOpen, onDelete } = {}) {
