@@ -75,6 +75,22 @@ export function renderTopbarInto(
   renderLiveBannerInto(liveBanner, runtime);
 }
 
+export function renderShellRuntimeLabelsInto(
+  { workspaceLabel = null, runtimeModeLabel = null, liveBanner = null } = {},
+  { workspaceLabel: workspaceText = "", runtimeModeLabel: runtimeModeText = "", hideLiveBanner = false } = {},
+) {
+  if (workspaceLabel) {
+    setText(workspaceLabel, workspaceText);
+  }
+  if (runtimeModeLabel) {
+    setText(runtimeModeLabel, runtimeModeText);
+  }
+  if (hideLiveBanner && liveBanner) {
+    liveBanner.classList.add("hidden");
+    setText(liveBanner, "");
+  }
+}
+
 export function renderRuntimeModeSelectorInto(select, runtimeMode = {}) {
   if (!select) {
     return;
