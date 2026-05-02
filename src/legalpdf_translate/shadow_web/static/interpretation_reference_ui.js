@@ -136,3 +136,32 @@ export function syncInterpretationCityDialogStateInto(backdrop, body, open) {
     body.dataset.interpretationCityDialog = isOpen ? "open" : "closed";
   }
 }
+
+export function renderInterpretationCityDialogContentInto(nodes = {}, dialog = {}) {
+  const {
+    title = null,
+    status = null,
+    cityInput = null,
+    distanceShell = null,
+    distanceHint = null,
+    confirmButton = null,
+  } = nodes || {};
+  if (title) {
+    title.textContent = String(dialog.title ?? "");
+  }
+  if (status) {
+    status.textContent = String(dialog.status ?? "");
+  }
+  if (cityInput) {
+    cityInput.readOnly = Boolean(dialog.lockedCity);
+  }
+  if (distanceShell) {
+    distanceShell.classList.toggle("hidden", !Boolean(dialog.showDistance));
+  }
+  if (distanceHint) {
+    distanceHint.textContent = String(dialog.distanceHint ?? "");
+  }
+  if (confirmButton) {
+    confirmButton.textContent = String(dialog.confirmLabel ?? "");
+  }
+}
