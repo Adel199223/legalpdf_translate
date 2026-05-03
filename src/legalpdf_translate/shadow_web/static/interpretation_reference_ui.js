@@ -11,14 +11,14 @@ function appendOption(select, { value = "", text = "", selected = false } = {}) 
   return option;
 }
 
-function setControlValue(node, value) {
+export function renderControlValueInto(node, value = "") {
   if (!node) {
     return;
   }
   node.value = String(value ?? "");
 }
 
-function setControlChecked(node, value) {
+export function renderCheckboxValueInto(node, value = false) {
   if (!node) {
     return;
   }
@@ -26,30 +26,30 @@ function setControlChecked(node, value) {
 }
 
 export function renderInterpretationRowIdInto(field, rowId = "") {
-  setControlValue(field, rowId);
+  renderControlValueInto(field, rowId);
 }
 
 export function renderInterpretationFormFieldsInto(nodes = {}, values = {}) {
   if (!nodes) {
     return;
   }
-  setControlValue(nodes.rowId, values.rowId);
-  setControlValue(nodes.caseNumber, values.caseNumber);
-  setControlValue(nodes.caseEntity, values.caseEntity);
-  setControlValue(nodes.serviceEntity, values.serviceEntity);
-  setControlValue(nodes.serviceDate, values.serviceDate);
-  setControlValue(nodes.travelKmOutbound, values.travelKmOutbound);
-  setControlValue(nodes.pages, values.pages);
-  setControlValue(nodes.wordCount, values.wordCount);
-  setControlValue(nodes.ratePerWord, values.ratePerWord);
-  setControlValue(nodes.expectedTotal, values.expectedTotal);
-  setControlValue(nodes.amountPaid, values.amountPaid);
-  setControlValue(nodes.apiCost, values.apiCost);
-  setControlValue(nodes.profit, values.profit);
-  setControlValue(nodes.recipientBlock, values.recipientBlock);
-  setControlChecked(nodes.serviceSame, values.serviceSame);
-  setControlChecked(nodes.useServiceLocation, values.useServiceLocation);
-  setControlChecked(nodes.includeTransport, values.includeTransport);
+  renderControlValueInto(nodes.rowId, values.rowId);
+  renderControlValueInto(nodes.caseNumber, values.caseNumber);
+  renderControlValueInto(nodes.caseEntity, values.caseEntity);
+  renderControlValueInto(nodes.serviceEntity, values.serviceEntity);
+  renderControlValueInto(nodes.serviceDate, values.serviceDate);
+  renderControlValueInto(nodes.travelKmOutbound, values.travelKmOutbound);
+  renderControlValueInto(nodes.pages, values.pages);
+  renderControlValueInto(nodes.wordCount, values.wordCount);
+  renderControlValueInto(nodes.ratePerWord, values.ratePerWord);
+  renderControlValueInto(nodes.expectedTotal, values.expectedTotal);
+  renderControlValueInto(nodes.amountPaid, values.amountPaid);
+  renderControlValueInto(nodes.apiCost, values.apiCost);
+  renderControlValueInto(nodes.profit, values.profit);
+  renderControlValueInto(nodes.recipientBlock, values.recipientBlock);
+  renderCheckboxValueInto(nodes.serviceSame, values.serviceSame);
+  renderCheckboxValueInto(nodes.useServiceLocation, values.useServiceLocation);
+  renderCheckboxValueInto(nodes.includeTransport, values.includeTransport);
 }
 
 export function renderInterpretationCityOptionsInto(select, cities = [], selectedValue = "") {
