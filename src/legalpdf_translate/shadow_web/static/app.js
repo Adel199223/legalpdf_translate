@@ -52,6 +52,7 @@ import {
   renderInterpretationSeedCardStateInto,
   renderInterpretationSessionCardInto,
   resetInterpretationExportResultInto,
+  syncInterpretationCompletionCardVisibilityInto,
 } from "./interpretation_result_ui.js";
 import {
   focusInterpretationFieldInto,
@@ -960,7 +961,7 @@ function renderInterpretationCompletionCard(snapshot = interpretationSnapshot())
   const completionStatus = String(interpretationUiState.completionPayload?.status || "").trim();
   const presentation = currentInterpretationPresentation(snapshot);
   const completed = workspaceMode === "gmail_completed";
-  container.classList.toggle("hidden", !completed);
+  syncInterpretationCompletionCardVisibilityInto(container, { completed });
   syncInterpretationReviewDetailsShell(completed);
   if (!completed) {
     return;

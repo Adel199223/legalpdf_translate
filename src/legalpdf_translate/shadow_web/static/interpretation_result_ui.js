@@ -237,3 +237,14 @@ export function renderInterpretationCompletionCardInto(container, card = {}) {
   appendResultGridItem(grid, "Service Location", card.serviceLocation || "", { className: "word-break" });
   container.appendChild(grid);
 }
+
+export function syncInterpretationCompletionCardVisibilityInto(container, { completed = false } = {}) {
+  if (!container) {
+    return;
+  }
+  if (completed) {
+    container.classList.remove("hidden");
+    return;
+  }
+  container.classList.add("hidden");
+}
