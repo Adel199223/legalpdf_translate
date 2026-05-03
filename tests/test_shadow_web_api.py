@@ -2635,6 +2635,27 @@ console.log(JSON.stringify({
     assert results["blockedCalls"] == 0
 
 
+def test_gmail_js_uses_shared_busy_ui_for_button_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    busy_ui_js = (static_dir / "busy_ui.js").read_text(encoding="utf-8")
+
+    assert 'import { runWithBusy } from "./busy_ui.js";' in gmail_js
+    assert "function setBusy(buttonIds, busy, busyLabels = {})" not in gmail_js
+    assert "async function runWithBusy(buttonIds, busyLabels, action)" not in gmail_js
+    assert "setBusy(" not in gmail_js
+    assert "button.setAttribute(\"aria-busy\"" not in gmail_js
+    assert "export async function runWithBusy(buttonIds, busyLabels, action, options = {})" in busy_ui_js
+    assert "const guardIds = options.guardIds || buttonIds;" in busy_ui_js
+    assert "innerHTML" not in busy_ui_js
+
+
 def test_google_photos_oauth_fallback_is_visible_without_rendering_url_text() -> None:
     script = """
 function makeClassList(initial = []) {
@@ -16615,6 +16636,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailAttachmentListInto" in gmail_ui_asset.text
         assert "renderGmailReviewDetailInto" in gmail_ui_asset.text
         assert "renderGmailBatchFinalizeSurfaceInto" in gmail_ui_asset.text
+        gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
+        assert gmail_asset.status_code == 200
+        assert gmail_asset.headers["content-type"].startswith("application/javascript")
+        assert 'from "./busy_ui.js"' in gmail_asset.text
         shell_ui_asset = client.get(f"/static-build/{asset_version}/shell_ui.js")
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")

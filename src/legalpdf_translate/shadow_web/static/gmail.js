@@ -5,6 +5,7 @@ import {
   ensureBrowserPdfBundleFromUrl,
   renderBrowserPdfPreviewToCanvas,
 } from "./browser_pdf.js";
+import { runWithBusy } from "./busy_ui.js";
 import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
   renderGmailAttachmentListInto,
@@ -698,33 +699,6 @@ async function runRedoCurrentTranslation() {
   gmailState.hooks.resetTranslationForGmailRedo?.(gmailState.suggestedTranslationLaunch);
   setActiveView("new-job");
   closeSessionDrawer();
-}
-
-function setBusy(buttonIds, busy, busyLabels = {}) {
-  for (const id of buttonIds) {
-    const button = qs(id);
-    if (!button) {
-      continue;
-    }
-    if (!button.dataset.defaultLabel) {
-      button.dataset.defaultLabel = button.textContent;
-    }
-    button.disabled = busy;
-    button.setAttribute("aria-busy", busy ? "true" : "false");
-    button.textContent = busy ? busyLabels[id] || button.dataset.defaultLabel : button.dataset.defaultLabel;
-  }
-}
-
-async function runWithBusy(buttonIds, busyLabels, action) {
-  if (buttonIds.some((id) => qs(id)?.disabled)) {
-    return;
-  }
-  setBusy(buttonIds, true, busyLabels);
-  try {
-    return await action();
-  } finally {
-    setBusy(buttonIds, false);
-  }
 }
 
 function formatBytes(value) {
