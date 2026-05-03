@@ -96,6 +96,7 @@ import {
 } from "./profile_presentation.js";
 import {
   renderProfileDistanceJsonInto,
+  renderProfileDistanceDraftInto,
   renderPrimaryProfileCardInto,
   renderProfileDistanceStatusInto,
   renderProfileDistanceRowsInto,
@@ -1782,12 +1783,7 @@ function applyProfileDistanceUpsert() {
   syncProfileDistanceJsonField();
   renderProfileDistanceRows();
   setProfileDistanceStatus("ok", `${resolvedCity} is ready for interpretation travel details.`);
-  if (cityField) {
-    cityField.value = "";
-  }
-  if (kmField) {
-    kmField.value = "";
-  }
+  renderProfileDistanceDraftInto({ cityField, kmField });
 }
 
 function applyProfileEditor(profile, { openDrawer = false } = {}) {

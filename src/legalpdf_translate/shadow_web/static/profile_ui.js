@@ -80,6 +80,12 @@ function setControlValue(node, value) {
   node.value = String(value ?? "");
 }
 
+export function renderProfileDistanceDraftInto(nodes = {}, { city = "", km = "" } = {}) {
+  const { cityField = null, kmField = null } = nodes || {};
+  setControlValue(cityField, city);
+  setControlValue(kmField, km);
+}
+
 export function renderProfileEditorFieldsInto(nodes = {}, values = {}) {
   const {
     fieldNodes = {},

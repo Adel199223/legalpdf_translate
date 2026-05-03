@@ -4964,6 +4964,132 @@ console.log(JSON.stringify({
     assert results["nullNodesResultType"] == "undefined"
 
 
+def test_profile_ui_module_centralizes_safe_profile_distance_draft_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    profile_ui_module = static_dir / "profile_ui.js"
+
+    assert profile_ui_module.exists()
+    profile_ui_js = profile_ui_module.read_text(encoding="utf-8")
+    assert "export function renderProfileDistanceDraftInto" in profile_ui_js
+    assert "renderProfileDistanceDraftInto({" in app_js
+
+    upsert_start = app_js.index("function applyProfileDistanceUpsert")
+    apply_start = app_js.index("function applyProfileEditor", upsert_start)
+    upsert_block = app_js[upsert_start:apply_start]
+    assert "renderProfileDistanceDraftInto({" in upsert_block
+    assert 'cityField?.value || ""' in upsert_block
+    assert 'kmField?.value || ""' in upsert_block
+    assert 'cityField.value = "";' not in upsert_block
+    assert 'kmField.value = "";' not in upsert_block
+    assert "innerHTML" not in upsert_block
+
+    draft_start = profile_ui_js.index("export function renderProfileDistanceDraftInto")
+    draft_end = profile_ui_js.index("export function renderProfileEditorFieldsInto", draft_start)
+    draft_block = profile_ui_js[draft_start:draft_end]
+    assert "innerHTML" not in draft_block
+
+    script = r"""
+const profileUi = await import(__PROFILE_UI_MODULE_URL__);
+
+function makeControl(value = "") {
+  const element = {
+    value,
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+  };
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return element;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  return nodes.reduce((total, node) => total + (node?.innerHTMLAssignments || []).length, 0);
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const populatedNodes = {
+  cityField: makeControl("stale city"),
+  kmField: makeControl("99"),
+};
+profileUi.renderProfileDistanceDraftInto(populatedNodes, {
+  city: `Beja ${malicious}`,
+  km: `12 ${malicious}`,
+});
+
+const clearedNodes = {
+  cityField: makeControl("Serpa"),
+  kmField: makeControl("18"),
+};
+profileUi.renderProfileDistanceDraftInto(clearedNodes);
+
+const missingCityNodes = {
+  cityField: null,
+  kmField: makeControl("old"),
+};
+const missingCityResult = profileUi.renderProfileDistanceDraftInto(missingCityNodes, {
+  city: `ignored ${malicious}`,
+  km: `33 ${malicious}`,
+});
+const nullNodesResult = profileUi.renderProfileDistanceDraftInto(null, {
+  city: `ignored ${malicious}`,
+  km: "44",
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof profileUi.renderProfileDistanceDraftInto,
+  populated: {
+    city: populatedNodes.cityField.value,
+    km: populatedNodes.kmField.value,
+    innerHTMLWrites: countInnerHtmlWrites(populatedNodes.cityField, populatedNodes.kmField),
+  },
+  cleared: {
+    city: clearedNodes.cityField.value,
+    km: clearedNodes.kmField.value,
+    innerHTMLWrites: countInnerHtmlWrites(clearedNodes.cityField, clearedNodes.kmField),
+  },
+  missingCity: {
+    km: missingCityNodes.kmField.value,
+    innerHTMLWrites: countInnerHtmlWrites(missingCityNodes.kmField),
+  },
+  missingCityResultType: missingCityResult === undefined ? "undefined" : typeof missingCityResult,
+  nullNodesResultType: nullNodesResult === undefined ? "undefined" : typeof nullNodesResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__PROFILE_UI_MODULE_URL__": "profile_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["populated"] == {
+        "city": "Beja <img src=x onerror=alert(1)><script>bad()</script>",
+        "km": "12 <img src=x onerror=alert(1)><script>bad()</script>",
+        "innerHTMLWrites": 0,
+    }
+    assert results["cleared"] == {"city": "", "km": "", "innerHTMLWrites": 0}
+    assert results["missingCity"] == {
+        "km": "33 <img src=x onerror=alert(1)><script>bad()</script>",
+        "innerHTMLWrites": 0,
+    }
+    assert results["missingCityResultType"] == "undefined"
+    assert results["nullNodesResultType"] == "undefined"
+
+
 def test_profile_ui_module_centralizes_safe_profile_toolbar_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -13609,6 +13735,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "syncProfileEditorDrawerStateInto" in profile_ui_asset.text
         assert "renderProfileDistanceStatusInto" in profile_ui_asset.text
         assert "renderProfileDistanceJsonInto" in profile_ui_asset.text
+        assert "renderProfileDistanceDraftInto" in profile_ui_asset.text
         assert "renderProfileEditorChromeInto" in profile_ui_asset.text
         assert "renderProfileEditorFieldsInto" in profile_ui_asset.text
         assert "renderProfileToolbarInto" in profile_ui_asset.text
