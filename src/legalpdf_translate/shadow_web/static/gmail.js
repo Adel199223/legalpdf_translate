@@ -8,6 +8,7 @@ import {
 import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
   renderGmailAttachmentListInto,
+  renderGmailBatchFinalizeSurfaceInto,
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailPreviewPanelInto,
@@ -726,15 +727,6 @@ async function runWithBusy(buttonIds, busyLabels, action) {
   }
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 function formatBytes(value) {
   const bytes = Number(value || 0);
   if (!Number.isFinite(bytes) || bytes <= 0) {
@@ -1226,12 +1218,14 @@ function closeBatchFinalizeDrawer() {
 }
 
 function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinalizeSession()) {
-  const status = qs("gmail-batch-finalize-status");
-  const summary = qs("gmail-batch-finalize-summary");
-  const result = qs("gmail-batch-finalize-result");
-  const button = qs("gmail-batch-finalize-run");
+  const nodes = {
+    status: qs("gmail-batch-finalize-status"),
+    summary: qs("gmail-batch-finalize-summary"),
+    result: qs("gmail-batch-finalize-result"),
+    button: qs("gmail-batch-finalize-run"),
+  };
   renderGmailFinalizeNumericMismatchWarning();
-  if (!status || !summary || !result || !button) {
+  if (!nodes.status || !nodes.summary || !nodes.result || !nodes.button) {
     return;
   }
   const session = activeSession || currentDisplayedBatchFinalizeSession();
@@ -1252,94 +1246,124 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
     draft_failed: "Draft failed",
   })[finalizationState] || session?.status || "confirmed";
   const retryLabel = "Try Gmail reply again";
-  button.textContent = payload?.status === "ok"
+  const defaultButtonLabel = payload?.status === "ok"
     ? "Finalized"
     : retryAvailable
       ? retryLabel
       : "Create Gmail reply";
-  button.disabled = !available;
-  button.classList.remove("hidden");
+  const defaultButton = {
+    label: defaultButtonLabel,
+    disabled: !available,
+    hidden: false,
+  };
+  const renderSurface = (card) => renderGmailBatchFinalizeSurfaceInto(nodes, {
+    button: defaultButton,
+    ...card,
+  });
   if (!available) {
-    summary.className = "result-card empty-state";
-    summary.textContent = "Finish every Gmail attachment first to open the final reply step.";
-    result.className = "result-card empty-state";
-    result.textContent = "Gmail reply details will appear here after the final step.";
-    status.textContent = "After every selected attachment is saved, create the Gmail reply with the final files.";
+    renderSurface({
+      statusText: "After every selected attachment is saved, create the Gmail reply with the final files.",
+      summary: {
+        empty: true,
+        text: "Finish every Gmail attachment first to open the final reply step.",
+      },
+      result: {
+        empty: true,
+        text: "Gmail reply details will appear here after the final step.",
+      },
+    });
     updateGmailFinalizationReportActionState();
     closeBatchFinalizeDrawer();
     return;
   }
   const confirmedItems = session.confirmed_items || [];
   const outputFolder = fieldValue("gmail-output-dir") || gmailState.bootstrap?.defaults?.default_output_dir || "Use default folder";
-  summary.className = "result-card";
-  summary.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(session.message?.subject || "Gmail batch ready to finalize.")}</strong>
-        <p>${recoveredOnly
-    ? "Recovered Gmail reply details from the last saved attachment set are available here."
-    : `${confirmedItems.length} saved attachment(s) are ready for the Gmail reply.`}</p>
-      </div>
-      <span class="status-chip ${finalizationState === "blocked_word_pdf_export" || finalizationState === "local_artifacts_ready" ? "warn" : finalizationState === "draft_failed" ? "bad" : "ok"}">${escapeHtml(stateLabel)}</span>
-    </div>
-    <div class="result-grid">
-      <div><h3>Target Language</h3><p>${escapeHtml(session.selected_target_lang || "?")}</p></div>
-      <div><h3>Confirmed Rows</h3><p>${confirmedItems.length}</p></div>
-      <div><h3>Output Folder</h3><p title="${escapeHtml(outputFolder)}">${escapeHtml(shortOutputFolderLabel(outputFolder))}</p></div>
-      <div><h3>Build Provenance</h3><p class="word-break">${escapeHtml(provenance.label)}</p></div>
-    </div>
-  `;
+  const summaryCard = {
+    title: session.message?.subject || "Gmail batch ready to finalize.",
+    message: recoveredOnly
+      ? "Recovered Gmail reply details from the last saved attachment set are available here."
+      : `${confirmedItems.length} saved attachment(s) are ready for the Gmail reply.`,
+    label: stateLabel,
+    tone: finalizationState === "blocked_word_pdf_export" || finalizationState === "local_artifacts_ready"
+      ? "warn"
+      : finalizationState === "draft_failed"
+        ? "bad"
+        : "ok",
+    gridItems: [
+      { label: "Target Language", value: session.selected_target_lang || "?" },
+      { label: "Confirmed Rows", value: confirmedItems.length },
+      {
+        label: "Output Folder",
+        value: shortOutputFolderLabel(outputFolder),
+        titleValue: outputFolder,
+      },
+      { label: "Build Provenance", value: provenance.label, className: "word-break" },
+    ],
+  };
   if (recoveredOnly) {
-    button.classList.add("hidden");
-    button.disabled = true;
-    status.textContent = finalizationState === "draft_ready"
+    const recoveredStatusText = finalizationState === "draft_ready"
       ? "These recovered Gmail reply details are available to review. Start a new Gmail message normally if you need a fresh reply, or generate the finalization report here if you need the earlier files."
       : "These recovered Gmail reply details are available for review and report generation only.";
-    result.className = "result-card";
-    result.innerHTML = `
-      <div class="result-header">
-        <div>
-          <strong>${escapeHtml(status.textContent)}</strong>
-          <p>${escapeHtml(session.actual_honorarios_path || session.actual_honorarios_pdf_path || session.session_report_path || "Recovered Gmail reply files are available.")}</p>
-        </div>
-        <span class="status-chip ${finalizationState === "draft_ready" ? "ok" : "info"}">${escapeHtml(stateLabel || "Recovered")}</span>
-      </div>
-      <div class="result-grid">
-        <div><h3>DOCX</h3><p class="word-break">${escapeHtml(session.actual_honorarios_path || "Unavailable")}</p></div>
-        <div><h3>PDF</h3><p class="word-break">${escapeHtml(session.actual_honorarios_pdf_path || "Unavailable")}</p></div>
-        <div><h3>Session Report</h3><p class="word-break">${escapeHtml(session.session_report_path || "Unavailable")}</p></div>
-        <div><h3>Recovery Source</h3><p>${escapeHtml(session.restored_from_report ? "Recovered from an earlier Gmail reply step" : "Recovered")}</p></div>
-      </div>
-    `;
+    renderSurface({
+      button: {
+        ...defaultButton,
+        disabled: true,
+        hidden: true,
+      },
+      statusText: recoveredStatusText,
+      summary: summaryCard,
+      result: {
+        title: recoveredStatusText,
+        message: session.actual_honorarios_path || session.actual_honorarios_pdf_path || session.session_report_path || "Recovered Gmail reply files are available.",
+        label: stateLabel || "Recovered",
+        tone: finalizationState === "draft_ready" ? "ok" : "info",
+        gridItems: [
+          { label: "DOCX", value: session.actual_honorarios_path || "Unavailable", className: "word-break" },
+          { label: "PDF", value: session.actual_honorarios_pdf_path || "Unavailable", className: "word-break" },
+          { label: "Session Report", value: session.session_report_path || "Unavailable", className: "word-break" },
+          { label: "Recovery Source", value: session.restored_from_report ? "Recovered from an earlier Gmail reply step" : "Recovered" },
+        ],
+      },
+    });
     updateGmailFinalizationReportActionState();
     return;
   }
   if (gmailState.batchFinalizePreflightInFlight && !payload) {
-    button.disabled = true;
-    result.className = "result-card empty-state";
-    result.textContent = "Checking whether the final Word PDF step is ready...";
-    status.textContent = "Checking the Word PDF export step before the Gmail reply is created.";
+    renderSurface({
+      button: {
+        ...defaultButton,
+        disabled: true,
+      },
+      statusText: "Checking the Word PDF export step before the Gmail reply is created.",
+      summary: summaryCard,
+      result: {
+        empty: true,
+        text: "Checking whether the final Word PDF step is ready...",
+      },
+    });
     updateGmailFinalizationReportActionState();
     return;
   }
   if (!payload && preflight && !preflight.finalization_ready) {
-    button.disabled = true;
-    status.textContent = "The final Word PDF step is blocked. Review the details here before you try again.";
-    result.className = "result-card";
-    result.innerHTML = `
-      <div class="result-header">
-        <div>
-          <strong>${escapeHtml(preflight.message || "Word PDF export is unavailable.")}</strong>
-          <p>${escapeHtml(preflight.details || "The Word launch probe and export canary are shown below.")}</p>
-        </div>
-        <span class="status-chip warn">Blocked</span>
-      </div>
-      <div class="result-grid">
-        <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight.launch_preflight?.message || "Unavailable")}</p></div>
-        <div><h3>Export Canary</h3><p>${escapeHtml(preflight.export_canary?.message || "Unavailable")}</p></div>
-        <div><h3>Failure Phase</h3><p>${escapeHtml(preflight.failure_phase || preflight.export_canary?.failure_phase || "Unknown")}</p></div>
-      </div>
-    `;
+    renderSurface({
+      button: {
+        ...defaultButton,
+        disabled: true,
+      },
+      statusText: "The final Word PDF step is blocked. Review the details here before you try again.",
+      summary: summaryCard,
+      result: {
+        title: preflight.message || "Word PDF export is unavailable.",
+        message: preflight.details || "The Word launch probe and export canary are shown below.",
+        label: "Blocked",
+        tone: "warn",
+        gridItems: [
+          { label: "Launch Preflight", value: preflight.launch_preflight?.message || "Unavailable" },
+          { label: "Export Canary", value: preflight.export_canary?.message || "Unavailable" },
+          { label: "Failure Phase", value: preflight.failure_phase || preflight.export_canary?.failure_phase || "Unknown" },
+        ],
+      },
+    });
     updateGmailFinalizationReportActionState();
     return;
   }
@@ -1347,63 +1371,76 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
     const draftCopy = finalizationState === "draft_ready"
       ? "The Gmail draft is ready for this saved attachment set."
       : session.draft_failure_reason || "The previous Gmail finalization attempt stayed recoverable in this workspace.";
-    status.textContent = finalizationState === "draft_ready"
+    const draftStatusText = finalizationState === "draft_ready"
       ? "The Gmail reply is ready to review."
       : finalizationState === "draft_failed"
         ? "The final DOCX files were created, but the Gmail reply step failed. You can try again from here."
         : "The final DOCX files were created locally, but the Gmail reply step stayed unavailable. You can try again from here.";
     const showRetryAction = finalizationState !== "draft_ready";
-    button.classList.toggle("hidden", !showRetryAction);
-    button.disabled = !showRetryAction || (preflight && !preflight.finalization_ready);
-    button.textContent = showRetryAction ? retryLabel : button.textContent;
-    result.className = "result-card";
-    result.innerHTML = `
-      <div class="result-header">
-        <div>
-          <strong>${escapeHtml(status.textContent)}</strong>
-          <p>${escapeHtml(session.actual_honorarios_path || session.actual_honorarios_pdf_path || draftCopy)}</p>
-        </div>
-        <span class="status-chip ${finalizationState === "draft_ready" ? "ok" : finalizationState === "draft_failed" ? "bad" : "warn"}">${escapeHtml(stateLabel)}</span>
-      </div>
-      <div class="result-grid">
-      <div><h3>DOCX</h3><p class="word-break">${escapeHtml(session.actual_honorarios_path || "Unavailable")}</p></div>
-      <div><h3>PDF</h3><p class="word-break">${escapeHtml(session.actual_honorarios_pdf_path || "Unavailable")}</p></div>
-      <div><h3>Draft</h3><p>${escapeHtml(draftCopy)}</p></div>
-      <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight?.launch_preflight?.message || "Unavailable")}</p></div>
-      <div><h3>Export Canary</h3><p>${escapeHtml(preflight?.export_canary?.message || "Unavailable")}</p></div>
-      <div><h3>Retry</h3><p>${showRetryAction ? "You can try again from this drawer." : "No retry required."}</p></div>
-      <div><h3>Build Provenance</h3><p class="word-break">${escapeHtml(provenance.label)}</p></div>
-    </div>
-  `;
+    renderSurface({
+      button: {
+        ...defaultButton,
+        label: showRetryAction ? retryLabel : defaultButtonLabel,
+        disabled: !showRetryAction || (preflight && !preflight.finalization_ready),
+        hidden: !showRetryAction,
+      },
+      statusText: draftStatusText,
+      summary: summaryCard,
+      result: {
+        title: draftStatusText,
+        message: session.actual_honorarios_path || session.actual_honorarios_pdf_path || draftCopy,
+        label: stateLabel,
+        tone: finalizationState === "draft_ready" ? "ok" : finalizationState === "draft_failed" ? "bad" : "warn",
+        gridItems: [
+          { label: "DOCX", value: session.actual_honorarios_path || "Unavailable", className: "word-break" },
+          { label: "PDF", value: session.actual_honorarios_pdf_path || "Unavailable", className: "word-break" },
+          { label: "Draft", value: draftCopy },
+          { label: "Launch Preflight", value: preflight?.launch_preflight?.message || "Unavailable" },
+          { label: "Export Canary", value: preflight?.export_canary?.message || "Unavailable" },
+          { label: "Retry", value: showRetryAction ? "You can try again from this drawer." : "No retry required." },
+          { label: "Build Provenance", value: provenance.label, className: "word-break" },
+        ],
+      },
+    });
     updateGmailFinalizationReportActionState();
     return;
   }
   if (!payload && preflight?.finalization_ready) {
-    button.disabled = false;
-    result.className = "result-card";
-    result.innerHTML = `
-      <div class="result-header">
-        <div>
-          <strong>Word PDF export is ready.</strong>
-          <p>The same Word export path used for the Gmail reply passed a canary export on this machine.</p>
-        </div>
-        <span class="status-chip ok">Ready</span>
-      </div>
-      <div class="result-grid">
-        <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight.launch_preflight?.message || "Ready")}</p></div>
-        <div><h3>Export Canary</h3><p>${escapeHtml(preflight.export_canary?.message || "Ready")}</p></div>
-        <div><h3>Checked</h3><p>${escapeHtml(preflight.last_checked_at || "Just now")}</p></div>
-      </div>
-    `;
-    status.textContent = "Every selected Gmail attachment is saved. You can create the Gmail reply when you are ready.";
+    renderSurface({
+      button: {
+        ...defaultButton,
+        disabled: false,
+      },
+      statusText: "Every selected Gmail attachment is saved. You can create the Gmail reply when you are ready.",
+      summary: summaryCard,
+      result: {
+        title: "Word PDF export is ready.",
+        message: "The same Word export path used for the Gmail reply passed a canary export on this machine.",
+        label: "Ready",
+        tone: "ok",
+        gridItems: [
+          { label: "Launch Preflight", value: preflight.launch_preflight?.message || "Ready" },
+          { label: "Export Canary", value: preflight.export_canary?.message || "Ready" },
+          { label: "Checked", value: preflight.last_checked_at || "Just now" },
+        ],
+      },
+    });
     updateGmailFinalizationReportActionState();
     return;
   }
   if (!payload) {
-    button.disabled = true;
-    result.className = "result-card empty-state";
-    result.textContent = "Create the Gmail reply after the Word PDF readiness check finishes.";
-    status.textContent = "The Gmail reply will unlock here after the Word PDF readiness check finishes.";
+    renderSurface({
+      button: {
+        ...defaultButton,
+        disabled: true,
+      },
+      statusText: "The Gmail reply will unlock here after the Word PDF readiness check finishes.",
+      summary: summaryCard,
+      result: {
+        empty: true,
+        text: "Create the Gmail reply after the Word PDF readiness check finishes.",
+      },
+    });
     updateGmailFinalizationReportActionState();
     return;
   }
@@ -1417,7 +1454,7 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
           ? "Draft failed"
           : "Ready";
   const tone = payload.status === "ok" ? "ok" : finalizationState === "draft_failed" ? "bad" : "warn";
-  status.textContent = payload.status === "ok"
+  const payloadStatusText = payload.status === "ok"
     ? "The Gmail reply is ready."
     : finalizationState === "blocked_word_pdf_export"
       ? "The final Word PDF step is blocked."
@@ -1426,29 +1463,32 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
       : finalizationState === "draft_failed"
         ? "The final DOCX files were created, but the Gmail reply step failed. You can try again from here."
         : "The Gmail reply step completed with warnings. Review the details here.";
-  button.disabled = gmailState.batchFinalizePreflightInFlight
-    || payload.status === "ok"
-    || (preflight && !preflight.finalization_ready);
-  button.classList.toggle("hidden", payload.status === "ok");
-  result.className = "result-card";
-  result.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(status.textContent)}</strong>
-        <p>${escapeHtml(normalized.docx_path || normalized.pdf_path || "Finalization output is available.")}</p>
-      </div>
-      <span class="status-chip ${tone === "ok" ? "ok" : tone === "warn" ? "warn" : "bad"}">${escapeHtml(draftStatus)}</span>
-    </div>
-    <div class="result-grid">
-      <div><h3>DOCX</h3><p class="word-break">${escapeHtml(normalized.docx_path || "Unavailable")}</p></div>
-      <div><h3>PDF</h3><p class="word-break">${escapeHtml(normalized.pdf_path || "Unavailable")}</p></div>
-      <div><h3>Draft</h3><p>${escapeHtml(normalized.gmail_draft_result?.message || normalized.draft_prereqs?.message || draftStatus)}</p></div>
-      <div><h3>Launch Preflight</h3><p>${escapeHtml(preflight?.launch_preflight?.message || "Unavailable")}</p></div>
-      <div><h3>Export Canary</h3><p>${escapeHtml(preflight?.export_canary?.message || "Unavailable")}</p></div>
-      <div><h3>Retry</h3><p>${retryAvailable ? "You can try again from this drawer." : "No retry required."}</p></div>
-      <div><h3>Build Provenance</h3><p class="word-break">${escapeHtml(provenance.label)}</p></div>
-    </div>
-  `;
+  renderSurface({
+    button: {
+      ...defaultButton,
+      disabled: gmailState.batchFinalizePreflightInFlight
+        || payload.status === "ok"
+        || (preflight && !preflight.finalization_ready),
+      hidden: payload.status === "ok",
+    },
+    statusText: payloadStatusText,
+    summary: summaryCard,
+    result: {
+      title: payloadStatusText,
+      message: normalized.docx_path || normalized.pdf_path || "Finalization output is available.",
+      label: draftStatus,
+      tone: tone === "ok" ? "ok" : tone === "warn" ? "warn" : "bad",
+      gridItems: [
+        { label: "DOCX", value: normalized.docx_path || "Unavailable", className: "word-break" },
+        { label: "PDF", value: normalized.pdf_path || "Unavailable", className: "word-break" },
+        { label: "Draft", value: normalized.gmail_draft_result?.message || normalized.draft_prereqs?.message || draftStatus },
+        { label: "Launch Preflight", value: preflight?.launch_preflight?.message || "Unavailable" },
+        { label: "Export Canary", value: preflight?.export_canary?.message || "Unavailable" },
+        { label: "Retry", value: retryAvailable ? "You can try again from this drawer." : "No retry required." },
+        { label: "Build Provenance", value: provenance.label, className: "word-break" },
+      ],
+    },
+  });
   updateGmailFinalizationReportActionState();
 }
 
