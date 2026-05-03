@@ -5597,6 +5597,233 @@ console.log(JSON.stringify({
     assert results["defaultMessage"]["innerHTMLWrites"] == 0
 
 
+def test_gmail_ui_module_centralizes_translation_step_card_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailTranslationStepCardInto" in gmail_js
+    assert "export function renderGmailTranslationStepCardInto" in gmail_ui_js
+
+    step_start = gmail_js.index("function renderTranslationCompletionGmailStepCard")
+    step_end = gmail_js.index("\nfunction collectSelections", step_start)
+    step_block = gmail_js[step_start:step_end]
+    assert "renderGmailTranslationStepCardInto({" in step_block
+    assert ".classList.toggle(" not in step_block
+    assert ".disabled =" not in step_block
+    assert ".textContent =" not in step_block
+
+    renderer_start = gmail_ui_js.index("export function renderGmailTranslationStepCardInto")
+    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeElement() {
+  const element = {
+    className: "",
+    children: [],
+    disabled: false,
+    innerHTMLAssignments: [],
+  };
+  element.classList = makeClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        this.children.push({ tagName: match[1].toUpperCase() });
+      }
+    },
+  });
+  return element;
+}
+
+function makeNodes() {
+  return {
+    card: makeElement(),
+    title: makeElement(),
+    copy: makeElement(),
+    chip: makeElement(),
+    button: makeElement(),
+  };
+}
+
+function summarize(nodes) {
+  return {
+    cardHidden: nodes.card.classList.contains("hidden"),
+    buttonDisabled: nodes.button.disabled,
+    title: nodes.title.textContent,
+    copy: nodes.copy.textContent,
+    chip: nodes.chip.textContent,
+    button: nodes.button.textContent,
+    childCounts: [
+      nodes.title.children.length,
+      nodes.copy.children.length,
+      nodes.chip.children.length,
+      nodes.button.children.length,
+    ],
+    innerHTMLWrites: [
+      nodes.card.innerHTMLAssignments.length,
+      nodes.title.innerHTMLAssignments.length,
+      nodes.copy.innerHTMLAssignments.length,
+      nodes.chip.innerHTMLAssignments.length,
+      nodes.button.innerHTMLAssignments.length,
+    ],
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const visible = makeNodes();
+const visibleResult = ui.renderGmailTranslationStepCardInto(visible, {
+  visible: true,
+  blocked: false,
+  title: `Ready ${malicious}`,
+  copy: `Copy ${malicious}`,
+  chipLabel: `1/2 ${malicious}`,
+  buttonLabel: `Save ${malicious}`,
+});
+
+const blocked = makeNodes();
+ui.renderGmailTranslationStepCardInto(blocked, {
+  visible: true,
+  blocked: true,
+  title: "Review first",
+  copy: "Open Word before saving.",
+  chipLabel: "1/1",
+  buttonLabel: "Save this Gmail attachment",
+});
+
+const hidden = makeNodes();
+hidden.title.textContent = "Keep existing title";
+hidden.copy.textContent = "Keep existing copy";
+hidden.chip.textContent = "Keep existing chip";
+hidden.button.textContent = "Keep existing button";
+const hiddenResult = ui.renderGmailTranslationStepCardInto(hidden, {
+  visible: false,
+  blocked: false,
+  title: `Hidden ${malicious}`,
+  copy: `Hidden ${malicious}`,
+  chipLabel: `Hidden ${malicious}`,
+  buttonLabel: `Hidden ${malicious}`,
+});
+
+const partial = makeNodes();
+const partialResult = ui.renderGmailTranslationStepCardInto({
+  card: partial.card,
+  title: partial.title,
+  copy: partial.copy,
+  chip: partial.chip,
+  button: null,
+}, {
+  visible: true,
+  title: malicious,
+});
+
+const nullResult = ui.renderGmailTranslationStepCardInto(null, {
+  visible: true,
+  title: malicious,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailTranslationStepCardInto,
+  visibleResultType: typeof visibleResult,
+  hiddenResultType: typeof hiddenResult,
+  partialResultType: typeof partialResult,
+  nullResultType: typeof nullResult,
+  visible: summarize(visible),
+  blocked: summarize(blocked),
+  hidden: summarize(hidden),
+  partial: summarize(partial),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["visibleResultType"] == "object"
+    assert results["hiddenResultType"] == "object"
+    assert results["partialResultType"] == "undefined"
+    assert results["nullResultType"] == "undefined"
+
+    assert results["visible"]["cardHidden"] is False
+    assert results["visible"]["buttonDisabled"] is False
+    assert results["visible"]["title"] == "Ready <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["copy"] == "Copy <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["chip"] == "1/2 <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["button"] == "Save <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["childCounts"] == [0, 0, 0, 0]
+    assert results["visible"]["innerHTMLWrites"] == [0, 0, 0, 0, 0]
+
+    assert results["blocked"]["cardHidden"] is False
+    assert results["blocked"]["buttonDisabled"] is True
+    assert results["blocked"]["title"] == "Review first"
+    assert results["blocked"]["button"] == "Save this Gmail attachment"
+
+    assert results["hidden"]["cardHidden"] is True
+    assert results["hidden"]["buttonDisabled"] is True
+    assert results["hidden"]["title"] == "Keep existing title"
+    assert results["hidden"]["copy"] == "Keep existing copy"
+    assert results["hidden"]["chip"] == "Keep existing chip"
+    assert results["hidden"]["button"] == "Keep existing button"
+    assert results["hidden"]["innerHTMLWrites"] == [0, 0, 0, 0, 0]
+
+    assert results["partial"]["cardHidden"] is False
+    assert results["partial"]["title"] == ""
+    assert results["partial"]["innerHTMLWrites"] == [0, 0, 0, 0, 0]
+
+
 def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -17007,6 +17234,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailBatchFinalizeSurfaceInto" in gmail_ui_asset.text
         assert "renderGmailReportActionInto" in gmail_ui_asset.text
         assert "renderGmailNumericMismatchWarningInto" in gmail_ui_asset.text
+        assert "renderGmailTranslationStepCardInto" in gmail_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
