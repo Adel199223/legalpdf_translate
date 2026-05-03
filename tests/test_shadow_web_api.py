@@ -4810,6 +4810,418 @@ console.log(JSON.stringify({
     assert results["staticDetail"]["buttons"][0]["disabled"] is False
 
 
+def test_gmail_ui_module_centralizes_batch_finalize_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailBatchFinalizeSurfaceInto" in gmail_js
+    batch_start = gmail_js.index("function renderBatchFinalizeSurface")
+    batch_end = gmail_js.index("\nfunction renderTranslationCompletionGmailStepCard", batch_start)
+    batch_block = gmail_js[batch_start:batch_end]
+    assert "renderGmailBatchFinalizeSurfaceInto" in batch_block
+    assert "innerHTML" not in batch_block
+    assert "innerHTML" not in gmail_js
+
+    assert "export function renderGmailBatchFinalizeSurfaceInto" in gmail_ui_js
+    renderer_start = gmail_ui_js.index("export function renderGmailBatchFinalizeSurfaceInto")
+    renderer_end = gmail_ui_js.index("\nfunction createCell", renderer_start)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    add(...names) {
+      const classes = new Set(normalizeClassList(element.className));
+      names.flatMap((name) => normalizeClassList(name)).forEach((name) => classes.add(name));
+      element.className = Array.from(classes).join(" ");
+    },
+    remove(...names) {
+      const removeNames = new Set(names.flatMap((name) => normalizeClassList(name)));
+      element.className = normalizeClassList(element.className)
+        .filter((name) => !removeNames.has(name))
+        .join(" ");
+    },
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: tagName.toUpperCase(),
+    children: [],
+    className: "",
+    dataset: {},
+    attributes: {},
+    innerHTMLAssignments: [],
+    disabled: false,
+    title: "",
+    appendChild(child) {
+      if (child) {
+        child.parentNode = this;
+        this.children.push(child);
+      }
+      return child;
+    },
+    replaceChildren(...children) {
+      this.children = [];
+      children.forEach((child) => this.appendChild(child));
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+    setAttribute(name, value) {
+      const stringValue = String(value ?? "");
+      this.attributes[name] = stringValue;
+      if (name === "title") {
+        this.title = stringValue;
+      }
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
+    },
+  };
+  element.classList = makeClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent || ""}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+function makeNodes() {
+  return {
+    status: makeElement("p"),
+    summary: makeElement("article"),
+    result: makeElement("article"),
+    button: makeElement("button"),
+  };
+}
+
+function walk(node, visitor) {
+  if (!node) {
+    return;
+  }
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHTMLWrites(...nodes) {
+  let total = 0;
+  nodes.forEach((node) => {
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
+  });
+  return total;
+}
+
+function collectClasses(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (String(current.className || "").trim()) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+function collectTitles(node) {
+  const titles = [];
+  walk(node, (current) => {
+    if (current.title) {
+      titles.push(current.title);
+    }
+  });
+  return titles;
+}
+
+function summarize(nodes) {
+  return {
+    statusText: nodes.status.textContent,
+    summaryClass: nodes.summary.className,
+    summaryText: nodes.summary.textContent,
+    resultClass: nodes.result.className,
+    resultText: nodes.result.textContent,
+    buttonText: nodes.button.textContent,
+    buttonDisabled: nodes.button.disabled,
+    buttonHidden: nodes.button.classList.contains("hidden"),
+    classes: [
+      ...collectClasses(nodes.summary),
+      ...collectClasses(nodes.result),
+      nodes.button.className,
+    ].filter(Boolean),
+    titles: [
+      ...collectTitles(nodes.summary),
+      ...collectTitles(nodes.result),
+    ],
+    imgCount: countTag(nodes.summary, "img") + countTag(nodes.result, "img"),
+    scriptCount: countTag(nodes.summary, "script") + countTag(nodes.result, "script"),
+    innerHTMLWrites: countInnerHTMLWrites(nodes.status, nodes.summary, nodes.result, nodes.button),
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const unavailableNodes = makeNodes();
+const unavailableResult = ui.renderGmailBatchFinalizeSurfaceInto(unavailableNodes, {
+  statusText: "After every selected attachment is saved, create the Gmail reply with the final files.",
+  button: { label: "Create Gmail reply", disabled: true, hidden: false },
+  summary: {
+    empty: true,
+    text: "Finish every Gmail attachment first to open the final reply step.",
+  },
+  result: {
+    empty: true,
+    text: "Gmail reply details will appear here after the final step.",
+  },
+});
+
+const recoveredNodes = makeNodes();
+ui.renderGmailBatchFinalizeSurfaceInto(recoveredNodes, {
+  statusText: `Recovered ${malicious}`,
+  button: { label: "Create Gmail reply", disabled: true, hidden: true },
+  summary: {
+    title: `Subject ${malicious}`,
+    message: `Recovered copy ${malicious}`,
+    label: `Draft ready ${malicious}`,
+    tone: "ok",
+    gridItems: [
+      { label: "Target Language", value: `FR ${malicious}` },
+      { label: "Output Folder", value: `Folder ${malicious}`, titleValue: `C:/Unsafe/${malicious}` },
+      { label: "Build Provenance", value: `main@abc ${malicious}`, className: "word-break" },
+    ],
+  },
+  result: {
+    title: `Recovered ${malicious}`,
+    message: `C:/demo.docx ${malicious}`,
+    label: `Recovered ${malicious}`,
+    tone: "info",
+    gridItems: [
+      { label: "DOCX", value: `C:/demo.docx ${malicious}`, className: "word-break" },
+      { label: "PDF", value: "" },
+      { label: "Session Report", value: "Unavailable", className: "word-break" },
+      { label: "Recovery Source", value: "Recovered" },
+    ],
+  },
+});
+
+const blockedNodes = makeNodes();
+ui.renderGmailBatchFinalizeSurfaceInto(blockedNodes, {
+  statusText: "The final Word PDF step is blocked. Review the details here before you try again.",
+  button: { label: "Create Gmail reply", disabled: true, hidden: false },
+  summary: { title: "Ready summary", message: "One saved attachment", label: "Blocked", tone: "warn" },
+  result: {
+    title: `Word PDF ${malicious}`,
+    message: `Probe ${malicious}`,
+    label: "Blocked",
+    tone: "warn",
+    gridItems: [
+      { label: "Launch Preflight", value: `Launch ${malicious}` },
+      { label: "Export Canary", value: `Canary ${malicious}` },
+      { label: "Failure Phase", value: `phase ${malicious}` },
+    ],
+  },
+});
+
+const readyNodes = makeNodes();
+ui.renderGmailBatchFinalizeSurfaceInto(readyNodes, {
+  statusText: "Every selected Gmail attachment is saved. You can create the Gmail reply when you are ready.",
+  button: { label: "Create Gmail reply", disabled: false, hidden: false },
+  summary: { title: "Ready summary", message: "One saved attachment", label: "Ready", tone: "ok" },
+  result: {
+    title: "Word PDF export is ready.",
+    message: "The same Word export path used for the Gmail reply passed a canary export on this machine.",
+    label: "Ready",
+    tone: "ok",
+    gridItems: [
+      { label: "Launch Preflight", value: "Ready" },
+      { label: "Export Canary", value: "Ready" },
+      { label: "Checked", value: "Just now" },
+    ],
+  },
+});
+
+const retryNodes = makeNodes();
+ui.renderGmailBatchFinalizeSurfaceInto(retryNodes, {
+  statusText: "The final DOCX files were created, but the Gmail reply step failed. You can try again from here.",
+  button: { label: "Try Gmail reply again", disabled: false, hidden: false },
+  summary: { title: "Retry summary", message: "Saved attachments", label: "Draft failed", tone: "bad" },
+  result: {
+    title: "The final DOCX files were created, but the Gmail reply step failed. You can try again from here.",
+    message: `Draft failed ${malicious}`,
+    label: "Draft failed",
+    tone: "bad",
+    gridItems: [
+      { label: "DOCX", value: "C:/demo.docx", className: "word-break" },
+      { label: "PDF", value: "Unavailable", className: "word-break" },
+      { label: "Draft", value: `Draft failed ${malicious}` },
+      { label: "Retry", value: "You can try again from this drawer." },
+    ],
+  },
+});
+
+const successNodes = makeNodes();
+ui.renderGmailBatchFinalizeSurfaceInto(successNodes, {
+  statusText: "The Gmail reply is ready.",
+  button: { label: "Finalized", disabled: true, hidden: true },
+  summary: { title: "Success summary", message: "Saved attachments", label: "Draft ready", tone: "ok" },
+  result: {
+    title: "The Gmail reply is ready.",
+    message: "C:/demo.docx",
+    label: "Draft ready",
+    tone: "ok",
+    gridItems: [
+      { label: "DOCX", value: "C:/demo.docx", className: "word-break" },
+      { label: "PDF", value: "C:/demo.pdf", className: "word-break" },
+      { label: "Draft", value: "Draft created" },
+      { label: "Retry", value: "No retry required." },
+    ],
+  },
+});
+
+const nullResult = ui.renderGmailBatchFinalizeSurfaceInto({ ...makeNodes(), summary: null }, {
+  statusText: "ignored",
+});
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailBatchFinalizeSurfaceInto,
+  unavailableResultType: typeof unavailableResult,
+  nullResultType: typeof nullResult,
+  unavailable: summarize(unavailableNodes),
+  recovered: summarize(recoveredNodes),
+  blocked: summarize(blockedNodes),
+  ready: summarize(readyNodes),
+  retry: summarize(retryNodes),
+  success: summarize(successNodes),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["unavailableResultType"] == "object"
+    assert results["nullResultType"] == "undefined"
+
+    assert results["unavailable"]["summaryClass"] == "result-card empty-state"
+    assert results["unavailable"]["summaryText"] == "Finish every Gmail attachment first to open the final reply step."
+    assert results["unavailable"]["resultClass"] == "result-card empty-state"
+    assert results["unavailable"]["resultText"] == "Gmail reply details will appear here after the final step."
+    assert results["unavailable"]["statusText"] == "After every selected attachment is saved, create the Gmail reply with the final files."
+    assert results["unavailable"]["buttonText"] == "Create Gmail reply"
+    assert results["unavailable"]["buttonDisabled"] is True
+    assert results["unavailable"]["buttonHidden"] is False
+    assert results["unavailable"]["innerHTMLWrites"] == 0
+
+    assert "Subject <img src=x onerror=alert(1)><script>bad()</script>" in results["recovered"]["summaryText"]
+    assert "Recovered <img src=x onerror=alert(1)><script>bad()</script>" in results["recovered"]["resultText"]
+    assert "C:/Unsafe/<img src=x onerror=alert(1)><script>bad()</script>" in results["recovered"]["titles"]
+    assert "status-chip ok" in results["recovered"]["classes"]
+    assert "status-chip info" in results["recovered"]["classes"]
+    assert results["recovered"]["buttonHidden"] is True
+    assert results["recovered"]["imgCount"] == 0
+    assert results["recovered"]["scriptCount"] == 0
+    assert results["recovered"]["innerHTMLWrites"] == 0
+
+    assert "Word PDF <img src=x onerror=alert(1)><script>bad()</script>" in results["blocked"]["resultText"]
+    assert "Failure Phase" in results["blocked"]["resultText"]
+    assert "status-chip warn" in results["blocked"]["classes"]
+    assert results["blocked"]["buttonDisabled"] is True
+    assert results["blocked"]["innerHTMLWrites"] == 0
+
+    assert results["ready"]["buttonDisabled"] is False
+    assert "Word PDF export is ready." in results["ready"]["resultText"]
+    assert "Checked" in results["ready"]["resultText"]
+    assert "status-chip ok" in results["ready"]["classes"]
+
+    assert results["retry"]["buttonText"] == "Try Gmail reply again"
+    assert results["retry"]["buttonDisabled"] is False
+    assert "Draft failed <img src=x onerror=alert(1)><script>bad()</script>" in results["retry"]["resultText"]
+    assert "status-chip bad" in results["retry"]["classes"]
+    assert results["retry"]["innerHTMLWrites"] == 0
+
+    assert results["success"]["buttonText"] == "Finalized"
+    assert results["success"]["buttonDisabled"] is True
+    assert results["success"]["buttonHidden"] is True
+    assert "The Gmail reply is ready." in results["success"]["statusText"]
+    assert "Draft created" in results["success"]["resultText"]
+    assert results["success"]["innerHTMLWrites"] == 0
+
+
 def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -16202,6 +16614,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailSessionResultInto" in gmail_ui_asset.text
         assert "renderGmailAttachmentListInto" in gmail_ui_asset.text
         assert "renderGmailReviewDetailInto" in gmail_ui_asset.text
+        assert "renderGmailBatchFinalizeSurfaceInto" in gmail_ui_asset.text
         shell_ui_asset = client.get(f"/static-build/{asset_version}/shell_ui.js")
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")
