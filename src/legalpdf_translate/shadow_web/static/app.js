@@ -68,6 +68,8 @@ import {
   renderCourtEmailEditorInto,
   renderCourtEmailOptionsInto,
   renderCourtEmailStatusInto,
+  renderCheckboxValueInto,
+  renderControlValueInto,
   renderInterpretationActionButtonsInto,
   renderInterpretationCityDialogContentInto,
   renderInterpretationCityDialogFieldsInto,
@@ -507,11 +509,11 @@ function fieldValue(id) {
 }
 
 function setFieldValue(id, value) {
-  qs(id).value = value ?? "";
+  renderControlValueInto(qs(id), value);
 }
 
 function setCheckbox(id, value) {
-  qs(id).checked = Boolean(value);
+  renderCheckboxValueInto(qs(id), value);
 }
 
 function profileSummaries() {

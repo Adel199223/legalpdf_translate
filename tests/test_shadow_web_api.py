@@ -7244,6 +7244,130 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_interpretation_reference_ui_module_centralizes_control_value_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_reference_ui_js = static_dir / "interpretation_reference_ui.js"
+
+    assert interpretation_reference_ui_js.exists()
+    interpretation_reference_ui_text = interpretation_reference_ui_js.read_text(encoding="utf-8")
+    assert "export function renderControlValueInto" in interpretation_reference_ui_text
+    assert "export function renderCheckboxValueInto" in interpretation_reference_ui_text
+    assert "renderControlValueInto(qs(id), value);" in app_js
+    assert "renderCheckboxValueInto(qs(id), value);" in app_js
+
+    helper_start = app_js.index("function setFieldValue")
+    helper_end = app_js.index("function profileSummaries", helper_start)
+    helper_block = app_js[helper_start:helper_end]
+    assert ".value =" not in helper_block
+    assert ".checked =" not in helper_block
+    assert "innerHTML" not in helper_block
+
+    renderer_start = interpretation_reference_ui_text.index("export function renderControlValueInto")
+    renderer_end = interpretation_reference_ui_text.index(
+        "export function renderInterpretationRowIdInto",
+        renderer_start,
+    )
+    renderer_block = interpretation_reference_ui_text[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = r"""
+const interpretationReferenceUi = await import(__INTERPRETATION_REFERENCE_UI_MODULE_URL__);
+
+function makeField(value = "stale") {
+  const field = {
+    value,
+    checked: false,
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+  };
+  Object.defineProperty(field, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return field;
+}
+
+const malicious = `Value <img src=x onerror=alert(1)><script>bad()</script>`;
+const textField = makeField();
+const emptyField = makeField("existing");
+const numericField = makeField("existing");
+const trueCheckbox = makeField();
+const falseCheckbox = makeField();
+const truthyCheckbox = makeField();
+const zeroCheckbox = makeField();
+
+interpretationReferenceUi.renderControlValueInto(textField, malicious);
+interpretationReferenceUi.renderControlValueInto(emptyField, null);
+interpretationReferenceUi.renderControlValueInto(numericField, 0);
+interpretationReferenceUi.renderCheckboxValueInto(trueCheckbox, true);
+interpretationReferenceUi.renderCheckboxValueInto(falseCheckbox, false);
+interpretationReferenceUi.renderCheckboxValueInto(truthyCheckbox, "truthy");
+interpretationReferenceUi.renderCheckboxValueInto(zeroCheckbox, 0);
+const nullValueResult = interpretationReferenceUi.renderControlValueInto(null, malicious);
+const nullCheckboxResult = interpretationReferenceUi.renderCheckboxValueInto(null, true);
+
+console.log(JSON.stringify({
+  valueExportType: typeof interpretationReferenceUi.renderControlValueInto,
+  checkboxExportType: typeof interpretationReferenceUi.renderCheckboxValueInto,
+  values: {
+    textField: textField.value,
+    emptyField: emptyField.value,
+    numericField: numericField.value,
+  },
+  checked: {
+    trueCheckbox: trueCheckbox.checked,
+    falseCheckbox: falseCheckbox.checked,
+    truthyCheckbox: truthyCheckbox.checked,
+    zeroCheckbox: zeroCheckbox.checked,
+  },
+  innerHTMLWrites:
+    textField.innerHTMLAssignments.length
+    + emptyField.innerHTMLAssignments.length
+    + numericField.innerHTMLAssignments.length
+    + trueCheckbox.innerHTMLAssignments.length
+    + falseCheckbox.innerHTMLAssignments.length
+    + truthyCheckbox.innerHTMLAssignments.length
+    + zeroCheckbox.innerHTMLAssignments.length,
+  nullValueResultType: nullValueResult === undefined ? "undefined" : typeof nullValueResult,
+  nullCheckboxResultType: nullCheckboxResult === undefined ? "undefined" : typeof nullCheckboxResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REFERENCE_UI_MODULE_URL__": "interpretation_reference_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["valueExportType"] == "function"
+    assert results["checkboxExportType"] == "function"
+    assert results["values"] == {
+        "textField": "Value <img src=x onerror=alert(1)><script>bad()</script>",
+        "emptyField": "",
+        "numericField": "0",
+    }
+    assert results["checked"] == {
+        "trueCheckbox": True,
+        "falseCheckbox": False,
+        "truthyCheckbox": True,
+        "zeroCheckbox": False,
+    }
+    assert results["innerHTMLWrites"] == 0
+    assert results["nullValueResultType"] == "undefined"
+    assert results["nullCheckboxResultType"] == "undefined"
+
+
 def test_interpretation_reference_ui_module_centralizes_service_same_controls() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -13901,6 +14025,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationCityDialogContentInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationFormFieldsInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationRowIdInto" in interpretation_reference_ui_asset.text
+        assert "renderControlValueInto" in interpretation_reference_ui_asset.text
+        assert "renderCheckboxValueInto" in interpretation_reference_ui_asset.text
         assert "renderServiceSameControlsInto" in interpretation_reference_ui_asset.text
         assert "renderCourtEmailEditorInto" in interpretation_reference_ui_asset.text
         assert "renderCourtEmailStatusInto" in interpretation_reference_ui_asset.text
