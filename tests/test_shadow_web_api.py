@@ -6333,6 +6333,205 @@ console.log(JSON.stringify({
     assert "nullDialogContentResult" not in results
 
 
+def test_interpretation_reference_ui_module_centralizes_form_field_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_reference_ui_js = static_dir / "interpretation_reference_ui.js"
+
+    assert interpretation_reference_ui_js.exists()
+    interpretation_reference_ui_text = interpretation_reference_ui_js.read_text(encoding="utf-8")
+    assert 'from "./interpretation_reference_ui.js"' in app_js
+    assert "export function renderInterpretationFormFieldsInto" in interpretation_reference_ui_text
+    assert "renderInterpretationFormFieldsInto({" in app_js
+    assert "innerHTML" not in interpretation_reference_ui_text
+
+    seed_start = app_js.index("export function applyInterpretationSeed")
+    history_start = app_js.index("function applyHistoryItem", seed_start)
+    seed_block = app_js[seed_start:history_start]
+    assert "renderInterpretationFormFieldsInto({" in seed_block
+    assert "deriveInterpretationSeedServiceDefaults" in seed_block
+    assert "applyInterpretationCityValue" in seed_block
+    assert "populateCourtEmailSelect" in seed_block
+    assert "populateServiceEntitySelect" in seed_block
+    assert 'setFieldValue("case-number"' not in seed_block
+    assert 'setFieldValue("pages"' not in seed_block
+    assert 'setFieldValue("profit"' not in seed_block
+    assert 'setCheckbox("include-transport"' not in seed_block
+    assert 'qs("recipient-block").value = ""' not in seed_block
+    assert 'qs("row-id").value = ""' not in seed_block
+
+    history_start = app_js.index("function applyHistoryItem")
+    profiles_start = app_js.index("function renderProfiles", history_start)
+    history_block = app_js[history_start:profiles_start]
+    assert "renderInterpretationFormFieldsInto({" in history_block
+    assert "applyInterpretationCityValue" in history_block
+    assert "populateCourtEmailSelect" in history_block
+    assert "populateServiceEntitySelect" in history_block
+    assert "inferServiceSame" in history_block
+    assert 'setFieldValue("case-number"' not in history_block
+    assert 'setFieldValue("pages"' not in history_block
+    assert 'setFieldValue("profit"' not in history_block
+    assert 'setCheckbox("include-transport"' not in history_block
+    assert 'qs("recipient-block").value = ""' not in history_block
+    assert 'qs("row-id").value = item.row.id' not in history_block
+
+    script = r"""
+const interpretationReferenceUi = await import(__INTERPRETATION_REFERENCE_UI_MODULE_URL__);
+
+function makeControl() {
+  return {
+    value: "unchanged",
+    checked: false,
+    innerHTMLAssignments: [],
+  };
+}
+
+Object.defineProperty(Object.prototype, "innerHTML", {
+  configurable: true,
+  get() {
+    return "";
+  },
+  set(value) {
+    if (!this.innerHTMLAssignments) {
+      this.innerHTMLAssignments = [];
+    }
+    this.innerHTMLAssignments.push(String(value ?? ""));
+  },
+});
+
+function countInnerHtmlWrites(nodes) {
+  return Object.values(nodes)
+    .filter(Boolean)
+    .reduce((total, node) => total + (node.innerHTMLAssignments || []).length, 0);
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const nodes = {
+  rowId: makeControl(),
+  caseNumber: makeControl(),
+  caseEntity: makeControl(),
+  serviceEntity: makeControl(),
+  serviceDate: makeControl(),
+  travelKmOutbound: makeControl(),
+  pages: makeControl(),
+  wordCount: makeControl(),
+  ratePerWord: makeControl(),
+  expectedTotal: makeControl(),
+  amountPaid: makeControl(),
+  apiCost: makeControl(),
+  profit: makeControl(),
+  recipientBlock: makeControl(),
+  serviceSame: makeControl(),
+  useServiceLocation: makeControl(),
+  includeTransport: makeControl(),
+};
+
+interpretationReferenceUi.renderInterpretationFormFieldsInto(nodes, {
+  rowId: 42,
+  caseNumber: `Case ${malicious}`,
+  caseEntity: `Entity ${malicious}`,
+  serviceEntity: `Service ${malicious}`,
+  serviceDate: `Date ${malicious}`,
+  travelKmOutbound: `Km ${malicious}`,
+  pages: 12,
+  wordCount: null,
+  ratePerWord: undefined,
+  expectedTotal: `Total ${malicious}`,
+  amountPaid: 0,
+  apiCost: `Cost ${malicious}`,
+  profit: false,
+  recipientBlock: `Recipient ${malicious}`,
+  serviceSame: true,
+  useServiceLocation: false,
+  includeTransport: "truthy",
+});
+
+const missingNode = makeControl();
+interpretationReferenceUi.renderInterpretationFormFieldsInto({
+  rowId: missingNode,
+  caseNumber: null,
+  serviceSame: null,
+}, {
+  rowId: null,
+  caseNumber: `Missing ${malicious}`,
+  serviceSame: true,
+});
+
+const nullNodesResult = interpretationReferenceUi.renderInterpretationFormFieldsInto(null, {
+  rowId: `Null ${malicious}`,
+  serviceSame: true,
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationReferenceUi.renderInterpretationFormFieldsInto,
+  values: {
+    rowId: nodes.rowId.value,
+    caseNumber: nodes.caseNumber.value,
+    caseEntity: nodes.caseEntity.value,
+    serviceEntity: nodes.serviceEntity.value,
+    serviceDate: nodes.serviceDate.value,
+    travelKmOutbound: nodes.travelKmOutbound.value,
+    pages: nodes.pages.value,
+    wordCount: nodes.wordCount.value,
+    ratePerWord: nodes.ratePerWord.value,
+    expectedTotal: nodes.expectedTotal.value,
+    amountPaid: nodes.amountPaid.value,
+    apiCost: nodes.apiCost.value,
+    profit: nodes.profit.value,
+    recipientBlock: nodes.recipientBlock.value,
+  },
+  checked: {
+    serviceSame: nodes.serviceSame.checked,
+    useServiceLocation: nodes.useServiceLocation.checked,
+    includeTransport: nodes.includeTransport.checked,
+  },
+  missing: {
+    rowId: missingNode.value,
+    checked: missingNode.checked,
+  },
+  innerHTMLWrites: countInnerHtmlWrites(nodes) + countInnerHtmlWrites({ missingNode }),
+  nullNodesResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REFERENCE_UI_MODULE_URL__": "interpretation_reference_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["values"] == {
+        "rowId": "42",
+        "caseNumber": "Case <img src=x onerror=alert(1)><script>bad()</script>",
+        "caseEntity": "Entity <img src=x onerror=alert(1)><script>bad()</script>",
+        "serviceEntity": "Service <img src=x onerror=alert(1)><script>bad()</script>",
+        "serviceDate": "Date <img src=x onerror=alert(1)><script>bad()</script>",
+        "travelKmOutbound": "Km <img src=x onerror=alert(1)><script>bad()</script>",
+        "pages": "12",
+        "wordCount": "",
+        "ratePerWord": "",
+        "expectedTotal": "Total <img src=x onerror=alert(1)><script>bad()</script>",
+        "amountPaid": "0",
+        "apiCost": "Cost <img src=x onerror=alert(1)><script>bad()</script>",
+        "profit": "false",
+        "recipientBlock": "Recipient <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["checked"] == {
+        "serviceSame": True,
+        "useServiceLocation": False,
+        "includeTransport": True,
+    }
+    assert results["missing"] == {"rowId": "", "checked": False}
+    assert results["innerHTMLWrites"] == 0
+    assert "nullNodesResult" not in results
+
+
 def test_interpretation_reference_ui_module_centralizes_service_same_controls() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -12983,6 +13182,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_asset.text
         assert "syncInterpretationCityDialogStateInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationCityDialogContentInto" in interpretation_reference_ui_asset.text
+        assert "renderInterpretationFormFieldsInto" in interpretation_reference_ui_asset.text
         assert "renderServiceSameControlsInto" in interpretation_reference_ui_asset.text
         assert "renderCourtEmailEditorInto" in interpretation_reference_ui_asset.text
         assert "renderCourtEmailStatusInto" in interpretation_reference_ui_asset.text

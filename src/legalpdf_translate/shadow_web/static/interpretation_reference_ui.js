@@ -11,6 +11,43 @@ function appendOption(select, { value = "", text = "", selected = false } = {}) 
   return option;
 }
 
+function setControlValue(node, value) {
+  if (!node) {
+    return;
+  }
+  node.value = String(value ?? "");
+}
+
+function setControlChecked(node, value) {
+  if (!node) {
+    return;
+  }
+  node.checked = Boolean(value);
+}
+
+export function renderInterpretationFormFieldsInto(nodes = {}, values = {}) {
+  if (!nodes) {
+    return;
+  }
+  setControlValue(nodes.rowId, values.rowId);
+  setControlValue(nodes.caseNumber, values.caseNumber);
+  setControlValue(nodes.caseEntity, values.caseEntity);
+  setControlValue(nodes.serviceEntity, values.serviceEntity);
+  setControlValue(nodes.serviceDate, values.serviceDate);
+  setControlValue(nodes.travelKmOutbound, values.travelKmOutbound);
+  setControlValue(nodes.pages, values.pages);
+  setControlValue(nodes.wordCount, values.wordCount);
+  setControlValue(nodes.ratePerWord, values.ratePerWord);
+  setControlValue(nodes.expectedTotal, values.expectedTotal);
+  setControlValue(nodes.amountPaid, values.amountPaid);
+  setControlValue(nodes.apiCost, values.apiCost);
+  setControlValue(nodes.profit, values.profit);
+  setControlValue(nodes.recipientBlock, values.recipientBlock);
+  setControlChecked(nodes.serviceSame, values.serviceSame);
+  setControlChecked(nodes.useServiceLocation, values.useServiceLocation);
+  setControlChecked(nodes.includeTransport, values.includeTransport);
+}
+
 export function renderInterpretationCityOptionsInto(select, cities = [], selectedValue = "") {
   if (!select) {
     return;
