@@ -4034,6 +4034,406 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./gmail_ui.js"' in gmail_js
+    assert "renderGmailPreviewPanelInto" in gmail_js
+    preview_panel_start = gmail_js.index("function renderPreviewPanel()")
+    preview_panel_end = gmail_js.index("\nfunction renderGmailRestoreBar", preview_panel_start)
+    preview_panel_block = gmail_js[preview_panel_start:preview_panel_end]
+    assert "renderGmailPreviewPanelInto" in preview_panel_block
+    assert "summary.innerHTML" not in preview_panel_block
+    assert "container.innerHTML" not in preview_panel_block
+
+    assert "export function renderGmailPreviewPanelInto" in gmail_ui_js
+    renderer_start = gmail_ui_js.index("export function renderGmailPreviewPanelInto")
+    renderer_end = gmail_ui_js.index("\nexport function renderGmailNoncanonicalRuntimeGuardInto", renderer_start)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    add(...names) {
+      const classes = new Set(normalizeClassList(element.className));
+      names.flatMap((name) => normalizeClassList(name)).forEach((name) => classes.add(name));
+      element.className = Array.from(classes).join(" ");
+    },
+    remove(...names) {
+      const removeNames = new Set(names.flatMap((name) => normalizeClassList(name)));
+      element.className = normalizeClassList(element.className)
+        .filter((name) => !removeNames.has(name))
+        .join(" ");
+    },
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeElement(tagName = "div", initialClasses = []) {
+  const element = {
+    tagName: tagName.toUpperCase(),
+    children: [],
+    className: initialClasses.join(" "),
+    innerHTMLAssignments: [],
+    attributes: {},
+    dataset: {},
+    disabled: false,
+    href: "",
+    value: "",
+    min: "",
+    max: "",
+    id: "",
+    src: "",
+    alt: "",
+    appendChild(child) {
+      if (child) {
+        child.parentNode = this;
+        this.children.push(child);
+      }
+      return child;
+    },
+    replaceChildren(...children) {
+      this.children = [];
+      children.forEach((child) => this.appendChild(child));
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+    setAttribute(name, value) {
+      const stringValue = String(value ?? "");
+      this.attributes[name] = stringValue;
+      if (name === "id") {
+        this.id = stringValue;
+      } else if (name === "class") {
+        this.className = stringValue;
+      } else if (name === "href") {
+        this.href = stringValue;
+      } else if (name === "src") {
+        this.src = stringValue;
+      } else if (name === "alt") {
+        this.alt = stringValue;
+      }
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
+    },
+  };
+  element.classList = makeClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent || ""}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+function walk(node, visitor) {
+  if (!node) {
+    return;
+  }
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHTMLWrites(...nodes) {
+  let total = 0;
+  nodes.forEach((node) => {
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
+  });
+  return total;
+}
+
+function collectClasses(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (String(current.className || "").trim()) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+function firstTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let found = null;
+  walk(node, (current) => {
+    if (!found && current.tagName === target) {
+      found = current;
+    }
+  });
+  return found;
+}
+
+function makeNodes(defaultLabel = "Use current page") {
+  const applyButton = makeElement("button");
+  applyButton.textContent = defaultLabel;
+  return {
+    container: makeElement("div"),
+    summary: makeElement("article"),
+    status: makeElement("p"),
+    openTab: makeElement("a"),
+    applyButton,
+    prevButton: makeElement("button"),
+    nextButton: makeElement("button"),
+    pageInput: makeElement("input"),
+  };
+}
+
+function summarize(nodes, result) {
+  const canvas = firstTag(nodes.container, "canvas");
+  const image = firstTag(nodes.container, "img");
+  return {
+    result,
+    summaryClass: nodes.summary.className,
+    summaryText: nodes.summary.textContent,
+    summaryClasses: collectClasses(nodes.summary),
+    containerClass: nodes.container.className,
+    containerText: nodes.container.textContent,
+    statusText: nodes.status.textContent,
+    openTabHidden: nodes.openTab.classList.contains("hidden"),
+    openTabHref: nodes.openTab.href,
+    applyDisabled: nodes.applyButton.disabled,
+    applyText: nodes.applyButton.textContent,
+    defaultLabel: nodes.applyButton.dataset.defaultLabel || "",
+    prevDisabled: nodes.prevButton.disabled,
+    nextDisabled: nodes.nextButton.disabled,
+    pageDisabled: nodes.pageInput.disabled,
+    pageMin: nodes.pageInput.min,
+    pageMax: nodes.pageInput.max,
+    pageValue: nodes.pageInput.value,
+    canvas: canvas ? {
+      id: canvas.id,
+      className: canvas.className,
+      ariaLabel: canvas.getAttribute("aria-label"),
+    } : null,
+    image: image ? {
+      className: image.className,
+      src: image.src,
+      alt: image.alt,
+    } : null,
+    imgCount: countTag(nodes.summary, "img") + countTag(nodes.container, "img"),
+    scriptCount: countTag(nodes.summary, "script") + countTag(nodes.container, "script"),
+    canvasCount: countTag(nodes.container, "canvas"),
+    innerHTMLWrites: countInnerHTMLWrites(
+      nodes.summary,
+      nodes.container,
+      nodes.status,
+      nodes.openTab,
+      nodes.applyButton,
+      nodes.prevButton,
+      nodes.nextButton,
+      nodes.pageInput,
+    ),
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const emptyNodes = makeNodes("Use current page");
+const emptyResult = ui.renderGmailPreviewPanelInto(emptyNodes, {});
+
+const pdfNodes = makeNodes("Use current page");
+const pdfResult = ui.renderGmailPreviewPanelInto(pdfNodes, {
+  attachment: { filename: `PDF ${malicious}` },
+  href: "/api/gmail/attachment/att-pdf?page=2",
+  page: 2,
+  pageCount: 5,
+  canApply: true,
+  isPdf: true,
+  isImage: false,
+});
+
+const imageNodes = makeNodes("Use current page");
+const imageResult = ui.renderGmailPreviewPanelInto(imageNodes, {
+  attachment: { filename: `Image ${malicious}` },
+  href: "/api/gmail/attachment/att-img?token=<unsafe>",
+  page: 1,
+  pageCount: 1,
+  canApply: false,
+  isPdf: false,
+  isImage: true,
+});
+
+const fallbackNodes = makeNodes("Use current page");
+const fallbackResult = ui.renderGmailPreviewPanelInto(fallbackNodes, {
+  attachment: { filename: `Other ${malicious}` },
+  href: "/api/gmail/attachment/att-other",
+  page: 1,
+  pageCount: 0,
+  canApply: false,
+  isPdf: false,
+  isImage: false,
+});
+
+const missingResult = ui.renderGmailPreviewPanelInto({ ...makeNodes(), container: null }, {
+  attachment: { filename: "ignored" },
+  href: "/ignored",
+});
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailPreviewPanelInto,
+  missingResultType: typeof missingResult,
+  empty: summarize(emptyNodes, emptyResult),
+  pdf: summarize(pdfNodes, pdfResult),
+  image: summarize(imageNodes, imageResult),
+  fallback: summarize(fallbackNodes, fallbackResult),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["missingResultType"] == "undefined"
+
+    assert results["empty"]["result"] == {"shouldRenderPdfCanvas": False}
+    assert results["empty"]["summaryClass"] == "result-card empty-state"
+    assert results["empty"]["summaryText"] == "Preview is optional. Open it when you want to check the document more closely."
+    assert results["empty"]["containerClass"] == "gmail-inline-preview empty-state"
+    assert results["empty"]["containerText"] == "Preview opens here when requested."
+    assert results["empty"]["statusText"] == "Preview is optional. Use it if you want to check the document or choose a later start page."
+    assert results["empty"]["openTabHidden"] is True
+    assert results["empty"]["openTabHref"] == "#"
+    assert results["empty"]["applyDisabled"] is True
+    assert results["empty"]["applyText"] == "Use current page"
+    assert results["empty"]["defaultLabel"] == "Use current page"
+    assert results["empty"]["prevDisabled"] is True
+    assert results["empty"]["nextDisabled"] is True
+    assert results["empty"]["pageDisabled"] is True
+    assert results["empty"]["pageMin"] == "1"
+    assert results["empty"]["pageMax"] == "1"
+    assert results["empty"]["pageValue"] == "1"
+    assert results["empty"]["innerHTMLWrites"] == 0
+
+    assert results["pdf"]["result"] == {"shouldRenderPdfCanvas": True}
+    assert results["pdf"]["summaryClass"] == "result-card"
+    assert "PDF <img src=x onerror=alert(1)><script>bad()</script>" in results["pdf"]["summaryText"]
+    assert "5 page(s) available" in results["pdf"]["summaryText"]
+    assert "Page 2" in results["pdf"]["summaryText"]
+    assert "status-chip info" in results["pdf"]["summaryClasses"]
+    assert results["pdf"]["openTabHidden"] is False
+    assert results["pdf"]["openTabHref"] == "/api/gmail/attachment/att-pdf?page=2"
+    assert results["pdf"]["applyDisabled"] is False
+    assert results["pdf"]["applyText"] == "Use current page"
+    assert results["pdf"]["prevDisabled"] is False
+    assert results["pdf"]["nextDisabled"] is False
+    assert results["pdf"]["pageDisabled"] is False
+    assert results["pdf"]["pageMax"] == "5"
+    assert results["pdf"]["pageValue"] == "2"
+    assert results["pdf"]["canvas"] == {
+        "id": "gmail-preview-canvas",
+        "className": "gmail-inline-preview-canvas",
+        "ariaLabel": "Preview for PDF <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["pdf"]["canvasCount"] == 1
+    assert results["pdf"]["imgCount"] == 0
+    assert results["pdf"]["scriptCount"] == 0
+    assert results["pdf"]["innerHTMLWrites"] == 0
+    assert results["pdf"]["statusText"] == (
+        "Previewing page 2 of 5. Use current page if you want the translation to start later in the document."
+    )
+
+    assert results["image"]["result"] == {"shouldRenderPdfCanvas": False}
+    assert results["image"]["containerClass"] == "gmail-inline-preview"
+    assert results["image"]["image"] == {
+        "className": "gmail-inline-preview-image",
+        "src": "/api/gmail/attachment/att-img?token=<unsafe>",
+        "alt": "Image <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["image"]["applyDisabled"] is True
+    assert results["image"]["applyText"] == "Preview only"
+    assert results["image"]["imgCount"] == 1
+    assert results["image"]["scriptCount"] == 0
+    assert results["image"]["innerHTMLWrites"] == 0
+    assert results["image"]["statusText"] == "Image preview is shown inline. Start page stays fixed at 1 for this attachment."
+
+    assert results["fallback"]["result"] == {"shouldRenderPdfCanvas": False}
+    assert results["fallback"]["containerClass"] == "gmail-inline-preview empty-state"
+    assert "Open Other <img src=x onerror=alert(1)><script>bad()</script> in a new tab for a full attachment view." in results["fallback"]["containerText"]
+    assert results["fallback"]["applyDisabled"] is True
+    assert results["fallback"]["applyText"] == "Preview only"
+    assert results["fallback"]["imgCount"] == 0
+    assert results["fallback"]["scriptCount"] == 0
+    assert results["fallback"]["innerHTMLWrites"] == 0
+    assert results["fallback"]["statusText"] == "This attachment type is available through the new-tab fallback."
+
+
 def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -15021,6 +15421,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailNoncanonicalRuntimeGuardInto" in gmail_ui_asset.text
         assert "renderGmailMessageResultInto" in gmail_ui_asset.text
         assert "renderGmailReviewSummaryInto" in gmail_ui_asset.text
+        assert "renderGmailPreviewPanelInto" in gmail_ui_asset.text
         shell_ui_asset = client.get(f"/static-build/{asset_version}/shell_ui.js")
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")
