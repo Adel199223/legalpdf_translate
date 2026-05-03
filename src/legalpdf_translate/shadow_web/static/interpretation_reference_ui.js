@@ -25,6 +25,10 @@ function setControlChecked(node, value) {
   node.checked = Boolean(value);
 }
 
+export function renderInterpretationRowIdInto(field, rowId = "") {
+  setControlValue(field, rowId);
+}
+
 export function renderInterpretationFormFieldsInto(nodes = {}, values = {}) {
   if (!nodes) {
     return;

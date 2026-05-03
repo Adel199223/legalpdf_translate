@@ -78,6 +78,7 @@ import {
   renderInterpretationDistanceSyncInto,
   renderServiceEntityOptionsInto,
   renderServiceSameControlsInto,
+  renderInterpretationRowIdInto,
   syncInterpretationCityDialogStateInto,
 } from "./interpretation_reference_ui.js";
 import {
@@ -2038,7 +2039,7 @@ async function handleDeleteJobLogRow(rowId, { jobType = "job-log", source = "his
   });
   if (Number(appState.currentRowId) === Number(rowId)) {
     appState.currentRowId = null;
-    qs("row-id").value = "";
+    renderInterpretationRowIdInto(qs("row-id"), "");
   }
   setPanelStatus("recent-jobs", "ok", presentation.deleteStatus);
   setDiagnostics("form", payload, { hint: `${source} deleted row #${rowId}.`, open: false });
@@ -2828,7 +2829,7 @@ async function handleSave() {
     }),
   });
   appState.currentRowId = payload.saved_result.row_id;
-  qs("row-id").value = payload.saved_result.row_id;
+  renderInterpretationRowIdInto(qs("row-id"), payload.saved_result.row_id);
   setPanelStatus("form", "ok", `Saved case record #${payload.saved_result.row_id}.`);
   setDiagnostics("form", payload, { hint: `Saved case record #${payload.saved_result.row_id}.`, open: false });
   await loadBootstrap();
