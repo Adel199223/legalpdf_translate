@@ -6736,6 +6736,250 @@ console.log(JSON.stringify({
     assert results["grid"]["innerHTMLWrites"] == 0
 
 
+def test_result_card_ui_module_centralizes_translation_completion_result_card() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    result_card_ui_js = (static_dir / "result_card_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./result_card_ui.js"' in translation_js
+    assert "renderResultHeaderCardInto" in translation_js
+    completion_start = translation_js.index("function renderTranslationCompletionResultCard")
+    completion_end = translation_js.index("function renderArabicReviewCard", completion_start)
+    completion_block = translation_js[completion_start:completion_end]
+    assert "renderResultHeaderCardInto(" in completion_block
+    assert ".innerHTML" not in completion_block
+    assert "escapeHtml" not in completion_block
+
+    assert "export function renderResultHeaderCardInto" in result_card_ui_js
+    renderer_start = result_card_ui_js.index("export function renderResultHeaderCardInto")
+    renderer_block = result_card_ui_js[renderer_start:]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const resultCardUi = await import(__RESULT_CARD_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    add(...names) {
+      const classes = new Set(normalizeClassList(element.className));
+      names.flatMap((name) => normalizeClassList(name)).forEach((name) => classes.add(name));
+      element.className = Array.from(classes).join(" ");
+    },
+    remove(...names) {
+      const removeNames = new Set(names.flatMap((name) => normalizeClassList(name)));
+      element.className = normalizeClassList(element.className)
+        .filter((name) => !removeNames.has(name))
+        .join(" ");
+    },
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    children: [],
+    parentNode: null,
+    title: "",
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  element.classList = makeClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function collectClasses(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (String(current.className || "").trim()) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const empty = makeElement("div");
+empty.className = "result-card";
+const emptyReturn = resultCardUi.renderResultHeaderCardInto(empty, {
+  available: false,
+  emptyText: `Unavailable ${malicious}`,
+});
+
+const populated = makeElement("div");
+populated.className = "result-card empty-state";
+const populatedReturn = resultCardUi.renderResultHeaderCardInto(populated, {
+  available: true,
+  title: `Finished ${malicious}`,
+  message: `Saved ${malicious}`,
+  detailLines: [`DOCX ${malicious}`, "", `PDF ${malicious}`],
+  label: `Ready ${malicious}`,
+  tone: "ok",
+});
+const nullReturn = resultCardUi.renderResultHeaderCardInto(null, {
+  available: true,
+  title: "Ignored",
+});
+
+console.log(JSON.stringify({
+  exportType: typeof resultCardUi.renderResultHeaderCardInto,
+  empty: {
+    returned: emptyReturn === empty,
+    className: empty.className,
+    text: empty.textContent,
+    imgCount: countTag(empty, "img"),
+    scriptCount: countTag(empty, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(empty),
+  },
+  populated: {
+    returned: populatedReturn === populated,
+    className: populated.className,
+    text: populated.textContent,
+    brCount: countTag(populated, "br"),
+    imgCount: countTag(populated, "img"),
+    scriptCount: countTag(populated, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(populated),
+    classes: collectClasses(populated),
+  },
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__RESULT_CARD_UI_MODULE_URL__": "result_card_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["empty"]["returned"] is True
+    assert "empty-state" in results["empty"]["className"]
+    assert results["empty"]["text"] == "Unavailable <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["empty"]["imgCount"] == 0
+    assert results["empty"]["scriptCount"] == 0
+    assert results["empty"]["innerHTMLWrites"] == 0
+
+    assert results["populated"]["returned"] is True
+    assert "empty-state" not in results["populated"]["className"]
+    assert "Finished <img src=x onerror=alert(1)><script>bad()</script>" in results["populated"]["text"]
+    assert "Saved <img src=x onerror=alert(1)><script>bad()</script>" in results["populated"]["text"]
+    assert "DOCX <img src=x onerror=alert(1)><script>bad()</script>" in results["populated"]["text"]
+    assert "PDF <img src=x onerror=alert(1)><script>bad()</script>" in results["populated"]["text"]
+    assert "Ready <img src=x onerror=alert(1)><script>bad()</script>" in results["populated"]["text"]
+    assert results["populated"]["brCount"] == 3
+    assert results["populated"]["imgCount"] == 0
+    assert results["populated"]["scriptCount"] == 0
+    assert results["populated"]["innerHTMLWrites"] == 0
+    assert "result-header" in results["populated"]["classes"]
+    assert "status-chip ok" in results["populated"]["classes"]
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -14762,6 +15006,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert result_card_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "createResultHeader" in result_card_ui_asset.text
         assert "appendResultGridItem" in result_card_ui_asset.text
+        assert "renderResultHeaderCardInto" in result_card_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")
