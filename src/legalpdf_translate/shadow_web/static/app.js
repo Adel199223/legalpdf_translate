@@ -135,6 +135,7 @@ import {
   shouldShowDailyRuntimeModeBanner,
 } from "./shell_presentation.js";
 import {
+  collapseGmailFocusDetailsInto,
   renderNavigationInto,
   renderClientHydrationMarkerInto,
   renderOperatorChromeInto,
@@ -2012,7 +2013,7 @@ function renderShellVisibility() {
     closeTranslationCompletionDrawer();
     closeInterpretationReviewDrawer();
     closeProfileEditorDrawer();
-    qs("gmail-intake-details")?.removeAttribute("open");
+    collapseGmailFocusDetailsInto(qs("gmail-intake-details"));
   }
   shellUiState.gmailFocusActive = gmailFocusActive;
   setNewJobTask(appState.newJobTask);

@@ -1940,6 +1940,102 @@ console.log(JSON.stringify({
     assert results["shellVisibility"]["missingResultType"] == "undefined"
 
 
+def test_shadow_web_shell_ui_module_centralizes_gmail_focus_details_collapse() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    shell_ui_js = static_dir / "shell_ui.js"
+    shell_ui_source = shell_ui_js.read_text(encoding="utf-8")
+
+    assert shell_ui_js.exists()
+    assert "export function collapseGmailFocusDetailsInto" in shell_ui_source
+    assert 'collapseGmailFocusDetailsInto(qs("gmail-intake-details"));' in app_js
+
+    visibility_start = app_js.index("function renderShellVisibility")
+    dashboard_start = app_js.index("function renderDashboardCards", visibility_start)
+    visibility_block = app_js[visibility_start:dashboard_start]
+    assert "collapseGmailFocusDetailsInto(" in visibility_block
+    assert 'qs("gmail-intake-details")?.removeAttribute("open")' not in visibility_block
+    assert "innerHTML" not in visibility_block
+
+    renderer_start = shell_ui_source.index("export function collapseGmailFocusDetailsInto")
+    renderer_end = shell_ui_source.index("export function renderShellVisibilityInto", renderer_start)
+    renderer_block = shell_ui_source[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = r"""
+const shellUi = await import(__SHELL_UI_MODULE_URL__);
+
+function makeDetails(open = true) {
+  return {
+    open,
+    attributes: { open: "" },
+    removed: [],
+    innerHTMLAssignments: [],
+    removeAttribute(name) {
+      this.removed.push(String(name));
+      delete this.attributes[String(name)];
+      if (String(name) === "open") {
+        this.open = false;
+      }
+    },
+  };
+}
+
+const openDetails = makeDetails(true);
+const closedDetails = makeDetails(false);
+const openResult = shellUi.collapseGmailFocusDetailsInto(openDetails);
+const closedResult = shellUi.collapseGmailFocusDetailsInto(closedDetails);
+const nullResult = shellUi.collapseGmailFocusDetailsInto(null);
+
+console.log(JSON.stringify({
+  exportedType: typeof shellUi.collapseGmailFocusDetailsInto,
+  openDetails: {
+    open: openDetails.open,
+    hasOpenAttribute: Object.prototype.hasOwnProperty.call(openDetails.attributes, "open"),
+    removed: openDetails.removed,
+    innerHTMLWrites: openDetails.innerHTMLAssignments.length,
+  },
+  closedDetails: {
+    open: closedDetails.open,
+    hasOpenAttribute: Object.prototype.hasOwnProperty.call(closedDetails.attributes, "open"),
+    removed: closedDetails.removed,
+    innerHTMLWrites: closedDetails.innerHTMLAssignments.length,
+  },
+  openResultType: openResult === undefined ? "undefined" : typeof openResult,
+  closedResultType: closedResult === undefined ? "undefined" : typeof closedResult,
+  nullResultType: nullResult === undefined ? "undefined" : typeof nullResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__SHELL_UI_MODULE_URL__": "shell_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["openDetails"] == {
+        "open": False,
+        "hasOpenAttribute": False,
+        "removed": ["open"],
+        "innerHTMLWrites": 0,
+    }
+    assert results["closedDetails"] == {
+        "open": False,
+        "hasOpenAttribute": False,
+        "removed": ["open"],
+        "innerHTMLWrites": 0,
+    }
+    assert results["openResultType"] == "undefined"
+    assert results["closedResultType"] == "undefined"
+    assert results["nullResultType"] == "undefined"
+
+
 def test_shadow_web_new_job_ui_module_centralizes_task_switch_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -13994,6 +14090,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderTopbarInto" in shell_ui_asset.text
         assert "renderShellRuntimeLabelsInto" in shell_ui_asset.text
         assert "renderClientHydrationMarkerInto" in shell_ui_asset.text
+        assert "collapseGmailFocusDetailsInto" in shell_ui_asset.text
         new_job_ui_asset = client.get(f"/static-build/{asset_version}/new_job_ui.js")
         assert new_job_ui_asset.status_code == 200
         assert new_job_ui_asset.headers["content-type"].startswith("application/javascript")

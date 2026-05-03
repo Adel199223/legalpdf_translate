@@ -194,6 +194,13 @@ export function renderShellChromeInto(
   }
 }
 
+export function collapseGmailFocusDetailsInto(details) {
+  if (!details) {
+    return;
+  }
+  details.removeAttribute("open");
+}
+
 export function renderShellVisibilityInto({
   views = [],
   navButtons = [],
