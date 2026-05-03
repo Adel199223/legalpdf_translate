@@ -70,6 +70,7 @@ import {
   renderCourtEmailStatusInto,
   renderInterpretationActionButtonsInto,
   renderInterpretationCityDialogContentInto,
+  renderInterpretationFormFieldsInto,
   renderInterpretationFieldWarningInto,
   renderInterpretationCityAddButtonsInto,
   renderInterpretationCityOptionsInto,
@@ -1850,28 +1851,48 @@ export function applyInterpretationSeed(seed, { activateTask = true, openReview 
   }
   appState.currentSeed = seed;
   appState.currentRowId = null;
-  qs("row-id").value = "";
-  setFieldValue("case-number", seed.case_number);
-  setFieldValue("case-entity", seed.case_entity);
   applyInterpretationCityValue("case_city", seed.case_city);
   populateCourtEmailSelect({ seedEmail: seed.court_email });
   const serviceDefaults = deriveInterpretationSeedServiceDefaults({ seed, sourceKind });
   populateServiceEntitySelect(serviceDefaults.serviceEntity);
-  setFieldValue("service-entity", serviceDefaults.serviceEntity);
   applyInterpretationCityValue("service_city", serviceDefaults.serviceCity);
-  setFieldValue("service-date", seed.service_date);
-  setFieldValue("travel-km-outbound", seed.travel_km_outbound ?? "");
-  setFieldValue("pages", seed.pages ?? "");
-  setFieldValue("word-count", seed.word_count ?? "");
-  setFieldValue("rate-per-word", seed.rate_per_word ?? "");
-  setFieldValue("expected-total", seed.expected_total ?? "");
-  setFieldValue("amount-paid", seed.amount_paid ?? "");
-  setFieldValue("api-cost", seed.api_cost ?? "");
-  setFieldValue("profit", seed.profit ?? "");
-  setCheckbox("service-same", serviceDefaults.serviceSame);
-  setCheckbox("use-service-location", Boolean(seed.use_service_location_in_honorarios));
-  setCheckbox("include-transport", seed.include_transport_sentence_in_honorarios !== false);
-  qs("recipient-block").value = "";
+  renderInterpretationFormFieldsInto({
+    rowId: qs("row-id"),
+    caseNumber: qs("case-number"),
+    caseEntity: qs("case-entity"),
+    serviceEntity: qs("service-entity"),
+    serviceDate: qs("service-date"),
+    travelKmOutbound: qs("travel-km-outbound"),
+    pages: qs("pages"),
+    wordCount: qs("word-count"),
+    ratePerWord: qs("rate-per-word"),
+    expectedTotal: qs("expected-total"),
+    amountPaid: qs("amount-paid"),
+    apiCost: qs("api-cost"),
+    profit: qs("profit"),
+    recipientBlock: qs("recipient-block"),
+    serviceSame: qs("service-same"),
+    useServiceLocation: qs("use-service-location"),
+    includeTransport: qs("include-transport"),
+  }, {
+    rowId: "",
+    caseNumber: seed.case_number,
+    caseEntity: seed.case_entity,
+    serviceEntity: serviceDefaults.serviceEntity,
+    serviceDate: seed.service_date,
+    travelKmOutbound: seed.travel_km_outbound ?? "",
+    pages: seed.pages ?? "",
+    wordCount: seed.word_count ?? "",
+    ratePerWord: seed.rate_per_word ?? "",
+    expectedTotal: seed.expected_total ?? "",
+    amountPaid: seed.amount_paid ?? "",
+    apiCost: seed.api_cost ?? "",
+    profit: seed.profit ?? "",
+    recipientBlock: "",
+    serviceSame: serviceDefaults.serviceSame,
+    useServiceLocation: Boolean(seed.use_service_location_in_honorarios),
+    includeTransport: seed.include_transport_sentence_in_honorarios !== false,
+  });
   interpretationCityState.manualDistance = Boolean(fieldValue("travel-km-outbound"));
   interpretationCityState.autoDistanceCity = "";
   updateServiceFieldState();
@@ -1890,27 +1911,47 @@ function applyHistoryItem(item) {
   setNewJobTask("interpretation");
   appState.currentSeed = item.seed;
   appState.currentRowId = item.row.id;
-  qs("row-id").value = item.row.id;
-  setFieldValue("case-number", item.row.case_number || "");
-  setFieldValue("case-entity", item.row.case_entity || "");
   applyInterpretationCityValue("case_city", item.row.case_city || "");
   populateCourtEmailSelect({ currentEmail: item.row.court_email || "" });
   populateServiceEntitySelect(item.row.service_entity || "");
-  setFieldValue("service-entity", item.row.service_entity || "");
   applyInterpretationCityValue("service_city", item.row.service_city || "");
-  setFieldValue("service-date", item.row.service_date || "");
-  setFieldValue("travel-km-outbound", item.row.travel_km_outbound ?? "");
-  setFieldValue("pages", item.row.pages ?? "");
-  setFieldValue("word-count", item.row.word_count ?? "");
-  setFieldValue("rate-per-word", item.row.rate_per_word ?? "");
-  setFieldValue("expected-total", item.row.expected_total ?? "");
-  setFieldValue("amount-paid", item.row.amount_paid ?? "");
-  setFieldValue("api-cost", item.row.api_cost ?? "");
-  setFieldValue("profit", item.row.profit ?? "");
-  qs("recipient-block").value = "";
-  setCheckbox("service-same", inferServiceSame(item.row.case_entity, item.row.case_city, item.row.service_entity, item.row.service_city));
-  setCheckbox("use-service-location", Boolean(item.row.use_service_location_in_honorarios));
-  setCheckbox("include-transport", item.row.include_transport_sentence_in_honorarios !== 0);
+  renderInterpretationFormFieldsInto({
+    rowId: qs("row-id"),
+    caseNumber: qs("case-number"),
+    caseEntity: qs("case-entity"),
+    serviceEntity: qs("service-entity"),
+    serviceDate: qs("service-date"),
+    travelKmOutbound: qs("travel-km-outbound"),
+    pages: qs("pages"),
+    wordCount: qs("word-count"),
+    ratePerWord: qs("rate-per-word"),
+    expectedTotal: qs("expected-total"),
+    amountPaid: qs("amount-paid"),
+    apiCost: qs("api-cost"),
+    profit: qs("profit"),
+    recipientBlock: qs("recipient-block"),
+    serviceSame: qs("service-same"),
+    useServiceLocation: qs("use-service-location"),
+    includeTransport: qs("include-transport"),
+  }, {
+    rowId: item.row.id,
+    caseNumber: item.row.case_number || "",
+    caseEntity: item.row.case_entity || "",
+    serviceEntity: item.row.service_entity || "",
+    serviceDate: item.row.service_date || "",
+    travelKmOutbound: item.row.travel_km_outbound ?? "",
+    pages: item.row.pages ?? "",
+    wordCount: item.row.word_count ?? "",
+    ratePerWord: item.row.rate_per_word ?? "",
+    expectedTotal: item.row.expected_total ?? "",
+    amountPaid: item.row.amount_paid ?? "",
+    apiCost: item.row.api_cost ?? "",
+    profit: item.row.profit ?? "",
+    recipientBlock: "",
+    serviceSame: inferServiceSame(item.row.case_entity, item.row.case_city, item.row.service_entity, item.row.service_city),
+    useServiceLocation: Boolean(item.row.use_service_location_in_honorarios),
+    includeTransport: item.row.include_transport_sentence_in_honorarios !== 0,
+  });
   updateServiceFieldState();
   interpretationCityState.manualDistance = Boolean(fieldValue("travel-km-outbound"));
   interpretationCityState.autoDistanceCity = "";
