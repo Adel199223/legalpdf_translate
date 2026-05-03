@@ -17,6 +17,7 @@ import {
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailPreviewPanelInto,
+  renderGmailReportActionInto,
   renderGmailReviewDetailInto,
   renderGmailReviewSummaryInto,
   renderGmailResumeCardInto,
@@ -361,30 +362,24 @@ function rememberGmailFailureReport(error, options = {}) {
 
 function updateGmailFailureReportActionState() {
   const button = qs("gmail-generate-failure-report");
-  if (!button) {
-    return;
-  }
   const available = Boolean(gmailState.lastFailureReportContext);
-  button.classList.toggle("hidden", !available);
-  button.disabled = !available;
   const defaultLabel = "Generate Failure Report";
-  button.textContent = defaultLabel;
-  button.dataset.defaultLabel = defaultLabel;
+  renderGmailReportActionInto(button, {
+    available,
+    label: defaultLabel,
+  });
 }
 
 function updateGmailFinalizationReportActionState() {
   const button = qs("gmail-batch-finalize-report");
-  if (!button) {
-    return;
-  }
   const available = Boolean(currentGmailFinalizationReportContext());
-  button.classList.toggle("hidden", !available);
-  button.disabled = !available;
   const defaultLabel = gmailState.lastFinalizationReportPayload
     ? "Generate Updated Finalization Report"
     : "Generate Finalization Report";
-  button.textContent = defaultLabel;
-  button.dataset.defaultLabel = defaultLabel;
+  renderGmailReportActionInto(button, {
+    available,
+    label: defaultLabel,
+  });
 }
 
 function gmailFailureHint(error, fallbackMessage) {

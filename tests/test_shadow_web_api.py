@@ -5243,6 +5243,183 @@ console.log(JSON.stringify({
     assert results["success"]["innerHTMLWrites"] == 0
 
 
+def test_gmail_ui_module_centralizes_report_action_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailReportActionInto" in gmail_js
+    assert "export function renderGmailReportActionInto" in gmail_ui_js
+
+    failure_start = gmail_js.index("function updateGmailFailureReportActionState")
+    failure_end = gmail_js.index("\nfunction updateGmailFinalizationReportActionState", failure_start)
+    failure_block = gmail_js[failure_start:failure_end]
+    assert "renderGmailReportActionInto(button, {" in failure_block
+    assert ".classList.toggle(" not in failure_block
+    assert ".disabled =" not in failure_block
+    assert ".textContent =" not in failure_block
+    assert ".dataset.defaultLabel" not in failure_block
+
+    finalization_start = gmail_js.index("function updateGmailFinalizationReportActionState")
+    finalization_end = gmail_js.index("\nfunction gmailFailureHint", finalization_start)
+    finalization_block = gmail_js[finalization_start:finalization_end]
+    assert "renderGmailReportActionInto(button, {" in finalization_block
+    assert ".classList.toggle(" not in finalization_block
+    assert ".disabled =" not in finalization_block
+    assert ".textContent =" not in finalization_block
+    assert ".dataset.defaultLabel" not in finalization_block
+
+    renderer_start = gmail_ui_js.index("export function renderGmailReportActionInto")
+    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeButton() {
+  const button = {
+    className: "",
+    dataset: {},
+    disabled: false,
+    children: [],
+    innerHTMLAssignments: [],
+  };
+  button.classList = makeClassList(button);
+  Object.defineProperty(button, "textContent", {
+    get() {
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(button, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        this.children.push({ tagName: match[1].toUpperCase() });
+      }
+    },
+  });
+  return button;
+}
+
+function summarize(button) {
+  return {
+    text: button.textContent,
+    defaultLabel: button.dataset.defaultLabel,
+    disabled: button.disabled,
+    hidden: button.classList.contains("hidden"),
+    className: button.className,
+    childCount: button.children.length,
+    innerHTMLWrites: button.innerHTMLAssignments.length,
+  };
+}
+
+const malicious = "Generate <img src=x onerror=alert(1)><script>bad()</script>";
+
+const visible = makeButton();
+const visibleResult = ui.renderGmailReportActionInto(visible, {
+  available: true,
+  label: malicious,
+});
+
+const hidden = makeButton();
+const hiddenResult = ui.renderGmailReportActionInto(hidden, {
+  available: false,
+  label: malicious,
+});
+
+const hiddenWithExistingClass = makeButton();
+hiddenWithExistingClass.className = "secondary hidden";
+ui.renderGmailReportActionInto(hiddenWithExistingClass, {
+  available: true,
+  label: "Generate Failure Report",
+});
+
+const nullResult = ui.renderGmailReportActionInto(null, {
+  available: true,
+  label: malicious,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailReportActionInto,
+  visibleResultType: typeof visibleResult,
+  hiddenResultType: typeof hiddenResult,
+  nullResultType: typeof nullResult,
+  visible: summarize(visible),
+  hidden: summarize(hidden),
+  existingClass: summarize(hiddenWithExistingClass),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["visibleResultType"] == "object"
+    assert results["hiddenResultType"] == "object"
+    assert results["nullResultType"] == "undefined"
+
+    assert results["visible"]["text"] == "Generate <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["defaultLabel"] == "Generate <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["disabled"] is False
+    assert results["visible"]["hidden"] is False
+    assert results["visible"]["childCount"] == 0
+    assert results["visible"]["innerHTMLWrites"] == 0
+
+    assert results["hidden"]["text"] == "Generate <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["hidden"]["defaultLabel"] == "Generate <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["hidden"]["disabled"] is True
+    assert results["hidden"]["hidden"] is True
+    assert results["hidden"]["childCount"] == 0
+    assert results["hidden"]["innerHTMLWrites"] == 0
+
+    assert results["existingClass"]["className"] == "secondary"
+    assert results["existingClass"]["hidden"] is False
+
+
 def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -16645,6 +16822,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailAttachmentListInto" in gmail_ui_asset.text
         assert "renderGmailReviewDetailInto" in gmail_ui_asset.text
         assert "renderGmailBatchFinalizeSurfaceInto" in gmail_ui_asset.text
+        assert "renderGmailReportActionInto" in gmail_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
