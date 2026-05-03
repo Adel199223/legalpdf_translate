@@ -4034,6 +4034,305 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_gmail_ui_module_centralizes_session_card_renderers() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailResumeCardInto" in gmail_js
+    assert "renderGmailSessionResultInto" in gmail_js
+    resume_start = gmail_js.index("function renderResumeCard")
+    resume_end = gmail_js.index("\nfunction renderSessionResult", resume_start)
+    resume_block = gmail_js[resume_start:resume_end]
+    assert "renderGmailResumeCardInto" in resume_block
+    assert "container.innerHTML" not in resume_block
+    session_start = gmail_js.index("function renderSessionResult")
+    session_end = gmail_js.index("\nfunction renderWorkspaceStrip", session_start)
+    session_block = gmail_js[session_start:session_end]
+    assert "renderGmailSessionResultInto" in session_block
+    assert "container.innerHTML" not in session_block
+
+    assert "export function renderGmailResumeCardInto" in gmail_ui_js
+    assert "export function renderGmailSessionResultInto" in gmail_ui_js
+    resume_renderer_start = gmail_ui_js.index("export function renderGmailResumeCardInto")
+    session_renderer_start = gmail_ui_js.index("export function renderGmailSessionResultInto")
+    resume_renderer_block = gmail_ui_js[resume_renderer_start:session_renderer_start]
+    session_renderer_end = gmail_ui_js.index("\nfunction resetGmailPreviewControls", session_renderer_start)
+    session_renderer_block = gmail_ui_js[session_renderer_start:session_renderer_end]
+    assert "innerHTML" not in resume_renderer_block
+    assert "innerHTML" not in session_renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    add(...names) {
+      const classes = new Set(normalizeClassList(element.className));
+      names.flatMap((name) => normalizeClassList(name)).forEach((name) => classes.add(name));
+      element.className = Array.from(classes).join(" ");
+    },
+    remove(...names) {
+      const removeNames = new Set(names.flatMap((name) => normalizeClassList(name)));
+      element.className = normalizeClassList(element.className)
+        .filter((name) => !removeNames.has(name))
+        .join(" ");
+    },
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: tagName.toUpperCase(),
+    children: [],
+    className: "",
+    innerHTMLAssignments: [],
+    attributes: {},
+    appendChild(child) {
+      if (child) {
+        child.parentNode = this;
+        this.children.push(child);
+      }
+      return child;
+    },
+    replaceChildren(...children) {
+      this.children = [];
+      children.forEach((child) => this.appendChild(child));
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value ?? "");
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
+    },
+  };
+  element.classList = makeClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent || ""}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+function walk(node, visitor) {
+  if (!node) {
+    return;
+  }
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHTMLWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function collectClasses(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (String(current.className || "").trim()) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+function summarize(node) {
+  return {
+    className: node.className,
+    text: node.textContent,
+    childTags: node.children.map((child) => child.tagName),
+    classes: collectClasses(node),
+    imgCount: countTag(node, "img"),
+    scriptCount: countTag(node, "script"),
+    gridCount: collectClasses(node).filter((className) => className === "result-grid").length,
+    wordBreakCount: collectClasses(node).filter((className) => className === "word-break").length,
+    innerHTMLWrites: countInnerHTMLWrites(node),
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const hiddenResume = makeElement("article");
+const hiddenResumeResult = ui.renderGmailResumeCardInto(hiddenResume, {
+  visible: false,
+  emptyText: "No Gmail step is waiting yet.",
+});
+
+const visibleResume = makeElement("article");
+const visibleResumeResult = ui.renderGmailResumeCardInto(visibleResume, {
+  visible: true,
+  title: `Resume ${malicious}`,
+  message: `Continue ${malicious}`,
+  extraMessages: [`Redo ${malicious}`],
+  label: `ready ${malicious}`,
+  tone: "ok",
+  gridItems: [
+    { label: "Status", value: `Ready ${malicious}` },
+    { label: "Batch", value: "1/2" },
+    { label: "Current File", value: `File ${malicious}`, className: "word-break" },
+  ],
+});
+
+const emptySession = makeElement("article");
+const emptySessionResult = ui.renderGmailSessionResultInto(emptySession, {
+  empty: true,
+  emptyText: "Continue Gmail from here when a translation or interpretation step is ready.",
+});
+
+const translationSession = makeElement("article");
+const translationSessionResult = ui.renderGmailSessionResultInto(translationSession, {
+  title: `Translate ${malicious}`,
+  message: `Prepare ${malicious}`,
+  label: `prepared ${malicious}`,
+  tone: "info",
+  gridItems: [
+    { label: "Subject", value: `Subject ${malicious}` },
+    { label: "Language", value: "FR" },
+    { label: "Current document", value: `Doc ${malicious}`, className: "word-break" },
+    { label: "Completed attachments", value: 2 },
+  ],
+});
+
+const nullResumeResult = ui.renderGmailResumeCardInto(null, { visible: true });
+const nullSessionResult = ui.renderGmailSessionResultInto(null, { empty: true });
+
+console.log(JSON.stringify({
+  resumeExportType: typeof ui.renderGmailResumeCardInto,
+  sessionExportType: typeof ui.renderGmailSessionResultInto,
+  hiddenResume: summarize(hiddenResume),
+  hiddenResumeReturnType: typeof hiddenResumeResult,
+  visibleResume: summarize(visibleResume),
+  visibleResumeReturnType: typeof visibleResumeResult,
+  emptySession: summarize(emptySession),
+  emptySessionReturnType: typeof emptySessionResult,
+  translationSession: summarize(translationSession),
+  translationSessionReturnType: typeof translationSessionResult,
+  nullResumeResultType: typeof nullResumeResult,
+  nullSessionResultType: typeof nullSessionResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["resumeExportType"] == "function"
+    assert results["sessionExportType"] == "function"
+    assert results["nullResumeResultType"] == "undefined"
+    assert results["nullSessionResultType"] == "undefined"
+
+    assert results["hiddenResume"]["className"] == "hidden empty-state"
+    assert results["hiddenResume"]["text"] == "No Gmail step is waiting yet."
+    assert results["hiddenResume"]["innerHTMLWrites"] == 0
+    assert results["hiddenResumeReturnType"] == "object"
+
+    assert results["visibleResume"]["className"] == ""
+    assert "Resume <img src=x onerror=alert(1)><script>bad()</script>" in results["visibleResume"]["text"]
+    assert "Continue <img src=x onerror=alert(1)><script>bad()</script>" in results["visibleResume"]["text"]
+    assert "Redo <img src=x onerror=alert(1)><script>bad()</script>" in results["visibleResume"]["text"]
+    assert "ready <img src=x onerror=alert(1)><script>bad()</script>" in results["visibleResume"]["text"]
+    assert "Status" in results["visibleResume"]["text"]
+    assert "Current File" in results["visibleResume"]["text"]
+    assert "status-chip ok" in results["visibleResume"]["classes"]
+    assert results["visibleResume"]["gridCount"] == 1
+    assert results["visibleResume"]["wordBreakCount"] == 1
+    assert results["visibleResume"]["imgCount"] == 0
+    assert results["visibleResume"]["scriptCount"] == 0
+    assert results["visibleResume"]["innerHTMLWrites"] == 0
+
+    assert results["emptySession"]["className"] == "empty-state"
+    assert results["emptySession"]["text"] == "Continue Gmail from here when a translation or interpretation step is ready."
+    assert results["emptySession"]["innerHTMLWrites"] == 0
+
+    assert results["translationSession"]["className"] == ""
+    assert "Translate <img src=x onerror=alert(1)><script>bad()</script>" in results["translationSession"]["text"]
+    assert "Subject <img src=x onerror=alert(1)><script>bad()</script>" in results["translationSession"]["text"]
+    assert "Doc <img src=x onerror=alert(1)><script>bad()</script>" in results["translationSession"]["text"]
+    assert "status-chip info" in results["translationSession"]["classes"]
+    assert results["translationSession"]["gridCount"] == 1
+    assert results["translationSession"]["wordBreakCount"] == 1
+    assert results["translationSession"]["imgCount"] == 0
+    assert results["translationSession"]["scriptCount"] == 0
+    assert results["translationSession"]["innerHTMLWrites"] == 0
+
+
 def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -15422,6 +15721,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailMessageResultInto" in gmail_ui_asset.text
         assert "renderGmailReviewSummaryInto" in gmail_ui_asset.text
         assert "renderGmailPreviewPanelInto" in gmail_ui_asset.text
+        assert "renderGmailResumeCardInto" in gmail_ui_asset.text
+        assert "renderGmailSessionResultInto" in gmail_ui_asset.text
         shell_ui_asset = client.get(f"/static-build/{asset_version}/shell_ui.js")
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")
