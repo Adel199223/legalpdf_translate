@@ -1,4 +1,4 @@
-import { clearNode, createTextElement } from "./safe_rendering.js";
+import { clearNode, createTextElement, setNodeTitle, setText } from "./safe_rendering.js";
 import { appendResultGridItem, createResultHeader } from "./result_card_ui.js";
 
 export function renderGmailMessageResultInto(container, detailsHint, card = {}) {
@@ -159,6 +159,218 @@ export function renderGmailSessionResultInto(container, card = {}) {
     tone: card.tone || "info",
   }));
   appendGmailResultGrid(container, card.gridItems);
+  return container;
+}
+
+function createCell(className = "") {
+  const cell = document.createElement("td");
+  if (className) {
+    cell.className = className;
+  }
+  return cell;
+}
+
+function defaultFormatSizeLabel(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const scaled = bytes / (1024 ** index);
+  const precision = scaled >= 10 || index === 0 ? 0 : 1;
+  return `${scaled.toFixed(precision)} ${units[index]}`;
+}
+
+function defaultAttachmentKindLabel(attachment) {
+  const normalized = String(attachment?.mime_type || "").trim().toLowerCase();
+  if (normalized === "application/pdf") {
+    return "PDF";
+  }
+  if (normalized.startsWith("image/")) {
+    return "Image";
+  }
+  return "Unknown";
+}
+
+function defaultStartPage(_attachment, state = {}) {
+  const parsed = Number.parseInt(String(state.startPage ?? "1").trim(), 10);
+  let value = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+  const pageCount = Number(state.pageCount || 0);
+  if (pageCount > 0) {
+    value = Math.min(value, pageCount);
+  }
+  return Math.max(1, value);
+}
+
+export function renderGmailAttachmentListInto(
+  container,
+  attachments = [],
+  {
+    startHeading = null,
+    interpretationWorkflow = false,
+    focusedAttachmentId = "",
+    resolveState = () => ({ selected: false, startPage: 1, pageCount: 0 }),
+    resolveCanEditStart = () => false,
+    resolveKindLabel = defaultAttachmentKindLabel,
+    resolveStartPage = defaultStartPage,
+    formatSizeLabel = defaultFormatSizeLabel,
+  } = {},
+) {
+  if (!container) {
+    return undefined;
+  }
+  const normalizedAttachments = Array.isArray(attachments) ? attachments : [];
+  clearNode(container);
+  if (startHeading) {
+    startHeading.textContent = "Start page";
+  }
+  if (!normalizedAttachments.length) {
+    const row = document.createElement("tr");
+    const cell = createCell("empty-state");
+    cell.colSpan = 5;
+    cell.textContent = "No supported PDF or image attachments were found in this message.";
+    row.appendChild(cell);
+    container.appendChild(row);
+    return container;
+  }
+  const selectedInputType = interpretationWorkflow ? "radio" : "checkbox";
+  for (const attachment of normalizedAttachments) {
+    const attachmentId = attachment?.attachment_id || "";
+    const state = resolveState(attachmentId) || {};
+    const selected = state.selected === true;
+    const focused = focusedAttachmentId === attachmentId;
+    const canEditStart = resolveCanEditStart(attachment) === true;
+    const row = document.createElement("tr");
+    row.className = [
+      "gmail-review-row",
+      selected ? "is-selected" : "",
+      focused ? "is-focused" : "",
+    ].filter(Boolean).join(" ");
+    row.dataset.attachmentRow = attachmentId;
+    row.tabIndex = 0;
+
+    const selectCell = createCell();
+    const label = document.createElement("label");
+    label.className = "checkbox-inline gmail-review-select";
+    const input = document.createElement("input");
+    input.type = selectedInputType;
+    input.name = "gmail-review-selection";
+    input.dataset.attachmentCheckbox = attachmentId;
+    input.checked = selected;
+    label.appendChild(input);
+    label.appendChild(createTextElement("span", selected ? "Selected" : "Choose", "gmail-review-row-label"));
+    selectCell.appendChild(label);
+
+    const fileCell = createCell("gmail-review-file-cell");
+    const filename = createTextElement("strong", attachment?.filename || "Attachment", "gmail-review-file-name");
+    setNodeTitle(filename, attachment?.filename || "Attachment");
+    fileCell.appendChild(filename);
+
+    const mimeCell = createCell();
+    setNodeTitle(mimeCell, attachment?.mime_type || "Unknown");
+    mimeCell.textContent = resolveKindLabel(attachment);
+
+    const sizeCell = createCell();
+    sizeCell.textContent = formatSizeLabel(attachment?.size_bytes || 0);
+
+    const startCell = createCell();
+    if (canEditStart) {
+      const startInput = document.createElement("input");
+      startInput.type = "number";
+      startInput.className = "attachment-start-page";
+      startInput.min = "1";
+      startInput.step = "1";
+      startInput.value = String(resolveStartPage(attachment, state));
+      startInput.dataset.attachmentStartPage = attachmentId;
+      startCell.appendChild(startInput);
+    } else {
+      startCell.appendChild(createTextElement("span", "1", "gmail-review-start-static"));
+    }
+
+    row.appendChild(selectCell);
+    row.appendChild(fileCell);
+    row.appendChild(mimeCell);
+    row.appendChild(sizeCell);
+    row.appendChild(startCell);
+    container.appendChild(row);
+  }
+  return container;
+}
+
+export function renderGmailReviewDetailInto(
+  container,
+  attachment,
+  {
+    state = {},
+    canEditStart = false,
+    previewLoaded = false,
+    runtimeGuard = { blocked: false },
+    kindLabel = "",
+    startPage = defaultStartPage(attachment, state),
+  } = {},
+) {
+  if (!container) {
+    return undefined;
+  }
+  if (!attachment) {
+    container.className = "result-card empty-state";
+    clearNode(container);
+    setText(container, "Choose an attachment row to see the document details, optional preview, and start page.");
+    return container;
+  }
+  const pageCountText = state.pageCount > 0
+    ? `${state.pageCount} ${state.pageCount === 1 ? "page" : "pages"}`
+    : "Page count appears after preview";
+  const selectedStateText = state.selected ? "Selected" : "Not selected";
+  container.className = "result-card";
+  clearNode(container);
+  const strip = document.createElement("div");
+  strip.className = "gmail-review-detail-strip";
+  const primary = document.createElement("div");
+  primary.className = "gmail-review-detail-primary";
+  const title = createTextElement("strong", attachment.filename || "Attachment", "word-break");
+  setNodeTitle(title, attachment.filename || "Attachment");
+  primary.appendChild(title);
+  primary.appendChild(createTextElement(
+    "p",
+    `${kindLabel} · ${selectedStateText} · ${pageCountText}${previewLoaded ? " · Preview ready" : ""}`,
+    "gmail-review-detail-meta",
+  ));
+  primary.appendChild(createTextElement(
+    "p",
+    "Preview is optional. Use it if you want to check the document or choose a later start page.",
+    "field-hint",
+  ));
+  strip.appendChild(primary);
+  const actions = document.createElement("div");
+  actions.className = "gmail-review-detail-actions";
+  if (canEditStart) {
+    const field = document.createElement("div");
+    field.className = "field gmail-review-start-field";
+    const label = createTextElement("label", "Start page");
+    label.htmlFor = "gmail-review-detail-start";
+    const input = document.createElement("input");
+    input.id = "gmail-review-detail-start";
+    input.type = "number";
+    input.min = "1";
+    input.step = "1";
+    input.value = String(startPage);
+    input.dataset.detailStartPage = attachment.attachment_id || "";
+    field.appendChild(label);
+    field.appendChild(input);
+    actions.appendChild(field);
+  }
+  const previewButton = document.createElement("button");
+  previewButton.type = "button";
+  previewButton.className = "ghost-button";
+  previewButton.id = "gmail-preview-selected";
+  previewButton.dataset.previewSelected = attachment.attachment_id || "";
+  previewButton.disabled = runtimeGuard.blocked === true;
+  previewButton.textContent = "Preview";
+  actions.appendChild(previewButton);
+  strip.appendChild(actions);
+  container.appendChild(strip);
   return container;
 }
 
