@@ -3782,6 +3782,258 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_gmail_ui_module_centralizes_review_summary_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./gmail_ui.js"' in gmail_js
+    assert "renderGmailReviewSummaryInto" in gmail_js
+    review_summary_start = gmail_js.index("function renderReviewSummary(loadResult)")
+    review_summary_end = gmail_js.index("\nexport function renderAttachmentListInto", review_summary_start)
+    review_summary_block = gmail_js[review_summary_start:review_summary_end]
+    assert "renderGmailReviewSummaryInto" in review_summary_block
+    assert "summary.innerHTML" not in review_summary_block
+    assert "summaryGrid.innerHTML" not in review_summary_block
+    assert "export function renderGmailReviewSummaryInto" in gmail_ui_js
+    renderer_start = gmail_ui_js.index("export function renderGmailReviewSummaryInto")
+    renderer_end = gmail_ui_js.index("\nexport function renderGmailNoncanonicalRuntimeGuardInto", renderer_start)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function makeClassList(owner, initial = []) {
+  const classes = new Set(initial);
+  owner.className = Array.from(classes).join(" ");
+  return {
+    add(value) {
+      classes.add(value);
+      owner.className = Array.from(classes).join(" ");
+    },
+    remove(value) {
+      classes.delete(value);
+      owner.className = Array.from(classes).join(" ");
+    },
+    contains(value) {
+      return classes.has(value);
+    },
+  };
+}
+
+function makeElement(tagName = "div", initialClasses = []) {
+  const element = {
+    tagName: tagName.toUpperCase(),
+    children: [],
+    className: "",
+    innerHTMLAssignments: [],
+    open: true,
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    },
+    replaceChildren(...children) {
+      this.children = children;
+    },
+  };
+  let textContent = "";
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return textContent;
+    },
+    set(value) {
+      textContent = String(value ?? "");
+      this.children = [];
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return "";
+    },
+    set(value) {
+      this.innerHTMLAssignments.push(String(value ?? ""));
+    },
+  });
+  element.classList = makeClassList(element, initialClasses);
+  return element;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+function collectText(node) {
+  if (!node) {
+    return "";
+  }
+  return [
+    node.textContent || "",
+    ...(node.children || []).map((child) => collectText(child)),
+  ].join("");
+}
+
+function collectClasses(node) {
+  if (!node) {
+    return "";
+  }
+  return [
+    node.className || "",
+    ...(node.children || []).map((child) => collectClasses(child)),
+  ].filter(Boolean).join(" ");
+}
+
+function countTag(node, tagName) {
+  if (!node) {
+    return 0;
+  }
+  const own = node.tagName === tagName.toUpperCase() ? 1 : 0;
+  return own + (node.children || []).reduce((total, child) => total + countTag(child, tagName), 0);
+}
+
+function countInnerHTMLWrites(node) {
+  if (!node) {
+    return 0;
+  }
+  return (node.innerHTMLAssignments || []).length
+    + (node.children || []).reduce((total, child) => total + countInnerHTMLWrites(child), 0);
+}
+
+function summarize(summary, grid, details) {
+  return {
+    summaryClass: summary.className,
+    summaryText: collectText(summary),
+    summaryClasses: collectClasses(summary),
+    summaryChildTags: summary.children.map((child) => child.tagName),
+    gridText: collectText(grid),
+    gridClasses: collectClasses(grid),
+    gridChildCount: grid.children.length,
+    detailsOpen: details.open,
+    imgCount: countTag(summary, "img") + countTag(grid, "img"),
+    scriptCount: countTag(summary, "script") + countTag(grid, "script"),
+    innerHTMLWrites: countInnerHTMLWrites(summary) + countInnerHTMLWrites(grid),
+  };
+}
+
+const emptySummary = makeElement("article", ["result-card"]);
+const emptyGrid = makeElement("div");
+emptyGrid.appendChild(makeElement("div"));
+const emptyDetails = makeElement("details");
+ui.renderGmailReviewSummaryInto(
+  { summary: emptySummary, summaryGrid: emptyGrid, summaryDetails: emptyDetails },
+  {
+    empty: true,
+    emptyText: "Load this Gmail message to choose attachments.",
+  },
+);
+
+const populatedSummary = makeElement("article", ["result-card", "empty-state"]);
+const populatedGrid = makeElement("div");
+const populatedDetails = makeElement("details");
+ui.renderGmailReviewSummaryInto(
+  { summary: populatedSummary, summaryGrid: populatedGrid, summaryDetails: populatedDetails },
+  {
+    subject: "Subject <img src=x onerror=alert(1)>",
+    reviewStatus: "Step <script>alert(2)</script>",
+    workflowLabel: "Workflow <script>alert(3)</script>",
+    attachmentCount: 3,
+    chipLabel: "2 selected",
+    chipTone: "ok",
+    gridItems: [
+      {
+        label: "From",
+        value: "Sender <script>alert(4)</script>",
+        className: "word-break",
+      },
+      {
+        label: "Gmail account",
+        value: "account@example.test <img src=x onerror=alert(5)>",
+        className: "word-break",
+      },
+      {
+        label: "Exact message ID",
+        value: "msg-1",
+        className: "word-break",
+      },
+      {
+        label: "Exact thread ID",
+        value: "thread-1",
+        className: "word-break",
+      },
+      {
+        label: "Save output in",
+        value: "C:/unsafe/<script>alert(6)</script>",
+        className: "word-break",
+      },
+    ],
+  },
+);
+
+const nullResult = ui.renderGmailReviewSummaryInto(
+  { summary: null, summaryGrid: populatedGrid, summaryDetails: populatedDetails },
+  { empty: true },
+);
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailReviewSummaryInto,
+  empty: summarize(emptySummary, emptyGrid, emptyDetails),
+  populated: summarize(populatedSummary, populatedGrid, populatedDetails),
+  nullResultType: typeof nullResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["empty"] == {
+        "summaryClass": "result-card empty-state",
+        "summaryText": "Load this Gmail message to choose attachments.",
+        "summaryClasses": "result-card empty-state",
+        "summaryChildTags": [],
+        "gridText": "",
+        "gridClasses": "",
+        "gridChildCount": 0,
+        "detailsOpen": False,
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["populated"]["summaryClass"] == "result-card"
+    assert results["populated"]["summaryChildTags"] == ["DIV"]
+    assert "Subject <img src=x onerror=alert(1)>" in results["populated"]["summaryText"]
+    assert "Step <script>alert(2)</script>" in results["populated"]["summaryText"]
+    assert "Workflow <script>alert(3)</script>" in results["populated"]["summaryText"]
+    assert "Supported attachments" in results["populated"]["summaryText"]
+    assert "3" in results["populated"]["summaryText"]
+    assert "2 selected" in results["populated"]["summaryText"]
+    assert "status-chip ok" in results["populated"]["summaryClasses"]
+    assert "From" in results["populated"]["gridText"]
+    assert "Sender <script>alert(4)</script>" in results["populated"]["gridText"]
+    assert "Gmail account" in results["populated"]["gridText"]
+    assert "account@example.test <img src=x onerror=alert(5)>" in results["populated"]["gridText"]
+    assert "Exact message ID" in results["populated"]["gridText"]
+    assert "Exact thread ID" in results["populated"]["gridText"]
+    assert "Save output in" in results["populated"]["gridText"]
+    assert "C:/unsafe/<script>alert(6)</script>" in results["populated"]["gridText"]
+    assert results["populated"]["gridClasses"].count("word-break") == 5
+    assert results["populated"]["gridChildCount"] == 5
+    assert results["populated"]["detailsOpen"] is True
+    assert results["populated"]["imgCount"] == 0
+    assert results["populated"]["scriptCount"] == 0
+    assert results["populated"]["innerHTMLWrites"] == 0
+    assert results["nullResultType"] == "undefined"
+
+
 def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -14523,6 +14775,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailNoncanonicalRuntimeGuardInto" in gmail_ui_asset.text
         assert "renderGmailMessageResultInto" in gmail_ui_asset.text
+        assert "renderGmailReviewSummaryInto" in gmail_ui_asset.text
         shell_ui_asset = client.get(f"/static-build/{asset_version}/shell_ui.js")
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")

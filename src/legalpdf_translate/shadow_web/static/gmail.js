@@ -9,6 +9,7 @@ import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
+  renderGmailReviewSummaryInto,
 } from "./gmail_ui.js";
 import {
   applyPreviewStateStartPage,
@@ -1709,38 +1710,56 @@ function renderReviewSummary(loadResult) {
   reviewOpenButton.textContent = reviewOpenButton.dataset.defaultLabel;
   reviewStatus.textContent = "Step 1: Choose workflow. Step 2: Pick attachment(s). Step 3: Preview or set start page if needed. Step 4: Continue.";
   if (!loadResult?.ok || !loadResult?.message) {
-    summary.className = "result-card empty-state";
-    summary.textContent = "Load this Gmail message to choose attachments.";
-    summaryGrid.innerHTML = "";
-    if (summaryDetails) {
-      summaryDetails.open = false;
-    }
+    renderGmailReviewSummaryInto(
+      { summary, summaryGrid, summaryDetails },
+      {
+        empty: true,
+        emptyText: "Load this Gmail message to choose attachments.",
+      },
+    );
     return;
   }
   const message = loadResult.message;
   const selectedCount = collectSelections().length;
   const outputFolder = fieldValue("gmail-output-dir") || gmailState.bootstrap?.defaults?.default_output_dir || "Use default folder";
-  summary.className = "result-card";
-  summary.innerHTML = `
-    <div class="gmail-review-summary-card">
-      <div class="gmail-review-summary-copy">
-        <strong>${escapeHtml(message.subject || "No subject")}</strong>
-        <p>${escapeHtml(workflow.reviewStatus)}</p>
-      </div>
-      <div class="gmail-review-summary-metrics">
-        <div><h3>Workflow</h3><p>${escapeHtml(workflow.label)}</p></div>
-        <div><h3>Supported attachments</h3><p>${attachments.length}</p></div>
-      </div>
-      <span class="status-chip ${selectedCount ? "ok" : "info"}">${selectedCount ? `${selectedCount} selected` : "Review ready"}</span>
-    </div>
-  `;
-  summaryGrid.innerHTML = `
-    <div><h3>From</h3><p class="word-break">${escapeHtml(message.from_header || "Unavailable")}</p></div>
-    <div><h3>Gmail account</h3><p class="word-break">${escapeHtml(message.account_email || "Unavailable")}</p></div>
-    <div><h3>Exact message ID</h3><p class="word-break">${escapeHtml(message.message_id || "Unavailable")}</p></div>
-    <div><h3>Exact thread ID</h3><p class="word-break">${escapeHtml(message.thread_id || "Unavailable")}</p></div>
-    <div><h3>Save output in</h3><p class="word-break">${escapeHtml(outputFolder)}</p></div>
-  `;
+  renderGmailReviewSummaryInto(
+    { summary, summaryGrid, summaryDetails },
+    {
+      subject: message.subject || "No subject",
+      reviewStatus: workflow.reviewStatus,
+      workflowLabel: workflow.label,
+      attachmentCount: attachments.length,
+      chipLabel: selectedCount ? `${selectedCount} selected` : "Review ready",
+      chipTone: selectedCount ? "ok" : "info",
+      gridItems: [
+        {
+          label: "From",
+          value: message.from_header || "Unavailable",
+          className: "word-break",
+        },
+        {
+          label: "Gmail account",
+          value: message.account_email || "Unavailable",
+          className: "word-break",
+        },
+        {
+          label: "Exact message ID",
+          value: message.message_id || "Unavailable",
+          className: "word-break",
+        },
+        {
+          label: "Exact thread ID",
+          value: message.thread_id || "Unavailable",
+          className: "word-break",
+        },
+        {
+          label: "Save output in",
+          value: outputFolder,
+          className: "word-break",
+        },
+      ],
+    },
+  );
 }
 
 export function renderAttachmentListInto(
