@@ -5849,7 +5849,7 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "renderCourtEmailOptionsInto(select, {" in app_js
     assert "renderServiceEntityOptionsInto(select, options, selectedValue);" in app_js
     assert "renderInterpretationFieldWarningInto(node, { message, tone });" in app_js
-    assert "renderInterpretationDistanceHintInto(" in app_js
+    assert "renderInterpretationDistanceSyncInto(" in app_js
     assert "renderInterpretationActionButtonsInto(actionButtons, { blocked });" in app_js
     assert "renderInterpretationCityAddButtonsInto({" in app_js
     assert "syncInterpretationCityDialogStateInto(backdrop, document.body, interpretationCityState.dialogOpen);" in app_js
@@ -6662,6 +6662,170 @@ console.log(JSON.stringify({
     assert "nullBackdropResult" not in results
     assert "nullDialogFieldsResult" not in results
     assert "nullDialogContentResult" not in results
+
+
+def test_interpretation_reference_ui_module_centralizes_distance_sync_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_reference_ui_js = static_dir / "interpretation_reference_ui.js"
+    interpretation_reference_ui_text = interpretation_reference_ui_js.read_text(encoding="utf-8")
+
+    assert "export function renderInterpretationDistanceSyncInto" in interpretation_reference_ui_text
+    assert "renderInterpretationDistanceSyncInto" in app_js
+
+    distance_sync_start = app_js.index("function syncInterpretationDistanceFromReference")
+    action_availability_start = app_js.index("function updateInterpretationActionAvailability", distance_sync_start)
+    distance_sync_block = app_js[distance_sync_start:action_availability_start]
+    assert "renderInterpretationDistanceSyncInto({" in distance_sync_block
+    assert 'setFieldValue("travel-km-outbound"' not in distance_sync_block
+    assert "renderInterpretationDistanceHintInto(" not in distance_sync_block
+    assert "hint.textContent" not in distance_sync_block
+    assert "innerHTML" not in distance_sync_block
+
+    script = r"""
+const interpretationReferenceUi = await import(__INTERPRETATION_REFERENCE_UI_MODULE_URL__);
+
+function makeElement(tagName = "input", value = "") {
+  const element = {
+    tagName: String(tagName || "input").toUpperCase(),
+    value,
+    children: [],
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(nextValue) {
+      this._textContent = String(nextValue ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(nextValue) {
+      const next = String(nextValue ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      for (const match of next.matchAll(/<\s*([a-zA-Z0-9-]+)/g)) {
+        this.children.push(makeElement(match[1]));
+      }
+    },
+  });
+  return element;
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = node.tagName === target ? 1 : 0;
+  for (const child of node.children || []) {
+    total += countTag(child, target);
+  }
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = (node.innerHTMLAssignments || []).length;
+  for (const child of node.children || []) {
+    total += countInnerHtmlWrites(child);
+  }
+  return total;
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const unchangedField = makeElement("input", " 12 ");
+const unchangedHint = makeElement("p");
+interpretationReferenceUi.renderInterpretationDistanceSyncInto({
+  field: unchangedField,
+  hint: unchangedHint,
+}, {
+  travelKmOutbound: "12",
+  hintText: `Same ${malicious}`,
+});
+
+const changedField = makeElement("input", "5");
+const changedHint = makeElement("p");
+interpretationReferenceUi.renderInterpretationDistanceSyncInto({
+  field: changedField,
+  hint: changedHint,
+}, {
+  travelKmOutbound: `44${malicious}`,
+  hintText: `Hint ${malicious}`,
+});
+
+const missingFieldHint = makeElement("p");
+const missingResult = interpretationReferenceUi.renderInterpretationDistanceSyncInto({
+  field: null,
+  hint: missingFieldHint,
+}, {
+  travelKmOutbound: "99",
+  hintText: `Only hint ${malicious}`,
+});
+const nullResult = interpretationReferenceUi.renderInterpretationDistanceSyncInto(null, {
+  travelKmOutbound: "ignored",
+  hintText: "ignored",
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationReferenceUi.renderInterpretationDistanceSyncInto,
+  compatibilityHintExportedType: typeof interpretationReferenceUi.renderInterpretationDistanceHintInto,
+  unchanged: {
+    value: unchangedField.value,
+    hint: unchangedHint.textContent,
+    imgCount: countTag(unchangedHint, "img"),
+    scriptCount: countTag(unchangedHint, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(unchangedHint),
+  },
+  changed: {
+    value: changedField.value,
+    hint: changedHint.textContent,
+    fieldInnerHTMLWrites: countInnerHtmlWrites(changedField),
+    hintInnerHTMLWrites: countInnerHtmlWrites(changedHint),
+    imgCount: countTag(changedHint, "img") + countTag(changedField, "img"),
+    scriptCount: countTag(changedHint, "script") + countTag(changedField, "script"),
+  },
+  missing: {
+    hint: missingFieldHint.textContent,
+    resultType: missingResult === undefined ? "undefined" : typeof missingResult,
+    nullResultType: nullResult === undefined ? "undefined" : typeof nullResult,
+  },
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REFERENCE_UI_MODULE_URL__": "interpretation_reference_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["compatibilityHintExportedType"] == "function"
+    assert results["unchanged"]["value"] == " 12 "
+    assert results["unchanged"]["hint"] == "Same <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["unchanged"]["imgCount"] == 0
+    assert results["unchanged"]["scriptCount"] == 0
+    assert results["unchanged"]["innerHTMLWrites"] == 0
+    assert results["changed"]["value"] == "44<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["changed"]["hint"] == "Hint <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["changed"]["fieldInnerHTMLWrites"] == 0
+    assert results["changed"]["hintInnerHTMLWrites"] == 0
+    assert results["changed"]["imgCount"] == 0
+    assert results["changed"]["scriptCount"] == 0
+    assert results["missing"]["hint"] == "Only hint <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["missing"]["resultType"] == "undefined"
+    assert results["missing"]["nullResultType"] == "undefined"
 
 
 def test_interpretation_reference_ui_module_centralizes_form_field_rendering() -> None:
@@ -13511,6 +13675,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderServiceEntityOptionsInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationFieldWarningInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationDistanceHintInto" in interpretation_reference_ui_asset.text
+        assert "renderInterpretationDistanceSyncInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationActionButtonsInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_asset.text
         assert "syncInterpretationCityDialogStateInto" in interpretation_reference_ui_asset.text

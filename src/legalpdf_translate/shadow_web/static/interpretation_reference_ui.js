@@ -166,6 +166,22 @@ export function renderInterpretationDistanceHintInto(hint, text = "") {
   hint.textContent = String(text ?? "");
 }
 
+export function renderInterpretationDistanceSyncInto(nodes = {}, syncState = {}) {
+  const {
+    field = null,
+    hint = null,
+  } = nodes || {};
+  const {
+    travelKmOutbound = "",
+    hintText = "",
+  } = syncState || {};
+  const nextTravelKmOutbound = String(travelKmOutbound ?? "");
+  if (field && String(field.value || "").trim() !== nextTravelKmOutbound) {
+    field.value = nextTravelKmOutbound;
+  }
+  renderInterpretationDistanceHintInto(hint, hintText);
+}
+
 export function renderInterpretationActionButtonsInto(buttons = [], { blocked = false } = {}) {
   for (const button of buttons || []) {
     if (!button) {
