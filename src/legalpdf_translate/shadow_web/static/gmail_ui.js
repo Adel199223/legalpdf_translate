@@ -38,6 +38,57 @@ export function renderGmailMessageResultInto(container, detailsHint, card = {}) 
   }
 }
 
+export function renderGmailReviewSummaryInto(nodes = {}, card = {}) {
+  const { summary, summaryGrid, summaryDetails } = nodes;
+  if (!summary || !summaryGrid) {
+    return;
+  }
+
+  if (card.empty) {
+    summary.className = "result-card empty-state";
+    summary.textContent = card.emptyText || "";
+    clearNode(summaryGrid);
+    if (summaryDetails) {
+      summaryDetails.open = false;
+    }
+    return;
+  }
+
+  summary.className = "result-card";
+  clearNode(summary);
+  const summaryCard = document.createElement("div");
+  summaryCard.className = "gmail-review-summary-card";
+
+  const copy = document.createElement("div");
+  copy.className = "gmail-review-summary-copy";
+  const subject = document.createElement("strong");
+  subject.textContent = card.subject || "No subject";
+  copy.appendChild(subject);
+  const status = document.createElement("p");
+  status.textContent = card.reviewStatus || "";
+  copy.appendChild(status);
+  summaryCard.appendChild(copy);
+
+  const metrics = document.createElement("div");
+  metrics.className = "gmail-review-summary-metrics";
+  appendResultGridItem(metrics, "Workflow", card.workflowLabel || "");
+  appendResultGridItem(metrics, "Supported attachments", card.attachmentCount || 0);
+  summaryCard.appendChild(metrics);
+
+  const chip = document.createElement("span");
+  chip.className = `status-chip ${card.chipTone || "info"}`;
+  chip.textContent = card.chipLabel || "Review ready";
+  summaryCard.appendChild(chip);
+  summary.appendChild(summaryCard);
+
+  clearNode(summaryGrid);
+  (Array.isArray(card.gridItems) ? card.gridItems : []).forEach((item) => {
+    appendResultGridItem(summaryGrid, item.label, item.value, {
+      className: item.className || "",
+    });
+  });
+}
+
 export function renderGmailNoncanonicalRuntimeGuardInto(nodes = {}, guard = {}) {
   const {
     card,
