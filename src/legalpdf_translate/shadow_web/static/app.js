@@ -155,7 +155,10 @@ import {
   updateGooglePhotosPickerDiagnostics,
 } from "./google_photos_ui.js";
 import { buildExtensionLabCards } from "./extension_lab_presentation.js";
-import { renderExtensionPrepareReasonCatalogInto } from "./extension_lab_ui.js";
+import {
+  renderExtensionPrepareReasonCatalogInto,
+  renderExtensionSimulatorDefaultsInto,
+} from "./extension_lab_ui.js";
 import {
   populateIdleDiagnostics,
   setDiagnostics,
@@ -175,7 +178,10 @@ export {
   setGooglePhotosPickerFallback,
 } from "./google_photos_ui.js";
 
-export { renderExtensionPrepareReasonCatalogInto } from "./extension_lab_ui.js";
+export {
+  renderExtensionPrepareReasonCatalogInto,
+  renderExtensionSimulatorDefaultsInto,
+} from "./extension_lab_ui.js";
 export { renderProfileDistanceRowsInto } from "./profile_ui.js";
 export {
   renderCapabilityCardsInto,
@@ -2321,18 +2327,12 @@ function renderExtensionLab(payload) {
     open: false,
   });
   const defaults = data.simulator_defaults || {};
-  if (!fieldValue("sim-message-id")) {
-    setFieldValue("sim-message-id", defaults.message_id || "");
-  }
-  if (!fieldValue("sim-thread-id")) {
-    setFieldValue("sim-thread-id", defaults.thread_id || "");
-  }
-  if (!fieldValue("sim-subject")) {
-    setFieldValue("sim-subject", defaults.subject || "");
-  }
-  if (!fieldValue("sim-account-email")) {
-    setFieldValue("sim-account-email", defaults.account_email || "");
-  }
+  renderExtensionSimulatorDefaultsInto({
+    messageId: qs("sim-message-id"),
+    threadId: qs("sim-thread-id"),
+    subject: qs("sim-subject"),
+    accountEmail: qs("sim-account-email"),
+  }, defaults);
   const reasonCatalog = qs("extension-reason-catalog");
   if (reasonCatalog) {
     renderExtensionPrepareReasonCatalogInto(reasonCatalog, data.prepare_reason_catalog || []);

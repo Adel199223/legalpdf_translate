@@ -3413,6 +3413,15 @@ def test_extension_lab_ui_module_centralizes_safe_prepare_reason_rendering() -> 
     assert 'from "./extension_lab_ui.js"' in app_js
     assert "export function renderExtensionPrepareReasonCatalogInto" not in app_js
     assert "renderExtensionPrepareReasonCatalogInto(reasonCatalog, data.prepare_reason_catalog || [])" in app_js
+    assert "export function renderExtensionSimulatorDefaultsInto" in extension_lab_ui_module.read_text(encoding="utf-8")
+    assert "renderExtensionSimulatorDefaultsInto" in app_js
+    render_lab_start = app_js.index("function renderExtensionLab")
+    render_lab_end = app_js.index("function renderTopbar", render_lab_start)
+    render_lab_block = app_js[render_lab_start:render_lab_end]
+    assert 'setFieldValue("sim-message-id"' not in render_lab_block
+    assert 'setFieldValue("sim-thread-id"' not in render_lab_block
+    assert 'setFieldValue("sim-subject"' not in render_lab_block
+    assert 'setFieldValue("sim-account-email"' not in render_lab_block
 
     script = r"""
 const labUi = await import(__EXTENSION_LAB_UI_MODULE_URL__);
@@ -3512,8 +3521,34 @@ const emptyContainer = document.createElement("div");
 labUi.renderExtensionPrepareReasonCatalogInto(emptyContainer, []);
 const nullResult = labUi.renderExtensionPrepareReasonCatalogInto(null, [{ reason: "ignored", message: "Ignored" }]);
 
+function makeInput(value = "") {
+  const input = makeElement("input");
+  input.value = value;
+  return input;
+}
+
+const messageId = makeInput("");
+const threadId = makeInput("keep-existing-thread");
+const subject = makeInput("   ");
+const accountEmail = makeInput("");
+const nullDefaultsResult = labUi.renderExtensionSimulatorDefaultsInto(null, {
+  message_id: "ignored",
+});
+const defaultsResult = labUi.renderExtensionSimulatorDefaultsInto({
+  messageId,
+  threadId,
+  subject,
+  accountEmail,
+}, {
+  message_id: `msg-${malicious}`,
+  thread_id: `thread-${malicious}`,
+  subject: `Subject ${malicious}`,
+  account_email: `account-${malicious}@example.test`,
+});
+
 console.log(JSON.stringify({
   exportedType: typeof labUi.renderExtensionPrepareReasonCatalogInto,
+  defaultsExportedType: typeof labUi.renderExtensionSimulatorDefaultsInto,
   text: container.textContent,
   articleCount: countTag(container, "article"),
   imgCount: countTag(container, "img"),
@@ -3523,6 +3558,18 @@ console.log(JSON.stringify({
   emptyText: emptyContainer.textContent,
   emptyClass: emptyContainer.children[0]?.className || "",
   nullResultType: nullResult === undefined ? "undefined" : typeof nullResult,
+  defaults: {
+    messageId: messageId.value,
+    threadId: threadId.value,
+    subject: subject.value,
+    accountEmail: accountEmail.value,
+    messageInnerHTMLWrites: countInnerHtmlWrites(messageId),
+    threadInnerHTMLWrites: countInnerHtmlWrites(threadId),
+    subjectInnerHTMLWrites: countInnerHtmlWrites(subject),
+    accountInnerHTMLWrites: countInnerHtmlWrites(accountEmail),
+    defaultsResultType: defaultsResult === undefined ? "undefined" : typeof defaultsResult,
+    nullDefaultsResultType: nullDefaultsResult === undefined ? "undefined" : typeof nullDefaultsResult,
+  },
 }));
 """
     results = run_browser_esm_json_probe(
@@ -3532,6 +3579,7 @@ console.log(JSON.stringify({
     )
 
     assert results["exportedType"] == "function"
+    assert results["defaultsExportedType"] == "function"
     assert "Message <img src=x onerror=alert(1)><script>bad()</script>" in results["text"]
     assert "Code: <img src=x onerror=alert(1)><script>bad()</script>" in results["text"]
     assert results["articleCount"] == 2
@@ -3542,6 +3590,16 @@ console.log(JSON.stringify({
     assert results["emptyText"] == "No prepare reasons are available."
     assert results["emptyClass"] == "empty-state"
     assert results["nullResultType"] == "undefined"
+    assert results["defaults"]["messageId"] == "msg-<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["defaults"]["threadId"] == "keep-existing-thread"
+    assert results["defaults"]["subject"] == "Subject <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["defaults"]["accountEmail"] == "account-<img src=x onerror=alert(1)><script>bad()</script>@example.test"
+    assert results["defaults"]["messageInnerHTMLWrites"] == 0
+    assert results["defaults"]["threadInnerHTMLWrites"] == 0
+    assert results["defaults"]["subjectInnerHTMLWrites"] == 0
+    assert results["defaults"]["accountInnerHTMLWrites"] == 0
+    assert results["defaults"]["defaultsResultType"] == "undefined"
+    assert results["defaults"]["nullDefaultsResultType"] == "undefined"
 
 
 def test_recovery_result_ui_module_centralizes_safe_card_rendering() -> None:
@@ -13376,6 +13434,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert extension_lab_ui_asset.status_code == 200
         assert extension_lab_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderExtensionPrepareReasonCatalogInto" in extension_lab_ui_asset.text
+        assert "renderExtensionSimulatorDefaultsInto" in extension_lab_ui_asset.text
         profile_ui_asset = client.get(f"/static-build/{asset_version}/profile_ui.js")
         assert profile_ui_asset.status_code == 200
         assert profile_ui_asset.headers["content-type"].startswith("application/javascript")
