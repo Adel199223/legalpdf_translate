@@ -62,6 +62,7 @@ import {
   renderInterpretationSessionShellInto,
   syncInterpretationReviewDrawerStateInto,
   syncInterpretationReviewDetailsShellInto,
+  syncInterpretationSeedServiceSectionInto,
 } from "./interpretation_review_ui.js";
 import {
   renderCourtEmailEditorInto,
@@ -1874,13 +1875,10 @@ export function applyInterpretationSeed(seed, { activateTask = true, openReview 
   interpretationCityState.manualDistance = Boolean(fieldValue("travel-km-outbound"));
   interpretationCityState.autoDistanceCity = "";
   updateServiceFieldState();
-  if (sourceKind === "photo" || sourceKind === "google_photos") {
-    if (serviceDefaults.serviceSame) {
-      qs("interpretation-service-section")?.removeAttribute("open");
-    } else {
-      qs("interpretation-service-section")?.setAttribute("open", "open");
-    }
-  }
+  syncInterpretationSeedServiceSectionInto(qs("interpretation-service-section"), {
+    sourceKind,
+    serviceSame: serviceDefaults.serviceSame,
+  });
   resetInterpretationExportResult();
   syncInterpretationReviewSurface();
   if (openReview) {
