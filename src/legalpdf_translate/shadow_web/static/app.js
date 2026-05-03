@@ -75,7 +75,7 @@ import {
   renderInterpretationFieldWarningInto,
   renderInterpretationCityAddButtonsInto,
   renderInterpretationCityOptionsInto,
-  renderInterpretationDistanceHintInto,
+  renderInterpretationDistanceSyncInto,
   renderServiceEntityOptionsInto,
   renderServiceSameControlsInto,
   syncInterpretationCityDialogStateInto,
@@ -1045,15 +1045,15 @@ function syncInterpretationDistanceFromReference() {
     autoDistanceCity: interpretationCityState.autoDistanceCity,
     manualDistance: interpretationCityState.manualDistance,
   });
-  if (fieldValue("travel-km-outbound") !== syncState.travelKmOutbound) {
-    setFieldValue("travel-km-outbound", syncState.travelKmOutbound);
-  }
   interpretationCityState.autoDistanceCity = syncState.autoDistanceCity;
   interpretationCityState.manualDistance = syncState.manualDistance;
-  renderInterpretationDistanceHintInto(
+  renderInterpretationDistanceSyncInto({
+    field: travelField,
     hint,
-    syncState.hintText || guard.distanceHint || "Distance saved by city will appear here when available.",
-  );
+  }, {
+    travelKmOutbound: syncState.travelKmOutbound,
+    hintText: syncState.hintText || guard.distanceHint || "Distance saved by city will appear here when available.",
+  });
 }
 
 function updateInterpretationActionAvailability() {
