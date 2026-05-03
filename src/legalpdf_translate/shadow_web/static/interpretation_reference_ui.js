@@ -227,6 +227,27 @@ export function syncInterpretationCityDialogStateInto(backdrop, body, open) {
   }
 }
 
+export function renderInterpretationCityDialogFieldsInto(nodes = {}, dialog = {}) {
+  const {
+    fieldName = null,
+    mode = null,
+    cityName = null,
+    distance = null,
+  } = nodes || {};
+  if (fieldName) {
+    fieldName.value = String(dialog.fieldName ?? "");
+  }
+  if (mode) {
+    mode.value = String(dialog.mode ?? "");
+  }
+  if (cityName) {
+    cityName.value = String(dialog.cityName ?? "");
+  }
+  if (distance) {
+    distance.value = "";
+  }
+}
+
 export function renderInterpretationCityDialogContentInto(nodes = {}, dialog = {}) {
   const {
     title = null,

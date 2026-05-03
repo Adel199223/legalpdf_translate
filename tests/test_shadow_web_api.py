@@ -5785,6 +5785,7 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "export function renderInterpretationActionButtonsInto" in interpretation_reference_ui_text
     assert "export function renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_text
     assert "export function syncInterpretationCityDialogStateInto" in interpretation_reference_ui_text
+    assert "export function renderInterpretationCityDialogFieldsInto" in interpretation_reference_ui_text
     assert "export function renderInterpretationCityDialogContentInto" in interpretation_reference_ui_text
     assert "renderInterpretationCityOptionsInto(select, reference.availableCities, currentValue);" in app_js
     assert "renderCourtEmailOptionsInto(select, {" in app_js
@@ -5794,6 +5795,7 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "renderInterpretationActionButtonsInto(actionButtons, { blocked });" in app_js
     assert "renderInterpretationCityAddButtonsInto({" in app_js
     assert "syncInterpretationCityDialogStateInto(backdrop, document.body, interpretationCityState.dialogOpen);" in app_js
+    assert "renderInterpretationCityDialogFieldsInto({" in app_js
     assert "renderInterpretationCityDialogContentInto({" in app_js
 
     city_start = app_js.index("function populateInterpretationCitySelect")
@@ -5849,6 +5851,11 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     open_dialog_start = app_js.index("function openInterpretationCityDialog")
     reference_update_start = app_js.index("function applyInterpretationReferenceUpdate", open_dialog_start)
     open_dialog_block = app_js[open_dialog_start:reference_update_start]
+    assert "renderInterpretationCityDialogFieldsInto({" in open_dialog_block
+    assert 'setFieldValue("interpretation-city-dialog-field-name"' not in open_dialog_block
+    assert 'setFieldValue("interpretation-city-dialog-mode"' not in open_dialog_block
+    assert 'setFieldValue("interpretation-city-dialog-name"' not in open_dialog_block
+    assert 'setFieldValue("interpretation-city-dialog-distance"' not in open_dialog_block
     assert "renderInterpretationCityDialogContentInto({" in open_dialog_block
     assert "title.textContent" not in open_dialog_block
     assert "status.textContent" not in open_dialog_block
@@ -6077,6 +6084,40 @@ function cityDialogNodes() {
   };
 }
 
+function cityDialogFieldNodes() {
+  return {
+    fieldName: document.createElement("input"),
+    mode: document.createElement("input"),
+    cityName: document.createElement("input"),
+    distance: document.createElement("input"),
+  };
+}
+
+function summarizeCityDialogFields(nodes) {
+  return {
+    fieldName: nodes.fieldName.value,
+    mode: nodes.mode.value,
+    cityName: nodes.cityName.value,
+    distance: nodes.distance.value,
+    imgCount:
+      countTag(nodes.fieldName, "img")
+      + countTag(nodes.mode, "img")
+      + countTag(nodes.cityName, "img")
+      + countTag(nodes.distance, "img"),
+    scriptCount:
+      countTag(nodes.fieldName, "script")
+      + countTag(nodes.mode, "script")
+      + countTag(nodes.cityName, "script")
+      + countTag(nodes.distance, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(
+      nodes.fieldName,
+      nodes.mode,
+      nodes.cityName,
+      nodes.distance,
+    ),
+  };
+}
+
 globalThis.document = {
   createElement(tagName) {
     return makeElement(tagName);
@@ -6229,6 +6270,34 @@ const nullBackdropBody = document.createElement("body");
 nullBackdropBody.dataset.interpretationCityDialog = "unchanged";
 const nullBackdropResult = interpretationReferenceUi.syncInterpretationCityDialogStateInto(null, nullBackdropBody, true);
 
+const dialogFields = cityDialogFieldNodes();
+dialogFields.distance.value = "stale distance";
+interpretationReferenceUi.renderInterpretationCityDialogFieldsInto(dialogFields, {
+  fieldName: `case_city${malicious}`,
+  mode: `distance${malicious}`,
+  cityName: `Beja ${malicious}`,
+});
+
+const missingDialogFields = {
+  fieldName: null,
+  mode: document.createElement("input"),
+  cityName: null,
+  distance: document.createElement("input"),
+};
+missingDialogFields.mode.value = "stale";
+missingDialogFields.distance.value = "stale distance";
+interpretationReferenceUi.renderInterpretationCityDialogFieldsInto(missingDialogFields, {
+  fieldName: `ignored${malicious}`,
+  mode: `add${malicious}`,
+  cityName: `ignored${malicious}`,
+});
+
+const nullDialogFieldsResult = interpretationReferenceUi.renderInterpretationCityDialogFieldsInto(null, {
+  fieldName: `ignored${malicious}`,
+  mode: "ignored",
+  cityName: "ignored",
+});
+
 const addCaseDialog = cityDialogNodes();
 interpretationReferenceUi.renderInterpretationCityDialogContentInto(addCaseDialog, {
   title: `Add Case City ${malicious}`,
@@ -6286,6 +6355,7 @@ console.log(JSON.stringify({
     actionButtons: typeof interpretationReferenceUi.renderInterpretationActionButtonsInto,
     cityAddButtons: typeof interpretationReferenceUi.renderInterpretationCityAddButtonsInto,
     cityDialogState: typeof interpretationReferenceUi.syncInterpretationCityDialogStateInto,
+    cityDialogFields: typeof interpretationReferenceUi.renderInterpretationCityDialogFieldsInto,
     cityDialogContent: typeof interpretationReferenceUi.renderInterpretationCityDialogContentInto,
   },
   city: summarizeSelect(citySelect),
@@ -6328,6 +6398,12 @@ console.log(JSON.stringify({
     bodyState: "",
     innerHTMLWrites: countInnerHtmlWrites(missingBodyBackdrop),
   },
+  cityDialogFields: summarizeCityDialogFields(dialogFields),
+  cityDialogMissingFields: {
+    mode: missingDialogFields.mode.value,
+    distance: missingDialogFields.distance.value,
+    innerHTMLWrites: countInnerHtmlWrites(missingDialogFields.mode, missingDialogFields.distance),
+  },
   cityDialogAddCase: summarizeCityDialogContent(addCaseDialog),
   cityDialogDistance: summarizeCityDialogContent(distanceDialog),
   cityDialogMissingNodes: {
@@ -6350,6 +6426,7 @@ console.log(JSON.stringify({
   nullActionResult,
   nullAddButtonResult,
   nullBackdropResult,
+  nullDialogFieldsResult,
   nullDialogContentResult,
 }));
 """
@@ -6368,6 +6445,7 @@ console.log(JSON.stringify({
         "actionButtons": "function",
         "cityAddButtons": "function",
         "cityDialogState": "function",
+        "cityDialogFields": "function",
         "cityDialogContent": "function",
     }
     assert results["city"]["optionTexts"][0] == "Select a city"
@@ -6471,6 +6549,21 @@ console.log(JSON.stringify({
     assert results["cityDialogMissingBody"]["bodyState"] == ""
     assert results["cityDialogMissingBody"]["innerHTMLWrites"] == 0
 
+    assert results["cityDialogFields"] == {
+        "fieldName": "case_city<img src=x onerror=alert(1)><script>bad()</script>",
+        "mode": "distance<img src=x onerror=alert(1)><script>bad()</script>",
+        "cityName": "Beja <img src=x onerror=alert(1)><script>bad()</script>",
+        "distance": "",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["cityDialogMissingFields"] == {
+        "mode": "add<img src=x onerror=alert(1)><script>bad()</script>",
+        "distance": "",
+        "innerHTMLWrites": 0,
+    }
+
     assert results["cityDialogAddCase"]["title"] == "Add Case City <img src=x onerror=alert(1)><script>bad()</script>"
     assert results["cityDialogAddCase"]["status"] == "Confirm the city details before continuing. <img src=x onerror=alert(1)><script>bad()</script>"
     assert results["cityDialogAddCase"]["readOnly"] is False
@@ -6509,6 +6602,7 @@ console.log(JSON.stringify({
     assert "nullActionResult" not in results
     assert "nullAddButtonResult" not in results
     assert "nullBackdropResult" not in results
+    assert "nullDialogFieldsResult" not in results
     assert "nullDialogContentResult" not in results
 
 
@@ -13361,6 +13455,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationActionButtonsInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_asset.text
         assert "syncInterpretationCityDialogStateInto" in interpretation_reference_ui_asset.text
+        assert "renderInterpretationCityDialogFieldsInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationCityDialogContentInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationFormFieldsInto" in interpretation_reference_ui_asset.text
         assert "renderServiceSameControlsInto" in interpretation_reference_ui_asset.text
