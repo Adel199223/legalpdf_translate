@@ -7153,6 +7153,97 @@ console.log(JSON.stringify({
     assert "nullNodesResult" not in results
 
 
+def test_interpretation_reference_ui_module_centralizes_row_id_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_reference_ui_js = static_dir / "interpretation_reference_ui.js"
+
+    assert interpretation_reference_ui_js.exists()
+    interpretation_reference_ui_text = interpretation_reference_ui_js.read_text(encoding="utf-8")
+    assert "export function renderInterpretationRowIdInto" in interpretation_reference_ui_text
+    assert 'renderInterpretationRowIdInto(qs("row-id"),' in app_js
+
+    delete_start = app_js.index("async function handleDeleteJobLogRow")
+    capability_start = app_js.index("function buildCapabilityCards", delete_start)
+    delete_block = app_js[delete_start:capability_start]
+    assert 'renderInterpretationRowIdInto(qs("row-id"), "");' in delete_block
+    assert 'qs("row-id").value = "";' not in delete_block
+    assert "innerHTML" not in delete_block
+
+    save_start = app_js.index("async function handleSave")
+    export_start = app_js.index("async function handleExport", save_start)
+    save_block = app_js[save_start:export_start]
+    assert 'renderInterpretationRowIdInto(qs("row-id"), payload.saved_result.row_id);' in save_block
+    assert 'qs("row-id").value = payload.saved_result.row_id' not in save_block
+    assert "innerHTML" not in save_block
+
+    renderer_start = interpretation_reference_ui_text.index("export function renderInterpretationRowIdInto")
+    renderer_end = interpretation_reference_ui_text.index("export function renderInterpretationFormFieldsInto", renderer_start)
+    renderer_block = interpretation_reference_ui_text[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = r"""
+const interpretationReferenceUi = await import(__INTERPRETATION_REFERENCE_UI_MODULE_URL__);
+
+function makeControl(value = "") {
+  const element = {
+    value,
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+  };
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return element;
+}
+
+const malicious = `42<img src=x onerror=alert(1)><script>bad()</script>`;
+const populated = makeControl("stale");
+interpretationReferenceUi.renderInterpretationRowIdInto(populated, malicious);
+const cleared = makeControl("123");
+interpretationReferenceUi.renderInterpretationRowIdInto(cleared, "");
+const nullResult = interpretationReferenceUi.renderInterpretationRowIdInto(null, malicious);
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationReferenceUi.renderInterpretationRowIdInto,
+  populated: {
+    value: populated.value,
+    innerHTMLWrites: populated.innerHTMLAssignments.length,
+  },
+  cleared: {
+    value: cleared.value,
+    innerHTMLWrites: cleared.innerHTMLAssignments.length,
+  },
+  nullResultType: nullResult === undefined ? "undefined" : typeof nullResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REFERENCE_UI_MODULE_URL__": "interpretation_reference_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["populated"] == {
+        "value": "42<img src=x onerror=alert(1)><script>bad()</script>",
+        "innerHTMLWrites": 0,
+    }
+    assert results["cleared"] == {"value": "", "innerHTMLWrites": 0}
+    assert results["nullResultType"] == "undefined"
+
+
 def test_interpretation_reference_ui_module_centralizes_service_same_controls() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -13809,6 +13900,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationCityDialogFieldsInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationCityDialogContentInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationFormFieldsInto" in interpretation_reference_ui_asset.text
+        assert "renderInterpretationRowIdInto" in interpretation_reference_ui_asset.text
         assert "renderServiceSameControlsInto" in interpretation_reference_ui_asset.text
         assert "renderCourtEmailEditorInto" in interpretation_reference_ui_asset.text
         assert "renderCourtEmailStatusInto" in interpretation_reference_ui_asset.text
