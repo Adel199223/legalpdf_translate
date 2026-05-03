@@ -9,6 +9,7 @@ import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
+  renderGmailPreviewPanelInto,
   renderGmailReviewSummaryInto,
 } from "./gmail_ui.js";
 import {
@@ -1970,97 +1971,33 @@ function renderPreviewPanel() {
   const prevButton = qs("gmail-preview-prev");
   const nextButton = qs("gmail-preview-next");
   const pageInput = qs("gmail-preview-page");
-  const attachment = focusedAttachment();
   const previewAttachment = previewAttachmentRecord();
   const previewHref = resolvedPreviewHref();
   if (!container || !summary || !status || !openTab || !applyButton || !prevButton || !nextButton || !pageInput) {
     return;
   }
-  if (!applyButton.dataset.defaultLabel) {
-    applyButton.dataset.defaultLabel = applyButton.textContent;
-  }
-  pageInput.disabled = true;
-  prevButton.disabled = true;
-  nextButton.disabled = true;
-  pageInput.min = "1";
-  pageInput.max = "1";
-  pageInput.value = "1";
-  openTab.classList.add("hidden");
-  openTab.href = "#";
-  applyButton.textContent = applyButton.dataset.defaultLabel;
-  applyButton.disabled = true;
-  if (!previewAttachment || !previewHref) {
-    summary.className = "result-card empty-state";
-    summary.textContent = "Preview is optional. Open it when you want to check the document more closely.";
-    container.className = "gmail-inline-preview empty-state";
-    container.textContent = "Preview opens here when requested.";
-    status.textContent = "Preview is optional. Use it if you want to check the document or choose a later start page.";
-    return;
-  }
-  const canApply = canEditStartPage(previewAttachment);
-  summary.className = "result-card";
-  summary.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(previewAttachment.filename || "Attachment preview")}</strong>
-        <p>${previewPageCount() > 0 ? `${previewPageCount()} page(s) available` : "Preview ready"}</p>
-      </div>
-      <span class="status-chip ${canApply ? "info" : "ok"}">${canApply ? `Page ${previewPage()}` : "Inspect only"}</span>
-    </div>
-  `;
-  openTab.classList.remove("hidden");
-  openTab.href = previewHref;
-  const pageCount = previewPageCount();
-  const page = previewPage();
-  if (isPdfAttachment(previewAttachment)) {
-    pageInput.disabled = false;
-    prevButton.disabled = page <= 1;
-    nextButton.disabled = pageCount > 0 ? page >= pageCount : false;
-    pageInput.max = String(Math.max(1, pageCount || page));
-    pageInput.value = String(page);
-    applyButton.disabled = !canApply;
-    applyButton.textContent = canApply ? applyButton.dataset.defaultLabel : "Preview only";
-    container.className = "gmail-inline-preview";
-    container.innerHTML = `
-      <div class="gmail-inline-preview-canvas-shell">
-        <canvas
-          id="gmail-preview-canvas"
-          class="gmail-inline-preview-canvas"
-          aria-label="${escapeHtml(`Preview for ${previewAttachment.filename || "attachment"}`)}"
-        ></canvas>
-      </div>
-    `;
-    status.textContent = canApply
-      ? (pageCount > 0
-        ? `Previewing page ${page} of ${pageCount}. Use current page if you want the translation to start later in the document.`
-        : `Previewing page ${page}. Use current page if you want the translation to start later in the document.`)
-      : (pageCount > 0
-        ? `Previewing page ${page} of ${pageCount}. This workflow still continues from page 1.`
-        : `Previewing page ${page}. This workflow still continues from page 1.`);
+
+  const renderResult = renderGmailPreviewPanelInto({
+    container,
+    summary,
+    status,
+    openTab,
+    applyButton,
+    prevButton,
+    nextButton,
+    pageInput,
+  }, {
+    attachment: previewAttachment,
+    href: previewHref,
+    page: previewPage(),
+    pageCount: previewPageCount(),
+    canApply: previewAttachment ? canEditStartPage(previewAttachment) : false,
+    isPdf: previewAttachment ? isPdfAttachment(previewAttachment) : false,
+    isImage: previewAttachment ? isImageAttachment(previewAttachment) : false,
+  });
+  if (renderResult?.shouldRenderPdfCanvas) {
     void renderActivePdfPreviewCanvas(previewAttachment);
-    return;
   }
-  container.className = "gmail-inline-preview";
-  if (isImageAttachment(previewAttachment)) {
-    applyButton.disabled = true;
-    applyButton.textContent = "Preview only";
-    container.innerHTML = `
-      <div class="gmail-inline-preview-image-shell">
-        <img
-          class="gmail-inline-preview-image"
-          src="${escapeHtml(previewHref)}"
-          alt="${escapeHtml(previewAttachment.filename || "Attachment preview")}"
-        >
-      </div>
-    `;
-    status.textContent = "Image preview is shown inline. Start page stays fixed at 1 for this attachment.";
-    return;
-  }
-  applyButton.disabled = true;
-  applyButton.textContent = "Preview only";
-  container.className = "gmail-inline-preview empty-state";
-  container.innerHTML = `Open <strong>${escapeHtml(previewAttachment.filename || "the preview")}</strong> in a new tab for a full attachment view.`;
-  status.textContent = "This attachment type is available through the new-tab fallback.";
 }
 
 function renderGmailRestoreBar() {
