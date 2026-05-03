@@ -6,6 +6,10 @@ import {
   renderBrowserPdfPreviewToCanvas,
 } from "./browser_pdf.js";
 import { runWithBusy } from "./busy_ui.js";
+import {
+  setDiagnostics,
+  setPanelStatus,
+} from "./diagnostics_ui.js";
 import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
   renderGmailAttachmentListInto,
@@ -95,63 +99,6 @@ function setFieldValue(id, value) {
   const node = qs(id);
   if (node) {
     node.value = value ?? "";
-  }
-}
-
-function formatDiagnosticValue(value) {
-  if (value instanceof Error) {
-    const payload = { status: "failed", message: value.message || "Unexpected error." };
-    if (value.status) {
-      payload.http_status = value.status;
-    }
-    if (value.payload && Object.keys(value.payload).length) {
-      payload.payload = value.payload;
-    }
-    return JSON.stringify(payload, null, 2);
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value === undefined || value === null) {
-    return "";
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function setDiagnostics(slot, value, { hint = "", open = false } = {}) {
-  const pre = qs(`${slot}-diagnostics`);
-  if (pre) {
-    pre.textContent = formatDiagnosticValue(value);
-  }
-  const hintNode = qs(`${slot}-hint`);
-  if (hintNode && hint) {
-    hintNode.textContent = hint;
-  }
-  const details = qs(`${slot}-details`);
-  if (details) {
-    details.open = Boolean(open);
-    if (open) {
-      details.dataset.reveal = "true";
-    } else {
-      delete details.dataset.reveal;
-    }
-  }
-}
-
-function setPanelStatus(slot, tone, message) {
-  const panel = qs(`${slot}-status`);
-  if (!panel) {
-    return;
-  }
-  panel.textContent = message;
-  if (tone) {
-    panel.dataset.tone = tone;
-  } else {
-    delete panel.dataset.tone;
   }
 }
 

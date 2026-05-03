@@ -14107,9 +14107,14 @@ def test_diagnostics_ui_module_centralizes_safe_status_rendering(tmp_path: Path,
 
     assert diagnostics_ui_module.exists()
     diagnostics_ui_js = diagnostics_ui_module.read_text(encoding="utf-8")
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     assert 'from "./diagnostics_ui.js"' in app_js
+    assert 'from "./diagnostics_ui.js"' in gmail_js
     assert 'from "./diagnostics_presentation.js"' in diagnostics_ui_js
     assert 'from "./diagnostics_presentation.js"' not in app_js
+    assert "function formatDiagnosticValue(value)" not in gmail_js
+    assert "function setDiagnostics(slot, value, { hint = \"\", open = false } = {})" not in gmail_js
+    assert "function setPanelStatus(slot, tone, message)" not in gmail_js
     assert "export function setDiagnostics" in diagnostics_ui_js
     assert "export function setPanelStatus" in diagnostics_ui_js
     assert "export function setTopbarStatus" in diagnostics_ui_js
@@ -14345,6 +14350,10 @@ console.log(JSON.stringify({
         assert "setPanelStatus" in diagnostics_asset.text
         assert "setTopbarStatus" in diagnostics_asset.text
         assert "populateIdleDiagnostics" in diagnostics_asset.text
+        gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
+        assert gmail_asset.status_code == 200
+        assert gmail_asset.headers["content-type"].startswith("application/javascript")
+        assert 'from "./diagnostics_ui.js"' in gmail_asset.text
 
 
 def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> None:
@@ -16640,6 +16649,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
         assert 'from "./busy_ui.js"' in gmail_asset.text
+        assert 'from "./diagnostics_ui.js"' in gmail_asset.text
         shell_ui_asset = client.get(f"/static-build/{asset_version}/shell_ui.js")
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")
