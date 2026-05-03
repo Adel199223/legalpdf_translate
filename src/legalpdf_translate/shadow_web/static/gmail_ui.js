@@ -1,6 +1,17 @@
 import { clearNode, createTextElement, setNodeTitle, setText } from "./safe_rendering.js";
 import { appendResultGridItem, createResultHeader } from "./result_card_ui.js";
 
+export function renderGmailReportActionInto(button, { available = false, label = "" } = {}) {
+  if (!button) {
+    return undefined;
+  }
+  button.classList.toggle("hidden", !available);
+  button.disabled = !available;
+  button.textContent = label;
+  button.dataset.defaultLabel = label;
+  return button;
+}
+
 export function renderGmailMessageResultInto(container, detailsHint, card = {}) {
   if (!container) {
     return;
