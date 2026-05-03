@@ -23,6 +23,7 @@ import {
   renderGmailReviewSummaryInto,
   renderGmailResumeCardInto,
   renderGmailSessionResultInto,
+  renderGmailTranslationStepCardInto,
 } from "./gmail_ui.js";
 import {
   applyPreviewStateStartPage,
@@ -1412,10 +1413,12 @@ function renderTranslationCompletionGmailStepCard(activeSession) {
     && !activeSession?.completed
     && (translationUi.currentJobStatus === "completed" || translationUi.hasCompletionSurface),
   );
-  card.classList.toggle("hidden", !show);
   const blockedOnArabicReview = Boolean(translationUi.requiresArabicReview && !translationUi.arabicReviewResolved);
-  button.disabled = !show || blockedOnArabicReview;
   if (!show) {
+    renderGmailTranslationStepCardInto({ card, title, copy, chip, button }, {
+      visible: false,
+      blocked: blockedOnArabicReview,
+    });
     return;
   }
   const filename = activeSession.current_attachment?.attachment?.filename || "Current Gmail attachment";
@@ -1439,20 +1442,24 @@ function renderTranslationCompletionGmailStepCard(activeSession) {
       hasMoreItems: Number(activeSession.current_item_number || 0) < Number(activeSession.total_items || 0),
     },
   });
-  title.textContent = presentation?.gmailCurrentAttachment?.title || (
-    blockedOnArabicReview
-      ? "Review the Arabic document in Word before you save this Gmail attachment."
-      : "This Gmail attachment is ready to save."
-  );
-  copy.textContent = presentation?.gmailCurrentAttachment?.copy || (
-    blockedOnArabicReview
-      ? (translationUi.arabicReviewMessage || "Open the translated DOCX in Word, save it there, then return here to save this Gmail attachment.")
-      : Number(activeSession.current_item_number || 0) < Number(activeSession.total_items || 0)
-        ? "Save this translated attachment, then continue with the next Gmail step."
-        : "Save this translated attachment, then continue to create the Gmail reply."
-  );
-  chip.textContent = presentation?.gmailCurrentAttachment?.chipLabel || batchLabel;
-  button.textContent = presentation?.gmailCurrentAttachment?.buttonLabel || "Save this Gmail attachment";
+  renderGmailTranslationStepCardInto({ card, title, copy, chip, button }, {
+    visible: true,
+    blocked: blockedOnArabicReview,
+    title: presentation?.gmailCurrentAttachment?.title || (
+      blockedOnArabicReview
+        ? "Review the Arabic document in Word before you save this Gmail attachment."
+        : "This Gmail attachment is ready to save."
+    ),
+    copy: presentation?.gmailCurrentAttachment?.copy || (
+      blockedOnArabicReview
+        ? (translationUi.arabicReviewMessage || "Open the translated DOCX in Word, save it there, then return here to save this Gmail attachment.")
+        : Number(activeSession.current_item_number || 0) < Number(activeSession.total_items || 0)
+          ? "Save this translated attachment, then continue with the next Gmail step."
+          : "Save this translated attachment, then continue to create the Gmail reply."
+    ),
+    chipLabel: presentation?.gmailCurrentAttachment?.chipLabel || batchLabel,
+    buttonLabel: presentation?.gmailCurrentAttachment?.buttonLabel || "Save this Gmail attachment",
+  });
 }
 
 function collectSelections() {
