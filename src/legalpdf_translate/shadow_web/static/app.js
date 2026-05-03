@@ -70,6 +70,7 @@ import {
   renderCourtEmailStatusInto,
   renderInterpretationActionButtonsInto,
   renderInterpretationCityDialogContentInto,
+  renderInterpretationCityDialogFieldsInto,
   renderInterpretationFormFieldsInto,
   renderInterpretationFieldWarningInto,
   renderInterpretationCityAddButtonsInto,
@@ -1230,10 +1231,16 @@ function openInterpretationCityDialog({
     fieldName: fieldName || "service_city",
     requireDistance: Boolean(requireDistance),
   };
-  setFieldValue("interpretation-city-dialog-field-name", interpretationCityState.activeDialog.fieldName);
-  setFieldValue("interpretation-city-dialog-mode", interpretationCityState.activeDialog.mode);
-  setFieldValue("interpretation-city-dialog-name", cityName);
-  setFieldValue("interpretation-city-dialog-distance", "");
+  renderInterpretationCityDialogFieldsInto({
+    fieldName: qs("interpretation-city-dialog-field-name"),
+    mode: qs("interpretation-city-dialog-mode"),
+    cityName: qs("interpretation-city-dialog-name"),
+    distance: qs("interpretation-city-dialog-distance"),
+  }, {
+    fieldName: interpretationCityState.activeDialog.fieldName,
+    mode: interpretationCityState.activeDialog.mode,
+    cityName,
+  });
   const title = qs("interpretation-city-dialog-title");
   const status = qs("interpretation-city-dialog-status");
   const cityInput = qs("interpretation-city-dialog-name");
