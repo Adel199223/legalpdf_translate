@@ -1,5 +1,6 @@
 import {
   appendMultilineText,
+  clearNode,
   createTextElement,
   setNodeTitle,
   setText,
@@ -40,4 +41,38 @@ export function appendResultGridItem(container, title, value, { className = "", 
   item.appendChild(paragraph);
   container.appendChild(item);
   return item;
+}
+
+export function renderResultHeaderCardInto(container, card = {}) {
+  if (!container) {
+    return undefined;
+  }
+
+  if (!card.available) {
+    container.classList.add("empty-state");
+    container.textContent = card.emptyText || "";
+    return container;
+  }
+
+  container.classList.remove("empty-state");
+  clearNode(container);
+
+  const header = document.createElement("div");
+  header.className = "result-header";
+  const copy = document.createElement("div");
+  copy.appendChild(createTextElement("strong", card.title || ""));
+
+  const message = createTextElement("p", card.message || "");
+  const detailLines = (Array.isArray(card.detailLines) ? card.detailLines : []).filter(Boolean);
+  if (detailLines.length) {
+    message.appendChild(document.createElement("br"));
+    message.appendChild(document.createElement("br"));
+    appendMultilineText(message, detailLines.join("\n"));
+  }
+  copy.appendChild(message);
+
+  header.appendChild(copy);
+  header.appendChild(createStatusChip(card.label || "", card.tone || "info"));
+  container.appendChild(header);
+  return container;
 }

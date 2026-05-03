@@ -7,6 +7,7 @@ import {
   createTextElement,
   setNodeTitle,
 } from "./safe_rendering.js";
+import { renderResultHeaderCardInto } from "./result_card_ui.js";
 
 const translationState = {
   currentSeed: null,
@@ -2149,24 +2150,20 @@ function renderTranslationCompletionResultCard() {
     gmailBatchContext: translationState.currentGmailBatchContext,
   });
   if (!presentation.available) {
-    container.classList.add("empty-state");
-    container.textContent = presentation.resultCopy;
+    renderResultHeaderCardInto(container, {
+      available: false,
+      emptyText: presentation.resultCopy,
+    });
     return;
   }
-  const detailLines = presentation.resultDetailLines
-    .filter(Boolean)
-    .map((line) => escapeHtml(line))
-    .join("<br>");
-  container.classList.remove("empty-state");
-  container.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(presentation.resultTitle)}</strong>
-        <p>${escapeHtml(presentation.resultCopy)}${detailLines ? `<br><br>${detailLines}` : ""}</p>
-      </div>
-      <span class="status-chip ${escapeHtml(presentation.resultChipTone)}">${escapeHtml(presentation.resultChipLabel)}</span>
-    </div>
-  `;
+  renderResultHeaderCardInto(container, {
+    available: true,
+    title: presentation.resultTitle,
+    message: presentation.resultCopy,
+    detailLines: presentation.resultDetailLines,
+    label: presentation.resultChipLabel,
+    tone: presentation.resultChipTone,
+  });
 }
 
 function renderArabicReviewCard() {
