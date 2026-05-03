@@ -11,6 +11,8 @@ import {
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailPreviewPanelInto,
   renderGmailReviewSummaryInto,
+  renderGmailResumeCardInto,
+  renderGmailSessionResultInto,
 } from "./gmail_ui.js";
 import {
   applyPreviewStateStartPage,
@@ -2067,12 +2069,13 @@ function renderResumeCard(activeSession) {
     return;
   }
   if (!cta.visible || !activeSession) {
-    container.classList.add("hidden");
-    container.classList.add("empty-state");
-    container.textContent = "No Gmail step is waiting yet.";
+    renderGmailResumeCardInto(container, {
+      visible: false,
+      emptyText: "No Gmail step is waiting yet.",
+    });
     return;
   }
-  let summaryGrid = "";
+  let gridItems = [];
   const stagePresentation = deriveGmailStagePresentation({
     stage: gmailState.stage,
     activeSession,
@@ -2082,35 +2085,27 @@ function renderResumeCard(activeSession) {
     const batchLabel = activeSession.total_items
       ? `${activeSession.current_item_number || "?"}/${activeSession.total_items}`
       : "Batch ready";
-    summaryGrid = `
-      <div class="result-grid">
-        <div><h3>Status</h3><p>${escapeHtml(stagePresentation.title || "Ready")}</p></div>
-        <div><h3>Batch</h3><p>${escapeHtml(batchLabel)}</p></div>
-        <div><h3>Current File</h3><p class="word-break">${escapeHtml(currentAttachment)}</p></div>
-      </div>
-    `;
+    gridItems = [
+      { label: "Status", value: stagePresentation.title || "Ready" },
+      { label: "Batch", value: batchLabel },
+      { label: "Current File", value: currentAttachment, className: "word-break" },
+    ];
   } else if (activeSession.kind === "interpretation") {
     const noticeName = activeSession.attachment?.attachment?.filename || "Prepared notice";
-    summaryGrid = `
-      <div class="result-grid">
-        <div><h3>Status</h3><p>${escapeHtml(stagePresentation.title || "Ready")}</p></div>
-        <div><h3>Notice</h3><p class="word-break">${escapeHtml(noticeName)}</p></div>
-      </div>
-    `;
+    gridItems = [
+      { label: "Status", value: stagePresentation.title || "Ready" },
+      { label: "Notice", value: noticeName, className: "word-break" },
+    ];
   }
-  container.classList.remove("hidden");
-  container.classList.remove("empty-state");
-  container.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(cta.title || "Resume Current Step")}</strong>
-        <p>${escapeHtml(cta.description || "Continue the active Gmail step when you are ready.")}</p>
-        ${redo.visible ? `<p>${escapeHtml(redo.description || "")}</p>` : ""}
-      </div>
-      <span class="status-chip ${cta.tone === "ok" ? "ok" : "info"}">${escapeHtml(activeSession.status || "ready")}</span>
-    </div>
-    ${summaryGrid}
-  `;
+  renderGmailResumeCardInto(container, {
+    visible: true,
+    title: cta.title || "Resume Current Step",
+    message: cta.description || "Continue the active Gmail step when you are ready.",
+    extraMessages: redo.visible ? [redo.description || ""] : [],
+    label: activeSession.status || "ready",
+    tone: cta.tone === "ok" ? "ok" : "info",
+    gridItems,
+  });
 }
 
 function renderSessionResult(activeSession) {
@@ -2119,47 +2114,42 @@ function renderSessionResult(activeSession) {
     return;
   }
   if (!activeSession) {
-    container.classList.add("empty-state");
-    container.textContent = "Continue Gmail from here when a translation or interpretation step is ready.";
+    renderGmailSessionResultInto(container, {
+      empty: true,
+      emptyText: "Continue Gmail from here when a translation or interpretation step is ready.",
+    });
     return;
   }
   const presentation = deriveGmailStagePresentation({
     stage: gmailState.stage || currentGmailStage(),
     activeSession,
   });
-  container.classList.remove("empty-state");
   if (activeSession.kind === "translation") {
     const current = activeSession.current_attachment?.attachment || {};
-    container.innerHTML = `
-      <div class="result-header">
-        <div>
-          <strong>${escapeHtml(presentation.title)}</strong>
-          <p>${escapeHtml(presentation.description)}</p>
-        </div>
-        <span class="status-chip ${activeSession.completed ? "ok" : "info"}">${escapeHtml(activeSession.status || "prepared")}</span>
-      </div>
-      <div class="result-grid">
-        <div><h3>Subject</h3><p>${escapeHtml(activeSession.message?.subject || "Unavailable")}</p></div>
-        <div><h3>Language</h3><p>${escapeHtml(activeSession.selected_target_lang || "?")}</p></div>
-        <div><h3>Current document</h3><p class="word-break">${escapeHtml(current.filename || "Unavailable")}</p></div>
-        <div><h3>Completed attachments</h3><p>${(activeSession.confirmed_items || []).length}</p></div>
-      </div>
-    `;
+    renderGmailSessionResultInto(container, {
+      title: presentation.title,
+      message: presentation.description,
+      label: activeSession.status || "prepared",
+      tone: activeSession.completed ? "ok" : "info",
+      gridItems: [
+        { label: "Subject", value: activeSession.message?.subject || "Unavailable" },
+        { label: "Language", value: activeSession.selected_target_lang || "?" },
+        { label: "Current document", value: current.filename || "Unavailable", className: "word-break" },
+        { label: "Completed attachments", value: (activeSession.confirmed_items || []).length },
+      ],
+    });
     return;
   }
-  container.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(presentation.title)}</strong>
-        <p>${escapeHtml(presentation.description)}</p>
-      </div>
-      <span class="status-chip info">${escapeHtml(activeSession.status || "prepared")}</span>
-    </div>
-    <div class="result-grid">
-      <div><h3>Notice</h3><p class="word-break">${escapeHtml(activeSession.attachment?.attachment?.filename || "Unavailable")}</p></div>
-      <div><h3>Subject</h3><p>${escapeHtml(activeSession.message?.subject || "Unavailable")}</p></div>
-    </div>
-  `;
+  renderGmailSessionResultInto(container, {
+    title: presentation.title,
+    message: presentation.description,
+    label: activeSession.status || "prepared",
+    tone: "info",
+    gridItems: [
+      { label: "Notice", value: activeSession.attachment?.attachment?.filename || "Unavailable", className: "word-break" },
+      { label: "Subject", value: activeSession.message?.subject || "Unavailable" },
+    ],
+  });
 }
 
 function renderWorkspaceStrip() {
