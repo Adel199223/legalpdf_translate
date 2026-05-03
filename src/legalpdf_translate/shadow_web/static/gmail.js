@@ -21,6 +21,7 @@ import {
   renderGmailReportActionInto,
   renderGmailReviewDetailInto,
   renderGmailReviewSummaryInto,
+  renderGmailRestoreBarInto,
   renderGmailResumeCardInto,
   renderGmailSessionResultInto,
   renderGmailTranslationStepCardInto,
@@ -1821,24 +1822,22 @@ function renderGmailRestoreBar() {
     && gmailState.loadResult?.ok
     && gmailState.loadResult?.message,
   );
-  reviewButton.classList.toggle("hidden", !canRestoreReview);
-  reviewButton.disabled = !canRestoreReview;
-  if (canRestoreReview) {
-    reviewButton.textContent = deriveGmailReviewRestoreLabel({ selectedCount: collectSelections().length });
-  }
 
   const canRestorePreview = Boolean(
     gmailState.previewDrawerMinimized
     && !gmailState.previewDrawerOpen
     && isPreviewStateOpen(gmailState.previewState),
   );
-  previewButton.classList.toggle("hidden", !canRestorePreview);
-  previewButton.disabled = !canRestorePreview;
-  if (canRestorePreview) {
-    previewButton.textContent = deriveGmailPreviewRestoreLabel(gmailState.previewState);
-  }
-
-  bar.classList.toggle("hidden", !(canRestoreReview || canRestorePreview));
+  renderGmailRestoreBarInto({ bar, reviewButton, previewButton }, {
+    review: {
+      visible: canRestoreReview,
+      label: canRestoreReview ? deriveGmailReviewRestoreLabel({ selectedCount: collectSelections().length }) : "",
+    },
+    preview: {
+      visible: canRestorePreview,
+      label: canRestorePreview ? deriveGmailPreviewRestoreLabel(gmailState.previewState) : "",
+    },
+  });
 }
 
 function updateDemoReviewAction() {
