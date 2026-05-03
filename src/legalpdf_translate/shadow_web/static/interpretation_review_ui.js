@@ -99,6 +99,20 @@ export function focusInterpretationFieldInto(nodes = {}, fieldName = "") {
   target?.focus?.();
 }
 
+export function syncInterpretationSeedServiceSectionInto(details, { sourceKind = "", serviceSame = true } = {}) {
+  if (!details) {
+    return;
+  }
+  if (sourceKind !== "photo" && sourceKind !== "google_photos") {
+    return;
+  }
+  if (serviceSame) {
+    details.removeAttribute?.("open");
+    return;
+  }
+  details.setAttribute?.("open", "open");
+}
+
 export function renderInterpretationReviewContextInto(nodes = {}, card = {}) {
   const {
     container,

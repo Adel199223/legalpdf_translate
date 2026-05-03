@@ -7961,6 +7961,125 @@ console.log(JSON.stringify({
     assert "nullNodesResult" not in results
 
 
+def test_interpretation_review_ui_module_centralizes_seed_service_section_sync() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_review_ui_js = static_dir / "interpretation_review_ui.js"
+
+    assert interpretation_review_ui_js.exists()
+    interpretation_review_ui_text = interpretation_review_ui_js.read_text(encoding="utf-8")
+    assert 'from "./interpretation_review_ui.js"' in app_js
+    assert "export function syncInterpretationSeedServiceSectionInto" in interpretation_review_ui_text
+    assert "syncInterpretationSeedServiceSectionInto(qs(\"interpretation-service-section\"), {" in app_js
+    assert "innerHTML" not in interpretation_review_ui_text
+
+    seed_start = app_js.index("export function applyInterpretationSeed")
+    history_start = app_js.index("function applyHistoryItem", seed_start)
+    seed_block = app_js[seed_start:history_start]
+    assert "deriveInterpretationSeedServiceDefaults" in seed_block
+    assert "syncInterpretationSeedServiceSectionInto" in seed_block
+    assert 'qs("interpretation-service-section")?.removeAttribute("open")' not in seed_block
+    assert 'qs("interpretation-service-section")?.setAttribute("open", "open")' not in seed_block
+    assert "innerHTML" not in seed_block
+
+    script = r"""
+const interpretationReviewUi = await import(__INTERPRETATION_REVIEW_UI_MODULE_URL__);
+
+function makeDetails(open = false) {
+  return {
+    attributes: open ? { open: "open" } : {},
+    innerHTMLAssignments: [],
+    setAttribute(name, value) {
+      this.attributes[String(name)] = String(value);
+    },
+    removeAttribute(name) {
+      delete this.attributes[String(name)];
+    },
+    hasAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, String(name));
+    },
+  };
+}
+
+Object.defineProperty(Object.prototype, "innerHTML", {
+  configurable: true,
+  get() {
+    return "";
+  },
+  set(value) {
+    if (!this.innerHTMLAssignments) {
+      this.innerHTMLAssignments = [];
+    }
+    this.innerHTMLAssignments.push(String(value ?? ""));
+  },
+});
+
+const photoSame = makeDetails(true);
+interpretationReviewUi.syncInterpretationSeedServiceSectionInto(photoSame, {
+  sourceKind: "photo",
+  serviceSame: true,
+});
+
+const googlePhotosDifferent = makeDetails(false);
+interpretationReviewUi.syncInterpretationSeedServiceSectionInto(googlePhotosDifferent, {
+  sourceKind: "google_photos",
+  serviceSame: false,
+});
+
+const manualUnchanged = makeDetails(true);
+interpretationReviewUi.syncInterpretationSeedServiceSectionInto(manualUnchanged, {
+  sourceKind: "manual",
+  serviceSame: true,
+});
+
+const blankSourceUnchanged = makeDetails(false);
+interpretationReviewUi.syncInterpretationSeedServiceSectionInto(blankSourceUnchanged, {
+  sourceKind: "",
+  serviceSame: false,
+});
+
+const nullResult = interpretationReviewUi.syncInterpretationSeedServiceSectionInto(null, {
+  sourceKind: "photo",
+  serviceSame: false,
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof interpretationReviewUi.syncInterpretationSeedServiceSectionInto,
+  photoSameOpen: photoSame.hasAttribute("open"),
+  photoSameInnerHTMLWrites: photoSame.innerHTMLAssignments.length,
+  googlePhotosDifferentOpen: googlePhotosDifferent.attributes.open,
+  googlePhotosDifferentInnerHTMLWrites: googlePhotosDifferent.innerHTMLAssignments.length,
+  manualUnchangedOpen: manualUnchanged.attributes.open,
+  manualUnchangedInnerHTMLWrites: manualUnchanged.innerHTMLAssignments.length,
+  blankSourceOpen: blankSourceUnchanged.hasAttribute("open"),
+  blankSourceInnerHTMLWrites: blankSourceUnchanged.innerHTMLAssignments.length,
+  nullResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REVIEW_UI_MODULE_URL__": "interpretation_review_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["photoSameOpen"] is False
+    assert results["photoSameInnerHTMLWrites"] == 0
+    assert results["googlePhotosDifferentOpen"] == "open"
+    assert results["googlePhotosDifferentInnerHTMLWrites"] == 0
+    assert results["manualUnchangedOpen"] == "open"
+    assert results["manualUnchangedInnerHTMLWrites"] == 0
+    assert results["blankSourceOpen"] is False
+    assert results["blankSourceInnerHTMLWrites"] == 0
+    assert "nullResult" not in results
+
+
 def test_interpretation_review_ui_module_centralizes_safe_drawer_state_sync() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -12877,6 +12996,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationReviewSurfaceInto" in interpretation_review_ui_asset.text
         assert "renderInterpretationDisclosureSectionsInto" in interpretation_review_ui_asset.text
         assert "focusInterpretationFieldInto" in interpretation_review_ui_asset.text
+        assert "syncInterpretationSeedServiceSectionInto" in interpretation_review_ui_asset.text
         interpretation_result_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_result_ui.js")
         assert interpretation_result_ui_asset.status_code == 200
         assert interpretation_result_ui_asset.headers["content-type"].startswith("application/javascript")
