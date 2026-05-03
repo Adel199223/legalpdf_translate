@@ -6,7 +6,10 @@ import {
   renderBrowserPdfPreviewToCanvas,
 } from "./browser_pdf.js";
 import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
-import { renderGmailNoncanonicalRuntimeGuardInto } from "./gmail_ui.js";
+import {
+  renderGmailMessageResultInto,
+  renderGmailNoncanonicalRuntimeGuardInto,
+} from "./gmail_ui.js";
 import {
   applyPreviewStateStartPage,
   clearConsumedReviewState,
@@ -1620,69 +1623,72 @@ function renderMessageResult(loadResult) {
       || resolvedContext.account_email
     );
     if (!hasContext) {
-      container.classList.add("empty-state");
-      container.textContent = "Open this from Gmail or load a message manually from details.";
-      if (detailsHint) {
-        detailsHint.textContent = "Manual message load and output overrides stay here unless Gmail needs help finding the message.";
-      }
+      renderGmailMessageResultInto(container, detailsHint, {
+        empty: true,
+        emptyText: "Open this from Gmail or load a message manually from details.",
+        detailsHint: "Manual message load and output overrides stay here unless Gmail needs help finding the message.",
+      });
       return;
     }
-    container.classList.remove("empty-state");
-    container.innerHTML = `
-      <div class="result-header">
-        <div>
-          <strong>${
-            currentPendingStatus === "failed"
-              ? "Gmail message could not finish loading."
-              : pendingWarming
-                ? "Gmail message is loading."
-                : "Gmail message found."
-          }</strong>
-          <p>${escapeHtml(resolvedContext.subject || "Subject unavailable")}</p>
-        </div>
-        <span class="status-chip ${
-          currentPendingStatus === "failed" ? "bad" : "info"
-        }">${
-          currentPendingStatus === "failed"
-            ? "Needs attention"
-            : pendingWarming
-              ? "Loading"
-              : "Ready soon"
-        }</span>
-      </div>
-      <div class="result-grid">
-        <div><h3>Gmail account</h3><p class="word-break">${escapeHtml(resolvedContext.account_email || "Unavailable")}</p></div>
-        <div><h3>Workflow</h3><p>${escapeHtml(workflow.label)}</p></div>
-      </div>
-    `;
-    if (detailsHint) {
-      detailsHint.textContent = pendingWarming
+    renderGmailMessageResultInto(container, detailsHint, {
+      title: currentPendingStatus === "failed"
+        ? "Gmail message could not finish loading."
+        : pendingWarming
+          ? "Gmail message is loading."
+          : "Gmail message found.",
+      message: resolvedContext.subject || "Subject unavailable",
+      label: currentPendingStatus === "failed"
+        ? "Needs attention"
+        : pendingWarming
+          ? "Loading"
+          : "Ready soon",
+      tone: currentPendingStatus === "failed" ? "bad" : "info",
+      detailsHint: pendingWarming
         ? "The message is still loading; open these details only if Gmail needs manual help."
-        : "Detected Gmail details are ready; open these details only if you need manual recovery.";
-    }
+        : "Detected Gmail details are ready; open these details only if you need manual recovery.",
+      gridItems: [
+        {
+          label: "Gmail account",
+          value: resolvedContext.account_email || "Unavailable",
+          className: "word-break",
+        },
+        {
+          label: "Workflow",
+          value: workflow.label,
+        },
+      ],
+    });
     return;
   }
   const message = loadResult.message || {};
   const attachmentCount = (message.attachments || []).length;
-  container.classList.remove("empty-state");
-  container.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(loadResult.ok ? "Gmail message ready to review." : "Gmail message needs attention.")}</strong>
-        <p>${escapeHtml(message.subject || "No subject")}</p>
-      </div>
-      <span class="status-chip ${loadResult.ok ? "ok" : loadResult.classification === "unavailable" ? "warn" : "bad"}">${loadResult.ok ? "Ready" : "Needs attention"}</span>
-    </div>
-    <div class="result-grid">
-      <div><h3>From</h3><p class="word-break">${escapeHtml(message.from_header || "Unavailable")}</p></div>
-      <div><h3>Gmail account</h3><p class="word-break">${escapeHtml(message.account_email || "Unavailable")}</p></div>
-      <div><h3>Supported attachments</h3><p>${attachmentCount}</p></div>
-      <div><h3>Workflow</h3><p>${escapeHtml(workflow.label)}</p></div>
-    </div>
-  `;
-  if (detailsHint) {
-    detailsHint.textContent = "Exact IDs and output overrides stay here unless you need manual recovery or troubleshooting.";
-  }
+  renderGmailMessageResultInto(container, detailsHint, {
+    title: loadResult.ok ? "Gmail message ready to review." : "Gmail message needs attention.",
+    message: message.subject || "No subject",
+    label: loadResult.ok ? "Ready" : "Needs attention",
+    tone: loadResult.ok ? "ok" : loadResult.classification === "unavailable" ? "warn" : "bad",
+    detailsHint: "Exact IDs and output overrides stay here unless you need manual recovery or troubleshooting.",
+    gridItems: [
+      {
+        label: "From",
+        value: message.from_header || "Unavailable",
+        className: "word-break",
+      },
+      {
+        label: "Gmail account",
+        value: message.account_email || "Unavailable",
+        className: "word-break",
+      },
+      {
+        label: "Supported attachments",
+        value: attachmentCount,
+      },
+      {
+        label: "Workflow",
+        value: workflow.label,
+      },
+    ],
+  });
 }
 
 function renderReviewSummary(loadResult) {
