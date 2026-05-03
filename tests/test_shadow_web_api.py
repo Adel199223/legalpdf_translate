@@ -3341,6 +3341,185 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_gmail_ui_module_centralizes_noncanonical_runtime_guard_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = static_dir / "gmail_ui.js"
+
+    assert gmail_ui_js.exists()
+    assert 'from "./gmail_ui.js"' in gmail_js
+    assert "renderGmailNoncanonicalRuntimeGuardInto" in gmail_js
+    guard_block = re.search(
+        r"function renderGmailNoncanonicalRuntimeGuard\(\) \{(?P<body>.*?)\n\}",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "renderGmailNoncanonicalRuntimeGuardInto" in guard_block
+    assert "innerHTML" not in guard_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function makeClassList(owner, initial = []) {
+  const classes = new Set(initial);
+  owner.className = Array.from(classes).join(" ");
+  return {
+    add(value) {
+      classes.add(value);
+      owner.className = Array.from(classes).join(" ");
+    },
+    remove(value) {
+      classes.delete(value);
+      owner.className = Array.from(classes).join(" ");
+    },
+    toggle(value, force) {
+      const shouldAdd = force === undefined ? !classes.has(value) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(value);
+      } else {
+        classes.delete(value);
+      }
+      owner.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(value) {
+      return classes.has(value);
+    },
+  };
+}
+
+function makeElement(tagName = "div", initialClasses = []) {
+  const element = {
+    tagName: tagName.toUpperCase(),
+    children: [],
+    textContent: "",
+    className: "",
+    innerHTMLAssignments: [],
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    },
+    replaceChildren(...children) {
+      this.children = children;
+    },
+    querySelector(selector) {
+      return selector === ".status-chip" ? this.statusChip || null : null;
+    },
+    get text() {
+      return [
+        this.textContent,
+        ...this.children.map((child) => child.text || child.textContent || ""),
+      ].join("");
+    },
+  };
+  element.classList = makeClassList(element, initialClasses);
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return "";
+    },
+    set(value) {
+      this.innerHTMLAssignments.push(String(value ?? ""));
+    },
+  });
+  return element;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const card = makeElement("article", ["hidden"]);
+const title = makeElement("h2");
+const message = makeElement("p");
+const details = makeElement("ul");
+const restartButton = makeElement("button");
+const chip = makeElement("span", ["status-chip"]);
+card.statusChip = chip;
+
+ui.renderGmailNoncanonicalRuntimeGuardInto(
+  { card, title, message, details, restartButton, chip },
+  {
+    active: true,
+    title: "<img src=x onerror=alert(1)>",
+    message: "<script>alert(2)</script>",
+    details: ["<b>unsafe detail</b>", "second detail"],
+    primaryLabel: "<strong>Restart</strong>",
+  },
+);
+const active = {
+  cardHidden: card.classList.contains("hidden"),
+  titleText: title.textContent,
+  messageText: message.textContent,
+  detailTags: details.children.map((child) => child.tagName),
+  detailTexts: details.children.map((child) => child.textContent),
+  restartText: restartButton.textContent,
+  chipClass: chip.className,
+  chipText: chip.textContent,
+  innerHTMLWrites: [
+    card,
+    title,
+    message,
+    details,
+    restartButton,
+    chip,
+    ...details.children,
+  ].reduce((total, node) => total + (node.innerHTMLAssignments || []).length, 0),
+};
+
+details.appendChild(makeElement("li"));
+ui.renderGmailNoncanonicalRuntimeGuardInto(
+  { card, title, message, details, restartButton, chip },
+  { active: false, details: ["ignored"] },
+);
+const inactive = {
+  cardHidden: card.classList.contains("hidden"),
+  detailsChildCount: details.children.length,
+  innerHTMLWrites: details.innerHTMLAssignments.length,
+};
+
+const nullResult = ui.renderGmailNoncanonicalRuntimeGuardInto(
+  { card: null, title, message, details, restartButton, chip },
+  { active: true, details: ["ignored"] },
+);
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailNoncanonicalRuntimeGuardInto,
+  active,
+  inactive,
+  nullResultType: typeof nullResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["active"]["cardHidden"] is False
+    assert results["active"]["titleText"] == "<img src=x onerror=alert(1)>"
+    assert results["active"]["messageText"] == "<script>alert(2)</script>"
+    assert results["active"]["detailTags"] == ["LI", "LI"]
+    assert results["active"]["detailTexts"] == ["<b>unsafe detail</b>", "second detail"]
+    assert results["active"]["restartText"] == "<strong>Restart</strong>"
+    assert results["active"]["chipClass"] == "status-chip warn"
+    assert results["active"]["chipText"] == "Review Paused"
+    assert results["active"]["innerHTMLWrites"] == 0
+    assert results["inactive"] == {
+        "cardHidden": True,
+        "detailsChildCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["nullResultType"] == "undefined"
+
+
 def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -14077,6 +14256,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert google_photos_ui_asset.status_code == 200
         assert google_photos_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGooglePhotosSummaryInto" in google_photos_ui_asset.text
+        gmail_ui_asset = client.get(f"/static-build/{asset_version}/gmail_ui.js")
+        assert gmail_ui_asset.status_code == 200
+        assert gmail_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGmailNoncanonicalRuntimeGuardInto" in gmail_ui_asset.text
         shell_ui_asset = client.get(f"/static-build/{asset_version}/shell_ui.js")
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")
