@@ -6,6 +6,7 @@ import {
   renderBrowserPdfPreviewToCanvas,
 } from "./browser_pdf.js";
 import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
+import { renderGmailNoncanonicalRuntimeGuardInto } from "./gmail_ui.js";
 import {
   applyPreviewStateStartPage,
   clearConsumedReviewState,
@@ -466,21 +467,8 @@ function renderGmailNoncanonicalRuntimeGuard() {
   const details = qs("gmail-noncanonical-runtime-details");
   const restartButton = qs("gmail-restart-canonical-runtime");
   const chip = card?.querySelector(".status-chip");
-  if (!card || !title || !message || !details || !restartButton || !chip) {
-    return;
-  }
   const guard = currentGmailRuntimeGuard();
-  card.classList.toggle("hidden", !guard.active);
-  if (!guard.active) {
-    details.innerHTML = "";
-    return;
-  }
-  title.textContent = guard.title;
-  message.textContent = guard.message;
-  details.innerHTML = guard.details.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
-  restartButton.textContent = guard.primaryLabel || "Restart from Canonical Main";
-  chip.className = "status-chip warn";
-  chip.textContent = "Review Paused";
+  renderGmailNoncanonicalRuntimeGuardInto({ card, title, message, details, restartButton, chip }, guard);
 }
 
 function maybeBlockGmailReviewAction(operation) {
