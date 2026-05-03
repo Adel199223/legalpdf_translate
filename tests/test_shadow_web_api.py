@@ -992,6 +992,118 @@ console.log(JSON.stringify({
     assert "missingResult" not in results
 
 
+def test_shadow_web_shell_ui_module_centralizes_client_hydration_marker_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    shell_ui_js = static_dir / "shell_ui.js"
+
+    assert shell_ui_js.exists()
+    shell_ui_source = shell_ui_js.read_text(encoding="utf-8")
+    assert 'from "./shell_ui.js"' in app_js
+    assert "export function renderClientHydrationMarkerInto" in shell_ui_source
+    assert "renderClientHydrationMarkerInto({" in app_js
+    assert "document.body.dataset.clientReady = marker.status;" not in app_js
+    assert "document.body.dataset.clientWorkspace = marker.workspaceId;" not in app_js
+    assert "document.body.dataset.clientRuntimeMode = marker.runtimeMode;" not in app_js
+    assert "document.body.dataset.clientActiveView = marker.activeView;" not in app_js
+    assert "document.body.dataset.clientBuildSha = marker.buildSha;" not in app_js
+    assert "document.body.dataset.clientAssetVersion = marker.assetVersion;" not in app_js
+    assert "document.body.dataset.clientLaunchSession = marker.launchSessionId || \"\";" not in app_js
+    assert "document.body.dataset.clientHandoffSession = marker.handoffSessionId || \"\";" not in app_js
+    assert (
+        "document.body.dataset.clientLaunchSessionSchemaVersion = "
+        "String(marker.launchSessionSchemaVersion || 0);"
+    ) not in app_js
+    assert "globalThis.window.LEGALPDF_BROWSER_CLIENT_READY = marker;" not in app_js
+    assert "innerHTML" not in shell_ui_source
+
+    script = r"""
+const shellUi = await import(__SHELL_UI_MODULE_URL__);
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const marker = {
+  status: `ready ${malicious}`,
+  workspaceId: `workspace ${malicious}`,
+  runtimeMode: "shadow",
+  activeView: `new-job ${malicious}`,
+  buildSha: `sha ${malicious}`,
+  assetVersion: `asset ${malicious}`,
+  launchSessionId: "",
+  handoffSessionId: `handoff ${malicious}`,
+  launchSessionSchemaVersion: 7,
+};
+
+const body = { dataset: {} };
+const targetWindow = {};
+shellUi.renderClientHydrationMarkerInto({ body, targetWindow }, marker);
+
+const bodyWithoutDatasetWindow = {};
+const bodyWithoutDatasetResult = shellUi.renderClientHydrationMarkerInto({
+  body: {},
+  targetWindow: bodyWithoutDatasetWindow,
+}, marker);
+
+const noWindowBody = { dataset: {} };
+const noWindowResult = shellUi.renderClientHydrationMarkerInto({
+  body: noWindowBody,
+  targetWindow: null,
+}, { ...marker, launchSessionSchemaVersion: 0, launchSessionId: undefined, handoffSessionId: undefined });
+
+const nullNodeResult = shellUi.renderClientHydrationMarkerInto({
+  body: null,
+  targetWindow: null,
+}, marker);
+
+console.log(JSON.stringify({
+  exportedType: typeof shellUi.renderClientHydrationMarkerInto,
+  dataset: body.dataset,
+  windowSameMarker: targetWindow.LEGALPDF_BROWSER_CLIENT_READY === marker,
+  bodyWithoutDatasetWindowSameMarker: bodyWithoutDatasetWindow.LEGALPDF_BROWSER_CLIENT_READY === marker,
+  bodyWithoutDatasetResult,
+  noWindowDataset: noWindowBody.dataset,
+  noWindowResult,
+  nullNodeResult,
+  unsafeTextCounts: {
+    img: Object.values(body.dataset).join(" ").split("<img").length - 1,
+    script: Object.values(body.dataset).join(" ").split("<script").length - 1,
+  },
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__SHELL_UI_MODULE_URL__": "shell_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["dataset"] == {
+        "clientReady": "ready <img src=x onerror=alert(1)><script>bad()</script>",
+        "clientWorkspace": "workspace <img src=x onerror=alert(1)><script>bad()</script>",
+        "clientRuntimeMode": "shadow",
+        "clientActiveView": "new-job <img src=x onerror=alert(1)><script>bad()</script>",
+        "clientBuildSha": "sha <img src=x onerror=alert(1)><script>bad()</script>",
+        "clientAssetVersion": "asset <img src=x onerror=alert(1)><script>bad()</script>",
+        "clientLaunchSession": "",
+        "clientHandoffSession": "handoff <img src=x onerror=alert(1)><script>bad()</script>",
+        "clientLaunchSessionSchemaVersion": "7",
+    }
+    assert results["windowSameMarker"] is True
+    assert results["bodyWithoutDatasetWindowSameMarker"] is True
+    assert "bodyWithoutDatasetResult" not in results
+    assert results["noWindowDataset"]["clientLaunchSession"] == ""
+    assert results["noWindowDataset"]["clientHandoffSession"] == ""
+    assert results["noWindowDataset"]["clientLaunchSessionSchemaVersion"] == "0"
+    assert "noWindowResult" not in results
+    assert "nullNodeResult" not in results
+    assert results["unsafeTextCounts"] == {"img": 6, "script": 6}
+
+
 def test_shadow_web_shell_ui_module_centralizes_safe_navigation_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -12693,6 +12805,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderShellChromeInto" in shell_ui_asset.text
         assert "renderTopbarInto" in shell_ui_asset.text
         assert "renderShellRuntimeLabelsInto" in shell_ui_asset.text
+        assert "renderClientHydrationMarkerInto" in shell_ui_asset.text
         new_job_ui_asset = client.get(f"/static-build/{asset_version}/new_job_ui.js")
         assert new_job_ui_asset.status_code == 200
         assert new_job_ui_asset.headers["content-type"].startswith("application/javascript")

@@ -91,6 +91,26 @@ export function renderShellRuntimeLabelsInto(
   }
 }
 
+export function renderClientHydrationMarkerInto(
+  { body = null, targetWindow = null } = {},
+  marker = {},
+) {
+  if (body?.dataset) {
+    body.dataset.clientReady = String(marker.status ?? "");
+    body.dataset.clientWorkspace = String(marker.workspaceId ?? "");
+    body.dataset.clientRuntimeMode = String(marker.runtimeMode ?? "");
+    body.dataset.clientActiveView = String(marker.activeView ?? "");
+    body.dataset.clientBuildSha = String(marker.buildSha ?? "");
+    body.dataset.clientAssetVersion = String(marker.assetVersion ?? "");
+    body.dataset.clientLaunchSession = String(marker.launchSessionId || "");
+    body.dataset.clientHandoffSession = String(marker.handoffSessionId || "");
+    body.dataset.clientLaunchSessionSchemaVersion = String(marker.launchSessionSchemaVersion || 0);
+  }
+  if (targetWindow) {
+    targetWindow.LEGALPDF_BROWSER_CLIENT_READY = marker;
+  }
+}
+
 export function renderRuntimeModeSelectorInto(select, runtimeMode = {}) {
   if (!select) {
     return;
