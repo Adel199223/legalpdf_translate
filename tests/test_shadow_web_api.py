@@ -8704,6 +8704,7 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "export function renderInterpretationExportPanelResultInto" in interpretation_result_ui_text
     assert "export function renderInterpretationGmailResultInto" in interpretation_result_ui_text
     assert "export function renderInterpretationCompletionCardInto" in interpretation_result_ui_text
+    assert "export function syncInterpretationCompletionCardVisibilityInto" in interpretation_result_ui_text
     assert "export function renderInterpretationSessionCardInto" in interpretation_result_ui_text
     assert "export function renderInterpretationSeedCardInto" in interpretation_result_ui_text
     assert "export function renderInterpretationSeedCardStateInto" in interpretation_result_ui_text
@@ -8773,7 +8774,8 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     completion_start = app_js.index("function renderInterpretationCompletionCard")
     warning_start = app_js.index("function setInterpretationFieldWarning", completion_start)
     completion_block = app_js[completion_start:warning_start]
-    assert 'container.classList.toggle("hidden", !completed);' in completion_block
+    assert 'container.classList.toggle("hidden", !completed);' not in completion_block
+    assert "syncInterpretationCompletionCardVisibilityInto(container, { completed });" in completion_block
     assert "syncInterpretationReviewDetailsShell(completed);" in completion_block
     assert "interpretationCaseLocation(snapshot)" in completion_block
     assert "interpretationServiceLocation(snapshot)" in completion_block
@@ -9158,6 +9160,19 @@ interpretationResultUi.renderInterpretationCompletionCardInto(completionFallback
 const nullCompletionResult = interpretationResultUi.renderInterpretationCompletionCardInto(null, {
   title: "Ignored",
 });
+const completionVisibleContainer = document.createElement("div");
+completionVisibleContainer.className = "result-card hidden";
+interpretationResultUi.syncInterpretationCompletionCardVisibilityInto(completionVisibleContainer, {
+  completed: true,
+});
+const completionHiddenContainer = document.createElement("div");
+completionHiddenContainer.className = "result-card";
+interpretationResultUi.syncInterpretationCompletionCardVisibilityInto(completionHiddenContainer, {
+  completed: false,
+});
+const nullCompletionVisibilityResult = interpretationResultUi.syncInterpretationCompletionCardVisibilityInto(null, {
+  completed: true,
+});
 
 const sessionContainer = document.createElement("div");
 sessionContainer.className = "result-card";
@@ -9372,6 +9387,7 @@ console.log(JSON.stringify({
     exportPanel: typeof interpretationResultUi.renderInterpretationExportPanelResultInto,
     gmail: typeof interpretationResultUi.renderInterpretationGmailResultInto,
     completion: typeof interpretationResultUi.renderInterpretationCompletionCardInto,
+    completionVisibility: typeof interpretationResultUi.syncInterpretationCompletionCardVisibilityInto,
     session: typeof interpretationResultUi.renderInterpretationSessionCardInto,
     seed: typeof interpretationResultUi.renderInterpretationSeedCardInto,
     seedState: typeof interpretationResultUi.renderInterpretationSeedCardStateInto,
@@ -9395,6 +9411,8 @@ console.log(JSON.stringify({
   gmailEmpty: summarize(gmailEmptyContainer),
   completion: summarize(completionContainer),
   completionFallback: summarize(completionFallbackContainer),
+  completionVisible: summarizeGuard(completionVisibleContainer),
+  completionHidden: summarizeGuard(completionHiddenContainer),
   session: summarize(sessionContainer),
   sessionFallback: summarize(sessionFallbackContainer),
   seed: summarize(seedContainer),
@@ -9420,6 +9438,7 @@ console.log(JSON.stringify({
   nullContainerResult,
   nullExportPanelResult,
   nullCompletionResult,
+  nullCompletionVisibilityResult,
   nullSessionResult,
   nullSeedResult,
   nullSeedStateResult,
@@ -9440,6 +9459,7 @@ console.log(JSON.stringify({
         "exportPanel": "function",
         "gmail": "function",
         "completion": "function",
+        "completionVisibility": "function",
         "session": "function",
         "seed": "function",
         "seedState": "function",
@@ -9597,6 +9617,17 @@ console.log(JSON.stringify({
     assert results["completionFallback"]["scriptCount"] == 0
     assert results["completionFallback"]["innerHTMLWrites"] == 0
     assert "nullCompletionResult" not in results
+    assert results["completionVisible"]["className"] == "result-card"
+    assert results["completionVisible"]["childClasses"] == []
+    assert results["completionVisible"]["imgCount"] == 0
+    assert results["completionVisible"]["scriptCount"] == 0
+    assert results["completionVisible"]["innerHTMLWrites"] == 0
+    assert results["completionHidden"]["className"] == "result-card hidden"
+    assert results["completionHidden"]["childClasses"] == []
+    assert results["completionHidden"]["imgCount"] == 0
+    assert results["completionHidden"]["scriptCount"] == 0
+    assert results["completionHidden"]["innerHTMLWrites"] == 0
+    assert "nullCompletionVisibilityResult" not in results
 
     assert results["session"]["className"] == "result-card"
     assert results["session"]["childClasses"] == ["result-header", "result-grid"]
@@ -12853,6 +12884,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationExportPanelResultInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationGmailResultInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationCompletionCardInto" in interpretation_result_ui_asset.text
+        assert "syncInterpretationCompletionCardVisibilityInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationSessionCardInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationSeedCardInto" in interpretation_result_ui_asset.text
         assert "renderInterpretationSeedCardStateInto" in interpretation_result_ui_asset.text
