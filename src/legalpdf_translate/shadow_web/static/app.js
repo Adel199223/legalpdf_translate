@@ -127,6 +127,7 @@ import {
 } from "./shell_presentation.js";
 import {
   renderNavigationInto,
+  renderClientHydrationMarkerInto,
   renderOperatorChromeInto,
   renderShellChromeInto,
   renderRuntimeModeBannerInto,
@@ -412,20 +413,10 @@ function setClientHydrationMarker(status, { payload = null, reason = "", message
   clientHydrationState.bootstrappedAt = marker.bootstrappedAt;
   clientHydrationState.reason = marker.reason || "";
   clientHydrationState.message = marker.message || "";
-  if (globalThis.document?.body?.dataset) {
-    document.body.dataset.clientReady = marker.status;
-    document.body.dataset.clientWorkspace = marker.workspaceId;
-    document.body.dataset.clientRuntimeMode = marker.runtimeMode;
-    document.body.dataset.clientActiveView = marker.activeView;
-    document.body.dataset.clientBuildSha = marker.buildSha;
-    document.body.dataset.clientAssetVersion = marker.assetVersion;
-    document.body.dataset.clientLaunchSession = marker.launchSessionId || "";
-    document.body.dataset.clientHandoffSession = marker.handoffSessionId || "";
-    document.body.dataset.clientLaunchSessionSchemaVersion = String(marker.launchSessionSchemaVersion || 0);
-  }
-  if (globalThis.window) {
-    globalThis.window.LEGALPDF_BROWSER_CLIENT_READY = marker;
-  }
+  renderClientHydrationMarkerInto({
+    body: globalThis.document?.body,
+    targetWindow: globalThis.window,
+  }, marker);
   return marker;
 }
 
