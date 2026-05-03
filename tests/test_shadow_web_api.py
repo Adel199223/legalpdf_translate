@@ -5824,6 +5824,218 @@ console.log(JSON.stringify({
     assert results["partial"]["innerHTMLWrites"] == [0, 0, 0, 0, 0]
 
 
+def test_gmail_ui_module_centralizes_restore_bar_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailRestoreBarInto" in gmail_js
+    assert "export function renderGmailRestoreBarInto" in gmail_ui_js
+
+    restore_start = gmail_js.index("function renderGmailRestoreBar")
+    restore_end = gmail_js.index("\nfunction updateDemoReviewAction", restore_start)
+    restore_block = gmail_js[restore_start:restore_end]
+    assert "renderGmailRestoreBarInto({" in restore_block
+    assert ".classList.toggle(" not in restore_block
+    assert ".disabled =" not in restore_block
+    assert ".textContent =" not in restore_block
+
+    renderer_start = gmail_ui_js.index("export function renderGmailRestoreBarInto")
+    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeElement() {
+  const element = {
+    className: "",
+    disabled: false,
+    children: [],
+    innerHTMLAssignments: [],
+  };
+  element.classList = makeClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        this.children.push({ tagName: match[1].toUpperCase() });
+      }
+    },
+  });
+  return element;
+}
+
+function makeNodes() {
+  return {
+    bar: makeElement(),
+    reviewButton: makeElement(),
+    previewButton: makeElement(),
+  };
+}
+
+function summarize(nodes) {
+  return {
+    barHidden: nodes.bar.classList.contains("hidden"),
+    reviewHidden: nodes.reviewButton.classList.contains("hidden"),
+    reviewDisabled: nodes.reviewButton.disabled,
+    reviewText: nodes.reviewButton.textContent,
+    previewHidden: nodes.previewButton.classList.contains("hidden"),
+    previewDisabled: nodes.previewButton.disabled,
+    previewText: nodes.previewButton.textContent,
+    childCounts: [
+      nodes.bar.children.length,
+      nodes.reviewButton.children.length,
+      nodes.previewButton.children.length,
+    ],
+    innerHTMLWrites: [
+      nodes.bar.innerHTMLAssignments.length,
+      nodes.reviewButton.innerHTMLAssignments.length,
+      nodes.previewButton.innerHTMLAssignments.length,
+    ],
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const both = makeNodes();
+const bothResult = ui.renderGmailRestoreBarInto(both, {
+  review: { visible: true, label: `Restore review ${malicious}` },
+  preview: { visible: true, label: `Restore preview ${malicious}` },
+});
+
+const reviewOnly = makeNodes();
+reviewOnly.previewButton.textContent = "Old preview";
+ui.renderGmailRestoreBarInto(reviewOnly, {
+  review: { visible: true, label: "Resume Review" },
+  preview: { visible: false, label: `Hidden preview ${malicious}` },
+});
+
+const none = makeNodes();
+none.reviewButton.textContent = "Old review";
+none.previewButton.textContent = "Old preview";
+const noneResult = ui.renderGmailRestoreBarInto(none, {
+  review: { visible: false, label: `Hidden review ${malicious}` },
+  preview: { visible: false, label: `Hidden preview ${malicious}` },
+});
+
+const partial = makeNodes();
+const partialResult = ui.renderGmailRestoreBarInto({
+  bar: partial.bar,
+  reviewButton: partial.reviewButton,
+  previewButton: null,
+}, {
+  review: { visible: true, label: malicious },
+});
+
+const nullResult = ui.renderGmailRestoreBarInto(null, {
+  review: { visible: true, label: malicious },
+});
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailRestoreBarInto,
+  bothResultType: typeof bothResult,
+  noneResultType: typeof noneResult,
+  partialResultType: typeof partialResult,
+  nullResultType: typeof nullResult,
+  both: summarize(both),
+  reviewOnly: summarize(reviewOnly),
+  none: summarize(none),
+  partial: summarize(partial),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["bothResultType"] == "object"
+    assert results["noneResultType"] == "object"
+    assert results["partialResultType"] == "undefined"
+    assert results["nullResultType"] == "undefined"
+
+    assert results["both"]["barHidden"] is False
+    assert results["both"]["reviewHidden"] is False
+    assert results["both"]["reviewDisabled"] is False
+    assert results["both"]["reviewText"] == "Restore review <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["both"]["previewHidden"] is False
+    assert results["both"]["previewDisabled"] is False
+    assert results["both"]["previewText"] == "Restore preview <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["both"]["childCounts"] == [0, 0, 0]
+    assert results["both"]["innerHTMLWrites"] == [0, 0, 0]
+
+    assert results["reviewOnly"]["barHidden"] is False
+    assert results["reviewOnly"]["reviewHidden"] is False
+    assert results["reviewOnly"]["reviewDisabled"] is False
+    assert results["reviewOnly"]["reviewText"] == "Resume Review"
+    assert results["reviewOnly"]["previewHidden"] is True
+    assert results["reviewOnly"]["previewDisabled"] is True
+    assert results["reviewOnly"]["previewText"] == "Old preview"
+    assert results["reviewOnly"]["innerHTMLWrites"] == [0, 0, 0]
+
+    assert results["none"]["barHidden"] is True
+    assert results["none"]["reviewHidden"] is True
+    assert results["none"]["reviewDisabled"] is True
+    assert results["none"]["reviewText"] == "Old review"
+    assert results["none"]["previewHidden"] is True
+    assert results["none"]["previewDisabled"] is True
+    assert results["none"]["previewText"] == "Old preview"
+    assert results["none"]["innerHTMLWrites"] == [0, 0, 0]
+
+    assert results["partial"]["barHidden"] is False
+    assert results["partial"]["reviewText"] == ""
+    assert results["partial"]["innerHTMLWrites"] == [0, 0, 0]
+
+
 def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -17235,6 +17447,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailReportActionInto" in gmail_ui_asset.text
         assert "renderGmailNumericMismatchWarningInto" in gmail_ui_asset.text
         assert "renderGmailTranslationStepCardInto" in gmail_ui_asset.text
+        assert "renderGmailRestoreBarInto" in gmail_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
