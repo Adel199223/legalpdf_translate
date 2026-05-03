@@ -5420,6 +5420,183 @@ console.log(JSON.stringify({
     assert results["existingClass"]["hidden"] is False
 
 
+def test_gmail_ui_module_centralizes_numeric_warning_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailNumericMismatchWarningInto" in gmail_js
+    assert "export function renderGmailNumericMismatchWarningInto" in gmail_ui_js
+
+    warning_start = gmail_js.index("function renderGmailFinalizeNumericMismatchWarning")
+    warning_end = gmail_js.index("\nfunction interpretationUiSnapshot", warning_start)
+    warning_block = gmail_js[warning_start:warning_end]
+    assert "renderGmailNumericMismatchWarningInto(container, warning)" in warning_block
+    assert ".classList.toggle(" not in warning_block
+    assert ".textContent =" not in warning_block
+    assert ".setAttribute(" not in warning_block
+
+    renderer_start = gmail_ui_js.index("export function renderGmailNumericMismatchWarningInto")
+    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeElement() {
+  const element = {
+    className: "",
+    attributes: {},
+    children: [],
+    innerHTMLAssignments: [],
+    setAttribute(name, value) {
+      this.attributes[name] = String(value ?? "");
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
+    },
+  };
+  element.classList = makeClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        this.children.push({ tagName: match[1].toUpperCase() });
+      }
+    },
+  });
+  return element;
+}
+
+function summarize(element) {
+  return {
+    text: element.textContent,
+    className: element.className,
+    hidden: element.classList.contains("hidden"),
+    role: element.getAttribute("role"),
+    childCount: element.children.length,
+    innerHTMLWrites: element.innerHTMLAssignments.length,
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const visible = makeElement();
+const visibleResult = ui.renderGmailNumericMismatchWarningInto(visible, {
+  visible: true,
+  message: `Review ${malicious}`,
+  lines: [`Line one ${malicious}`, "", null, `Line two ${malicious}`],
+});
+
+const hidden = makeElement();
+const hiddenResult = ui.renderGmailNumericMismatchWarningInto(hidden, {
+  visible: false,
+  message: `Hidden ${malicious}`,
+  lines: [`Hidden line ${malicious}`],
+});
+
+const defaultMessage = makeElement();
+ui.renderGmailNumericMismatchWarningInto(defaultMessage, {
+  visible: true,
+  lines: [],
+});
+
+const nullResult = ui.renderGmailNumericMismatchWarningInto(null, {
+  visible: true,
+  message: malicious,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailNumericMismatchWarningInto,
+  visibleResultType: typeof visibleResult,
+  hiddenResultType: typeof hiddenResult,
+  nullResultType: typeof nullResult,
+  visible: summarize(visible),
+  hidden: summarize(hidden),
+  defaultMessage: summarize(defaultMessage),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["visibleResultType"] == "object"
+    assert results["hiddenResultType"] == "object"
+    assert results["nullResultType"] == "undefined"
+
+    assert results["visible"]["text"] == (
+        "Review <img src=x onerror=alert(1)><script>bad()</script>\n"
+        "Line one <img src=x onerror=alert(1)><script>bad()</script>\n"
+        "Line two <img src=x onerror=alert(1)><script>bad()</script>"
+    )
+    assert results["visible"]["hidden"] is False
+    assert results["visible"]["role"] == "note"
+    assert results["visible"]["childCount"] == 0
+    assert results["visible"]["innerHTMLWrites"] == 0
+
+    assert results["hidden"]["text"] == ""
+    assert results["hidden"]["hidden"] is True
+    assert results["hidden"]["role"] is None
+    assert results["hidden"]["childCount"] == 0
+    assert results["hidden"]["innerHTMLWrites"] == 0
+
+    assert results["defaultMessage"]["text"] == (
+        "Review recommended: some numbers from the source may not appear exactly in the translation."
+    )
+    assert results["defaultMessage"]["role"] == "note"
+    assert results["defaultMessage"]["innerHTMLWrites"] == 0
+
+
 def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -14544,6 +14721,7 @@ def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> Non
     guard_js = (static_dir / "gmail_runtime_guard.js").read_text(encoding="utf-8")
     dashboard_js = (static_dir / "dashboard_presentation.js").read_text(encoding="utf-8")
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
 
     assert 'id="runtime-mode-banner"' in template
     assert '"Live mode: using your real settings, Gmail drafts, and saved work."' in shell_js
@@ -14572,8 +14750,13 @@ def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> Non
     warning_end = gmail_js.index("function interpretationUiSnapshot")
     warning_block = gmail_js[warning_start:warning_end]
     assert '"gmail-batch-finalize-numeric-warning"' in warning_block
-    assert "container.textContent" in warning_block
+    assert "renderGmailNumericMismatchWarningInto(container, warning)" in warning_block
     assert ".innerHTML" not in warning_block
+    warning_renderer_start = gmail_ui_js.index("export function renderGmailNumericMismatchWarningInto")
+    warning_renderer_end = gmail_ui_js.index("\nexport function", warning_renderer_start + 1)
+    warning_renderer_block = gmail_ui_js[warning_renderer_start:warning_renderer_end]
+    assert "container.textContent" in warning_renderer_block
+    assert ".innerHTML" not in warning_renderer_block
 
     banner_start = app_js.index("function syncRuntimeModeBanner")
     banner_end = app_js.index("function syncShellChrome")
@@ -16823,6 +17006,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailReviewDetailInto" in gmail_ui_asset.text
         assert "renderGmailBatchFinalizeSurfaceInto" in gmail_ui_asset.text
         assert "renderGmailReportActionInto" in gmail_ui_asset.text
+        assert "renderGmailNumericMismatchWarningInto" in gmail_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
