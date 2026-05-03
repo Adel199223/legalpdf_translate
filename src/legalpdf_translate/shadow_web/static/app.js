@@ -99,6 +99,7 @@ import {
   renderProfileDistanceStatusInto,
   renderProfileDistanceRowsInto,
   renderProfileEditorChromeInto,
+  renderProfileEditorFieldsInto,
   renderProfileListInto,
   renderProfileOptionsInto,
   renderProfileToolbarInto,
@@ -1780,10 +1781,19 @@ function applyProfileEditor(profile, { openDrawer = false } = {}) {
   const resolved = { ...blankProfileDraft(), ...(profile || {}) };
   const presentation = deriveProfilePresentation(resolved);
   const fieldIds = profileFieldIds();
-  for (const [key, id] of Object.entries(fieldIds)) {
-    setFieldValue(id, resolved[key] ?? "");
-  }
-  setCheckbox("profile-editor-make-primary", Boolean(resolved.is_primary));
+  const fieldNodes = Object.fromEntries(
+    Object.entries(fieldIds).map(([key, id]) => [key, qs(id)]),
+  );
+  renderProfileEditorFieldsInto({
+    fieldNodes: fieldNodes,
+    makePrimary: qs("profile-editor-make-primary"),
+    distanceCity: qs("profile-distance-city"),
+    distanceKm: qs("profile-distance-km"),
+  }, {
+    profileFields: resolved,
+    isPrimary: Boolean(resolved.is_primary),
+    clearDistanceDraft: true,
+  });
   profileState.currentProfileId = resolved.id || "";
   renderProfileEditorChromeInto({
     status: qs("profile-editor-status"),
@@ -1797,8 +1807,6 @@ function applyProfileEditor(profile, { openDrawer = false } = {}) {
     deleteLabel: "Delete profile",
     collapseDistanceAdvanced: true,
   });
-  setFieldValue("profile-distance-city", "");
-  setFieldValue("profile-distance-km", "");
   setProfileDistanceRows(resolved.travel_distances_by_city || {}, { markClean: true });
   if (openDrawer) {
     openProfileEditorDrawer();

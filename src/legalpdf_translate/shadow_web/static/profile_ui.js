@@ -73,6 +73,40 @@ export function renderProfileDistanceJsonInto(field, value = "") {
   field.value = String(value ?? "");
 }
 
+function setControlValue(node, value) {
+  if (!node) {
+    return;
+  }
+  node.value = String(value ?? "");
+}
+
+export function renderProfileEditorFieldsInto(nodes = {}, values = {}) {
+  const {
+    fieldNodes = {},
+    makePrimary = null,
+    distanceCity = null,
+    distanceKm = null,
+  } = nodes || {};
+  const {
+    profileFields = {},
+    isPrimary = false,
+    clearDistanceDraft = false,
+  } = values || {};
+  if (!fieldNodes && !makePrimary && !distanceCity && !distanceKm) {
+    return;
+  }
+  for (const [key, node] of Object.entries(fieldNodes || {})) {
+    setControlValue(node, profileFields?.[key]);
+  }
+  if (makePrimary) {
+    makePrimary.checked = Boolean(isPrimary);
+  }
+  if (clearDistanceDraft) {
+    setControlValue(distanceCity, "");
+    setControlValue(distanceKm, "");
+  }
+}
+
 export function renderProfileEditorChromeInto(
   {
     status = null,

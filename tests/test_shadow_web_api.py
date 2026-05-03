@@ -4727,6 +4727,185 @@ console.log(JSON.stringify({
     assert results["missingNodeResultType"] == "undefined"
 
 
+def test_profile_ui_module_centralizes_safe_profile_editor_field_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    profile_ui_module = static_dir / "profile_ui.js"
+
+    assert profile_ui_module.exists()
+    profile_ui_js = profile_ui_module.read_text(encoding="utf-8")
+    assert "export function renderProfileEditorFieldsInto" in profile_ui_js
+    assert "renderProfileEditorFieldsInto" in app_js
+    assert 'from "./profile_ui.js"' in app_js
+
+    apply_start = app_js.index("function applyProfileEditor")
+    collect_start = app_js.index("function collectProfileFormValues", apply_start)
+    apply_block = app_js[apply_start:collect_start]
+    assert "renderProfileEditorFieldsInto({" in apply_block
+    assert "fieldNodes:" in apply_block
+    assert 'makePrimary: qs("profile-editor-make-primary")' in apply_block
+    assert 'distanceCity: qs("profile-distance-city")' in apply_block
+    assert 'distanceKm: qs("profile-distance-km")' in apply_block
+    assert "profileFields:" in apply_block
+    assert "isPrimary: Boolean(resolved.is_primary)" in apply_block
+    assert "clearDistanceDraft: true" in apply_block
+    assert 'setFieldValue(id, resolved[key] ?? "")' not in apply_block
+    assert 'setCheckbox("profile-editor-make-primary"' not in apply_block
+    assert 'setFieldValue("profile-distance-city", "")' not in apply_block
+    assert 'setFieldValue("profile-distance-km", "")' not in apply_block
+    assert "innerHTML" not in apply_block
+
+    script = r"""
+const profileUi = await import(__PROFILE_UI_MODULE_URL__);
+
+function makeControl() {
+  const element = {
+    value: "stale",
+    checked: false,
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+  };
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return element;
+}
+
+function countInnerHtmlWrites(nodes = {}) {
+  return Object.values(nodes).reduce(
+    (total, node) => total + (node?.innerHTMLAssignments || []).length,
+    0,
+  );
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const fieldNodes = {
+  firstName: makeControl(),
+  lastName: makeControl(),
+  documentNameOverride: makeControl(),
+  email: makeControl(),
+  phoneNumber: makeControl(),
+  travelOriginLabel: makeControl(),
+  postalAddress: makeControl(),
+  iban: makeControl(),
+  ivaText: makeControl(),
+  irsText: makeControl(),
+};
+const controls = {
+  ...fieldNodes,
+  makePrimary: makeControl(),
+  distanceCity: makeControl(),
+  distanceKm: makeControl(),
+};
+controls.makePrimary.checked = false;
+
+profileUi.renderProfileEditorFieldsInto({
+  fieldNodes,
+  makePrimary: controls.makePrimary,
+  distanceCity: controls.distanceCity,
+  distanceKm: controls.distanceKm,
+}, {
+  profileFields: {
+    firstName: malicious,
+    lastName: "Pessoa",
+    documentNameOverride: null,
+    email: `a${malicious}@example.com`,
+    phoneNumber: undefined,
+    travelOriginLabel: "Home",
+    postalAddress: malicious,
+    iban: "PT50",
+    ivaText: "",
+    irsText: 123,
+  },
+  isPrimary: "truthy",
+  clearDistanceDraft: true,
+});
+
+const missingNodesResult = profileUi.renderProfileEditorFieldsInto({
+  fieldNodes: {
+    firstName: null,
+    lastName: makeControl(),
+  },
+  makePrimary: null,
+  distanceCity: null,
+  distanceKm: null,
+}, {
+  profileFields: {
+    firstName: "ignored",
+    lastName: malicious,
+  },
+  isPrimary: false,
+  clearDistanceDraft: true,
+});
+
+const nullNodesResult = profileUi.renderProfileEditorFieldsInto(null, {
+  profileFields: {
+    firstName: malicious,
+  },
+  isPrimary: true,
+});
+
+console.log(JSON.stringify({
+  rendererType: typeof profileUi.renderProfileEditorFieldsInto,
+  values: {
+    firstName: controls.firstName.value,
+    lastName: controls.lastName.value,
+    documentNameOverride: controls.documentNameOverride.value,
+    email: controls.email.value,
+    phoneNumber: controls.phoneNumber.value,
+    travelOriginLabel: controls.travelOriginLabel.value,
+    postalAddress: controls.postalAddress.value,
+    iban: controls.iban.value,
+    ivaText: controls.ivaText.value,
+    irsText: controls.irsText.value,
+    makePrimaryChecked: controls.makePrimary.checked,
+    distanceCity: controls.distanceCity.value,
+    distanceKm: controls.distanceKm.value,
+  },
+  innerHTMLWrites: countInnerHtmlWrites(controls),
+  missingNodesResultType: missingNodesResult === undefined ? "undefined" : typeof missingNodesResult,
+  nullNodesResultType: nullNodesResult === undefined ? "undefined" : typeof nullNodesResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__PROFILE_UI_MODULE_URL__": "profile_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["rendererType"] == "function"
+    assert results["values"] == {
+        "firstName": "<img src=x onerror=alert(1)><script>bad()</script>",
+        "lastName": "Pessoa",
+        "documentNameOverride": "",
+        "email": "a<img src=x onerror=alert(1)><script>bad()</script>@example.com",
+        "phoneNumber": "",
+        "travelOriginLabel": "Home",
+        "postalAddress": "<img src=x onerror=alert(1)><script>bad()</script>",
+        "iban": "PT50",
+        "ivaText": "",
+        "irsText": "123",
+        "makePrimaryChecked": True,
+        "distanceCity": "",
+        "distanceKm": "",
+    }
+    assert results["innerHTMLWrites"] == 0
+    assert results["missingNodesResultType"] == "undefined"
+    assert results["nullNodesResultType"] == "undefined"
+
+
 def test_profile_ui_module_centralizes_safe_profile_toolbar_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -13114,6 +13293,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderProfileDistanceStatusInto" in profile_ui_asset.text
         assert "renderProfileDistanceJsonInto" in profile_ui_asset.text
         assert "renderProfileEditorChromeInto" in profile_ui_asset.text
+        assert "renderProfileEditorFieldsInto" in profile_ui_asset.text
         assert "renderProfileToolbarInto" in profile_ui_asset.text
         dashboard_ui_asset = client.get(f"/static-build/{asset_version}/dashboard_ui.js")
         assert dashboard_ui_asset.status_code == 200
