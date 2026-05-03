@@ -7,9 +7,11 @@ import {
 } from "./browser_pdf.js";
 import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
+  renderGmailAttachmentListInto,
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailPreviewPanelInto,
+  renderGmailReviewDetailInto,
   renderGmailReviewSummaryInto,
   renderGmailResumeCardInto,
   renderGmailSessionResultInto,
@@ -39,13 +41,6 @@ import {
   shouldIgnoreReviewRowFocusTarget,
   writeConsumedReviewState,
 } from "./gmail_review_state.js";
-import {
-  clearNode,
-  createTextElement,
-  setNodeTitle,
-  setText,
-} from "./safe_rendering.js";
-
 const AUTO_REFRESH_DELAY_MS = 220;
 const AUTO_REFRESH_THROTTLE_MS = 1400;
 const PASSIVE_REFRESH_COOLDOWN_MS = 6000;
@@ -99,14 +94,6 @@ function setFieldValue(id, value) {
   if (node) {
     node.value = value ?? "";
   }
-}
-
-function createCell(className = "") {
-  const cell = document.createElement("td");
-  if (className) {
-    cell.className = className;
-  }
-  return cell;
 }
 
 function formatDiagnosticValue(value) {
@@ -1768,90 +1755,16 @@ function renderReviewSummary(loadResult) {
 export function renderAttachmentListInto(
   container,
   attachments,
-  {
-    startHeading = null,
-    interpretationWorkflow = false,
-    focusedAttachmentId = "",
-    resolveState = () => ({ selected: false, startPage: 1, pageCount: 0 }),
-    resolveCanEditStart = () => false,
-  } = {},
+  options = {},
 ) {
-  if (!container) {
-    return;
-  }
-  clearNode(container);
-  if (startHeading) {
-    startHeading.textContent = "Start page";
-  }
-  if (!attachments.length) {
-    const row = document.createElement("tr");
-    const cell = createCell("empty-state");
-    cell.colSpan = 5;
-    cell.textContent = "No supported PDF or image attachments were found in this message.";
-    row.appendChild(cell);
-    container.appendChild(row);
-    return;
-  }
-  const selectedInputType = interpretationWorkflow ? "radio" : "checkbox";
-  for (const attachment of attachments) {
-    const state = resolveState(attachment.attachment_id) || {};
-    const selected = state.selected === true;
-    const focused = focusedAttachmentId === attachment.attachment_id;
-    const canEditStart = resolveCanEditStart(attachment) === true;
-    const row = document.createElement("tr");
-    row.className = [
-      "gmail-review-row",
-      selected ? "is-selected" : "",
-      focused ? "is-focused" : "",
-    ].filter(Boolean).join(" ");
-    row.dataset.attachmentRow = attachment.attachment_id;
-    row.tabIndex = 0;
-
-    const selectCell = createCell();
-    const label = document.createElement("label");
-    label.className = "checkbox-inline gmail-review-select";
-    const input = document.createElement("input");
-    input.type = selectedInputType;
-    input.name = "gmail-review-selection";
-    input.dataset.attachmentCheckbox = attachment.attachment_id;
-    input.checked = selected;
-    label.appendChild(input);
-    label.appendChild(createTextElement("span", selected ? "Selected" : "Choose", "gmail-review-row-label"));
-    selectCell.appendChild(label);
-
-    const fileCell = createCell("gmail-review-file-cell");
-    const filename = createTextElement("strong", attachment.filename || "Attachment", "gmail-review-file-name");
-    setNodeTitle(filename, attachment.filename || "Attachment");
-    fileCell.appendChild(filename);
-
-    const mimeCell = createCell();
-    setNodeTitle(mimeCell, attachment.mime_type || "Unknown");
-    mimeCell.textContent = attachmentKindLabel(attachment);
-
-    const sizeCell = createCell();
-    sizeCell.textContent = formatBytes(attachment.size_bytes || 0);
-
-    const startCell = createCell();
-    if (canEditStart) {
-      const startInput = document.createElement("input");
-      startInput.type = "number";
-      startInput.className = "attachment-start-page";
-      startInput.min = "1";
-      startInput.step = "1";
-      startInput.value = String(clampStartPage(attachment, state.startPage, state.pageCount));
-      startInput.dataset.attachmentStartPage = attachment.attachment_id;
-      startCell.appendChild(startInput);
-    } else {
-      startCell.appendChild(createTextElement("span", "1", "gmail-review-start-static"));
-    }
-
-    row.appendChild(selectCell);
-    row.appendChild(fileCell);
-    row.appendChild(mimeCell);
-    row.appendChild(sizeCell);
-    row.appendChild(startCell);
-    container.appendChild(row);
-  }
+  renderGmailAttachmentListInto(container, attachments, {
+    ...options,
+    formatSizeLabel: options.formatSizeLabel || formatBytes,
+    resolveKindLabel: options.resolveKindLabel || attachmentKindLabel,
+    resolveStartPage: options.resolveStartPage || ((attachment, state = {}) => (
+      clampStartPage(attachment, state.startPage, state.pageCount)
+    )),
+  });
 }
 
 function renderAttachmentList(loadResult) {
@@ -1875,75 +1788,16 @@ function renderAttachmentList(loadResult) {
 export function renderReviewDetailInto(
   container,
   attachment,
-  {
-    state = {},
-    canEditStart = false,
-    previewLoaded = false,
-    runtimeGuard = { blocked: false },
-    kindLabel = "",
-  } = {},
+  options = {},
 ) {
-  if (!container) {
-    return;
-  }
-  if (!attachment) {
-    container.className = "result-card empty-state";
-    clearNode(container);
-    setText(container, "Choose an attachment row to see the document details, optional preview, and start page.");
-    return;
-  }
-  const pageCountText = state.pageCount > 0
-    ? `${state.pageCount} ${state.pageCount === 1 ? "page" : "pages"}`
-    : "Page count appears after preview";
-  const selectedStateText = state.selected ? "Selected" : "Not selected";
-  container.className = "result-card";
-  clearNode(container);
-  const strip = document.createElement("div");
-  strip.className = "gmail-review-detail-strip";
-  const primary = document.createElement("div");
-  primary.className = "gmail-review-detail-primary";
-  const title = createTextElement("strong", attachment.filename || "Attachment", "word-break");
-  setNodeTitle(title, attachment.filename || "Attachment");
-  primary.appendChild(title);
-  primary.appendChild(createTextElement(
-    "p",
-    `${kindLabel} · ${selectedStateText} · ${pageCountText}${previewLoaded ? " · Preview ready" : ""}`,
-    "gmail-review-detail-meta",
-  ));
-  primary.appendChild(createTextElement(
-    "p",
-    "Preview is optional. Use it if you want to check the document or choose a later start page.",
-    "field-hint",
-  ));
-  strip.appendChild(primary);
-  const actions = document.createElement("div");
-  actions.className = "gmail-review-detail-actions";
-  if (canEditStart) {
-    const field = document.createElement("div");
-    field.className = "field gmail-review-start-field";
-    const label = createTextElement("label", "Start page");
-    label.htmlFor = "gmail-review-detail-start";
-    const input = document.createElement("input");
-    input.id = "gmail-review-detail-start";
-    input.type = "number";
-    input.min = "1";
-    input.step = "1";
-    input.value = String(clampStartPage(attachment, state.startPage, state.pageCount));
-    input.dataset.detailStartPage = attachment.attachment_id;
-    field.appendChild(label);
-    field.appendChild(input);
-    actions.appendChild(field);
-  }
-  const previewButton = document.createElement("button");
-  previewButton.type = "button";
-  previewButton.className = "ghost-button";
-  previewButton.id = "gmail-preview-selected";
-  previewButton.dataset.previewSelected = attachment.attachment_id;
-  previewButton.disabled = runtimeGuard.blocked === true;
-  previewButton.textContent = "Preview";
-  actions.appendChild(previewButton);
-  strip.appendChild(actions);
-  container.appendChild(strip);
+  const state = options.state || {};
+  renderGmailReviewDetailInto(container, attachment, {
+    ...options,
+    state,
+    startPage: Object.prototype.hasOwnProperty.call(options, "startPage")
+      ? options.startPage
+      : clampStartPage(attachment, state.startPage, state.pageCount),
+  });
 }
 
 function renderReviewDetail() {

@@ -4333,6 +4333,483 @@ console.log(JSON.stringify({
     assert results["translationSession"]["innerHTMLWrites"] == 0
 
 
+def test_gmail_ui_module_centralizes_review_attachment_renderers() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailAttachmentListInto" in gmail_js
+    assert "renderGmailReviewDetailInto" in gmail_js
+    attachment_start = gmail_js.index("export function renderAttachmentListInto")
+    attachment_end = gmail_js.index("\nfunction renderAttachmentList", attachment_start)
+    attachment_block = gmail_js[attachment_start:attachment_end]
+    assert "renderGmailAttachmentListInto" in attachment_block
+    assert "document.createElement" not in attachment_block
+    assert "appendChild" not in attachment_block
+    assert "createTextElement" not in attachment_block
+    assert "clearNode" not in attachment_block
+    assert "innerHTML" not in attachment_block
+    detail_start = gmail_js.index("export function renderReviewDetailInto")
+    detail_end = gmail_js.index("\nfunction renderReviewDetail", detail_start)
+    detail_block = gmail_js[detail_start:detail_end]
+    assert "renderGmailReviewDetailInto" in detail_block
+    assert "document.createElement" not in detail_block
+    assert "appendChild" not in detail_block
+    assert "createTextElement" not in detail_block
+    assert "clearNode" not in detail_block
+    assert "innerHTML" not in detail_block
+
+    assert "export function renderGmailAttachmentListInto" in gmail_ui_js
+    assert "export function renderGmailReviewDetailInto" in gmail_ui_js
+    list_renderer_start = gmail_ui_js.index("export function renderGmailAttachmentListInto")
+    detail_renderer_start = gmail_ui_js.index("export function renderGmailReviewDetailInto")
+    list_renderer_block = gmail_ui_js[list_renderer_start:detail_renderer_start]
+    detail_renderer_end = gmail_ui_js.index("\nfunction resetGmailPreviewControls", detail_renderer_start)
+    detail_renderer_block = gmail_ui_js[detail_renderer_start:detail_renderer_end]
+    assert "innerHTML" not in list_renderer_block
+    assert "innerHTML" not in detail_renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    add(...names) {
+      const classes = new Set(normalizeClassList(element.className));
+      names.flatMap((name) => normalizeClassList(name)).forEach((name) => classes.add(name));
+      element.className = Array.from(classes).join(" ");
+    },
+    remove(...names) {
+      const removeNames = new Set(names.flatMap((name) => normalizeClassList(name)));
+      element.className = normalizeClassList(element.className)
+        .filter((name) => !removeNames.has(name))
+        .join(" ");
+    },
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: tagName.toUpperCase(),
+    children: [],
+    className: "",
+    dataset: {},
+    attributes: {},
+    innerHTMLAssignments: [],
+    checked: false,
+    colSpan: 0,
+    disabled: false,
+    id: "",
+    max: "",
+    min: "",
+    name: "",
+    step: "",
+    tabIndex: null,
+    title: "",
+    type: "",
+    value: "",
+    appendChild(child) {
+      if (child) {
+        child.parentNode = this;
+        this.children.push(child);
+      }
+      return child;
+    },
+    replaceChildren(...children) {
+      this.children = [];
+      children.forEach((child) => this.appendChild(child));
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value ?? "");
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
+    },
+  };
+  element.classList = makeClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent || ""}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+function walk(node, visitor) {
+  if (!node) {
+    return;
+  }
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHTMLWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function findAll(node, predicate) {
+  const matches = [];
+  walk(node, (current) => {
+    if (predicate(current)) {
+      matches.push(current);
+    }
+  });
+  return matches;
+}
+
+function collectClasses(node) {
+  return findAll(node, (current) => String(current.className || "").trim())
+    .map((current) => current.className);
+}
+
+function collectTitles(node) {
+  return findAll(node, (current) => String(current.title || "").trim())
+    .map((current) => current.title);
+}
+
+function summarizeTable(node) {
+  const rows = node.children;
+  const inputs = findAll(node, (current) => current.tagName === "INPUT");
+  return {
+    text: node.textContent,
+    rowCount: rows.length,
+    rowClasses: rows.map((row) => row.className),
+    rowDatasets: rows.map((row) => ({ ...row.dataset })),
+    rowTabIndexes: rows.map((row) => row.tabIndex),
+    inputTypes: inputs.map((input) => input.type),
+    inputNames: inputs.map((input) => input.name),
+    inputValues: inputs.map((input) => input.value),
+    inputChecked: inputs.map((input) => input.checked),
+    inputDatasets: inputs.map((input) => ({ ...input.dataset })),
+    classes: collectClasses(node),
+    titles: collectTitles(node),
+    emptyColSpan: rows[0]?.children?.[0]?.colSpan || 0,
+    imgCount: countTag(node, "img"),
+    scriptCount: countTag(node, "script"),
+    innerHTMLWrites: countInnerHTMLWrites(node),
+  };
+}
+
+function summarizeDetail(node) {
+  const inputs = findAll(node, (current) => current.tagName === "INPUT");
+  const buttons = findAll(node, (current) => current.tagName === "BUTTON");
+  return {
+    className: node.className,
+    text: node.textContent,
+    classes: collectClasses(node),
+    titles: collectTitles(node),
+    inputs: inputs.map((input) => ({
+      id: input.id,
+      type: input.type,
+      min: input.min,
+      step: input.step,
+      value: input.value,
+      dataset: { ...input.dataset },
+    })),
+    buttons: buttons.map((button) => ({
+      id: button.id,
+      type: button.type,
+      className: button.className,
+      text: button.textContent,
+      disabled: button.disabled,
+      dataset: { ...button.dataset },
+    })),
+    imgCount: countTag(node, "img"),
+    scriptCount: countTag(node, "script"),
+    innerHTMLWrites: countInnerHTMLWrites(node),
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const emptyTable = makeElement("tbody");
+const emptyHeading = makeElement("th");
+const emptyListResult = ui.renderGmailAttachmentListInto(emptyTable, [], { startHeading: emptyHeading });
+
+const table = makeElement("tbody");
+const startHeading = makeElement("th");
+const populatedListResult = ui.renderGmailAttachmentListInto(table, [
+  {
+    attachment_id: `pdf-${malicious}`,
+    filename: `PDF ${malicious}`,
+    mime_type: `application/pdf ${malicious}`,
+    size_bytes: 1536,
+  },
+  {
+    attachment_id: `image-${malicious}`,
+    filename: `Image ${malicious}`,
+    mime_type: `image/png ${malicious}`,
+    size_bytes: 256,
+  },
+], {
+  startHeading,
+  interpretationWorkflow: false,
+  focusedAttachmentId: `pdf-${malicious}`,
+  resolveState(attachmentId) {
+    return String(attachmentId).startsWith("pdf-")
+      ? { selected: true, startPage: 9, pageCount: 4 }
+      : { selected: false, startPage: 1, pageCount: 0 };
+  },
+  resolveCanEditStart(attachment) {
+    return String(attachment.attachment_id).startsWith("pdf-");
+  },
+  resolveStartPage(attachment, state) {
+    return String(attachment.attachment_id).startsWith("pdf-")
+      ? Math.min(Number(state.startPage || 1), Number(state.pageCount || 0) || 1)
+      : 1;
+  },
+  resolveKindLabel(attachment) {
+    return `Kind ${attachment.mime_type}`;
+  },
+  formatSizeLabel(value) {
+    return `${value} bytes`;
+  },
+});
+
+const interpretationTable = makeElement("tbody");
+ui.renderGmailAttachmentListInto(interpretationTable, [
+  { attachment_id: "att-image", filename: "Image file", mime_type: "image/png", size_bytes: 99 },
+], {
+  interpretationWorkflow: true,
+  resolveState() {
+    return { selected: false, startPage: 1, pageCount: 0 };
+  },
+  resolveCanEditStart() {
+    return false;
+  },
+  resolveKindLabel() {
+    return "Image";
+  },
+});
+
+const emptyDetail = makeElement("article");
+const emptyDetailResult = ui.renderGmailReviewDetailInto(emptyDetail, null);
+
+const detail = makeElement("article");
+const populatedDetailResult = ui.renderGmailReviewDetailInto(detail, {
+  attachment_id: `pdf-${malicious}`,
+  filename: `PDF ${malicious}`,
+  mime_type: "application/pdf",
+}, {
+  state: { selected: true, startPage: 7, pageCount: 4 },
+  canEditStart: true,
+  previewLoaded: true,
+  runtimeGuard: { blocked: true },
+  kindLabel: `PDF ${malicious}`,
+  startPage: 4,
+});
+
+const staticDetail = makeElement("article");
+ui.renderGmailReviewDetailInto(staticDetail, {
+  attachment_id: "image-1",
+  filename: "Image",
+  mime_type: "image/png",
+}, {
+  state: { selected: false, startPage: 1, pageCount: 0 },
+  canEditStart: false,
+  previewLoaded: false,
+  runtimeGuard: { blocked: false },
+  kindLabel: "Image",
+});
+
+const nullListResult = ui.renderGmailAttachmentListInto(null, []);
+const nullDetailResult = ui.renderGmailReviewDetailInto(null, { attachment_id: "ignored" });
+
+console.log(JSON.stringify({
+  listExportType: typeof ui.renderGmailAttachmentListInto,
+  detailExportType: typeof ui.renderGmailReviewDetailInto,
+  emptyHeading: emptyHeading.textContent,
+  emptyTable: summarizeTable(emptyTable),
+  emptyListReturnType: typeof emptyListResult,
+  populatedHeading: startHeading.textContent,
+  populatedTable: summarizeTable(table),
+  populatedListReturnType: typeof populatedListResult,
+  interpretationTable: summarizeTable(interpretationTable),
+  emptyDetail: summarizeDetail(emptyDetail),
+  emptyDetailReturnType: typeof emptyDetailResult,
+  populatedDetail: summarizeDetail(detail),
+  populatedDetailReturnType: typeof populatedDetailResult,
+  staticDetail: summarizeDetail(staticDetail),
+  nullListResultType: typeof nullListResult,
+  nullDetailResultType: typeof nullDetailResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["listExportType"] == "function"
+    assert results["detailExportType"] == "function"
+    assert results["nullListResultType"] == "undefined"
+    assert results["nullDetailResultType"] == "undefined"
+
+    assert results["emptyHeading"] == "Start page"
+    assert results["emptyTable"]["text"] == "No supported PDF or image attachments were found in this message."
+    assert results["emptyTable"]["rowCount"] == 1
+    assert results["emptyTable"]["classes"] == ["empty-state"]
+    assert results["emptyTable"]["emptyColSpan"] == 5
+    assert results["emptyTable"]["imgCount"] == 0
+    assert results["emptyTable"]["scriptCount"] == 0
+    assert results["emptyTable"]["innerHTMLWrites"] == 0
+    assert results["emptyListReturnType"] == "object"
+
+    assert results["populatedHeading"] == "Start page"
+    assert results["populatedTable"]["rowCount"] == 2
+    assert results["populatedTable"]["rowClasses"][0] == "gmail-review-row is-selected is-focused"
+    assert results["populatedTable"]["rowClasses"][1] == "gmail-review-row"
+    assert results["populatedTable"]["rowDatasets"][0]["attachmentRow"] == "pdf-<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["populatedTable"]["rowTabIndexes"] == [0, 0]
+    assert results["populatedTable"]["inputTypes"] == ["checkbox", "number", "checkbox"]
+    assert results["populatedTable"]["inputNames"] == ["gmail-review-selection", "", "gmail-review-selection"]
+    assert results["populatedTable"]["inputChecked"] == [True, False, False]
+    assert results["populatedTable"]["inputValues"] == ["", "4", ""]
+    assert results["populatedTable"]["inputDatasets"][0]["attachmentCheckbox"] == "pdf-<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["populatedTable"]["inputDatasets"][1]["attachmentStartPage"] == "pdf-<img src=x onerror=alert(1)><script>bad()</script>"
+    assert "PDF <img src=x onerror=alert(1)><script>bad()</script>" in results["populatedTable"]["text"]
+    assert "Kind application/pdf <img src=x onerror=alert(1)><script>bad()</script>" in results["populatedTable"]["text"]
+    assert "1536 bytes" in results["populatedTable"]["text"]
+    assert "Selected" in results["populatedTable"]["text"]
+    assert "Choose" in results["populatedTable"]["text"]
+    assert "gmail-review-file-cell" in results["populatedTable"]["classes"]
+    assert "gmail-review-file-name" in results["populatedTable"]["classes"]
+    assert "attachment-start-page" in results["populatedTable"]["classes"]
+    assert "gmail-review-start-static" in results["populatedTable"]["classes"]
+    assert "PDF <img src=x onerror=alert(1)><script>bad()</script>" in results["populatedTable"]["titles"]
+    assert "application/pdf <img src=x onerror=alert(1)><script>bad()</script>" in results["populatedTable"]["titles"]
+    assert results["populatedTable"]["imgCount"] == 0
+    assert results["populatedTable"]["scriptCount"] == 0
+    assert results["populatedTable"]["innerHTMLWrites"] == 0
+    assert results["populatedListReturnType"] == "object"
+
+    assert results["interpretationTable"]["inputTypes"] == ["radio"]
+    assert results["interpretationTable"]["text"].endswith("Image99 B1")
+    assert "gmail-review-start-static" in results["interpretationTable"]["classes"]
+
+    assert results["emptyDetail"]["className"] == "result-card empty-state"
+    assert results["emptyDetail"]["text"] == "Choose an attachment row to see the document details, optional preview, and start page."
+    assert results["emptyDetail"]["imgCount"] == 0
+    assert results["emptyDetail"]["scriptCount"] == 0
+    assert results["emptyDetail"]["innerHTMLWrites"] == 0
+    assert results["emptyDetailReturnType"] == "object"
+
+    assert results["populatedDetail"]["className"] == "result-card"
+    assert "PDF <img src=x onerror=alert(1)><script>bad()</script>" in results["populatedDetail"]["text"]
+    assert "Selected" in results["populatedDetail"]["text"]
+    assert "4 pages" in results["populatedDetail"]["text"]
+    assert "Preview ready" in results["populatedDetail"]["text"]
+    assert "Preview is optional. Use it if you want to check the document or choose a later start page." in results["populatedDetail"]["text"]
+    assert "gmail-review-detail-strip" in results["populatedDetail"]["classes"]
+    assert "gmail-review-detail-primary" in results["populatedDetail"]["classes"]
+    assert "gmail-review-detail-actions" in results["populatedDetail"]["classes"]
+    assert "field gmail-review-start-field" in results["populatedDetail"]["classes"]
+    assert results["populatedDetail"]["titles"] == ["PDF <img src=x onerror=alert(1)><script>bad()</script>"]
+    assert results["populatedDetail"]["inputs"] == [
+        {
+            "id": "gmail-review-detail-start",
+            "type": "number",
+            "min": "1",
+            "step": "1",
+            "value": "4",
+            "dataset": {"detailStartPage": "pdf-<img src=x onerror=alert(1)><script>bad()</script>"},
+        }
+    ]
+    assert results["populatedDetail"]["buttons"] == [
+        {
+            "id": "gmail-preview-selected",
+            "type": "button",
+            "className": "ghost-button",
+            "text": "Preview",
+            "disabled": True,
+            "dataset": {"previewSelected": "pdf-<img src=x onerror=alert(1)><script>bad()</script>"},
+        }
+    ]
+    assert results["populatedDetail"]["imgCount"] == 0
+    assert results["populatedDetail"]["scriptCount"] == 0
+    assert results["populatedDetail"]["innerHTMLWrites"] == 0
+    assert results["populatedDetailReturnType"] == "object"
+
+    assert "Image · Not selected · Page count appears after preview" in results["staticDetail"]["text"]
+    assert results["staticDetail"]["inputs"] == []
+    assert results["staticDetail"]["buttons"][0]["disabled"] is False
+
+
 def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -15723,6 +16200,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailPreviewPanelInto" in gmail_ui_asset.text
         assert "renderGmailResumeCardInto" in gmail_ui_asset.text
         assert "renderGmailSessionResultInto" in gmail_ui_asset.text
+        assert "renderGmailAttachmentListInto" in gmail_ui_asset.text
+        assert "renderGmailReviewDetailInto" in gmail_ui_asset.text
         shell_ui_asset = client.get(f"/static-build/{asset_version}/shell_ui.js")
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")
