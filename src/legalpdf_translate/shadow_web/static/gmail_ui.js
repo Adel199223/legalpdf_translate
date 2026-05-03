@@ -1,4 +1,42 @@
 import { clearNode } from "./safe_rendering.js";
+import { appendResultGridItem, createResultHeader } from "./result_card_ui.js";
+
+export function renderGmailMessageResultInto(container, detailsHint, card = {}) {
+  if (!container) {
+    return;
+  }
+
+  if (card.empty) {
+    container.classList.add("empty-state");
+    container.textContent = card.emptyText || "";
+    if (detailsHint) {
+      detailsHint.textContent = card.detailsHint || "";
+    }
+    return;
+  }
+
+  container.classList.remove("empty-state");
+  clearNode(container);
+  container.appendChild(createResultHeader({
+    title: card.title || "",
+    message: card.message || "",
+    label: card.label || "",
+    tone: card.tone || "info",
+  }));
+
+  const grid = document.createElement("div");
+  grid.className = "result-grid";
+  (Array.isArray(card.gridItems) ? card.gridItems : []).forEach((item) => {
+    appendResultGridItem(grid, item.label, item.value, {
+      className: item.className || "",
+    });
+  });
+  container.appendChild(grid);
+
+  if (detailsHint) {
+    detailsHint.textContent = card.detailsHint || "";
+  }
+}
 
 export function renderGmailNoncanonicalRuntimeGuardInto(nodes = {}, guard = {}) {
   const {

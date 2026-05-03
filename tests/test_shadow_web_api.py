@@ -3520,6 +3520,268 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_gmail_ui_module_centralizes_message_result_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./gmail_ui.js"' in gmail_js
+    assert "renderGmailMessageResultInto" in gmail_js
+    message_result_start = gmail_js.index("function renderMessageResult(loadResult)")
+    message_result_end = gmail_js.index("\nfunction renderReviewSummary", message_result_start)
+    message_result_block = gmail_js[message_result_start:message_result_end]
+    assert "renderGmailMessageResultInto" in message_result_block
+    assert "innerHTML" not in message_result_block
+    assert "export function renderGmailMessageResultInto" in gmail_ui_js
+    renderer_start = gmail_ui_js.index("export function renderGmailMessageResultInto")
+    renderer_end = gmail_ui_js.index("\nexport function renderGmailNoncanonicalRuntimeGuardInto", renderer_start)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function makeClassList(owner, initial = []) {
+  const classes = new Set(initial);
+  owner.className = Array.from(classes).join(" ");
+  return {
+    add(value) {
+      classes.add(value);
+      owner.className = Array.from(classes).join(" ");
+    },
+    remove(value) {
+      classes.delete(value);
+      owner.className = Array.from(classes).join(" ");
+    },
+    contains(value) {
+      return classes.has(value);
+    },
+  };
+}
+
+function makeElement(tagName = "div", initialClasses = []) {
+  const element = {
+    tagName: tagName.toUpperCase(),
+    children: [],
+    className: "",
+    innerHTMLAssignments: [],
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    },
+    replaceChildren(...children) {
+      this.children = children;
+    },
+  };
+  let textContent = "";
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return textContent;
+    },
+    set(value) {
+      textContent = String(value ?? "");
+      this.children = [];
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return "";
+    },
+    set(value) {
+      this.innerHTMLAssignments.push(String(value ?? ""));
+    },
+  });
+  element.classList = makeClassList(element, initialClasses);
+  return element;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+function collectText(node) {
+  if (!node) {
+    return "";
+  }
+  return [
+    node.textContent || "",
+    ...(node.children || []).map((child) => collectText(child)),
+  ].join("");
+}
+
+function collectClasses(node) {
+  if (!node) {
+    return "";
+  }
+  return [
+    node.className || "",
+    ...(node.children || []).map((child) => collectClasses(child)),
+  ].filter(Boolean).join(" ");
+}
+
+function countTag(node, tagName) {
+  if (!node) {
+    return 0;
+  }
+  const own = node.tagName === tagName.toUpperCase() ? 1 : 0;
+  return own + (node.children || []).reduce((total, child) => total + countTag(child, tagName), 0);
+}
+
+function countInnerHTMLWrites(node) {
+  if (!node) {
+    return 0;
+  }
+  return (node.innerHTMLAssignments || []).length
+    + (node.children || []).reduce((total, child) => total + countInnerHTMLWrites(child), 0);
+}
+
+function summarize(node, hint) {
+  return {
+    className: node.className,
+    childTags: node.children.map((child) => child.tagName),
+    text: collectText(node),
+    classes: collectClasses(node),
+    detailsHint: hint.textContent,
+    imgCount: countTag(node, "img"),
+    scriptCount: countTag(node, "script"),
+    innerHTMLWrites: countInnerHTMLWrites(node),
+  };
+}
+
+const pendingContainer = makeElement("article", ["result-card", "empty-state"]);
+pendingContainer.appendChild(makeElement("div"));
+const pendingHint = makeElement("summary");
+ui.renderGmailMessageResultInto(pendingContainer, pendingHint, {
+  title: "Gmail <img src=x onerror=alert(1)> found.",
+  message: "Subject <script>alert(2)</script>",
+  label: "Ready soon",
+  tone: "info",
+  detailsHint: "Detected Gmail <b>details</b> are ready.",
+  gridItems: [
+    {
+      label: "Gmail account",
+      value: "person@example.test <img src=x onerror=alert(3)>",
+      className: "word-break",
+    },
+    {
+      label: "Workflow",
+      value: "Guided translation <script>alert(4)</script>",
+    },
+  ],
+});
+
+const loadedContainer = makeElement("article", ["result-card", "empty-state"]);
+const loadedHint = makeElement("summary");
+ui.renderGmailMessageResultInto(loadedContainer, loadedHint, {
+  title: "Gmail message needs attention.",
+  message: "No subject",
+  label: "Needs attention",
+  tone: "warn",
+  detailsHint: "Exact IDs and output overrides stay here unless you need manual recovery or troubleshooting.",
+  gridItems: [
+    {
+      label: "From",
+      value: "Sender <script>alert(5)</script>",
+      className: "word-break",
+    },
+    {
+      label: "Gmail account",
+      value: "account@example.test",
+      className: "word-break",
+    },
+    {
+      label: "Supported attachments",
+      value: 2,
+    },
+    {
+      label: "Workflow",
+      value: "Review",
+    },
+  ],
+});
+
+const emptyContainer = makeElement("article", ["result-card"]);
+emptyContainer.appendChild(makeElement("div"));
+const emptyHint = makeElement("summary");
+ui.renderGmailMessageResultInto(emptyContainer, emptyHint, {
+  empty: true,
+  emptyText: "Open this from Gmail or load a message manually from details.",
+  detailsHint: "Manual message load and output overrides stay here unless Gmail needs help finding the message.",
+});
+
+const nullResult = ui.renderGmailMessageResultInto(null, emptyHint, {
+  empty: true,
+  emptyText: "ignored",
+});
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailMessageResultInto,
+  pending: summarize(pendingContainer, pendingHint),
+  loaded: summarize(loadedContainer, loadedHint),
+  empty: {
+    className: emptyContainer.className,
+    text: collectText(emptyContainer),
+    childCount: emptyContainer.children.length,
+    detailsHint: emptyHint.textContent,
+    imgCount: countTag(emptyContainer, "img"),
+    scriptCount: countTag(emptyContainer, "script"),
+    innerHTMLWrites: countInnerHTMLWrites(emptyContainer),
+  },
+  nullResultType: typeof nullResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["pending"]["className"] == "result-card"
+    assert results["pending"]["childTags"] == ["DIV", "DIV"]
+    assert "Gmail <img src=x onerror=alert(1)> found." in results["pending"]["text"]
+    assert "Subject <script>alert(2)</script>" in results["pending"]["text"]
+    assert "person@example.test <img src=x onerror=alert(3)>" in results["pending"]["text"]
+    assert "Guided translation <script>alert(4)</script>" in results["pending"]["text"]
+    assert "status-chip info" in results["pending"]["classes"]
+    assert results["pending"]["classes"].count("word-break") == 1
+    assert results["pending"]["detailsHint"] == "Detected Gmail <b>details</b> are ready."
+    assert results["pending"]["imgCount"] == 0
+    assert results["pending"]["scriptCount"] == 0
+    assert results["pending"]["innerHTMLWrites"] == 0
+
+    assert results["loaded"]["className"] == "result-card"
+    assert "Gmail message needs attention." in results["loaded"]["text"]
+    assert "Needs attention" in results["loaded"]["text"]
+    assert "Sender <script>alert(5)</script>" in results["loaded"]["text"]
+    assert "Supported attachments" in results["loaded"]["text"]
+    assert "2" in results["loaded"]["text"]
+    assert "status-chip warn" in results["loaded"]["classes"]
+    assert results["loaded"]["classes"].count("word-break") == 2
+    assert results["loaded"]["detailsHint"] == "Exact IDs and output overrides stay here unless you need manual recovery or troubleshooting."
+    assert results["loaded"]["imgCount"] == 0
+    assert results["loaded"]["scriptCount"] == 0
+    assert results["loaded"]["innerHTMLWrites"] == 0
+
+    assert results["empty"] == {
+        "className": "result-card empty-state",
+        "text": "Open this from Gmail or load a message manually from details.",
+        "childCount": 0,
+        "detailsHint": "Manual message load and output overrides stay here unless Gmail needs help finding the message.",
+        "imgCount": 0,
+        "scriptCount": 0,
+        "innerHTMLWrites": 0,
+    }
+    assert results["nullResultType"] == "undefined"
+
+
 def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -14260,6 +14522,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_ui_asset.status_code == 200
         assert gmail_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailNoncanonicalRuntimeGuardInto" in gmail_ui_asset.text
+        assert "renderGmailMessageResultInto" in gmail_ui_asset.text
         shell_ui_asset = client.get(f"/static-build/{asset_version}/shell_ui.js")
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")
