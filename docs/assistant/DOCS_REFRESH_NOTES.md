@@ -1594,3 +1594,11 @@ Verification commands/results:
   - `src/legalpdf_translate/shadow_web/static/power-tools.js`
   - `tests/test_shadow_web_api.py`
 - Follow-up docs refresh should mention that recent run-folder cards now render through the safe Power Tools UI module while `power-tools.js` still owns diagnostics, builder updates, and panel-status side effects.
+
+# 2026-05-04
+- Deferred assistant-docs refresh for the browser UI modernization slice that extracts provider credential/tool readiness status text into `power_tools_ui.js`.
+- Touched implementation/test surfaces:
+  - `src/legalpdf_translate/shadow_web/static/power_tools_ui.js`
+  - `src/legalpdf_translate/shadow_web/static/power-tools.js`
+  - `tests/test_shadow_web_api.py`
+- Follow-up docs refresh should mention that provider key, OCR key, native-host, and Word/PDF readiness lines now render through the safe Power Tools UI module while `power-tools.js` still owns provider-state orchestration, diagnostics, and settings status.
