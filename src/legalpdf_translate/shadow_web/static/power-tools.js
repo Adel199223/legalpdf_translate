@@ -1,5 +1,6 @@
 import { fetchJson } from "./api.js";
 import { appState } from "./state.js";
+import { runWithBusy } from "./busy_ui.js";
 import { buildSettingsStatusPresentation } from "./settings_presentation.js";
 import { formatDiagnosticValue } from "./diagnostics_presentation.js";
 import { renderCredentialRecoveryStateInto, renderLatestRunDirsInto } from "./power_tools_ui.js";
@@ -105,33 +106,6 @@ function appendUniqueLine(id, value) {
     lines.add(String(value));
   }
   setFieldValue(id, Array.from(lines).join("\n"));
-}
-
-function setBusy(buttonIds, busy, busyLabels = {}) {
-  for (const id of buttonIds) {
-    const button = qs(id);
-    if (!button) {
-      continue;
-    }
-    if (!button.dataset.defaultLabel) {
-      button.dataset.defaultLabel = button.textContent;
-    }
-    button.disabled = busy;
-    button.setAttribute("aria-busy", busy ? "true" : "false");
-    button.textContent = busy ? busyLabels[id] || button.dataset.defaultLabel : button.dataset.defaultLabel;
-  }
-}
-
-async function runWithBusy(buttonIds, busyLabels, action) {
-  if (buttonIds.some((id) => qs(id)?.disabled)) {
-    return;
-  }
-  setBusy(buttonIds, true, busyLabels);
-  try {
-    return await action();
-  } finally {
-    setBusy(buttonIds, false);
-  }
 }
 
 async function fetchJsonAllowFailed(path, options = {}) {

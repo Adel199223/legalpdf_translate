@@ -2656,6 +2656,27 @@ def test_gmail_js_uses_shared_busy_ui_for_button_state() -> None:
     assert "innerHTML" not in busy_ui_js
 
 
+def test_power_tools_js_uses_shared_busy_ui_for_button_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    busy_ui_js = (static_dir / "busy_ui.js").read_text(encoding="utf-8")
+
+    assert 'import { runWithBusy } from "./busy_ui.js";' in power_tools_js
+    assert "function setBusy(buttonIds, busy, busyLabels = {})" not in power_tools_js
+    assert "async function runWithBusy(buttonIds, busyLabels, action)" not in power_tools_js
+    assert "setBusy(" not in power_tools_js
+    assert "button.setAttribute(\"aria-busy\"" not in power_tools_js
+    assert "export async function runWithBusy(buttonIds, busyLabels, action, options = {})" in busy_ui_js
+    assert "const guardIds = options.guardIds || buttonIds;" in busy_ui_js
+    assert "innerHTML" not in busy_ui_js
+
+
 def test_google_photos_oauth_fallback_is_visible_without_rendering_url_text() -> None:
     script = """
 function makeClassList(initial = []) {

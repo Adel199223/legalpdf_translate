@@ -1602,3 +1602,10 @@ Verification commands/results:
   - `src/legalpdf_translate/shadow_web/static/power-tools.js`
   - `tests/test_shadow_web_api.py`
 - Follow-up docs refresh should mention that provider key, OCR key, native-host, and Word/PDF readiness lines now render through the safe Power Tools UI module while `power-tools.js` still owns provider-state orchestration, diagnostics, and settings status.
+
+# 2026-05-04
+- Deferred assistant-docs refresh for the browser UI modernization slice that centralizes Power Tools busy-button state on `busy_ui.js`.
+- Touched implementation/test surfaces:
+  - `src/legalpdf_translate/shadow_web/static/power-tools.js`
+  - `tests/test_shadow_web_api.py`
+- Follow-up docs refresh should mention that Power Tools now imports the shared `runWithBusy(...)` helper for button labels, disabled state, and `aria-busy` updates while keeping all Power Tools action orchestration unchanged.
