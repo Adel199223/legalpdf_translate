@@ -2677,6 +2677,41 @@ def test_power_tools_js_uses_shared_busy_ui_for_button_state() -> None:
     assert "innerHTML" not in busy_ui_js
 
 
+def test_translation_js_uses_shared_status_and_busy_ui_helpers() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    busy_ui_js = (static_dir / "busy_ui.js").read_text(encoding="utf-8")
+    diagnostics_ui_js = (static_dir / "diagnostics_ui.js").read_text(encoding="utf-8")
+    diagnostics_presentation_js = (static_dir / "diagnostics_presentation.js").read_text(encoding="utf-8")
+
+    assert 'import { runWithBusy } from "./busy_ui.js";' in translation_js
+    assert 'import { setDiagnostics, setPanelStatus } from "./diagnostics_ui.js";' in translation_js
+    assert 'from "./diagnostics_presentation.js"' not in translation_js
+    assert "function formatDiagnosticValue(value)" not in translation_js
+    assert "function setDiagnostics(slot, value, { hint = \"\", open = false } = {})" not in translation_js
+    assert "function setPanelStatus(slot, tone, message)" not in translation_js
+    assert "function setBusy(buttonIds, busy, busyLabels = {})" not in translation_js
+    assert "async function runWithBusy(buttonIds, busyLabels, action)" not in translation_js
+    assert "button.setAttribute(\"aria-busy\"" not in translation_js
+    assert "button.textContent = busy ?" not in translation_js
+    assert "pre.textContent = formatDiagnosticValue(value)" not in translation_js
+    assert "panel.textContent = message" not in translation_js
+
+    assert "export async function runWithBusy(buttonIds, busyLabels, action, options = {})" in busy_ui_js
+    assert "const guardIds = options.guardIds || buttonIds;" in busy_ui_js
+    assert "export function setDiagnostics" in diagnostics_ui_js
+    assert "export function setPanelStatus" in diagnostics_ui_js
+    assert 'from "./diagnostics_presentation.js"' in diagnostics_ui_js
+    assert "export function formatDiagnosticValue(value)" in diagnostics_presentation_js
+    assert "innerHTML" not in busy_ui_js
+
+
 def test_google_photos_oauth_fallback_is_visible_without_rendering_url_text() -> None:
     script = """
 function makeClassList(initial = []) {
