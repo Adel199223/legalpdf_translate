@@ -6907,6 +6907,264 @@ console.log(JSON.stringify({
     assert results["blockedRedo"]["innerHTMLWrites"] == 0
 
 
+def test_gmail_ui_module_centralizes_workspace_strip_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailWorkspaceStripInto" in gmail_js
+    assert "export function renderGmailWorkspaceStripInto" in gmail_ui_js
+
+    strip_start = gmail_js.index("function renderWorkspaceStrip()")
+    strip_end = gmail_js.index("\nfunction updatePrepareActionState", strip_start)
+    strip_block = gmail_js[strip_start:strip_end]
+    assert "renderGmailWorkspaceStripInto(" in strip_block
+    assert "strip.classList.toggle" not in strip_block
+    assert "title.textContent =" not in strip_block
+    assert "copy.textContent =" not in strip_block
+    assert "action.textContent =" not in strip_block
+    assert "action.dataset.gmailStripAction =" not in strip_block
+    assert "currentGmailStage()" in strip_block
+    assert "currentHomeCta()" in strip_block
+    assert "currentRecoveredFinalizationAction()" in strip_block
+    assert "deriveGmailStagePresentation(" in strip_block
+
+    renderer_start = gmail_ui_js.index("export function renderGmailWorkspaceStripInto")
+    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+    assert "qs(" not in renderer_block
+    assert "gmail-workspace-strip" not in renderer_block
+    assert "gmail-workspace-strip-action" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeNode(className = "") {
+  const node = {
+    className,
+    dataset: {},
+    children: [],
+    innerHTMLAssignments: [],
+    textContentAssignments: [],
+  };
+  node.classList = makeClassList(node);
+  Object.defineProperty(node, "textContent", {
+    get() {
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+      this.textContentAssignments.push(this._textContent);
+    },
+  });
+  Object.defineProperty(node, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g))
+        .map((match) => ({ tagName: match[1].toUpperCase() }));
+      this.innerHTMLAssignments.push(next);
+    },
+  });
+  return node;
+}
+
+function summarize(node) {
+  return {
+    className: normalizeClassList(node.className).sort().join(" "),
+    hidden: node.classList.contains("hidden"),
+    text: node.textContent,
+    action: node.dataset.gmailStripAction || "",
+    childCount: node.children.length,
+    innerHTMLWrites: node.innerHTMLAssignments.length,
+    textContentWrites: node.textContentAssignments.length,
+  };
+}
+
+const strip = makeNode("hidden workspace-strip");
+const title = makeNode();
+const copy = makeNode();
+const action = makeNode();
+const visibleResult = ui.renderGmailWorkspaceStripInto(
+  { strip, title, copy, action },
+  {
+    visible: true,
+    title: "Continue <img src=x onerror=alert(1)>",
+    copy: "Copy <script>bad()</script>",
+    actionLabel: "Review <img src=x onerror=alert(2)>",
+    action: "open-<script>bad()</script>",
+  },
+);
+
+const recoveredStrip = makeNode("hidden recovered-strip");
+const recoveredTitle = makeNode();
+const recoveredCopy = makeNode();
+const recoveredAction = makeNode();
+ui.renderGmailWorkspaceStripInto(
+  {
+    strip: recoveredStrip,
+    title: recoveredTitle,
+    copy: recoveredCopy,
+    action: recoveredAction,
+  },
+  {
+    visible: true,
+    title: "Last finalized batch is recoverable.",
+    copy: "Open the recovered result only if you need the previous Gmail finalization details or report.",
+    actionLabel: "Open Last Finalization Result",
+    action: "open-recovered-finalization",
+  },
+);
+
+const defaultStrip = makeNode("hidden default-strip");
+const defaultTitle = makeNode();
+const defaultCopy = makeNode();
+const defaultAction = makeNode();
+ui.renderGmailWorkspaceStripInto(
+  { strip: defaultStrip, title: defaultTitle, copy: defaultCopy, action: defaultAction },
+  {
+    visible: true,
+    title: "Gmail attachment ready",
+    copy: "Review the Gmail message and attachments before you continue.",
+    actionLabel: "Review Gmail message",
+    action: "open-intake",
+  },
+);
+
+const hiddenStrip = makeNode("workspace-strip");
+const hiddenTitle = makeNode();
+const hiddenCopy = makeNode();
+const hiddenAction = makeNode();
+hiddenTitle.textContent = "Keep title";
+hiddenCopy.textContent = "Keep copy";
+hiddenAction.textContent = "Keep action";
+hiddenAction.dataset.gmailStripAction = "keep-action";
+ui.renderGmailWorkspaceStripInto(
+  { strip: hiddenStrip, title: hiddenTitle, copy: hiddenCopy, action: hiddenAction },
+  { visible: false, title: "Ignored", copy: "Ignored", actionLabel: "Ignored", action: "ignored" },
+);
+
+const partialStrip = makeNode("hidden partial-strip");
+const partialAction = makeNode();
+ui.renderGmailWorkspaceStripInto(
+  { strip: partialStrip, action: partialAction },
+  {
+    visible: true,
+    title: "Missing title node",
+    copy: "Missing copy node",
+    actionLabel: "Partial action",
+    action: "partial",
+  },
+);
+const nullResult = ui.renderGmailWorkspaceStripInto(null, { visible: true });
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailWorkspaceStripInto,
+  visibleResultType: typeof visibleResult,
+  nullResultType: typeof nullResult,
+  strip: summarize(strip),
+  title: summarize(title),
+  copy: summarize(copy),
+  action: summarize(action),
+  recoveredStrip: summarize(recoveredStrip),
+  recoveredTitle: summarize(recoveredTitle),
+  recoveredCopy: summarize(recoveredCopy),
+  recoveredAction: summarize(recoveredAction),
+  defaultStrip: summarize(defaultStrip),
+  defaultTitle: summarize(defaultTitle),
+  defaultCopy: summarize(defaultCopy),
+  defaultAction: summarize(defaultAction),
+  hiddenStrip: summarize(hiddenStrip),
+  hiddenTitle: summarize(hiddenTitle),
+  hiddenCopy: summarize(hiddenCopy),
+  hiddenAction: summarize(hiddenAction),
+  partialStrip: summarize(partialStrip),
+  partialAction: summarize(partialAction),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["visibleResultType"] == "object"
+    assert results["nullResultType"] == "undefined"
+
+    assert results["strip"]["hidden"] is False
+    assert results["strip"]["className"] == "workspace-strip"
+    assert results["title"]["text"] == "Continue <img src=x onerror=alert(1)>"
+    assert results["title"]["childCount"] == 0
+    assert results["title"]["innerHTMLWrites"] == 0
+    assert results["copy"]["text"] == "Copy <script>bad()</script>"
+    assert results["copy"]["childCount"] == 0
+    assert results["copy"]["innerHTMLWrites"] == 0
+    assert results["action"]["text"] == "Review <img src=x onerror=alert(2)>"
+    assert results["action"]["action"] == "open-<script>bad()</script>"
+    assert results["action"]["childCount"] == 0
+    assert results["action"]["innerHTMLWrites"] == 0
+
+    assert results["recoveredStrip"]["hidden"] is False
+    assert results["recoveredTitle"]["text"] == "Last finalized batch is recoverable."
+    assert results["recoveredCopy"]["text"] == (
+        "Open the recovered result only if you need the previous Gmail finalization details or report."
+    )
+    assert results["recoveredAction"]["text"] == "Open Last Finalization Result"
+    assert results["recoveredAction"]["action"] == "open-recovered-finalization"
+
+    assert results["defaultStrip"]["hidden"] is False
+    assert results["defaultTitle"]["text"] == "Gmail attachment ready"
+    assert results["defaultCopy"]["text"] == "Review the Gmail message and attachments before you continue."
+    assert results["defaultAction"]["text"] == "Review Gmail message"
+    assert results["defaultAction"]["action"] == "open-intake"
+
+    assert results["hiddenStrip"]["hidden"] is True
+    assert results["hiddenTitle"]["text"] == "Keep title"
+    assert results["hiddenCopy"]["text"] == "Keep copy"
+    assert results["hiddenAction"]["text"] == "Keep action"
+    assert results["hiddenAction"]["action"] == "keep-action"
+
+    assert results["partialStrip"]["hidden"] is False
+    assert results["partialAction"]["text"] == "Partial action"
+    assert results["partialAction"]["action"] == "partial"
+
+
 def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -18324,6 +18582,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailPrepareActionInto" in gmail_ui_asset.text
         assert "renderGmailSessionButtonsInto" in gmail_ui_asset.text
         assert "renderGmailResumeActionsInto" in gmail_ui_asset.text
+        assert "renderGmailWorkspaceStripInto" in gmail_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
