@@ -71,3 +71,22 @@ export function renderTranslationPrimaryActionsInto(nodes = {}, actionState = {}
   }
   return helper || undefined;
 }
+
+export function renderTranslationNumericMismatchWarningInto(container, warning = {}) {
+  if (!container) {
+    return undefined;
+  }
+
+  const visible = Boolean(warning?.visible);
+  container.classList.toggle("hidden", !visible);
+  if (!visible) {
+    setText(container, "");
+    return container;
+  }
+
+  const lines = Array.isArray(warning.lines) ? warning.lines : [];
+  const detailLines = lines.length ? `\n${lines.join("\n")}` : "";
+  setText(container, `${warning.message || ""}${detailLines}`);
+  container.setAttribute("role", "note");
+  return container;
+}

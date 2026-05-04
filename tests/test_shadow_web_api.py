@@ -11510,6 +11510,179 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_ui_module_centralizes_numeric_warning_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationNumericMismatchWarningInto" in translation_js
+    assert "export function renderTranslationNumericMismatchWarningInto" in translation_ui_js
+    warning_start = translation_js.index("export function renderNumericMismatchWarningInto")
+    warning_end = translation_js.index("\nfunction currentNumericMismatchWarning", warning_start)
+    warning_block = translation_js[warning_start:warning_end]
+    assert "renderTranslationNumericMismatchWarningInto(container, normalized)" in warning_block
+    assert ".innerHTML" not in warning_block
+
+    renderer_start = translation_ui_js.index("export function renderTranslationNumericMismatchWarningInto")
+    renderer_end = (
+        translation_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+        else len(translation_ui_js)
+    )
+    renderer_block = translation_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeElement() {
+  const element = {
+    attributes: {},
+    children: [],
+    classListActions: [],
+    innerHTMLAssignments: [],
+    _hidden: false,
+    _textContent: "",
+    _innerHTML: "",
+    classList: {
+      toggle(name, force) {
+        this.owner._hidden = Boolean(force);
+        this.owner.classListActions.push([name, Boolean(force)]);
+      },
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
+  };
+  element.classList.owner = element;
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        this.children.push({ tagName: match[1].toUpperCase() });
+      }
+    },
+  });
+  return element;
+}
+
+function summarize(node) {
+  return {
+    hidden: node._hidden,
+    text: node.textContent,
+    role: node.attributes.role || "",
+    toggles: node.classListActions,
+    innerHTMLWrites: node.innerHTMLAssignments.length,
+    imgChildren: node.children.filter((child) => child.tagName === "IMG").length,
+    scriptChildren: node.children.filter((child) => child.tagName === "SCRIPT").length,
+  };
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const visible = makeElement();
+const visibleReturn = translationUi.renderTranslationNumericMismatchWarningInto(visible, {
+  visible: true,
+  message: `Review ${malicious}`,
+  lines: [`Page 1: ${malicious}`, `Page 2: ${malicious}`],
+});
+
+const noLines = makeElement();
+translationUi.renderTranslationNumericMismatchWarningInto(noLines, {
+  visible: true,
+  message: `Review without lines ${malicious}`,
+  lines: [],
+});
+
+const hidden = makeElement();
+hidden.textContent = "Previous warning";
+translationUi.renderTranslationNumericMismatchWarningInto(hidden, {
+  visible: false,
+  message: `Ignored ${malicious}`,
+  lines: [`Ignored ${malicious}`],
+});
+
+const defaultHidden = makeElement();
+defaultHidden.textContent = "Previous default";
+translationUi.renderTranslationNumericMismatchWarningInto(defaultHidden);
+
+const nullReturn = translationUi.renderTranslationNumericMismatchWarningInto(null, {
+  visible: true,
+  message: "Ignored",
+});
+
+console.log(JSON.stringify({
+  exportType: typeof translationUi.renderTranslationNumericMismatchWarningInto,
+  visibleReturned: visibleReturn === visible,
+  visible: summarize(visible),
+  noLines: summarize(noLines),
+  hidden: summarize(hidden),
+  defaultHidden: summarize(defaultHidden),
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["visibleReturned"] is True
+    assert results["visible"]["hidden"] is False
+    assert results["visible"]["text"] == (
+        "Review <img src=x onerror=alert(1)><script>bad()</script>\n"
+        "Page 1: <img src=x onerror=alert(1)><script>bad()</script>\n"
+        "Page 2: <img src=x onerror=alert(1)><script>bad()</script>"
+    )
+    assert results["visible"]["role"] == "note"
+    assert results["visible"]["toggles"] == [["hidden", False]]
+    assert results["visible"]["innerHTMLWrites"] == 0
+    assert results["visible"]["imgChildren"] == 0
+    assert results["visible"]["scriptChildren"] == 0
+
+    assert results["noLines"]["hidden"] is False
+    assert results["noLines"]["text"] == "Review without lines <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["noLines"]["role"] == "note"
+    assert results["noLines"]["innerHTMLWrites"] == 0
+
+    assert results["hidden"]["hidden"] is True
+    assert results["hidden"]["text"] == ""
+    assert results["hidden"]["role"] == ""
+    assert results["hidden"]["toggles"] == [["hidden", True]]
+    assert results["hidden"]["innerHTMLWrites"] == 0
+
+    assert results["defaultHidden"]["hidden"] is True
+    assert results["defaultHidden"]["text"] == ""
+    assert results["defaultHidden"]["innerHTMLWrites"] == 0
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -19560,6 +19733,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderTranslationOutputSummaryInto" in translation_ui_asset.text
         assert "renderTranslationRunStatusInto" in translation_ui_asset.text
         assert "renderTranslationPrimaryActionsInto" in translation_ui_asset.text
+        assert "renderTranslationNumericMismatchWarningInto" in translation_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")
