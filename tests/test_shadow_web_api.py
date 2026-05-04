@@ -6684,6 +6684,229 @@ console.log(JSON.stringify({
     assert results["empty"]["textContentWrites"] == 0
 
 
+def test_gmail_ui_module_centralizes_resume_actions_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailResumeActionsInto" in gmail_js
+    assert "export function renderGmailResumeActionsInto" in gmail_ui_js
+
+    resume_start = gmail_js.index("function renderResumeCard(")
+    resume_end = gmail_js.index("\nfunction renderSessionResult", resume_start)
+    resume_block = gmail_js[resume_start:resume_end]
+    assert "renderGmailResumeActionsInto(" in resume_block
+    assert "button.classList.toggle" not in resume_block
+    assert "button.disabled =" not in resume_block
+    assert "button.textContent =" not in resume_block
+    assert "button.dataset.gmailAction =" not in resume_block
+    assert "redoButton.classList.toggle" not in resume_block
+    assert "redoButton.disabled =" not in resume_block
+    assert "redoButton.textContent =" not in resume_block
+    assert "redoButton.dataset.gmailAction =" not in resume_block
+    assert "redoButton.title =" not in resume_block
+    assert "renderGmailResumeCardInto(" in resume_block
+
+    renderer_start = gmail_ui_js.index("export function renderGmailResumeActionsInto")
+    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+    assert "qs(" not in renderer_block
+    assert "gmail-resume-step" not in renderer_block
+    assert "gmail-redo-current" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeButton(className = "") {
+  const button = {
+    className,
+    disabled: false,
+    dataset: {},
+    title: "",
+    children: [],
+    innerHTMLAssignments: [],
+    textContentAssignments: [],
+  };
+  button.classList = makeClassList(button);
+  Object.defineProperty(button, "textContent", {
+    get() {
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+      this.textContentAssignments.push(this._textContent);
+    },
+  });
+  Object.defineProperty(button, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g))
+        .map((match) => ({ tagName: match[1].toUpperCase() }));
+      this.innerHTMLAssignments.push(next);
+    },
+  });
+  return button;
+}
+
+function summarize(button) {
+  return {
+    className: normalizeClassList(button.className).sort().join(" "),
+    hidden: button.classList.contains("hidden"),
+    disabled: button.disabled,
+    text: button.textContent,
+    action: button.dataset.gmailAction || "",
+    title: button.title || "",
+    childCount: button.children.length,
+    innerHTMLWrites: button.innerHTMLAssignments.length,
+    textContentWrites: button.textContentAssignments.length,
+  };
+}
+
+const resume = makeButton("hidden primary-button");
+const redo = makeButton("hidden secondary-button");
+const visibleResult = ui.renderGmailResumeActionsInto(
+  { resumeButton: resume, redoButton: redo },
+  {
+    cta: {
+      visible: true,
+      label: "Resume <img src=x onerror=alert(1)><script>bad()</script>",
+      action: "resume-<script>bad()</script>",
+    },
+    redo: {
+      visible: true,
+      enabled: true,
+      label: "Redo <img src=x onerror=alert(2)>",
+      action: "redo-<script>bad()</script>",
+      blocked: false,
+      description: "Ignored when unblocked",
+    },
+  },
+);
+
+const hiddenResume = makeButton("primary-button");
+const hiddenRedo = makeButton("secondary-button");
+ui.renderGmailResumeActionsInto(
+  { resumeButton: hiddenResume, redoButton: hiddenRedo },
+  {
+    cta: { visible: false },
+    redo: { visible: false, enabled: true, blocked: false },
+  },
+);
+
+const blockedRedo = makeButton("hidden secondary-button");
+ui.renderGmailResumeActionsInto(
+  { redoButton: blockedRedo },
+  {
+    redo: {
+      visible: true,
+      enabled: false,
+      blocked: true,
+      action: "redo-blocked",
+      description: "Cancel <img src=x onerror=alert(3)> first",
+    },
+  },
+);
+
+const nullResult = ui.renderGmailResumeActionsInto(null, {
+  cta: { visible: true, label: "Missing" },
+});
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailResumeActionsInto,
+  visibleResultType: typeof visibleResult,
+  nullResultType: typeof nullResult,
+  resume: summarize(resume),
+  redo: summarize(redo),
+  hiddenResume: summarize(hiddenResume),
+  hiddenRedo: summarize(hiddenRedo),
+  blockedRedo: summarize(blockedRedo),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["visibleResultType"] == "object"
+    assert results["nullResultType"] == "undefined"
+
+    assert results["resume"]["hidden"] is False
+    assert results["resume"]["disabled"] is False
+    assert results["resume"]["className"] == "primary-button"
+    assert results["resume"]["text"] == "Resume <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["resume"]["action"] == "resume-<script>bad()</script>"
+    assert results["resume"]["childCount"] == 0
+    assert results["resume"]["innerHTMLWrites"] == 0
+
+    assert results["redo"]["hidden"] is False
+    assert results["redo"]["disabled"] is False
+    assert results["redo"]["className"] == "secondary-button"
+    assert results["redo"]["text"] == "Redo <img src=x onerror=alert(2)>"
+    assert results["redo"]["action"] == "redo-<script>bad()</script>"
+    assert results["redo"]["title"] == ""
+    assert results["redo"]["childCount"] == 0
+    assert results["redo"]["innerHTMLWrites"] == 0
+
+    assert results["hiddenResume"]["hidden"] is True
+    assert results["hiddenResume"]["disabled"] is True
+    assert results["hiddenResume"]["text"] == "Resume Current Step"
+    assert results["hiddenResume"]["action"] == ""
+    assert results["hiddenResume"]["innerHTMLWrites"] == 0
+
+    assert results["hiddenRedo"]["hidden"] is True
+    assert results["hiddenRedo"]["disabled"] is True
+    assert results["hiddenRedo"]["text"] == "Redo Current Attachment"
+    assert results["hiddenRedo"]["action"] == ""
+    assert results["hiddenRedo"]["title"] == ""
+    assert results["hiddenRedo"]["innerHTMLWrites"] == 0
+
+    assert results["blockedRedo"]["hidden"] is False
+    assert results["blockedRedo"]["disabled"] is True
+    assert results["blockedRedo"]["text"] == "Redo Current Attachment"
+    assert results["blockedRedo"]["action"] == "redo-blocked"
+    assert results["blockedRedo"]["title"] == "Cancel <img src=x onerror=alert(3)> first"
+    assert results["blockedRedo"]["childCount"] == 0
+    assert results["blockedRedo"]["innerHTMLWrites"] == 0
+
+
 def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -18100,6 +18323,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailReturnToSourceActionInto" in gmail_ui_asset.text
         assert "renderGmailPrepareActionInto" in gmail_ui_asset.text
         assert "renderGmailSessionButtonsInto" in gmail_ui_asset.text
+        assert "renderGmailResumeActionsInto" in gmail_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")

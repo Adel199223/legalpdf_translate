@@ -22,6 +22,7 @@ import {
   renderGmailPrepareActionInto,
   renderGmailReportActionInto,
   renderGmailReturnToSourceActionInto,
+  renderGmailResumeActionsInto,
   renderGmailReviewDetailInto,
   renderGmailReviewSummaryInto,
   renderGmailRestoreBarInto,
@@ -1858,19 +1859,7 @@ function renderResumeCard(activeSession) {
   gmailState.stage = currentGmailStage();
   const cta = currentHomeCta();
   const redo = currentRedoAction();
-  if (button) {
-    button.classList.toggle("hidden", !cta.visible);
-    button.disabled = !cta.visible;
-    button.textContent = cta.label || "Resume Current Step";
-    button.dataset.gmailAction = cta.action || "";
-  }
-  if (redoButton) {
-    redoButton.classList.toggle("hidden", !redo.visible);
-    redoButton.disabled = !redo.visible || !redo.enabled;
-    redoButton.textContent = redo.label || "Redo Current Attachment";
-    redoButton.dataset.gmailAction = redo.action || "";
-    redoButton.title = redo.blocked ? (redo.description || "Cancel the active matching job before redoing this attachment.") : "";
-  }
+  renderGmailResumeActionsInto({ resumeButton: button, redoButton }, { cta, redo });
   if (!container) {
     return;
   }
