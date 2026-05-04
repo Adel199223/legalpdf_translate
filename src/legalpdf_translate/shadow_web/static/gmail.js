@@ -26,6 +26,7 @@ import {
   renderGmailReviewSummaryInto,
   renderGmailRestoreBarInto,
   renderGmailResumeCardInto,
+  renderGmailSessionButtonsInto,
   renderGmailSessionResultInto,
   renderGmailTranslationStepCardInto,
 } from "./gmail_ui.js";
@@ -2067,14 +2068,7 @@ function updateSessionButtons() {
     ["gmail-load-interpretation-seed", activeSession?.kind === "interpretation" && interpretationReady],
     ["gmail-finalize-interpretation", activeSession?.kind === "interpretation"],
   ];
-  for (const [id, enabled] of rules) {
-    const button = qs(id);
-    if (!button) {
-      continue;
-    }
-    button.disabled = !enabled;
-    button.classList.toggle("hidden", !enabled);
-  }
+  renderGmailSessionButtonsInto(rules.map(([id, enabled]) => [qs(id), enabled]));
   if (!sessionAvailable) {
     closeSessionDrawer();
   }

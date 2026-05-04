@@ -118,6 +118,22 @@ export function renderGmailPrepareActionInto(button, { label = "", disabled = fa
   return button;
 }
 
+export function renderGmailSessionButtonsInto(buttonRules = []) {
+  if (!Array.isArray(buttonRules)) {
+    return undefined;
+  }
+
+  for (const [button, enabled] of buttonRules) {
+    if (!button) {
+      continue;
+    }
+    const show = Boolean(enabled);
+    button.disabled = !show;
+    button.classList.toggle("hidden", !show);
+  }
+  return buttonRules;
+}
+
 export function renderGmailMessageResultInto(container, detailsHint, card = {}) {
   if (!container) {
     return;
