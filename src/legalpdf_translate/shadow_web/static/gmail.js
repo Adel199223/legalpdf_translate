@@ -14,6 +14,7 @@ import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
   renderGmailAttachmentListInto,
   renderGmailBatchFinalizeSurfaceInto,
+  renderGmailDemoReviewActionInto,
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
@@ -1846,8 +1847,7 @@ function updateDemoReviewAction() {
     return;
   }
   const visible = appState.runtimeMode === "shadow" && !(gmailState.loadResult?.ok && gmailState.loadResult?.message);
-  button.classList.toggle("hidden", !visible);
-  button.disabled = !visible;
+  renderGmailDemoReviewActionInto(button, { visible });
 }
 
 function renderResumeCard(activeSession) {

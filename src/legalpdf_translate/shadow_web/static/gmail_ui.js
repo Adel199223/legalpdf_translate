@@ -82,6 +82,17 @@ export function renderGmailRestoreBarInto(nodes = {}, restore = {}) {
   return nodes;
 }
 
+export function renderGmailDemoReviewActionInto(button, { visible = false } = {}) {
+  if (!button) {
+    return undefined;
+  }
+
+  const show = Boolean(visible);
+  button.classList.toggle("hidden", !show);
+  button.disabled = !show;
+  return button;
+}
+
 export function renderGmailMessageResultInto(container, detailsHint, card = {}) {
   if (!container) {
     return;
