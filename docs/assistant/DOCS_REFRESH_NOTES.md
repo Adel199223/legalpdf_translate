@@ -16,6 +16,24 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-05-04 — feat/translation-source-path-ui-module (deferred)
+- Files changed:
+  - src/legalpdf_translate/shadow_web/static/translation.js
+  - src/legalpdf_translate/shadow_web/static/translation_ui.js
+  - tests/test_shadow_web_api.py
+- Key symbols / entrypoints changed:
+  - translation_ui.js::renderTranslationFieldValueInto
+  - translation_ui.js::renderTranslationSourcePathInto
+  - translation.js::setFieldValue
+  - translation.js::setSourcePathValue
+- User-visible behavior:
+  - No intended behavior change; translation source path hidden field and summary text keep the same values and fallback copy while moving simple DOM writes into the translation UI module.
+- Tests:
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "translation_ui_module_centralizes_source_path_renderers or versioned_static_route"
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_browser_safe_rendering.py
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py tests\test_shadow_web_route_state.py tests\test_translation_browser_state.py
+  - powershell -ExecutionPolicy Bypass -File scripts\validate_dev.ps1 -Full
+
 ## 2026-05-04 — feat/gmail-control-state-ui-module (deferred)
 - Files changed:
   - src/legalpdf_translate/shadow_web/static/gmail.js
