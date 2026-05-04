@@ -14,6 +14,7 @@ import {
 } from "./result_card_ui.js";
 import {
   renderTranslationDownloadLinkInto,
+  renderTranslationCompletionSurfaceInto,
   renderTranslationNumericMismatchWarningInto,
   renderTranslationOutputSummaryInto,
   renderTranslationPrimaryActionsInto,
@@ -2185,6 +2186,7 @@ function syncTranslationCompletionSurface() {
   const runReportButton = qs("translation-generate-report");
   const saveButton = qs("translation-save-row");
   const review = currentArabicReviewState();
+  const hasSaveSurface = hasTranslationSaveSeed();
   const presentation = deriveTranslationCompletionPresentation({
     job: translationState.currentJob,
     saveSeed: currentTranslationSeed(),
@@ -2192,22 +2194,28 @@ function syncTranslationCompletionSurface() {
     arabicReview: review,
     gmailBatchContext: translationState.currentGmailBatchContext,
   });
-  if (openButton) {
-    openButton.classList.toggle("hidden", !available);
-    openButton.textContent = completionButtonLabel();
-  }
-  if (emptyTitleNode) {
-    emptyTitleNode.textContent = presentation.emptyTitle;
-  }
-  if (emptyCopyNode) {
-    emptyCopyNode.textContent = presentation.emptyCopy;
-  }
-  if (saveTitleNode) {
-    saveTitleNode.textContent = presentation.saveTitle;
-  }
-  if (saveStatusNode) {
-    saveStatusNode.textContent = presentation.saveStatus;
-  }
+  renderTranslationCompletionSurfaceInto({
+    openButton,
+    formShell,
+    emptyShell,
+    status: statusNode,
+    emptyTitle: emptyTitleNode,
+    emptyCopy: emptyCopyNode,
+    saveTitle: saveTitleNode,
+    saveStatus: saveStatusNode,
+    saveButton,
+  }, {
+    available,
+    hasSaveSurface,
+    openButtonLabel: completionButtonLabel(),
+    drawerStatus: presentation.drawerStatus,
+    emptyTitle: presentation.emptyTitle,
+    emptyCopy: presentation.emptyCopy,
+    saveTitle: presentation.saveTitle,
+    saveStatus: presentation.saveStatus,
+    saveButtonLabel: presentation.saveButtonLabel,
+    saveDisabled: !hasSaveSurface || currentArabicReviewIsBlocking(),
+  });
   if (!translationState.currentJob) {
     if (reviewExportButton) {
       reviewExportButton.disabled = true;
@@ -2232,16 +2240,6 @@ function syncTranslationCompletionSurface() {
     renderArabicReviewCard();
     closeTranslationCompletionDrawer();
     return;
-  }
-  if (statusNode) {
-    statusNode.textContent = presentation.drawerStatus;
-  }
-  const hasSaveSurface = hasTranslationSaveSeed();
-  formShell?.classList.toggle("hidden", !hasSaveSurface);
-  emptyShell?.classList.toggle("hidden", hasSaveSurface);
-  if (saveButton) {
-    saveButton.textContent = presentation.saveButtonLabel;
-    saveButton.disabled = !hasSaveSurface || currentArabicReviewIsBlocking();
   }
   if (hasSaveSurface && !translationState.currentRowId && review.required) {
     setPanelStatus(

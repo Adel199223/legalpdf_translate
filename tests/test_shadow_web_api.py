@@ -11992,6 +11992,239 @@ console.log(JSON.stringify({
     assert results["missingBackdropBodyInnerHTMLWrites"] == 0
 
 
+def test_translation_ui_module_centralizes_completion_surface_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationCompletionSurfaceInto" in translation_js
+    assert "export function renderTranslationCompletionSurfaceInto" in translation_ui_js
+    surface_start = translation_js.index("function syncTranslationCompletionSurface")
+    surface_end = translation_js.index("\n\nfunction maybeAutoOpenTranslationCompletion", surface_start)
+    surface_block = translation_js[surface_start:surface_end]
+    assert "deriveTranslationCompletionPresentation({" in surface_block
+    assert "renderTranslationCompletionSurfaceInto({" in surface_block
+    assert "clearDownloadLink(\"translation-download-report\")" in surface_block
+    assert "setPanelStatus(" in surface_block
+    assert "renderTranslationCompletionResultCard()" in surface_block
+    assert "renderArabicReviewCard()" in surface_block
+    assert "closeTranslationCompletionDrawer()" in surface_block
+    assert ".innerHTML" not in surface_block
+
+    renderer_start = translation_ui_js.index("export function renderTranslationCompletionSurfaceInto")
+    renderer_end = (
+        translation_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+        else len(translation_ui_js)
+    )
+    renderer_block = translation_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeNode() {
+  const node = {
+    classActions: [],
+    classSet: new Set(),
+    disabled: false,
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+    _textContent: "",
+    classList: {
+      add(name) {
+        this.owner.classSet.add(name);
+        this.owner.classActions.push(["add", name]);
+      },
+      toggle(name, force) {
+        const enabled = Boolean(force);
+        if (enabled) {
+          this.owner.classSet.add(name);
+        } else {
+          this.owner.classSet.delete(name);
+        }
+        this.owner.classActions.push(["toggle", name, enabled]);
+        return enabled;
+      },
+    },
+  };
+  node.classList.owner = node;
+  Object.defineProperty(node, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+    },
+  });
+  Object.defineProperty(node, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return node;
+}
+
+function makeNodes() {
+  return {
+    openButton: makeNode(),
+    formShell: makeNode(),
+    emptyShell: makeNode(),
+    status: makeNode(),
+    emptyTitle: makeNode(),
+    emptyCopy: makeNode(),
+    saveTitle: makeNode(),
+    saveStatus: makeNode(),
+    saveButton: makeNode(),
+  };
+}
+
+function summarize(nodes) {
+  const innerHTMLWrites = Object.values(nodes)
+    .reduce((total, node) => total + (node?.innerHTMLAssignments?.length || 0), 0);
+  return {
+    openButtonText: nodes.openButton.textContent,
+    openButtonHidden: nodes.openButton.classSet.has("hidden"),
+    openButtonActions: nodes.openButton.classActions,
+    formHidden: nodes.formShell.classSet.has("hidden"),
+    formActions: nodes.formShell.classActions,
+    emptyHidden: nodes.emptyShell.classSet.has("hidden"),
+    emptyActions: nodes.emptyShell.classActions,
+    statusText: nodes.status.textContent,
+    emptyTitleText: nodes.emptyTitle.textContent,
+    emptyCopyText: nodes.emptyCopy.textContent,
+    saveTitleText: nodes.saveTitle.textContent,
+    saveStatusText: nodes.saveStatus.textContent,
+    saveButtonText: nodes.saveButton.textContent,
+    saveButtonDisabled: nodes.saveButton.disabled,
+    innerHTMLWrites,
+    imgCount: Object.values(nodes).reduce((total, node) => total + (node?.textContent?.match(/<img/g) || []).length, 0),
+    scriptCount: Object.values(nodes).reduce((total, node) => total + (node?.textContent?.match(/<script/g) || []).length, 0),
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const unavailable = makeNodes();
+unavailable.saveButton.textContent = "Existing save label";
+unavailable.saveButton.disabled = false;
+const unavailableReturn = translationUi.renderTranslationCompletionSurfaceInto(unavailable, {
+  available: false,
+  hasSaveSurface: false,
+  openButtonLabel: `Review ${malicious}`,
+  drawerStatus: `Status ${malicious}`,
+  emptyTitle: `Empty ${malicious}`,
+  emptyCopy: `Copy ${malicious}`,
+  saveTitle: `Save ${malicious}`,
+  saveStatus: `Save status ${malicious}`,
+  saveButtonLabel: `Button ${malicious}`,
+  saveDisabled: true,
+});
+
+const saveSurface = makeNodes();
+const saveSurfaceReturn = translationUi.renderTranslationCompletionSurfaceInto(saveSurface, {
+  available: true,
+  hasSaveSurface: true,
+  openButtonLabel: "Open completion",
+  drawerStatus: "Ready to save",
+  emptyTitle: "Unused empty title",
+  emptyCopy: "Unused empty copy",
+  saveTitle: "Save translation",
+  saveStatus: "Review before saving",
+  saveButtonLabel: "Save row",
+  saveDisabled: false,
+});
+
+const emptySurface = makeNodes();
+const emptySurfaceReturn = translationUi.renderTranslationCompletionSurfaceInto(emptySurface, {
+  available: true,
+  hasSaveSurface: false,
+  openButtonLabel: "Open details",
+  drawerStatus: "Completed without save data",
+  emptyTitle: "No save details",
+  emptyCopy: "The completion exists but cannot be saved yet.",
+  saveTitle: "Hidden save title",
+  saveStatus: "Hidden save status",
+  saveButtonLabel: "Save anyway",
+  saveDisabled: true,
+});
+
+const nullReturn = translationUi.renderTranslationCompletionSurfaceInto(null, {
+  available: true,
+  drawerStatus: malicious,
+});
+const partialReturn = translationUi.renderTranslationCompletionSurfaceInto({
+  openButton: makeNode(),
+}, {
+  available: true,
+  openButtonLabel: malicious,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof translationUi.renderTranslationCompletionSurfaceInto,
+  unavailableReturned: unavailableReturn === unavailable.openButton,
+  unavailable: summarize(unavailable),
+  saveSurfaceReturned: saveSurfaceReturn === saveSurface.openButton,
+  saveSurface: summarize(saveSurface),
+  emptySurfaceReturned: emptySurfaceReturn === emptySurface.openButton,
+  emptySurface: summarize(emptySurface),
+  nullReturnType: typeof nullReturn,
+  partialReturnedText: partialReturn?.textContent || "",
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["unavailableReturned"] is True
+    assert results["unavailable"]["openButtonText"] == "Review <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["unavailable"]["openButtonHidden"] is True
+    assert results["unavailable"]["formHidden"] is True
+    assert results["unavailable"]["emptyHidden"] is True
+    assert results["unavailable"]["statusText"] == "Status <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["unavailable"]["saveButtonText"] == "Existing save label"
+    assert results["unavailable"]["saveButtonDisabled"] is False
+    assert results["unavailable"]["innerHTMLWrites"] == 0
+    assert results["unavailable"]["imgCount"] == 6
+    assert results["unavailable"]["scriptCount"] == 6
+
+    assert results["saveSurfaceReturned"] is True
+    assert results["saveSurface"]["openButtonText"] == "Open completion"
+    assert results["saveSurface"]["openButtonHidden"] is False
+    assert results["saveSurface"]["formHidden"] is False
+    assert results["saveSurface"]["emptyHidden"] is True
+    assert results["saveSurface"]["statusText"] == "Ready to save"
+    assert results["saveSurface"]["saveButtonText"] == "Save row"
+    assert results["saveSurface"]["saveButtonDisabled"] is False
+    assert results["saveSurface"]["innerHTMLWrites"] == 0
+
+    assert results["emptySurfaceReturned"] is True
+    assert results["emptySurface"]["openButtonText"] == "Open details"
+    assert results["emptySurface"]["openButtonHidden"] is False
+    assert results["emptySurface"]["formHidden"] is True
+    assert results["emptySurface"]["emptyHidden"] is False
+    assert results["emptySurface"]["statusText"] == "Completed without save data"
+    assert results["emptySurface"]["saveButtonText"] == "Save anyway"
+    assert results["emptySurface"]["saveButtonDisabled"] is True
+    assert results["emptySurface"]["innerHTMLWrites"] == 0
+    assert results["nullReturnType"] == "undefined"
+    assert results["partialReturnedText"] == "<img src=x onerror=alert(1)><script>bad()</script>"
+
+
 def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -20045,6 +20278,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderTranslationNumericMismatchWarningInto" in translation_ui_asset.text
         assert "renderTranslationDownloadLinkInto" in translation_ui_asset.text
         assert "syncTranslationCompletionDrawerStateInto" in translation_ui_asset.text
+        assert "renderTranslationCompletionSurfaceInto" in translation_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")

@@ -120,3 +120,54 @@ export function syncTranslationCompletionDrawerStateInto(nodes = {}, open = fals
   }
   return backdrop;
 }
+
+export function renderTranslationCompletionSurfaceInto(nodes = {}, surface = {}) {
+  const {
+    openButton,
+    formShell,
+    emptyShell,
+    status,
+    emptyTitle,
+    emptyCopy,
+    saveTitle,
+    saveStatus,
+    saveButton,
+  } = nodes || {};
+
+  const available = Boolean(surface.available);
+  const hasSaveSurface = Boolean(surface.hasSaveSurface);
+
+  if (openButton) {
+    openButton.classList.toggle("hidden", !available);
+    setText(openButton, surface.openButtonLabel || "");
+  }
+  if (emptyTitle) {
+    setText(emptyTitle, surface.emptyTitle || "");
+  }
+  if (emptyCopy) {
+    setText(emptyCopy, surface.emptyCopy || "");
+  }
+  if (saveTitle) {
+    setText(saveTitle, surface.saveTitle || "");
+  }
+  if (saveStatus) {
+    setText(saveStatus, surface.saveStatus || "");
+  }
+  if (status) {
+    setText(status, surface.drawerStatus || "");
+  }
+
+  if (!available) {
+    formShell?.classList.add("hidden");
+    emptyShell?.classList.add("hidden");
+    return openButton || status || undefined;
+  }
+
+  formShell?.classList.toggle("hidden", !hasSaveSurface);
+  emptyShell?.classList.toggle("hidden", hasSaveSurface);
+  if (saveButton) {
+    setText(saveButton, surface.saveButtonLabel || "");
+    saveButton.disabled = Boolean(surface.saveDisabled);
+  }
+  return openButton || status || undefined;
+}
