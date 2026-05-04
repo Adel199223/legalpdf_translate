@@ -503,7 +503,7 @@ console.log(JSON.stringify({
             "__TRANSLATION_MODULE_URL__": "translation.js",
             "__GMAIL_MODULE_URL__": "gmail.js",
         },
-        timeout_seconds=30,
+        timeout_seconds=60,
     )
 
 

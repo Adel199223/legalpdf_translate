@@ -20,6 +20,7 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 - Files changed:
   - src/legalpdf_translate/shadow_web/static/result_card_ui.js
   - src/legalpdf_translate/shadow_web/static/translation.js
+  - tests/test_browser_safe_rendering.py
   - tests/test_shadow_web_api.py
   - tests/test_translation_browser_state.py
 - Key symbols / entrypoints changed:
@@ -27,6 +28,7 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
   - translation.js::renderTranslationResultCard
 - User-visible behavior:
   - No intended behavior change; translation progress/result cards keep the same copy and chip tones while rendering dynamic text through safe DOM helpers.
+  - Browser safe-rendering CI probe gets a longer Node timeout to avoid full-suite Windows runner timing noise.
 - Tests:
   - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "translation_result_card_renderer or versioned_static_route"
   - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "translation_result or result_card_ui or versioned_static_route"
