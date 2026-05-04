@@ -2,6 +2,7 @@ import { fetchJson } from "./api.js";
 import { appState } from "./state.js";
 import { buildSettingsStatusPresentation } from "./settings_presentation.js";
 import { formatDiagnosticValue } from "./diagnostics_presentation.js";
+import { renderLatestRunDirsInto } from "./power_tools_ui.js";
 
 function qs(id) {
   return document.getElementById(id);
@@ -354,72 +355,18 @@ function mergeLatestRunDirs(powerTools) {
 }
 
 function renderLatestRunDirs(items) {
-  const container = qs("power-tools-latest-run-dirs");
-  if (!container) {
-    return;
-  }
-  container.innerHTML = "";
-  if (!items.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.textContent = "No recent run folders are available yet.";
-    container.appendChild(empty);
-    return;
-  }
-  for (const item of items) {
-    const article = document.createElement("article");
-    article.className = "history-item";
-
-    const left = document.createElement("div");
-    const title = document.createElement("strong");
-    title.textContent = item.name || "run";
-    const body = document.createElement("p");
-    body.className = "word-break";
-    body.textContent = item.run_dir || "";
-    const meta = document.createElement("div");
-    meta.className = "history-meta";
-    for (const bit of [
-      item.modified_at_iso || "",
-      item.has_run_summary ? "summary" : "",
-      item.has_run_state ? "state" : "",
-      item.has_calibration_report ? "calibration" : "",
-    ]) {
-      if (!bit) {
-        continue;
-      }
-      const small = document.createElement("small");
-      small.textContent = bit;
-      meta.appendChild(small);
-    }
-    left.appendChild(title);
-    left.appendChild(body);
-    left.appendChild(meta);
-
-    const actions = document.createElement("div");
-    actions.className = "panel-actions";
-    const useForReport = document.createElement("button");
-    useForReport.type = "button";
-    useForReport.textContent = "Use for run report";
-    useForReport.addEventListener("click", () => {
+  renderLatestRunDirsInto(qs("power-tools-latest-run-dirs"), items, {
+    onUseForReport(item) {
       setFieldValue("diagnostics-run-dir", item.run_dir || "");
       setPanelStatus("power-tools", "", `Selected ${item.name || "run"} for troubleshooting files.`);
-    });
-    const addToBuilder = document.createElement("button");
-    addToBuilder.type = "button";
-    addToBuilder.textContent = "Add to builder";
-    addToBuilder.addEventListener("click", () => {
+    },
+    onAddToBuilder(item) {
       appendUniqueLine("builder-run-dirs", item.run_dir || "");
       setFieldValue("builder-source-mode", "run_folders");
       syncBuilderSourceMode();
       setPanelStatus("power-tools", "", `Added ${item.name || "run"} to glossary suggestions input.`);
-    });
-    actions.appendChild(useForReport);
-    actions.appendChild(addToBuilder);
-
-    article.appendChild(left);
-    article.appendChild(actions);
-    container.appendChild(article);
-  }
+    },
+  });
 }
 
 function renderPowerToolsPayload(powerTools, { preserveStatus = false } = {}) {
