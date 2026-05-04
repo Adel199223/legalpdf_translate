@@ -15,6 +15,7 @@ import {
   renderGmailAttachmentListInto,
   renderGmailBatchFinalizeSurfaceInto,
   renderGmailDemoReviewActionInto,
+  renderGmailDrawerChromeInto,
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
@@ -997,9 +998,10 @@ function setReviewDrawerOpen(open) {
   if (nextOpen) {
     gmailState.reviewDrawerMinimized = false;
   }
-  backdrop.classList.toggle("hidden", !nextOpen);
-  backdrop.setAttribute("aria-hidden", nextOpen ? "false" : "true");
-  document.body.dataset.gmailReviewDrawer = nextOpen ? "open" : "closed";
+  renderGmailDrawerChromeInto(
+    { backdrop, body: document.body },
+    { open: nextOpen, bodyDatasetKey: "gmailReviewDrawer" },
+  );
   if (nextOpen) {
     rememberCurrentReviewEvent();
   }
@@ -1031,9 +1033,10 @@ function setPreviewDrawerOpen(open) {
     gmailState.previewDrawerMinimized = false;
     gmailState.previewState = restorePreviewState(gmailState.previewState);
   }
-  backdrop.classList.toggle("hidden", !nextOpen);
-  backdrop.setAttribute("aria-hidden", nextOpen ? "false" : "true");
-  document.body.dataset.gmailPreviewDrawer = nextOpen ? "open" : "closed";
+  renderGmailDrawerChromeInto(
+    { backdrop, body: document.body },
+    { open: nextOpen, bodyDatasetKey: "gmailPreviewDrawer" },
+  );
   renderGmailRestoreBar();
 }
 
@@ -1063,9 +1066,10 @@ function setSessionDrawerOpen(open) {
     return;
   }
   gmailState.sessionDrawerOpen = Boolean(open) && Boolean(gmailState.activeSession);
-  backdrop.classList.toggle("hidden", !gmailState.sessionDrawerOpen);
-  backdrop.setAttribute("aria-hidden", gmailState.sessionDrawerOpen ? "false" : "true");
-  document.body.dataset.gmailSessionDrawer = gmailState.sessionDrawerOpen ? "open" : "closed";
+  renderGmailDrawerChromeInto(
+    { backdrop, body: document.body },
+    { open: gmailState.sessionDrawerOpen, bodyDatasetKey: "gmailSessionDrawer" },
+  );
 }
 
 function openSessionDrawer() {
@@ -1094,9 +1098,10 @@ function setBatchFinalizeDrawerOpen(open, { source = "active" } = {}) {
     && gmailState.batchFinalizeDrawerSource === "restored"
     && Boolean(gmailState.restoredCompletedSession?.kind === "translation" && gmailState.restoredCompletedSession?.completed);
   gmailState.batchFinalizeDrawerOpen = activeOpen || restoredOpen;
-  backdrop.classList.toggle("hidden", !gmailState.batchFinalizeDrawerOpen);
-  backdrop.setAttribute("aria-hidden", gmailState.batchFinalizeDrawerOpen ? "false" : "true");
-  document.body.dataset.gmailBatchFinalizeDrawer = gmailState.batchFinalizeDrawerOpen ? "open" : "closed";
+  renderGmailDrawerChromeInto(
+    { backdrop, body: document.body },
+    { open: gmailState.batchFinalizeDrawerOpen, bodyDatasetKey: "gmailBatchFinalizeDrawer" },
+  );
 }
 
 function openBatchFinalizeDrawer({ source = "active" } = {}) {

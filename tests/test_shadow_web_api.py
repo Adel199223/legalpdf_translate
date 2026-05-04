@@ -3383,6 +3383,176 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_gmail_ui_module_centralizes_drawer_chrome_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./gmail_ui.js"' in gmail_js
+    assert "renderGmailDrawerChromeInto" in gmail_js
+    assert "export function renderGmailDrawerChromeInto" in gmail_ui_js
+    renderer_start = gmail_ui_js.index("export function renderGmailDrawerChromeInto")
+    renderer_end = gmail_ui_js.index("\nexport function renderGmailReportActionInto", renderer_start)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    drawer_blocks = {
+        "review": gmail_js[
+            gmail_js.index("function setReviewDrawerOpen"):
+            gmail_js.index("\nfunction openReviewDrawer")
+        ],
+        "preview": gmail_js[
+            gmail_js.index("function setPreviewDrawerOpen"):
+            gmail_js.index("\nfunction openPreviewDrawer")
+        ],
+        "session": gmail_js[
+            gmail_js.index("function setSessionDrawerOpen"):
+            gmail_js.index("\nfunction openSessionDrawer")
+        ],
+        "batch": gmail_js[
+            gmail_js.index("function setBatchFinalizeDrawerOpen"):
+            gmail_js.index("\nfunction openBatchFinalizeDrawer")
+        ],
+    }
+    for block in drawer_blocks.values():
+        assert "renderGmailDrawerChromeInto" in block
+        assert "backdrop.classList.toggle" not in block
+        assert 'backdrop.setAttribute("aria-hidden"' not in block
+        assert "document.body.dataset.gmail" not in block
+
+    script = r"""
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function makeClassList(initial = []) {
+  const values = new Set(initial);
+  return {
+    toggle(name, force) {
+      if (force === undefined ? !values.has(name) : Boolean(force)) {
+        values.add(name);
+      } else {
+        values.delete(name);
+      }
+      return values.has(name);
+    },
+    contains(name) {
+      return values.has(name);
+    },
+    values() {
+      return Array.from(values).sort();
+    },
+  };
+}
+
+function makeBackdrop(initialClasses = []) {
+  const node = {
+    classList: makeClassList(initialClasses),
+    attributes: {},
+    innerHTMLAssignments: [],
+    setAttribute(name, value) {
+      this.attributes[String(name)] = String(value ?? "");
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, String(name))
+        ? this.attributes[String(name)]
+        : null;
+    },
+  };
+  Object.defineProperty(node, "innerHTML", {
+    get() {
+      return "";
+    },
+    set(value) {
+      this.innerHTMLAssignments.push(String(value ?? ""));
+    },
+  });
+  return node;
+}
+
+function summarize(node) {
+  return {
+    hidden: node.classList.contains("hidden"),
+    classes: node.classList.values(),
+    ariaHidden: node.attributes["aria-hidden"] || "",
+    innerHTMLWrites: node.innerHTMLAssignments.length,
+  };
+}
+
+const body = { dataset: {} };
+const openBackdrop = makeBackdrop(["hidden"]);
+const openResult = ui.renderGmailDrawerChromeInto(
+  { backdrop: openBackdrop, body },
+  { open: true, bodyDatasetKey: "gmailReviewDrawer" },
+);
+
+const closedBackdrop = makeBackdrop([]);
+const closedResult = ui.renderGmailDrawerChromeInto(
+  { backdrop: closedBackdrop, body },
+  { open: false, bodyDatasetKey: "gmailPreviewDrawer" },
+);
+
+const noBodyBackdrop = makeBackdrop(["hidden"]);
+const noBodyResult = ui.renderGmailDrawerChromeInto(
+  { backdrop: noBodyBackdrop },
+  { open: true, bodyDatasetKey: "gmailSessionDrawer" },
+);
+
+const nullBackdropResult = ui.renderGmailDrawerChromeInto(
+  { backdrop: null, body },
+  { open: true, bodyDatasetKey: "gmailBatchFinalizeDrawer" },
+);
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailDrawerChromeInto,
+  openResultIsNodes: openResult?.backdrop === openBackdrop,
+  closedResultIsNodes: closedResult?.backdrop === closedBackdrop,
+  noBodyResultIsNodes: noBodyResult?.backdrop === noBodyBackdrop,
+  nullBackdropResult: nullBackdropResult === undefined ? null : "unexpected",
+  open: summarize(openBackdrop),
+  closed: summarize(closedBackdrop),
+  noBody: summarize(noBodyBackdrop),
+  bodyDataset: body.dataset,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["openResultIsNodes"] is True
+    assert results["closedResultIsNodes"] is True
+    assert results["noBodyResultIsNodes"] is True
+    assert results["nullBackdropResult"] is None
+    assert results["open"] == {
+        "hidden": False,
+        "classes": [],
+        "ariaHidden": "false",
+        "innerHTMLWrites": 0,
+    }
+    assert results["closed"] == {
+        "hidden": True,
+        "classes": ["hidden"],
+        "ariaHidden": "true",
+        "innerHTMLWrites": 0,
+    }
+    assert results["noBody"] == {
+        "hidden": False,
+        "classes": [],
+        "ariaHidden": "false",
+        "innerHTMLWrites": 0,
+    }
+    assert results["bodyDataset"]["gmailReviewDrawer"] == "open"
+    assert results["bodyDataset"]["gmailPreviewDrawer"] == "closed"
+    assert "gmailBatchFinalizeDrawer" not in results["bodyDataset"]
+
+
 def test_gmail_ui_module_centralizes_noncanonical_runtime_guard_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -21480,6 +21650,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailReportActionInto" in gmail_ui_asset.text
         assert "renderGmailNumericMismatchWarningInto" in gmail_ui_asset.text
         assert "renderGmailTranslationStepCardInto" in gmail_ui_asset.text
+        assert "renderGmailDrawerChromeInto" in gmail_ui_asset.text
         assert "renderGmailRestoreBarInto" in gmail_ui_asset.text
         assert "renderGmailDemoReviewActionInto" in gmail_ui_asset.text
         assert "renderGmailReturnToSourceActionInto" in gmail_ui_asset.text

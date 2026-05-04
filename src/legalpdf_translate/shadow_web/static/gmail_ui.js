@@ -1,6 +1,22 @@
 import { clearNode, createTextElement, setNodeTitle, setText } from "./safe_rendering.js";
 import { appendResultGridItem, createResultHeader } from "./result_card_ui.js";
 
+export function renderGmailDrawerChromeInto(nodes = {}, drawer = {}) {
+  const { backdrop, body } = nodes || {};
+  if (!backdrop) {
+    return undefined;
+  }
+
+  const open = Boolean(drawer.open);
+  backdrop.classList.toggle("hidden", !open);
+  backdrop.setAttribute("aria-hidden", open ? "false" : "true");
+  const bodyDatasetKey = String(drawer.bodyDatasetKey || "").trim();
+  if (body && bodyDatasetKey) {
+    body.dataset[bodyDatasetKey] = open ? "open" : "closed";
+  }
+  return nodes;
+}
+
 export function renderGmailReportActionInto(button, { available = false, label = "" } = {}) {
   if (!button) {
     return undefined;
