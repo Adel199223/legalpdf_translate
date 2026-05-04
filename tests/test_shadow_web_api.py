@@ -8127,6 +8127,259 @@ console.log(JSON.stringify({
     assert results["missingStatusResultType"] == "undefined"
 
 
+def test_gmail_ui_module_centralizes_context_default_renderers() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./gmail_ui.js"' in gmail_js
+    assert "renderGmailContextDefaultsInto" in gmail_js
+    assert "renderGmailSimulatorDefaultsInto" in gmail_js
+    bootstrap_start = gmail_js.index("function applyBootstrapDefaults")
+    bootstrap_end = gmail_js.index("\nfunction activeSessionAttachmentId", bootstrap_start)
+    bootstrap_block = gmail_js[bootstrap_start:bootstrap_end]
+    assert "renderGmailContextDefaultsInto" in bootstrap_block
+    assert "setFieldValue(" not in bootstrap_block
+    assert 'fieldValue("gmail-' not in bootstrap_block
+
+    simulator_start = gmail_js.index('qs("gmail-use-simulator-defaults")?.addEventListener("click"')
+    simulator_end = gmail_js.index('\n\n  qs("gmail-workflow-kind")', simulator_start)
+    simulator_block = gmail_js[simulator_start:simulator_end]
+    assert "renderGmailSimulatorDefaultsInto" in simulator_block
+    assert "setFieldValue(" not in simulator_block
+
+    assert "export function renderGmailContextDefaultsInto" in gmail_ui_js
+    assert "export function renderGmailSimulatorDefaultsInto" in gmail_ui_js
+    context_start = gmail_ui_js.index("export function renderGmailContextDefaultsInto")
+    simulator_start_ui = gmail_ui_js.index("export function renderGmailSimulatorDefaultsInto")
+    context_block = gmail_ui_js[context_start:simulator_start_ui]
+    simulator_end_ui = gmail_ui_js.index("\nexport function", simulator_start_ui + 1)
+    simulator_block_ui = gmail_ui_js[simulator_start_ui:simulator_end_ui]
+    assert "innerHTML" not in context_block
+    assert "innerHTML" not in simulator_block_ui
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function makeField(value = "") {
+  const field = {
+    value,
+    innerHTMLAssignments: [],
+  };
+  Object.defineProperty(field, "innerHTML", {
+    get() {
+      return "";
+    },
+    set(value) {
+      this.innerHTMLAssignments.push(String(value ?? ""));
+    },
+  });
+  return field;
+}
+
+function makeNodes(values = {}) {
+  return {
+    messageId: makeField(values.messageId || ""),
+    threadId: makeField(values.threadId || ""),
+    subject: makeField(values.subject || ""),
+    accountEmail: makeField(values.accountEmail || ""),
+    outputDir: makeField(values.outputDir || ""),
+    targetLang: makeField(values.targetLang || ""),
+  };
+}
+
+function summarize(nodes, result) {
+  const ordered = {
+    messageId: nodes.messageId?.value ?? null,
+    threadId: nodes.threadId?.value ?? null,
+    subject: nodes.subject?.value ?? null,
+    accountEmail: nodes.accountEmail?.value ?? null,
+    outputDir: nodes.outputDir?.value ?? null,
+    targetLang: nodes.targetLang?.value ?? null,
+  };
+  const innerHTMLWrites = Object.values(nodes).reduce(
+    (total, node) => total + ((node?.innerHTMLAssignments || []).length),
+    0,
+  );
+  return { resultType: typeof result, values: ordered, innerHTMLWrites };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const blankNodes = makeNodes();
+const blankResult = ui.renderGmailContextDefaultsInto(blankNodes, {
+  defaults: {
+    message_context: {
+      message_id: `msg-${malicious}`,
+      thread_id: `thread-${malicious}`,
+      subject: `Subject ${malicious}`,
+      account_email: `sender-${malicious}@example.test`,
+    },
+    default_output_dir: `C:/Output/${malicious}`,
+    target_lang: "FR",
+  },
+});
+
+const preservedNodes = makeNodes({
+  messageId: " existing-message ",
+  threadId: "existing-thread",
+  subject: "existing subject",
+  accountEmail: "existing@example.test",
+  outputDir: "C:/Existing",
+  targetLang: "AR",
+});
+ui.renderGmailContextDefaultsInto(preservedNodes, {
+  defaults: {
+    message_context: {
+      message_id: "new-message",
+      thread_id: "new-thread",
+      subject: "new subject",
+      account_email: "new@example.test",
+    },
+    default_output_dir: "C:/New",
+    target_lang: "EN",
+  },
+});
+
+const defaultLanguageNodes = makeNodes();
+ui.renderGmailContextDefaultsInto(defaultLanguageNodes, { defaults: {} });
+
+const missingNodes = makeNodes();
+const missingResult = ui.renderGmailContextDefaultsInto({
+  ...missingNodes,
+  messageId: null,
+  outputDir: null,
+}, {
+  defaults: {
+    message_context: {
+      message_id: "ignored-message",
+      thread_id: "thread",
+      subject: "subject",
+      account_email: "account@example.test",
+    },
+    default_output_dir: "ignored-output",
+    target_lang: "PT",
+  },
+});
+
+const simulatorNodes = makeNodes({
+  messageId: "old-message",
+  threadId: "old-thread",
+  subject: "old subject",
+  accountEmail: "old@example.test",
+  outputDir: "C:/Keep",
+  targetLang: "AR",
+});
+const simulatorResult = ui.renderGmailSimulatorDefaultsInto(simulatorNodes, {
+  message_id: `sim-message-${malicious}`,
+  thread_id: `sim-thread-${malicious}`,
+  subject: `Sim subject ${malicious}`,
+  account_email: `sim-${malicious}@example.test`,
+});
+
+const simulatorBlankAccountNodes = makeNodes({
+  accountEmail: "keep@example.test",
+});
+ui.renderGmailSimulatorDefaultsInto(simulatorBlankAccountNodes, {
+  message_id: null,
+  thread_id: undefined,
+  subject: "",
+  account_email: "",
+});
+
+const simulatorMissingResult = ui.renderGmailSimulatorDefaultsInto({
+  messageId: null,
+  threadId: null,
+  subject: null,
+  accountEmail: null,
+}, {
+  message_id: "ignored",
+  thread_id: "ignored",
+  subject: "ignored",
+  account_email: "ignored@example.test",
+});
+
+console.log(JSON.stringify({
+  contextExportType: typeof ui.renderGmailContextDefaultsInto,
+  simulatorExportType: typeof ui.renderGmailSimulatorDefaultsInto,
+  blank: summarize(blankNodes, blankResult),
+  preserved: summarize(preservedNodes),
+  defaultLanguage: summarize(defaultLanguageNodes),
+  missing: summarize(missingNodes, missingResult),
+  simulator: summarize(simulatorNodes, simulatorResult),
+  simulatorBlankAccount: summarize(simulatorBlankAccountNodes),
+  simulatorMissingResultType: typeof simulatorMissingResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["contextExportType"] == "function"
+    assert results["simulatorExportType"] == "function"
+
+    assert results["blank"]["resultType"] == "object"
+    assert results["blank"]["values"] == {
+        "messageId": "msg-<img src=x onerror=alert(1)><script>bad()</script>",
+        "threadId": "thread-<img src=x onerror=alert(1)><script>bad()</script>",
+        "subject": "Subject <img src=x onerror=alert(1)><script>bad()</script>",
+        "accountEmail": "sender-<img src=x onerror=alert(1)><script>bad()</script>@example.test",
+        "outputDir": "C:/Output/<img src=x onerror=alert(1)><script>bad()</script>",
+        "targetLang": "FR",
+    }
+    assert results["blank"]["innerHTMLWrites"] == 0
+
+    assert results["preserved"]["values"] == {
+        "messageId": " existing-message ",
+        "threadId": "existing-thread",
+        "subject": "existing subject",
+        "accountEmail": "existing@example.test",
+        "outputDir": "C:/Existing",
+        "targetLang": "AR",
+    }
+    assert results["preserved"]["innerHTMLWrites"] == 0
+
+    assert results["defaultLanguage"]["values"]["targetLang"] == "EN"
+    assert results["defaultLanguage"]["values"]["messageId"] == ""
+    assert results["defaultLanguage"]["innerHTMLWrites"] == 0
+
+    assert results["missing"]["values"] == {
+        "messageId": "",
+        "threadId": "thread",
+        "subject": "subject",
+        "accountEmail": "account@example.test",
+        "outputDir": "",
+        "targetLang": "PT",
+    }
+    assert results["missing"]["innerHTMLWrites"] == 0
+
+    assert results["simulator"]["resultType"] == "object"
+    assert results["simulator"]["values"] == {
+        "messageId": "sim-message-<img src=x onerror=alert(1)><script>bad()</script>",
+        "threadId": "sim-thread-<img src=x onerror=alert(1)><script>bad()</script>",
+        "subject": "Sim subject <img src=x onerror=alert(1)><script>bad()</script>",
+        "accountEmail": "sim-<img src=x onerror=alert(1)><script>bad()</script>@example.test",
+        "outputDir": "C:/Keep",
+        "targetLang": "AR",
+    }
+    assert results["simulator"]["innerHTMLWrites"] == 0
+
+    assert results["simulatorBlankAccount"]["values"]["messageId"] == ""
+    assert results["simulatorBlankAccount"]["values"]["threadId"] == ""
+    assert results["simulatorBlankAccount"]["values"]["subject"] == ""
+    assert results["simulatorBlankAccount"]["values"]["accountEmail"] == "keep@example.test"
+    assert results["simulatorBlankAccount"]["innerHTMLWrites"] == 0
+    assert results["simulatorMissingResultType"] == "object"
+
+
 def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -22031,6 +22284,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailSessionButtonsInto" in gmail_ui_asset.text
         assert "renderGmailResumeActionsInto" in gmail_ui_asset.text
         assert "renderGmailWorkspaceStripInto" in gmail_ui_asset.text
+        assert "renderGmailContextDefaultsInto" in gmail_ui_asset.text
+        assert "renderGmailSimulatorDefaultsInto" in gmail_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")

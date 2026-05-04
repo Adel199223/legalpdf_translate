@@ -14,6 +14,7 @@ import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
   renderGmailAttachmentListInto,
   renderGmailBatchFinalizeSurfaceInto,
+  renderGmailContextDefaultsInto,
   renderGmailDemoReviewActionInto,
   renderGmailDrawerChromeInto,
   renderGmailMessageResultInto,
@@ -32,6 +33,7 @@ import {
   renderGmailResumeCardInto,
   renderGmailSessionButtonsInto,
   renderGmailSessionResultInto,
+  renderGmailSimulatorDefaultsInto,
   renderGmailTranslationStepCardInto,
   renderGmailWorkspaceStripInto,
 } from "./gmail_ui.js";
@@ -106,13 +108,6 @@ function qs(id) {
 
 function fieldValue(id) {
   return qs(id)?.value?.trim?.() ?? "";
-}
-
-function setFieldValue(id, value) {
-  const node = qs(id);
-  if (node) {
-    node.value = value ?? "";
-  }
 }
 
 function browserBootstrapConfig() {
@@ -794,26 +789,14 @@ function forgetConsumedReviewEvent() {
 }
 
 function applyBootstrapDefaults(data) {
-  const defaults = data?.defaults || {};
-  const messageContext = defaults.message_context || {};
-  if (!fieldValue("gmail-message-id")) {
-    setFieldValue("gmail-message-id", messageContext.message_id || "");
-  }
-  if (!fieldValue("gmail-thread-id")) {
-    setFieldValue("gmail-thread-id", messageContext.thread_id || "");
-  }
-  if (!fieldValue("gmail-subject")) {
-    setFieldValue("gmail-subject", messageContext.subject || "");
-  }
-  if (!fieldValue("gmail-account-email")) {
-    setFieldValue("gmail-account-email", messageContext.account_email || "");
-  }
-  if (!fieldValue("gmail-output-dir")) {
-    setFieldValue("gmail-output-dir", defaults.default_output_dir || "");
-  }
-  if (!fieldValue("gmail-target-lang")) {
-    setFieldValue("gmail-target-lang", defaults.target_lang || "EN");
-  }
+  renderGmailContextDefaultsInto({
+    messageId: qs("gmail-message-id"),
+    threadId: qs("gmail-thread-id"),
+    subject: qs("gmail-subject"),
+    accountEmail: qs("gmail-account-email"),
+    outputDir: qs("gmail-output-dir"),
+    targetLang: qs("gmail-target-lang"),
+  }, data);
 }
 
 function activeSessionAttachmentId(activeSession) {
@@ -2760,12 +2743,12 @@ export function initializeGmailUi(hooks) {
 
   qs("gmail-use-simulator-defaults")?.addEventListener("click", () => {
     const defaults = appState.extensionDiagnostics?.simulator_defaults || {};
-    setFieldValue("gmail-message-id", defaults.message_id || "");
-    setFieldValue("gmail-thread-id", defaults.thread_id || "");
-    setFieldValue("gmail-subject", defaults.subject || "");
-    if (defaults.account_email) {
-      setFieldValue("gmail-account-email", defaults.account_email);
-    }
+    renderGmailSimulatorDefaultsInto({
+      messageId: qs("gmail-message-id"),
+      threadId: qs("gmail-thread-id"),
+      subject: qs("gmail-subject"),
+      accountEmail: qs("gmail-account-email"),
+    }, defaults);
   });
 
   qs("gmail-workflow-kind")?.addEventListener("change", () => {
