@@ -1,4 +1,10 @@
-import { setText } from "./safe_rendering.js";
+import {
+  clearNode,
+  createEmptyState,
+  createTextElement,
+  setNodeTitle,
+  setText,
+} from "./safe_rendering.js";
 
 export function renderTranslationOutputSummaryInto(nodes = {}, summary = {}) {
   const { label, copy, path } = nodes || {};
@@ -216,4 +222,106 @@ export function renderTranslationSourceCardInto(nodes = {}, sourceCard = {}) {
   }
   clearButton?.classList.toggle("hidden", Boolean(sourceCard.clearHidden));
   return card;
+}
+
+export function renderTranslationHistoryListInto(container, history = [], {
+  emptyText = "",
+  openLabel = "",
+  deleteLabel = "",
+  onOpen,
+  onDelete,
+} = {}) {
+  if (!container) {
+    return undefined;
+  }
+
+  const items = Array.isArray(history) ? history : [];
+  clearNode(container);
+  if (!items.length) {
+    container.appendChild(createEmptyState(emptyText));
+    return container;
+  }
+
+  for (const item of items) {
+    const row = item?.row || {};
+    const card = document.createElement("article");
+    card.className = "history-item";
+    const details = document.createElement("div");
+    details.appendChild(createTextElement("strong", row.case_number || "No case number"));
+    details.appendChild(createTextElement(
+      "p",
+      [row.case_entity || "No case entity", row.case_city || "No case city", row.translation_date || "No date"].join(" | "),
+    ));
+    card.appendChild(details);
+    const actions = document.createElement("div");
+    actions.className = "history-actions";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = openLabel;
+    button.addEventListener("click", () => onOpen?.(item));
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.textContent = deleteLabel;
+    deleteButton.addEventListener("click", () => onDelete?.(item));
+    actions.appendChild(button);
+    actions.appendChild(deleteButton);
+    card.appendChild(actions);
+    container.appendChild(card);
+  }
+  return container;
+}
+
+export function renderTranslationJobsListInto(container, jobs = [], {
+  emptyText = "",
+  presentationForJob,
+  onOpen,
+  onResume,
+  onRebuild,
+} = {}) {
+  if (!container) {
+    return undefined;
+  }
+
+  const items = Array.isArray(jobs) ? jobs : [];
+  clearNode(container);
+  if (!items.length) {
+    container.appendChild(createEmptyState(emptyText));
+    return container;
+  }
+
+  for (const job of items) {
+    const presentation = typeof presentationForJob === "function" ? presentationForJob(job) || {} : {};
+    const card = document.createElement("article");
+    card.className = "history-item";
+    const details = document.createElement("div");
+    const title = createTextElement("strong", presentation.translationRunTitle);
+    setNodeTitle(title, String(job?.config?.source_path || "").trim());
+    details.appendChild(title);
+    details.appendChild(createTextElement("p", presentation.translationRunSubtitle));
+    const actions = document.createElement("div");
+    actions.className = "history-meta";
+    const loadButton = document.createElement("button");
+    loadButton.type = "button";
+    loadButton.textContent = presentation.translationRunOpenLabel;
+    loadButton.addEventListener("click", () => onOpen?.(job));
+    actions.appendChild(loadButton);
+    if (job?.actions?.resume) {
+      const resume = document.createElement("button");
+      resume.type = "button";
+      resume.textContent = presentation.translationRunResumeLabel;
+      resume.addEventListener("click", () => onResume?.(job));
+      actions.appendChild(resume);
+    }
+    if (job?.actions?.rebuild) {
+      const rebuild = document.createElement("button");
+      rebuild.type = "button";
+      rebuild.textContent = presentation.translationRunRebuildLabel;
+      rebuild.addEventListener("click", () => onRebuild?.(job));
+      actions.appendChild(rebuild);
+    }
+    card.appendChild(details);
+    card.appendChild(actions);
+    container.appendChild(card);
+  }
+  return container;
 }

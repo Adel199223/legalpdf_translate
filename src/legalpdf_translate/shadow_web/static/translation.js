@@ -2,12 +2,6 @@ import { fetchJson } from "./api.js";
 import { appState, setActiveView } from "./state.js";
 import { ensureBrowserPdfBundleFromFile } from "./browser_pdf.js";
 import {
-  clearNode,
-  createEmptyState,
-  createTextElement,
-  setNodeTitle,
-} from "./safe_rendering.js";
-import {
   renderArabicReviewCardInto,
   renderResultHeaderCardInto,
   renderTranslationResultCardInto,
@@ -15,6 +9,8 @@ import {
 import {
   renderTranslationDownloadLinkInto,
   renderTranslationCompletionSurfaceInto,
+  renderTranslationHistoryListInto,
+  renderTranslationJobsListInto,
   renderTranslationNumericMismatchWarningInto,
   renderTranslationOutputSummaryInto,
   renderTranslationPrimaryActionsInto,
@@ -3070,38 +3066,14 @@ export function renderTranslationHistoryInto(container, history, { onOpen, onDel
   if (!container) {
     return;
   }
-  clearNode(container);
-  if (!history.length) {
-    container.appendChild(createEmptyState(deriveRecentWorkPresentation().translationHistoryEmpty));
-    return;
-  }
-  for (const item of history) {
-    const row = item.row || {};
-    const presentation = deriveRecentWorkPresentation({ jobType: row.job_type || "Translation" });
-    const card = document.createElement("article");
-    card.className = "history-item";
-    const details = document.createElement("div");
-    details.appendChild(createTextElement("strong", row.case_number || "No case number"));
-    details.appendChild(createTextElement(
-      "p",
-      [row.case_entity || "No case entity", row.case_city || "No case city", row.translation_date || "No date"].join(" | "),
-    ));
-    card.appendChild(details);
-    const actions = document.createElement("div");
-    actions.className = "history-actions";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = presentation.translationHistoryOpenLabel;
-    button.addEventListener("click", () => onOpen?.(item));
-    const deleteButton = document.createElement("button");
-    deleteButton.type = "button";
-    deleteButton.textContent = presentation.translationHistoryDeleteLabel;
-    deleteButton.addEventListener("click", () => onDelete?.(item));
-    actions.appendChild(button);
-    actions.appendChild(deleteButton);
-    card.appendChild(actions);
-    container.appendChild(card);
-  }
+  const presentation = deriveRecentWorkPresentation();
+  renderTranslationHistoryListInto(container, history, {
+    emptyText: presentation.translationHistoryEmpty,
+    openLabel: presentation.translationHistoryOpenLabel,
+    deleteLabel: presentation.translationHistoryDeleteLabel,
+    onOpen,
+    onDelete,
+  });
 }
 
 function renderTranslationHistory(history) {
@@ -3158,45 +3130,14 @@ export function renderTranslationJobsInto(container, jobs, { onOpen, onResume, o
   if (!container) {
     return;
   }
-  clearNode(container);
-  if (!jobs.length) {
-    container.appendChild(createEmptyState(deriveRecentWorkPresentation().translationRunsEmpty));
-    return;
-  }
-  for (const job of jobs) {
-    const presentation = deriveRecentWorkPresentation({ translationRunCount: jobs.length, job });
-    const card = document.createElement("article");
-    card.className = "history-item";
-    const details = document.createElement("div");
-    const title = createTextElement("strong", presentation.translationRunTitle);
-    setNodeTitle(title, String(job?.config?.source_path || "").trim());
-    details.appendChild(title);
-    details.appendChild(createTextElement("p", presentation.translationRunSubtitle));
-    const actions = document.createElement("div");
-    actions.className = "history-meta";
-    const loadButton = document.createElement("button");
-    loadButton.type = "button";
-    loadButton.textContent = presentation.translationRunOpenLabel;
-    loadButton.addEventListener("click", () => onOpen?.(job));
-    actions.appendChild(loadButton);
-    if (job.actions?.resume) {
-      const resume = document.createElement("button");
-      resume.type = "button";
-      resume.textContent = presentation.translationRunResumeLabel;
-      resume.addEventListener("click", () => onResume?.(job));
-      actions.appendChild(resume);
-    }
-    if (job.actions?.rebuild) {
-      const rebuild = document.createElement("button");
-      rebuild.type = "button";
-      rebuild.textContent = presentation.translationRunRebuildLabel;
-      rebuild.addEventListener("click", () => onRebuild?.(job));
-      actions.appendChild(rebuild);
-    }
-    card.appendChild(details);
-    card.appendChild(actions);
-    container.appendChild(card);
-  }
+  const presentation = deriveRecentWorkPresentation();
+  renderTranslationJobsListInto(container, jobs, {
+    emptyText: presentation.translationRunsEmpty,
+    presentationForJob: (job) => deriveRecentWorkPresentation({ translationRunCount: jobs.length, job }),
+    onOpen,
+    onResume,
+    onRebuild,
+  });
 }
 
 function renderTranslationJobs(jobs) {
