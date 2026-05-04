@@ -1554,3 +1554,11 @@ Verification commands/results:
   - `src/legalpdf_translate/shadow_web/static/translation.js`
   - `tests/test_shadow_web_api.py`
 - Follow-up docs refresh should mention that translation artifact link DOM updates now render through the safe translation UI module while `translation.js` still derives available report/DOCX/partial/summary/analyze artifact URLs.
+
+# 2026-05-04
+- Deferred assistant-docs refresh for the browser UI modernization slice that extracts translation completion drawer chrome rendering into `translation_ui.js`.
+- Touched implementation/test surfaces:
+  - `src/legalpdf_translate/shadow_web/static/translation_ui.js`
+  - `src/legalpdf_translate/shadow_web/static/translation.js`
+  - `tests/test_shadow_web_api.py`
+- Follow-up docs refresh should mention that translation completion drawer backdrop/body open state now renders through the safe translation UI module while `translation.js` still owns completion drawer state and notification side effects.

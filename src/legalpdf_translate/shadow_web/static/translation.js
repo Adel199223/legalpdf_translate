@@ -18,6 +18,7 @@ import {
   renderTranslationOutputSummaryInto,
   renderTranslationPrimaryActionsInto,
   renderTranslationRunStatusInto,
+  syncTranslationCompletionDrawerStateInto,
 } from "./translation_ui.js";
 
 const translationState = {
@@ -1984,9 +1985,10 @@ function setTranslationCompletionDrawerOpen(open) {
     return;
   }
   translationState.completionDrawerOpen = Boolean(open) && hasTranslationCompletionSurface();
-  backdrop.classList.toggle("hidden", !translationState.completionDrawerOpen);
-  backdrop.setAttribute("aria-hidden", translationState.completionDrawerOpen ? "false" : "true");
-  document.body.dataset.translationCompletionDrawer = translationState.completionDrawerOpen ? "open" : "closed";
+  syncTranslationCompletionDrawerStateInto({
+    backdrop,
+    body: document.body,
+  }, translationState.completionDrawerOpen);
   notifyTranslationUiStateChanged();
 }
 

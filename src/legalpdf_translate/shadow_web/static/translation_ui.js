@@ -105,3 +105,18 @@ export function renderTranslationDownloadLinkInto(node, href = "") {
   }
   return node;
 }
+
+export function syncTranslationCompletionDrawerStateInto(nodes = {}, open = false) {
+  const { backdrop, body } = nodes || {};
+  if (!backdrop) {
+    return undefined;
+  }
+
+  const isOpen = Boolean(open);
+  backdrop.classList.toggle("hidden", !isOpen);
+  backdrop.setAttribute("aria-hidden", isOpen ? "false" : "true");
+  if (body?.dataset) {
+    body.dataset.translationCompletionDrawer = isOpen ? "open" : "closed";
+  }
+  return backdrop;
+}

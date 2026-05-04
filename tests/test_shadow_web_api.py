@@ -11821,6 +11821,177 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_ui_module_centralizes_completion_drawer_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "syncTranslationCompletionDrawerStateInto" in translation_js
+    assert "export function syncTranslationCompletionDrawerStateInto" in translation_ui_js
+    drawer_start = translation_js.index("function setTranslationCompletionDrawerOpen")
+    drawer_end = translation_js.index("\n\nexport function openTranslationCompletionDrawer", drawer_start)
+    drawer_block = translation_js[drawer_start:drawer_end]
+    assert "hasTranslationCompletionSurface()" in drawer_block
+    assert "syncTranslationCompletionDrawerStateInto({" in drawer_block
+    assert "notifyTranslationUiStateChanged()" in drawer_block
+    assert ".innerHTML" not in drawer_block
+
+    renderer_start = translation_ui_js.index("export function syncTranslationCompletionDrawerStateInto")
+    renderer_end = (
+        translation_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+        else len(translation_ui_js)
+    )
+    renderer_block = translation_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeBackdrop() {
+  const node = {
+    attributes: {},
+    classActions: [],
+    classSet: new Set(),
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+    classList: {
+      toggle(name, force) {
+        const enabled = Boolean(force);
+        if (enabled) {
+          this.owner.classSet.add(name);
+        } else {
+          this.owner.classSet.delete(name);
+        }
+        this.owner.classActions.push([name, enabled]);
+        return enabled;
+      },
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
+  };
+  node.classList.owner = node;
+  Object.defineProperty(node, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return node;
+}
+
+function makeBody() {
+  const body = {
+    dataset: {},
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+  };
+  Object.defineProperty(body, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return body;
+}
+
+function summarize(backdrop, body) {
+  return {
+    hidden: backdrop.classSet.has("hidden"),
+    classActions: backdrop.classActions,
+    ariaHidden: backdrop.attributes["aria-hidden"] || "",
+    bodyState: body?.dataset?.translationCompletionDrawer || "",
+    backdropInnerHTMLWrites: backdrop.innerHTMLAssignments.length,
+    bodyInnerHTMLWrites: body?.innerHTMLAssignments?.length || 0,
+  };
+}
+
+const openBackdrop = makeBackdrop();
+const openBody = makeBody();
+const openReturn = translationUi.syncTranslationCompletionDrawerStateInto({
+  backdrop: openBackdrop,
+  body: openBody,
+}, "<img src=x onerror=alert(1)><script>bad()</script>");
+
+const closedBackdrop = makeBackdrop();
+const closedBody = makeBody();
+closedBackdrop.classSet.add("ready");
+const closedReturn = translationUi.syncTranslationCompletionDrawerStateInto({
+  backdrop: closedBackdrop,
+  body: closedBody,
+}, false);
+
+const missingBodyBackdrop = makeBackdrop();
+const missingBodyReturn = translationUi.syncTranslationCompletionDrawerStateInto({
+  backdrop: missingBodyBackdrop,
+}, true);
+
+const missingBackdropBody = makeBody();
+missingBackdropBody.dataset.translationCompletionDrawer = "unchanged";
+const missingBackdropReturn = translationUi.syncTranslationCompletionDrawerStateInto({
+  body: missingBackdropBody,
+}, true);
+
+console.log(JSON.stringify({
+  exportType: typeof translationUi.syncTranslationCompletionDrawerStateInto,
+  openReturned: openReturn === openBackdrop,
+  open: summarize(openBackdrop, openBody),
+  closedReturned: closedReturn === closedBackdrop,
+  closed: summarize(closedBackdrop, closedBody),
+  missingBodyReturned: missingBodyReturn === missingBodyBackdrop,
+  missingBody: summarize(missingBodyBackdrop),
+  missingBackdropReturnType: typeof missingBackdropReturn,
+  missingBackdropBodyState: missingBackdropBody.dataset.translationCompletionDrawer,
+  missingBackdropBodyInnerHTMLWrites: missingBackdropBody.innerHTMLAssignments.length,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["openReturned"] is True
+    assert results["open"]["hidden"] is False
+    assert results["open"]["classActions"] == [["hidden", False]]
+    assert results["open"]["ariaHidden"] == "false"
+    assert results["open"]["bodyState"] == "open"
+    assert results["open"]["backdropInnerHTMLWrites"] == 0
+    assert results["open"]["bodyInnerHTMLWrites"] == 0
+
+    assert results["closedReturned"] is True
+    assert results["closed"]["hidden"] is True
+    assert results["closed"]["classActions"] == [["hidden", True]]
+    assert results["closed"]["ariaHidden"] == "true"
+    assert results["closed"]["bodyState"] == "closed"
+    assert results["closed"]["backdropInnerHTMLWrites"] == 0
+    assert results["closed"]["bodyInnerHTMLWrites"] == 0
+
+    assert results["missingBodyReturned"] is True
+    assert results["missingBody"]["hidden"] is False
+    assert results["missingBody"]["ariaHidden"] == "false"
+    assert results["missingBody"]["bodyState"] == ""
+    assert results["missingBody"]["backdropInnerHTMLWrites"] == 0
+    assert results["missingBackdropReturnType"] == "undefined"
+    assert results["missingBackdropBodyState"] == "unchanged"
+    assert results["missingBackdropBodyInnerHTMLWrites"] == 0
+
+
 def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -19873,6 +20044,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderTranslationPrimaryActionsInto" in translation_ui_asset.text
         assert "renderTranslationNumericMismatchWarningInto" in translation_ui_asset.text
         assert "renderTranslationDownloadLinkInto" in translation_ui_asset.text
+        assert "syncTranslationCompletionDrawerStateInto" in translation_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")
