@@ -105,6 +105,19 @@ export function renderGmailReturnToSourceActionInto(button, { visible = false, s
   return button;
 }
 
+export function renderGmailPrepareActionInto(button, { label = "", disabled = false, title = "" } = {}) {
+  if (!button) {
+    return undefined;
+  }
+
+  const nextLabel = String(label || "");
+  button.textContent = nextLabel;
+  button.dataset.defaultLabel = nextLabel;
+  button.disabled = Boolean(disabled);
+  button.title = String(title || "");
+  return button;
+}
+
 export function renderGmailMessageResultInto(container, detailsHint, card = {}) {
   if (!container) {
     return;
