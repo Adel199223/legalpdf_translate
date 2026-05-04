@@ -171,3 +171,49 @@ export function renderTranslationCompletionSurfaceInto(nodes = {}, surface = {})
   }
   return openButton || status || undefined;
 }
+
+export function renderTranslationSourceCardInto(nodes = {}, sourceCard = {}) {
+  const {
+    card,
+    title,
+    copy,
+    filename,
+    sourceType,
+    pages,
+    target,
+    defaultTarget,
+    stageStatus,
+    hint,
+    chip,
+    browseButton,
+    clearButton,
+  } = nodes || {};
+
+  if (!card) {
+    return undefined;
+  }
+
+  card.dataset.state = sourceCard.state || "empty";
+  setText(title, sourceCard.title || "");
+  setText(copy, sourceCard.copy || "");
+  setText(filename, sourceCard.filename || "");
+  setText(sourceType, sourceCard.sourceType || "");
+  setText(pages, sourceCard.pages ?? "");
+  setText(target, sourceCard.target || "");
+  setText(defaultTarget, sourceCard.defaultTarget || "");
+  setText(stageStatus, sourceCard.stageStatus || "");
+  setText(hint, sourceCard.hint || "");
+  if (chip) {
+    setText(chip, sourceCard.chipText || "");
+    chip.className = sourceCard.chipText
+      ? `status-chip ${sourceCard.chipTone || ""}`
+      : "status-chip info hidden";
+    chip.classList.toggle("hidden", !sourceCard.chipText);
+  }
+  if (browseButton) {
+    setText(browseButton, sourceCard.browseLabel || "");
+    browseButton.disabled = Boolean(sourceCard.browseDisabled);
+  }
+  clearButton?.classList.toggle("hidden", Boolean(sourceCard.clearHidden));
+  return card;
+}

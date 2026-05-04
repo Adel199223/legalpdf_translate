@@ -12225,6 +12225,260 @@ console.log(JSON.stringify({
     assert results["partialReturnedText"] == "<img src=x onerror=alert(1)><script>bad()</script>"
 
 
+def test_translation_ui_module_centralizes_source_card_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationSourceCardInto" in translation_js
+    assert "export function renderTranslationSourceCardInto" in translation_ui_js
+    source_start = translation_js.index("function renderTranslationSourceCard")
+    source_end = translation_js.index("\n\nfunction browserDefaultOutputDir", source_start)
+    source_block = translation_js[source_start:source_end]
+    assert "deriveTranslationSourceState()" in source_block
+    assert "currentPreparedTranslationLaunch()" in source_block
+    assert 'fieldValue("translation-target-lang")' in source_block
+    assert "defaultTranslationTargetLang()" in source_block
+    assert "hasManualSourceSelection()" in source_block
+    assert "renderTranslationSourceCardInto({" in source_block
+    assert "title.textContent" not in source_block
+    assert "copy.textContent" not in source_block
+    assert ".innerHTML" not in source_block
+
+    renderer_start = translation_ui_js.index("export function renderTranslationSourceCardInto")
+    renderer_end = (
+        translation_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+        else len(translation_ui_js)
+    )
+    renderer_block = translation_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeNode() {
+  const node = {
+    classActions: [],
+    className: "",
+    classSet: new Set(),
+    dataset: {},
+    disabled: false,
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+    _textContent: "",
+    classList: {
+      toggle(name, force) {
+        const enabled = Boolean(force);
+        if (enabled) {
+          this.owner.classSet.add(name);
+        } else {
+          this.owner.classSet.delete(name);
+        }
+        this.owner.classActions.push(["toggle", name, enabled]);
+        return enabled;
+      },
+    },
+  };
+  node.classList.owner = node;
+  Object.defineProperty(node, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+    },
+  });
+  Object.defineProperty(node, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return node;
+}
+
+function makeNodes() {
+  return {
+    card: makeNode(),
+    title: makeNode(),
+    copy: makeNode(),
+    filename: makeNode(),
+    sourceType: makeNode(),
+    pages: makeNode(),
+    target: makeNode(),
+    defaultTarget: makeNode(),
+    stageStatus: makeNode(),
+    hint: makeNode(),
+    chip: makeNode(),
+    browseButton: makeNode(),
+    clearButton: makeNode(),
+  };
+}
+
+function summarize(nodes) {
+  const textNodes = [
+    "title",
+    "copy",
+    "filename",
+    "sourceType",
+    "pages",
+    "target",
+    "defaultTarget",
+    "stageStatus",
+    "hint",
+    "chip",
+    "browseButton",
+  ];
+  return {
+    state: nodes.card.dataset.state || "",
+    title: nodes.title.textContent,
+    copy: nodes.copy.textContent,
+    filename: nodes.filename.textContent,
+    sourceType: nodes.sourceType.textContent,
+    pages: nodes.pages.textContent,
+    target: nodes.target.textContent,
+    defaultTarget: nodes.defaultTarget.textContent,
+    stageStatus: nodes.stageStatus.textContent,
+    hint: nodes.hint.textContent,
+    chipText: nodes.chip.textContent,
+    chipClass: nodes.chip.className,
+    chipHidden: nodes.chip.classSet.has("hidden"),
+    chipActions: nodes.chip.classActions,
+    browseText: nodes.browseButton.textContent,
+    browseDisabled: nodes.browseButton.disabled,
+    clearHidden: nodes.clearButton.classSet.has("hidden"),
+    clearActions: nodes.clearButton.classActions,
+    innerHTMLWrites: Object.values(nodes)
+      .reduce((total, node) => total + (node?.innerHTMLAssignments?.length || 0), 0),
+    imgCount: textNodes.reduce((total, key) => total + (nodes[key].textContent.match(/<img/g) || []).length, 0),
+    scriptCount: textNodes.reduce((total, key) => total + (nodes[key].textContent.match(/<script/g) || []).length, 0),
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const ready = makeNodes();
+const readyReturn = translationUi.renderTranslationSourceCardInto(ready, {
+  state: `prepared-ready-${malicious}`,
+  title: `Title ${malicious}`,
+  copy: `Copy ${malicious}`,
+  filename: `File ${malicious}`,
+  sourceType: `Type ${malicious}`,
+  pages: `Pages ${malicious}`,
+  target: `Target ${malicious}`,
+  defaultTarget: `Default ${malicious}`,
+  stageStatus: `Stage ${malicious}`,
+  hint: `Hint ${malicious}`,
+  chipText: `Chip ${malicious}`,
+  chipTone: "info",
+  browseLabel: `Browse ${malicious}`,
+  browseDisabled: false,
+  clearHidden: false,
+});
+
+const empty = makeNodes();
+empty.chip.classSet.add("ready");
+empty.clearButton.classSet.add("ready");
+const emptyReturn = translationUi.renderTranslationSourceCardInto(empty, {
+  state: "empty",
+  title: "Choose a PDF or image",
+  copy: "Drag and drop it here, or choose it from your computer.",
+  filename: "No file selected yet.",
+  sourceType: "",
+  pages: "--",
+  target: "Target language: EN",
+  defaultTarget: "Using the current target language for this run.",
+  stageStatus: "Choose a file to begin.",
+  hint: "PDF and common image files are supported.",
+  chipText: "",
+  chipTone: "",
+  browseLabel: "Choose document",
+  browseDisabled: true,
+  clearHidden: true,
+});
+
+const partial = {
+  card: makeNode(),
+  title: makeNode(),
+};
+const partialReturn = translationUi.renderTranslationSourceCardInto(partial, {
+  state: "partial",
+  title: malicious,
+});
+const nullReturn = translationUi.renderTranslationSourceCardInto(null, {
+  state: "missing",
+  title: malicious,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof translationUi.renderTranslationSourceCardInto,
+  readyReturned: readyReturn === ready.card,
+  ready: summarize(ready),
+  emptyReturned: emptyReturn === empty.card,
+  empty: summarize(empty),
+  partialReturned: partialReturn === partial.card,
+  partialState: partial.card.dataset.state,
+  partialTitle: partial.title.textContent,
+  partialInnerHTMLWrites: partial.title.innerHTMLAssignments.length,
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["readyReturned"] is True
+    assert results["ready"]["state"] == "prepared-ready-<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["title"] == "Title <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["copy"] == "Copy <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["filename"] == "File <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["sourceType"] == "Type <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["pages"] == "Pages <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["target"] == "Target <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["defaultTarget"] == "Default <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["stageStatus"] == "Stage <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["hint"] == "Hint <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["chipText"] == "Chip <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["chipClass"] == "status-chip info"
+    assert results["ready"]["chipHidden"] is False
+    assert results["ready"]["browseText"] == "Browse <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["browseDisabled"] is False
+    assert results["ready"]["clearHidden"] is False
+    assert results["ready"]["innerHTMLWrites"] == 0
+    assert results["ready"]["imgCount"] == 11
+    assert results["ready"]["scriptCount"] == 11
+
+    assert results["emptyReturned"] is True
+    assert results["empty"]["state"] == "empty"
+    assert results["empty"]["title"] == "Choose a PDF or image"
+    assert results["empty"]["chipText"] == ""
+    assert results["empty"]["chipClass"] == "status-chip info hidden"
+    assert results["empty"]["chipHidden"] is True
+    assert results["empty"]["browseText"] == "Choose document"
+    assert results["empty"]["browseDisabled"] is True
+    assert results["empty"]["clearHidden"] is True
+    assert results["empty"]["innerHTMLWrites"] == 0
+    assert results["partialReturned"] is True
+    assert results["partialState"] == "partial"
+    assert results["partialTitle"] == "<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["partialInnerHTMLWrites"] == 0
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -20279,6 +20533,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderTranslationDownloadLinkInto" in translation_ui_asset.text
         assert "syncTranslationCompletionDrawerStateInto" in translation_ui_asset.text
         assert "renderTranslationCompletionSurfaceInto" in translation_ui_asset.text
+        assert "renderTranslationSourceCardInto" in translation_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")
