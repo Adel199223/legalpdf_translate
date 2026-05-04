@@ -134,6 +134,34 @@ export function renderGmailSessionButtonsInto(buttonRules = []) {
   return buttonRules;
 }
 
+export function renderGmailResumeActionsInto(nodes = {}, actions = {}) {
+  if (!nodes) {
+    return undefined;
+  }
+
+  const { resumeButton, redoButton } = nodes;
+  const { cta = {}, redo = {} } = actions || {};
+
+  if (resumeButton) {
+    const visible = Boolean(cta.visible);
+    resumeButton.classList.toggle("hidden", !visible);
+    resumeButton.disabled = !visible;
+    resumeButton.textContent = cta.label || "Resume Current Step";
+    resumeButton.dataset.gmailAction = cta.action || "";
+  }
+
+  if (redoButton) {
+    const visible = Boolean(redo.visible);
+    redoButton.classList.toggle("hidden", !visible);
+    redoButton.disabled = !visible || !redo.enabled;
+    redoButton.textContent = redo.label || "Redo Current Attachment";
+    redoButton.dataset.gmailAction = redo.action || "";
+    redoButton.title = redo.blocked ? (redo.description || "Cancel the active matching job before redoing this attachment.") : "";
+  }
+
+  return nodes;
+}
+
 export function renderGmailMessageResultInto(container, detailsHint, card = {}) {
   if (!container) {
     return;
