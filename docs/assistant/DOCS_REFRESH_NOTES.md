@@ -1522,3 +1522,11 @@ Verification commands/results:
   - `src/legalpdf_translate/shadow_web/static/translation.js`
   - `tests/test_shadow_web_api.py`
 - Follow-up docs refresh should mention that translation output summary text is now rendered through the safe translation UI module while `translation.js` still derives the default/custom/empty output-folder state.
+
+# 2026-05-04
+- Deferred assistant-docs refresh for the browser UI modernization slice that extracts the translation run-status renderer into `translation_ui.js`.
+- Touched implementation/test surfaces:
+  - `src/legalpdf_translate/shadow_web/static/translation_ui.js`
+  - `src/legalpdf_translate/shadow_web/static/translation.js`
+  - `tests/test_shadow_web_api.py`
+- Follow-up docs refresh should mention that translation progress/status DOM updates now use the safe translation UI module while `translation.js` still derives job progress, chip tone, current task, page counts, retry markers, and alerts.
