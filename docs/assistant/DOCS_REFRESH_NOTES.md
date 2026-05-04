@@ -1514,3 +1514,11 @@ Verification commands/results:
   - `src/legalpdf_translate/shadow_web/static/translation.js`
   - `tests/test_shadow_web_api.py`
 - Follow-up docs refresh should mention that the browser Arabic review card now uses the shared safe result-card UI module while `translation.js` remains responsible for review state and Word-review orchestration.
+
+# 2026-05-04
+- Deferred assistant-docs refresh for the browser UI modernization slice that adds `translation_ui.js` and extracts the translation output-folder summary renderer.
+- Touched implementation/test surfaces:
+  - `src/legalpdf_translate/shadow_web/static/translation_ui.js`
+  - `src/legalpdf_translate/shadow_web/static/translation.js`
+  - `tests/test_shadow_web_api.py`
+- Follow-up docs refresh should mention that translation output summary text is now rendered through the safe translation UI module while `translation.js` still derives the default/custom/empty output-folder state.

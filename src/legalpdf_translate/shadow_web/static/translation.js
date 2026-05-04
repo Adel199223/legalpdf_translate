@@ -12,6 +12,7 @@ import {
   renderResultHeaderCardInto,
   renderTranslationResultCardInto,
 } from "./result_card_ui.js";
+import { renderTranslationOutputSummaryInto } from "./translation_ui.js";
 
 const translationState = {
   currentSeed: null,
@@ -1034,31 +1035,33 @@ function defaultTranslationTargetLang() {
 }
 
 function renderTranslationOutputSummary() {
-  const label = qs("translation-output-summary-label");
-  const copy = qs("translation-output-summary-copy");
-  const path = qs("translation-output-summary-path");
-  if (!label || !copy || !path) {
-    return;
-  }
   const outputDir = fieldValue("translation-output-dir");
   const defaultOutdir = browserDefaultOutputDir();
+  let summary = {
+    label: "Choose an output folder",
+    copy: "Open Change folder/path to decide where translated files should be saved.",
+    path: "No output folder selected yet.",
+  };
   if (outputDir && defaultOutdir && outputDir === defaultOutdir) {
-    label.textContent = "Using default output folder";
-    copy.textContent = "Translated files will be saved in the default folder for this workspace.";
-    path.textContent = outputDir;
-    return;
+    summary = {
+      label: "Using default output folder",
+      copy: "Translated files will be saved in the default folder for this workspace.",
+      path: outputDir,
+    };
+  } else if (outputDir) {
+    summary = {
+      label: "Save output in",
+      copy: defaultOutdir
+        ? "Using the folder shown below. Open Change folder/path if you want to save somewhere else."
+        : "Using the folder shown below.",
+      path: outputDir,
+    };
   }
-  if (outputDir) {
-    label.textContent = "Save output in";
-    copy.textContent = defaultOutdir
-      ? "Using the folder shown below. Open Change folder/path if you want to save somewhere else."
-      : "Using the folder shown below.";
-    path.textContent = outputDir;
-    return;
-  }
-  label.textContent = "Choose an output folder";
-  copy.textContent = "Open Change folder/path to decide where translated files should be saved.";
-  path.textContent = "No output folder selected yet.";
+  renderTranslationOutputSummaryInto({
+    label: qs("translation-output-summary-label"),
+    copy: qs("translation-output-summary-copy"),
+    path: qs("translation-output-summary-path"),
+  }, summary);
 }
 
 function blankNumericMismatchWarning({ checked = false } = {}) {

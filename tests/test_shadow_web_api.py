@@ -10993,6 +10993,169 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_ui_module_centralizes_output_summary_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationOutputSummaryInto" in translation_js
+    assert "export function renderTranslationOutputSummaryInto" in translation_ui_js
+    output_start = translation_js.index("function renderTranslationOutputSummary")
+    output_end = translation_js.index("\nfunction blankNumericMismatchWarning", output_start)
+    output_block = translation_js[output_start:output_end]
+    assert "renderTranslationOutputSummaryInto({" in output_block
+    assert ".innerHTML" not in output_block
+    assert "escapeHtml" not in output_block
+
+    renderer_start = translation_ui_js.index("export function renderTranslationOutputSummaryInto")
+    renderer_end = translation_ui_js.index("\nexport function", renderer_start + 1) if "\nexport function" in translation_ui_js[renderer_start + 1:] else len(translation_ui_js)
+    renderer_block = translation_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeElement() {
+  const element = {
+    children: [],
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        this.children.push({ tagName: match[1].toUpperCase() });
+      }
+    },
+  });
+  return element;
+}
+
+function makeNodes() {
+  return {
+    label: makeElement(),
+    copy: makeElement(),
+    path: makeElement(),
+  };
+}
+
+function summarize(nodes) {
+  return {
+    label: nodes.label.textContent,
+    copy: nodes.copy.textContent,
+    path: nodes.path.textContent,
+    innerHTMLWrites: Object.values(nodes).reduce((total, node) => total + node.innerHTMLAssignments.length, 0),
+    imgChildren: Object.values(nodes).reduce((total, node) => total + node.children.filter((child) => child.tagName === "IMG").length, 0),
+    scriptChildren: Object.values(nodes).reduce((total, node) => total + node.children.filter((child) => child.tagName === "SCRIPT").length, 0),
+  };
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const defaultNodes = makeNodes();
+const defaultReturn = translationUi.renderTranslationOutputSummaryInto(defaultNodes, {
+  label: `Using default ${malicious}`,
+  copy: `Saved there ${malicious}`,
+  path: `C:/tmp/default ${malicious}`,
+});
+
+const customNodes = makeNodes();
+const customReturn = translationUi.renderTranslationOutputSummaryInto(customNodes, {
+  label: "Save output in",
+  copy: "Using the folder shown below.",
+  path: "D:/cases/out",
+});
+
+const emptyNodes = makeNodes();
+const emptyReturn = translationUi.renderTranslationOutputSummaryInto(emptyNodes, {
+  label: "Choose an output folder",
+  copy: "Open Change folder/path to decide where translated files should be saved.",
+  path: "No output folder selected yet.",
+});
+
+const incompleteNodes = makeNodes();
+delete incompleteNodes.copy;
+const incompleteReturn = translationUi.renderTranslationOutputSummaryInto(incompleteNodes, {
+  label: "Ignored",
+  copy: "Ignored",
+  path: "Ignored",
+});
+const nullReturn = translationUi.renderTranslationOutputSummaryInto(null, {
+  label: "Ignored",
+});
+
+console.log(JSON.stringify({
+  exportType: typeof translationUi.renderTranslationOutputSummaryInto,
+  defaultReturned: defaultReturn === defaultNodes.label,
+  defaultSummary: summarize(defaultNodes),
+  customReturned: customReturn === customNodes.label,
+  customSummary: summarize(customNodes),
+  emptyReturned: emptyReturn === emptyNodes.label,
+  emptySummary: summarize(emptyNodes),
+  incompleteReturnType: typeof incompleteReturn,
+  incompleteLabel: incompleteNodes.label.textContent,
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["defaultReturned"] is True
+    assert results["defaultSummary"]["label"] == "Using default <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["defaultSummary"]["copy"] == "Saved there <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["defaultSummary"]["path"] == "C:/tmp/default <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["defaultSummary"]["innerHTMLWrites"] == 0
+    assert results["defaultSummary"]["imgChildren"] == 0
+    assert results["defaultSummary"]["scriptChildren"] == 0
+
+    assert results["customReturned"] is True
+    assert results["customSummary"]["label"] == "Save output in"
+    assert results["customSummary"]["copy"] == "Using the folder shown below."
+    assert results["customSummary"]["path"] == "D:/cases/out"
+    assert results["customSummary"]["innerHTMLWrites"] == 0
+
+    assert results["emptyReturned"] is True
+    assert results["emptySummary"]["label"] == "Choose an output folder"
+    assert results["emptySummary"]["copy"] == "Open Change folder/path to decide where translated files should be saved."
+    assert results["emptySummary"]["path"] == "No output folder selected yet."
+    assert results["emptySummary"]["innerHTMLWrites"] == 0
+
+    assert results["incompleteReturnType"] == "undefined"
+    assert results["incompleteLabel"] == ""
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -19037,6 +19200,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderResultHeaderCardInto" in result_card_ui_asset.text
         assert "renderTranslationResultCardInto" in result_card_ui_asset.text
         assert "renderArabicReviewCardInto" in result_card_ui_asset.text
+        translation_ui_asset = client.get(f"/static-build/{asset_version}/translation_ui.js")
+        assert translation_ui_asset.status_code == 200
+        assert translation_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderTranslationOutputSummaryInto" in translation_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")
