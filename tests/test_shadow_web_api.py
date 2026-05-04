@@ -18554,6 +18554,218 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_power_tools_ui_module_centralizes_safe_credential_state_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    power_tools_ui_module = static_dir / "power_tools_ui.js"
+
+    assert power_tools_ui_module.exists()
+    assert "renderCredentialRecoveryStateInto" in power_tools_ui_module.read_text(encoding="utf-8")
+    assert "renderCredentialRecoveryStateInto({" in power_tools_js
+    assert "describeTranslationCredentialSource" not in power_tools_js
+    assert "describeOcrCredentialSource" not in power_tools_js
+    assert 'qs("settings-translation-key-state").textContent' not in power_tools_js
+
+    power_tools_ui_source = power_tools_ui_module.read_text(encoding="utf-8")
+    credential_block_start = power_tools_ui_source.index("export function renderCredentialRecoveryStateInto")
+    credential_block = power_tools_ui_source[credential_block_start:]
+    assert "innerHTML" not in credential_block
+
+    script = r"""
+const powerToolsUi = await import(__POWER_TOOLS_UI_MODULE_URL__);
+
+function makeElement() {
+  const element = {
+    children: [],
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      this.children = matches.map((match) => ({ tagName: match[1].toUpperCase(), children: [] }));
+    },
+  });
+  return element;
+}
+
+function countUnsafeNodes(node) {
+  let total = 0;
+  const walk = (current) => {
+    const tagName = String(current?.tagName || "").toUpperCase();
+    if (tagName === "IMG" || tagName === "SCRIPT") {
+      total += 1;
+    }
+    for (const child of current?.children || []) {
+      walk(child);
+    }
+  };
+  walk(node);
+  return total;
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const nodes = {
+  translation: makeElement(),
+  ocr: makeElement(),
+  nativeHost: makeElement(),
+  word: makeElement(),
+};
+const returned = powerToolsUi.renderCredentialRecoveryStateInto(nodes, {
+  translation: {
+    stored_credential_configured: true,
+    ocr_fallback_configured: true,
+    effective_credential_source: { kind: "stored", name: "ocr_api_key_fallback" },
+  },
+  ocr: {
+    stored_credential_configured: false,
+    translation_fallback_configured: true,
+    effective_credential_source: { kind: "env", name: "OCR_KEY<script>" },
+  },
+  native_host: {
+    ready: false,
+    repairable: true,
+    self_test_status: `failed ${malicious}`,
+    wrapper_target_python: `C:/Python/${malicious}`,
+    message: `Native message ${malicious}`,
+  },
+  word_pdf_export: {
+    launch_preflight: { ok: false },
+    export_canary: { ok: true },
+    finalization_ready: true,
+    last_checked_at: `2026-05-04 ${malicious}`,
+    used_cache: true,
+    message: `Word message ${malicious}`,
+  },
+});
+
+const alternateNodes = {
+  translation: makeElement(),
+  ocr: makeElement(),
+  nativeHost: makeElement(),
+  word: makeElement(),
+};
+powerToolsUi.renderCredentialRecoveryStateInto(alternateNodes, {
+  translation: {
+    stored_credential_configured: false,
+    ocr_fallback_configured: false,
+    effective_credential_source: { kind: "inline", name: "" },
+  },
+  ocr: {
+    stored_credential_configured: true,
+    translation_fallback_configured: false,
+    effective_credential_source: { kind: "missing", name: "" },
+  },
+  native_host: { ready: true, self_test_status: "", wrapper_target_python: "", message: "" },
+  word_pdf_export: { launch_preflight: {}, export_canary: {}, finalization_ready: false, used_cache: false },
+});
+const partialNodes = { translation: makeElement() };
+const partialReturned = powerToolsUi.renderCredentialRecoveryStateInto(partialNodes, { translation: { effective_credential_source: { kind: "unknown", name: "" } } });
+const nullReturned = powerToolsUi.renderCredentialRecoveryStateInto(null, { translation: {} });
+
+console.log(JSON.stringify({
+  exportedType: typeof powerToolsUi.renderCredentialRecoveryStateInto,
+  returnedSameNodes: returned === nodes,
+  populated: {
+    translation: nodes.translation.textContent,
+    ocr: nodes.ocr.textContent,
+    nativeHost: nodes.nativeHost.textContent,
+    word: nodes.word.textContent,
+    innerHTMLWrites: Object.values(nodes).reduce((total, node) => total + node.innerHTMLAssignments.length, 0),
+    unsafeNodes: Object.values(nodes).reduce((total, node) => total + countUnsafeNodes(node), 0),
+  },
+  alternate: {
+    translation: alternateNodes.translation.textContent,
+    ocr: alternateNodes.ocr.textContent,
+    nativeHost: alternateNodes.nativeHost.textContent,
+    word: alternateNodes.word.textContent,
+    innerHTMLWrites: Object.values(alternateNodes).reduce((total, node) => total + node.innerHTMLAssignments.length, 0),
+  },
+  partial: {
+    returnedSameNodes: partialReturned === partialNodes,
+    translation: partialNodes.translation.textContent,
+    innerHTMLWrites: partialNodes.translation.innerHTMLAssignments.length,
+  },
+  nullResultType: nullReturned === undefined ? "undefined" : typeof nullReturned,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__POWER_TOOLS_UI_MODULE_URL__": "power_tools_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["returnedSameNodes"] is True
+    assert results["populated"]["translation"] == (
+        "Stored translation key: yes. Stored OCR fallback: available. "
+        "Effective source: stored OCR key fallback. The browser never shows the stored key value."
+    )
+    assert results["populated"]["ocr"] == (
+        "Stored OCR key: no. OpenAI translation fallback: available. "
+        "Effective source: env OCR_KEY<script>. The browser never shows the stored key value."
+    )
+    assert "Native host is repairable from this browser runtime." in results["populated"]["nativeHost"]
+    assert "Self-test: failed <img src=x onerror=alert(1)><script>bad()</script>." in results["populated"]["nativeHost"]
+    assert "Wrapper target: C:/Python/<img src=x onerror=alert(1)><script>bad()</script>." in results["populated"]["nativeHost"]
+    assert "Native message <img src=x onerror=alert(1)><script>bad()</script>" in results["populated"]["nativeHost"]
+    assert "Launch preflight: failed." in results["populated"]["word"]
+    assert "Export canary: passed." in results["populated"]["word"]
+    assert "Finalization ready: yes." in results["populated"]["word"]
+    assert "Checked at: 2026-05-04 <img src=x onerror=alert(1)><script>bad()</script>." in results["populated"]["word"]
+    assert "Current view reused a cached readiness result." in results["populated"]["word"]
+    assert "Word message <img src=x onerror=alert(1)><script>bad()</script>" in results["populated"]["word"]
+    assert results["populated"]["innerHTMLWrites"] == 0
+    assert results["populated"]["unsafeNodes"] == 0
+    assert results["alternate"]["translation"] == (
+        "Stored translation key: no. Stored OCR fallback: not available. "
+        "Effective source: inline key. The browser never shows the stored key value."
+    )
+    assert results["alternate"]["ocr"] == (
+        "Stored OCR key: yes. OpenAI translation fallback: not available. "
+        "Effective source: missing credentials. The browser never shows the stored key value."
+    )
+    assert results["alternate"]["nativeHost"] == "Native host is ready. Self-test: not run."
+    assert results["alternate"]["word"] == (
+        "Launch preflight: not run. Export canary: not run. Finalization ready: no. "
+        "Current view is showing a fresh readiness result or no cached result."
+    )
+    assert results["alternate"]["innerHTMLWrites"] == 0
+    assert results["partial"] == {
+        "returnedSameNodes": True,
+        "translation": (
+            "Stored translation key: no. Stored OCR fallback: not available. "
+            "Effective source: unknown. The browser never shows the stored key value."
+        ),
+        "innerHTMLWrites": 0,
+    }
+    assert results["nullResultType"] == "undefined"
+
+
 def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -21292,6 +21504,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert power_tools_ui_asset.status_code == 200
         assert power_tools_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderLatestRunDirsInto" in power_tools_ui_asset.text
+        assert "renderCredentialRecoveryStateInto" in power_tools_ui_asset.text
         interpretation_reference_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_reference_ui.js")
         assert interpretation_reference_ui_asset.status_code == 200
         assert interpretation_reference_ui_asset.headers["content-type"].startswith("application/javascript")
