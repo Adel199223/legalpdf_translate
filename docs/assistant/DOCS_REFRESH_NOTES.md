@@ -1578,3 +1578,11 @@ Verification commands/results:
   - `src/legalpdf_translate/shadow_web/static/translation.js`
   - `tests/test_shadow_web_api.py`
 - Follow-up docs refresh should mention that translation source-card text, chip, source-state dataset, browse button, and clear-button visibility now render through the safe translation UI module while `translation.js` still owns source state, prepared Gmail launch, target-language, and manual-source derivation.
+
+# 2026-05-04
+- Deferred assistant-docs refresh for the browser UI modernization slice that extracts translation recent-work list rendering into `translation_ui.js`.
+- Touched implementation/test surfaces:
+  - `src/legalpdf_translate/shadow_web/static/translation_ui.js`
+  - `src/legalpdf_translate/shadow_web/static/translation.js`
+  - `tests/test_shadow_web_api.py`
+- Follow-up docs refresh should mention that translation saved-case and runtime-job list card DOM rendering now lives in the safe translation UI module while `translation.js` still owns recent-work presentation derivation, callbacks, delete handling, resume/rebuild actions, and app state transitions.

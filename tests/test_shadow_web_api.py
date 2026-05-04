@@ -12479,6 +12479,423 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_ui_module_centralizes_recent_work_list_renderers() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationHistoryListInto" in translation_js
+    assert "renderTranslationJobsListInto" in translation_js
+    assert "export function renderTranslationHistoryListInto" in translation_ui_js
+    assert "export function renderTranslationJobsListInto" in translation_ui_js
+
+    history_start = translation_js.index("export function renderTranslationHistoryInto")
+    history_end = translation_js.index("\n\nfunction renderTranslationHistory", history_start)
+    history_block = translation_js[history_start:history_end]
+    assert "deriveRecentWorkPresentation()" in history_block
+    assert "renderTranslationHistoryListInto(container, history, {" in history_block
+    assert "document.createElement" not in history_block
+    assert "appendChild" not in history_block
+    assert "createEmptyState" not in history_block
+    assert ".innerHTML" not in history_block
+
+    jobs_start = translation_js.index("export function renderTranslationJobsInto")
+    jobs_end = translation_js.index("\n\nfunction renderTranslationJobs", jobs_start)
+    jobs_block = translation_js[jobs_start:jobs_end]
+    assert "deriveRecentWorkPresentation()" in jobs_block
+    assert "deriveRecentWorkPresentation({ translationRunCount: jobs.length, job })" in jobs_block
+    assert "renderTranslationJobsListInto(container, jobs, {" in jobs_block
+    assert "document.createElement" not in jobs_block
+    assert "appendChild" not in jobs_block
+    assert "createEmptyState" not in jobs_block
+    assert ".innerHTML" not in jobs_block
+
+    for export_name in [
+        "renderTranslationHistoryListInto",
+        "renderTranslationJobsListInto",
+    ]:
+        renderer_start = translation_ui_js.index(f"export function {export_name}")
+        renderer_end = (
+            translation_ui_js.index("\nexport function", renderer_start + 1)
+            if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+            else len(translation_ui_js)
+        )
+        renderer_block = translation_ui_js[renderer_start:renderer_end]
+        assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function syncClassList(element, classes) {
+  element.className = Array.from(classes).join(" ");
+}
+
+function makeElement(tagName = "div") {
+  const classNames = new Set();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    _className: "",
+    children: [],
+    parentNode: null,
+    dataset: {},
+    attributes: {},
+    events: {},
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    title: "",
+    disabled: false,
+    type: "",
+    classList: {
+      add(...names) {
+        names.forEach((name) => {
+          if (name) {
+            classNames.add(String(name));
+          }
+        });
+        syncClassList(element, classNames);
+      },
+      remove(...names) {
+        names.forEach((name) => classNames.delete(String(name)));
+        syncClassList(element, classNames);
+      },
+      contains(name) {
+        return classNames.has(String(name));
+      },
+      toggle(name, force) {
+        const key = String(name);
+        const enabled = force === undefined ? !classNames.has(key) : Boolean(force);
+        if (enabled) {
+          classNames.add(key);
+        } else {
+          classNames.delete(key);
+        }
+        syncClassList(element, classNames);
+        return enabled;
+      },
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value ?? "");
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name)
+        ? this.attributes[name]
+        : null;
+    },
+    addEventListener(name, handler) {
+      this.events[name] = handler;
+    },
+    click() {
+      this.events.click?.({ target: this });
+    },
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  Object.defineProperty(element, "className", {
+    get() {
+      return this._className;
+    },
+    set(value) {
+      this._className = String(value ?? "");
+      classNames.clear();
+      this._className.split(/\s+/).filter(Boolean).forEach((name) => classNames.add(name));
+    },
+  });
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  let total = 0;
+  nodes.forEach((node) => {
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
+  });
+  return total;
+}
+
+function serializeHistory(container) {
+  const card = container.children[0];
+  const details = card?.children?.[0];
+  const actions = card?.children?.[1];
+  return {
+    count: container.children.length,
+    cardClass: card?.className || "",
+    title: details?.children?.[0]?.textContent || "",
+    summary: details?.children?.[1]?.textContent || "",
+    actionsClass: actions?.className || "",
+    openLabel: actions?.children?.[0]?.textContent || "",
+    deleteLabel: actions?.children?.[1]?.textContent || "",
+    openType: actions?.children?.[0]?.type || "",
+    deleteType: actions?.children?.[1]?.type || "",
+  };
+}
+
+function serializeJobs(container) {
+  const card = container.children[0];
+  const details = card?.children?.[0];
+  const actions = card?.children?.[1];
+  return {
+    count: container.children.length,
+    cardClass: card?.className || "",
+    title: details?.children?.[0]?.textContent || "",
+    titleAttr: details?.children?.[0]?.title || "",
+    subtitle: details?.children?.[1]?.textContent || "",
+    actionsClass: actions?.className || "",
+    labels: (actions?.children || []).map((button) => button.textContent),
+    types: (actions?.children || []).map((button) => button.type),
+  };
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const historyContainer = document.createElement("div");
+let openedHistory = "";
+let deletedHistory = "";
+const historyReturn = translationUi.renderTranslationHistoryListInto(historyContainer, [{
+  row: {
+    case_number: `Case ${malicious}`,
+    case_entity: `Entity ${malicious}`,
+    case_city: `City ${malicious}`,
+    translation_date: `Date ${malicious}`,
+  },
+}], {
+  emptyText: "No saved translation cases yet.",
+  openLabel: `Open ${malicious}`,
+  deleteLabel: `Delete ${malicious}`,
+  onOpen(item) {
+    openedHistory = item.row.case_number;
+  },
+  onDelete(item) {
+    deletedHistory = item.row.case_city;
+  },
+});
+historyContainer.children[0].children[1].children[0].click();
+historyContainer.children[0].children[1].children[1].click();
+
+const emptyHistory = document.createElement("div");
+emptyHistory.appendChild(document.createElement("article"));
+const emptyHistoryReturn = translationUi.renderTranslationHistoryListInto(emptyHistory, [], {
+  emptyText: `Empty ${malicious}`,
+});
+
+const jobsContainer = document.createElement("div");
+let openedJob = "";
+let resumedJob = "";
+let rebuiltJob = "";
+const job = {
+  job_id: `job-${malicious}`,
+  job_kind: "translate",
+  status: "running",
+  actions: { resume: true, rebuild: true },
+  config: {
+    source_path: `C:\\cases\\notice-${malicious}.pdf`,
+    target_lang: "FR",
+  },
+};
+const jobsReturn = translationUi.renderTranslationJobsListInto(jobsContainer, [job], {
+  emptyText: "No translation runs have started yet.",
+  presentationForJob(currentJob) {
+    return {
+      translationRunTitle: `Title ${malicious}`,
+      translationRunSubtitle: `Subtitle ${malicious}`,
+      translationRunOpenLabel: `Open ${malicious}`,
+      translationRunResumeLabel: `Resume ${malicious}`,
+      translationRunRebuildLabel: `Rebuild ${malicious}`,
+    };
+  },
+  onOpen(currentJob) {
+    openedJob = currentJob.job_id;
+  },
+  onResume(currentJob) {
+    resumedJob = currentJob.job_id;
+  },
+  onRebuild(currentJob) {
+    rebuiltJob = currentJob.job_id;
+  },
+});
+jobsContainer.children[0].children[1].children[0].click();
+jobsContainer.children[0].children[1].children[1].click();
+jobsContainer.children[0].children[1].children[2].click();
+
+const emptyJobs = document.createElement("div");
+emptyJobs.appendChild(document.createElement("article"));
+const emptyJobsReturn = translationUi.renderTranslationJobsListInto(emptyJobs, [], {
+  emptyText: `No runs ${malicious}`,
+});
+
+console.log(JSON.stringify({
+  historyExportType: typeof translationUi.renderTranslationHistoryListInto,
+  jobsExportType: typeof translationUi.renderTranslationJobsListInto,
+  historyReturned: historyReturn === historyContainer,
+  history: serializeHistory(historyContainer),
+  openedHistory,
+  deletedHistory,
+  historyImgCount: countTag(historyContainer, "img"),
+  historyScriptCount: countTag(historyContainer, "script"),
+  historyInnerHTMLWrites: countInnerHtmlWrites(historyContainer),
+  emptyHistoryReturned: emptyHistoryReturn === emptyHistory,
+  emptyHistoryCount: emptyHistory.children.length,
+  emptyHistoryClass: emptyHistory.children[0].className,
+  emptyHistoryText: emptyHistory.children[0].textContent,
+  emptyHistoryImgCount: countTag(emptyHistory, "img"),
+  jobsReturned: jobsReturn === jobsContainer,
+  jobs: serializeJobs(jobsContainer),
+  openedJob,
+  resumedJob,
+  rebuiltJob,
+  jobsImgCount: countTag(jobsContainer, "img"),
+  jobsScriptCount: countTag(jobsContainer, "script"),
+  jobsInnerHTMLWrites: countInnerHtmlWrites(jobsContainer),
+  emptyJobsReturned: emptyJobsReturn === emptyJobs,
+  emptyJobsCount: emptyJobs.children.length,
+  emptyJobsClass: emptyJobs.children[0].className,
+  emptyJobsText: emptyJobs.children[0].textContent,
+  emptyJobsScriptCount: countTag(emptyJobs, "script"),
+  nullHistoryReturn: typeof translationUi.renderTranslationHistoryListInto(null, [{
+    row: { case_number: malicious },
+  }]),
+  nullJobsReturn: typeof translationUi.renderTranslationJobsListInto(null, [job]),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["historyExportType"] == "function"
+    assert results["jobsExportType"] == "function"
+    assert results["historyReturned"] is True
+    assert results["history"]["count"] == 1
+    assert results["history"]["cardClass"] == "history-item"
+    assert results["history"]["title"] == "Case <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["history"]["summary"] == (
+        "Entity <img src=x onerror=alert(1)><script>bad()</script> | "
+        "City <img src=x onerror=alert(1)><script>bad()</script> | "
+        "Date <img src=x onerror=alert(1)><script>bad()</script>"
+    )
+    assert results["history"]["actionsClass"] == "history-actions"
+    assert results["history"]["openLabel"] == "Open <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["history"]["deleteLabel"] == "Delete <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["history"]["openType"] == "button"
+    assert results["history"]["deleteType"] == "button"
+    assert results["openedHistory"] == "Case <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["deletedHistory"] == "City <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["historyImgCount"] == 0
+    assert results["historyScriptCount"] == 0
+    assert results["historyInnerHTMLWrites"] == 0
+    assert results["emptyHistoryReturned"] is True
+    assert results["emptyHistoryCount"] == 1
+    assert results["emptyHistoryClass"] == "empty-state"
+    assert results["emptyHistoryText"] == "Empty <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["emptyHistoryImgCount"] == 0
+
+    assert results["jobsReturned"] is True
+    assert results["jobs"]["count"] == 1
+    assert results["jobs"]["cardClass"] == "history-item"
+    assert results["jobs"]["title"] == "Title <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["jobs"]["titleAttr"] == "C:\\cases\\notice-<img src=x onerror=alert(1)><script>bad()</script>.pdf"
+    assert results["jobs"]["subtitle"] == "Subtitle <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["jobs"]["actionsClass"] == "history-meta"
+    assert results["jobs"]["labels"] == [
+        "Open <img src=x onerror=alert(1)><script>bad()</script>",
+        "Resume <img src=x onerror=alert(1)><script>bad()</script>",
+        "Rebuild <img src=x onerror=alert(1)><script>bad()</script>",
+    ]
+    assert results["jobs"]["types"] == ["button", "button", "button"]
+    assert results["openedJob"] == "job-<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["resumedJob"] == "job-<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["rebuiltJob"] == "job-<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["jobsImgCount"] == 0
+    assert results["jobsScriptCount"] == 0
+    assert results["jobsInnerHTMLWrites"] == 0
+    assert results["emptyJobsReturned"] is True
+    assert results["emptyJobsCount"] == 1
+    assert results["emptyJobsClass"] == "empty-state"
+    assert results["emptyJobsText"] == "No runs <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["emptyJobsScriptCount"] == 0
+    assert results["nullHistoryReturn"] == "undefined"
+    assert results["nullJobsReturn"] == "undefined"
+
+
 def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -20534,6 +20951,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "syncTranslationCompletionDrawerStateInto" in translation_ui_asset.text
         assert "renderTranslationCompletionSurfaceInto" in translation_ui_asset.text
         assert "renderTranslationSourceCardInto" in translation_ui_asset.text
+        assert "renderTranslationHistoryListInto" in translation_ui_asset.text
+        assert "renderTranslationJobsListInto" in translation_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")
