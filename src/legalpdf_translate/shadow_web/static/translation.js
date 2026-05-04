@@ -7,7 +7,10 @@ import {
   createTextElement,
   setNodeTitle,
 } from "./safe_rendering.js";
-import { renderResultHeaderCardInto } from "./result_card_ui.js";
+import {
+  renderResultHeaderCardInto,
+  renderTranslationResultCardInto,
+} from "./result_card_ui.js";
 
 const translationState = {
   currentSeed: null,
@@ -1055,15 +1058,6 @@ function renderTranslationOutputSummary() {
   label.textContent = "Choose an output folder";
   copy.textContent = "Open Change folder/path to decide where translated files should be saved.";
   path.textContent = "No output folder selected yet.";
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
 
 function blankNumericMismatchWarning({ checked = false } = {}) {
@@ -2869,34 +2863,28 @@ function renderTranslationResultCard(job, { containerId = "translation-result" }
   if (!job) {
     const preparedLaunch = currentPreparedTranslationLaunch();
     if (preparedLaunch) {
-      container.classList.remove("empty-state");
-      container.innerHTML = `
-        <div class="result-header">
-          <div>
-            <strong>Prepared Gmail attachment is ready to start.</strong>
-            <p>${preparedTranslationSummaryLines(preparedLaunch).map((line) => escapeHtml(line)).join("<br>")}</p>
-            <p>Ready to start. Click Start Translate when you're ready.</p>
-          </div>
-          <span class="status-chip info">ready</span>
-        </div>
-      `;
+      renderTranslationResultCardInto(container, {
+        title: "Prepared Gmail attachment is ready to start.",
+        summaryLines: preparedTranslationSummaryLines(preparedLaunch),
+        footer: "Ready to start. Click Start Translate when you're ready.",
+        label: "ready",
+        tone: "info",
+      });
       return;
     }
     if (hasReadyTranslationSource()) {
-      container.classList.remove("empty-state");
-      container.innerHTML = `
-        <div class="result-header">
-          <div>
-            <strong>Source file is ready.</strong>
-            <p>Confirm the language and output folder, then click Start Translate when you're ready.</p>
-          </div>
-          <span class="status-chip ok">ready</span>
-        </div>
-      `;
+      renderTranslationResultCardInto(container, {
+        title: "Source file is ready.",
+        summaryLines: ["Confirm the language and output folder, then click Start Translate when you're ready."],
+        label: "ready",
+        tone: "ok",
+      });
       return;
     }
-    container.classList.add("empty-state");
-    container.textContent = "Choose a source file to see translation progress and results here.";
+    renderTranslationResultCardInto(container, {
+      empty: true,
+      emptyText: "Choose a source file to see translation progress and results here.",
+    });
     return;
   }
   const summaryLines = [];
@@ -2950,22 +2938,18 @@ function renderTranslationResultCard(job, { containerId = "translation-result" }
       }
     }
   }
-  container.classList.remove("empty-state");
   const primaryTitle = String(job.status_text || "").trim();
   const safeTitle = primaryTitle && !looksLikeRawTechnicalStateText(primaryTitle)
     ? primaryTitle
     : job.status === "completed"
       ? "Translation complete."
       : "Translation progress is available.";
-  container.innerHTML = `
-    <div class="result-header">
-      <div>
-        <strong>${escapeHtml(safeTitle)}</strong>
-        <p>${summaryLines.map((line) => escapeHtml(line)).join("<br>")}</p>
-      </div>
-      <span class="status-chip ${job.status === "completed" ? "ok" : job.status === "failed" ? "bad" : job.status === "cancelled" ? "warn" : "info"}">${escapeHtml(job.status)}</span>
-    </div>
-  `;
+  renderTranslationResultCardInto(container, {
+    title: safeTitle,
+    summaryLines,
+    label: job.status,
+    tone: job.status === "completed" ? "ok" : job.status === "failed" ? "bad" : job.status === "cancelled" ? "warn" : "info",
+  });
 }
 
 function maybeRefreshNumericMismatchWarning(job) {

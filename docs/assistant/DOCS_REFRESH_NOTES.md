@@ -16,6 +16,24 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-05-04 — feat/translation-result-card-ui-module (deferred)
+- Files changed:
+  - src/legalpdf_translate/shadow_web/static/result_card_ui.js
+  - src/legalpdf_translate/shadow_web/static/translation.js
+  - tests/test_shadow_web_api.py
+  - tests/test_translation_browser_state.py
+- Key symbols / entrypoints changed:
+  - result_card_ui.js::renderTranslationResultCardInto
+  - translation.js::renderTranslationResultCard
+- User-visible behavior:
+  - No intended behavior change; translation progress/result cards keep the same copy and chip tones while rendering dynamic text through safe DOM helpers.
+- Tests:
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "translation_result_card_renderer or versioned_static_route"
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "translation_result or result_card_ui or versioned_static_route"
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_browser_safe_rendering.py
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py tests\test_shadow_web_route_state.py tests\test_translation_browser_state.py
+  - powershell -ExecutionPolicy Bypass -File scripts\validate_dev.ps1 -Full
+
 ## 2026-04-28 — feat/google-photos-interpretation (Google Photos Interpretation docs sync)
 - Files changed:
   - APP_KNOWLEDGE.md
