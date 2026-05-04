@@ -243,6 +243,22 @@ export function renderGmailMessageResultInto(container, detailsHint, card = {}) 
   }
 }
 
+export function renderGmailReviewChromeInto(nodes = {}, chrome = {}) {
+  const { status, openButton } = nodes || {};
+  if (!status || !openButton) {
+    return undefined;
+  }
+
+  openButton.disabled = !Boolean(chrome.available);
+  const buttonDataset = openButton.dataset || {};
+  if (!buttonDataset.defaultLabel) {
+    buttonDataset.defaultLabel = openButton.textContent;
+  }
+  openButton.textContent = buttonDataset.defaultLabel || "";
+  status.textContent = chrome.statusText || "";
+  return nodes;
+}
+
 export function renderGmailReviewSummaryInto(nodes = {}, card = {}) {
   const { summary, summaryGrid, summaryDetails } = nodes;
   if (!summary || !summaryGrid) {
