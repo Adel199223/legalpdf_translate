@@ -6370,6 +6370,151 @@ console.log(JSON.stringify({
     assert results["missingSource"]["innerHTMLWrites"] == 0
 
 
+def test_gmail_ui_module_centralizes_prepare_action_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailPrepareActionInto" in gmail_js
+    assert "export function renderGmailPrepareActionInto" in gmail_ui_js
+
+    update_start = gmail_js.index("function updatePrepareActionState()")
+    update_end = gmail_js.index("\nfunction syncShellState", update_start)
+    update_block = gmail_js[update_start:update_end]
+    assert 'renderGmailPrepareActionInto(button, { label, disabled, title });' in update_block
+    assert ".textContent =" not in update_block
+    assert ".dataset.defaultLabel =" not in update_block
+    assert ".disabled =" not in update_block
+    assert ".title =" not in update_block
+
+    renderer_start = gmail_ui_js.index("export function renderGmailPrepareActionInto")
+    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function makeButton() {
+  const button = {
+    dataset: {},
+    disabled: false,
+    title: "old title",
+    children: [],
+    innerHTMLAssignments: [],
+  };
+  Object.defineProperty(button, "textContent", {
+    get() {
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(button, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g))
+        .map((match) => ({ tagName: match[1].toUpperCase() }));
+      this.innerHTMLAssignments.push(next);
+    },
+  });
+  return button;
+}
+
+function summarize(button) {
+  return {
+    disabled: button.disabled,
+    title: button.title,
+    text: button.textContent,
+    defaultLabel: button.dataset.defaultLabel,
+    childCount: button.children.length,
+    innerHTMLWrites: button.innerHTMLAssignments.length,
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const enabled = makeButton();
+const enabledResult = ui.renderGmailPrepareActionInto(enabled, {
+  label: `Continue ${malicious}`,
+  disabled: false,
+  title: "",
+});
+
+const blocked = makeButton();
+const blockedResult = ui.renderGmailPrepareActionInto(blocked, {
+  label: `Restart ${malicious}`,
+  disabled: true,
+  title: `Blocked ${malicious}`,
+});
+
+const truthyDisabled = makeButton();
+ui.renderGmailPrepareActionInto(truthyDisabled, {
+  label: "Load first",
+  disabled: malicious,
+});
+
+const missingResult = ui.renderGmailPrepareActionInto(null, {
+  label: malicious,
+  disabled: true,
+  title: malicious,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailPrepareActionInto,
+  enabledResultType: typeof enabledResult,
+  blockedResultType: typeof blockedResult,
+  missingResultType: typeof missingResult,
+  enabled: summarize(enabled),
+  blocked: summarize(blocked),
+  truthyDisabled: summarize(truthyDisabled),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["enabledResultType"] == "object"
+    assert results["blockedResultType"] == "object"
+    assert results["missingResultType"] == "undefined"
+
+    assert results["enabled"]["disabled"] is False
+    assert results["enabled"]["title"] == ""
+    assert results["enabled"]["text"] == "Continue <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["enabled"]["defaultLabel"] == "Continue <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["enabled"]["childCount"] == 0
+    assert results["enabled"]["innerHTMLWrites"] == 0
+
+    assert results["blocked"]["disabled"] is True
+    assert results["blocked"]["title"] == "Blocked <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["blocked"]["text"] == "Restart <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["blocked"]["defaultLabel"] == "Restart <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["blocked"]["childCount"] == 0
+    assert results["blocked"]["innerHTMLWrites"] == 0
+
+    assert results["truthyDisabled"]["disabled"] is True
+    assert results["truthyDisabled"]["title"] == ""
+    assert results["truthyDisabled"]["text"] == "Load first"
+    assert results["truthyDisabled"]["defaultLabel"] == "Load first"
+    assert results["truthyDisabled"]["innerHTMLWrites"] == 0
+
+
 def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -17784,6 +17929,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailRestoreBarInto" in gmail_ui_asset.text
         assert "renderGmailDemoReviewActionInto" in gmail_ui_asset.text
         assert "renderGmailReturnToSourceActionInto" in gmail_ui_asset.text
+        assert "renderGmailPrepareActionInto" in gmail_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")

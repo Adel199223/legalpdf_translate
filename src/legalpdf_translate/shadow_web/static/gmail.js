@@ -19,6 +19,7 @@ import {
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
   renderGmailPreviewPanelInto,
+  renderGmailPrepareActionInto,
   renderGmailReportActionInto,
   renderGmailReturnToSourceActionInto,
   renderGmailReviewDetailInto,
@@ -2028,10 +2029,8 @@ function updatePrepareActionState() {
     label = "Restart live Gmail runtime to continue";
     disabled = true;
   }
-  button.textContent = label;
-  button.dataset.defaultLabel = label;
-  button.disabled = disabled;
-  button.title = runtimeGuard.blocked ? runtimeGuard.message : "";
+  const title = runtimeGuard.blocked ? runtimeGuard.message : "";
+  renderGmailPrepareActionInto(button, { label, disabled, title });
 }
 
 function syncShellState() {
