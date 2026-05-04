@@ -13,6 +13,7 @@ import {
   renderTranslationResultCardInto,
 } from "./result_card_ui.js";
 import {
+  renderTranslationNumericMismatchWarningInto,
   renderTranslationOutputSummaryInto,
   renderTranslationPrimaryActionsInto,
   renderTranslationRunStatusInto,
@@ -1230,14 +1231,7 @@ export function renderNumericMismatchWarningInto(containerOrId, warning = blankN
     return;
   }
   const normalized = warning?.visible ? warning : blankNumericMismatchWarning();
-  container.classList.toggle("hidden", !normalized.visible);
-  if (!normalized.visible) {
-    container.textContent = "";
-    return;
-  }
-  const detailLines = normalized.lines?.length ? `\n${normalized.lines.join("\n")}` : "";
-  container.textContent = `${normalized.message}${detailLines}`;
-  container.setAttribute("role", "note");
+  renderTranslationNumericMismatchWarningInto(container, normalized);
 }
 
 function currentNumericMismatchWarning(job = translationState.currentJob) {
