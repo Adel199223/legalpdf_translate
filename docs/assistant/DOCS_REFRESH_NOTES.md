@@ -16,6 +16,22 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-05-05 — feat/translation-shared-controls-ui-module (deferred)
+- Files changed:
+  - src/legalpdf_translate/shadow_web/static/translation.js
+  - tests/test_shadow_web_api.py
+- Key symbols / entrypoints changed:
+  - translation.js::runWithBusy
+  - translation.js::setDiagnostics
+  - translation.js::setPanelStatus
+- User-visible behavior:
+  - No intended behavior change; translation diagnostics/status panels and busy button states now reuse the existing shared safe UI modules.
+- Tests:
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "translation_js_uses_shared_status_and_busy_ui_helpers"
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_browser_safe_rendering.py
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py tests\test_shadow_web_route_state.py tests\test_translation_browser_state.py
+  - powershell -ExecutionPolicy Bypass -File scripts\validate_dev.ps1 -Full
+
 ## 2026-05-04 — feat/translation-source-path-ui-module (deferred)
 - Files changed:
   - src/legalpdf_translate/shadow_web/static/translation.js

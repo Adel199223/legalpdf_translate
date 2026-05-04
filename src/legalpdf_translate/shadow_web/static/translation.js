@@ -1,6 +1,8 @@
 import { fetchJson } from "./api.js";
 import { appState, setActiveView } from "./state.js";
 import { ensureBrowserPdfBundleFromFile } from "./browser_pdf.js";
+import { runWithBusy } from "./busy_ui.js";
+import { setDiagnostics, setPanelStatus } from "./diagnostics_ui.js";
 import {
   renderArabicReviewCardInto,
   renderResultHeaderCardInto,
@@ -1259,90 +1261,6 @@ function friendlyTranslationTaskText({ job, progress = {}, result = {}, fallback
       : "Translating... Latest technical state is available in details.";
   }
   return "Latest technical state is available in details.";
-}
-
-function formatDiagnosticValue(value) {
-  if (value instanceof Error) {
-    const payload = { status: "failed", message: value.message || "Unexpected error." };
-    if (value.status) {
-      payload.http_status = value.status;
-    }
-    if (value.payload && Object.keys(value.payload).length) {
-      payload.payload = value.payload;
-    }
-    return JSON.stringify(payload, null, 2);
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value === undefined || value === null) {
-    return "";
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function setDiagnostics(slot, value, { hint = "", open = false } = {}) {
-  const pre = qs(`${slot}-diagnostics`);
-  if (pre) {
-    pre.textContent = formatDiagnosticValue(value);
-  }
-  const hintNode = qs(`${slot}-hint`);
-  if (hintNode && hint) {
-    hintNode.textContent = hint;
-  }
-  const details = qs(`${slot}-details`);
-  if (details) {
-    details.open = Boolean(open);
-    if (open) {
-      details.dataset.reveal = "true";
-    } else {
-      delete details.dataset.reveal;
-    }
-  }
-}
-
-function setPanelStatus(slot, tone, message) {
-  const panel = qs(`${slot}-status`);
-  if (!panel) {
-    return;
-  }
-  panel.textContent = message;
-  if (tone) {
-    panel.dataset.tone = tone;
-  } else {
-    delete panel.dataset.tone;
-  }
-}
-
-function setBusy(buttonIds, busy, busyLabels = {}) {
-  for (const id of buttonIds) {
-    const button = qs(id);
-    if (!button) {
-      continue;
-    }
-    if (!button.dataset.defaultLabel) {
-      button.dataset.defaultLabel = button.textContent;
-    }
-    button.disabled = busy;
-    button.setAttribute("aria-busy", busy ? "true" : "false");
-    button.textContent = busy ? busyLabels[id] || button.dataset.defaultLabel : button.dataset.defaultLabel;
-  }
-}
-
-async function runWithBusy(buttonIds, busyLabels, action) {
-  if (buttonIds.some((id) => qs(id)?.disabled)) {
-    return;
-  }
-  setBusy(buttonIds, true, busyLabels);
-  try {
-    return await action();
-  } finally {
-    setBusy(buttonIds, false);
-  }
 }
 
 function stopPolling() {
