@@ -8,6 +8,7 @@ import {
   setNodeTitle,
 } from "./safe_rendering.js";
 import {
+  renderArabicReviewCardInto,
   renderResultHeaderCardInto,
   renderTranslationResultCardInto,
 } from "./result_card_ui.js";
@@ -2162,42 +2163,45 @@ function renderTranslationCompletionResultCard() {
 
 function renderArabicReviewCard() {
   const card = qs("translation-arabic-review-card");
-  const title = qs("translation-arabic-review-title");
-  const copy = qs("translation-arabic-review-copy");
-  const chip = qs("translation-arabic-review-chip");
-  const docxLabel = qs("translation-arabic-review-docx-label");
-  const docxPath = qs("translation-arabic-review-docx-path");
-  const openButton = qs("translation-arabic-review-open");
-  const continueNowButton = qs("translation-arabic-review-continue-now");
-  const continueWithoutChangesButton = qs("translation-arabic-review-continue-without-changes");
-  if (!card || !title || !copy || !chip || !docxLabel || !docxPath || !openButton || !continueNowButton || !continueWithoutChangesButton) {
+  if (!card) {
     return;
   }
   const review = currentArabicReviewState();
+  const saveSeed = currentTranslationSeed();
   const presentation = deriveTranslationCompletionPresentation({
     job: translationState.currentJob,
-    saveSeed: currentTranslationSeed(),
+    saveSeed,
     currentRowId: translationState.currentRowId,
     arabicReview: review,
     gmailBatchContext: translationState.currentGmailBatchContext,
   });
   const show = Boolean(review.required || currentCompletedTranslationJobRequiresArabicReview());
-  card.classList.toggle("hidden", !show);
-  if (!show) {
-    return;
-  }
-  docxLabel.textContent = presentation.arabicReview.docxLabel;
-  title.textContent = presentation.arabicReview.title;
-  copy.textContent = presentation.arabicReview.copy;
-  docxPath.textContent = review.docx_path || String(currentTranslationSeed().output_docx || "").trim() || presentation.arabicReview.unavailableText;
-  chip.textContent = presentation.arabicReview.chipLabel;
-  chip.className = `status-chip ${presentation.arabicReview.chipTone}`;
-  openButton.textContent = presentation.arabicReview.openLabel;
-  continueNowButton.textContent = presentation.arabicReview.continueNowLabel;
-  continueWithoutChangesButton.textContent = presentation.arabicReview.continueWithoutChangesLabel;
-  openButton.disabled = !Boolean(review.docx_path || currentTranslationSeed().output_docx);
-  continueNowButton.disabled = Boolean(review.required && review.resolved);
-  continueWithoutChangesButton.disabled = Boolean(review.required && review.resolved);
+  const docxSource = review.docx_path || String(saveSeed.output_docx || "").trim();
+  renderArabicReviewCardInto({
+    card,
+    title: qs("translation-arabic-review-title"),
+    copy: qs("translation-arabic-review-copy"),
+    chip: qs("translation-arabic-review-chip"),
+    docxLabel: qs("translation-arabic-review-docx-label"),
+    docxPath: qs("translation-arabic-review-docx-path"),
+    openButton: qs("translation-arabic-review-open"),
+    continueNowButton: qs("translation-arabic-review-continue-now"),
+    continueWithoutChangesButton: qs("translation-arabic-review-continue-without-changes"),
+  }, {
+    show,
+    docxLabel: presentation.arabicReview.docxLabel,
+    title: presentation.arabicReview.title,
+    copy: presentation.arabicReview.copy,
+    docxPath: docxSource || presentation.arabicReview.unavailableText,
+    chipLabel: presentation.arabicReview.chipLabel,
+    chipTone: presentation.arabicReview.chipTone,
+    openLabel: presentation.arabicReview.openLabel,
+    continueNowLabel: presentation.arabicReview.continueNowLabel,
+    continueWithoutChangesLabel: presentation.arabicReview.continueWithoutChangesLabel,
+    openDisabled: !Boolean(docxSource),
+    continueNowDisabled: Boolean(review.required && review.resolved),
+    continueWithoutChangesDisabled: Boolean(review.required && review.resolved),
+  });
 }
 
 function syncTranslationCompletionSurface() {

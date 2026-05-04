@@ -1506,3 +1506,11 @@ Verification commands/results:
   - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe tooling/validate_workspace_hygiene.dart` -> `PASS`
   - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe test/tooling/validate_agent_docs_test.dart` -> `PASS` (`72 cases`)
   - `C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe test/tooling/validate_workspace_hygiene_test.dart` -> `PASS` (`7 cases`)
+
+# 2026-05-04
+- Deferred assistant-docs refresh for the browser UI modernization slice that extracts the Arabic review card renderer into `result_card_ui.js`.
+- Touched implementation/test surfaces:
+  - `src/legalpdf_translate/shadow_web/static/result_card_ui.js`
+  - `src/legalpdf_translate/shadow_web/static/translation.js`
+  - `tests/test_shadow_web_api.py`
+- Follow-up docs refresh should mention that the browser Arabic review card now uses the shared safe result-card UI module while `translation.js` remains responsible for review state and Word-review orchestration.
