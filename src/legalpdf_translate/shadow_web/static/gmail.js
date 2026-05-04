@@ -20,6 +20,7 @@ import {
   renderGmailNumericMismatchWarningInto,
   renderGmailPreviewPanelInto,
   renderGmailReportActionInto,
+  renderGmailReturnToSourceActionInto,
   renderGmailReviewDetailInto,
   renderGmailReviewSummaryInto,
   renderGmailRestoreBarInto,
@@ -715,9 +716,7 @@ function updateReturnToGmailAction() {
   }
   const sourceUrl = currentSourceGmailUrl();
   const visible = sourceUrl !== "";
-  button.classList.toggle("hidden", !visible);
-  button.disabled = !visible;
-  button.title = visible ? sourceUrl : "";
+  renderGmailReturnToSourceActionInto(button, { visible, sourceUrl });
 }
 
 function pendingStatus() {

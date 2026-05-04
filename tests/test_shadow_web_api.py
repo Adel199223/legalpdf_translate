@@ -6189,6 +6189,187 @@ console.log(JSON.stringify({
     assert results["truthy"]["innerHTMLWrites"] == 0
 
 
+def test_gmail_ui_module_centralizes_return_to_source_action_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailReturnToSourceActionInto" in gmail_js
+    assert "export function renderGmailReturnToSourceActionInto" in gmail_ui_js
+
+    update_start = gmail_js.index("function updateReturnToGmailAction()")
+    update_end = gmail_js.index("\nfunction pendingStatus", update_start)
+    update_block = gmail_js[update_start:update_end]
+    assert "renderGmailReturnToSourceActionInto(button, { visible, sourceUrl });" in update_block
+    assert ".classList.toggle(" not in update_block
+    assert ".disabled =" not in update_block
+    assert ".title =" not in update_block
+
+    renderer_start = gmail_ui_js.index("export function renderGmailReturnToSourceActionInto")
+    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeButton(className = "") {
+  const button = {
+    className,
+    disabled: false,
+    title: "",
+    children: [],
+    innerHTMLAssignments: [],
+  };
+  button.classList = makeClassList(button);
+  Object.defineProperty(button, "textContent", {
+    get() {
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(button, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g))
+        .map((match) => ({ tagName: match[1].toUpperCase() }));
+      this.innerHTMLAssignments.push(next);
+    },
+  });
+  return button;
+}
+
+function summarize(button) {
+  return {
+    className: normalizeClassList(button.className).sort().join(" "),
+    hidden: button.classList.contains("hidden"),
+    disabled: button.disabled,
+    title: button.title,
+    text: button.textContent,
+    childCount: button.children.length,
+    innerHTMLWrites: button.innerHTMLAssignments.length,
+  };
+}
+
+const malicious = "https://mail.google.test/thread/<img src=x onerror=alert(1)><script>bad()</script>";
+
+const visible = makeButton("hidden ghost-button");
+visible.textContent = "Return to Gmail";
+const visibleResult = ui.renderGmailReturnToSourceActionInto(visible, {
+  visible: true,
+  sourceUrl: malicious,
+});
+
+const hidden = makeButton("ghost-button");
+hidden.title = "old source";
+hidden.textContent = "Return to Gmail";
+const hiddenResult = ui.renderGmailReturnToSourceActionInto(hidden, {
+  visible: false,
+  sourceUrl: malicious,
+});
+
+const truthy = makeButton("hidden");
+truthy.textContent = "Existing label";
+ui.renderGmailReturnToSourceActionInto(truthy, {
+  visible: malicious,
+  sourceUrl: "https://mail.google.test/thread/123",
+});
+
+const missingSource = makeButton("hidden");
+ui.renderGmailReturnToSourceActionInto(missingSource, { visible: true });
+
+const missingResult = ui.renderGmailReturnToSourceActionInto(null, {
+  visible: true,
+  sourceUrl: malicious,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailReturnToSourceActionInto,
+  visibleResultType: typeof visibleResult,
+  hiddenResultType: typeof hiddenResult,
+  missingResultType: typeof missingResult,
+  visible: summarize(visible),
+  hidden: summarize(hidden),
+  truthy: summarize(truthy),
+  missingSource: summarize(missingSource),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["visibleResultType"] == "object"
+    assert results["hiddenResultType"] == "object"
+    assert results["missingResultType"] == "undefined"
+
+    assert results["visible"]["hidden"] is False
+    assert results["visible"]["disabled"] is False
+    assert results["visible"]["className"] == "ghost-button"
+    assert results["visible"]["title"] == "https://mail.google.test/thread/<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["text"] == "Return to Gmail"
+    assert results["visible"]["childCount"] == 0
+    assert results["visible"]["innerHTMLWrites"] == 0
+
+    assert results["hidden"]["hidden"] is True
+    assert results["hidden"]["disabled"] is True
+    assert results["hidden"]["className"] == "ghost-button hidden"
+    assert results["hidden"]["title"] == ""
+    assert results["hidden"]["text"] == "Return to Gmail"
+    assert results["hidden"]["childCount"] == 0
+    assert results["hidden"]["innerHTMLWrites"] == 0
+
+    assert results["truthy"]["hidden"] is False
+    assert results["truthy"]["disabled"] is False
+    assert results["truthy"]["title"] == "https://mail.google.test/thread/123"
+    assert results["truthy"]["text"] == "Existing label"
+    assert results["truthy"]["innerHTMLWrites"] == 0
+
+    assert results["missingSource"]["hidden"] is False
+    assert results["missingSource"]["disabled"] is False
+    assert results["missingSource"]["title"] == ""
+    assert results["missingSource"]["innerHTMLWrites"] == 0
+
+
 def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -17602,6 +17783,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailTranslationStepCardInto" in gmail_ui_asset.text
         assert "renderGmailRestoreBarInto" in gmail_ui_asset.text
         assert "renderGmailDemoReviewActionInto" in gmail_ui_asset.text
+        assert "renderGmailReturnToSourceActionInto" in gmail_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
