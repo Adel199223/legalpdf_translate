@@ -16,6 +16,22 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-05-04 — feat/gmail-review-chrome-ui-module (deferred)
+- Files changed:
+  - src/legalpdf_translate/shadow_web/static/gmail.js
+  - src/legalpdf_translate/shadow_web/static/gmail_ui.js
+  - tests/test_shadow_web_api.py
+- Key symbols / entrypoints changed:
+  - gmail_ui.js::renderGmailReviewChromeInto
+  - gmail.js::renderReviewSummary
+- User-visible behavior:
+  - No intended behavior change; the Gmail review button/status chrome keeps the same copy, disabled state, and default-label reset while moving the DOM writes into the Gmail UI module.
+- Tests:
+  - C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "gmail_ui_module_centralizes_review_chrome_renderer or versioned_static_route"
+  - C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests\test_browser_safe_rendering.py
+  - C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py tests\test_shadow_web_route_state.py tests\test_translation_browser_state.py
+  - powershell -ExecutionPolicy Bypass -File scripts\validate_dev.ps1 -Full
+
 ## 2026-05-04 — feat/translation-result-card-ui-module (deferred)
 - Files changed:
   - src/legalpdf_translate/shadow_web/static/result_card_ui.js

@@ -4246,6 +4246,126 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_gmail_ui_module_centralizes_review_chrome_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./gmail_ui.js"' in gmail_js
+    assert "renderGmailReviewChromeInto" in gmail_js
+    review_summary_start = gmail_js.index("function renderReviewSummary(loadResult)")
+    review_summary_end = gmail_js.index("\nexport function renderAttachmentListInto", review_summary_start)
+    review_summary_block = gmail_js[review_summary_start:review_summary_end]
+    assert "renderGmailReviewChromeInto({" in review_summary_block
+    assert "reviewOpenButton.disabled" not in review_summary_block
+    assert "reviewOpenButton.textContent" not in review_summary_block
+    assert "reviewStatus.textContent" not in review_summary_block
+    assert "export function renderGmailReviewChromeInto" in gmail_ui_js
+    renderer_start = gmail_ui_js.index("export function renderGmailReviewChromeInto")
+    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function makeElement(initialText = "") {
+  const element = {
+    dataset: {},
+    disabled: false,
+    innerHTMLAssignments: [],
+  };
+  let textContent = String(initialText ?? "");
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return textContent;
+    },
+    set(value) {
+      textContent = String(value ?? "");
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return "";
+    },
+    set(value) {
+      this.innerHTMLAssignments.push(String(value ?? ""));
+    },
+  });
+  return element;
+}
+
+const status = makeElement();
+const openButton = makeElement("Review <img src=x onerror=alert(1)>");
+
+const firstResult = ui.renderGmailReviewChromeInto(
+  { status, openButton },
+  {
+    available: true,
+    statusText: "Step <script>alert(2)</script>",
+  },
+);
+openButton.textContent = "Changed by busy state";
+ui.renderGmailReviewChromeInto(
+  { status, openButton },
+  {
+    available: false,
+    statusText: "Second <img src=x onerror=alert(3)>",
+  },
+);
+const missingStatusResult = ui.renderGmailReviewChromeInto(
+  { status: null, openButton },
+  {
+    available: true,
+    statusText: "Ignored",
+  },
+);
+const missingButtonResult = ui.renderGmailReviewChromeInto(
+  { status, openButton: null },
+  {
+    available: true,
+    statusText: "Ignored",
+  },
+);
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailReviewChromeInto,
+  firstResultType: typeof firstResult,
+  defaultLabel: openButton.dataset.defaultLabel,
+  buttonText: openButton.textContent,
+  buttonDisabled: openButton.disabled,
+  statusText: status.textContent,
+  buttonInnerHTMLWrites: openButton.innerHTMLAssignments.length,
+  statusInnerHTMLWrites: status.innerHTMLAssignments.length,
+  missingStatusResultType: typeof missingStatusResult,
+  missingButtonResultType: typeof missingButtonResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results == {
+        "exportType": "function",
+        "firstResultType": "object",
+        "defaultLabel": "Review <img src=x onerror=alert(1)>",
+        "buttonText": "Review <img src=x onerror=alert(1)>",
+        "buttonDisabled": True,
+        "statusText": "Second <img src=x onerror=alert(3)>",
+        "buttonInnerHTMLWrites": 0,
+        "statusInnerHTMLWrites": 0,
+        "missingStatusResultType": "undefined",
+        "missingButtonResultType": "undefined",
+    }
+
+
 def test_gmail_ui_module_centralizes_session_card_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -21641,6 +21761,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailNoncanonicalRuntimeGuardInto" in gmail_ui_asset.text
         assert "renderGmailMessageResultInto" in gmail_ui_asset.text
         assert "renderGmailReviewSummaryInto" in gmail_ui_asset.text
+        assert "renderGmailReviewChromeInto" in gmail_ui_asset.text
         assert "renderGmailPreviewPanelInto" in gmail_ui_asset.text
         assert "renderGmailResumeCardInto" in gmail_ui_asset.text
         assert "renderGmailSessionResultInto" in gmail_ui_asset.text

@@ -24,6 +24,7 @@ import {
   renderGmailReportActionInto,
   renderGmailReturnToSourceActionInto,
   renderGmailResumeActionsInto,
+  renderGmailReviewChromeInto,
   renderGmailReviewDetailInto,
   renderGmailReviewSummaryInto,
   renderGmailRestoreBarInto,
@@ -1655,12 +1656,13 @@ function renderReviewSummary(loadResult) {
     return;
   }
   const workflow = currentWorkflowPresentation();
-  reviewOpenButton.disabled = !(loadResult?.ok && loadResult?.message);
-  if (!reviewOpenButton.dataset.defaultLabel) {
-    reviewOpenButton.dataset.defaultLabel = reviewOpenButton.textContent;
-  }
-  reviewOpenButton.textContent = reviewOpenButton.dataset.defaultLabel;
-  reviewStatus.textContent = "Step 1: Choose workflow. Step 2: Pick attachment(s). Step 3: Preview or set start page if needed. Step 4: Continue.";
+  renderGmailReviewChromeInto({
+    status: reviewStatus,
+    openButton: reviewOpenButton,
+  }, {
+    available: Boolean(loadResult?.ok && loadResult?.message),
+    statusText: "Step 1: Choose workflow. Step 2: Pick attachment(s). Step 3: Preview or set start page if needed. Step 4: Continue.",
+  });
   if (!loadResult?.ok || !loadResult?.message) {
     renderGmailReviewSummaryInto(
       { summary, summaryGrid, summaryDetails },
