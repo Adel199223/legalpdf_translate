@@ -1609,3 +1609,11 @@ Verification commands/results:
   - `src/legalpdf_translate/shadow_web/static/power-tools.js`
   - `tests/test_shadow_web_api.py`
 - Follow-up docs refresh should mention that Power Tools now imports the shared `runWithBusy(...)` helper for button labels, disabled state, and `aria-busy` updates while keeping all Power Tools action orchestration unchanged.
+
+# 2026-05-04
+- Deferred assistant-docs refresh for the browser UI modernization slice that extracts Gmail drawer chrome rendering into `gmail_ui.js`.
+- Touched implementation/test surfaces:
+  - `src/legalpdf_translate/shadow_web/static/gmail_ui.js`
+  - `src/legalpdf_translate/shadow_web/static/gmail.js`
+  - `tests/test_shadow_web_api.py`
+- Follow-up docs refresh should mention that Gmail review, preview, session, and batch-finalize drawer hidden/`aria-hidden`/body dataset writes now render through `renderGmailDrawerChromeInto(...)` while `gmail.js` still owns drawer eligibility, state transitions, restore-bar coordination, and Gmail side effects.
