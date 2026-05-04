@@ -90,3 +90,18 @@ export function renderTranslationNumericMismatchWarningInto(container, warning =
   container.setAttribute("role", "note");
   return container;
 }
+
+export function renderTranslationDownloadLinkInto(node, href = "") {
+  if (!node) {
+    return undefined;
+  }
+
+  if (href) {
+    node.href = href;
+    node.classList.remove("hidden");
+  } else {
+    node.classList.add("hidden");
+    node.removeAttribute("href");
+  }
+  return node;
+}

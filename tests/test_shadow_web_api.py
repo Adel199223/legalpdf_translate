@@ -11683,6 +11683,144 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_ui_module_centralizes_download_link_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationDownloadLinkInto" in translation_js
+    assert "export function renderTranslationDownloadLinkInto" in translation_ui_js
+    link_start = translation_js.index("function clearDownloadLink")
+    link_end = translation_js.index("\nfunction translationRunReportHref", link_start)
+    link_block = translation_js[link_start:link_end]
+    assert 'renderTranslationDownloadLinkInto(qs(id), "")' in link_block
+    assert "renderTranslationDownloadLinkInto(qs(id), href)" in link_block
+    assert ".innerHTML" not in link_block
+
+    renderer_start = translation_ui_js.index("export function renderTranslationDownloadLinkInto")
+    renderer_end = (
+        translation_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+        else len(translation_ui_js)
+    )
+    renderer_block = translation_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeLink() {
+  const link = {
+    attributes: {},
+    classActions: [],
+    classSet: new Set(),
+    href: "",
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+    classList: {
+      add(name) {
+        this.owner.classSet.add(name);
+        this.owner.classActions.push(["add", name]);
+      },
+      remove(name) {
+        this.owner.classSet.delete(name);
+        this.owner.classActions.push(["remove", name]);
+      },
+    },
+    removeAttribute(name) {
+      delete this.attributes[name];
+      if (name === "href") {
+        this.href = "";
+      }
+      this.removedAttribute = name;
+    },
+  };
+  link.classList.owner = link;
+  Object.defineProperty(link, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return link;
+}
+
+function summarize(link) {
+  return {
+    href: link.href,
+    hidden: link.classSet.has("hidden"),
+    classActions: link.classActions,
+    removedAttribute: link.removedAttribute || "",
+    innerHTMLWrites: link.innerHTMLAssignments.length,
+  };
+}
+
+const malicious = `/api/translation/jobs/123/artifact/output_docx?name=<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const visible = makeLink();
+const visibleReturn = translationUi.renderTranslationDownloadLinkInto(visible, malicious);
+
+const hidden = makeLink();
+hidden.href = "/old/report.docx";
+hidden.attributes.href = "/old/report.docx";
+hidden.classSet.add("ready");
+const hiddenReturn = translationUi.renderTranslationDownloadLinkInto(hidden, "");
+
+const defaultHidden = makeLink();
+defaultHidden.href = "/old/default.docx";
+const defaultHiddenReturn = translationUi.renderTranslationDownloadLinkInto(defaultHidden);
+
+const nullReturn = translationUi.renderTranslationDownloadLinkInto(null, malicious);
+
+console.log(JSON.stringify({
+  exportType: typeof translationUi.renderTranslationDownloadLinkInto,
+  visibleReturned: visibleReturn === visible,
+  visible: summarize(visible),
+  hiddenReturned: hiddenReturn === hidden,
+  hidden: summarize(hidden),
+  defaultHiddenReturned: defaultHiddenReturn === defaultHidden,
+  defaultHidden: summarize(defaultHidden),
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["visibleReturned"] is True
+    assert results["visible"]["href"] == "/api/translation/jobs/123/artifact/output_docx?name=<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["hidden"] is False
+    assert results["visible"]["classActions"] == [["remove", "hidden"]]
+    assert results["visible"]["innerHTMLWrites"] == 0
+
+    assert results["hiddenReturned"] is True
+    assert results["hidden"]["href"] == ""
+    assert results["hidden"]["hidden"] is True
+    assert results["hidden"]["removedAttribute"] == "href"
+    assert results["hidden"]["classActions"] == [["add", "hidden"]]
+    assert results["hidden"]["innerHTMLWrites"] == 0
+
+    assert results["defaultHiddenReturned"] is True
+    assert results["defaultHidden"]["href"] == ""
+    assert results["defaultHidden"]["hidden"] is True
+    assert results["defaultHidden"]["removedAttribute"] == "href"
+    assert results["defaultHidden"]["innerHTMLWrites"] == 0
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -19734,6 +19872,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderTranslationRunStatusInto" in translation_ui_asset.text
         assert "renderTranslationPrimaryActionsInto" in translation_ui_asset.text
         assert "renderTranslationNumericMismatchWarningInto" in translation_ui_asset.text
+        assert "renderTranslationDownloadLinkInto" in translation_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")
