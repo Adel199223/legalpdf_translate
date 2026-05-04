@@ -11156,6 +11156,179 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_ui_module_centralizes_run_status_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationRunStatusInto" in translation_js
+    assert "export function renderTranslationRunStatusInto" in translation_ui_js
+    run_status_start = translation_js.index("function renderTranslationRunStatus")
+    run_status_end = translation_js.index("\nfunction clearDownloadLink", run_status_start)
+    run_status_block = translation_js[run_status_start:run_status_end]
+    assert "renderTranslationRunStatusInto(" in run_status_block
+    assert ".innerHTML" not in run_status_block
+
+    renderer_start = translation_ui_js.index("export function renderTranslationRunStatusInto")
+    renderer_end = (
+        translation_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+        else len(translation_ui_js)
+    )
+    renderer_block = translation_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeElement() {
+  const element = {
+    attributes: {},
+    children: [],
+    className: "",
+    innerHTMLAssignments: [],
+    style: {},
+    _textContent: "",
+    _innerHTML: "",
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        this.children.push({ tagName: match[1].toUpperCase() });
+      }
+    },
+  });
+  return element;
+}
+
+function makeNodes() {
+  return {
+    percent: makeElement(),
+    chip: makeElement(),
+    track: makeElement(),
+    bar: makeElement(),
+    task: makeElement(),
+    pages: makeElement(),
+    currentPage: makeElement(),
+    imageRetry: makeElement(),
+    alerts: makeElement(),
+  };
+}
+
+function summarize(nodes) {
+  const allNodes = Object.values(nodes).filter(Boolean);
+  return {
+    percent: nodes.percent?.textContent || "",
+    chipText: nodes.chip?.textContent || "",
+    chipClass: nodes.chip?.className || "",
+    trackNow: nodes.track?.attributes?.["aria-valuenow"] || "",
+    barWidth: nodes.bar?.style?.width || "",
+    task: nodes.task?.textContent || "",
+    pages: nodes.pages?.textContent || "",
+    currentPage: nodes.currentPage?.textContent || "",
+    imageRetry: nodes.imageRetry?.textContent || "",
+    alerts: nodes.alerts?.textContent || "",
+    innerHTMLWrites: allNodes.reduce((total, node) => total + node.innerHTMLAssignments.length, 0),
+    imgChildren: allNodes.reduce((total, node) => total + node.children.filter((child) => child.tagName === "IMG").length, 0),
+    scriptChildren: allNodes.reduce((total, node) => total + node.children.filter((child) => child.tagName === "SCRIPT").length, 0),
+  };
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const nodes = makeNodes();
+const returned = translationUi.renderTranslationRunStatusInto(nodes, {
+  percentValue: 42,
+  percentText: `42% ${malicious}`,
+  chipText: `Running ${malicious}`,
+  chipTone: "warn",
+  currentTask: `Working ${malicious}`,
+  pagesText: `2 / 5 ${malicious}`,
+  currentPageText: `Page 2 ${malicious}`,
+  imageRetryText: `Retry ${malicious}`,
+  alertsText: `Flagged ${malicious}`,
+});
+
+const missingNodes = makeNodes();
+delete missingNodes.alerts;
+const missingReturn = translationUi.renderTranslationRunStatusInto(missingNodes, {
+  percentValue: 100,
+  percentText: "Should not render",
+  chipText: "Ignored",
+  chipTone: "ok",
+});
+
+const nullReturn = translationUi.renderTranslationRunStatusInto(null, {
+  percentValue: 100,
+  percentText: "Ignored",
+});
+
+console.log(JSON.stringify({
+  exportType: typeof translationUi.renderTranslationRunStatusInto,
+  returned: returned === nodes.percent,
+  rendered: summarize(nodes),
+  missingReturnType: typeof missingReturn,
+  missingPercent: missingNodes.percent.textContent,
+  missingInnerHTMLWrites: Object.values(missingNodes).filter(Boolean).reduce((total, node) => total + node.innerHTMLAssignments.length, 0),
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["returned"] is True
+    assert results["rendered"]["percent"] == "42% <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["rendered"]["chipText"] == "Running <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["rendered"]["chipClass"] == "status-chip warn"
+    assert results["rendered"]["trackNow"] == "42"
+    assert results["rendered"]["barWidth"] == "42%"
+    assert results["rendered"]["task"] == "Working <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["rendered"]["pages"] == "2 / 5 <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["rendered"]["currentPage"] == "Page 2 <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["rendered"]["imageRetry"] == "Retry <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["rendered"]["alerts"] == "Flagged <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["rendered"]["innerHTMLWrites"] == 0
+    assert results["rendered"]["imgChildren"] == 0
+    assert results["rendered"]["scriptChildren"] == 0
+    assert results["missingReturnType"] == "undefined"
+    assert results["missingPercent"] == ""
+    assert results["missingInnerHTMLWrites"] == 0
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -19204,6 +19377,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert translation_ui_asset.status_code == 200
         assert translation_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderTranslationOutputSummaryInto" in translation_ui_asset.text
+        assert "renderTranslationRunStatusInto" in translation_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")

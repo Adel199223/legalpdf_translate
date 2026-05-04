@@ -12,7 +12,10 @@ import {
   renderResultHeaderCardInto,
   renderTranslationResultCardInto,
 } from "./result_card_ui.js";
-import { renderTranslationOutputSummaryInto } from "./translation_ui.js";
+import {
+  renderTranslationOutputSummaryInto,
+  renderTranslationRunStatusInto,
+} from "./translation_ui.js";
 
 const translationState = {
   currentSeed: null,
@@ -1876,29 +1879,22 @@ export function deriveTranslationRunStatusView(
 }
 
 function renderTranslationRunStatus(job = translationState.currentJob) {
-  const percentNode = qs("translation-progress-percent");
-  const chipNode = qs("translation-run-status-chip");
-  const trackNode = qs("translation-progress-track");
-  const barNode = qs("translation-progress-bar");
-  const taskNode = qs("translation-current-task");
-  const pagesNode = qs("translation-run-pages");
-  const currentPageNode = qs("translation-run-current-page");
-  const imageRetryNode = qs("translation-run-image-retry");
-  const alertsNode = qs("translation-run-alerts");
-  if (!percentNode || !chipNode || !trackNode || !barNode || !taskNode || !pagesNode || !currentPageNode || !imageRetryNode || !alertsNode) {
+  const nodes = {
+    percent: qs("translation-progress-percent"),
+    chip: qs("translation-run-status-chip"),
+    track: qs("translation-progress-track"),
+    bar: qs("translation-progress-bar"),
+    task: qs("translation-current-task"),
+    pages: qs("translation-run-pages"),
+    currentPage: qs("translation-run-current-page"),
+    imageRetry: qs("translation-run-image-retry"),
+    alerts: qs("translation-run-alerts"),
+  };
+  if (!nodes.percent || !nodes.chip || !nodes.track || !nodes.bar || !nodes.task || !nodes.pages || !nodes.currentPage || !nodes.imageRetry || !nodes.alerts) {
     return;
   }
   const view = deriveTranslationRunStatusView(job);
-  percentNode.textContent = view.percentText;
-  chipNode.textContent = view.chipText;
-  chipNode.className = `status-chip ${view.chipTone}`;
-  trackNode.setAttribute("aria-valuenow", String(view.percentValue));
-  barNode.style.width = `${view.percentValue}%`;
-  taskNode.textContent = view.currentTask;
-  pagesNode.textContent = view.pagesText;
-  currentPageNode.textContent = view.currentPageText;
-  imageRetryNode.textContent = view.imageRetryText;
-  alertsNode.textContent = view.alertsText;
+  renderTranslationRunStatusInto(nodes, view);
 }
 
 function clearDownloadLink(id) {
