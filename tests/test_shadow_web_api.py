@@ -7876,6 +7876,257 @@ console.log(JSON.stringify({
     assert results["fallback"]["statusText"] == "This attachment type is available through the new-tab fallback."
 
 
+def test_gmail_ui_module_centralizes_pdf_preview_fallback_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./gmail_ui.js"' in gmail_js
+    assert "renderGmailPdfPreviewFallbackInto" in gmail_js
+    preview_canvas_start = gmail_js.index("async function renderActivePdfPreviewCanvas")
+    preview_canvas_end = gmail_js.index("\nasync function previewAttachment", preview_canvas_start)
+    preview_canvas_block = gmail_js[preview_canvas_start:preview_canvas_end]
+    assert "renderGmailPdfPreviewFallbackInto" in preview_canvas_block
+    assert 'container.className = "gmail-inline-preview empty-state"' not in preview_canvas_block
+    assert "container.textContent =" not in preview_canvas_block
+    assert "status.textContent =" not in preview_canvas_block
+    assert "innerHTML" not in preview_canvas_block
+
+    assert "export function renderGmailPdfPreviewFallbackInto" in gmail_ui_js
+    renderer_start = gmail_ui_js.index("export function renderGmailPdfPreviewFallbackInto")
+    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    add(...names) {
+      const classes = new Set(normalizeClassList(element.className));
+      names.flatMap((name) => normalizeClassList(name)).forEach((name) => classes.add(name));
+      element.className = Array.from(classes).join(" ");
+    },
+    remove(...names) {
+      const removeNames = new Set(names.flatMap((name) => normalizeClassList(name)));
+      element.className = normalizeClassList(element.className)
+        .filter((name) => !removeNames.has(name))
+        .join(" ");
+    },
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: tagName.toUpperCase(),
+    children: [],
+    className: "",
+    innerHTMLAssignments: [],
+    appendChild(child) {
+      if (child) {
+        child.parentNode = this;
+        this.children.push(child);
+      }
+      return child;
+    },
+    replaceChildren(...children) {
+      this.children = [];
+      children.forEach((child) => this.appendChild(child));
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  element.classList = makeClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent || ""}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  if (!node) {
+    return;
+  }
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHTMLWrites(...nodes) {
+  let total = 0;
+  nodes.forEach((node) => {
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
+  });
+  return total;
+}
+
+function makeNodes() {
+  return {
+    container: makeElement("div"),
+    status: makeElement("p"),
+  };
+}
+
+function summarize(nodes, result) {
+  return {
+    resultType: typeof result,
+    containerClass: nodes.container.className,
+    containerText: nodes.container.textContent,
+    statusText: nodes.status.textContent,
+    imgCount: countTag(nodes.container, "img") + countTag(nodes.status, "img"),
+    scriptCount: countTag(nodes.container, "script") + countTag(nodes.status, "script"),
+    innerHTMLWrites: countInnerHTMLWrites(nodes.container, nodes.status),
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const missingPreviewNodes = makeNodes();
+const missingPreviewResult = ui.renderGmailPdfPreviewFallbackInto(missingPreviewNodes, {
+  containerMessage: `Preview download is not ready for this PDF yet. ${malicious}`,
+  statusMessage: `Preview download is not ready yet. Try preview again. ${malicious}`,
+});
+
+const renderErrorNodes = makeNodes();
+ui.renderGmailPdfPreviewFallbackInto(renderErrorNodes, {
+  containerMessage: `Preview rendering failed for this PDF. ${malicious}`,
+  statusMessage: `Worker failed ${malicious}`,
+});
+
+const defaultNodes = makeNodes();
+ui.renderGmailPdfPreviewFallbackInto(defaultNodes);
+
+const customClassNodes = makeNodes();
+ui.renderGmailPdfPreviewFallbackInto(customClassNodes, {
+  className: "gmail-inline-preview custom-state",
+  containerMessage: "Custom",
+  statusMessage: "Custom status",
+});
+
+const missingContainerResult = ui.renderGmailPdfPreviewFallbackInto({ ...makeNodes(), container: null }, {
+  containerMessage: "ignored",
+  statusMessage: "ignored",
+});
+const missingStatusResult = ui.renderGmailPdfPreviewFallbackInto({ ...makeNodes(), status: null }, {
+  containerMessage: "ignored",
+  statusMessage: "ignored",
+});
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailPdfPreviewFallbackInto,
+  missingPreview: summarize(missingPreviewNodes, missingPreviewResult),
+  renderError: summarize(renderErrorNodes),
+  defaults: summarize(defaultNodes),
+  customClass: summarize(customClassNodes),
+  missingContainerResultType: typeof missingContainerResult,
+  missingStatusResultType: typeof missingStatusResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+
+    assert results["missingPreview"]["resultType"] == "object"
+    assert results["missingPreview"]["containerClass"] == "gmail-inline-preview empty-state"
+    assert "Preview download is not ready for this PDF yet." in results["missingPreview"]["containerText"]
+    assert "<img src=x onerror=alert(1)><script>bad()</script>" in results["missingPreview"]["containerText"]
+    assert "Preview download is not ready yet. Try preview again." in results["missingPreview"]["statusText"]
+    assert results["missingPreview"]["imgCount"] == 0
+    assert results["missingPreview"]["scriptCount"] == 0
+    assert results["missingPreview"]["innerHTMLWrites"] == 0
+
+    assert results["renderError"]["containerClass"] == "gmail-inline-preview empty-state"
+    assert "Preview rendering failed for this PDF." in results["renderError"]["containerText"]
+    assert "Worker failed <img src=x onerror=alert(1)><script>bad()</script>" in results["renderError"]["statusText"]
+    assert results["renderError"]["imgCount"] == 0
+    assert results["renderError"]["scriptCount"] == 0
+    assert results["renderError"]["innerHTMLWrites"] == 0
+
+    assert results["defaults"]["containerClass"] == "gmail-inline-preview empty-state"
+    assert results["defaults"]["containerText"] == ""
+    assert results["defaults"]["statusText"] == ""
+    assert results["defaults"]["innerHTMLWrites"] == 0
+
+    assert results["customClass"]["containerClass"] == "gmail-inline-preview custom-state"
+    assert results["customClass"]["containerText"] == "Custom"
+    assert results["customClass"]["statusText"] == "Custom status"
+    assert results["customClass"]["innerHTMLWrites"] == 0
+
+    assert results["missingContainerResultType"] == "undefined"
+    assert results["missingStatusResultType"] == "undefined"
+
+
 def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -21768,6 +22019,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailAttachmentListInto" in gmail_ui_asset.text
         assert "renderGmailReviewDetailInto" in gmail_ui_asset.text
         assert "renderGmailBatchFinalizeSurfaceInto" in gmail_ui_asset.text
+        assert "renderGmailPdfPreviewFallbackInto" in gmail_ui_asset.text
         assert "renderGmailReportActionInto" in gmail_ui_asset.text
         assert "renderGmailNumericMismatchWarningInto" in gmail_ui_asset.text
         assert "renderGmailTranslationStepCardInto" in gmail_ui_asset.text

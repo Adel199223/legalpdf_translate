@@ -806,6 +806,18 @@ export function renderGmailPreviewPanelInto(nodes = {}, preview = {}) {
   return gmailPreviewResult(false);
 }
 
+export function renderGmailPdfPreviewFallbackInto(nodes = {}, fallback = {}) {
+  const { container, status } = nodes || {};
+  if (!container || !status) {
+    return undefined;
+  }
+
+  container.className = fallback.className || "gmail-inline-preview empty-state";
+  container.textContent = fallback.containerMessage || "";
+  status.textContent = fallback.statusMessage || "";
+  return nodes;
+}
+
 export function renderGmailNoncanonicalRuntimeGuardInto(nodes = {}, guard = {}) {
   const {
     card,

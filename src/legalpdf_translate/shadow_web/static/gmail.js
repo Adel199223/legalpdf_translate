@@ -19,6 +19,7 @@ import {
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
+  renderGmailPdfPreviewFallbackInto,
   renderGmailPreviewPanelInto,
   renderGmailPrepareActionInto,
   renderGmailReportActionInto,
@@ -2345,9 +2346,10 @@ async function renderActivePdfPreviewCanvas(previewAttachment) {
   const sourcePath = String(browserState.sourcePath || "").trim();
   const previewHref = String(browserState.previewHref || gmailState.previewState.previewHref || "").trim();
   if (!sourcePath || !previewHref) {
-    container.className = "gmail-inline-preview empty-state";
-    container.textContent = "Preview download is not ready for this PDF yet.";
-    status.textContent = "Preview download is not ready yet. Try preview again.";
+    renderGmailPdfPreviewFallbackInto({ container, status }, {
+      containerMessage: "Preview download is not ready for this PDF yet.",
+      statusMessage: "Preview download is not ready yet. Try preview again.",
+    });
     return;
   }
   try {
@@ -2364,9 +2366,10 @@ async function renderActivePdfPreviewCanvas(previewAttachment) {
       operation: "gmail_preview_render",
       attachment: previewAttachment,
     });
-    container.className = "gmail-inline-preview empty-state";
-    container.textContent = "Preview rendering failed for this PDF.";
-    status.textContent = error.message || "Preview rendering failed.";
+    renderGmailPdfPreviewFallbackInto({ container, status }, {
+      containerMessage: "Preview rendering failed for this PDF.",
+      statusMessage: error.message || "Preview rendering failed.",
+    });
     setDiagnostics("gmail", error, { hint: gmailFailureHint(error, error.message || "Preview rendering failed."), open: true });
     updateGmailFailureReportActionState();
   }
