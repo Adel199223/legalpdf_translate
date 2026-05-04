@@ -40,3 +40,34 @@ export function renderTranslationRunStatusInto(nodes = {}, view = {}) {
   setText(alerts, view.alertsText || "");
   return percent;
 }
+
+export function renderTranslationPrimaryActionsInto(nodes = {}, actionState = {}) {
+  const {
+    helper,
+    startButton,
+    analyzeButton,
+    cancelButton,
+    resumeButton,
+    rebuildButton,
+  } = nodes || {};
+
+  if (helper) {
+    setText(helper, actionState.helperText || "");
+  }
+  if (startButton) {
+    startButton.disabled = !actionState.startEnabled;
+  }
+  if (analyzeButton) {
+    analyzeButton.disabled = !actionState.analyzeEnabled;
+  }
+  if (cancelButton) {
+    cancelButton.disabled = !actionState.cancelEnabled;
+  }
+  if (resumeButton) {
+    resumeButton.disabled = !actionState.resumeEnabled;
+  }
+  if (rebuildButton) {
+    rebuildButton.disabled = !actionState.rebuildEnabled;
+  }
+  return helper || undefined;
+}

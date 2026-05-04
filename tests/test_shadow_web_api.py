@@ -11329,6 +11329,187 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_ui_module_centralizes_primary_action_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationPrimaryActionsInto" in translation_js
+    assert "export function renderTranslationPrimaryActionsInto" in translation_ui_js
+    action_start = translation_js.index("function syncTranslationPrimaryActionState")
+    action_end = translation_js.index("\n\nexport function deriveTranslationRunStatusView", action_start)
+    action_block = translation_js[action_start:action_end]
+    assert "deriveTranslationActionState()" in action_block
+    assert "renderTranslationPrimaryActionsInto(" in action_block
+    assert ".innerHTML" not in action_block
+
+    renderer_start = translation_ui_js.index("export function renderTranslationPrimaryActionsInto")
+    renderer_end = (
+        translation_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+        else len(translation_ui_js)
+    )
+    renderer_block = translation_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeElement() {
+  const element = {
+    children: [],
+    disabled: false,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        this.children.push({ tagName: match[1].toUpperCase() });
+      }
+    },
+  });
+  return element;
+}
+
+function makeNodes() {
+  return {
+    helper: makeElement(),
+    startButton: makeElement(),
+    analyzeButton: makeElement(),
+    cancelButton: makeElement(),
+    resumeButton: makeElement(),
+    rebuildButton: makeElement(),
+  };
+}
+
+function summarize(nodes) {
+  const allNodes = Object.values(nodes).filter(Boolean);
+  return {
+    helper: nodes.helper?.textContent || "",
+    startDisabled: nodes.startButton?.disabled ?? null,
+    analyzeDisabled: nodes.analyzeButton?.disabled ?? null,
+    cancelDisabled: nodes.cancelButton?.disabled ?? null,
+    resumeDisabled: nodes.resumeButton?.disabled ?? null,
+    rebuildDisabled: nodes.rebuildButton?.disabled ?? null,
+    innerHTMLWrites: allNodes.reduce((total, node) => total + node.innerHTMLAssignments.length, 0),
+    imgChildren: allNodes.reduce((total, node) => total + node.children.filter((child) => child.tagName === "IMG").length, 0),
+    scriptChildren: allNodes.reduce((total, node) => total + node.children.filter((child) => child.tagName === "SCRIPT").length, 0),
+  };
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const readyNodes = makeNodes();
+const readyReturn = translationUi.renderTranslationPrimaryActionsInto(readyNodes, {
+  helperText: `Ready ${malicious}`,
+  startEnabled: true,
+  analyzeEnabled: true,
+  cancelEnabled: false,
+  resumeEnabled: false,
+  rebuildEnabled: true,
+});
+
+const blockedNodes = makeNodes();
+const blockedReturn = translationUi.renderTranslationPrimaryActionsInto(blockedNodes, {
+  helperText: "Blocked until source is ready.",
+  startEnabled: false,
+  analyzeEnabled: false,
+  cancelEnabled: true,
+  resumeEnabled: true,
+  rebuildEnabled: false,
+});
+
+const partialNodes = makeNodes();
+delete partialNodes.helper;
+delete partialNodes.analyzeButton;
+const partialReturn = translationUi.renderTranslationPrimaryActionsInto(partialNodes, {
+  helperText: "Ignored helper",
+  startEnabled: true,
+  analyzeEnabled: true,
+  cancelEnabled: true,
+  resumeEnabled: false,
+  rebuildEnabled: false,
+});
+
+const nullReturn = translationUi.renderTranslationPrimaryActionsInto(null, {
+  helperText: "Ignored",
+});
+
+console.log(JSON.stringify({
+  exportType: typeof translationUi.renderTranslationPrimaryActionsInto,
+  readyReturned: readyReturn === readyNodes.helper,
+  ready: summarize(readyNodes),
+  blockedReturned: blockedReturn === blockedNodes.helper,
+  blocked: summarize(blockedNodes),
+  partialReturnType: typeof partialReturn,
+  partial: summarize(partialNodes),
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["readyReturned"] is True
+    assert results["ready"]["helper"] == "Ready <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ready"]["startDisabled"] is False
+    assert results["ready"]["analyzeDisabled"] is False
+    assert results["ready"]["cancelDisabled"] is True
+    assert results["ready"]["resumeDisabled"] is True
+    assert results["ready"]["rebuildDisabled"] is False
+    assert results["ready"]["innerHTMLWrites"] == 0
+    assert results["ready"]["imgChildren"] == 0
+    assert results["ready"]["scriptChildren"] == 0
+
+    assert results["blockedReturned"] is True
+    assert results["blocked"]["helper"] == "Blocked until source is ready."
+    assert results["blocked"]["startDisabled"] is True
+    assert results["blocked"]["analyzeDisabled"] is True
+    assert results["blocked"]["cancelDisabled"] is False
+    assert results["blocked"]["resumeDisabled"] is False
+    assert results["blocked"]["rebuildDisabled"] is True
+    assert results["blocked"]["innerHTMLWrites"] == 0
+
+    assert results["partialReturnType"] == "undefined"
+    assert results["partial"]["startDisabled"] is False
+    assert results["partial"]["cancelDisabled"] is False
+    assert results["partial"]["resumeDisabled"] is True
+    assert results["partial"]["rebuildDisabled"] is True
+    assert results["partial"]["innerHTMLWrites"] == 0
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -19378,6 +19559,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert translation_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderTranslationOutputSummaryInto" in translation_ui_asset.text
         assert "renderTranslationRunStatusInto" in translation_ui_asset.text
+        assert "renderTranslationPrimaryActionsInto" in translation_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")

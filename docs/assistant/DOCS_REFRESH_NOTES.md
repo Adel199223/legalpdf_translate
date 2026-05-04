@@ -1530,3 +1530,11 @@ Verification commands/results:
   - `src/legalpdf_translate/shadow_web/static/translation.js`
   - `tests/test_shadow_web_api.py`
 - Follow-up docs refresh should mention that translation progress/status DOM updates now use the safe translation UI module while `translation.js` still derives job progress, chip tone, current task, page counts, retry markers, and alerts.
+
+# 2026-05-04
+- Deferred assistant-docs refresh for the browser UI modernization slice that extracts the translation primary-action renderer into `translation_ui.js`.
+- Touched implementation/test surfaces:
+  - `src/legalpdf_translate/shadow_web/static/translation_ui.js`
+  - `src/legalpdf_translate/shadow_web/static/translation.js`
+  - `tests/test_shadow_web_api.py`
+- Follow-up docs refresh should mention that translation helper text and Start/Analyze/Cancel/Resume/Rebuild enabled states now render through the safe translation UI module while `translation.js` still derives action readiness from source and job state.
