@@ -9,12 +9,14 @@ import {
 import {
   renderTranslationDownloadLinkInto,
   renderTranslationCompletionSurfaceInto,
+  renderTranslationFieldValueInto,
   renderTranslationHistoryListInto,
   renderTranslationJobsListInto,
   renderTranslationNumericMismatchWarningInto,
   renderTranslationOutputSummaryInto,
   renderTranslationPrimaryActionsInto,
   renderTranslationRunStatusInto,
+  renderTranslationSourcePathInto,
   renderTranslationSourceCardInto,
   syncTranslationCompletionDrawerStateInto,
 } from "./translation_ui.js";
@@ -563,10 +565,7 @@ function fieldValue(id) {
 }
 
 function setFieldValue(id, value) {
-  const node = qs(id);
-  if (node) {
-    node.value = value ?? "";
-  }
+  renderTranslationFieldValueInto(qs(id), value);
 }
 
 function setCheckbox(id, value) {
@@ -670,11 +669,13 @@ function clearSourceUploadState() {
 }
 
 function setSourcePathValue(value) {
-  setFieldValue("translation-source-path", value ?? "");
-  const pathNode = qs("translation-source-path-summary");
-  if (pathNode) {
-    pathNode.textContent = String(value || "").trim() || "No source staged yet.";
-  }
+  renderTranslationSourcePathInto(
+    {
+      pathField: qs("translation-source-path"),
+      summary: qs("translation-source-path-summary"),
+    },
+    value,
+  );
 }
 
 function currentManualSourceFile() {

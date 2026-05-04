@@ -12114,6 +12114,171 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_ui_module_centralizes_source_path_renderers() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationFieldValueInto" in translation_js
+    assert "renderTranslationSourcePathInto" in translation_js
+    assert "export function renderTranslationFieldValueInto" in translation_ui_js
+    assert "export function renderTranslationSourcePathInto" in translation_ui_js
+
+    field_start = translation_js.index("function setFieldValue")
+    field_end = translation_js.index("\n\nfunction setCheckbox", field_start)
+    field_block = translation_js[field_start:field_end]
+    assert "renderTranslationFieldValueInto(qs(id), value)" in field_block
+    assert ".value =" not in field_block
+
+    source_start = translation_js.index("function setSourcePathValue")
+    source_end = translation_js.index("\n\nfunction currentManualSourceFile", source_start)
+    source_block = translation_js[source_start:source_end]
+    assert "renderTranslationSourcePathInto(" in source_block
+    assert "translation-source-path" in source_block
+    assert "translation-source-path-summary" in source_block
+    assert "textContent" not in source_block
+
+    for export_name in [
+        "renderTranslationFieldValueInto",
+        "renderTranslationSourcePathInto",
+    ]:
+        renderer_start = translation_ui_js.index(f"export function {export_name}")
+        renderer_end = (
+            translation_ui_js.index("\nexport function", renderer_start + 1)
+            if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+            else len(translation_ui_js)
+        )
+        renderer_block = translation_ui_js[renderer_start:renderer_end]
+        assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeNode(initialValue = "") {
+  const node = {
+    _textContent: "",
+    _innerHTML: "",
+    value: initialValue,
+    innerHTMLAssignments: [],
+  };
+  Object.defineProperty(node, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(node, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return node;
+}
+
+const malicious = "C:/source/<img src=x onerror=alert(1)><script>bad()</script>.pdf";
+const field = makeNode();
+const summary = makeNode();
+const sourcePath = makeNode();
+
+const fieldReturn = translationUi.renderTranslationFieldValueInto(field, malicious);
+const sourceReturn = translationUi.renderTranslationSourcePathInto(
+  { pathField: sourcePath, summary },
+  malicious,
+);
+
+const emptySummary = makeNode();
+const emptyPath = makeNode("old value");
+const emptyReturn = translationUi.renderTranslationSourcePathInto(
+  { pathField: emptyPath, summary: emptySummary },
+  "   ",
+);
+
+const nullFieldReturn = translationUi.renderTranslationFieldValueInto(null, malicious);
+const nullSourceReturn = translationUi.renderTranslationSourcePathInto(null, malicious);
+const partialSummary = makeNode();
+const partialReturn = translationUi.renderTranslationSourcePathInto(
+  { summary: partialSummary },
+  malicious,
+);
+
+console.log(JSON.stringify({
+  fieldExportType: typeof translationUi.renderTranslationFieldValueInto,
+  sourceExportType: typeof translationUi.renderTranslationSourcePathInto,
+  fieldReturned: fieldReturn === field,
+  fieldValue: field.value,
+  fieldText: field.textContent,
+  sourceReturned: sourceReturn === sourcePath,
+  sourcePathValue: sourcePath.value,
+  summaryText: summary.textContent,
+  emptyReturned: emptyReturn === emptyPath,
+  emptyPathValue: emptyPath.value,
+  emptySummaryText: emptySummary.textContent,
+  partialReturned: partialReturn === partialSummary,
+  partialSummaryText: partialSummary.textContent,
+  nullFieldReturnType: typeof nullFieldReturn,
+  nullSourceReturnType: typeof nullSourceReturn,
+  innerHTMLWrites: [
+    field,
+    summary,
+    sourcePath,
+    emptySummary,
+    emptyPath,
+    partialSummary,
+  ].reduce((total, node) => total + node.innerHTMLAssignments.length, 0),
+  imgLiteralCount: [
+    field.value,
+    summary.textContent,
+    sourcePath.value,
+    partialSummary.textContent,
+  ].filter((value) => String(value).includes("<img")).length,
+  scriptLiteralCount: [
+    field.value,
+    summary.textContent,
+    sourcePath.value,
+    partialSummary.textContent,
+  ].filter((value) => String(value).includes("<script>")).length,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["fieldExportType"] == "function"
+    assert results["sourceExportType"] == "function"
+    assert results["fieldReturned"] is True
+    assert results["fieldValue"] == "C:/source/<img src=x onerror=alert(1)><script>bad()</script>.pdf"
+    assert results["fieldText"] == ""
+    assert results["sourceReturned"] is True
+    assert results["sourcePathValue"] == "C:/source/<img src=x onerror=alert(1)><script>bad()</script>.pdf"
+    assert results["summaryText"] == "C:/source/<img src=x onerror=alert(1)><script>bad()</script>.pdf"
+    assert results["emptyReturned"] is True
+    assert results["emptyPathValue"] == "   "
+    assert results["emptySummaryText"] == "No source staged yet."
+    assert results["partialReturned"] is True
+    assert results["partialSummaryText"] == "C:/source/<img src=x onerror=alert(1)><script>bad()</script>.pdf"
+    assert results["nullFieldReturnType"] == "undefined"
+    assert results["nullSourceReturnType"] == "undefined"
+    assert results["innerHTMLWrites"] == 0
+    assert results["imgLiteralCount"] == 4
+    assert results["scriptLiteralCount"] == 4
+
+
 def test_translation_ui_module_centralizes_run_status_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -22384,6 +22549,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         translation_ui_asset = client.get(f"/static-build/{asset_version}/translation_ui.js")
         assert translation_ui_asset.status_code == 200
         assert translation_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderTranslationFieldValueInto" in translation_ui_asset.text
+        assert "renderTranslationSourcePathInto" in translation_ui_asset.text
         assert "renderTranslationOutputSummaryInto" in translation_ui_asset.text
         assert "renderTranslationRunStatusInto" in translation_ui_asset.text
         assert "renderTranslationPrimaryActionsInto" in translation_ui_asset.text

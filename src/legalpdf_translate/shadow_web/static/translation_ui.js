@@ -6,6 +6,30 @@ import {
   setText,
 } from "./safe_rendering.js";
 
+export function renderTranslationFieldValueInto(field, value = "") {
+  if (!field) {
+    return undefined;
+  }
+
+  field.value = value ?? "";
+  return field;
+}
+
+export function renderTranslationSourcePathInto(nodes = {}, value = "") {
+  const { pathField, summary } = nodes || {};
+  if (!pathField && !summary) {
+    return undefined;
+  }
+
+  if (pathField) {
+    pathField.value = value ?? "";
+  }
+  if (summary) {
+    setText(summary, String(value || "").trim() || "No source staged yet.");
+  }
+  return pathField || summary;
+}
+
 export function renderTranslationOutputSummaryInto(nodes = {}, summary = {}) {
   const { label, copy, path } = nodes || {};
   if (!label || !copy || !path) {
