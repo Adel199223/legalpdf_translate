@@ -18283,6 +18283,277 @@ console.log(JSON.stringify({
     assert results["nullResultTypes"] == ["undefined", "undefined", "undefined"]
 
 
+def test_power_tools_ui_module_centralizes_safe_run_directory_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    power_tools_ui_module = static_dir / "power_tools_ui.js"
+
+    assert power_tools_ui_module.exists()
+    assert 'from "./power_tools_ui.js"' in power_tools_js
+    assert 'renderLatestRunDirsInto(qs("power-tools-latest-run-dirs"), items, {' in power_tools_js
+    assert "container.innerHTML" not in power_tools_js
+    assert 'document.createElement("article")' not in power_tools_js
+
+    power_tools_ui_source = power_tools_ui_module.read_text(encoding="utf-8")
+    assert "export function renderLatestRunDirsInto" in power_tools_ui_source
+    assert "innerHTML" not in power_tools_ui_source
+
+    script = r"""
+const powerToolsUi = await import(__POWER_TOOLS_UI_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const listeners = new Map();
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    children: [],
+    parentNode: null,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    disabled: false,
+    type: "",
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+    addEventListener(type, handler) {
+      if (!listeners.has(type)) {
+        listeners.set(type, []);
+      }
+      listeners.get(type).push(handler);
+    },
+    click() {
+      for (const handler of listeners.get("click") || []) {
+        handler({ target: this, currentTarget: this, preventDefault() {} });
+      }
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function collectClasses(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (String(current.className || "").trim()) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+function allButtons(node) {
+  const buttons = [];
+  walk(node, (current) => {
+    if (current.tagName === "BUTTON") {
+      buttons.push(current);
+    }
+  });
+  return buttons;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const container = document.createElement("div");
+let callbackLog = [];
+const returned = powerToolsUi.renderLatestRunDirsInto(
+  container,
+  [
+    {
+      name: malicious,
+      run_dir: `C:/runs/${malicious}`,
+      modified_at_iso: "2026-05-04T12:00:00Z",
+      has_run_summary: true,
+      has_run_state: true,
+      has_calibration_report: true,
+    },
+    {
+      name: "",
+      run_dir: "",
+      modified_at_iso: "",
+      has_run_summary: false,
+      has_run_state: false,
+      has_calibration_report: false,
+    },
+  ],
+  {
+    onUseForReport(item) {
+      callbackLog.push({ action: "use", name: item.name || "run", runDir: item.run_dir || "" });
+    },
+    onAddToBuilder(item) {
+      callbackLog.push({ action: "add", name: item.name || "run", runDir: item.run_dir || "" });
+    },
+  },
+);
+
+const buttons = allButtons(container);
+buttons[0].click();
+buttons[1].click();
+buttons[2].click();
+buttons[3].click();
+
+const emptyContainer = document.createElement("div");
+emptyContainer.appendChild(document.createElement("span"));
+const emptyReturned = powerToolsUi.renderLatestRunDirsInto(emptyContainer, []);
+const nullResult = powerToolsUi.renderLatestRunDirsInto(null, [{ name: "ignored" }]);
+
+console.log(JSON.stringify({
+  exportedType: typeof powerToolsUi.renderLatestRunDirsInto,
+  returnedContainer: returned === container,
+  populated: {
+    text: container.textContent,
+    articleCount: countTag(container, "article"),
+    buttonTexts: buttons.map((button) => button.textContent),
+    imgCount: countTag(container, "img"),
+    scriptCount: countTag(container, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(container),
+    classes: collectClasses(container),
+    callbackLog,
+  },
+  empty: {
+    returnedContainer: emptyReturned === emptyContainer,
+    childCount: emptyContainer.children.length,
+    text: emptyContainer.textContent,
+    className: emptyContainer.children[0]?.className || "",
+    innerHTMLWrites: countInnerHtmlWrites(emptyContainer),
+  },
+  nullResultType: nullResult === undefined ? "undefined" : typeof nullResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__POWER_TOOLS_UI_MODULE_URL__": "power_tools_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["returnedContainer"] is True
+    assert "<img src=x onerror=alert(1)><script>bad()</script>" in results["populated"]["text"]
+    assert "C:/runs/<img src=x onerror=alert(1)><script>bad()</script>" in results["populated"]["text"]
+    assert "2026-05-04T12:00:00Z" in results["populated"]["text"]
+    assert "summary" in results["populated"]["text"]
+    assert "state" in results["populated"]["text"]
+    assert "calibration" in results["populated"]["text"]
+    assert results["populated"]["articleCount"] == 2
+    assert results["populated"]["buttonTexts"] == [
+        "Use for run report",
+        "Add to builder",
+        "Use for run report",
+        "Add to builder",
+    ]
+    assert results["populated"]["imgCount"] == 0
+    assert results["populated"]["scriptCount"] == 0
+    assert results["populated"]["innerHTMLWrites"] == 0
+    assert "history-item" in results["populated"]["classes"]
+    assert "word-break" in results["populated"]["classes"]
+    assert "history-meta" in results["populated"]["classes"]
+    assert "panel-actions" in results["populated"]["classes"]
+    assert results["populated"]["callbackLog"] == [
+        {
+            "action": "use",
+            "name": "<img src=x onerror=alert(1)><script>bad()</script>",
+            "runDir": "C:/runs/<img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        {
+            "action": "add",
+            "name": "<img src=x onerror=alert(1)><script>bad()</script>",
+            "runDir": "C:/runs/<img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        {"action": "use", "name": "run", "runDir": ""},
+        {"action": "add", "name": "run", "runDir": ""},
+    ]
+    assert results["empty"] == {
+        "returnedContainer": True,
+        "childCount": 1,
+        "text": "No recent run folders are available yet.",
+        "className": "empty-state",
+        "innerHTMLWrites": 0,
+    }
+    assert results["nullResultType"] == "undefined"
+
+
 def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -21017,6 +21288,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert busy_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "setBusy" in busy_ui_asset.text
         assert "runWithBusy" in busy_ui_asset.text
+        power_tools_ui_asset = client.get(f"/static-build/{asset_version}/power_tools_ui.js")
+        assert power_tools_ui_asset.status_code == 200
+        assert power_tools_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderLatestRunDirsInto" in power_tools_ui_asset.text
         interpretation_reference_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_reference_ui.js")
         assert interpretation_reference_ui_asset.status_code == 200
         assert interpretation_reference_ui_asset.headers["content-type"].startswith("application/javascript")

@@ -1586,3 +1586,11 @@ Verification commands/results:
   - `src/legalpdf_translate/shadow_web/static/translation.js`
   - `tests/test_shadow_web_api.py`
 - Follow-up docs refresh should mention that translation saved-case and runtime-job list card DOM rendering now lives in the safe translation UI module while `translation.js` still owns recent-work presentation derivation, callbacks, delete handling, resume/rebuild actions, and app state transitions.
+
+# 2026-05-04
+- Deferred assistant-docs refresh for the browser UI modernization slice that extracts Power Tools recent run-folder list rendering into `power_tools_ui.js`.
+- Touched implementation/test surfaces:
+  - `src/legalpdf_translate/shadow_web/static/power_tools_ui.js`
+  - `src/legalpdf_translate/shadow_web/static/power-tools.js`
+  - `tests/test_shadow_web_api.py`
+- Follow-up docs refresh should mention that recent run-folder cards now render through the safe Power Tools UI module while `power-tools.js` still owns diagnostics, builder updates, and panel-status side effects.
