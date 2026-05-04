@@ -8380,6 +8380,149 @@ console.log(JSON.stringify({
     assert results["simulatorMissingResultType"] == "object"
 
 
+def test_gmail_ui_module_centralizes_control_state_renderers() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailDrawerDatasetDefaultsInto" in gmail_js
+    assert "renderGmailDetailsOpenInto" in gmail_js
+    assert "renderGmailInputValueInto" in gmail_js
+    assert 'document.body.dataset.gmailReviewDrawer = "closed"' not in gmail_js
+    assert 'document.body.dataset.gmailPreviewDrawer = "closed"' not in gmail_js
+    assert 'document.body.dataset.gmailSessionDrawer = "closed"' not in gmail_js
+    assert 'document.body.dataset.gmailBatchFinalizeDrawer = "closed"' not in gmail_js
+    assert "details.open = false" not in gmail_js
+    assert "startPage.value = String(clamped)" not in gmail_js
+    assert "input.value = String(clamped)" not in gmail_js
+
+    assert "export function renderGmailDrawerDatasetDefaultsInto" in gmail_ui_js
+    assert "export function renderGmailDetailsOpenInto" in gmail_ui_js
+    assert "export function renderGmailInputValueInto" in gmail_ui_js
+    drawer_start = gmail_ui_js.index("export function renderGmailDrawerDatasetDefaultsInto")
+    details_start = gmail_ui_js.index("export function renderGmailDetailsOpenInto")
+    input_start = gmail_ui_js.index("export function renderGmailInputValueInto")
+    control_block = gmail_ui_js[drawer_start:gmail_ui_js.index("\nexport function", input_start + 1)]
+    assert "innerHTML" not in control_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function makeBody() {
+  return {
+    dataset: {
+      unrelated: "keep",
+    },
+    innerHTMLAssignments: [],
+  };
+}
+
+function makeDetails(open = true) {
+  const details = {
+    open,
+    innerHTMLAssignments: [],
+  };
+  Object.defineProperty(details, "innerHTML", {
+    get() {
+      return "";
+    },
+    set(value) {
+      this.innerHTMLAssignments.push(String(value ?? ""));
+    },
+  });
+  return details;
+}
+
+function makeInput(value = "") {
+  const input = {
+    value,
+    dataset: {
+      unrelated: "keep",
+    },
+    innerHTMLAssignments: [],
+  };
+  Object.defineProperty(input, "innerHTML", {
+    get() {
+      return "";
+    },
+    set(value) {
+      this.innerHTMLAssignments.push(String(value ?? ""));
+    },
+  });
+  return input;
+}
+
+const body = makeBody();
+const drawerResult = ui.renderGmailDrawerDatasetDefaultsInto(body);
+
+const details = makeDetails(true);
+const closedDetailsResult = ui.renderGmailDetailsOpenInto(details, { open: false });
+const reopenedDetails = makeDetails(false);
+ui.renderGmailDetailsOpenInto(reopenedDetails, { open: true });
+
+const input = makeInput("999");
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const inputResult = ui.renderGmailInputValueInto(input, `4${malicious}`);
+
+const nullDrawerResult = ui.renderGmailDrawerDatasetDefaultsInto(null);
+const nullDetailsResult = ui.renderGmailDetailsOpenInto(null, { open: true });
+const nullInputResult = ui.renderGmailInputValueInto(null, "ignored");
+
+console.log(JSON.stringify({
+  drawerExportType: typeof ui.renderGmailDrawerDatasetDefaultsInto,
+  detailsExportType: typeof ui.renderGmailDetailsOpenInto,
+  inputExportType: typeof ui.renderGmailInputValueInto,
+  drawerResultType: typeof drawerResult,
+  bodyDataset: body.dataset,
+  closedDetailsResultType: typeof closedDetailsResult,
+  closedDetailsOpen: details.open,
+  closedDetailsInnerHTMLWrites: details.innerHTMLAssignments.length,
+  reopenedDetailsOpen: reopenedDetails.open,
+  inputResultType: typeof inputResult,
+  inputValue: input.value,
+  inputDataset: input.dataset,
+  inputInnerHTMLWrites: input.innerHTMLAssignments.length,
+  nullDrawerResultType: typeof nullDrawerResult,
+  nullDetailsResultType: typeof nullDetailsResult,
+  nullInputResultType: typeof nullInputResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["drawerExportType"] == "function"
+    assert results["detailsExportType"] == "function"
+    assert results["inputExportType"] == "function"
+    assert results["drawerResultType"] == "object"
+    assert results["bodyDataset"] == {
+        "unrelated": "keep",
+        "gmailReviewDrawer": "closed",
+        "gmailPreviewDrawer": "closed",
+        "gmailSessionDrawer": "closed",
+        "gmailBatchFinalizeDrawer": "closed",
+    }
+    assert results["closedDetailsResultType"] == "object"
+    assert results["closedDetailsOpen"] is False
+    assert results["closedDetailsInnerHTMLWrites"] == 0
+    assert results["reopenedDetailsOpen"] is True
+    assert results["inputResultType"] == "object"
+    assert results["inputValue"] == "4<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["inputDataset"] == {"unrelated": "keep"}
+    assert results["inputInnerHTMLWrites"] == 0
+    assert results["nullDrawerResultType"] == "undefined"
+    assert results["nullDetailsResultType"] == "undefined"
+    assert results["nullInputResultType"] == "undefined"
+
+
 def test_google_photos_click_handlers_guard_primary_actions_only() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -22286,6 +22429,9 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailWorkspaceStripInto" in gmail_ui_asset.text
         assert "renderGmailContextDefaultsInto" in gmail_ui_asset.text
         assert "renderGmailSimulatorDefaultsInto" in gmail_ui_asset.text
+        assert "renderGmailDrawerDatasetDefaultsInto" in gmail_ui_asset.text
+        assert "renderGmailDetailsOpenInto" in gmail_ui_asset.text
+        assert "renderGmailInputValueInto" in gmail_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")

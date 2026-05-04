@@ -15,8 +15,11 @@ import {
   renderGmailAttachmentListInto,
   renderGmailBatchFinalizeSurfaceInto,
   renderGmailContextDefaultsInto,
+  renderGmailDetailsOpenInto,
   renderGmailDemoReviewActionInto,
+  renderGmailDrawerDatasetDefaultsInto,
   renderGmailDrawerChromeInto,
+  renderGmailInputValueInto,
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
@@ -2203,10 +2206,7 @@ async function loadMessage() {
   updateSessionButtons();
   setPanelStatus("gmail", payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad", payload.normalized_payload.load_result?.status_message || "Gmail message load complete.");
   setDiagnostics("gmail", payload, { hint: payload.normalized_payload.load_result?.status_message || "Gmail message load complete.", open: payload.status !== "ok" });
-  const details = qs("gmail-intake-details");
-  if (details) {
-    details.open = false;
-  }
+  renderGmailDetailsOpenInto(qs("gmail-intake-details"), { open: false });
   if (gmailState.loadResult?.ok && gmailState.loadResult?.message) {
     openReviewDrawer();
   }
@@ -2713,10 +2713,7 @@ export function initializeGmailUi(hooks) {
   setDiagnostics("gmail", { status: "idle", message: "No Gmail action has run yet." }, { hint: "Exact-message load, attachment preview, and session preparation details appear here.", open: false });
   setDiagnostics("gmail-session", { status: "idle", message: "No Gmail batch or interpretation finalization has run yet." }, { hint: "Batch progression, staged attachments, export status, and Gmail draft details appear here.", open: false });
   setDiagnostics("gmail-batch-finalize", { status: "idle", message: "No Gmail batch finalization has run yet." }, { hint: "Final draft request details and honorários export diagnostics appear here.", open: false });
-  document.body.dataset.gmailReviewDrawer = "closed";
-  document.body.dataset.gmailPreviewDrawer = "closed";
-  document.body.dataset.gmailSessionDrawer = "closed";
-  document.body.dataset.gmailBatchFinalizeDrawer = "closed";
+  renderGmailDrawerDatasetDefaultsInto(document.body);
 
   qs("gmail-context-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2859,7 +2856,7 @@ export function initializeGmailUi(hooks) {
     if (startPage) {
       const attachmentId = startPage.dataset.attachmentStartPage;
       const clamped = updateAttachmentStartPage(attachmentId, startPage.value);
-      startPage.value = String(clamped);
+      renderGmailInputValueInto(startPage, clamped);
       renderReviewDetail();
       renderPreviewPanel();
     }
@@ -2872,7 +2869,7 @@ export function initializeGmailUi(hooks) {
     }
     const attachmentId = startPage.dataset.detailStartPage;
     const clamped = updateAttachmentStartPage(attachmentId, startPage.value);
-    startPage.value = String(clamped);
+    renderGmailInputValueInto(startPage, clamped);
     renderAttachmentList(gmailState.loadResult);
     renderPreviewPanel();
   });
@@ -2949,7 +2946,7 @@ export function initializeGmailUi(hooks) {
     const input = event.target;
     gmailState.previewState = setPreviewStatePage(gmailState.previewState, input.value);
     const clamped = previewPage();
-    input.value = String(clamped);
+    renderGmailInputValueInto(input, clamped);
     renderPreviewPanel();
   });
 

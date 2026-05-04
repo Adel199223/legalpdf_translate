@@ -16,6 +16,25 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-05-04 — feat/gmail-control-state-ui-module (deferred)
+- Files changed:
+  - src/legalpdf_translate/shadow_web/static/gmail.js
+  - src/legalpdf_translate/shadow_web/static/gmail_ui.js
+  - tests/test_shadow_web_api.py
+- Key symbols / entrypoints changed:
+  - gmail_ui.js::renderGmailDrawerDatasetDefaultsInto
+  - gmail_ui.js::renderGmailDetailsOpenInto
+  - gmail_ui.js::renderGmailInputValueInto
+  - gmail.js::initializeGmailUi
+- User-visible behavior:
+  - No intended behavior change; Gmail drawer default state, Gmail intake detail collapse, and clamped numeric inputs keep the same values while moving simple DOM writes into the Gmail UI module.
+- Tests:
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "gmail_ui_module_centralizes_control_state_renderers or versioned_static_route"
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_browser_safe_rendering.py
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_gmail_intake.py -k "browser_pdf or review"
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py tests\test_shadow_web_route_state.py tests\test_translation_browser_state.py
+  - powershell -ExecutionPolicy Bypass -File scripts\validate_dev.ps1 -Full
+
 ## 2026-05-04 — feat/gmail-context-defaults-ui-module (deferred)
 - Files changed:
   - src/legalpdf_translate/shadow_web/static/gmail.js
