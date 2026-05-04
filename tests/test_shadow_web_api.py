@@ -10787,6 +10787,212 @@ console.log(JSON.stringify({
     assert "status-chip ok" in results["completed"]["classes"]
 
 
+def test_result_card_ui_module_centralizes_arabic_review_card_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    result_card_ui_js = (static_dir / "result_card_ui.js").read_text(encoding="utf-8")
+
+    assert "renderArabicReviewCardInto" in translation_js
+    assert "export function renderArabicReviewCardInto" in result_card_ui_js
+    review_start = translation_js.index("function renderArabicReviewCard")
+    review_end = translation_js.index("\nfunction syncTranslationCompletionSurface", review_start)
+    review_block = translation_js[review_start:review_end]
+    assert "renderArabicReviewCardInto({" in review_block
+    assert ".innerHTML" not in review_block
+    assert "escapeHtml" not in review_block
+
+    renderer_start = result_card_ui_js.index("export function renderArabicReviewCardInto")
+    renderer_end = result_card_ui_js.index("\nexport function", renderer_start + 1) if "\nexport function" in result_card_ui_js[renderer_start + 1:] else len(result_card_ui_js)
+    renderer_block = result_card_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const resultCardUi = await import(__RESULT_CARD_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    children: [],
+    innerHTMLAssignments: [],
+    disabled: false,
+    _textContent: "",
+    _innerHTML: "",
+  };
+  element.classList = makeClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        this.children.push(makeElement(match[1]));
+      }
+    },
+  });
+  return element;
+}
+
+function makeNodes() {
+  return {
+    card: makeElement("article"),
+    title: makeElement("strong"),
+    copy: makeElement("p"),
+    chip: makeElement("span"),
+    docxLabel: makeElement("h3"),
+    docxPath: makeElement("p"),
+    openButton: makeElement("button"),
+    continueNowButton: makeElement("button"),
+    continueWithoutChangesButton: makeElement("button"),
+  };
+}
+
+function summarize(nodes) {
+  return {
+    hidden: nodes.card.classList.contains("hidden"),
+    title: nodes.title.textContent,
+    copy: nodes.copy.textContent,
+    chipText: nodes.chip.textContent,
+    chipClass: nodes.chip.className,
+    docxLabel: nodes.docxLabel.textContent,
+    docxPath: nodes.docxPath.textContent,
+    openText: nodes.openButton.textContent,
+    continueNowText: nodes.continueNowButton.textContent,
+    continueWithoutChangesText: nodes.continueWithoutChangesButton.textContent,
+    openDisabled: nodes.openButton.disabled,
+    continueNowDisabled: nodes.continueNowButton.disabled,
+    continueWithoutChangesDisabled: nodes.continueWithoutChangesButton.disabled,
+    innerHTMLWrites: Object.values(nodes).reduce((total, node) => total + node.innerHTMLAssignments.length, 0),
+    imgChildren: Object.values(nodes).reduce((total, node) => total + node.children.filter((child) => child.tagName === "IMG").length, 0),
+    scriptChildren: Object.values(nodes).reduce((total, node) => total + node.children.filter((child) => child.tagName === "SCRIPT").length, 0),
+  };
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const hiddenNodes = makeNodes();
+hiddenNodes.card.className = "result-card";
+const hiddenReturn = resultCardUi.renderArabicReviewCardInto(hiddenNodes, {
+  show: false,
+  title: `Ignored ${malicious}`,
+});
+
+const visibleNodes = makeNodes();
+visibleNodes.card.className = "result-card hidden";
+const visibleReturn = resultCardUi.renderArabicReviewCardInto(visibleNodes, {
+  show: true,
+  title: `Review ${malicious}`,
+  copy: `Open Word ${malicious}`,
+  chipLabel: `Required ${malicious}`,
+  chipTone: "warn",
+  docxLabel: `DOCX ${malicious}`,
+  docxPath: `C:/tmp/arabic ${malicious}.docx`,
+  openLabel: `Open ${malicious}`,
+  continueNowLabel: `Saved ${malicious}`,
+  continueWithoutChangesLabel: `Skip ${malicious}`,
+  openDisabled: true,
+  continueNowDisabled: false,
+  continueWithoutChangesDisabled: true,
+});
+
+const incompleteNodes = makeNodes();
+delete incompleteNodes.copy;
+const incompleteReturn = resultCardUi.renderArabicReviewCardInto(incompleteNodes, {
+  show: true,
+  title: "Should not render",
+});
+const nullReturn = resultCardUi.renderArabicReviewCardInto(null, { show: true });
+
+console.log(JSON.stringify({
+  exportType: typeof resultCardUi.renderArabicReviewCardInto,
+  hiddenReturned: hiddenReturn === hiddenNodes.card,
+  hidden: summarize(hiddenNodes),
+  visibleReturned: visibleReturn === visibleNodes.card,
+  visible: summarize(visibleNodes),
+  incompleteReturnType: typeof incompleteReturn,
+  incompleteTitle: incompleteNodes.title.textContent,
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__RESULT_CARD_UI_MODULE_URL__": "result_card_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["hiddenReturned"] is True
+    assert results["hidden"]["hidden"] is True
+    assert results["hidden"]["title"] == ""
+    assert results["hidden"]["innerHTMLWrites"] == 0
+
+    assert results["visibleReturned"] is True
+    assert results["visible"]["hidden"] is False
+    assert results["visible"]["title"] == "Review <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["copy"] == "Open Word <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["chipText"] == "Required <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["chipClass"] == "status-chip warn"
+    assert results["visible"]["docxLabel"] == "DOCX <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["docxPath"] == "C:/tmp/arabic <img src=x onerror=alert(1)><script>bad()</script>.docx"
+    assert results["visible"]["openText"] == "Open <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["continueNowText"] == "Saved <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["continueWithoutChangesText"] == "Skip <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["visible"]["openDisabled"] is True
+    assert results["visible"]["continueNowDisabled"] is False
+    assert results["visible"]["continueWithoutChangesDisabled"] is True
+    assert results["visible"]["innerHTMLWrites"] == 0
+    assert results["visible"]["imgChildren"] == 0
+    assert results["visible"]["scriptChildren"] == 0
+
+    assert results["incompleteReturnType"] == "undefined"
+    assert results["incompleteTitle"] == ""
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -18830,6 +19036,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "appendResultGridItem" in result_card_ui_asset.text
         assert "renderResultHeaderCardInto" in result_card_ui_asset.text
         assert "renderTranslationResultCardInto" in result_card_ui_asset.text
+        assert "renderArabicReviewCardInto" in result_card_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")

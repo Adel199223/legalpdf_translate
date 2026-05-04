@@ -112,3 +112,49 @@ export function renderTranslationResultCardInto(container, card = {}) {
   container.appendChild(header);
   return container;
 }
+
+export function renderArabicReviewCardInto(nodes = {}, card = {}) {
+  const {
+    card: cardNode,
+    title,
+    copy,
+    chip,
+    docxLabel,
+    docxPath,
+    openButton,
+    continueNowButton,
+    continueWithoutChangesButton,
+  } = nodes || {};
+  if (
+    !cardNode
+    || !title
+    || !copy
+    || !chip
+    || !docxLabel
+    || !docxPath
+    || !openButton
+    || !continueNowButton
+    || !continueWithoutChangesButton
+  ) {
+    return undefined;
+  }
+
+  cardNode.classList.toggle("hidden", !card.show);
+  if (!card.show) {
+    return cardNode;
+  }
+
+  setText(docxLabel, card.docxLabel || "");
+  setText(title, card.title || "");
+  setText(copy, card.copy || "");
+  setText(docxPath, card.docxPath || "");
+  setText(chip, card.chipLabel || "");
+  chip.className = `status-chip ${card.chipTone || ""}`;
+  setText(openButton, card.openLabel || "");
+  setText(continueNowButton, card.continueNowLabel || "");
+  setText(continueWithoutChangesButton, card.continueWithoutChangesLabel || "");
+  openButton.disabled = Boolean(card.openDisabled);
+  continueNowButton.disabled = Boolean(card.continueNowDisabled);
+  continueWithoutChangesButton.disabled = Boolean(card.continueWithoutChangesDisabled);
+  return cardNode;
+}
