@@ -6515,6 +6515,175 @@ console.log(JSON.stringify({
     assert results["truthyDisabled"]["innerHTMLWrites"] == 0
 
 
+def test_gmail_ui_module_centralizes_session_buttons_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+
+    assert "renderGmailSessionButtonsInto" in gmail_js
+    assert "export function renderGmailSessionButtonsInto" in gmail_ui_js
+
+    update_start = gmail_js.index("function updateSessionButtons()")
+    update_end = gmail_js.index("\nfunction renderReviewSurface", update_start)
+    update_block = gmail_js[update_start:update_end]
+    assert "renderGmailSessionButtonsInto(" in update_block
+    assert "button.disabled =" not in update_block
+    assert 'button.classList.toggle("hidden"' not in update_block
+    assert "closeSessionDrawer();" in update_block
+
+    renderer_start = gmail_ui_js.index("export function renderGmailSessionButtonsInto")
+    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "innerHTML" not in renderer_block
+    assert "textContent" not in renderer_block
+    assert "qs(" not in renderer_block
+    assert "gmail-load-translation-launch" not in renderer_block
+    assert "gmail-finalize-interpretation" not in renderer_block
+
+    script = """
+const ui = await import(__GMAIL_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    toggle(name, force) {
+      const classes = new Set(normalizeClassList(element.className));
+      const shouldAdd = force === undefined ? !classes.has(name) : Boolean(force);
+      if (shouldAdd) {
+        classes.add(name);
+      } else {
+        classes.delete(name);
+      }
+      element.className = Array.from(classes).join(" ");
+      return shouldAdd;
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeButton(className = "") {
+  const button = {
+    className,
+    disabled: false,
+    children: [],
+    innerHTMLAssignments: [],
+    textContentAssignments: [],
+  };
+  button.classList = makeClassList(button);
+  Object.defineProperty(button, "textContent", {
+    get() {
+      return this._textContent || "";
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+      this.textContentAssignments.push(this._textContent);
+    },
+  });
+  Object.defineProperty(button, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = Array.from(next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g))
+        .map((match) => ({ tagName: match[1].toUpperCase() }));
+      this.innerHTMLAssignments.push(next);
+    },
+  });
+  return button;
+}
+
+function summarize(button) {
+  return {
+    className: normalizeClassList(button.className).sort().join(" "),
+    hidden: button.classList.contains("hidden"),
+    disabled: button.disabled,
+    innerHTMLWrites: button.innerHTMLAssignments.length,
+    textContentWrites: button.textContentAssignments.length,
+  };
+}
+
+const enabled = makeButton("hidden ghost-button");
+const disabled = makeButton("ghost-button");
+const truthy = makeButton("hidden");
+const falsey = makeButton("ghost-button");
+const empty = makeButton("hidden");
+
+const result = ui.renderGmailSessionButtonsInto([
+  [enabled, true],
+  [disabled, false],
+  [truthy, "yes"],
+  [falsey, ""],
+  [null, true],
+]);
+const emptyResult = ui.renderGmailSessionButtonsInto([]);
+const nullResult = ui.renderGmailSessionButtonsInto(null);
+
+console.log(JSON.stringify({
+  exportType: typeof ui.renderGmailSessionButtonsInto,
+  resultType: typeof result,
+  emptyResultType: typeof emptyResult,
+  nullResultType: typeof nullResult,
+  enabled: summarize(enabled),
+  disabled: summarize(disabled),
+  truthy: summarize(truthy),
+  falsey: summarize(falsey),
+  empty: summarize(empty),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["resultType"] == "object"
+    assert results["emptyResultType"] == "object"
+    assert results["nullResultType"] == "undefined"
+
+    assert results["enabled"]["hidden"] is False
+    assert results["enabled"]["disabled"] is False
+    assert results["enabled"]["className"] == "ghost-button"
+    assert results["enabled"]["innerHTMLWrites"] == 0
+    assert results["enabled"]["textContentWrites"] == 0
+
+    assert results["disabled"]["hidden"] is True
+    assert results["disabled"]["disabled"] is True
+    assert results["disabled"]["className"] == "ghost-button hidden"
+    assert results["disabled"]["innerHTMLWrites"] == 0
+    assert results["disabled"]["textContentWrites"] == 0
+
+    assert results["truthy"]["hidden"] is False
+    assert results["truthy"]["disabled"] is False
+    assert results["truthy"]["innerHTMLWrites"] == 0
+    assert results["truthy"]["textContentWrites"] == 0
+
+    assert results["falsey"]["hidden"] is True
+    assert results["falsey"]["disabled"] is True
+    assert results["falsey"]["innerHTMLWrites"] == 0
+    assert results["falsey"]["textContentWrites"] == 0
+
+    assert results["empty"]["hidden"] is True
+    assert results["empty"]["disabled"] is False
+    assert results["empty"]["innerHTMLWrites"] == 0
+    assert results["empty"]["textContentWrites"] == 0
+
+
 def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -17930,6 +18099,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailDemoReviewActionInto" in gmail_ui_asset.text
         assert "renderGmailReturnToSourceActionInto" in gmail_ui_asset.text
         assert "renderGmailPrepareActionInto" in gmail_ui_asset.text
+        assert "renderGmailSessionButtonsInto" in gmail_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
