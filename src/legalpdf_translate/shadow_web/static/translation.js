@@ -13,6 +13,7 @@ import {
   renderTranslationResultCardInto,
 } from "./result_card_ui.js";
 import {
+  renderTranslationDownloadLinkInto,
   renderTranslationNumericMismatchWarningInto,
   renderTranslationOutputSummaryInto,
   renderTranslationPrimaryActionsInto,
@@ -1877,25 +1878,11 @@ function renderTranslationRunStatus(job = translationState.currentJob) {
 }
 
 function clearDownloadLink(id) {
-  const node = qs(id);
-  if (!node) {
-    return;
-  }
-  node.classList.add("hidden");
-  node.removeAttribute("href");
+  renderTranslationDownloadLinkInto(qs(id), "");
 }
 
 function setDownloadLink(id, href) {
-  const node = qs(id);
-  if (!node) {
-    return;
-  }
-  if (href) {
-    node.href = href;
-    node.classList.remove("hidden");
-  } else {
-    clearDownloadLink(id);
-  }
+  renderTranslationDownloadLinkInto(qs(id), href);
 }
 
 function translationRunReportHref(job = translationState.currentJob) {
