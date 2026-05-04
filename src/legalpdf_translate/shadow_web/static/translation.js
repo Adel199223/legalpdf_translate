@@ -14,6 +14,7 @@ import {
 } from "./result_card_ui.js";
 import {
   renderTranslationOutputSummaryInto,
+  renderTranslationPrimaryActionsInto,
   renderTranslationRunStatusInto,
 } from "./translation_ui.js";
 
@@ -1735,31 +1736,15 @@ function summarizeTranslationLogFlags(logs = []) {
 }
 
 function syncTranslationPrimaryActionState() {
-  const startButton = qs("translation-start");
-  const analyzeButton = qs("translation-analyze");
-  const cancelButton = qs("translation-cancel");
-  const resumeButton = qs("translation-resume-btn");
-  const rebuildButton = qs("translation-rebuild");
-  const helper = qs("translation-action-helper");
   const actionState = deriveTranslationActionState();
-  if (helper) {
-    helper.textContent = actionState.helperText;
-  }
-  if (startButton) {
-    startButton.disabled = !actionState.startEnabled;
-  }
-  if (analyzeButton) {
-    analyzeButton.disabled = !actionState.analyzeEnabled;
-  }
-  if (cancelButton) {
-    cancelButton.disabled = !actionState.cancelEnabled;
-  }
-  if (resumeButton) {
-    resumeButton.disabled = !actionState.resumeEnabled;
-  }
-  if (rebuildButton) {
-    rebuildButton.disabled = !actionState.rebuildEnabled;
-  }
+  renderTranslationPrimaryActionsInto({
+    helper: qs("translation-action-helper"),
+    startButton: qs("translation-start"),
+    analyzeButton: qs("translation-analyze"),
+    cancelButton: qs("translation-cancel"),
+    resumeButton: qs("translation-resume-btn"),
+    rebuildButton: qs("translation-rebuild"),
+  }, actionState);
 }
 
 export function deriveTranslationRunStatusView(
