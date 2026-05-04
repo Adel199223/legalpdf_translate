@@ -93,6 +93,18 @@ export function renderGmailDemoReviewActionInto(button, { visible = false } = {}
   return button;
 }
 
+export function renderGmailReturnToSourceActionInto(button, { visible = false, sourceUrl = "" } = {}) {
+  if (!button) {
+    return undefined;
+  }
+
+  const show = Boolean(visible);
+  button.classList.toggle("hidden", !show);
+  button.disabled = !show;
+  button.title = show ? String(sourceUrl || "") : "";
+  return button;
+}
+
 export function renderGmailMessageResultInto(container, detailsHint, card = {}) {
   if (!container) {
     return;
