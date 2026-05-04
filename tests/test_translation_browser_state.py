@@ -388,6 +388,13 @@ function historyResponse() {
   });
 }
 
+function deepText(node) {
+  if (!node) {
+    return "";
+  }
+  return `${node.textContent || ""}${(node.children || []).map((child) => deepText(child)).join("")}`;
+}
+
 function captureUi(env, translationModule) {
   return {
     snapshot: translationModule.getTranslationUiSnapshot(),
@@ -402,6 +409,7 @@ function captureUi(env, translationModule) {
     actionHelper: env.element("translation-action-helper").textContent,
     runTask: env.element("translation-current-task").textContent,
     resultHtml: env.element("translation-result").innerHTML,
+    resultText: deepText(env.element("translation-result")),
     jobDiagnostics: env.element("translation-job-diagnostics").textContent,
     jobDetailsOpen: env.element("translation-job-details").open,
     numericWarning: env.element("translation-numeric-warning").textContent,
@@ -1321,8 +1329,8 @@ def test_translation_browser_loaded_job_source_replaces_stale_summary_and_run_st
     raw_warning = results["rawStatusNumericWarning"]
     assert raw_warning["runTask"] == "Completed pages: 9. Latest technical state is available in details."
     assert '{"job_id"' not in raw_warning["runTask"]
-    assert "Translation complete." in raw_warning["resultHtml"]
-    assert '{"job_id"' not in raw_warning["resultHtml"]
+    assert "Translation complete." in raw_warning["resultText"]
+    assert '{"job_id"' not in raw_warning["resultText"]
     assert '"status_text"' in raw_warning["jobDiagnostics"]
     assert '\\"job_id\\"' in raw_warning["jobDiagnostics"]
     assert "Review recommended: some numbers from the source may not appear exactly in the translation." in raw_warning["numericWarning"]

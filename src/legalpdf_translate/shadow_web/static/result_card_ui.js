@@ -76,3 +76,39 @@ export function renderResultHeaderCardInto(container, card = {}) {
   container.appendChild(header);
   return container;
 }
+
+export function renderTranslationResultCardInto(container, card = {}) {
+  if (!container) {
+    return undefined;
+  }
+
+  if (card.empty) {
+    container.classList.add("empty-state");
+    container.textContent = card.emptyText || "";
+    return container;
+  }
+
+  container.classList.remove("empty-state");
+  clearNode(container);
+
+  const header = document.createElement("div");
+  header.className = "result-header";
+
+  const copy = document.createElement("div");
+  copy.appendChild(createTextElement("strong", card.title || ""));
+
+  const summary = document.createElement("p");
+  const summaryLines = (Array.isArray(card.summaryLines) ? card.summaryLines : []).map((line) => String(line ?? ""));
+  appendMultilineText(summary, summaryLines.join("\n"));
+  copy.appendChild(summary);
+
+  const footer = String(card.footer || "");
+  if (footer) {
+    copy.appendChild(createTextElement("p", footer));
+  }
+
+  header.appendChild(copy);
+  header.appendChild(createStatusChip(card.label || "", card.tone || "info"));
+  container.appendChild(header);
+  return container;
+}

@@ -10511,6 +10511,282 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_result_card_ui_module_centralizes_translation_result_card_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    result_card_ui_js = (static_dir / "result_card_ui.js").read_text(encoding="utf-8")
+
+    assert "renderTranslationResultCardInto" in translation_js
+    assert "export function renderTranslationResultCardInto" in result_card_ui_js
+    result_start = translation_js.index("function renderTranslationResultCard")
+    result_end = translation_js.index("\nfunction maybeRefreshNumericMismatchWarning", result_start)
+    result_block = translation_js[result_start:result_end]
+    assert "renderTranslationResultCardInto(container, {" in result_block
+    assert ".innerHTML" not in result_block
+    assert "escapeHtml" not in result_block
+
+    renderer_start = result_card_ui_js.index("export function renderTranslationResultCardInto")
+    renderer_end = result_card_ui_js.index("\nexport function", renderer_start + 1) if "\nexport function" in result_card_ui_js[renderer_start + 1:] else len(result_card_ui_js)
+    renderer_block = result_card_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const resultCardUi = await import(__RESULT_CARD_UI_MODULE_URL__);
+
+function normalizeClassList(value) {
+  return String(value || "").split(/\s+/).filter(Boolean);
+}
+
+function makeClassList(element) {
+  return {
+    add(...names) {
+      const classes = new Set(normalizeClassList(element.className));
+      names.flatMap((name) => normalizeClassList(name)).forEach((name) => classes.add(name));
+      element.className = Array.from(classes).join(" ");
+    },
+    remove(...names) {
+      const removeNames = new Set(names.flatMap((name) => normalizeClassList(name)));
+      element.className = normalizeClassList(element.className)
+        .filter((name) => !removeNames.has(name))
+        .join(" ");
+    },
+    contains(name) {
+      return normalizeClassList(element.className).includes(name);
+    },
+  };
+}
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    children: [],
+    parentNode: null,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    appendChild(node) {
+      if (node) {
+        node.parentNode = this;
+        this.children.push(node);
+      }
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      nodes.forEach((node) => {
+        if (node) {
+          node.parentNode = this;
+          this.children.push(node);
+        }
+      });
+      this._textContent = "";
+      this._innerHTML = "";
+    },
+  };
+  element.classList = makeClassList(element);
+  Object.defineProperty(element, "textContent", {
+    get() {
+      if (this.children.length) {
+        return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      }
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      for (const match of matches) {
+        const child = makeElement(match[1]);
+        child.parentNode = this;
+        this.children.push(child);
+      }
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(node) {
+  let total = 0;
+  walk(node, (current) => {
+    total += (current.innerHTMLAssignments || []).length;
+  });
+  return total;
+}
+
+function collectClasses(node) {
+  const classes = [];
+  walk(node, (current) => {
+    if (String(current.className || "").trim()) {
+      classes.push(current.className);
+    }
+  });
+  return classes;
+}
+
+function summarize(node) {
+  return {
+    returned: Boolean(node.returned),
+    className: node.className,
+    text: node.textContent,
+    brCount: countTag(node, "br"),
+    pCount: countTag(node, "p"),
+    imgCount: countTag(node, "img"),
+    scriptCount: countTag(node, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(node),
+    classes: collectClasses(node),
+  };
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const empty = makeElement("div");
+empty.className = "result-card";
+empty.returned = resultCardUi.renderTranslationResultCardInto(empty, {
+  empty: true,
+  emptyText: `Choose ${malicious}`,
+}) === empty;
+
+const prepared = makeElement("div");
+prepared.className = "result-card empty-state";
+prepared.returned = resultCardUi.renderTranslationResultCardInto(prepared, {
+  title: "Prepared Gmail attachment is ready to start.",
+  summaryLines: [`File ${malicious}`, "Start page: 2"],
+  footer: "Ready to start. Click Start Translate when you're ready.",
+  label: "ready",
+  tone: "info",
+}) === prepared;
+
+const sourceReady = makeElement("div");
+sourceReady.className = "result-card empty-state";
+sourceReady.returned = resultCardUi.renderTranslationResultCardInto(sourceReady, {
+  title: "Source file is ready.",
+  summaryLines: ["Confirm the language and output folder, then click Start Translate when you're ready."],
+  label: "ready",
+  tone: "ok",
+}) === sourceReady;
+
+const failed = makeElement("div");
+failed.className = "result-card empty-state";
+failed.returned = resultCardUi.renderTranslationResultCardInto(failed, {
+  title: `Failed ${malicious}`,
+  summaryLines: [`Error: ${malicious}`, "Status code: 401"],
+  label: `failed ${malicious}`,
+  tone: "bad",
+}) === failed;
+
+const completed = makeElement("div");
+completed.className = "result-card empty-state";
+completed.returned = resultCardUi.renderTranslationResultCardInto(completed, {
+  title: "Translation complete.",
+  summaryLines: ["Completed pages: 3", "Run ID: run-123"],
+  label: "completed",
+  tone: "ok",
+}) === completed;
+
+const nullReturn = resultCardUi.renderTranslationResultCardInto(null, {
+  title: "Ignored",
+});
+
+console.log(JSON.stringify({
+  exportType: typeof resultCardUi.renderTranslationResultCardInto,
+  nullReturnType: typeof nullReturn,
+  empty: summarize(empty),
+  prepared: summarize(prepared),
+  sourceReady: summarize(sourceReady),
+  failed: summarize(failed),
+  completed: summarize(completed),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__RESULT_CARD_UI_MODULE_URL__": "result_card_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["nullReturnType"] == "undefined"
+    assert results["empty"]["returned"] is True
+    assert "empty-state" in results["empty"]["className"]
+    assert results["empty"]["text"] == "Choose <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["empty"]["imgCount"] == 0
+    assert results["empty"]["scriptCount"] == 0
+    assert results["empty"]["innerHTMLWrites"] == 0
+
+    assert results["prepared"]["returned"] is True
+    assert "empty-state" not in results["prepared"]["className"]
+    assert "Prepared Gmail attachment is ready to start." in results["prepared"]["text"]
+    assert "File <img src=x onerror=alert(1)><script>bad()</script>" in results["prepared"]["text"]
+    assert "Ready to start. Click Start Translate when you're ready." in results["prepared"]["text"]
+    assert "ready" in results["prepared"]["text"]
+    assert results["prepared"]["pCount"] == 2
+    assert results["prepared"]["brCount"] == 1
+    assert results["prepared"]["imgCount"] == 0
+    assert results["prepared"]["scriptCount"] == 0
+    assert results["prepared"]["innerHTMLWrites"] == 0
+    assert "status-chip info" in results["prepared"]["classes"]
+
+    assert "empty-state" not in results["sourceReady"]["className"]
+    assert "Source file is ready." in results["sourceReady"]["text"]
+    assert results["sourceReady"]["pCount"] == 1
+    assert results["sourceReady"]["brCount"] == 0
+    assert "status-chip ok" in results["sourceReady"]["classes"]
+
+    assert "Failed <img src=x onerror=alert(1)><script>bad()</script>" in results["failed"]["text"]
+    assert "Error: <img src=x onerror=alert(1)><script>bad()</script>" in results["failed"]["text"]
+    assert "failed <img src=x onerror=alert(1)><script>bad()</script>" in results["failed"]["text"]
+    assert results["failed"]["imgCount"] == 0
+    assert results["failed"]["scriptCount"] == 0
+    assert results["failed"]["innerHTMLWrites"] == 0
+    assert "status-chip bad" in results["failed"]["classes"]
+
+    assert results["completed"]["text"] == "Translation complete.Completed pages: 3Run ID: run-123completed"
+    assert results["completed"]["brCount"] == 1
+    assert "status-chip ok" in results["completed"]["classes"]
+
+
 def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -18553,6 +18829,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "createResultHeader" in result_card_ui_asset.text
         assert "appendResultGridItem" in result_card_ui_asset.text
         assert "renderResultHeaderCardInto" in result_card_ui_asset.text
+        assert "renderTranslationResultCardInto" in result_card_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")
