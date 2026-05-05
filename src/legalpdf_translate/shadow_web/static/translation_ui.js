@@ -130,6 +130,22 @@ export function renderTranslationPreparedControlsInto(nodes = {}) {
   return reportButton || reviewExport || cancelButton || resumeButton || rebuildButton || undefined;
 }
 
+export function renderTranslationJobActionControlsInto(nodes = {}, controls = {}) {
+  const { reportButton, reviewExport } = nodes || {};
+  const reportAvailable = Boolean(controls.reportAvailable);
+  const reportVisible = Boolean(controls.reportVisible);
+  const reviewExportAvailable = Boolean(controls.reviewExportAvailable);
+
+  if (reportButton) {
+    reportButton.disabled = !reportAvailable;
+    reportButton.classList.toggle("hidden", !reportVisible);
+  }
+  if (reviewExport) {
+    reviewExport.disabled = !reviewExportAvailable;
+  }
+  return reportButton || reviewExport || undefined;
+}
+
 export function renderTranslationNumericMismatchWarningInto(container, warning = {}) {
   if (!container) {
     return undefined;

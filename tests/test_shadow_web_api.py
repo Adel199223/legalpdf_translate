@@ -12811,6 +12811,198 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_ui_module_centralizes_job_action_controls_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationJobActionControlsInto" in translation_js
+    assert "export function renderTranslationJobActionControlsInto" in translation_ui_js
+
+    unavailable_start = translation_js.index("if (!translationState.currentJob)")
+    unavailable_end = translation_js.index("\n  if (!available)", unavailable_start)
+    unavailable_block = translation_js[unavailable_start:unavailable_end]
+    assert "renderTranslationJobActionControlsInto({" in unavailable_block
+    assert ".disabled =" not in unavailable_block
+    assert ".classList.add(\"hidden\")" not in unavailable_block
+
+    job_start = translation_js.index("function renderTranslationJob(job)")
+    job_end = translation_js.index("\n  if (job?.result?.save_seed)", job_start)
+    job_block = translation_js[job_start:job_end]
+    assert "renderTranslationJobActionControlsInto({" in job_block
+    assert "translationRunReportHref(job)" in job_block
+    assert "reportButton.disabled" not in job_block
+    assert "reportButton.classList.toggle" not in job_block
+    assert "translation-review-export\").disabled" not in job_block
+    assert ".innerHTML" not in job_block
+
+    renderer_start = translation_ui_js.index("export function renderTranslationJobActionControlsInto")
+    renderer_end = (
+        translation_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+        else len(translation_ui_js)
+    )
+    renderer_block = translation_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeButton() {
+  const button = {
+    classActions: [],
+    classSet: new Set(),
+    disabled: false,
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+    classList: {
+      toggle(name, force) {
+        const enabled = Boolean(force);
+        if (enabled) {
+          this.owner.classSet.add(name);
+        } else {
+          this.owner.classSet.delete(name);
+        }
+        this.owner.classActions.push(["toggle", name, enabled]);
+        return enabled;
+      },
+    },
+  };
+  button.classList.owner = button;
+  Object.defineProperty(button, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return button;
+}
+
+function makeNodes() {
+  return {
+    reportButton: makeButton(),
+    reviewExport: makeButton(),
+  };
+}
+
+function summarize(nodes) {
+  const allNodes = Object.values(nodes).filter(Boolean);
+  return {
+    reportDisabled: nodes.reportButton?.disabled ?? null,
+    reportHidden: nodes.reportButton?.classSet.has("hidden") ?? null,
+    reviewExportDisabled: nodes.reviewExport?.disabled ?? null,
+    innerHTMLWrites: allNodes.reduce((total, node) => total + node.innerHTMLAssignments.length, 0),
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const readyNodes = makeNodes();
+const readyReturn = translationUi.renderTranslationJobActionControlsInto(readyNodes, {
+  reportAvailable: true,
+  reportVisible: true,
+  reviewExportAvailable: true,
+});
+
+const blockedNodes = makeNodes();
+const blockedReturn = translationUi.renderTranslationJobActionControlsInto(blockedNodes, {
+  reportAvailable: false,
+  reportVisible: true,
+  reviewExportAvailable: false,
+});
+
+const unavailableNodes = makeNodes();
+const unavailableReturn = translationUi.renderTranslationJobActionControlsInto(unavailableNodes, {
+  reportAvailable: false,
+  reportVisible: false,
+  reviewExportAvailable: false,
+});
+
+const truthyNodes = makeNodes();
+const truthyReturn = translationUi.renderTranslationJobActionControlsInto(truthyNodes, {
+  reportAvailable: malicious,
+  reportVisible: malicious,
+  reviewExportAvailable: malicious,
+});
+
+const partialNodes = makeNodes();
+delete partialNodes.reportButton;
+const partialReturn = translationUi.renderTranslationJobActionControlsInto(partialNodes, {
+  reportAvailable: true,
+  reportVisible: true,
+  reviewExportAvailable: false,
+});
+
+const nullReturn = translationUi.renderTranslationJobActionControlsInto(null, {
+  reportAvailable: true,
+  reportVisible: true,
+  reviewExportAvailable: true,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof translationUi.renderTranslationJobActionControlsInto,
+  readyReturned: readyReturn === readyNodes.reportButton,
+  ready: summarize(readyNodes),
+  blockedReturned: blockedReturn === blockedNodes.reportButton,
+  blocked: summarize(blockedNodes),
+  unavailableReturned: unavailableReturn === unavailableNodes.reportButton,
+  unavailable: summarize(unavailableNodes),
+  truthyReturned: truthyReturn === truthyNodes.reportButton,
+  truthy: summarize(truthyNodes),
+  partialReturned: partialReturn === partialNodes.reviewExport,
+  partial: summarize(partialNodes),
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["readyReturned"] is True
+    assert results["ready"]["reportDisabled"] is False
+    assert results["ready"]["reportHidden"] is False
+    assert results["ready"]["reviewExportDisabled"] is False
+    assert results["ready"]["innerHTMLWrites"] == 0
+
+    assert results["blockedReturned"] is True
+    assert results["blocked"]["reportDisabled"] is True
+    assert results["blocked"]["reportHidden"] is False
+    assert results["blocked"]["reviewExportDisabled"] is True
+    assert results["blocked"]["innerHTMLWrites"] == 0
+
+    assert results["unavailableReturned"] is True
+    assert results["unavailable"]["reportDisabled"] is True
+    assert results["unavailable"]["reportHidden"] is True
+    assert results["unavailable"]["reviewExportDisabled"] is True
+    assert results["unavailable"]["innerHTMLWrites"] == 0
+
+    assert results["truthyReturned"] is True
+    assert results["truthy"]["reportDisabled"] is False
+    assert results["truthy"]["reportHidden"] is False
+    assert results["truthy"]["reviewExportDisabled"] is False
+    assert results["truthy"]["innerHTMLWrites"] == 0
+
+    assert results["partialReturned"] is True
+    assert results["partial"]["reportDisabled"] is None
+    assert results["partial"]["reportHidden"] is None
+    assert results["partial"]["reviewExportDisabled"] is True
+    assert results["partial"]["innerHTMLWrites"] == 0
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_translation_ui_module_centralizes_numeric_warning_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -22867,6 +23059,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderTranslationRunStatusInto" in translation_ui_asset.text
         assert "renderTranslationPrimaryActionsInto" in translation_ui_asset.text
         assert "renderTranslationPreparedControlsInto" in translation_ui_asset.text
+        assert "renderTranslationJobActionControlsInto" in translation_ui_asset.text
         assert "renderTranslationNumericMismatchWarningInto" in translation_ui_asset.text
         assert "renderTranslationDownloadLinkInto" in translation_ui_asset.text
         assert "syncTranslationCompletionDrawerStateInto" in translation_ui_asset.text
