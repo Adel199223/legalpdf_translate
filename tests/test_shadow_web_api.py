@@ -13485,6 +13485,121 @@ console.log(JSON.stringify({
     assert results["missingBackdropBodyInnerHTMLWrites"] == 0
 
 
+def test_translation_ui_module_centralizes_completion_section_collapse_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "collapseTranslationCompletionSectionsInto" in translation_js
+    assert "export function collapseTranslationCompletionSectionsInto" in translation_ui_js
+
+    collapse_start = translation_js.index("function collapseTranslationCompletionSections")
+    collapse_end = translation_js.index("\n\nfunction hasTranslationSaveSeed", collapse_start)
+    collapse_block = translation_js[collapse_start:collapse_end]
+    assert "collapseTranslationCompletionSectionsInto({" in collapse_block
+    assert "translation-save-metrics-section" in collapse_block
+    assert "translation-save-amounts-section" in collapse_block
+    assert "removeAttribute(\"open\")" not in collapse_block
+    assert ".innerHTML" not in collapse_block
+
+    renderer_start = translation_ui_js.index("export function collapseTranslationCompletionSectionsInto")
+    renderer_end = (
+        translation_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+        else len(translation_ui_js)
+    )
+    renderer_block = translation_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeDetails() {
+  const node = {
+    removedAttributes: [],
+    attributes: { open: "" },
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+    removeAttribute(name) {
+      this.removedAttributes.push(name);
+      delete this.attributes[name];
+    },
+  };
+  Object.defineProperty(node, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return node;
+}
+
+function summarize(nodes) {
+  const allNodes = Object.values(nodes).filter(Boolean);
+  return {
+    metricsOpen: Object.prototype.hasOwnProperty.call(nodes.metrics?.attributes || {}, "open"),
+    amountsOpen: Object.prototype.hasOwnProperty.call(nodes.amounts?.attributes || {}, "open"),
+    metricsRemoved: nodes.metrics?.removedAttributes || [],
+    amountsRemoved: nodes.amounts?.removedAttributes || [],
+    innerHTMLWrites: allNodes.reduce((total, node) => total + node.innerHTMLAssignments.length, 0),
+  };
+}
+
+const fullNodes = {
+  metrics: makeDetails(),
+  amounts: makeDetails(),
+};
+const fullReturn = translationUi.collapseTranslationCompletionSectionsInto(fullNodes);
+
+const partialNodes = {
+  amounts: makeDetails(),
+};
+const partialReturn = translationUi.collapseTranslationCompletionSectionsInto(partialNodes);
+
+const nullReturn = translationUi.collapseTranslationCompletionSectionsInto(null);
+
+console.log(JSON.stringify({
+  exportType: typeof translationUi.collapseTranslationCompletionSectionsInto,
+  fullReturned: fullReturn === fullNodes.metrics,
+  full: summarize(fullNodes),
+  partialReturned: partialReturn === partialNodes.amounts,
+  partial: summarize(partialNodes),
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["fullReturned"] is True
+    assert results["full"]["metricsOpen"] is False
+    assert results["full"]["amountsOpen"] is False
+    assert results["full"]["metricsRemoved"] == ["open"]
+    assert results["full"]["amountsRemoved"] == ["open"]
+    assert results["full"]["innerHTMLWrites"] == 0
+
+    assert results["partialReturned"] is True
+    assert results["partial"]["metricsOpen"] is False
+    assert results["partial"]["amountsOpen"] is False
+    assert results["partial"]["metricsRemoved"] == []
+    assert results["partial"]["amountsRemoved"] == ["open"]
+    assert results["partial"]["innerHTMLWrites"] == 0
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_translation_ui_module_centralizes_completion_surface_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -23063,6 +23178,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderTranslationNumericMismatchWarningInto" in translation_ui_asset.text
         assert "renderTranslationDownloadLinkInto" in translation_ui_asset.text
         assert "syncTranslationCompletionDrawerStateInto" in translation_ui_asset.text
+        assert "collapseTranslationCompletionSectionsInto" in translation_ui_asset.text
         assert "renderTranslationCompletionSurfaceInto" in translation_ui_asset.text
         assert "renderTranslationSourceCardInto" in translation_ui_asset.text
         assert "renderTranslationSourceFileInputClearInto" in translation_ui_asset.text
