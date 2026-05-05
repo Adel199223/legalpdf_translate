@@ -195,6 +195,17 @@ export function syncTranslationCompletionDrawerStateInto(nodes = {}, open = fals
   return backdrop;
 }
 
+export function collapseTranslationCompletionSectionsInto(nodes = {}) {
+  const { metrics, amounts } = nodes || {};
+  if (metrics) {
+    metrics.removeAttribute("open");
+  }
+  if (amounts) {
+    amounts.removeAttribute("open");
+  }
+  return metrics || amounts || undefined;
+}
+
 export function renderTranslationCompletionSurfaceInto(nodes = {}, surface = {}) {
   const {
     openButton,

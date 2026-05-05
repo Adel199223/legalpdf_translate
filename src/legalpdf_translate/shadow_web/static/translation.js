@@ -9,6 +9,7 @@ import {
   renderTranslationResultCardInto,
 } from "./result_card_ui.js";
 import {
+  collapseTranslationCompletionSectionsInto,
   renderTranslationDownloadLinkInto,
   renderTranslationCompletionSurfaceInto,
   renderTranslationFieldValueInto,
@@ -1828,8 +1829,10 @@ function dispatchNewJobTask(task) {
 }
 
 function collapseTranslationCompletionSections() {
-  qs("translation-save-metrics-section")?.removeAttribute("open");
-  qs("translation-save-amounts-section")?.removeAttribute("open");
+  collapseTranslationCompletionSectionsInto({
+    metrics: qs("translation-save-metrics-section"),
+    amounts: qs("translation-save-amounts-section"),
+  });
 }
 
 function hasTranslationSaveSeed() {
