@@ -5177,7 +5177,7 @@ console.log(JSON.stringify({
     assert results["staticDetail"]["buttons"][0]["disabled"] is False
 
 
-def test_gmail_ui_module_centralizes_batch_finalize_renderer() -> None:
+def test_gmail_finalize_ui_module_owns_batch_finalize_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -5187,8 +5187,12 @@ def test_gmail_ui_module_centralizes_batch_finalize_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_finalize_ui_path = static_dir / "gmail_finalize_ui.js"
+    assert gmail_finalize_ui_path.exists()
+    gmail_finalize_ui_js = gmail_finalize_ui_path.read_text(encoding="utf-8")
 
     assert "renderGmailBatchFinalizeSurfaceInto" in gmail_js
+    assert 'from "./gmail_finalize_ui.js"' in gmail_js
     batch_start = gmail_js.index("function renderBatchFinalizeSurface")
     batch_end = gmail_js.index("\nfunction renderTranslationCompletionGmailStepCard", batch_start)
     batch_block = gmail_js[batch_start:batch_end]
@@ -5196,14 +5200,15 @@ def test_gmail_ui_module_centralizes_batch_finalize_renderer() -> None:
     assert "innerHTML" not in batch_block
     assert "innerHTML" not in gmail_js
 
-    assert "export function renderGmailBatchFinalizeSurfaceInto" in gmail_ui_js
-    renderer_start = gmail_ui_js.index("export function renderGmailBatchFinalizeSurfaceInto")
-    renderer_end = gmail_ui_js.index("\nfunction createCell", renderer_start)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert 'from "./gmail_finalize_ui.js"' in gmail_ui_js
+    assert "renderGmailBatchFinalizeSurfaceInto" in gmail_ui_js
+    assert "export function renderGmailBatchFinalizeSurfaceInto" in gmail_finalize_ui_js
+    renderer_start = gmail_finalize_ui_js.index("export function renderGmailBatchFinalizeSurfaceInto")
+    renderer_block = gmail_finalize_ui_js[renderer_start:]
     assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_FINALIZE_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -5536,7 +5541,7 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {"__GMAIL_FINALIZE_UI_MODULE_URL__": "gmail_finalize_ui.js"},
         timeout_seconds=30,
     )
 
@@ -23265,6 +23270,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailDrawerDatasetDefaultsInto" in gmail_ui_asset.text
         assert "renderGmailDetailsOpenInto" in gmail_ui_asset.text
         assert "renderGmailInputValueInto" in gmail_ui_asset.text
+        gmail_finalize_ui_asset = client.get(f"/static-build/{asset_version}/gmail_finalize_ui.js")
+        assert gmail_finalize_ui_asset.status_code == 200
+        assert gmail_finalize_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGmailBatchFinalizeSurfaceInto" in gmail_finalize_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")

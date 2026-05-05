@@ -16,6 +16,24 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-05-05 — feat/gmail-finalize-ui-module (deferred)
+- Files changed:
+  - src/legalpdf_translate/shadow_web/static/gmail.js
+  - src/legalpdf_translate/shadow_web/static/gmail_ui.js
+  - src/legalpdf_translate/shadow_web/static/gmail_finalize_ui.js
+  - tests/test_shadow_web_api.py
+- Key symbols / entrypoints changed:
+  - gmail_finalize_ui.js::renderGmailBatchFinalizeSurfaceInto
+  - gmail_ui.js::renderGmailBatchFinalizeSurfaceInto
+  - gmail.js::renderBatchFinalizeSurface
+- User-visible behavior:
+  - No intended behavior change; Gmail batch-finalize status, summary, result, and action button rendering now live in a focused finalize UI module while `gmail_ui.js` re-exports the renderer for compatibility.
+- Tests:
+  - C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "gmail_finalize_ui or versioned_static_route"
+  - C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests\test_browser_safe_rendering.py
+  - C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py tests\test_shadow_web_route_state.py tests\test_translation_browser_state.py
+  - powershell -ExecutionPolicy Bypass -File scripts\validate_dev.ps1 -Full
+
 ## 2026-05-05 — feat/translation-completion-surface-delegation (deferred)
 - Files changed:
   - src/legalpdf_translate/shadow_web/static/translation.js

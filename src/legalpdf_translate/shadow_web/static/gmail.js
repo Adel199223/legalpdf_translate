@@ -11,9 +11,9 @@ import {
   setPanelStatus,
 } from "./diagnostics_ui.js";
 import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
+import { renderGmailBatchFinalizeSurfaceInto } from "./gmail_finalize_ui.js";
 import {
   renderGmailAttachmentListInto,
-  renderGmailBatchFinalizeSurfaceInto,
   renderGmailContextDefaultsInto,
   renderGmailDetailsOpenInto,
   renderGmailDemoReviewActionInto,
