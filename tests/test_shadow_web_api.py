@@ -12668,6 +12668,149 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_ui_module_centralizes_prepared_controls_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationPreparedControlsInto" in translation_js
+    assert "export function renderTranslationPreparedControlsInto" in translation_ui_js
+
+    prepared_start = translation_js.index("function renderTranslationPreparedState")
+    prepared_end = translation_js.index("\n\nfunction renderTranslationResultCard", prepared_start)
+    prepared_block = translation_js[prepared_start:prepared_end]
+    assert "renderTranslationPreparedControlsInto({" in prepared_block
+    assert "setDownloadLink(\"translation-download-report\", \"\")" in prepared_block
+    assert "notifyTranslationUiStateChanged()" in prepared_block
+    assert ".disabled =" not in prepared_block
+    assert ".classList.add(\"hidden\")" not in prepared_block
+    assert ".innerHTML" not in prepared_block
+
+    renderer_start = translation_ui_js.index("export function renderTranslationPreparedControlsInto")
+    renderer_end = (
+        translation_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+        else len(translation_ui_js)
+    )
+    renderer_block = translation_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeButton() {
+  const button = {
+    classActions: [],
+    classSet: new Set(),
+    disabled: false,
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+    classList: {
+      add(name) {
+        this.owner.classSet.add(name);
+        this.owner.classActions.push(["add", name]);
+      },
+      toggle(name, force) {
+        const enabled = Boolean(force);
+        if (enabled) {
+          this.owner.classSet.add(name);
+        } else {
+          this.owner.classSet.delete(name);
+        }
+        this.owner.classActions.push(["toggle", name, enabled]);
+        return enabled;
+      },
+    },
+  };
+  button.classList.owner = button;
+  Object.defineProperty(button, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return button;
+}
+
+function makeNodes() {
+  return {
+    reportButton: makeButton(),
+    reviewExport: makeButton(),
+    cancelButton: makeButton(),
+    resumeButton: makeButton(),
+    rebuildButton: makeButton(),
+  };
+}
+
+function summarize(nodes) {
+  const allNodes = Object.values(nodes).filter(Boolean);
+  return {
+    reportDisabled: nodes.reportButton?.disabled ?? null,
+    reportHidden: nodes.reportButton?.classSet.has("hidden") ?? null,
+    reviewExportDisabled: nodes.reviewExport?.disabled ?? null,
+    cancelDisabled: nodes.cancelButton?.disabled ?? null,
+    resumeDisabled: nodes.resumeButton?.disabled ?? null,
+    rebuildDisabled: nodes.rebuildButton?.disabled ?? null,
+    innerHTMLWrites: allNodes.reduce((total, node) => total + node.innerHTMLAssignments.length, 0),
+  };
+}
+
+const fullNodes = makeNodes();
+const fullReturn = translationUi.renderTranslationPreparedControlsInto(fullNodes);
+
+const partialNodes = makeNodes();
+delete partialNodes.reportButton;
+delete partialNodes.cancelButton;
+const partialReturn = translationUi.renderTranslationPreparedControlsInto(partialNodes);
+
+const nullReturn = translationUi.renderTranslationPreparedControlsInto(null);
+
+console.log(JSON.stringify({
+  exportType: typeof translationUi.renderTranslationPreparedControlsInto,
+  fullReturned: fullReturn === fullNodes.reportButton,
+  full: summarize(fullNodes),
+  partialReturned: partialReturn === partialNodes.reviewExport,
+  partial: summarize(partialNodes),
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["fullReturned"] is True
+    assert results["full"]["reportDisabled"] is True
+    assert results["full"]["reportHidden"] is True
+    assert results["full"]["reviewExportDisabled"] is True
+    assert results["full"]["cancelDisabled"] is True
+    assert results["full"]["resumeDisabled"] is True
+    assert results["full"]["rebuildDisabled"] is True
+    assert results["full"]["innerHTMLWrites"] == 0
+
+    assert results["partialReturned"] is True
+    assert results["partial"]["reportDisabled"] is None
+    assert results["partial"]["reportHidden"] is None
+    assert results["partial"]["reviewExportDisabled"] is True
+    assert results["partial"]["cancelDisabled"] is None
+    assert results["partial"]["resumeDisabled"] is True
+    assert results["partial"]["rebuildDisabled"] is True
+    assert results["partial"]["innerHTMLWrites"] == 0
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_translation_ui_module_centralizes_numeric_warning_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -22723,6 +22866,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderTranslationOutputSummaryInto" in translation_ui_asset.text
         assert "renderTranslationRunStatusInto" in translation_ui_asset.text
         assert "renderTranslationPrimaryActionsInto" in translation_ui_asset.text
+        assert "renderTranslationPreparedControlsInto" in translation_ui_asset.text
         assert "renderTranslationNumericMismatchWarningInto" in translation_ui_asset.text
         assert "renderTranslationDownloadLinkInto" in translation_ui_asset.text
         assert "syncTranslationCompletionDrawerStateInto" in translation_ui_asset.text

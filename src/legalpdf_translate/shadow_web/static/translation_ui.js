@@ -102,6 +102,34 @@ export function renderTranslationPrimaryActionsInto(nodes = {}, actionState = {}
   return helper || undefined;
 }
 
+export function renderTranslationPreparedControlsInto(nodes = {}) {
+  const {
+    reportButton,
+    reviewExport,
+    cancelButton,
+    resumeButton,
+    rebuildButton,
+  } = nodes || {};
+
+  if (reportButton) {
+    reportButton.disabled = true;
+    reportButton.classList.add("hidden");
+  }
+  if (reviewExport) {
+    reviewExport.disabled = true;
+  }
+  if (cancelButton) {
+    cancelButton.disabled = true;
+  }
+  if (resumeButton) {
+    resumeButton.disabled = true;
+  }
+  if (rebuildButton) {
+    rebuildButton.disabled = true;
+  }
+  return reportButton || reviewExport || cancelButton || resumeButton || rebuildButton || undefined;
+}
+
 export function renderTranslationNumericMismatchWarningInto(container, warning = {}) {
   if (!container) {
     return undefined;
