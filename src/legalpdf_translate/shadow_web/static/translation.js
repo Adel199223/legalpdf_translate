@@ -13,6 +13,7 @@ import {
   renderTranslationCompletionSurfaceInto,
   renderTranslationFieldValueInto,
   renderTranslationHistoryListInto,
+  renderTranslationJobActionControlsInto,
   renderTranslationJobsListInto,
   renderTranslationNumericMismatchWarningInto,
   renderTranslationOutputSummaryInto,
@@ -2078,8 +2079,6 @@ function syncTranslationCompletionSurface() {
   const emptyCopyNode = qs("translation-completion-empty-copy");
   const saveTitleNode = qs("translation-save-form-title");
   const saveStatusNode = qs("translation-save-status");
-  const reviewExportButton = qs("translation-review-export");
-  const runReportButton = qs("translation-generate-report");
   const saveButton = qs("translation-save-row");
   const review = currentArabicReviewState();
   const hasSaveSurface = hasTranslationSaveSeed();
@@ -2113,13 +2112,14 @@ function syncTranslationCompletionSurface() {
     saveDisabled: !hasSaveSurface || currentArabicReviewIsBlocking(),
   });
   if (!translationState.currentJob) {
-    if (reviewExportButton) {
-      reviewExportButton.disabled = true;
-    }
-    if (runReportButton) {
-      runReportButton.disabled = true;
-      runReportButton.classList.add("hidden");
-    }
+    renderTranslationJobActionControlsInto({
+      reportButton: qs("translation-generate-report"),
+      reviewExport: qs("translation-review-export"),
+    }, {
+      reportAvailable: false,
+      reportVisible: false,
+      reviewExportAvailable: false,
+    });
     clearDownloadLink("translation-download-report");
     clearDownloadLink("translation-download-docx");
     clearDownloadLink("translation-download-partial");
@@ -2920,13 +2920,14 @@ function renderTranslationJob(job) {
   setDownloadLink("translation-download-partial", job?.actions?.download_partial_docx ? `/api/translation/jobs/${job.job_id}/artifact/partial_docx?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
   setDownloadLink("translation-download-summary", job?.actions?.download_run_summary ? `/api/translation/jobs/${job.job_id}/artifact/run_summary?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
   setDownloadLink("translation-download-analyze", job?.actions?.download_analyze_report ? `/api/translation/jobs/${job.job_id}/artifact/analyze_report?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
-  const reportButton = qs("translation-generate-report");
-  if (reportButton) {
-    const available = Boolean(job?.job_kind === "translate" && runDir);
-    reportButton.disabled = !available;
-    reportButton.classList.toggle("hidden", !job);
-  }
-  qs("translation-review-export").disabled = !job?.actions?.review_export;
+  renderTranslationJobActionControlsInto({
+    reportButton: qs("translation-generate-report"),
+    reviewExport: qs("translation-review-export"),
+  }, {
+    reportAvailable: Boolean(job?.job_kind === "translate" && runDir),
+    reportVisible: Boolean(job),
+    reviewExportAvailable: Boolean(job?.actions?.review_export),
+  });
   if (job?.result?.save_seed) {
     applyTranslationSeed(job.result.save_seed);
     setPanelStatus(
