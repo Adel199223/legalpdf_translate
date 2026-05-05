@@ -248,6 +248,26 @@ export function renderTranslationSourceCardInto(nodes = {}, sourceCard = {}) {
   return card;
 }
 
+export function renderTranslationSourceFileInputClearInto(input) {
+  if (!input) {
+    return undefined;
+  }
+  input.value = "";
+  return input;
+}
+
+export function renderTranslationSourceDragStateInto(card, { active = false } = {}) {
+  if (!card?.dataset) {
+    return undefined;
+  }
+  if (active) {
+    card.dataset.dragActive = "true";
+  } else {
+    delete card.dataset.dragActive;
+  }
+  return card;
+}
+
 export function renderTranslationHistoryListInto(container, history = [], {
   emptyText = "",
   openLabel = "",
