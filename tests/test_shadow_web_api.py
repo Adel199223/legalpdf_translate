@@ -13624,6 +13624,9 @@ def test_translation_ui_module_centralizes_completion_surface_renderer() -> None
     assert "renderTranslationCompletionResultCard()" in surface_block
     assert "renderArabicReviewCard()" in surface_block
     assert "closeTranslationCompletionDrawer()" in surface_block
+    assert 'formShell?.classList.add("hidden")' not in surface_block
+    assert 'emptyShell?.classList.add("hidden")' not in surface_block
+    assert "statusNode.textContent = presentation.drawerStatus" not in surface_block
     assert ".innerHTML" not in surface_block
 
     renderer_start = translation_ui_js.index("export function renderTranslationCompletionSurfaceInto")

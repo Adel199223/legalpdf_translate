@@ -2131,11 +2131,6 @@ function syncTranslationCompletionSurface() {
     clearDownloadLink("translation-download-analyze");
   }
   if (!available) {
-    formShell?.classList.add("hidden");
-    emptyShell?.classList.add("hidden");
-    if (statusNode) {
-      statusNode.textContent = presentation.drawerStatus;
-    }
     renderTranslationCompletionResultCard();
     renderArabicReviewCard();
     closeTranslationCompletionDrawer();
