@@ -20,6 +20,8 @@ import {
   renderTranslationRunStatusInto,
   renderTranslationSourcePathInto,
   renderTranslationSourceCardInto,
+  renderTranslationSourceDragStateInto,
+  renderTranslationSourceFileInputClearInto,
   syncTranslationCompletionDrawerStateInto,
 } from "./translation_ui.js";
 
@@ -1298,7 +1300,7 @@ function syncNativeSourceInputFile(file) {
     return;
   }
   if (!file) {
-    input.value = "";
+    renderTranslationSourceFileInputClearInto(input);
     try {
       input.files = [];
     } catch {
@@ -3393,19 +3395,19 @@ export function initializeTranslationUi() {
   sourceCard?.addEventListener("dragover", (event) => {
     event.preventDefault();
     if (sourceUploadIsPending()) {
-      delete sourceCard.dataset.dragActive;
+      renderTranslationSourceDragStateInto(sourceCard, { active: false });
       return;
     }
-    sourceCard.dataset.dragActive = "true";
+    renderTranslationSourceDragStateInto(sourceCard, { active: true });
   });
 
   sourceCard?.addEventListener("dragleave", () => {
-    delete sourceCard.dataset.dragActive;
+    renderTranslationSourceDragStateInto(sourceCard, { active: false });
   });
 
   sourceCard?.addEventListener("drop", async (event) => {
     event.preventDefault();
-    delete sourceCard.dataset.dragActive;
+    renderTranslationSourceDragStateInto(sourceCard, { active: false });
     if (sourceUploadIsPending()) {
       return;
     }

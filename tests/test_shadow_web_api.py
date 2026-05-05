@@ -13637,6 +13637,140 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_ui_module_centralizes_source_interaction_renderers() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationSourceFileInputClearInto" in translation_js
+    assert "renderTranslationSourceDragStateInto" in translation_js
+    assert "export function renderTranslationSourceFileInputClearInto" in translation_ui_js
+    assert "export function renderTranslationSourceDragStateInto" in translation_ui_js
+
+    clear_start = translation_js.index("function syncNativeSourceInputFile")
+    clear_end = translation_js.index("\n\nfunction clearManualSourceSelection", clear_start)
+    clear_block = translation_js[clear_start:clear_end]
+    assert "renderTranslationSourceFileInputClearInto(input)" in clear_block
+    assert ".value =" not in clear_block
+    assert ".innerHTML" not in clear_block
+
+    drag_start = translation_js.index('sourceCard?.addEventListener("dragover"')
+    drag_end = translation_js.index('\n\n  for (const eventName of ["input", "change"])', drag_start)
+    drag_block = translation_js[drag_start:drag_end]
+    assert "renderTranslationSourceDragStateInto(sourceCard, { active: false })" in drag_block
+    assert "renderTranslationSourceDragStateInto(sourceCard, { active: true })" in drag_block
+    assert "dataset.dragActive" not in drag_block
+    assert ".innerHTML" not in drag_block
+
+    for export_name in [
+        "renderTranslationSourceFileInputClearInto",
+        "renderTranslationSourceDragStateInto",
+    ]:
+        renderer_start = translation_ui_js.index(f"export function {export_name}")
+        renderer_end = (
+            translation_ui_js.index("\nexport function", renderer_start + 1)
+            if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+            else len(translation_ui_js)
+        )
+        renderer_block = translation_ui_js[renderer_start:renderer_end]
+        assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeInput(value) {
+  const node = {
+    value,
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+  };
+  Object.defineProperty(node, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return node;
+}
+
+function makeCard() {
+  const node = {
+    dataset: {},
+    innerHTMLAssignments: [],
+    _innerHTML: "",
+  };
+  Object.defineProperty(node, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+  });
+  return node;
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const input = makeInput(malicious);
+const clearReturn = translationUi.renderTranslationSourceFileInputClearInto(input);
+const clearNullReturn = translationUi.renderTranslationSourceFileInputClearInto(null);
+
+const card = makeCard();
+const activeReturn = translationUi.renderTranslationSourceDragStateInto(card, { active: malicious });
+const activeValue = card.dataset.dragActive;
+const inactiveReturn = translationUi.renderTranslationSourceDragStateInto(card, { active: false });
+const inactiveHasDragState = Object.prototype.hasOwnProperty.call(card.dataset, "dragActive");
+const inactiveValue = card.dataset.dragActive || "";
+const nullDragReturn = translationUi.renderTranslationSourceDragStateInto(null, { active: true });
+
+console.log(JSON.stringify({
+  clearExportType: typeof translationUi.renderTranslationSourceFileInputClearInto,
+  dragExportType: typeof translationUi.renderTranslationSourceDragStateInto,
+  clearReturned: clearReturn === input,
+  clearValue: input.value,
+  clearInnerHTMLWrites: input.innerHTMLAssignments.length,
+  clearNullReturnType: typeof clearNullReturn,
+  activeReturned: activeReturn === card,
+  activeValue,
+  inactiveReturned: inactiveReturn === card,
+  inactiveHasDragState,
+  inactiveValue,
+  cardInnerHTMLWrites: card.innerHTMLAssignments.length,
+  nullDragReturnType: typeof nullDragReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["clearExportType"] == "function"
+    assert results["dragExportType"] == "function"
+    assert results["clearReturned"] is True
+    assert results["clearValue"] == ""
+    assert results["clearInnerHTMLWrites"] == 0
+    assert results["clearNullReturnType"] == "undefined"
+    assert results["activeReturned"] is True
+    assert results["activeValue"] == "true"
+    assert results["inactiveReturned"] is True
+    assert results["inactiveHasDragState"] is False
+    assert results["inactiveValue"] == ""
+    assert results["cardInnerHTMLWrites"] == 0
+    assert results["nullDragReturnType"] == "undefined"
+
+
 def test_translation_ui_module_centralizes_recent_work_list_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -22594,6 +22728,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "syncTranslationCompletionDrawerStateInto" in translation_ui_asset.text
         assert "renderTranslationCompletionSurfaceInto" in translation_ui_asset.text
         assert "renderTranslationSourceCardInto" in translation_ui_asset.text
+        assert "renderTranslationSourceFileInputClearInto" in translation_ui_asset.text
+        assert "renderTranslationSourceDragStateInto" in translation_ui_asset.text
         assert "renderTranslationHistoryListInto" in translation_ui_asset.text
         assert "renderTranslationJobsListInto" in translation_ui_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")

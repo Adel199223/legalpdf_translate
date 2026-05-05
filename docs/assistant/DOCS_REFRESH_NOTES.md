@@ -16,6 +16,24 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-05-05 — feat/translation-source-interaction-ui-module (deferred)
+- Files changed:
+  - src/legalpdf_translate/shadow_web/static/translation.js
+  - src/legalpdf_translate/shadow_web/static/translation_ui.js
+  - tests/test_shadow_web_api.py
+- Key symbols / entrypoints changed:
+  - translation_ui.js::renderTranslationSourceFileInputClearInto
+  - translation_ui.js::renderTranslationSourceDragStateInto
+  - translation.js::syncNativeSourceInputFile
+  - translation.js source-card drag/drop handlers
+- User-visible behavior:
+  - No intended behavior change; source input clearing and drag-active source card state keep the same UI behavior while moving simple DOM writes into the translation UI module.
+- Tests:
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "translation_ui_module_centralizes_source_interaction_renderers or versioned_static_route"
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_browser_safe_rendering.py
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py tests\test_shadow_web_route_state.py tests\test_translation_browser_state.py
+  - powershell -ExecutionPolicy Bypass -File scripts\validate_dev.ps1 -Full
+
 ## 2026-05-05 — feat/translation-shared-controls-ui-module (deferred)
 - Files changed:
   - src/legalpdf_translate/shadow_web/static/translation.js
