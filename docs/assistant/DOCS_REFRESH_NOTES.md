@@ -16,6 +16,21 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-05-05 — feat/translation-history-shell-visibility-ui-module (deferred)
+- Files changed:
+  - src/legalpdf_translate/shadow_web/static/translation.js
+  - tests/test_shadow_web_api.py
+- Key symbols / entrypoints changed:
+  - translation.js::loadTranslationHistoryItem
+  - shell_ui.js::renderShellVisibilityInto
+- User-visible behavior:
+  - No intended behavior change; loading a saved translation case still switches to New Job / Translation while the duplicated shell page/nav visibility writes reuse the existing shell UI renderer.
+- Tests:
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "translation_module_reuses_shell_visibility_renderer"
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_browser_safe_rendering.py
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py tests\test_shadow_web_route_state.py tests\test_translation_browser_state.py
+  - powershell -ExecutionPolicy Bypass -File scripts\validate_dev.ps1 -Full
+
 ## 2026-05-05 — feat/translation-completion-collapse-ui-module (deferred)
 - Files changed:
   - src/legalpdf_translate/shadow_web/static/translation.js

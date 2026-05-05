@@ -3,6 +3,7 @@ import { appState, setActiveView } from "./state.js";
 import { ensureBrowserPdfBundleFromFile } from "./browser_pdf.js";
 import { runWithBusy } from "./busy_ui.js";
 import { setDiagnostics, setPanelStatus } from "./diagnostics_ui.js";
+import { renderShellVisibilityInto } from "./shell_ui.js";
 import {
   renderArabicReviewCardInto,
   renderResultHeaderCardInto,
@@ -3020,11 +3021,10 @@ function loadTranslationHistoryItem(item) {
   applyTranslationSeed(item?.seed || blankSaveSeed(), { rowId: row.id || null });
   setActiveView("new-job");
   dispatchNewJobTask("translation");
-  document.querySelectorAll(".page-view").forEach((node) => {
-    node.classList.toggle("hidden", node.dataset.view !== "new-job");
-  });
-  document.querySelectorAll(".nav-button").forEach((buttonNode) => {
-    buttonNode.classList.toggle("active", buttonNode.dataset.view === "new-job");
+  renderShellVisibilityInto({
+    views: document.querySelectorAll(".page-view"),
+    navButtons: document.querySelectorAll(".nav-button"),
+    activeView: "new-job",
   });
   if (row.id) {
     setPanelStatus("translation-save", "ok", "Saved case record loaded. Review the fields below and save any edits.");
