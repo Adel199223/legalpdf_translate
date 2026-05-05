@@ -17,6 +17,7 @@ import {
   renderTranslationNumericMismatchWarningInto,
   renderTranslationOutputSummaryInto,
   renderTranslationPrimaryActionsInto,
+  renderTranslationPreparedControlsInto,
   renderTranslationRunStatusInto,
   renderTranslationSourcePathInto,
   renderTranslationSourceCardInto,
@@ -2694,27 +2695,13 @@ function renderTranslationPreparedState() {
   setDownloadLink("translation-download-partial", "");
   setDownloadLink("translation-download-summary", "");
   setDownloadLink("translation-download-analyze", "");
-  const reportButton = qs("translation-generate-report");
-  if (reportButton) {
-    reportButton.disabled = true;
-    reportButton.classList.add("hidden");
-  }
-  const reviewExport = qs("translation-review-export");
-  if (reviewExport) {
-    reviewExport.disabled = true;
-  }
-  const cancelButton = qs("translation-cancel");
-  if (cancelButton) {
-    cancelButton.disabled = true;
-  }
-  const resumeButton = qs("translation-resume-btn");
-  if (resumeButton) {
-    resumeButton.disabled = true;
-  }
-  const rebuildButton = qs("translation-rebuild");
-  if (rebuildButton) {
-    rebuildButton.disabled = true;
-  }
+  renderTranslationPreparedControlsInto({
+    reportButton: qs("translation-generate-report"),
+    reviewExport: qs("translation-review-export"),
+    cancelButton: qs("translation-cancel"),
+    resumeButton: qs("translation-resume-btn"),
+    rebuildButton: qs("translation-rebuild"),
+  });
   notifyTranslationUiStateChanged();
   return true;
 }
