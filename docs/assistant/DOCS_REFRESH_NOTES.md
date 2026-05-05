@@ -16,6 +16,28 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-05-06 — feat/gmail-preview-ui-module (deferred)
+- Files changed:
+  - src/legalpdf_translate/shadow_web/static/gmail.js
+  - src/legalpdf_translate/shadow_web/static/gmail_ui.js
+  - src/legalpdf_translate/shadow_web/static/gmail_preview_ui.js
+  - tests/test_shadow_web_api.py
+- Key symbols / entrypoints changed:
+  - gmail_preview_ui.js::renderGmailPreviewPanelInto
+  - gmail_preview_ui.js::renderGmailPdfPreviewFallbackInto
+  - gmail_ui.js::renderGmailPreviewPanelInto
+  - gmail_ui.js::renderGmailPdfPreviewFallbackInto
+  - gmail.js::renderPreviewPanel
+  - gmail.js::renderActivePdfPreviewCanvas
+- User-visible behavior:
+  - No intended behavior change; Gmail inline preview panel and PDF fallback rendering now live in a focused preview UI module while `gmail_ui.js` re-exports the renderers for compatibility.
+- Tests:
+  - C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "gmail_preview_ui or versioned_static_route"
+  - C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests\test_browser_safe_rendering.py
+  - C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests\test_gmail_intake.py -k "browser_pdf or review"
+  - C:\Users\FA507\.codex\legalpdf_translate\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py tests\test_shadow_web_route_state.py tests\test_translation_browser_state.py
+  - powershell -ExecutionPolicy Bypass -File scripts\validate_dev.ps1 -Full
+
 ## 2026-05-05 — feat/gmail-finalize-ui-module (deferred)
 - Files changed:
   - src/legalpdf_translate/shadow_web/static/gmail.js

@@ -13,6 +13,10 @@ import {
 import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import { renderGmailBatchFinalizeSurfaceInto } from "./gmail_finalize_ui.js";
 import {
+  renderGmailPdfPreviewFallbackInto,
+  renderGmailPreviewPanelInto,
+} from "./gmail_preview_ui.js";
+import {
   renderGmailAttachmentListInto,
   renderGmailContextDefaultsInto,
   renderGmailDetailsOpenInto,
@@ -23,8 +27,6 @@ import {
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
-  renderGmailPdfPreviewFallbackInto,
-  renderGmailPreviewPanelInto,
   renderGmailPrepareActionInto,
   renderGmailReportActionInto,
   renderGmailReturnToSourceActionInto,

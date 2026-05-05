@@ -4430,7 +4430,7 @@ def test_gmail_ui_module_centralizes_session_card_renderers() -> None:
     resume_renderer_start = gmail_ui_js.index("export function renderGmailResumeCardInto")
     session_renderer_start = gmail_ui_js.index("export function renderGmailSessionResultInto")
     resume_renderer_block = gmail_ui_js[resume_renderer_start:session_renderer_start]
-    session_renderer_end = gmail_ui_js.index("\nfunction resetGmailPreviewControls", session_renderer_start)
+    session_renderer_end = gmail_ui_js.index("\nfunction createCell", session_renderer_start)
     session_renderer_block = gmail_ui_js[session_renderer_start:session_renderer_end]
     assert "innerHTML" not in resume_renderer_block
     assert "innerHTML" not in session_renderer_block
@@ -4737,7 +4737,10 @@ def test_gmail_ui_module_centralizes_review_attachment_renderers() -> None:
     list_renderer_start = gmail_ui_js.index("export function renderGmailAttachmentListInto")
     detail_renderer_start = gmail_ui_js.index("export function renderGmailReviewDetailInto")
     list_renderer_block = gmail_ui_js[list_renderer_start:detail_renderer_start]
-    detail_renderer_end = gmail_ui_js.index("\nfunction resetGmailPreviewControls", detail_renderer_start)
+    detail_renderer_end = gmail_ui_js.index(
+        "\nexport function renderGmailNoncanonicalRuntimeGuardInto",
+        detail_renderer_start,
+    )
     detail_renderer_block = gmail_ui_js[detail_renderer_start:detail_renderer_end]
     assert "innerHTML" not in list_renderer_block
     assert "innerHTML" not in detail_renderer_block
@@ -7516,7 +7519,7 @@ console.log(JSON.stringify({
     assert results["partialAction"]["action"] == "partial"
 
 
-def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
+def test_gmail_preview_ui_module_owns_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -7526,8 +7529,11 @@ def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_preview_ui_path = static_dir / "gmail_preview_ui.js"
+    assert gmail_preview_ui_path.exists()
+    gmail_preview_ui_js = gmail_preview_ui_path.read_text(encoding="utf-8")
 
-    assert 'from "./gmail_ui.js"' in gmail_js
+    assert 'from "./gmail_preview_ui.js"' in gmail_js
     assert "renderGmailPreviewPanelInto" in gmail_js
     preview_panel_start = gmail_js.index("function renderPreviewPanel()")
     preview_panel_end = gmail_js.index("\nfunction renderGmailRestoreBar", preview_panel_start)
@@ -7536,14 +7542,15 @@ def test_gmail_ui_module_centralizes_preview_panel_renderer() -> None:
     assert "summary.innerHTML" not in preview_panel_block
     assert "container.innerHTML" not in preview_panel_block
 
-    assert "export function renderGmailPreviewPanelInto" in gmail_ui_js
-    renderer_start = gmail_ui_js.index("export function renderGmailPreviewPanelInto")
-    renderer_end = gmail_ui_js.index("\nexport function renderGmailNoncanonicalRuntimeGuardInto", renderer_start)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert 'from "./gmail_preview_ui.js"' in gmail_ui_js
+    assert "renderGmailPreviewPanelInto" in gmail_ui_js
+    assert "export function renderGmailPreviewPanelInto" in gmail_preview_ui_js
+    renderer_start = gmail_preview_ui_js.index("export function renderGmailPreviewPanelInto")
+    renderer_block = gmail_preview_ui_js[renderer_start:gmail_preview_ui_js.index("\nexport function renderGmailPdfPreviewFallbackInto", renderer_start)]
     assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_PREVIEW_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -7837,7 +7844,7 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {"__GMAIL_PREVIEW_UI_MODULE_URL__": "gmail_preview_ui.js"},
         timeout_seconds=30,
     )
 
@@ -7916,7 +7923,7 @@ console.log(JSON.stringify({
     assert results["fallback"]["statusText"] == "This attachment type is available through the new-tab fallback."
 
 
-def test_gmail_ui_module_centralizes_pdf_preview_fallback_renderer() -> None:
+def test_gmail_preview_ui_module_owns_pdf_preview_fallback_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -7926,8 +7933,11 @@ def test_gmail_ui_module_centralizes_pdf_preview_fallback_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_preview_ui_path = static_dir / "gmail_preview_ui.js"
+    assert gmail_preview_ui_path.exists()
+    gmail_preview_ui_js = gmail_preview_ui_path.read_text(encoding="utf-8")
 
-    assert 'from "./gmail_ui.js"' in gmail_js
+    assert 'from "./gmail_preview_ui.js"' in gmail_js
     assert "renderGmailPdfPreviewFallbackInto" in gmail_js
     preview_canvas_start = gmail_js.index("async function renderActivePdfPreviewCanvas")
     preview_canvas_end = gmail_js.index("\nasync function previewAttachment", preview_canvas_start)
@@ -7938,14 +7948,15 @@ def test_gmail_ui_module_centralizes_pdf_preview_fallback_renderer() -> None:
     assert "status.textContent =" not in preview_canvas_block
     assert "innerHTML" not in preview_canvas_block
 
-    assert "export function renderGmailPdfPreviewFallbackInto" in gmail_ui_js
-    renderer_start = gmail_ui_js.index("export function renderGmailPdfPreviewFallbackInto")
-    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert 'from "./gmail_preview_ui.js"' in gmail_ui_js
+    assert "renderGmailPdfPreviewFallbackInto" in gmail_ui_js
+    assert "export function renderGmailPdfPreviewFallbackInto" in gmail_preview_ui_js
+    renderer_start = gmail_preview_ui_js.index("export function renderGmailPdfPreviewFallbackInto")
+    renderer_block = gmail_preview_ui_js[renderer_start:]
     assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_PREVIEW_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -8131,7 +8142,7 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {"__GMAIL_PREVIEW_UI_MODULE_URL__": "gmail_preview_ui.js"},
         timeout_seconds=30,
     )
 
@@ -23274,6 +23285,11 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_finalize_ui_asset.status_code == 200
         assert gmail_finalize_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailBatchFinalizeSurfaceInto" in gmail_finalize_ui_asset.text
+        gmail_preview_ui_asset = client.get(f"/static-build/{asset_version}/gmail_preview_ui.js")
+        assert gmail_preview_ui_asset.status_code == 200
+        assert gmail_preview_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGmailPreviewPanelInto" in gmail_preview_ui_asset.text
+        assert "renderGmailPdfPreviewFallbackInto" in gmail_preview_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
