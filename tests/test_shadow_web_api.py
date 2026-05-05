@@ -14221,6 +14221,45 @@ console.log(JSON.stringify({
     assert results["nullDragReturnType"] == "undefined"
 
 
+def test_translation_module_reuses_shell_visibility_renderer_for_history_load() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    shell_ui_js = (static_dir / "shell_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./shell_ui.js"' in translation_js
+    assert "renderShellVisibilityInto" in translation_js
+    assert "export function renderShellVisibilityInto" in shell_ui_js
+
+    load_start = translation_js.index("function loadTranslationHistoryItem")
+    load_end = translation_js.index("\n\nexport function renderTranslationJobsInto", load_start)
+    load_block = translation_js[load_start:load_end]
+
+    assert 'setActiveView("new-job")' in load_block
+    assert 'dispatchNewJobTask("translation")' in load_block
+    assert "renderShellVisibilityInto({" in load_block
+    assert 'views: document.querySelectorAll(".page-view")' in load_block
+    assert 'navButtons: document.querySelectorAll(".nav-button")' in load_block
+    assert 'activeView: "new-job"' in load_block
+    assert 'node.classList.toggle("hidden"' not in load_block
+    assert 'buttonNode.classList.toggle("active"' not in load_block
+    assert ".innerHTML" not in load_block
+
+    renderer_start = shell_ui_js.index("export function renderShellVisibilityInto")
+    renderer_end = (
+        shell_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in shell_ui_js[renderer_start + 1 :]
+        else len(shell_ui_js)
+    )
+    renderer_block = shell_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+
 def test_translation_ui_module_centralizes_recent_work_list_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
