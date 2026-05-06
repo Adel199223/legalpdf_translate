@@ -247,6 +247,28 @@ def test_app_autofill_actions_delegate_repeated_action_failure_feedback() -> Non
     assert 'setDiagnostics("autofill", error, { hint: error.message ||' not in app_source
 
 
+def test_app_google_photos_picker_failure_delegates_action_failure_feedback() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_source = (static_dir / "app.js").read_text(encoding="utf-8")
+
+    assert 'from "./action_feedback_presentation.js"' in app_source
+    assert "function applyGooglePhotosPickerFailureFeedback" in app_source
+    assert "buildActionFailureFeedback(feedbackError, \"Google Photos import failed.\"" in app_source
+    assert "GOOGLE_PHOTOS_RECONNECT_GUIDANCE" in app_source
+    assert "google_photos_picker: pickerDiagnostics" in app_source
+    assert "request_error: error.payload || {}" in app_source
+    assert "renderGooglePhotosSummary({" in app_source
+    assert "applyGooglePhotosPickerFailureFeedback(error, pickerDiagnostics)" in app_source
+    assert 'error.message || "Google Photos import failed."' not in app_source
+    assert 'setPanelStatus("autofill", "bad", message)' not in app_source
+
+
 def test_app_form_actions_delegate_repeated_action_failure_feedback() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
