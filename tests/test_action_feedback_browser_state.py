@@ -78,6 +78,129 @@ console.log(JSON.stringify({
     }
 
 
+def test_action_feedback_ui_helper_applies_status_and_diagnostics_safely() -> None:
+    script = """
+const feedbackModule = await import(__ACTION_FEEDBACK_MODULE_URL__);
+
+const calls = { panel: [], diagnostics: [] };
+const directFeedback = feedbackModule.applyActionFailureFeedbackToUi(
+  { message: "Failure <img src=x onerror=alert(1)><script>bad()</script>" },
+  {
+    panelSlot: "gmail",
+    diagnosticsSlot: "gmail-session",
+    fallback: "Fallback should not win",
+    tone: "warn",
+    diagnosticsHint: (message) => `Hint ${message}`,
+  },
+  {
+    setPanelStatus(slot, tone, message) {
+      calls.panel.push({ slot, tone, message });
+    },
+    setDiagnostics(slot, value, options) {
+      calls.diagnostics.push({
+        slot,
+        valueMessage: value?.message || "",
+        hint: options?.hint || "",
+        open: options?.open === true,
+      });
+    },
+  },
+);
+const fallbackFeedback = feedbackModule.applyActionFailureFeedbackToUi(
+  { message: "" },
+  {
+    panelSlot: "power-tools",
+    fallback: "Fallback <strong>safe</strong>",
+  },
+  {
+    setPanelStatus(slot, tone, message) {
+      calls.panel.push({ slot, tone, message });
+    },
+    setDiagnostics(slot, value, options) {
+      calls.diagnostics.push({ slot, valueMessage: value?.message || "", hint: options?.hint || "", open: options?.open === true });
+    },
+  },
+);
+const nullSinksFeedback = feedbackModule.applyActionFailureFeedbackToUi(
+  null,
+  { fallback: "Null fallback" },
+  {},
+);
+
+console.log(JSON.stringify({
+  exportType: typeof feedbackModule.applyActionFailureFeedbackToUi,
+  directFeedback,
+  fallbackFeedback,
+  nullSinksFeedback,
+  calls,
+}));
+"""
+    payload = run_browser_esm_json_probe(
+        script,
+        {"__ACTION_FEEDBACK_MODULE_URL__": "action_feedback_presentation.js"},
+        timeout_seconds=20,
+    )
+
+    assert payload["exportType"] == "function"
+    assert payload["directFeedback"] == {
+        "panelSlot": "gmail",
+        "diagnosticsSlot": "gmail-session",
+        "tone": "warn",
+        "message": "Failure <img src=x onerror=alert(1)><script>bad()</script>",
+        "diagnosticsHint": "Failure <img src=x onerror=alert(1)><script>bad()</script>",
+        "diagnosticsOpen": True,
+    }
+    assert payload["fallbackFeedback"]["message"] == "Fallback <strong>safe</strong>"
+    assert payload["nullSinksFeedback"]["message"] == "Null fallback"
+    assert payload["calls"]["panel"] == [
+        {
+            "slot": "gmail",
+            "tone": "warn",
+            "message": "Failure <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        {
+            "slot": "power-tools",
+            "tone": "bad",
+            "message": "Fallback <strong>safe</strong>",
+        },
+    ]
+    assert payload["calls"]["diagnostics"] == [
+        {
+            "slot": "gmail-session",
+            "valueMessage": "Failure <img src=x onerror=alert(1)><script>bad()</script>",
+            "hint": "Hint Failure <img src=x onerror=alert(1)><script>bad()</script>",
+            "open": True,
+        },
+    ]
+
+
+def test_browser_modules_delegate_action_failure_ui_application() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    feedback_source = (static_dir / "action_feedback_presentation.js").read_text(encoding="utf-8")
+    module_sources = {
+        "app": (static_dir / "app.js").read_text(encoding="utf-8"),
+        "gmail": (static_dir / "gmail.js").read_text(encoding="utf-8"),
+        "translation": (static_dir / "translation.js").read_text(encoding="utf-8"),
+        "power-tools": (static_dir / "power-tools.js").read_text(encoding="utf-8"),
+    }
+
+    assert "export function applyActionFailureFeedbackToUi" in feedback_source
+    for name, source in module_sources.items():
+        assert "applyActionFailureFeedbackToUi" in source, f"{name} should import the shared action feedback UI helper"
+        helper_start = source.index("function applyActionFailureFeedback(")
+        helper_end = source.index("\n}\n", helper_start) + 3
+        helper_block = source[helper_start:helper_end]
+        assert "applyActionFailureFeedbackToUi(" in helper_block, f"{name} helper should delegate"
+        assert "setPanelStatus(feedback.panelSlot" not in helper_block, f"{name} helper should not repeat status plumbing"
+        assert "setDiagnostics(feedback.diagnosticsSlot" not in helper_block, f"{name} helper should not repeat diagnostics plumbing"
+
+
 def test_power_tools_delegates_repeated_action_failure_feedback() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -91,7 +214,7 @@ def test_power_tools_delegates_repeated_action_failure_feedback() -> None:
 
     assert "export function buildActionFailureFeedback" in feedback_source
     assert 'from "./action_feedback_presentation.js"' in power_tools_source
-    assert "buildActionFailureFeedback" in power_tools_source
+    assert "applyActionFailureFeedbackToUi" in power_tools_source
     assert "function applyActionFailureFeedback" in power_tools_source
     assert 'setPanelStatus("settings", "bad", error.message ||' not in power_tools_source
     assert 'setPanelStatus("power-tools", "bad", error.message ||' not in power_tools_source
@@ -426,7 +549,7 @@ def test_translation_actions_delegate_repeated_action_failure_feedback() -> None
     translation_source = (static_dir / "translation.js").read_text(encoding="utf-8")
 
     assert 'from "./action_feedback_presentation.js"' in translation_source
-    assert "buildActionFailureFeedback" in translation_source
+    assert "applyActionFailureFeedbackToUi" in translation_source
     assert "function applyActionFailureFeedback" in translation_source
     for fallback in [
         "Translation job polling failed.",
@@ -486,7 +609,7 @@ def test_translation_save_actions_delegate_remaining_action_failure_feedback() -
         ), f"{fallback} should not repeat raw fallback message plumbing"
     assert 'setPanelStatus("translation-save", "bad", error.message ||' not in translation_source
     assert 'setPanelStatus("translation-save", "warn", error.message ||' not in translation_source
-    assert "setDiagnostics(feedback.diagnosticsSlot, error, {" in translation_source
+    assert "applyActionFailureFeedbackToUi(" in translation_source
     assert 'hint: error.message ||' not in translation_source
 
 
@@ -501,7 +624,7 @@ def test_gmail_actions_delegate_repeated_action_failure_feedback() -> None:
     gmail_source = (static_dir / "gmail.js").read_text(encoding="utf-8")
 
     assert 'from "./action_feedback_presentation.js"' in gmail_source
-    assert "buildActionFailureFeedback" in gmail_source
+    assert "applyActionFailureFeedbackToUi" in gmail_source
     assert "function applyActionFailureFeedback" in gmail_source
     for fallback in [
         "Gmail batch finalization preflight failed.",
