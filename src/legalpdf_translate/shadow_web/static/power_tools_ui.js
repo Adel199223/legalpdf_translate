@@ -170,6 +170,22 @@ export function renderLatestRunDirsInto(
   return container;
 }
 
+export function renderPowerToolsFieldValueInto(field, value = "") {
+  if (!field) {
+    return undefined;
+  }
+  field.value = value ?? "";
+  return field;
+}
+
+export function renderPowerToolsCheckboxInto(checkbox, value = false) {
+  if (!checkbox) {
+    return undefined;
+  }
+  checkbox.checked = Boolean(value);
+  return checkbox;
+}
+
 function qs(id) {
   return document.getElementById(id);
 }

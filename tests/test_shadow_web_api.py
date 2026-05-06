@@ -20815,6 +20815,129 @@ console.log(JSON.stringify({
     assert results["innerHTMLWrites"] == 0
 
 
+def test_power_tools_ui_module_centralizes_safe_input_control_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    power_tools_ui_module = static_dir / "power_tools_ui.js"
+
+    assert power_tools_ui_module.exists()
+    power_tools_ui_source = power_tools_ui_module.read_text(encoding="utf-8")
+    assert "export function renderPowerToolsFieldValueInto" in power_tools_ui_source
+    assert "export function renderPowerToolsCheckboxInto" in power_tools_ui_source
+    assert "renderPowerToolsFieldValueInto(qs(id), value);" in power_tools_js
+    assert "renderPowerToolsCheckboxInto(qs(id), value);" in power_tools_js
+    assert "node.value = value ?? \"\";" not in power_tools_js
+    assert "node.checked = Boolean(value);" not in power_tools_js
+    assert "innerHTML" not in power_tools_ui_source
+
+    script = r"""
+const powerToolsUi = await import(__POWER_TOOLS_UI_MODULE_URL__);
+
+class Element {
+  constructor() {
+    this.value = "existing";
+    this.checked = false;
+    this.textContent = "";
+    this.innerHTMLAssignments = [];
+    this._innerHTML = "";
+  }
+}
+
+Object.defineProperty(Element.prototype, "innerHTML", {
+  get() {
+    return this._innerHTML;
+  },
+  set(value) {
+    this._innerHTML = String(value ?? "");
+    this.innerHTMLAssignments.push(this._innerHTML);
+  },
+});
+
+const field = new Element();
+const emptyField = new Element();
+const checkbox = new Element();
+const falseCheckbox = new Element();
+const stringFalseCheckbox = new Element();
+
+const fieldReturn = powerToolsUi.renderPowerToolsFieldValueInto(
+  field,
+  "<img src=x onerror=alert(1)><script>bad()</script>",
+);
+powerToolsUi.renderPowerToolsFieldValueInto(emptyField, null);
+const nullFieldReturn = powerToolsUi.renderPowerToolsFieldValueInto(null, "ignored");
+
+const checkboxReturn = powerToolsUi.renderPowerToolsCheckboxInto(checkbox, 1);
+powerToolsUi.renderPowerToolsCheckboxInto(falseCheckbox, "");
+powerToolsUi.renderPowerToolsCheckboxInto(stringFalseCheckbox, "false");
+const nullCheckboxReturn = powerToolsUi.renderPowerToolsCheckboxInto(null, true);
+
+console.log(JSON.stringify({
+  field: {
+    value: field.value,
+    textContent: field.textContent,
+    returnedSameNode: fieldReturn === field,
+    innerHTMLWrites: field.innerHTMLAssignments.length,
+  },
+  emptyField: {
+    value: emptyField.value,
+    innerHTMLWrites: emptyField.innerHTMLAssignments.length,
+  },
+  checkbox: {
+    checked: checkbox.checked,
+    returnedSameNode: checkboxReturn === checkbox,
+    innerHTMLWrites: checkbox.innerHTMLAssignments.length,
+  },
+  falseCheckbox: {
+    checked: falseCheckbox.checked,
+    innerHTMLWrites: falseCheckbox.innerHTMLAssignments.length,
+  },
+  stringFalseCheckbox: {
+    checked: stringFalseCheckbox.checked,
+    innerHTMLWrites: stringFalseCheckbox.innerHTMLAssignments.length,
+  },
+  nullFieldReturnType: typeof nullFieldReturn,
+  nullCheckboxReturnType: typeof nullCheckboxReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__POWER_TOOLS_UI_MODULE_URL__": "power_tools_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["field"] == {
+        "value": "<img src=x onerror=alert(1)><script>bad()</script>",
+        "textContent": "",
+        "returnedSameNode": True,
+        "innerHTMLWrites": 0,
+    }
+    assert results["emptyField"] == {
+        "value": "",
+        "innerHTMLWrites": 0,
+    }
+    assert results["checkbox"] == {
+        "checked": True,
+        "returnedSameNode": True,
+        "innerHTMLWrites": 0,
+    }
+    assert results["falseCheckbox"] == {
+        "checked": False,
+        "innerHTMLWrites": 0,
+    }
+    assert results["stringFalseCheckbox"] == {
+        "checked": True,
+        "innerHTMLWrites": 0,
+    }
+    assert results["nullFieldReturnType"] == "undefined"
+    assert results["nullCheckboxReturnType"] == "undefined"
+
+
 def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -23591,6 +23714,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderCredentialRecoveryStateInto" in power_tools_ui_asset.text
         assert "setDiagnostics" in power_tools_ui_asset.text
         assert "setPanelStatus" in power_tools_ui_asset.text
+        assert "renderPowerToolsFieldValueInto" in power_tools_ui_asset.text
+        assert "renderPowerToolsCheckboxInto" in power_tools_ui_asset.text
         interpretation_reference_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_reference_ui.js")
         assert interpretation_reference_ui_asset.status_code == 200
         assert interpretation_reference_ui_asset.headers["content-type"].startswith("application/javascript")
