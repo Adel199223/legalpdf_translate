@@ -227,6 +227,34 @@ function applyActionFailureFeedback(
   return feedback;
 }
 
+function applyGooglePhotosPickerFailureFeedback(error, pickerDiagnostics) {
+  const reconnectNeeded = [
+    "picker_done_but_media_items_set_false",
+    "picker_reconnect_to_partner_app",
+    "picker_stale_session_possible",
+    "picker_account_mismatch_possible",
+  ].includes(pickerDiagnostics?.safe_failure_category);
+  const feedbackError = reconnectNeeded
+    ? { message: GOOGLE_PHOTOS_RECONNECT_GUIDANCE }
+    : error;
+  const feedback = buildActionFailureFeedback(feedbackError, "Google Photos import failed.", {
+    panelSlot: "autofill",
+    diagnosticsSlot: "autofill",
+  });
+  setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
+  setDiagnostics(feedback.diagnosticsSlot, {
+    status: "failed",
+    message: feedback.message,
+    google_photos_picker: pickerDiagnostics,
+    request_error: error.payload || {},
+  }, { hint: feedback.diagnosticsHint, open: feedback.diagnosticsOpen });
+  renderGooglePhotosSummary({
+    diagnostics: { location_message: "Google Photos location: unavailable from Picker API" },
+    message: feedback.message,
+  });
+  return feedback;
+}
+
 function qsa(selector) {
   return Array.from(document.querySelectorAll(selector));
 }
@@ -3166,23 +3194,7 @@ function wireEvents() {
         await handleGooglePhotosChoose();
       } catch (error) {
         const pickerDiagnostics = googlePhotosUiState.pickerDiagnostics || buildGooglePhotosPickerDiagnostics();
-        const reconnectNeeded = [
-          "picker_done_but_media_items_set_false",
-          "picker_reconnect_to_partner_app",
-          "picker_stale_session_possible",
-          "picker_account_mismatch_possible",
-        ].includes(pickerDiagnostics.safe_failure_category);
-        const message = reconnectNeeded
-          ? GOOGLE_PHOTOS_RECONNECT_GUIDANCE
-          : (error.message || "Google Photos import failed.");
-        setPanelStatus("autofill", "bad", message);
-        setDiagnostics("autofill", {
-          status: "failed",
-          message,
-          google_photos_picker: pickerDiagnostics,
-          request_error: error.payload || {},
-        }, { hint: message, open: true });
-        renderGooglePhotosSummary({ diagnostics: { location_message: "Google Photos location: unavailable from Picker API" }, message });
+        applyGooglePhotosPickerFailureFeedback(error, pickerDiagnostics);
       }
     }, { guardIds: ["google-photos-choose"] });
     renderGooglePhotosStatus(googlePhotosUiState.status || {});
