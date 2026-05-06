@@ -186,6 +186,18 @@ export function renderPowerToolsCheckboxInto(checkbox, value = false) {
   return checkbox;
 }
 
+export function renderPowerToolsGlossaryFormInto(nodes = {}, glossary = {}) {
+  if (!nodes) {
+    return undefined;
+  }
+  renderPowerToolsFieldValueInto(nodes.projectPath, glossary.projectPath || "");
+  renderPowerToolsFieldValueInto(nodes.personalJson, glossary.personalJson ?? "{}");
+  renderPowerToolsFieldValueInto(nodes.projectJson, glossary.projectJson ?? "{}");
+  renderPowerToolsFieldValueInto(nodes.enabledTiersJson, glossary.enabledTiersJson ?? "{}");
+  renderPowerToolsFieldValueInto(nodes.promptAddendumJson, glossary.promptAddendumJson ?? "{}");
+  return nodes;
+}
+
 export function renderBuilderSourceModeInto(nodes = {}, sourceMode = "run_folders") {
   if (!nodes) {
     return undefined;

@@ -21232,6 +21232,144 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_power_tools_ui_module_centralizes_glossary_form_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    power_tools_ui_module = static_dir / "power_tools_ui.js"
+
+    assert power_tools_ui_module.exists()
+    power_tools_ui_source = power_tools_ui_module.read_text(encoding="utf-8")
+    assert "export function renderPowerToolsGlossaryFormInto" in power_tools_ui_source
+    assert "renderPowerToolsGlossaryFormInto({" in power_tools_js
+    assert 'setFieldValue("glossary-project-path", glossary.project_glossary_path || "");' not in power_tools_js
+    assert 'setFieldValue("glossary-personal-json", prettyJson(glossary.personal_glossaries_by_lang || {}));' not in power_tools_js
+    assert 'setFieldValue("glossary-project-json", prettyJson(glossary.project_glossaries_by_lang || {}));' not in power_tools_js
+    assert 'setFieldValue("glossary-enabled-tiers-json", prettyJson(glossary.enabled_tiers_by_target_lang || {}));' not in power_tools_js
+    assert 'setFieldValue("glossary-prompt-addendum-json", prettyJson(glossary.prompt_addendum_by_lang || {}));' not in power_tools_js
+    assert "innerHTML" not in power_tools_ui_source
+
+    script = r"""
+const powerToolsUi = await import(__POWER_TOOLS_UI_MODULE_URL__);
+
+class Element {
+  constructor() {
+    this.value = "existing";
+    this.innerHTMLAssignments = [];
+    this._innerHTML = "";
+  }
+}
+
+Object.defineProperty(Element.prototype, "innerHTML", {
+  get() {
+    return this._innerHTML;
+  },
+  set(value) {
+    this._innerHTML = String(value ?? "");
+    this.innerHTMLAssignments.push(this._innerHTML);
+  },
+});
+
+function makeNodes() {
+  return {
+    projectPath: new Element(),
+    personalJson: new Element(),
+    projectJson: new Element(),
+    enabledTiersJson: new Element(),
+    promptAddendumJson: new Element(),
+  };
+}
+
+function readNodes(nodes) {
+  return {
+    projectPath: nodes.projectPath.value,
+    personalJson: nodes.personalJson.value,
+    projectJson: nodes.projectJson.value,
+    enabledTiersJson: nodes.enabledTiersJson.value,
+    promptAddendumJson: nodes.promptAddendumJson.value,
+    innerHTMLWrites: Object.values(nodes).reduce(
+      (total, node) => total + node.innerHTMLAssignments.length,
+      0,
+    ),
+  };
+}
+
+const maliciousNodes = makeNodes();
+const maliciousReturn = powerToolsUi.renderPowerToolsGlossaryFormInto(maliciousNodes, {
+  projectPath: "C:/glossary/<img src=x onerror=alert(1)>.json",
+  personalJson: "{\"EN\":{\"term\":\"<script>bad()</script>\"}}",
+  projectJson: "{\"AR\":{\"term\":\"<img src=x onerror=alert(1)>\"}}",
+  enabledTiersJson: "{\"EN\":[\"<svg onload=alert(1)>\"]}",
+  promptAddendumJson: "{\"EN\":\"<b>Use exact term</b>\"}",
+});
+
+const defaultsNodes = makeNodes();
+powerToolsUi.renderPowerToolsGlossaryFormInto(defaultsNodes, {});
+
+const partialNodes = {
+  projectPath: new Element(),
+  promptAddendumJson: new Element(),
+};
+powerToolsUi.renderPowerToolsGlossaryFormInto(partialNodes, {
+  projectPath: "C:/glossary/project.json",
+  promptAddendumJson: "{\"FR\":\"Use formal register\"}",
+});
+
+const nullReturn = powerToolsUi.renderPowerToolsGlossaryFormInto(null, {
+  projectPath: "ignored",
+});
+
+console.log(JSON.stringify({
+  malicious: {
+    ...readNodes(maliciousNodes),
+    returnedSameNodes: maliciousReturn === maliciousNodes,
+  },
+  defaults: readNodes(defaultsNodes),
+  partial: {
+    projectPath: partialNodes.projectPath.value,
+    promptAddendumJson: partialNodes.promptAddendumJson.value,
+    innerHTMLWrites: partialNodes.projectPath.innerHTMLAssignments.length
+      + partialNodes.promptAddendumJson.innerHTMLAssignments.length,
+  },
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__POWER_TOOLS_UI_MODULE_URL__": "power_tools_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["malicious"] == {
+        "projectPath": "C:/glossary/<img src=x onerror=alert(1)>.json",
+        "personalJson": "{\"EN\":{\"term\":\"<script>bad()</script>\"}}",
+        "projectJson": "{\"AR\":{\"term\":\"<img src=x onerror=alert(1)>\"}}",
+        "enabledTiersJson": "{\"EN\":[\"<svg onload=alert(1)>\"]}",
+        "promptAddendumJson": "{\"EN\":\"<b>Use exact term</b>\"}",
+        "innerHTMLWrites": 0,
+        "returnedSameNodes": True,
+    }
+    assert results["defaults"] == {
+        "projectPath": "",
+        "personalJson": "{}",
+        "projectJson": "{}",
+        "enabledTiersJson": "{}",
+        "promptAddendumJson": "{}",
+        "innerHTMLWrites": 0,
+    }
+    assert results["partial"] == {
+        "projectPath": "C:/glossary/project.json",
+        "promptAddendumJson": "{\"FR\":\"Use formal register\"}",
+        "innerHTMLWrites": 0,
+    }
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_power_tools_ui_module_centralizes_calibration_defaults_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -24162,6 +24300,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderPowerToolsFieldValueInto" in power_tools_ui_asset.text
         assert "renderPowerToolsCheckboxInto" in power_tools_ui_asset.text
         assert "renderBuilderSourceModeInto" in power_tools_ui_asset.text
+        assert "renderPowerToolsGlossaryFormInto" in power_tools_ui_asset.text
         assert "renderPowerToolsBuilderDefaultsInto" in power_tools_ui_asset.text
         assert "renderPowerToolsCalibrationDefaultsInto" in power_tools_ui_asset.text
         interpretation_reference_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_reference_ui.js")

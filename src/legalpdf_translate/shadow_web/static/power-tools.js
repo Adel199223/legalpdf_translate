@@ -10,6 +10,7 @@ import {
   renderPowerToolsCalibrationDefaultsInto,
   renderPowerToolsCheckboxInto,
   renderPowerToolsFieldValueInto,
+  renderPowerToolsGlossaryFormInto,
   setDiagnostics,
   setPanelStatus,
 } from "./power_tools_ui.js";
@@ -224,11 +225,19 @@ function renderPowerToolsPayload(powerTools, { preserveStatus = false } = {}) {
     return;
   }
   const glossary = powerTools.glossary || {};
-  setFieldValue("glossary-project-path", glossary.project_glossary_path || "");
-  setFieldValue("glossary-personal-json", prettyJson(glossary.personal_glossaries_by_lang || {}));
-  setFieldValue("glossary-project-json", prettyJson(glossary.project_glossaries_by_lang || {}));
-  setFieldValue("glossary-enabled-tiers-json", prettyJson(glossary.enabled_tiers_by_target_lang || {}));
-  setFieldValue("glossary-prompt-addendum-json", prettyJson(glossary.prompt_addendum_by_lang || {}));
+  renderPowerToolsGlossaryFormInto({
+    projectPath: qs("glossary-project-path"),
+    personalJson: qs("glossary-personal-json"),
+    projectJson: qs("glossary-project-json"),
+    enabledTiersJson: qs("glossary-enabled-tiers-json"),
+    promptAddendumJson: qs("glossary-prompt-addendum-json"),
+  }, {
+    projectPath: glossary.project_glossary_path || "",
+    personalJson: prettyJson(glossary.personal_glossaries_by_lang || {}),
+    projectJson: prettyJson(glossary.project_glossaries_by_lang || {}),
+    enabledTiersJson: prettyJson(glossary.enabled_tiers_by_target_lang || {}),
+    promptAddendumJson: prettyJson(glossary.prompt_addendum_by_lang || {}),
+  });
 
   const builder = powerTools.glossary_builder || {};
   const builderDefaults = builder.defaults || {};
