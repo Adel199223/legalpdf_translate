@@ -5,6 +5,8 @@ import { buildSettingsStatusPresentation } from "./settings_presentation.js";
 import {
   renderCredentialRecoveryStateInto,
   renderLatestRunDirsInto,
+  renderPowerToolsCheckboxInto,
+  renderPowerToolsFieldValueInto,
   setDiagnostics,
   setPanelStatus,
 } from "./power_tools_ui.js";
@@ -18,17 +20,11 @@ function fieldValue(id) {
 }
 
 function setFieldValue(id, value) {
-  const node = qs(id);
-  if (node) {
-    node.value = value ?? "";
-  }
+  renderPowerToolsFieldValueInto(qs(id), value);
 }
 
 function setCheckbox(id, value) {
-  const node = qs(id);
-  if (node) {
-    node.checked = Boolean(value);
-  }
+  renderPowerToolsCheckboxInto(qs(id), value);
 }
 
 function parseJsonObject(text, label) {
