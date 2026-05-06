@@ -211,13 +211,16 @@ function qs(id) {
 
 function applyActionFailureFeedback(
   error,
-  { panelSlot = "", diagnosticsSlot = "", fallback = "" } = {},
+  { panelSlot = "", diagnosticsSlot = "", fallback = "", diagnosticsHint = "" } = {},
 ) {
   const feedback = buildActionFailureFeedback(error, fallback, { panelSlot, diagnosticsSlot });
+  const resolvedDiagnosticsHint = typeof diagnosticsHint === "function"
+    ? diagnosticsHint(feedback.message)
+    : (diagnosticsHint || feedback.diagnosticsHint);
   setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
   if (feedback.diagnosticsSlot) {
     setDiagnostics(feedback.diagnosticsSlot, error, {
-      hint: feedback.diagnosticsHint,
+      hint: resolvedDiagnosticsHint,
       open: feedback.diagnosticsOpen,
     });
   }
@@ -470,21 +473,23 @@ function escapeHtml(value) {
 }
 
 function applyBootstrapFailureState(error) {
+  const bootstrapFeedback = buildActionFailureFeedback(
+    error,
+    "Browser app bootstrap failed.",
+    { panelSlot: "runtime", diagnosticsSlot: "runtime" },
+  );
   setClientHydrationMarker("client_boot_failed", {
     reason: error?.payload?.diagnostics?.error || error?.name || "bootstrap_failed",
-    message: error?.message || "Browser app bootstrap failed.",
+    message: bootstrapFeedback.message,
   });
   if (error?.payload?.diagnostics?.error === "stale_browser_assets") {
-    setTopbarStatus(error.message || "This LegalPDF browser tab is using stale browser assets.", "bad");
-    setPanelStatus(
-      "runtime",
-      "bad",
-      error.message || "This LegalPDF browser tab is using stale browser assets.",
-    );
-    setDiagnostics("runtime", error, {
-      hint: "The tab loaded an older browser asset version than the live server expects. Reload the LegalPDF tab once to pick up the current local build.",
-      open: true,
+    const feedback = applyActionFailureFeedback(error, {
+      panelSlot: "runtime",
+      diagnosticsSlot: "runtime",
+      fallback: "This LegalPDF browser tab is using stale browser assets.",
+      diagnosticsHint: "The tab loaded an older browser asset version than the live server expects. Reload the LegalPDF tab once to pick up the current local build.",
     });
+    setTopbarStatus(feedback.message, feedback.tone);
     return;
   }
   if (isLocalServerUnavailableError(error)) {
@@ -516,9 +521,12 @@ function applyBootstrapFailureState(error) {
     }
     return;
   }
-  setTopbarStatus(error.message || "Browser app bootstrap failed.", "bad");
-  setPanelStatus("runtime", "bad", error.message || "Browser app bootstrap failed.");
-  setDiagnostics("runtime", error, { hint: error.message || "Browser app bootstrap failed.", open: true });
+  const feedback = applyActionFailureFeedback(error, {
+    panelSlot: "runtime",
+    diagnosticsSlot: "runtime",
+    fallback: "Browser app bootstrap failed.",
+  });
+  setTopbarStatus(feedback.message, feedback.tone);
 }
 
 function fieldValue(id) {
