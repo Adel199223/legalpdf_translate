@@ -134,6 +134,35 @@ def test_app_profile_actions_delegate_repeated_action_failure_feedback() -> None
     assert 'setDiagnostics("profile", error, { hint: error.message ||' not in app_source
 
 
+def test_app_profile_distance_actions_delegate_action_failure_feedback() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_source = (static_dir / "app.js").read_text(encoding="utf-8")
+
+    assert 'from "./action_feedback_presentation.js"' in app_source
+    assert "function applyProfileDistanceFailureStatus" in app_source
+    assert "buildActionFailureFeedback(error, fallback)" in app_source
+    assert "setProfileDistanceStatus(feedback.tone, feedback.message)" in app_source
+    for fallback in [
+        "Unable to update the distance.",
+        "Unable to refresh the distance list.",
+    ]:
+        assert (
+            f'applyProfileDistanceFailureStatus(error, "{fallback}")'
+            in app_source
+        ), f"{fallback} should be routed through shared action feedback"
+        assert (
+            f'error.message || "{fallback}"'
+            not in app_source
+        ), f"{fallback} should not repeat raw fallback message plumbing"
+    assert 'setProfileDistanceStatus("bad", error.message ||' not in app_source
+
+
 def test_app_recent_work_actions_delegate_repeated_action_failure_feedback() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]

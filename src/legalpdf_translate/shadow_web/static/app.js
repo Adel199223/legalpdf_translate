@@ -1748,6 +1748,12 @@ function setProfileDistanceStatus(tone, message) {
   renderProfileDistanceStatusInto(qs("profile-distance-status"), { tone, message });
 }
 
+function applyProfileDistanceFailureStatus(error, fallback) {
+  const feedback = buildActionFailureFeedback(error, fallback);
+  setProfileDistanceStatus(feedback.tone, feedback.message);
+  return feedback;
+}
+
 function syncProfileDistanceJsonField({ markClean = true } = {}) {
   const jsonField = qs("profile-editor-travel-distances-json");
   if (!jsonField) {
@@ -3297,7 +3303,7 @@ function wireEvents() {
     try {
       applyProfileDistanceUpsert();
     } catch (error) {
-      setProfileDistanceStatus("bad", error.message || "Unable to update the distance.");
+      applyProfileDistanceFailureStatus(error, "Unable to update the distance.");
     }
   });
 
@@ -3305,7 +3311,7 @@ function wireEvents() {
     try {
       resyncProfileDistancesFromAdvancedJson();
     } catch (error) {
-      setProfileDistanceStatus("bad", error.message || "Unable to refresh the distance list.");
+      applyProfileDistanceFailureStatus(error, "Unable to refresh the distance list.");
     }
   });
 
