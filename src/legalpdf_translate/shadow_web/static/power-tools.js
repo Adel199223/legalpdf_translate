@@ -2,8 +2,12 @@ import { fetchJson } from "./api.js";
 import { appState } from "./state.js";
 import { runWithBusy } from "./busy_ui.js";
 import { buildSettingsStatusPresentation } from "./settings_presentation.js";
-import { formatDiagnosticValue } from "./diagnostics_presentation.js";
-import { renderCredentialRecoveryStateInto, renderLatestRunDirsInto } from "./power_tools_ui.js";
+import {
+  renderCredentialRecoveryStateInto,
+  renderLatestRunDirsInto,
+  setDiagnostics,
+  setPanelStatus,
+} from "./power_tools_ui.js";
 
 function qs(id) {
   return document.getElementById(id);
@@ -24,34 +28,6 @@ function setCheckbox(id, value) {
   const node = qs(id);
   if (node) {
     node.checked = Boolean(value);
-  }
-}
-
-function setDiagnostics(slot, value, { hint = "", open = false } = {}) {
-  const pre = qs(`${slot}-diagnostics`);
-  if (pre) {
-    pre.textContent = formatDiagnosticValue(value);
-  }
-  const hintNode = qs(`${slot}-hint`);
-  if (hintNode && hint) {
-    hintNode.textContent = hint;
-  }
-  const details = qs(`${slot}-details`);
-  if (details) {
-    details.open = Boolean(open);
-  }
-}
-
-function setPanelStatus(slot, tone, message) {
-  const panel = qs(`${slot}-status`);
-  if (!panel) {
-    return;
-  }
-  panel.textContent = message;
-  if (tone) {
-    panel.dataset.tone = tone;
-  } else {
-    delete panel.dataset.tone;
   }
 }
 

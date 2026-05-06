@@ -1,4 +1,5 @@
 import { clearNode, createEmptyState, createTextElement } from "./safe_rendering.js";
+import { formatDiagnosticValue } from "./diagnostics_presentation.js";
 
 function describeTranslationCredentialSource(translation = {}) {
   const source = translation.effective_credential_source || translation.credential_source || {};
@@ -167,4 +168,36 @@ export function renderLatestRunDirsInto(
     container.appendChild(article);
   }
   return container;
+}
+
+function qs(id) {
+  return document.getElementById(id);
+}
+
+export function setDiagnostics(slot, value, { hint = "", open = false } = {}) {
+  const pre = qs(`${slot}-diagnostics`);
+  if (pre) {
+    pre.textContent = formatDiagnosticValue(value);
+  }
+  const hintNode = qs(`${slot}-hint`);
+  if (hintNode && hint) {
+    hintNode.textContent = hint;
+  }
+  const details = qs(`${slot}-details`);
+  if (details) {
+    details.open = Boolean(open);
+  }
+}
+
+export function setPanelStatus(slot, tone, message) {
+  const panel = qs(`${slot}-status`);
+  if (!panel) {
+    return;
+  }
+  panel.textContent = message;
+  if (tone) {
+    panel.dataset.tone = tone;
+  } else {
+    delete panel.dataset.tone;
+  }
 }
