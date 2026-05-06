@@ -6,6 +6,7 @@ import {
   renderBuilderSourceModeInto,
   renderCredentialRecoveryStateInto,
   renderLatestRunDirsInto,
+  renderPowerToolsCalibrationDefaultsInto,
   renderPowerToolsCheckboxInto,
   renderPowerToolsFieldValueInto,
   setDiagnostics,
@@ -244,13 +245,15 @@ function renderPowerToolsPayload(powerTools, { preserveStatus = false } = {}) {
 
   const calibration = powerTools.calibration || {};
   const calibrationDefaults = calibration.defaults || {};
-  setFieldValue("calibration-pdf-path", calibrationDefaults.pdf_path || "");
-  setFieldValue("calibration-output-dir", calibrationDefaults.output_dir || "");
-  setFieldValue("calibration-target-lang", calibrationDefaults.target_lang || "EN");
-  setFieldValue("calibration-sample-pages", calibrationDefaults.sample_pages ?? 5);
-  setFieldValue("calibration-user-seed", calibrationDefaults.user_seed || "");
-  setFieldValue("calibration-excerpt-max-chars", calibrationDefaults.excerpt_max_chars ?? 200);
-  setCheckbox("calibration-include-excerpts", calibrationDefaults.include_excerpts);
+  renderPowerToolsCalibrationDefaultsInto({
+    pdfPath: qs("calibration-pdf-path"),
+    outputDir: qs("calibration-output-dir"),
+    targetLang: qs("calibration-target-lang"),
+    samplePages: qs("calibration-sample-pages"),
+    userSeed: qs("calibration-user-seed"),
+    excerptMaxChars: qs("calibration-excerpt-max-chars"),
+    includeExcerpts: qs("calibration-include-excerpts"),
+  }, calibrationDefaults);
 
   const diagnostics = powerTools.diagnostics || {};
   if (!fieldValue("diagnostics-run-dir")) {

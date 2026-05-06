@@ -200,6 +200,20 @@ export function renderBuilderSourceModeInto(nodes = {}, sourceMode = "run_folder
   return nodes;
 }
 
+export function renderPowerToolsCalibrationDefaultsInto(nodes = {}, defaults = {}) {
+  if (!nodes) {
+    return undefined;
+  }
+  renderPowerToolsFieldValueInto(nodes.pdfPath, defaults.pdf_path || "");
+  renderPowerToolsFieldValueInto(nodes.outputDir, defaults.output_dir || "");
+  renderPowerToolsFieldValueInto(nodes.targetLang, defaults.target_lang || "EN");
+  renderPowerToolsFieldValueInto(nodes.samplePages, defaults.sample_pages ?? 5);
+  renderPowerToolsFieldValueInto(nodes.userSeed, defaults.user_seed || "");
+  renderPowerToolsFieldValueInto(nodes.excerptMaxChars, defaults.excerpt_max_chars ?? 200);
+  renderPowerToolsCheckboxInto(nodes.includeExcerpts, defaults.include_excerpts);
+  return nodes;
+}
+
 function qs(id) {
   return document.getElementById(id);
 }

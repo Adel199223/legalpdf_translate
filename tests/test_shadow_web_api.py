@@ -21052,6 +21052,157 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_power_tools_ui_module_centralizes_calibration_defaults_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    power_tools_ui_module = static_dir / "power_tools_ui.js"
+
+    assert power_tools_ui_module.exists()
+    power_tools_ui_source = power_tools_ui_module.read_text(encoding="utf-8")
+    assert "export function renderPowerToolsCalibrationDefaultsInto" in power_tools_ui_source
+    assert "renderPowerToolsCalibrationDefaultsInto({" in power_tools_js
+    assert 'setFieldValue("calibration-pdf-path", calibrationDefaults.pdf_path || "");' not in power_tools_js
+    assert 'setFieldValue("calibration-output-dir", calibrationDefaults.output_dir || "");' not in power_tools_js
+    assert 'setFieldValue("calibration-target-lang", calibrationDefaults.target_lang || "EN");' not in power_tools_js
+    assert 'setFieldValue("calibration-sample-pages", calibrationDefaults.sample_pages ?? 5);' not in power_tools_js
+    assert 'setFieldValue("calibration-user-seed", calibrationDefaults.user_seed || "");' not in power_tools_js
+    assert 'setFieldValue("calibration-excerpt-max-chars", calibrationDefaults.excerpt_max_chars ?? 200);' not in power_tools_js
+    assert 'setCheckbox("calibration-include-excerpts", calibrationDefaults.include_excerpts);' not in power_tools_js
+    assert "innerHTML" not in power_tools_ui_source
+
+    script = r"""
+const powerToolsUi = await import(__POWER_TOOLS_UI_MODULE_URL__);
+
+class Element {
+  constructor() {
+    this.value = "existing";
+    this.checked = true;
+    this.innerHTMLAssignments = [];
+    this._innerHTML = "";
+  }
+}
+
+Object.defineProperty(Element.prototype, "innerHTML", {
+  get() {
+    return this._innerHTML;
+  },
+  set(value) {
+    this._innerHTML = String(value ?? "");
+    this.innerHTMLAssignments.push(this._innerHTML);
+  },
+});
+
+function makeNodes() {
+  return {
+    pdfPath: new Element(),
+    outputDir: new Element(),
+    targetLang: new Element(),
+    samplePages: new Element(),
+    userSeed: new Element(),
+    excerptMaxChars: new Element(),
+    includeExcerpts: new Element(),
+  };
+}
+
+function readNodes(nodes) {
+  return {
+    pdfPath: nodes.pdfPath.value,
+    outputDir: nodes.outputDir.value,
+    targetLang: nodes.targetLang.value,
+    samplePages: nodes.samplePages.value,
+    userSeed: nodes.userSeed.value,
+    excerptMaxChars: nodes.excerptMaxChars.value,
+    includeExcerpts: nodes.includeExcerpts.checked,
+    innerHTMLWrites: Object.values(nodes).reduce(
+      (total, node) => total + node.innerHTMLAssignments.length,
+      0,
+    ),
+  };
+}
+
+const maliciousNodes = makeNodes();
+const maliciousReturn = powerToolsUi.renderPowerToolsCalibrationDefaultsInto(maliciousNodes, {
+  pdf_path: "<img src=x onerror=alert(1)>",
+  output_dir: "<script>bad()</script>",
+  target_lang: "<b>AR</b>",
+  sample_pages: 0,
+  user_seed: "<svg onload=alert(1)>",
+  excerpt_max_chars: 0,
+  include_excerpts: false,
+});
+
+const defaultsNodes = makeNodes();
+powerToolsUi.renderPowerToolsCalibrationDefaultsInto(defaultsNodes, {});
+
+const partialNodes = {
+  pdfPath: new Element(),
+  includeExcerpts: new Element(),
+};
+powerToolsUi.renderPowerToolsCalibrationDefaultsInto(partialNodes, {
+  pdf_path: "C:/case.pdf",
+  include_excerpts: 1,
+});
+
+const nullReturn = powerToolsUi.renderPowerToolsCalibrationDefaultsInto(null, {
+  pdf_path: "ignored",
+});
+
+console.log(JSON.stringify({
+  malicious: {
+    ...readNodes(maliciousNodes),
+    returnedSameNodes: maliciousReturn === maliciousNodes,
+  },
+  defaults: readNodes(defaultsNodes),
+  partial: {
+    pdfPath: partialNodes.pdfPath.value,
+    includeExcerpts: partialNodes.includeExcerpts.checked,
+    innerHTMLWrites: partialNodes.pdfPath.innerHTMLAssignments.length
+      + partialNodes.includeExcerpts.innerHTMLAssignments.length,
+  },
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__POWER_TOOLS_UI_MODULE_URL__": "power_tools_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["malicious"] == {
+        "pdfPath": "<img src=x onerror=alert(1)>",
+        "outputDir": "<script>bad()</script>",
+        "targetLang": "<b>AR</b>",
+        "samplePages": 0,
+        "userSeed": "<svg onload=alert(1)>",
+        "excerptMaxChars": 0,
+        "includeExcerpts": False,
+        "innerHTMLWrites": 0,
+        "returnedSameNodes": True,
+    }
+    assert results["defaults"] == {
+        "pdfPath": "",
+        "outputDir": "",
+        "targetLang": "EN",
+        "samplePages": 5,
+        "userSeed": "",
+        "excerptMaxChars": 200,
+        "includeExcerpts": False,
+        "innerHTMLWrites": 0,
+    }
+    assert results["partial"] == {
+        "pdfPath": "C:/case.pdf",
+        "includeExcerpts": True,
+        "innerHTMLWrites": 0,
+    }
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -23831,6 +23982,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderPowerToolsFieldValueInto" in power_tools_ui_asset.text
         assert "renderPowerToolsCheckboxInto" in power_tools_ui_asset.text
         assert "renderBuilderSourceModeInto" in power_tools_ui_asset.text
+        assert "renderPowerToolsCalibrationDefaultsInto" in power_tools_ui_asset.text
         interpretation_reference_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_reference_ui.js")
         assert interpretation_reference_ui_asset.status_code == 200
         assert interpretation_reference_ui_asset.headers["content-type"].startswith("application/javascript")
