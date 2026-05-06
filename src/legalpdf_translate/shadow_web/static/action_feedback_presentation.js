@@ -22,6 +22,7 @@ export function applyActionFailureFeedbackToUi(
     fallback = "",
     tone = "bad",
     diagnosticsHint = "",
+    diagnosticsValue = undefined,
   } = {},
   {
     setPanelStatus = null,
@@ -36,11 +37,14 @@ export function applyActionFailureFeedbackToUi(
   const resolvedDiagnosticsHint = typeof diagnosticsHint === "function"
     ? diagnosticsHint(feedback.message)
     : (diagnosticsHint || feedback.diagnosticsHint);
+  const resolvedDiagnosticsValue = typeof diagnosticsValue === "function"
+    ? diagnosticsValue(feedback, error)
+    : diagnosticsValue;
   if (typeof setPanelStatus === "function") {
     setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
   }
   if (feedback.diagnosticsSlot && typeof setDiagnostics === "function") {
-    setDiagnostics(feedback.diagnosticsSlot, error, {
+    setDiagnostics(feedback.diagnosticsSlot, resolvedDiagnosticsValue === undefined ? error : resolvedDiagnosticsValue, {
       hint: resolvedDiagnosticsHint,
       open: feedback.diagnosticsOpen,
     });

@@ -106,6 +106,32 @@ const directFeedback = feedbackModule.applyActionFailureFeedbackToUi(
     },
   },
 );
+const customDiagnosticsFeedback = feedbackModule.applyActionFailureFeedbackToUi(
+  { message: "Guard blocked <svg onload=alert(1)>", payload: { route: "<b>form</b>" } },
+  {
+    panelSlot: "form",
+    diagnosticsSlot: "form",
+    fallback: "Fallback should not win",
+    diagnosticsValue: (feedback, error) => ({
+      status: "failed",
+      message: feedback.message,
+      originalPayload: error.payload,
+    }),
+  },
+  {
+    setPanelStatus(slot, tone, message) {
+      calls.panel.push({ slot, tone, message });
+    },
+    setDiagnostics(slot, value, options) {
+      calls.diagnostics.push({
+        slot,
+        value,
+        hint: options?.hint || "",
+        open: options?.open === true,
+      });
+    },
+  },
+);
 const fallbackFeedback = feedbackModule.applyActionFailureFeedbackToUi(
   { message: "" },
   {
@@ -130,6 +156,7 @@ const nullSinksFeedback = feedbackModule.applyActionFailureFeedbackToUi(
 console.log(JSON.stringify({
   exportType: typeof feedbackModule.applyActionFailureFeedbackToUi,
   directFeedback,
+  customDiagnosticsFeedback,
   fallbackFeedback,
   nullSinksFeedback,
   calls,
@@ -151,12 +178,18 @@ console.log(JSON.stringify({
         "diagnosticsOpen": True,
     }
     assert payload["fallbackFeedback"]["message"] == "Fallback <strong>safe</strong>"
+    assert payload["customDiagnosticsFeedback"]["message"] == "Guard blocked <svg onload=alert(1)>"
     assert payload["nullSinksFeedback"]["message"] == "Null fallback"
     assert payload["calls"]["panel"] == [
         {
             "slot": "gmail",
             "tone": "warn",
             "message": "Failure <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        {
+            "slot": "form",
+            "tone": "bad",
+            "message": "Guard blocked <svg onload=alert(1)>",
         },
         {
             "slot": "power-tools",
@@ -169,6 +202,16 @@ console.log(JSON.stringify({
             "slot": "gmail-session",
             "valueMessage": "Failure <img src=x onerror=alert(1)><script>bad()</script>",
             "hint": "Hint Failure <img src=x onerror=alert(1)><script>bad()</script>",
+            "open": True,
+        },
+        {
+            "slot": "form",
+            "value": {
+                "status": "failed",
+                "message": "Guard blocked <svg onload=alert(1)>",
+                "originalPayload": {"route": "<b>form</b>"},
+            },
+            "hint": "Guard blocked <svg onload=alert(1)>",
             "open": True,
         },
     ]
@@ -269,8 +312,12 @@ def test_app_profile_distance_actions_delegate_action_failure_feedback() -> None
 
     assert 'from "./action_feedback_presentation.js"' in app_source
     assert "function applyProfileDistanceFailureStatus" in app_source
-    assert "buildActionFailureFeedback(error, fallback)" in app_source
-    assert "setProfileDistanceStatus(feedback.tone, feedback.message)" in app_source
+    helper_start = app_source.index("function applyProfileDistanceFailureStatus")
+    helper_end = app_source.index("\n}\n", helper_start) + 3
+    helper_block = app_source[helper_start:helper_end]
+    assert "applyActionFailureFeedbackToUi(" in helper_block
+    assert "setProfileDistanceStatus(tone, message)" in helper_block
+    assert "buildActionFailureFeedback(error, fallback)" not in helper_block
     for fallback in [
         "Unable to update the distance.",
         "Unable to refresh the distance list.",
@@ -382,7 +429,12 @@ def test_app_google_photos_picker_failure_delegates_action_failure_feedback() ->
 
     assert 'from "./action_feedback_presentation.js"' in app_source
     assert "function applyGooglePhotosPickerFailureFeedback" in app_source
-    assert "buildActionFailureFeedback(feedbackError, \"Google Photos import failed.\"" in app_source
+    helper_start = app_source.index("function applyGooglePhotosPickerFailureFeedback")
+    helper_end = app_source.index("\n}\n", helper_start) + 3
+    helper_block = app_source[helper_start:helper_end]
+    assert "applyActionFailureFeedbackToUi(" in helper_block
+    assert "diagnosticsValue:" in helper_block
+    assert "buildActionFailureFeedback(feedbackError, \"Google Photos import failed.\"" not in helper_block
     assert "GOOGLE_PHOTOS_RECONNECT_GUIDANCE" in app_source
     assert "google_photos_picker: pickerDiagnostics" in app_source
     assert "request_error: error.payload || {}" in app_source
@@ -434,9 +486,14 @@ def test_app_interpretation_guard_failures_delegate_action_failure_feedback() ->
 
     assert 'from "./action_feedback_presentation.js"' in app_source
     assert "function applyInterpretationGuardFailureFeedback" in app_source
-    assert "buildActionFailureFeedback(error, fallback" in app_source
-    assert "setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message)" in app_source
-    assert "setDiagnostics(feedback.diagnosticsSlot, diagnosticsValue || error, {" in app_source
+    helper_start = app_source.index("function applyInterpretationGuardFailureFeedback")
+    helper_end = app_source.index("\n}\n", helper_start) + 3
+    helper_block = app_source[helper_start:helper_end]
+    assert "applyActionFailureFeedbackToUi(" in helper_block
+    assert "diagnosticsValue: diagnosticsValue || error" in helper_block
+    assert "buildActionFailureFeedback(error, fallback" not in helper_block
+    assert "setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message)" not in helper_block
+    assert "setDiagnostics(feedback.diagnosticsSlot, diagnosticsValue || error, {" not in helper_block
     assert 'fallback: `Interpretation ${actionName} is blocked.`' in app_source
     assert 'fallback: "A positive one-way distance is required before continuing."' in app_source
     assert "applyInterpretationGuardFailureFeedback(fallbackError" in app_source
