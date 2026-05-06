@@ -3346,8 +3346,11 @@ function wireEvents() {
       try {
         await refreshExtensionLab();
       } catch (error) {
-        setPanelStatus("extension", "bad", error.message || "Extension diagnostics refresh failed.");
-        setDiagnostics("extension", error, { hint: error.message || "Extension diagnostics refresh failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "extension",
+          diagnosticsSlot: "extension",
+          fallback: "Extension diagnostics refresh failed.",
+        });
       }
     });
   });
@@ -3358,8 +3361,11 @@ function wireEvents() {
       try {
         await handleExtensionSimulation();
       } catch (error) {
-        setPanelStatus("simulator", "bad", error.message || "Simulator request failed.");
-        setDiagnostics("simulator", error, { hint: error.message || "Simulator request failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "simulator",
+          diagnosticsSlot: "simulator",
+          fallback: "Simulator request failed.",
+        });
       }
     });
   });
