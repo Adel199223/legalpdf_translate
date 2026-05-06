@@ -3177,8 +3177,11 @@ function wireEvents() {
         await handleSave();
       } catch (error) {
         recoverInterpretationValidationError(error);
-        setPanelStatus("form", "bad", error.message || "Save failed.");
-        setDiagnostics("form", error, { hint: error.message || "Save failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "form",
+          diagnosticsSlot: "form",
+          fallback: "Save failed.",
+        });
       }
     });
   });
@@ -3190,8 +3193,11 @@ function wireEvents() {
         await handleExport();
       } catch (error) {
         recoverInterpretationValidationError(error);
-        setPanelStatus("form", "bad", error.message || "Export failed.");
-        setDiagnostics("form", error, { hint: error.message || "Export failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "form",
+          diagnosticsSlot: "form",
+          fallback: "Export failed.",
+        });
       }
     });
   });
