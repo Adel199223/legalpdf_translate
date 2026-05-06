@@ -1,4 +1,5 @@
 import { fetchJson } from "./api.js";
+import { buildActionFailureFeedback } from "./action_feedback_presentation.js";
 import { appState, setActiveView } from "./state.js";
 import { ensureBrowserPdfBundleFromFile } from "./browser_pdf.js";
 import { runWithBusy } from "./busy_ui.js";
@@ -56,6 +57,21 @@ let lastTranslationUiSnapshotKey = "";
 const PAGE_FLAG_LOG_RE = /page=(?<page>\d+)\s+image_used=(?<image>True|False)\s+retry_used=(?<retry>True|False)\s+status=(?<status>[a-z_]+)/;
 const PAGE_STATUS_LOG_RE = /Page\s+(?<page>\d+)\s+(?<status>finished|failed)/i;
 const NUMERIC_MISMATCH_WARNING_MESSAGE = "Review recommended: some numbers from the source may not appear exactly in the translation.";
+
+function applyActionFailureFeedback(
+  error,
+  { panelSlot = "", diagnosticsSlot = "", fallback = "" } = {},
+) {
+  const feedback = buildActionFailureFeedback(error, fallback, { panelSlot, diagnosticsSlot });
+  setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
+  if (feedback.diagnosticsSlot) {
+    setDiagnostics(feedback.diagnosticsSlot, error, {
+      hint: feedback.diagnosticsHint,
+      open: feedback.diagnosticsOpen,
+    });
+  }
+  return feedback;
+}
 
 function normalizeGmailBatchContext(value) {
   if (!value || typeof value !== "object") {
@@ -3125,8 +3141,11 @@ async function pollCurrentJob() {
     renderTranslationJob(payload.normalized_payload.job || null);
     await refreshTranslationHistory();
   } catch (error) {
-    setPanelStatus("translation", "bad", error.message || "Translation job polling failed.");
-    setDiagnostics("translation-job", error, { hint: error.message || "Translation job polling failed.", open: true });
+    applyActionFailureFeedback(error, {
+      panelSlot: "translation",
+      diagnosticsSlot: "translation-job",
+      fallback: "Translation job polling failed.",
+    });
   }
 }
 
@@ -3325,10 +3344,10 @@ export function initializeTranslationUi() {
     renderTranslationResultCard(translationState.currentJob);
     renderTranslationRunStatus(translationState.currentJob);
     syncTranslationPrimaryActionState();
-    setPanelStatus("translation", "bad", error.message || "Source staging failed.");
-    setDiagnostics("translation", error, {
-      hint: error.message || "Source staging failed.",
-      open: true,
+    applyActionFailureFeedback(error, {
+      panelSlot: "translation",
+      diagnosticsSlot: "translation",
+      fallback: "Source staging failed.",
     });
   };
 
@@ -3418,8 +3437,11 @@ export function initializeTranslationUi() {
       try {
         await refreshTranslationBootstrap();
       } catch (error) {
-        setPanelStatus("translation", "bad", error.message || "Translation refresh failed.");
-        setDiagnostics("translation", error, { hint: error.message || "Translation refresh failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation",
+          diagnosticsSlot: "translation",
+          fallback: "Translation refresh failed.",
+        });
       }
     });
   });
@@ -3430,8 +3452,11 @@ export function initializeTranslationUi() {
         setPanelStatus("translation", "", "Running analyze-only preflight...");
         await handleAnalyze();
       } catch (error) {
-        setPanelStatus("translation", "bad", error.message || "Analyze failed.");
-        setDiagnostics("translation", error, { hint: error.message || "Analyze failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation",
+          diagnosticsSlot: "translation",
+          fallback: "Analyze failed.",
+        });
       }
     });
   });
@@ -3442,8 +3467,11 @@ export function initializeTranslationUi() {
         setPanelStatus("translation", "", "Starting translation run...");
         await handleTranslate();
       } catch (error) {
-        setPanelStatus("translation", "bad", error.message || "Translation start failed.");
-        setDiagnostics("translation", error, { hint: error.message || "Translation start failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation",
+          diagnosticsSlot: "translation",
+          fallback: "Translation start failed.",
+        });
       }
     });
   });
@@ -3452,8 +3480,11 @@ export function initializeTranslationUi() {
       try {
         await handleCancel();
       } catch (error) {
-        setPanelStatus("translation", "bad", error.message || "Cancellation failed.");
-        setDiagnostics("translation", error, { hint: error.message || "Cancellation failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation",
+          diagnosticsSlot: "translation",
+          fallback: "Cancellation failed.",
+        });
       }
     });
   });
@@ -3463,8 +3494,11 @@ export function initializeTranslationUi() {
         closeTranslationCompletionDrawer();
         await handleResume();
       } catch (error) {
-        setPanelStatus("translation", "bad", error.message || "Resume failed.");
-        setDiagnostics("translation", error, { hint: error.message || "Resume failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation",
+          diagnosticsSlot: "translation",
+          fallback: "Resume failed.",
+        });
       }
     });
   });
@@ -3474,8 +3508,11 @@ export function initializeTranslationUi() {
         closeTranslationCompletionDrawer();
         await handleRebuild();
       } catch (error) {
-        setPanelStatus("translation", "bad", error.message || "Rebuild failed.");
-        setDiagnostics("translation", error, { hint: error.message || "Rebuild failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation",
+          diagnosticsSlot: "translation",
+          fallback: "Rebuild failed.",
+        });
       }
     });
   });
@@ -3484,8 +3521,11 @@ export function initializeTranslationUi() {
       try {
         await handleReviewExport();
       } catch (error) {
-        setPanelStatus("translation", "bad", error.message || "Review queue export failed.");
-        setDiagnostics("translation-job", error, { hint: error.message || "Review queue export failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation",
+          diagnosticsSlot: "translation-job",
+          fallback: "Review queue export failed.",
+        });
       }
     });
   });
@@ -3494,10 +3534,10 @@ export function initializeTranslationUi() {
       try {
         await handleGenerateRunReport();
       } catch (error) {
-        setPanelStatus("translation", "bad", error.message || "Run report generation failed.");
-        setDiagnostics("translation-job", error, {
-          hint: error.message || "Run report generation failed.",
-          open: true,
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation",
+          diagnosticsSlot: "translation-job",
+          fallback: "Run report generation failed.",
         });
       }
     });
@@ -3507,8 +3547,11 @@ export function initializeTranslationUi() {
       try {
         await handleTranslationSave();
       } catch (error) {
-        setPanelStatus("translation-save", "bad", error.message || "Translation save failed.");
-        setDiagnostics("translation-save", error, { hint: error.message || "Translation save failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation-save",
+          diagnosticsSlot: "translation-save",
+          fallback: "Translation save failed.",
+        });
       }
     });
   });
