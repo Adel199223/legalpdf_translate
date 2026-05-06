@@ -118,13 +118,16 @@ function fieldValue(id) {
 
 function applyActionFailureFeedback(
   error,
-  { panelSlot = "", diagnosticsSlot = "", fallback = "" } = {},
+  { panelSlot = "", diagnosticsSlot = "", fallback = "", diagnosticsHint = "" } = {},
 ) {
   const feedback = buildActionFailureFeedback(error, fallback, { panelSlot, diagnosticsSlot });
+  const resolvedDiagnosticsHint = typeof diagnosticsHint === "function"
+    ? diagnosticsHint(feedback.message)
+    : (diagnosticsHint || feedback.diagnosticsHint);
   setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
   if (feedback.diagnosticsSlot) {
     setDiagnostics(feedback.diagnosticsSlot, error, {
-      hint: feedback.diagnosticsHint,
+      hint: resolvedDiagnosticsHint,
       open: feedback.diagnosticsOpen,
     });
   }
@@ -2367,11 +2370,15 @@ async function renderActivePdfPreviewCanvas(previewAttachment) {
       operation: "gmail_preview_render",
       attachment: previewAttachment,
     });
+    const feedback = applyActionFailureFeedback(error, {
+      diagnosticsSlot: "gmail",
+      fallback: "Preview rendering failed.",
+      diagnosticsHint: (message) => gmailFailureHint(error, message),
+    });
     renderGmailPdfPreviewFallbackInto({ container, status }, {
       containerMessage: "Preview rendering failed for this PDF.",
-      statusMessage: error.message || "Preview rendering failed.",
+      statusMessage: feedback.message,
     });
-    setDiagnostics("gmail", error, { hint: gmailFailureHint(error, error.message || "Preview rendering failed."), open: true });
     updateGmailFailureReportActionState();
   }
 }
@@ -2862,8 +2869,11 @@ export function initializeGmailUi(hooks) {
       try {
         await previewAttachment(attachmentId);
       } catch (error) {
-        setPanelStatus("gmail", "bad", error.message || "Attachment preview failed.");
-        setDiagnostics("gmail", error, { hint: error.message || "Attachment preview failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail",
+          diagnosticsSlot: "gmail",
+          fallback: "Attachment preview failed.",
+        });
       }
     });
   });
@@ -2918,10 +2928,11 @@ export function initializeGmailUi(hooks) {
           operation: "gmail_preview_attachment",
           attachment,
         });
-        setPanelStatus("gmail", "bad", error.message || "Attachment preview failed.");
-        setDiagnostics("gmail", error, {
-          hint: gmailFailureHint(error, error.message || "Attachment preview failed."),
-          open: true,
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail",
+          diagnosticsSlot: "gmail",
+          fallback: "Attachment preview failed.",
+          diagnosticsHint: (message) => gmailFailureHint(error, message),
         });
         updateGmailFailureReportActionState();
       }
@@ -3003,10 +3014,11 @@ export function initializeGmailUi(hooks) {
           operation: "gmail_prepare_session",
           attachment: focusedAttachment(),
         });
-        setPanelStatus("gmail", "bad", error.message || "Gmail session preparation failed.");
-        setDiagnostics("gmail", error, {
-          hint: gmailFailureHint(error, error.message || "Gmail session preparation failed."),
-          open: true,
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail",
+          diagnosticsSlot: "gmail",
+          fallback: "Gmail session preparation failed.",
+          diagnosticsHint: (message) => gmailFailureHint(error, message),
         });
         updateGmailFailureReportActionState();
       }

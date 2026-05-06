@@ -424,3 +424,34 @@ def test_gmail_actions_delegate_repeated_action_failure_feedback() -> None:
     assert 'setDiagnostics("gmail", error, { hint: error.message || "Gmail refresh failed."' not in gmail_source
     assert 'setDiagnostics("gmail-session", error, { hint: error.message || "Gmail review reset failed."' not in gmail_source
     assert 'setDiagnostics("gmail-batch-finalize", error, { hint: error.message || "Gmail finalization report generation failed."' not in gmail_source
+
+
+def test_gmail_preview_actions_delegate_remaining_action_failure_feedback() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_source = (static_dir / "gmail.js").read_text(encoding="utf-8")
+
+    assert 'from "./action_feedback_presentation.js"' in gmail_source
+    assert "function applyActionFailureFeedback" in gmail_source
+    assert "diagnosticsHint" in gmail_source
+    assert "gmailFailureHint(error, message)" in gmail_source
+    for fallback in [
+        "Preview rendering failed.",
+        "Attachment preview failed.",
+        "Gmail session preparation failed.",
+    ]:
+        assert (
+            f'fallback: "{fallback}"'
+            in gmail_source
+        ), f"{fallback} should be routed through shared action feedback"
+        assert (
+            f'error.message || "{fallback}"'
+            not in gmail_source
+        ), f"{fallback} should not repeat raw fallback message plumbing"
+    assert 'setPanelStatus("gmail", "bad", error.message || "Attachment preview failed."' not in gmail_source
+    assert 'setPanelStatus("gmail", "bad", error.message || "Gmail session preparation failed."' not in gmail_source
