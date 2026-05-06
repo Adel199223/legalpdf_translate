@@ -255,6 +255,22 @@ function applyGooglePhotosPickerFailureFeedback(error, pickerDiagnostics) {
   return feedback;
 }
 
+function applyInterpretationGuardFailureFeedback(
+  error,
+  { fallback = "", diagnosticsValue = null } = {},
+) {
+  const feedback = buildActionFailureFeedback(error, fallback, {
+    panelSlot: "form",
+    diagnosticsSlot: "form",
+  });
+  setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
+  setDiagnostics(feedback.diagnosticsSlot, diagnosticsValue || error, {
+    hint: feedback.diagnosticsHint,
+    open: feedback.diagnosticsOpen,
+  });
+  return feedback;
+}
+
 function qsa(selector) {
   return Array.from(document.querySelectorAll(selector));
 }
@@ -1530,10 +1546,8 @@ export async function prepareInterpretationAction(actionName = "save") {
       },
     };
     if (guard.blockedField === "travel_km_outbound") {
-      setPanelStatus("form", "bad", fallbackError.message || `Interpretation ${actionName} is blocked.`);
-      setDiagnostics("form", fallbackError, {
-        hint: fallbackError.message || `Interpretation ${actionName} is blocked.`,
-        open: true,
+      applyInterpretationGuardFailureFeedback(fallbackError, {
+        fallback: `Interpretation ${actionName} is blocked.`,
       });
       focusInterpretationField("travel_km_outbound");
     } else {
@@ -1552,8 +1566,11 @@ export async function prepareInterpretationAction(actionName = "save") {
     });
     if (!result) {
       const message = guard.distanceHint || "A positive one-way distance is required before continuing.";
-      setPanelStatus("form", "bad", message);
-      setDiagnostics("form", { status: "failed", diagnostics: { error: message } }, { hint: message, open: true });
+      const distanceError = new Error(message);
+      applyInterpretationGuardFailureFeedback(distanceError, {
+        fallback: "A positive one-way distance is required before continuing.",
+        diagnosticsValue: { status: "failed", diagnostics: { error: message } },
+      });
       focusInterpretationField("travel_km_outbound");
       throw new Error(message);
     }

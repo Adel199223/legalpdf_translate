@@ -299,6 +299,30 @@ def test_app_form_actions_delegate_repeated_action_failure_feedback() -> None:
     assert 'hint: error.message || "Interpretation validation failed."' not in app_source
 
 
+def test_app_interpretation_guard_failures_delegate_action_failure_feedback() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_source = (static_dir / "app.js").read_text(encoding="utf-8")
+
+    assert 'from "./action_feedback_presentation.js"' in app_source
+    assert "function applyInterpretationGuardFailureFeedback" in app_source
+    assert "buildActionFailureFeedback(error, fallback" in app_source
+    assert "setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message)" in app_source
+    assert "setDiagnostics(feedback.diagnosticsSlot, diagnosticsValue || error, {" in app_source
+    assert 'fallback: `Interpretation ${actionName} is blocked.`' in app_source
+    assert 'fallback: "A positive one-way distance is required before continuing."' in app_source
+    assert "applyInterpretationGuardFailureFeedback(fallbackError" in app_source
+    assert "applyInterpretationGuardFailureFeedback(distanceError" in app_source
+    assert 'setPanelStatus("form", "bad", fallbackError.message ||' not in app_source
+    assert 'hint: fallbackError.message ||' not in app_source
+    assert 'setPanelStatus("form", "bad", message)' not in app_source
+
+
 def test_app_runtime_actions_delegate_repeated_action_failure_feedback() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
