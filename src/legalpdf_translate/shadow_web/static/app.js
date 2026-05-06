@@ -3051,8 +3051,11 @@ function wireEvents() {
     try {
       await loadBootstrap();
     } catch (error) {
-      setPanelStatus("runtime", "bad", error.message || "Browser shell refresh failed.");
-      setDiagnostics("runtime", error, { hint: error.message || "Browser shell refresh failed.", open: true });
+      applyActionFailureFeedback(error, {
+        panelSlot: "runtime",
+        diagnosticsSlot: "runtime",
+        fallback: "Browser shell refresh failed.",
+      });
     }
   });
 
@@ -3335,8 +3338,11 @@ function wireEvents() {
       try {
         await loadBootstrap();
       } catch (error) {
-        setPanelStatus("runtime", "bad", error.message || "Runtime refresh failed.");
-        setDiagnostics("runtime", error, { hint: error.message || "Runtime refresh failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "runtime",
+          diagnosticsSlot: "runtime",
+          fallback: "Runtime refresh failed.",
+        });
       }
     });
   });
@@ -3390,8 +3396,11 @@ function wireEvents() {
       try {
         await handleRuntimeModeChange();
       } catch (error) {
-        setPanelStatus("runtime", "bad", error.message || "Runtime mode change failed.");
-        setDiagnostics("runtime", error, { hint: error.message || "Runtime mode change failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "runtime",
+          diagnosticsSlot: "runtime",
+          fallback: "Runtime mode change failed.",
+        });
       }
     });
   });
