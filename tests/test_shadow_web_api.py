@@ -12340,6 +12340,99 @@ console.log(JSON.stringify({
     assert results["scriptLiteralCount"] == 4
 
 
+def test_translation_ui_module_centralizes_checkbox_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+
+    assert 'from "./translation_ui.js"' in translation_js
+    assert "renderTranslationCheckboxInto" in translation_js
+    assert "export function renderTranslationCheckboxInto" in translation_ui_js
+
+    checkbox_start = translation_js.index("function setCheckbox")
+    checkbox_end = translation_js.index("\n\nfunction coercePositiveInt", checkbox_start)
+    checkbox_block = translation_js[checkbox_start:checkbox_end]
+    assert "renderTranslationCheckboxInto(qs(id), value)" in checkbox_block
+    assert ".checked =" not in checkbox_block
+
+    renderer_start = translation_ui_js.index("export function renderTranslationCheckboxInto")
+    renderer_end = (
+        translation_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in translation_ui_js[renderer_start + 1 :]
+        else len(translation_ui_js)
+    )
+    renderer_block = translation_ui_js[renderer_start:renderer_end]
+    assert ".innerHTML" not in renderer_block
+
+    script = r"""
+const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
+
+function makeCheckbox(initialChecked = false) {
+  return {
+    checked: initialChecked,
+    _innerHTML: "",
+    innerHTMLAssignments: [],
+    set innerHTML(value) {
+      this._innerHTML = String(value ?? "");
+      this.innerHTMLAssignments.push(this._innerHTML);
+    },
+    get innerHTML() {
+      return this._innerHTML;
+    },
+  };
+}
+
+const truthyCheckbox = makeCheckbox(false);
+const falseyCheckbox = makeCheckbox(true);
+const maliciousCheckbox = makeCheckbox(false);
+
+const truthyReturn = translationUi.renderTranslationCheckboxInto(truthyCheckbox, "yes");
+const falseyReturn = translationUi.renderTranslationCheckboxInto(falseyCheckbox, 0);
+const maliciousReturn = translationUi.renderTranslationCheckboxInto(
+  maliciousCheckbox,
+  "<img src=x onerror=alert(1)>",
+);
+const nullReturn = translationUi.renderTranslationCheckboxInto(null, true);
+
+console.log(JSON.stringify({
+  exportType: typeof translationUi.renderTranslationCheckboxInto,
+  truthyReturned: truthyReturn === truthyCheckbox,
+  truthyChecked: truthyCheckbox.checked,
+  falseyReturned: falseyReturn === falseyCheckbox,
+  falseyChecked: falseyCheckbox.checked,
+  maliciousReturned: maliciousReturn === maliciousCheckbox,
+  maliciousChecked: maliciousCheckbox.checked,
+  nullReturnType: typeof nullReturn,
+  innerHTMLWrites: [
+    truthyCheckbox,
+    falseyCheckbox,
+    maliciousCheckbox,
+  ].reduce((total, node) => total + node.innerHTMLAssignments.length, 0),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_UI_MODULE_URL__": "translation_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["truthyReturned"] is True
+    assert results["truthyChecked"] is True
+    assert results["falseyReturned"] is True
+    assert results["falseyChecked"] is False
+    assert results["maliciousReturned"] is True
+    assert results["maliciousChecked"] is True
+    assert results["nullReturnType"] == "undefined"
+    assert results["innerHTMLWrites"] == 0
+
+
 def test_translation_ui_module_centralizes_run_status_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -23237,6 +23330,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert translation_ui_asset.status_code == 200
         assert translation_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderTranslationFieldValueInto" in translation_ui_asset.text
+        assert "renderTranslationCheckboxInto" in translation_ui_asset.text
         assert "renderTranslationSourcePathInto" in translation_ui_asset.text
         assert "renderTranslationOutputSummaryInto" in translation_ui_asset.text
         assert "renderTranslationRunStatusInto" in translation_ui_asset.text
