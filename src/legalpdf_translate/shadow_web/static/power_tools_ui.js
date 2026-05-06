@@ -186,6 +186,24 @@ export function renderPowerToolsCheckboxInto(checkbox, value = false) {
   return checkbox;
 }
 
+export function renderPowerToolsSettingsAdminFormInto(nodes = {}, form = {}) {
+  if (!nodes) {
+    return undefined;
+  }
+  const fields = nodes.fields || {};
+  const checkboxes = nodes.checkboxes || {};
+  const fieldValues = form.fieldValues || {};
+  const checkboxValues = form.checkboxValues || {};
+  for (const [id, field] of Object.entries(fields)) {
+    renderPowerToolsFieldValueInto(field, fieldValues[id] ?? "");
+  }
+  for (const [id, checkbox] of Object.entries(checkboxes)) {
+    renderPowerToolsCheckboxInto(checkbox, checkboxValues[id]);
+  }
+  renderPowerToolsFieldValueInto(nodes.defaultRateJson, form.defaultRateJson ?? "{}");
+  return nodes;
+}
+
 export function renderPowerToolsGlossaryFormInto(nodes = {}, glossary = {}) {
   if (!nodes) {
     return undefined;

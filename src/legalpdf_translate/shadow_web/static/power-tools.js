@@ -11,6 +11,7 @@ import {
   renderPowerToolsCheckboxInto,
   renderPowerToolsFieldValueInto,
   renderPowerToolsGlossaryFormInto,
+  renderPowerToolsSettingsAdminFormInto,
   setDiagnostics,
   setPanelStatus,
 } from "./power_tools_ui.js";
@@ -147,6 +148,14 @@ const settingsCheckboxMap = {
 
 let currentSettingsFormValues = {};
 
+function nodesForIds(ids) {
+  const nodes = {};
+  for (const id of ids) {
+    nodes[id] = qs(id);
+  }
+  return nodes;
+}
+
 function renderProviderState(providerState, { preserveStatus = false } = {}) {
   if (!providerState) {
     return;
@@ -179,13 +188,23 @@ function renderSettingsAdminPayload(settingsAdmin, { preserveStatus = false } = 
   }
   const values = settingsAdmin.form_values || {};
   currentSettingsFormValues = { ...currentSettingsFormValues, ...values };
+  const fieldValues = {};
   for (const [id, key] of Object.entries(settingsFieldMap)) {
-    setFieldValue(id, values[key] ?? "");
+    fieldValues[id] = values[key] ?? "";
   }
+  const checkboxValues = {};
   for (const [id, key] of Object.entries(settingsCheckboxMap)) {
-    setCheckbox(id, values[key]);
+    checkboxValues[id] = values[key];
   }
-  setFieldValue("settings-default-rate-json", prettyJson(values.default_rate_per_word || {}));
+  renderPowerToolsSettingsAdminFormInto({
+    fields: nodesForIds(Object.keys(settingsFieldMap)),
+    checkboxes: nodesForIds(Object.keys(settingsCheckboxMap)),
+    defaultRateJson: qs("settings-default-rate-json"),
+  }, {
+    fieldValues,
+    checkboxValues,
+    defaultRateJson: prettyJson(values.default_rate_per_word || {}),
+  });
   renderProviderState(settingsAdmin.provider_state || {}, { preserveStatus });
 }
 
