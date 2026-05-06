@@ -21035,6 +21035,136 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_power_tools_ui_module_centralizes_result_field_updates() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    power_tools_ui_module = static_dir / "power_tools_ui.js"
+
+    assert power_tools_ui_module.exists()
+    power_tools_ui_source = power_tools_ui_module.read_text(encoding="utf-8")
+    assert "export function renderPowerToolsResultFieldsInto" in power_tools_ui_source
+    assert "renderPowerToolsResultFieldsInto({" in power_tools_js
+    assert 'setFieldValue("builder-approved-json",' not in power_tools_js
+    assert 'setFieldValue("diagnostics-run-dir", reportPath.replace' not in power_tools_js
+    assert "innerHTML" not in power_tools_ui_source
+
+    script = r"""
+const powerToolsUi = await import(__POWER_TOOLS_UI_MODULE_URL__);
+
+class Element {
+  constructor(value = "existing") {
+    this.value = value;
+    this.textContent = "";
+    this.innerHTMLAssignments = [];
+    this._innerHTML = "";
+  }
+}
+
+Object.defineProperty(Element.prototype, "innerHTML", {
+  get() {
+    return this._innerHTML;
+  },
+  set(value) {
+    this._innerHTML = String(value ?? "");
+    this.innerHTMLAssignments.push(this._innerHTML);
+  },
+});
+
+const approvedJson = new Element("old suggestions");
+const diagnosticsRunDir = new Element("old run dir");
+const fullReturn = powerToolsUi.renderPowerToolsResultFieldsInto({
+  approvedJson,
+  diagnosticsRunDir,
+}, {
+  approvedJson: "[{\"source\":\"<img src=x onerror=alert(1)>\"}]",
+  diagnosticsRunDir: "C:/runs/<script>bad()</script>",
+});
+
+const preservedApprovedJson = new Element("keep suggestions");
+const preservedDiagnosticsRunDir = new Element("keep run dir");
+powerToolsUi.renderPowerToolsResultFieldsInto({
+  approvedJson: preservedApprovedJson,
+  diagnosticsRunDir: preservedDiagnosticsRunDir,
+}, {});
+
+const partialApprovedJson = new Element("partial suggestions");
+powerToolsUi.renderPowerToolsResultFieldsInto({
+  approvedJson: partialApprovedJson,
+}, {
+  diagnosticsRunDir: "ignored because node is missing",
+});
+
+const partialDiagnosticsRunDir = new Element("partial run dir");
+powerToolsUi.renderPowerToolsResultFieldsInto({
+  diagnosticsRunDir: partialDiagnosticsRunDir,
+}, {
+  approvedJson: "ignored because node is missing",
+});
+
+const nullReturn = powerToolsUi.renderPowerToolsResultFieldsInto(null, {
+  approvedJson: "ignored",
+  diagnosticsRunDir: "ignored",
+});
+
+console.log(JSON.stringify({
+  full: {
+    approvedJson: approvedJson.value,
+    diagnosticsRunDir: diagnosticsRunDir.value,
+    approvedText: approvedJson.textContent,
+    diagnosticsText: diagnosticsRunDir.textContent,
+    returnedSameNodes: fullReturn.approvedJson === approvedJson
+      && fullReturn.diagnosticsRunDir === diagnosticsRunDir,
+    innerHTMLWrites: approvedJson.innerHTMLAssignments.length
+      + diagnosticsRunDir.innerHTMLAssignments.length,
+  },
+  preserved: {
+    approvedJson: preservedApprovedJson.value,
+    diagnosticsRunDir: preservedDiagnosticsRunDir.value,
+    innerHTMLWrites: preservedApprovedJson.innerHTMLAssignments.length
+      + preservedDiagnosticsRunDir.innerHTMLAssignments.length,
+  },
+  partial: {
+    approvedJson: partialApprovedJson.value,
+    diagnosticsRunDir: partialDiagnosticsRunDir.value,
+    innerHTMLWrites: partialApprovedJson.innerHTMLAssignments.length
+      + partialDiagnosticsRunDir.innerHTMLAssignments.length,
+  },
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__POWER_TOOLS_UI_MODULE_URL__": "power_tools_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["full"] == {
+        "approvedJson": "[{\"source\":\"<img src=x onerror=alert(1)>\"}]",
+        "diagnosticsRunDir": "C:/runs/<script>bad()</script>",
+        "approvedText": "",
+        "diagnosticsText": "",
+        "returnedSameNodes": True,
+        "innerHTMLWrites": 0,
+    }
+    assert results["preserved"] == {
+        "approvedJson": "keep suggestions",
+        "diagnosticsRunDir": "keep run dir",
+        "innerHTMLWrites": 0,
+    }
+    assert results["partial"] == {
+        "approvedJson": "partial suggestions",
+        "diagnosticsRunDir": "partial run dir",
+        "innerHTMLWrites": 0,
+    }
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_power_tools_ui_module_centralizes_settings_admin_form_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -24571,6 +24701,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderPowerToolsBuilderDefaultsInto" in power_tools_ui_asset.text
         assert "renderPowerToolsCalibrationDefaultsInto" in power_tools_ui_asset.text
         assert "renderPowerToolsCredentialInputClearInto" in power_tools_ui_asset.text
+        assert "renderPowerToolsResultFieldsInto" in power_tools_ui_asset.text
         interpretation_reference_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_reference_ui.js")
         assert interpretation_reference_ui_asset.status_code == 200
         assert interpretation_reference_ui_asset.headers["content-type"].startswith("application/javascript")

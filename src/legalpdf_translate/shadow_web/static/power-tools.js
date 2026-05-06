@@ -12,6 +12,7 @@ import {
   renderPowerToolsCredentialInputClearInto,
   renderPowerToolsFieldValueInto,
   renderPowerToolsGlossaryFormInto,
+  renderPowerToolsResultFieldsInto,
   renderPowerToolsSettingsAdminFormInto,
   setDiagnostics,
   setPanelStatus,
@@ -687,7 +688,11 @@ async function handleBuilderRun() {
     body: JSON.stringify(collectBuilderPayload()),
   });
   if (payload.normalized_payload?.suggestions) {
-    setFieldValue("builder-approved-json", prettyJson(payload.normalized_payload.suggestions));
+    renderPowerToolsResultFieldsInto({
+      approvedJson: qs("builder-approved-json"),
+    }, {
+      approvedJson: prettyJson(payload.normalized_payload.suggestions),
+    });
   }
   setPanelStatus(
     "power-tools",
@@ -729,7 +734,11 @@ async function handleCalibrationRun() {
   });
   const reportPath = String(payload.normalized_payload?.report_json_path || "").trim();
   if (reportPath) {
-    setFieldValue("diagnostics-run-dir", reportPath.replace(/[\\/][^\\/]+$/, ""));
+    renderPowerToolsResultFieldsInto({
+      diagnosticsRunDir: qs("diagnostics-run-dir"),
+    }, {
+      diagnosticsRunDir: reportPath.replace(/[\\/][^\\/]+$/, ""),
+    });
   }
 }
 

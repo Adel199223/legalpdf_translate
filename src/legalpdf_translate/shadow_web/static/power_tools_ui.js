@@ -182,6 +182,19 @@ export function renderPowerToolsCredentialInputClearInto(field) {
   return renderPowerToolsFieldValueInto(field, "");
 }
 
+export function renderPowerToolsResultFieldsInto(nodes = {}, result = {}) {
+  if (!nodes) {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(result, "approvedJson")) {
+    renderPowerToolsFieldValueInto(nodes.approvedJson, result.approvedJson);
+  }
+  if (Object.prototype.hasOwnProperty.call(result, "diagnosticsRunDir")) {
+    renderPowerToolsFieldValueInto(nodes.diagnosticsRunDir, result.diagnosticsRunDir);
+  }
+  return nodes;
+}
+
 export function renderPowerToolsCheckboxInto(checkbox, value = false) {
   if (!checkbox) {
     return undefined;
