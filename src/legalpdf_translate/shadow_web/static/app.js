@@ -221,6 +221,7 @@ function applyActionFailureFeedback(
       open: feedback.diagnosticsOpen,
     });
   }
+  return feedback;
 }
 
 function qsa(selector) {
@@ -3459,11 +3460,14 @@ function wireEvents() {
     try {
       await persistInterpretationCourtEmail();
     } catch (error) {
-      setPanelStatus("form", "bad", error.message || "Unable to save the court email yet.");
-      setDiagnostics("form", error, { hint: error.message || "Unable to save the court email yet.", open: true });
+      const feedback = applyActionFailureFeedback(error, {
+        panelSlot: "form",
+        diagnosticsSlot: "form",
+        fallback: "Unable to save the court email yet.",
+      });
       renderCourtEmailStatusInto(qs("court-email-status"), {
-        message: error.message || "Unable to save the court email yet.",
-        tone: "bad",
+        message: feedback.message,
+        tone: feedback.tone,
       });
     }
   });
@@ -3472,8 +3476,11 @@ function wireEvents() {
       await promptToAddInterpretationCity("case_city");
     } catch (error) {
       recoverInterpretationValidationError(error);
-      setPanelStatus("form", "bad", error.message || "Unable to save the city yet.");
-      setDiagnostics("form", error, { hint: error.message || "Unable to save the city yet.", open: true });
+      applyActionFailureFeedback(error, {
+        panelSlot: "form",
+        diagnosticsSlot: "form",
+        fallback: "Unable to save the city yet.",
+      });
     }
   });
   qs("service-city-add").addEventListener("click", async () => {
@@ -3481,8 +3488,11 @@ function wireEvents() {
       await promptToAddInterpretationCity("service_city");
     } catch (error) {
       recoverInterpretationValidationError(error);
-      setPanelStatus("form", "bad", error.message || "Unable to save the city yet.");
-      setDiagnostics("form", error, { hint: error.message || "Unable to save the city yet.", open: true });
+      applyActionFailureFeedback(error, {
+        panelSlot: "form",
+        diagnosticsSlot: "form",
+        fallback: "Unable to save the city yet.",
+      });
     }
   });
   qs("interpretation-city-dialog-close")?.addEventListener("click", () => closeInterpretationCityDialog(null));
