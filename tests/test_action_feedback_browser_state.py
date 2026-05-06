@@ -330,3 +330,46 @@ def test_translation_actions_delegate_repeated_action_failure_feedback() -> None
     assert 'setDiagnostics("translation", error, { hint: error.message ||' not in translation_source
     assert 'setDiagnostics("translation-job", error, { hint: error.message ||' not in translation_source
     assert 'setDiagnostics("translation-save", error, { hint: error.message || "Translation save failed."' not in translation_source
+
+
+def test_gmail_actions_delegate_repeated_action_failure_feedback() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_source = (static_dir / "gmail.js").read_text(encoding="utf-8")
+
+    assert 'from "./action_feedback_presentation.js"' in gmail_source
+    assert "buildActionFailureFeedback" in gmail_source
+    assert "function applyActionFailureFeedback" in gmail_source
+    for fallback in [
+        "Gmail batch finalization preflight failed.",
+        "Gmail message load failed.",
+        "Demo Gmail review load failed.",
+        "Canonical runtime restart failed.",
+        "Gmail browser failure report generation failed.",
+        "Gmail finalization report generation failed.",
+        "Redo current attachment failed.",
+        "Gmail attachment confirmation failed.",
+        "Gmail batch finalization failed.",
+        "Creating the Gmail reply failed.",
+        "Gmail refresh failed.",
+        "Gmail review reset failed.",
+    ]:
+        assert (
+            f'fallback: "{fallback}"'
+            in gmail_source
+        ), f"{fallback} should be routed through shared action feedback"
+        assert (
+            f'error.message || "{fallback}"'
+            not in gmail_source
+        ), f"{fallback} should not repeat raw fallback message plumbing"
+    assert 'setPanelStatus("gmail", "bad", error.message || "Gmail message load failed."' not in gmail_source
+    assert 'setPanelStatus("gmail-session", "bad", error.message || "Gmail attachment confirmation failed."' not in gmail_source
+    assert 'setPanelStatus("gmail-batch-finalize", "bad", error.message || "Gmail batch finalization failed."' not in gmail_source
+    assert 'setDiagnostics("gmail", error, { hint: error.message || "Gmail refresh failed."' not in gmail_source
+    assert 'setDiagnostics("gmail-session", error, { hint: error.message || "Gmail review reset failed."' not in gmail_source
+    assert 'setDiagnostics("gmail-batch-finalize", error, { hint: error.message || "Gmail finalization report generation failed."' not in gmail_source

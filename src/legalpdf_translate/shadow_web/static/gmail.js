@@ -1,4 +1,5 @@
 import { fetchJson } from "./api.js";
+import { buildActionFailureFeedback } from "./action_feedback_presentation.js";
 import { appState, setActiveView } from "./state.js";
 import {
   browserPdfDiagnosticsFromError,
@@ -113,6 +114,21 @@ function qs(id) {
 
 function fieldValue(id) {
   return qs(id)?.value?.trim?.() ?? "";
+}
+
+function applyActionFailureFeedback(
+  error,
+  { panelSlot = "", diagnosticsSlot = "", fallback = "" } = {},
+) {
+  const feedback = buildActionFailureFeedback(error, fallback, { panelSlot, diagnosticsSlot });
+  setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
+  if (feedback.diagnosticsSlot) {
+    setDiagnostics(feedback.diagnosticsSlot, error, {
+      hint: feedback.diagnosticsHint,
+      open: feedback.diagnosticsOpen,
+    });
+  }
+  return feedback;
 }
 
 function browserBootstrapConfig() {
@@ -1111,10 +1127,10 @@ function openBatchFinalizeDrawer({ source = "active" } = {}) {
     return;
   }
   void refreshBatchFinalizePreflight({ forceRefresh: false }).catch((error) => {
-    setPanelStatus("gmail-batch-finalize", "bad", error.message || "Gmail batch finalization preflight failed.");
-    setDiagnostics("gmail-batch-finalize", error, {
-      hint: error.message || "Gmail batch finalization preflight failed.",
-      open: true,
+    applyActionFailureFeedback(error, {
+      panelSlot: "gmail-batch-finalize",
+      diagnosticsSlot: "gmail-batch-finalize",
+      fallback: "Gmail batch finalization preflight failed.",
     });
   });
 }
@@ -2504,10 +2520,10 @@ async function refreshBatchFinalizePreflight({ forceRefresh = false } = {}) {
     });
     return payload;
   } catch (error) {
-    setPanelStatus("gmail-batch-finalize", "bad", error.message || "Gmail batch finalization preflight failed.");
-    setDiagnostics("gmail-batch-finalize", error, {
-      hint: error.message || "Gmail batch finalization preflight failed.",
-      open: true,
+    applyActionFailureFeedback(error, {
+      panelSlot: "gmail-batch-finalize",
+      diagnosticsSlot: "gmail-batch-finalize",
+      fallback: "Gmail batch finalization preflight failed.",
     });
     throw error;
   } finally {
@@ -2723,8 +2739,11 @@ export function initializeGmailUi(hooks) {
       try {
         await loadMessage();
       } catch (error) {
-        setPanelStatus("gmail", "bad", error.message || "Gmail message load failed.");
-        setDiagnostics("gmail", error, { hint: error.message || "Gmail message load failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail",
+          diagnosticsSlot: "gmail",
+          fallback: "Gmail message load failed.",
+        });
       }
     });
   });
@@ -2734,8 +2753,11 @@ export function initializeGmailUi(hooks) {
       try {
         await loadDemoReview();
       } catch (error) {
-        setPanelStatus("gmail", "bad", error.message || "Demo Gmail review load failed.");
-        setDiagnostics("gmail", error, { hint: error.message || "Demo Gmail review load failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail",
+          diagnosticsSlot: "gmail",
+          fallback: "Demo Gmail review load failed.",
+        });
       }
     });
   });
@@ -2771,10 +2793,10 @@ export function initializeGmailUi(hooks) {
     runWithBusy(["gmail-restart-canonical-runtime"], { "gmail-restart-canonical-runtime": "Restarting..." }, async () => {
       await restartCanonicalRuntimeGuidance();
     }).catch((error) => {
-      setPanelStatus("gmail", "bad", error.message || "Canonical runtime restart failed.");
-      setDiagnostics("gmail", error, {
-        hint: error.message || "Canonical runtime restart failed.",
-        open: true,
+      applyActionFailureFeedback(error, {
+        panelSlot: "gmail",
+        diagnosticsSlot: "gmail",
+        fallback: "Canonical runtime restart failed.",
       });
     });
   });
@@ -2996,10 +3018,10 @@ export function initializeGmailUi(hooks) {
       try {
         await handleGmailFailureReport();
       } catch (error) {
-        setPanelStatus("gmail", "bad", error.message || "Gmail browser failure report generation failed.");
-        setDiagnostics("gmail", error, {
-          hint: error.message || "Gmail browser failure report generation failed.",
-          open: true,
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail",
+          diagnosticsSlot: "gmail",
+          fallback: "Gmail browser failure report generation failed.",
         });
       }
     });
@@ -3010,10 +3032,10 @@ export function initializeGmailUi(hooks) {
       try {
         await handleGmailFinalizationReport();
       } catch (error) {
-        setPanelStatus("gmail-batch-finalize", "bad", error.message || "Gmail finalization report generation failed.");
-        setDiagnostics("gmail-batch-finalize", error, {
-          hint: error.message || "Gmail finalization report generation failed.",
-          open: true,
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail-batch-finalize",
+          diagnosticsSlot: "gmail-batch-finalize",
+          fallback: "Gmail finalization report generation failed.",
         });
       }
     });
@@ -3028,10 +3050,10 @@ export function initializeGmailUi(hooks) {
       try {
         await runRedoCurrentTranslation();
       } catch (error) {
-        setPanelStatus("gmail-session", "bad", error.message || "Redo current attachment failed.");
-        setDiagnostics("gmail-session", error, {
-          hint: error.message || "Redo current attachment failed.",
-          open: true,
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail-session",
+          diagnosticsSlot: "gmail-session",
+          fallback: "Redo current attachment failed.",
         });
       }
     });
@@ -3042,8 +3064,11 @@ export function initializeGmailUi(hooks) {
       try {
         await confirmCurrentTranslation();
       } catch (error) {
-        setPanelStatus("gmail-session", "bad", error.message || "Gmail attachment confirmation failed.");
-        setDiagnostics("gmail-session", error, { hint: error.message || "Gmail attachment confirmation failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail-session",
+          diagnosticsSlot: "gmail-session",
+          fallback: "Gmail attachment confirmation failed.",
+        });
       }
     });
   });
@@ -3075,8 +3100,11 @@ export function initializeGmailUi(hooks) {
       try {
         await confirmCurrentTranslation();
       } catch (error) {
-        setPanelStatus("gmail-session", "bad", error.message || "Gmail attachment confirmation failed.");
-        setDiagnostics("gmail-session", error, { hint: error.message || "Gmail attachment confirmation failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail-session",
+          diagnosticsSlot: "gmail-session",
+          fallback: "Gmail attachment confirmation failed.",
+        });
       }
     });
   });
@@ -3086,8 +3114,11 @@ export function initializeGmailUi(hooks) {
       try {
         await finalizeBatch();
       } catch (error) {
-        setPanelStatus("gmail-session", "bad", error.message || "Gmail batch finalization failed.");
-        setDiagnostics("gmail-session", error, { hint: error.message || "Gmail batch finalization failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail-session",
+          diagnosticsSlot: "gmail-session",
+          fallback: "Gmail batch finalization failed.",
+        });
       }
     });
   });
@@ -3097,8 +3128,11 @@ export function initializeGmailUi(hooks) {
       try {
         await finalizeInterpretation();
       } catch (error) {
-        setPanelStatus("gmail-session", "bad", error.message || "Creating the Gmail reply failed.");
-        setDiagnostics("gmail-session", error, { hint: error.message || "Creating the Gmail reply failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail-session",
+          diagnosticsSlot: "gmail-session",
+          fallback: "Creating the Gmail reply failed.",
+        });
       }
     });
   });
@@ -3109,8 +3143,11 @@ export function initializeGmailUi(hooks) {
         await finalizeInterpretation();
       } catch (error) {
         gmailState.hooks.recoverInterpretationValidationError?.(error);
-        setPanelStatus("gmail-session", "bad", error.message || "Creating the Gmail reply failed.");
-        setDiagnostics("gmail-session", error, { hint: error.message || "Creating the Gmail reply failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail-session",
+          diagnosticsSlot: "gmail-session",
+          fallback: "Creating the Gmail reply failed.",
+        });
       }
     });
   });
@@ -3120,8 +3157,11 @@ export function initializeGmailUi(hooks) {
       try {
         await refreshGmailState();
       } catch (error) {
-        setPanelStatus("gmail", "bad", error.message || "Gmail refresh failed.");
-        setDiagnostics("gmail", error, { hint: error.message || "Gmail refresh failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail",
+          diagnosticsSlot: "gmail",
+          fallback: "Gmail refresh failed.",
+        });
       }
     });
   });
@@ -3147,8 +3187,11 @@ export function initializeGmailUi(hooks) {
         setDiagnostics("gmail-batch-finalize", payload, { hint: "Gmail review reset.", open: false });
         closeSessionDrawer();
       } catch (error) {
-        setPanelStatus("gmail-session", "bad", error.message || "Gmail review reset failed.");
-        setDiagnostics("gmail-session", error, { hint: error.message || "Gmail review reset failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail-session",
+          diagnosticsSlot: "gmail-session",
+          fallback: "Gmail review reset failed.",
+        });
       }
     });
   });
@@ -3171,8 +3214,11 @@ export function initializeGmailUi(hooks) {
       try {
         await finalizeBatch();
       } catch (error) {
-        setPanelStatus("gmail-batch-finalize", "bad", error.message || "Gmail batch finalization failed.");
-        setDiagnostics("gmail-batch-finalize", error, { hint: error.message || "Gmail batch finalization failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "gmail-batch-finalize",
+          diagnosticsSlot: "gmail-batch-finalize",
+          fallback: "Gmail batch finalization failed.",
+        });
       }
     });
   });
