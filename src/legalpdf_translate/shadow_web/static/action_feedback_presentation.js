@@ -1,13 +1,13 @@
 export function buildActionFailureFeedback(
   error = {},
   fallback = "",
-  { panelSlot = "", diagnosticsSlot = "" } = {},
+  { panelSlot = "", diagnosticsSlot = "", tone = "bad" } = {},
 ) {
   const message = error?.message || fallback;
   return {
     panelSlot,
     diagnosticsSlot,
-    tone: "bad",
+    tone,
     message,
     diagnosticsHint: message,
     diagnosticsOpen: true,

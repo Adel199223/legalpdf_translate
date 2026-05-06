@@ -23,12 +23,18 @@ const nullError = feedbackModule.buildActionFailureFeedback(
   null,
   "Null fallback",
 );
+const warningError = feedbackModule.buildActionFailureFeedback(
+  { message: "Warning <strong>safe</strong>" },
+  "Warning fallback",
+  { panelSlot: "translation-save", diagnosticsSlot: "translation-save", tone: "warn" },
+);
 
 console.log(JSON.stringify({
   exportType: typeof feedbackModule.buildActionFailureFeedback,
   directError,
   fallbackError,
   nullError,
+  warningError,
 }));
 """
     payload = run_browser_esm_json_probe(
@@ -60,6 +66,14 @@ console.log(JSON.stringify({
         "tone": "bad",
         "message": "Null fallback",
         "diagnosticsHint": "Null fallback",
+        "diagnosticsOpen": True,
+    }
+    assert payload["warningError"] == {
+        "panelSlot": "translation-save",
+        "diagnosticsSlot": "translation-save",
+        "tone": "warn",
+        "message": "Warning <strong>safe</strong>",
+        "diagnosticsHint": "Warning <strong>safe</strong>",
         "diagnosticsOpen": True,
     }
 
@@ -330,6 +344,40 @@ def test_translation_actions_delegate_repeated_action_failure_feedback() -> None
     assert 'setDiagnostics("translation", error, { hint: error.message ||' not in translation_source
     assert 'setDiagnostics("translation-job", error, { hint: error.message ||' not in translation_source
     assert 'setDiagnostics("translation-save", error, { hint: error.message || "Translation save failed."' not in translation_source
+
+
+def test_translation_save_actions_delegate_remaining_action_failure_feedback() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_source = (static_dir / "translation.js").read_text(encoding="utf-8")
+
+    assert 'from "./action_feedback_presentation.js"' in translation_source
+    assert "function applyActionFailureFeedback" in translation_source
+    assert 'tone: "warn"' in translation_source
+    for fallback in [
+        "Arabic DOCX review refresh failed.",
+        "Arabic DOCX review open failed.",
+        "Arabic DOCX review restore failed.",
+        "Translation row delete failed.",
+        "Arabic DOCX review continuation failed.",
+    ]:
+        assert (
+            f'fallback: "{fallback}"'
+            in translation_source
+        ), f"{fallback} should be routed through shared action feedback"
+        assert (
+            f'error.message || "{fallback}"'
+            not in translation_source
+        ), f"{fallback} should not repeat raw fallback message plumbing"
+    assert 'setPanelStatus("translation-save", "bad", error.message ||' not in translation_source
+    assert 'setPanelStatus("translation-save", "warn", error.message ||' not in translation_source
+    assert "setDiagnostics(feedback.diagnosticsSlot, error, {" in translation_source
+    assert 'hint: error.message ||' not in translation_source
 
 
 def test_gmail_actions_delegate_repeated_action_failure_feedback() -> None:
