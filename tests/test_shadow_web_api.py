@@ -4401,7 +4401,7 @@ console.log(JSON.stringify({
     }
 
 
-def test_gmail_ui_module_centralizes_session_card_renderers() -> None:
+def test_gmail_session_ui_module_owns_session_card_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -4411,6 +4411,9 @@ def test_gmail_ui_module_centralizes_session_card_renderers() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_session_ui_path = static_dir / "gmail_session_ui.js"
+    assert gmail_session_ui_path.exists()
+    gmail_session_ui_js = gmail_session_ui_path.read_text(encoding="utf-8")
 
     assert "renderGmailResumeCardInto" in gmail_js
     assert "renderGmailSessionResultInto" in gmail_js
@@ -4425,18 +4428,20 @@ def test_gmail_ui_module_centralizes_session_card_renderers() -> None:
     assert "renderGmailSessionResultInto" in session_block
     assert "container.innerHTML" not in session_block
 
-    assert "export function renderGmailResumeCardInto" in gmail_ui_js
-    assert "export function renderGmailSessionResultInto" in gmail_ui_js
-    resume_renderer_start = gmail_ui_js.index("export function renderGmailResumeCardInto")
-    session_renderer_start = gmail_ui_js.index("export function renderGmailSessionResultInto")
-    resume_renderer_block = gmail_ui_js[resume_renderer_start:session_renderer_start]
-    session_renderer_end = gmail_ui_js.index("\nfunction createCell", session_renderer_start)
-    session_renderer_block = gmail_ui_js[session_renderer_start:session_renderer_end]
+    assert 'from "./gmail_session_ui.js"' in gmail_ui_js
+    assert "renderGmailResumeCardInto" in gmail_ui_js
+    assert "renderGmailSessionResultInto" in gmail_ui_js
+    assert "export function renderGmailResumeCardInto" in gmail_session_ui_js
+    assert "export function renderGmailSessionResultInto" in gmail_session_ui_js
+    resume_renderer_start = gmail_session_ui_js.index("export function renderGmailResumeCardInto")
+    session_renderer_start = gmail_session_ui_js.index("export function renderGmailSessionResultInto")
+    resume_renderer_block = gmail_session_ui_js[resume_renderer_start:session_renderer_start]
+    session_renderer_block = gmail_session_ui_js[session_renderer_start:]
     assert "innerHTML" not in resume_renderer_block
     assert "innerHTML" not in session_renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_SESSION_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -4656,7 +4661,7 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {"__GMAIL_SESSION_UI_MODULE_URL__": "gmail_session_ui.js"},
         timeout_seconds=30,
     )
 
@@ -23290,6 +23295,11 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_preview_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailPreviewPanelInto" in gmail_preview_ui_asset.text
         assert "renderGmailPdfPreviewFallbackInto" in gmail_preview_ui_asset.text
+        gmail_session_ui_asset = client.get(f"/static-build/{asset_version}/gmail_session_ui.js")
+        assert gmail_session_ui_asset.status_code == 200
+        assert gmail_session_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGmailResumeCardInto" in gmail_session_ui_asset.text
+        assert "renderGmailSessionResultInto" in gmail_session_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
