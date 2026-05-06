@@ -1465,10 +1465,10 @@ export function recoverInterpretationValidationError(error) {
     }
   }
   syncInterpretationCityControls();
-  setPanelStatus("form", "bad", error.message || "Interpretation validation failed.");
-  setDiagnostics("form", error, {
-    hint: error.message || "Interpretation validation failed.",
-    open: true,
+  applyActionFailureFeedback(error, {
+    panelSlot: "form",
+    diagnosticsSlot: "form",
+    fallback: "Interpretation validation failed.",
   });
   focusInterpretationField(fieldName || "case-city");
   return true;
