@@ -1,4 +1,5 @@
 import { describeLocalServerUnavailable, fetchJson, isLocalServerUnavailableError } from "./api.js";
+import { buildActionFailureFeedback } from "./action_feedback_presentation.js";
 import { runStagedBootstrap } from "./bootstrap_hydration.js";
 import { runWithBusy } from "./busy_ui.js";
 import {
@@ -206,6 +207,20 @@ export { runWithBusy } from "./busy_ui.js";
 
 function qs(id) {
   return document.getElementById(id);
+}
+
+function applyActionFailureFeedback(
+  error,
+  { panelSlot = "", diagnosticsSlot = "", fallback = "" } = {},
+) {
+  const feedback = buildActionFailureFeedback(error, fallback, { panelSlot, diagnosticsSlot });
+  setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
+  if (feedback.diagnosticsSlot) {
+    setDiagnostics(feedback.diagnosticsSlot, error, {
+      hint: feedback.diagnosticsHint,
+      open: feedback.diagnosticsOpen,
+    });
+  }
 }
 
 function qsa(selector) {
@@ -2279,16 +2294,22 @@ function renderProfile(payload) {
       try {
         await handleSetPrimaryProfile(profile.id);
       } catch (error) {
-        setPanelStatus("profile", "bad", error.message || "Set-primary failed.");
-        setDiagnostics("profile", error, { hint: error.message || "Set-primary failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "profile",
+          diagnosticsSlot: "profile",
+          fallback: "Set-primary failed.",
+        });
       }
     },
     async onDelete(profile) {
       try {
         await handleDeleteProfile(profile.id);
       } catch (error) {
-        setPanelStatus("profile", "bad", error.message || "Profile delete failed.");
-        setDiagnostics("profile", error, { hint: error.message || "Profile delete failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "profile",
+          diagnosticsSlot: "profile",
+          fallback: "Profile delete failed.",
+        });
       }
     },
   });
@@ -3202,8 +3223,11 @@ function wireEvents() {
       try {
         await handleImportLiveProfiles();
       } catch (error) {
-        setPanelStatus("profile", "bad", error.message || "Profile import failed.");
-        setDiagnostics("profile", error, { hint: error.message || "Profile import failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "profile",
+          diagnosticsSlot: "profile",
+          fallback: "Profile import failed.",
+        });
       }
     });
   });
@@ -3213,8 +3237,11 @@ function wireEvents() {
       try {
         await handleNewProfile();
       } catch (error) {
-        setPanelStatus("profile", "bad", error.message || "New profile failed.");
-        setDiagnostics("profile", error, { hint: error.message || "New profile failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "profile",
+          diagnosticsSlot: "profile",
+          fallback: "New profile failed.",
+        });
       }
     }, { guardIds: ["import-live-profiles", "new-profile", "profile-save"] });
   });
@@ -3224,8 +3251,11 @@ function wireEvents() {
       try {
         await handleSaveProfile();
       } catch (error) {
-        setPanelStatus("profile", "bad", error.message || "Profile save failed.");
-        setDiagnostics("profile", error, { hint: error.message || "Profile save failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "profile",
+          diagnosticsSlot: "profile",
+          fallback: "Profile save failed.",
+        });
       }
     });
   });
@@ -3256,8 +3286,11 @@ function wireEvents() {
       try {
         await handleSetPrimaryProfile();
       } catch (error) {
-        setPanelStatus("profile", "bad", error.message || "Set-primary failed.");
-        setDiagnostics("profile", error, { hint: error.message || "Set-primary failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "profile",
+          diagnosticsSlot: "profile",
+          fallback: "Set-primary failed.",
+        });
       }
     });
   });
@@ -3267,8 +3300,11 @@ function wireEvents() {
       try {
         await handleDeleteProfile();
       } catch (error) {
-        setPanelStatus("profile", "bad", error.message || "Profile delete failed.");
-        setDiagnostics("profile", error, { hint: error.message || "Profile delete failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "profile",
+          diagnosticsSlot: "profile",
+          fallback: "Profile delete failed.",
+        });
       }
     });
   });
