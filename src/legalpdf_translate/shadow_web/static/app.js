@@ -2185,8 +2185,11 @@ function renderRecentJobs(items, history, translationHistory = []) {
       try {
         await handleDeleteJobLogRow(item.id, { jobType: item.job_type, source: "recent jobs" });
       } catch (error) {
-        setPanelStatus("recent-jobs", "bad", error.message || "Saved work delete failed.");
-        setDiagnostics("form", error, { hint: error.message || "Saved work delete failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "recent-jobs",
+          diagnosticsSlot: "form",
+          fallback: "Saved work delete failed.",
+        });
       }
     },
   });
@@ -2201,8 +2204,11 @@ function renderHistory(items, modeLabel) {
       try {
         await handleDeleteJobLogRow(item.row.id, { jobType: "Interpretation", source: "interpretation history" });
       } catch (error) {
-        setPanelStatus("recent-jobs", "bad", error.message || "Saved work delete failed.");
-        setDiagnostics("form", error, { hint: error.message || "Saved work delete failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "recent-jobs",
+          diagnosticsSlot: "form",
+          fallback: "Saved work delete failed.",
+        });
       }
     },
   });
@@ -3326,8 +3332,11 @@ function wireEvents() {
         await reloadHistory();
         setPanelStatus("recent-jobs", "", deriveRecentWorkPresentation().refreshStatus);
       } catch (error) {
-        setPanelStatus("recent-jobs", "bad", error.message || "History reload failed.");
-        setDiagnostics("form", error, { hint: error.message || "History reload failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "recent-jobs",
+          diagnosticsSlot: "form",
+          fallback: "History reload failed.",
+        });
       }
     });
   });
