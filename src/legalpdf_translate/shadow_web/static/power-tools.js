@@ -1,7 +1,10 @@
 import { fetchJson } from "./api.js";
 import { appState } from "./state.js";
 import { runWithBusy } from "./busy_ui.js";
-import { buildSettingsStatusPresentation } from "./settings_presentation.js";
+import {
+  buildSettingsActionFeedback,
+  buildSettingsStatusPresentation,
+} from "./settings_presentation.js";
 import {
   renderBuilderSourceModeInto,
   renderCredentialRecoveryStateInto,
@@ -99,15 +102,6 @@ async function fetchJsonAllowFailed(path, options = {}) {
     }
     throw error;
   }
-}
-
-function resolvePayloadMessage(payload, fallback) {
-  return String(
-    payload?.normalized_payload?.message
-    || payload?.diagnostics?.error
-    || payload?.diagnostics?.message
-    || fallback,
-  ).trim();
 }
 
 const settingsFieldMap = {
@@ -429,27 +423,44 @@ async function handleSettingsSave() {
   });
 }
 
+function applySettingsActionFeedback(
+  payload,
+  fallback,
+  {
+    diagnosticsSlot = "settings-test",
+    clearFieldId = "",
+    invalidateBootstrapOnOk = false,
+  } = {},
+) {
+  const feedback = buildSettingsActionFeedback(payload, fallback);
+  if (Object.keys(feedback.providerState || {}).length) {
+    renderProviderState(feedback.providerState, { preserveStatus: true });
+  }
+  setPanelStatus("settings", feedback.tone, feedback.message);
+  setDiagnostics(diagnosticsSlot, payload, {
+    hint: feedback.diagnosticsHint,
+    open: feedback.diagnosticsOpen,
+  });
+  if (feedback.ok && clearFieldId) {
+    renderPowerToolsCredentialInputClearInto(qs(clearFieldId));
+  }
+  if (feedback.ok && invalidateBootstrapOnOk) {
+    window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
+  }
+  return feedback;
+}
+
 async function handleTranslationKeySave() {
   const payload = await fetchJsonAllowFailed("/api/settings/translation-key/save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ key: fieldValue("settings-translation-key-input") }),
   });
-  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
-  if (Object.keys(providerState).length) {
-    renderProviderState(providerState, { preserveStatus: true });
-  }
-  const message = resolvePayloadMessage(payload, "Translation key save completed.");
-  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
-  setPanelStatus("settings", tone, message);
-  setDiagnostics("settings-admin", payload, {
-    hint: message,
-    open: payload.status !== "ok",
+  applySettingsActionFeedback(payload, "Translation key save completed.", {
+    diagnosticsSlot: "settings-admin",
+    clearFieldId: "settings-translation-key-input",
+    invalidateBootstrapOnOk: true,
   });
-  if (payload.status === "ok") {
-    renderPowerToolsCredentialInputClearInto(qs("settings-translation-key-input"));
-    window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
-  }
 }
 
 async function handleTranslationKeyClear() {
@@ -458,21 +469,11 @@ async function handleTranslationKeyClear() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
-  if (Object.keys(providerState).length) {
-    renderProviderState(providerState, { preserveStatus: true });
-  }
-  const message = resolvePayloadMessage(payload, "Translation key clear completed.");
-  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
-  setPanelStatus("settings", tone, message);
-  setDiagnostics("settings-admin", payload, {
-    hint: message,
-    open: payload.status !== "ok",
+  applySettingsActionFeedback(payload, "Translation key clear completed.", {
+    diagnosticsSlot: "settings-admin",
+    clearFieldId: "settings-translation-key-input",
+    invalidateBootstrapOnOk: true,
   });
-  if (payload.status === "ok") {
-    renderPowerToolsCredentialInputClearInto(qs("settings-translation-key-input"));
-    window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
-  }
 }
 
 async function handleOcrKeySave() {
@@ -481,21 +482,11 @@ async function handleOcrKeySave() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ key: fieldValue("settings-ocr-key-input") }),
   });
-  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
-  if (Object.keys(providerState).length) {
-    renderProviderState(providerState, { preserveStatus: true });
-  }
-  const message = resolvePayloadMessage(payload, "OCR key save completed.");
-  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
-  setPanelStatus("settings", tone, message);
-  setDiagnostics("settings-admin", payload, {
-    hint: message,
-    open: payload.status !== "ok",
+  applySettingsActionFeedback(payload, "OCR key save completed.", {
+    diagnosticsSlot: "settings-admin",
+    clearFieldId: "settings-ocr-key-input",
+    invalidateBootstrapOnOk: true,
   });
-  if (payload.status === "ok") {
-    renderPowerToolsCredentialInputClearInto(qs("settings-ocr-key-input"));
-    window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
-  }
 }
 
 async function handleOcrKeyClear() {
@@ -504,21 +495,11 @@ async function handleOcrKeyClear() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
-  if (Object.keys(providerState).length) {
-    renderProviderState(providerState, { preserveStatus: true });
-  }
-  const message = resolvePayloadMessage(payload, "OCR key clear completed.");
-  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
-  setPanelStatus("settings", tone, message);
-  setDiagnostics("settings-admin", payload, {
-    hint: message,
-    open: payload.status !== "ok",
+  applySettingsActionFeedback(payload, "OCR key clear completed.", {
+    diagnosticsSlot: "settings-admin",
+    clearFieldId: "settings-ocr-key-input",
+    invalidateBootstrapOnOk: true,
   });
-  if (payload.status === "ok") {
-    renderPowerToolsCredentialInputClearInto(qs("settings-ocr-key-input"));
-    window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
-  }
 }
 
 async function handleSettingsPreflight() {
@@ -543,17 +524,7 @@ async function handleOcrTest() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
-  if (Object.keys(providerState).length) {
-    renderProviderState(providerState, { preserveStatus: true });
-  }
-  const message = resolvePayloadMessage(payload, "OCR provider test completed.");
-  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
-  setPanelStatus("settings", tone, message);
-  setDiagnostics("settings-test", payload, {
-    hint: message,
-    open: payload.status !== "ok",
-  });
+  applySettingsActionFeedback(payload, "OCR provider test completed.");
 }
 
 async function handleTranslationTest() {
@@ -562,17 +533,7 @@ async function handleTranslationTest() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
-  if (Object.keys(providerState).length) {
-    renderProviderState(providerState, { preserveStatus: true });
-  }
-  const message = resolvePayloadMessage(payload, "Translation auth test completed.");
-  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
-  setPanelStatus("settings", tone, message);
-  setDiagnostics("settings-test", payload, {
-    hint: message,
-    open: payload.status !== "ok",
-  });
+  applySettingsActionFeedback(payload, "Translation auth test completed.");
 }
 
 async function handleNativeHostTest() {
@@ -581,17 +542,7 @@ async function handleNativeHostTest() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
-  if (Object.keys(providerState).length) {
-    renderProviderState(providerState, { preserveStatus: true });
-  }
-  const message = resolvePayloadMessage(payload, "Native-host diagnostics refreshed.");
-  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
-  setPanelStatus("settings", tone, message);
-  setDiagnostics("settings-test", payload, {
-    hint: message,
-    open: payload.status !== "ok",
-  });
+  applySettingsActionFeedback(payload, "Native-host diagnostics refreshed.");
 }
 
 async function handleNativeHostRepair() {
@@ -600,20 +551,10 @@ async function handleNativeHostRepair() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
-  if (Object.keys(providerState).length) {
-    renderProviderState(providerState, { preserveStatus: true });
-  }
-  const message = resolvePayloadMessage(payload, "Native-host repair completed.");
-  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
-  setPanelStatus("settings", tone, message);
-  setDiagnostics("settings-admin", payload, {
-    hint: message,
-    open: payload.status !== "ok",
+  applySettingsActionFeedback(payload, "Native-host repair completed.", {
+    diagnosticsSlot: "settings-admin",
+    invalidateBootstrapOnOk: true,
   });
-  if (payload.status === "ok") {
-    window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
-  }
 }
 
 async function handleWordPdfExportTest() {
@@ -622,17 +563,7 @@ async function handleWordPdfExportTest() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  const providerState = payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {};
-  if (Object.keys(providerState).length) {
-    renderProviderState(providerState, { preserveStatus: true });
-  }
-  const message = resolvePayloadMessage(payload, "Word PDF export test completed.");
-  const tone = payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad";
-  setPanelStatus("settings", tone, message);
-  setDiagnostics("settings-test", payload, {
-    hint: message,
-    open: payload.status !== "ok",
-  });
+  applySettingsActionFeedback(payload, "Word PDF export test completed.");
 }
 
 async function handleGmailPrereqs() {
