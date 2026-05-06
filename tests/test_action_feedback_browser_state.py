@@ -173,3 +173,32 @@ def test_app_extension_lab_actions_delegate_repeated_action_failure_feedback() -
         ), f"{fallback} should not repeat raw fallback message plumbing"
     assert 'setPanelStatus("extension", "bad", error.message ||' not in app_source
     assert 'setPanelStatus("simulator", "bad", error.message ||' not in app_source
+
+
+def test_app_autofill_actions_delegate_repeated_action_failure_feedback() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_source = (static_dir / "app.js").read_text(encoding="utf-8")
+
+    assert 'from "./action_feedback_presentation.js"' in app_source
+    assert "function applyActionFailureFeedback" in app_source
+    for fallback in [
+        "Notification autofill failed.",
+        "Photo autofill failed.",
+        "Google Photos connection failed.",
+    ]:
+        assert (
+            f'fallback: "{fallback}"'
+            in app_source
+        ), f"{fallback} should be routed through shared action feedback"
+        assert (
+            f'error.message || "{fallback}"'
+            not in app_source
+        ), f"{fallback} should not repeat raw fallback message plumbing"
+    assert 'setPanelStatus("autofill", "bad", error.message ||' not in app_source
+    assert 'setDiagnostics("autofill", error, { hint: error.message ||' not in app_source

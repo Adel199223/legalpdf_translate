@@ -3094,8 +3094,11 @@ function wireEvents() {
         setPanelStatus("autofill", "", "Running notification OCR and metadata recovery...");
         await handleUpload("notification-upload-form", "/api/interpretation/autofill-notification");
       } catch (error) {
-        setPanelStatus("autofill", "bad", error.message || "Notification autofill failed.");
-        setDiagnostics("autofill", error, { hint: error.message || "Notification autofill failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "autofill",
+          diagnosticsSlot: "autofill",
+          fallback: "Notification autofill failed.",
+        });
       }
     });
   });
@@ -3107,8 +3110,11 @@ function wireEvents() {
         setPanelStatus("autofill", "", "Running photo/screenshot metadata recovery...");
         await handleUpload("photo-upload-form", "/api/interpretation/autofill-photo", { sourceKind: "photo" });
       } catch (error) {
-        setPanelStatus("autofill", "bad", error.message || "Photo autofill failed.");
-        setDiagnostics("autofill", error, { hint: error.message || "Photo autofill failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "autofill",
+          diagnosticsSlot: "autofill",
+          fallback: "Photo autofill failed.",
+        });
       }
     });
   });
@@ -3119,8 +3125,11 @@ function wireEvents() {
       try {
         await handleGooglePhotosConnect();
       } catch (error) {
-        setPanelStatus("autofill", "bad", error.message || "Google Photos connection failed.");
-        setDiagnostics("autofill", error, { hint: error.message || "Google Photos connection failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "autofill",
+          diagnosticsSlot: "autofill",
+          fallback: "Google Photos connection failed.",
+        });
       }
     }, { guardIds: ["google-photos-connect"] });
     renderGooglePhotosStatus(googlePhotosUiState.status || {});
