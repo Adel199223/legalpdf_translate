@@ -233,17 +233,21 @@ function applyGooglePhotosPickerFailureFeedback(error, pickerDiagnostics) {
   const feedbackError = reconnectNeeded
     ? { message: GOOGLE_PHOTOS_RECONNECT_GUIDANCE }
     : error;
-  const feedback = buildActionFailureFeedback(feedbackError, "Google Photos import failed.", {
-    panelSlot: "autofill",
-    diagnosticsSlot: "autofill",
-  });
-  setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
-  setDiagnostics(feedback.diagnosticsSlot, {
-    status: "failed",
-    message: feedback.message,
-    google_photos_picker: pickerDiagnostics,
-    request_error: error.payload || {},
-  }, { hint: feedback.diagnosticsHint, open: feedback.diagnosticsOpen });
+  const feedback = applyActionFailureFeedbackToUi(
+    feedbackError,
+    {
+      panelSlot: "autofill",
+      diagnosticsSlot: "autofill",
+      fallback: "Google Photos import failed.",
+      diagnosticsValue: (resolvedFeedback) => ({
+        status: "failed",
+        message: resolvedFeedback.message,
+        google_photos_picker: pickerDiagnostics,
+        request_error: error.payload || {},
+      }),
+    },
+    { setPanelStatus, setDiagnostics },
+  );
   renderGooglePhotosSummary({
     diagnostics: { location_message: "Google Photos location: unavailable from Picker API" },
     message: feedback.message,
@@ -255,16 +259,16 @@ function applyInterpretationGuardFailureFeedback(
   error,
   { fallback = "", diagnosticsValue = null } = {},
 ) {
-  const feedback = buildActionFailureFeedback(error, fallback, {
-    panelSlot: "form",
-    diagnosticsSlot: "form",
-  });
-  setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
-  setDiagnostics(feedback.diagnosticsSlot, diagnosticsValue || error, {
-    hint: feedback.diagnosticsHint,
-    open: feedback.diagnosticsOpen,
-  });
-  return feedback;
+  return applyActionFailureFeedbackToUi(
+    error,
+    {
+      panelSlot: "form",
+      diagnosticsSlot: "form",
+      fallback,
+      diagnosticsValue: diagnosticsValue || error,
+    },
+    { setPanelStatus, setDiagnostics },
+  );
 }
 
 function qsa(selector) {
@@ -1790,9 +1794,15 @@ function setProfileDistanceStatus(tone, message) {
 }
 
 function applyProfileDistanceFailureStatus(error, fallback) {
-  const feedback = buildActionFailureFeedback(error, fallback);
-  setProfileDistanceStatus(feedback.tone, feedback.message);
-  return feedback;
+  return applyActionFailureFeedbackToUi(
+    error,
+    { fallback },
+    {
+      setPanelStatus(_slot, tone, message) {
+        setProfileDistanceStatus(tone, message);
+      },
+    },
+  );
 }
 
 function syncProfileDistanceJsonField({ markClean = true } = {}) {
