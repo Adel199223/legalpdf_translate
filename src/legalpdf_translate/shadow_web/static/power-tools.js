@@ -3,6 +3,7 @@ import { appState } from "./state.js";
 import { runWithBusy } from "./busy_ui.js";
 import { buildSettingsStatusPresentation } from "./settings_presentation.js";
 import {
+  renderBuilderSourceModeInto,
   renderCredentialRecoveryStateInto,
   renderLatestRunDirsInto,
   renderPowerToolsCheckboxInto,
@@ -344,9 +345,10 @@ function collectCalibrationPayload() {
 
 function syncBuilderSourceMode() {
   const sourceMode = fieldValue("builder-source-mode") || "run_folders";
-  const useRunDirs = sourceMode === "run_folders";
-  qs("builder-run-dirs").disabled = !useRunDirs;
-  qs("builder-pdf-paths").disabled = useRunDirs;
+  renderBuilderSourceModeInto({
+    runDirs: qs("builder-run-dirs"),
+    pdfPaths: qs("builder-pdf-paths"),
+  }, sourceMode);
 }
 
 async function refreshSettingsAdmin({ preserveStatus = true } = {}) {
