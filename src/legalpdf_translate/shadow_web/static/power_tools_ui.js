@@ -200,6 +200,23 @@ export function renderBuilderSourceModeInto(nodes = {}, sourceMode = "run_folder
   return nodes;
 }
 
+export function renderPowerToolsBuilderDefaultsInto(nodes = {}, builder = {}) {
+  if (!nodes) {
+    return undefined;
+  }
+  renderPowerToolsFieldValueInto(nodes.sourceMode, builder.sourceMode || "run_folders");
+  renderPowerToolsFieldValueInto(nodes.targetLang, builder.targetLang || "EN");
+  renderPowerToolsFieldValueInto(nodes.mode, builder.mode || "full_text");
+  renderPowerToolsFieldValueInto(nodes.lemmaEffort, builder.lemmaEffort || "high");
+  renderPowerToolsCheckboxInto(nodes.lemmaEnabled, builder.lemmaEnabled);
+  renderPowerToolsFieldValueInto(nodes.runDirs, builder.runDirs || "");
+  renderPowerToolsFieldValueInto(nodes.pdfPaths, builder.pdfPaths || "");
+  if (Object.prototype.hasOwnProperty.call(builder, "approvedJson")) {
+    renderPowerToolsFieldValueInto(nodes.approvedJson, builder.approvedJson);
+  }
+  return nodes;
+}
+
 export function renderPowerToolsCalibrationDefaultsInto(nodes = {}, defaults = {}) {
   if (!nodes) {
     return undefined;

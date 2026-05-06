@@ -21052,6 +21052,186 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_power_tools_ui_module_centralizes_builder_defaults_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    power_tools_ui_module = static_dir / "power_tools_ui.js"
+
+    assert power_tools_ui_module.exists()
+    power_tools_ui_source = power_tools_ui_module.read_text(encoding="utf-8")
+    assert "export function renderPowerToolsBuilderDefaultsInto" in power_tools_ui_source
+    assert "renderPowerToolsBuilderDefaultsInto({" in power_tools_js
+    assert 'setFieldValue("builder-source-mode", builderDefaults.source_mode || "run_folders");' not in power_tools_js
+    assert 'setFieldValue("builder-target-lang", builderDefaults.target_lang || "EN");' not in power_tools_js
+    assert 'setFieldValue("builder-mode", builderDefaults.mode || "full_text");' not in power_tools_js
+    assert 'setFieldValue("builder-lemma-effort", builderDefaults.lemma_effort || "high");' not in power_tools_js
+    assert 'setCheckbox("builder-lemma-enabled", builderDefaults.lemma_enabled);' not in power_tools_js
+    assert 'setFieldValue("builder-run-dirs", (builderDefaults.run_dirs || []).join("\\n"));' not in power_tools_js
+    assert 'setFieldValue("builder-pdf-paths", (builderDefaults.pdf_paths || []).join("\\n"));' not in power_tools_js
+    assert 'setFieldValue("builder-approved-json", prettyJson(builder.last_result.suggestions));' not in power_tools_js
+    assert "innerHTML" not in power_tools_ui_source
+
+    script = r"""
+const powerToolsUi = await import(__POWER_TOOLS_UI_MODULE_URL__);
+
+class Element {
+  constructor(value = "existing") {
+    this.value = value;
+    this.checked = true;
+    this.innerHTMLAssignments = [];
+    this._innerHTML = "";
+  }
+}
+
+Object.defineProperty(Element.prototype, "innerHTML", {
+  get() {
+    return this._innerHTML;
+  },
+  set(value) {
+    this._innerHTML = String(value ?? "");
+    this.innerHTMLAssignments.push(this._innerHTML);
+  },
+});
+
+function makeNodes() {
+  return {
+    sourceMode: new Element(),
+    targetLang: new Element(),
+    mode: new Element(),
+    lemmaEffort: new Element(),
+    lemmaEnabled: new Element(),
+    runDirs: new Element(),
+    pdfPaths: new Element(),
+    approvedJson: new Element("keep-approved"),
+  };
+}
+
+function readNodes(nodes) {
+  return {
+    sourceMode: nodes.sourceMode.value,
+    targetLang: nodes.targetLang.value,
+    mode: nodes.mode.value,
+    lemmaEffort: nodes.lemmaEffort.value,
+    lemmaEnabled: nodes.lemmaEnabled.checked,
+    runDirs: nodes.runDirs.value,
+    pdfPaths: nodes.pdfPaths.value,
+    approvedJson: nodes.approvedJson.value,
+    innerHTMLWrites: Object.values(nodes).reduce(
+      (total, node) => total + node.innerHTMLAssignments.length,
+      0,
+    ),
+  };
+}
+
+const maliciousNodes = makeNodes();
+const maliciousReturn = powerToolsUi.renderPowerToolsBuilderDefaultsInto(maliciousNodes, {
+  sourceMode: "<img src=x onerror=alert(1)>",
+  targetLang: "<b>AR</b>",
+  mode: "<script>bad()</script>",
+  lemmaEffort: "<svg onload=alert(1)>",
+  lemmaEnabled: false,
+  runDirs: "C:/runs/<img src=x onerror=alert(1)>",
+  pdfPaths: "C:/pdfs/<script>bad()</script>",
+  approvedJson: "[{\"term\":\"<img src=x onerror=alert(1)>\"}]",
+});
+
+const defaultsNodes = makeNodes();
+powerToolsUi.renderPowerToolsBuilderDefaultsInto(defaultsNodes, {});
+
+const noSuggestionsNodes = makeNodes();
+powerToolsUi.renderPowerToolsBuilderDefaultsInto(noSuggestionsNodes, {
+  sourceMode: "pdf_paths",
+  targetLang: "FR",
+  mode: "review",
+  lemmaEffort: "low",
+  lemmaEnabled: 1,
+  runDirs: "C:/run-a\nC:/run-b",
+  pdfPaths: "C:/pdf-a.pdf\nC:/pdf-b.pdf",
+});
+
+const partialNodes = {
+  sourceMode: new Element(),
+  approvedJson: new Element("old-json"),
+};
+powerToolsUi.renderPowerToolsBuilderDefaultsInto(partialNodes, {
+  sourceMode: "pdf_paths",
+  approvedJson: "[1]",
+});
+
+const nullReturn = powerToolsUi.renderPowerToolsBuilderDefaultsInto(null, {
+  sourceMode: "ignored",
+});
+
+console.log(JSON.stringify({
+  malicious: {
+    ...readNodes(maliciousNodes),
+    returnedSameNodes: maliciousReturn === maliciousNodes,
+  },
+  defaults: readNodes(defaultsNodes),
+  noSuggestions: readNodes(noSuggestionsNodes),
+  partial: {
+    sourceMode: partialNodes.sourceMode.value,
+    approvedJson: partialNodes.approvedJson.value,
+    innerHTMLWrites: partialNodes.sourceMode.innerHTMLAssignments.length
+      + partialNodes.approvedJson.innerHTMLAssignments.length,
+  },
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__POWER_TOOLS_UI_MODULE_URL__": "power_tools_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["malicious"] == {
+        "sourceMode": "<img src=x onerror=alert(1)>",
+        "targetLang": "<b>AR</b>",
+        "mode": "<script>bad()</script>",
+        "lemmaEffort": "<svg onload=alert(1)>",
+        "lemmaEnabled": False,
+        "runDirs": "C:/runs/<img src=x onerror=alert(1)>",
+        "pdfPaths": "C:/pdfs/<script>bad()</script>",
+        "approvedJson": '[{"term":"<img src=x onerror=alert(1)>"}]',
+        "innerHTMLWrites": 0,
+        "returnedSameNodes": True,
+    }
+    assert results["defaults"] == {
+        "sourceMode": "run_folders",
+        "targetLang": "EN",
+        "mode": "full_text",
+        "lemmaEffort": "high",
+        "lemmaEnabled": False,
+        "runDirs": "",
+        "pdfPaths": "",
+        "approvedJson": "keep-approved",
+        "innerHTMLWrites": 0,
+    }
+    assert results["noSuggestions"] == {
+        "sourceMode": "pdf_paths",
+        "targetLang": "FR",
+        "mode": "review",
+        "lemmaEffort": "low",
+        "lemmaEnabled": True,
+        "runDirs": "C:/run-a\nC:/run-b",
+        "pdfPaths": "C:/pdf-a.pdf\nC:/pdf-b.pdf",
+        "approvedJson": "keep-approved",
+        "innerHTMLWrites": 0,
+    }
+    assert results["partial"] == {
+        "sourceMode": "pdf_paths",
+        "approvedJson": "[1]",
+        "innerHTMLWrites": 0,
+    }
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_power_tools_ui_module_centralizes_calibration_defaults_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -23982,6 +24162,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderPowerToolsFieldValueInto" in power_tools_ui_asset.text
         assert "renderPowerToolsCheckboxInto" in power_tools_ui_asset.text
         assert "renderBuilderSourceModeInto" in power_tools_ui_asset.text
+        assert "renderPowerToolsBuilderDefaultsInto" in power_tools_ui_asset.text
         assert "renderPowerToolsCalibrationDefaultsInto" in power_tools_ui_asset.text
         interpretation_reference_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_reference_ui.js")
         assert interpretation_reference_ui_asset.status_code == 200
