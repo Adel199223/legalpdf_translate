@@ -20938,6 +20938,120 @@ console.log(JSON.stringify({
     assert results["nullCheckboxReturnType"] == "undefined"
 
 
+def test_power_tools_ui_module_centralizes_builder_source_mode_controls() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    power_tools_ui_module = static_dir / "power_tools_ui.js"
+
+    assert power_tools_ui_module.exists()
+    power_tools_ui_source = power_tools_ui_module.read_text(encoding="utf-8")
+    assert "export function renderBuilderSourceModeInto" in power_tools_ui_source
+    assert "renderBuilderSourceModeInto({" in power_tools_js
+    assert 'qs("builder-run-dirs").disabled' not in power_tools_js
+    assert 'qs("builder-pdf-paths").disabled' not in power_tools_js
+    assert "innerHTML" not in power_tools_ui_source
+
+    script = r"""
+const powerToolsUi = await import(__POWER_TOOLS_UI_MODULE_URL__);
+
+class Element {
+  constructor() {
+    this.disabled = false;
+    this.innerHTMLAssignments = [];
+    this._innerHTML = "";
+  }
+}
+
+Object.defineProperty(Element.prototype, "innerHTML", {
+  get() {
+    return this._innerHTML;
+  },
+  set(value) {
+    this._innerHTML = String(value ?? "");
+    this.innerHTMLAssignments.push(this._innerHTML);
+  },
+});
+
+const runDirs = new Element();
+const pdfPaths = new Element();
+const runFoldersReturn = powerToolsUi.renderBuilderSourceModeInto({ runDirs, pdfPaths }, "run_folders");
+
+const pdfRunDirs = new Element();
+const pdfPathsField = new Element();
+powerToolsUi.renderBuilderSourceModeInto({ runDirs: pdfRunDirs, pdfPaths: pdfPathsField }, "pdf_paths");
+
+const maliciousRunDirs = new Element();
+const maliciousPdfPaths = new Element();
+powerToolsUi.renderBuilderSourceModeInto(
+  { runDirs: maliciousRunDirs, pdfPaths: maliciousPdfPaths },
+  "<img src=x onerror=alert(1)>",
+);
+
+const missingRunDirs = new Element();
+const missingPdfPaths = new Element();
+powerToolsUi.renderBuilderSourceModeInto({ runDirs: missingRunDirs }, "run_folders");
+powerToolsUi.renderBuilderSourceModeInto({ pdfPaths: missingPdfPaths }, "pdf_paths");
+const nullReturn = powerToolsUi.renderBuilderSourceModeInto(null, "run_folders");
+
+console.log(JSON.stringify({
+  runFolders: {
+    runDirsDisabled: runDirs.disabled,
+    pdfPathsDisabled: pdfPaths.disabled,
+    returnedSameNodes: runFoldersReturn.runDirs === runDirs && runFoldersReturn.pdfPaths === pdfPaths,
+    innerHTMLWrites: runDirs.innerHTMLAssignments.length + pdfPaths.innerHTMLAssignments.length,
+  },
+  pdfPaths: {
+    runDirsDisabled: pdfRunDirs.disabled,
+    pdfPathsDisabled: pdfPathsField.disabled,
+    innerHTMLWrites: pdfRunDirs.innerHTMLAssignments.length + pdfPathsField.innerHTMLAssignments.length,
+  },
+  malicious: {
+    runDirsDisabled: maliciousRunDirs.disabled,
+    pdfPathsDisabled: maliciousPdfPaths.disabled,
+    innerHTMLWrites: maliciousRunDirs.innerHTMLAssignments.length + maliciousPdfPaths.innerHTMLAssignments.length,
+  },
+  missing: {
+    runDirsOnlyDisabled: missingRunDirs.disabled,
+    pdfPathsOnlyDisabled: missingPdfPaths.disabled,
+  },
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__POWER_TOOLS_UI_MODULE_URL__": "power_tools_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["runFolders"] == {
+        "runDirsDisabled": False,
+        "pdfPathsDisabled": True,
+        "returnedSameNodes": True,
+        "innerHTMLWrites": 0,
+    }
+    assert results["pdfPaths"] == {
+        "runDirsDisabled": True,
+        "pdfPathsDisabled": False,
+        "innerHTMLWrites": 0,
+    }
+    assert results["malicious"] == {
+        "runDirsDisabled": True,
+        "pdfPathsDisabled": False,
+        "innerHTMLWrites": 0,
+    }
+    assert results["missing"] == {
+        "runDirsOnlyDisabled": False,
+        "pdfPathsOnlyDisabled": False,
+    }
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -23716,6 +23830,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "setPanelStatus" in power_tools_ui_asset.text
         assert "renderPowerToolsFieldValueInto" in power_tools_ui_asset.text
         assert "renderPowerToolsCheckboxInto" in power_tools_ui_asset.text
+        assert "renderBuilderSourceModeInto" in power_tools_ui_asset.text
         interpretation_reference_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_reference_ui.js")
         assert interpretation_reference_ui_asset.status_code == 200
         assert interpretation_reference_ui_asset.headers["content-type"].startswith("application/javascript")

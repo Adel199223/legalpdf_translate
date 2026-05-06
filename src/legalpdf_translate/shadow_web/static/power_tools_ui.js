@@ -186,6 +186,20 @@ export function renderPowerToolsCheckboxInto(checkbox, value = false) {
   return checkbox;
 }
 
+export function renderBuilderSourceModeInto(nodes = {}, sourceMode = "run_folders") {
+  if (!nodes) {
+    return undefined;
+  }
+  const useRunDirs = sourceMode === "run_folders";
+  if (nodes.runDirs) {
+    nodes.runDirs.disabled = !useRunDirs;
+  }
+  if (nodes.pdfPaths) {
+    nodes.pdfPaths.disabled = useRunDirs;
+  }
+  return nodes;
+}
+
 function qs(id) {
   return document.getElementById(id);
 }
