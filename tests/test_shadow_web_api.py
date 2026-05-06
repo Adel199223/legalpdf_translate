@@ -20938,6 +20938,103 @@ console.log(JSON.stringify({
     assert results["nullCheckboxReturnType"] == "undefined"
 
 
+def test_power_tools_ui_module_centralizes_credential_input_clear_renderer() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    power_tools_ui_module = static_dir / "power_tools_ui.js"
+
+    assert power_tools_ui_module.exists()
+    power_tools_ui_source = power_tools_ui_module.read_text(encoding="utf-8")
+    assert "export function renderPowerToolsCredentialInputClearInto" in power_tools_ui_source
+    assert "renderPowerToolsCredentialInputClearInto" in power_tools_js
+    assert 'setFieldValue("settings-translation-key-input", "");' not in power_tools_js
+    assert 'setFieldValue("settings-ocr-key-input", "");' not in power_tools_js
+    assert "innerHTML" not in power_tools_ui_source
+
+    script = r"""
+const powerToolsUi = await import(__POWER_TOOLS_UI_MODULE_URL__);
+
+class Element {
+  constructor(value = "existing") {
+    this.value = value;
+    this.textContent = "";
+    this.innerHTMLAssignments = [];
+    this._innerHTML = "";
+  }
+}
+
+Object.defineProperty(Element.prototype, "innerHTML", {
+  get() {
+    return this._innerHTML;
+  },
+  set(value) {
+    this._innerHTML = String(value ?? "");
+    this.innerHTMLAssignments.push(this._innerHTML);
+  },
+});
+
+const translation = new Element("<img src=x onerror=alert(1)>");
+const ocr = new Element("<script>bad()</script>");
+const empty = new Element("");
+
+const translationReturn = powerToolsUi.renderPowerToolsCredentialInputClearInto(translation);
+const ocrReturn = powerToolsUi.renderPowerToolsCredentialInputClearInto(ocr);
+const emptyReturn = powerToolsUi.renderPowerToolsCredentialInputClearInto(empty);
+const nullReturn = powerToolsUi.renderPowerToolsCredentialInputClearInto(null);
+
+console.log(JSON.stringify({
+  translation: {
+    value: translation.value,
+    textContent: translation.textContent,
+    returnedSameNode: translationReturn === translation,
+    innerHTMLWrites: translation.innerHTMLAssignments.length,
+  },
+  ocr: {
+    value: ocr.value,
+    textContent: ocr.textContent,
+    returnedSameNode: ocrReturn === ocr,
+    innerHTMLWrites: ocr.innerHTMLAssignments.length,
+  },
+  empty: {
+    value: empty.value,
+    returnedSameNode: emptyReturn === empty,
+    innerHTMLWrites: empty.innerHTMLAssignments.length,
+  },
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__POWER_TOOLS_UI_MODULE_URL__": "power_tools_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["translation"] == {
+        "value": "",
+        "textContent": "",
+        "returnedSameNode": True,
+        "innerHTMLWrites": 0,
+    }
+    assert results["ocr"] == {
+        "value": "",
+        "textContent": "",
+        "returnedSameNode": True,
+        "innerHTMLWrites": 0,
+    }
+    assert results["empty"] == {
+        "value": "",
+        "returnedSameNode": True,
+        "innerHTMLWrites": 0,
+    }
+    assert results["nullReturnType"] == "undefined"
+
+
 def test_power_tools_ui_module_centralizes_settings_admin_form_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -24473,6 +24570,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderPowerToolsGlossaryFormInto" in power_tools_ui_asset.text
         assert "renderPowerToolsBuilderDefaultsInto" in power_tools_ui_asset.text
         assert "renderPowerToolsCalibrationDefaultsInto" in power_tools_ui_asset.text
+        assert "renderPowerToolsCredentialInputClearInto" in power_tools_ui_asset.text
         interpretation_reference_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_reference_ui.js")
         assert interpretation_reference_ui_asset.status_code == 200
         assert interpretation_reference_ui_asset.headers["content-type"].startswith("application/javascript")

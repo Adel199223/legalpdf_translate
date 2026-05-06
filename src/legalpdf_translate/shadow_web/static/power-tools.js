@@ -9,6 +9,7 @@ import {
   renderPowerToolsBuilderDefaultsInto,
   renderPowerToolsCalibrationDefaultsInto,
   renderPowerToolsCheckboxInto,
+  renderPowerToolsCredentialInputClearInto,
   renderPowerToolsFieldValueInto,
   renderPowerToolsGlossaryFormInto,
   renderPowerToolsSettingsAdminFormInto,
@@ -445,7 +446,7 @@ async function handleTranslationKeySave() {
     open: payload.status !== "ok",
   });
   if (payload.status === "ok") {
-    setFieldValue("settings-translation-key-input", "");
+    renderPowerToolsCredentialInputClearInto(qs("settings-translation-key-input"));
     window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
   }
 }
@@ -468,7 +469,7 @@ async function handleTranslationKeyClear() {
     open: payload.status !== "ok",
   });
   if (payload.status === "ok") {
-    setFieldValue("settings-translation-key-input", "");
+    renderPowerToolsCredentialInputClearInto(qs("settings-translation-key-input"));
     window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
   }
 }
@@ -491,7 +492,7 @@ async function handleOcrKeySave() {
     open: payload.status !== "ok",
   });
   if (payload.status === "ok") {
-    setFieldValue("settings-ocr-key-input", "");
+    renderPowerToolsCredentialInputClearInto(qs("settings-ocr-key-input"));
     window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
   }
 }
@@ -514,7 +515,7 @@ async function handleOcrKeyClear() {
     open: payload.status !== "ok",
   });
   if (payload.status === "ok") {
-    setFieldValue("settings-ocr-key-input", "");
+    renderPowerToolsCredentialInputClearInto(qs("settings-ocr-key-input"));
     window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
   }
 }

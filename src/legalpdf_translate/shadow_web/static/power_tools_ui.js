@@ -178,6 +178,10 @@ export function renderPowerToolsFieldValueInto(field, value = "") {
   return field;
 }
 
+export function renderPowerToolsCredentialInputClearInto(field) {
+  return renderPowerToolsFieldValueInto(field, "");
+}
+
 export function renderPowerToolsCheckboxInto(checkbox, value = false) {
   if (!checkbox) {
     return undefined;
